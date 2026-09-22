@@ -2443,6 +2443,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApplication.shared.terminate(nil)
     }
 
+    func quitFromMenuBar() {
+        requestTermination(.menuBar)
+    }
+
     func openSettingsWindow() {
         voiceState.captureSettingsHistoryPasteTarget()
         NSApp.activate(ignoringOtherApps: true)
@@ -2570,6 +2574,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSWorkspace.shared.activateFileViewerSelecting(
                     Self.historyFileRevealSelection(for: audioPath)
                 )
+            },
+            footerPresentation: { [weak self] in
+                if let self {
+                    return VoiceBarFooterPresentation.resolve(state: voiceState)
+                }
+                return .resolve(
+                    isConnected: false,
+                    mode: .disconnected,
+                    captureLive: false,
+                    errorMessage: nil,
+                    remoteSTTConfigured: nil
+                )
             }
         )
     }
@@ -2694,40 +2710,62 @@ struct VoiceBarApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 10) {
                 if let degradation = appDelegate.voiceState.polishDegradation {
                     Label(degradation.hint, systemImage: "exclamationmark.triangle.fill")
                         .font(.system(.caption, weight: .medium))
                         .foregroundStyle(.orange)
                     Divider()
                 }
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(appDelegate.voiceState.isConnected ? .green : .red)
-                        .frame(width: 8, height: 8)
-                    Text(appDelegate.voiceState.isConnected ? "Connected" : "Disconnected")
-                        .font(.system(.caption, weight: .medium))
-                }
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(appDelegate.hotkeyEnabled ? .green : .orange)
-                        .frame(width: 8, height: 8)
-                    Text(
-                        VoiceBarPresentation.hotkeyPermissionHint(
+                VoiceBarStatusFooter(
+                    presentation: .resolve(state: appDelegate.voiceState)
+                )
+                Text(
+                    appDelegate.hotkeyEnabled
+                        ? "Hold F5 to dictate"
+                        : VoiceBarPresentation.hotkeyPermissionHint(
                             hotkeyEnabled: appDelegate.hotkeyEnabled,
                             missingPermissions: appDelegate.missingHotkeyPermissions
                         )
-                    )
-                    .font(.system(.caption, weight: .medium))
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Image(systemName: "mic")
+                    Text(menuInputDeviceName)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+                .padding(9)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
+                if !appDelegate.voiceState.latestReusableTranscript.isEmpty {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(appDelegate.voiceState.latestReusableTranscript)
+                            .font(.caption)
+                            .lineLimit(3)
+                        Button {
+                            appDelegate.voiceState.copyLastTranscript()
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Copy last transcript")
+                    }
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
                 }
                 Divider()
-                ForEach(appDelegate.quickMenuActions()) { action in
-                    Button(action.title) {
-                        action.perform()
-                    }
+                Button("Open Settings…") {
+                    appDelegate.openSettingsWindow()
+                }
+                Button("Quit VoiceBar") {
+                    appDelegate.quitFromMenuBar()
                 }
             }
-            .padding(8)
+            .frame(width: 310)
+            .padding(12)
             .onAppear {
                 appDelegate.voiceState.acknowledgePolishMenuSignal()
             }
@@ -2739,6 +2777,7 @@ struct VoiceBarApp: App {
                     : "waveform.circle.fill"
             )
         }
+        .menuBarExtraStyle(.window)
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") {
@@ -2747,5 +2786,11 @@ struct VoiceBarApp: App {
                 .keyboardShortcut(",", modifiers: .command)
             }
         }
+    }
+
+    private var menuInputDeviceName: String {
+        let selected = MicrophoneDeviceManager.selectedInputDeviceID()
+        return MicrophoneDeviceManager.availableInputDevices()
+            .first(where: { $0.id == selected })?.name ?? "Input unavailable"
     }
 }

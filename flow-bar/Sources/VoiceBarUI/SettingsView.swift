@@ -299,6 +299,7 @@ public struct SettingsView: View {
     public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
     public let dictionarySource: (STTDictionaryEntry) -> SettingsDictionarySource
+    public let footerPresentation: () -> VoiceBarFooterPresentation
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -390,6 +391,15 @@ public struct SettingsView: View {
         isTranscribingActive: @escaping () -> Bool = { false },
         onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
         dictionarySource: @escaping (STTDictionaryEntry) -> SettingsDictionarySource = { _ in .unknown },
+        footerPresentation: @escaping () -> VoiceBarFooterPresentation = {
+            .resolve(
+                isConnected: false,
+                mode: .disconnected,
+                captureLive: false,
+                errorMessage: nil,
+                remoteSTTConfigured: nil
+            )
+        },
         initialTab: SettingsTab = .general,
         initialHistoryScope: SettingsHistoryScope = .recording
     ) {
@@ -442,6 +452,7 @@ public struct SettingsView: View {
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
         self.dictionarySource = dictionarySource
+        self.footerPresentation = footerPresentation
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
         let initialVocabulary = vocabularyPreview()
@@ -472,7 +483,7 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        SettingsNavigationShell(selection: $selectedTab) {
+        SettingsNavigationShell(selection: $selectedTab, footer: footerPresentation()) {
             switch selectedTab {
             case .audio:
                 settingsPage(title: "Audio") { audioTab }

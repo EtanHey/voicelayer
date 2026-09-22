@@ -370,6 +370,7 @@ export interface HealthResponse {
   queue_depth: number;
   recording_state: "idle" | "recording" | "transcribing";
   model_status: WhisperModelStatus;
+  remote_stt_configured: boolean;
   polish_controls: import("./polish-controls-status").PolishControlsStatus;
 }
 

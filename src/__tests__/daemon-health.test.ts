@@ -51,6 +51,19 @@ describe("daemon-health", () => {
     expect(pong.connections).toBe(2);
   });
 
+  it("reports remote STT configuration from the running daemon", () => {
+    const base = {
+      queueDepth: 0,
+      recordingState: "idle" as const,
+      modelStatus: {} as Parameters<typeof buildHealthResponse>[0]["modelStatus"],
+    };
+    expect(buildHealthResponse(base, { QA_VOICE_STT_BACKEND: "whisper" }).remote_stt_configured).toBe(false);
+    expect(buildHealthResponse(base, { QA_VOICE_STT_BACKEND: "whisper", QA_VOICE_WISPR_KEY: "test-key" }).remote_stt_configured).toBe(true);
+    expect(buildHealthResponse(base, { QA_VOICE_STT_BACKEND: "wispr" }).remote_stt_configured).toBe(true);
+    expect(buildHealthResponse(base, { QA_VOICE_STT_BACKEND: "auto", QA_VOICE_WISPR_KEY: "test-key" }).remote_stt_configured).toBe(true);
+    expect(buildHealthResponse(base, { QA_VOICE_STT_BACKEND: "auto" }).remote_stt_configured).toBe(false);
+  });
+
   it("adds authoritative polish controls to the health payload", () => {
     const health = buildHealthResponse({
       queueDepth: 0,
