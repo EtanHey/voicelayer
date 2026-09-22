@@ -129,6 +129,7 @@ describe("socket health command", () => {
       uptime_seconds: 42,
       queue_depth: 3,
       recording_state: "recording",
+      remote_stt_configured: expect.any(Boolean),
       model_status: {
         configured_model: { name: "large-v3-turbo", size_bytes: 10, installed: true },
         residency: "loaded",

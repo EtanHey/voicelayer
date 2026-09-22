@@ -56,19 +56,25 @@ export function buildHealthResponse(health: {
   queueDepth: number;
   recordingState: "idle" | "recording" | "transcribing";
   modelStatus: WhisperModelStatus;
-}): {
+}, environment: Record<string, string | undefined> = process.env): {
   type: "health";
   uptime_seconds: number;
   queue_depth: number;
   recording_state: "idle" | "recording" | "transcribing";
   model_status: WhisperModelStatus;
+  remote_stt_configured: boolean;
 } {
+  const preference = (environment.QA_VOICE_STT_BACKEND ?? "auto").toLowerCase();
   return {
     type: "health",
     uptime_seconds: getUptimeSeconds(),
     queue_depth: health.queueDepth,
     recording_state: health.recordingState,
     model_status: health.modelStatus,
+    // A Wispr key enables cloud fallback in auto mode. Report configuration
+    // from the daemon environment, even when a forced local mode currently
+    // prevents selection, so the UI never overclaims local-only processing.
+    remote_stt_configured: preference === "wispr" || Boolean(environment.QA_VOICE_WISPR_KEY),
   };
 }
 

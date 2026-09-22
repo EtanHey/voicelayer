@@ -327,6 +327,7 @@ public final class VoiceState {
     /// Active STT vocabulary hints loaded from the daemon snapshot.
     public private(set) var transcriptionVocabularyRevision: UInt64 = 0
     public private(set) var modelsSettingsState = ModelsSettingsState.loading
+    public private(set) var remoteSTTConfigured: Bool?
 
     public var transcriptionVocabularyTerms: [String] = [] {
         didSet {
@@ -1314,6 +1315,7 @@ public final class VoiceState {
         case "health":
             let status = ModelsSettingsState(healthEvent: event)
             modelsSettingsState = status.settingBusy(status.isBusy || Self.blocksModelsEffort(mode))
+            remoteSTTConfigured = event["remote_stt_configured"] as? Bool
 
         case "command_mode":
             handleCommandModeEvent(event)
@@ -1414,6 +1416,7 @@ public final class VoiceState {
         let previous = isConnected
         isConnected = connected
         guard previous != connected else { return }
+        remoteSTTConfigured = nil
 
         onConnectionChange?(connected)
 
