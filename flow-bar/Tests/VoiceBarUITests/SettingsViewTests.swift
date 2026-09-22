@@ -1,3 +1,6 @@
+import AppKit
+import Observation
+import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
@@ -5,6 +8,36 @@ import XCTest
 /// (Etan QA: invisible-until-hover inputs, missing term add/delete,
 /// search reads as a label, stale gesture copy).
 final class SettingsViewTests: XCTestCase {
+    @MainActor
+    func testVocabularyRevisionObserverRefreshesOnlyWhenRevisionChanges() {
+        let model = VocabularyRevisionModel()
+        var refreshCount = 0
+        let host = NSHostingView(
+            rootView: VocabularyRevisionHarness(model: model) {
+                refreshCount += 1
+            }
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+        host.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(refreshCount, 0)
+
+        model.revision = 1
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(refreshCount, 1)
+
+        model.revision = 1
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(refreshCount, 1)
+
+        model.revision = 2
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(refreshCount, 2)
+    }
+
     // MARK: - Field visibility (the invisible-until-hover class dies)
 
     func testDictionaryInputsUseVisibleFieldTreatmentAtRest() throws {
@@ -62,16 +95,8 @@ final class SettingsViewTests: XCTestCase {
         let borderedCount = source.components(separatedBy: ".buttonStyle(.bordered)").count - 1
         let prominentCount = source.components(separatedBy: ".buttonStyle(.borderedProminent)").count - 1
 
-        XCTAssertGreaterThanOrEqual(borderedCount, 3)
-        XCTAssertGreaterThanOrEqual(prominentCount, 3)
-        XCTAssertTrue(source
-            .contains(
-                "Button(\"Cancel\") {\n                    cancelTermRename()\n                }\n                .buttonStyle(.bordered)"
-            ))
-        XCTAssertTrue(source
-            .contains(
-                "Button(\"Save\") {\n                    saveTermRename(entry.canonical)\n                }\n                .buttonStyle(.borderedProminent)"
-            ))
+        XCTAssertGreaterThanOrEqual(borderedCount, 2)
+        XCTAssertGreaterThanOrEqual(prominentCount, 2)
         XCTAssertTrue(addVariantSource.contains("Button(\"Cancel\") {"))
         XCTAssertTrue(addVariantSource.contains(".buttonStyle(.bordered)"))
         XCTAssertTrue(addVariantSource.contains("Button(\"Add\") {"))
@@ -108,28 +133,18 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(functionSource.contains("RoundedRectangle(cornerRadius: 8)"))
     }
 
-    func testDictionaryHeaderModesShareStableControlHeight() throws {
+    func testDictionaryEditUsesNativeAlignedActionRow() throws {
         let source = try settingsViewSource()
         let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
-        let deleteButtonSource = try XCTUnwrap(source.functionBody(named: "deleteDictionaryEntryButton"))
 
-        XCTAssertTrue(source.contains("static let headerHeight"))
-        XCTAssertGreaterThanOrEqual(
-            headerSource.components(separatedBy: ".frame(minHeight: DictionaryCardLayout.headerHeight)").count - 1,
-            2,
-            "idle and edit header states must reserve the same row height"
-        )
-        XCTAssertGreaterThanOrEqual(
-            (headerSource + deleteButtonSource)
-                .components(separatedBy: ".frame(height: DictionaryCardLayout.headerHeight)").count - 1,
-            4,
-            "edit and delete-confirm text buttons must not be taller than the idle icon row"
-        )
-        XCTAssertGreaterThanOrEqual(
-            (headerSource + deleteButtonSource).components(separatedBy: ".controlSize(.small)").count - 1,
-            4,
-            "dictionary header text buttons need compact macOS control sizing"
-        )
+        XCTAssertTrue(headerSource.contains("VStack(alignment: .leading, spacing: 10)"))
+        XCTAssertTrue(headerSource.contains("HStack(spacing: 8)"))
+        XCTAssertTrue(headerSource.contains("Spacer()"))
+        XCTAssertTrue(headerSource.contains("Button(\"Cancel\")"))
+        XCTAssertTrue(headerSource.contains("Button(\"Save\")"))
+        XCTAssertTrue(headerSource.contains(".keyboardShortcut(.cancelAction)"))
+        XCTAssertTrue(headerSource.contains(".keyboardShortcut(.defaultAction)"))
+        XCTAssertTrue(headerSource.contains(".controlSize(.regular)"))
     }
 
     func testAddVariantInlineInputAndButtonsShareHeight() throws {
@@ -292,8 +307,12 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(
-            source.contains(".onChange(of: vocabularyRevision())"),
-            "Dictionary cards should reconcile with later daemon vocabulary snapshots"
+            source.contains("SettingsVocabularyRevisionObserver("),
+            "Dictionary cards should observe later daemon vocabulary revisions"
+        )
+        XCTAssertTrue(
+            source.contains("onRefresh: { reconcileLocalEntries(with: vocabularyPreview().entries) }"),
+            "A revision change should project the new snapshot into local dictionary cards"
         )
         XCTAssertTrue(
             source.contains("guard !hasPendingDictionaryEdit else { return }"),
@@ -462,6 +481,27 @@ final class SettingsViewTests: XCTestCase {
             .appendingPathComponent("VoiceBarUI")
             .appendingPathComponent("SettingsView.swift")
         return try String(contentsOf: settingsURL)
+    }
+}
+
+@MainActor
+@Observable
+private final class VocabularyRevisionModel {
+    var revision: UInt64 = 0
+}
+
+@MainActor
+private struct VocabularyRevisionHarness: View {
+    let model: VocabularyRevisionModel
+    let onRefresh: () -> Void
+
+    var body: some View {
+        Color.clear.modifier(
+            SettingsVocabularyRevisionObserver(
+                revision: model.revision,
+                onRefresh: onRefresh
+            )
+        )
     }
 }
 
