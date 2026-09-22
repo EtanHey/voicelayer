@@ -181,6 +181,7 @@ public final class VoiceState {
     public var mode: VoiceMode = .idle {
         didSet {
             previousMode = oldValue
+            synchronizeModelsSettingsState(from: oldValue, to: mode)
             if oldValue != mode, oldValue == .recording || mode == .recording {
                 resetRecordingHold()
             }
@@ -618,6 +619,15 @@ public final class VoiceState {
     }
 
     // MARK: - Commands
+
+    public func refreshModelsSettingsStatus() {
+        guard isConnected else {
+            modelsSettingsState = .unavailable
+            return
+        }
+        modelsSettingsState = .loading
+        sendCommand?(["cmd": "health"])
+    }
 
     public func stop() {
         let shouldShowTranscribing = mode == .recording
@@ -1302,7 +1312,8 @@ public final class VoiceState {
             }
 
         case "health":
-            modelsSettingsState = ModelsSettingsState(healthEvent: event)
+            let status = ModelsSettingsState(healthEvent: event)
+            modelsSettingsState = status.settingBusy(status.isBusy || Self.blocksModelsEffort(mode))
 
         case "command_mode":
             handleCommandModeEvent(event)
@@ -1445,6 +1456,18 @@ public final class VoiceState {
         onModeChange?(.disconnected)
         collapseTimer?.cancel()
         isCollapsed = false
+    }
+
+    private func synchronizeModelsSettingsState(from oldMode: VoiceMode, to newMode: VoiceMode) {
+        if Self.blocksModelsEffort(newMode) {
+            modelsSettingsState = modelsSettingsState.settingBusy(true)
+        } else if Self.blocksModelsEffort(oldMode) {
+            modelsSettingsState = isConnected ? .loading : .unavailable
+        }
+    }
+
+    private static func blocksModelsEffort(_ mode: VoiceMode) -> Bool {
+        mode == .recording || mode == .transcribing
     }
 
     // MARK: - Idle collapse

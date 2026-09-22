@@ -21,11 +21,22 @@ public struct ModelsSettingsView: View {
     public var body: some View {
         Form {
             Section("Speech recognition") {
-                LabeledContent("Configured model", value: configuredName)
-                LabeledContent("Model file", value: installedLabel)
-                LabeledContent("Residency", value: residencyLabel)
-                LabeledContent("Active model", value: activeName)
-                LabeledContent("Active effort", value: state.activeEffort?.displayName ?? "Unknown")
+                LabeledContent("Configured model") {
+                    Text(configuredName).accessibilityIdentifier("models-configured-model")
+                }
+                LabeledContent("Model file") {
+                    Text(installedLabel).accessibilityIdentifier("models-model-file")
+                }
+                LabeledContent("Residency") {
+                    Text(residencyLabel).accessibilityIdentifier("models-residency")
+                }
+                LabeledContent("Active model") {
+                    Text(activeName).accessibilityIdentifier("models-active-model")
+                }
+                LabeledContent("Active effort") {
+                    Text(state.activeEffort?.displayName ?? "Unknown")
+                        .accessibilityIdentifier("models-active-effort")
+                }
             }
             Section("Transcription effort") {
                 Picker("Effort", selection: Binding(
@@ -40,6 +51,7 @@ public struct ModelsSettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .accessibilityIdentifier("models-effort-picker")
                 .disabled(state.isBusy || state.availability != .available)
                 if state.isBusy, state.availability == .available {
                     Text("Effort can be changed when recording and transcription are idle.")
@@ -52,6 +64,8 @@ public struct ModelsSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("models-settings-form")
     }
 
     private var configuredName: String {

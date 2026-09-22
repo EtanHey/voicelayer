@@ -61,7 +61,43 @@ public struct ModelsSettingsState: Equatable, Sendable {
         isBusy = healthEvent["recording_state"] as? String != "idle"
     }
 
-    static let unavailable = ModelsSettingsState(availability: .unavailable)
+    public static let unavailable = ModelsSettingsState(availability: .unavailable)
+
+    func settingBusy(_ isBusy: Bool) -> ModelsSettingsState {
+        ModelsSettingsState(
+            availability: availability,
+            configuredModelName: configuredModelName,
+            configuredModelSizeBytes: configuredModelSizeBytes,
+            isInstalled: isInstalled,
+            residency: residency,
+            activeModelName: activeModelName,
+            configuredEffort: configuredEffort,
+            activeEffort: activeEffort,
+            isBusy: isBusy
+        )
+    }
+
+    private init(
+        availability: ModelsStatusAvailability,
+        configuredModelName: String?,
+        configuredModelSizeBytes: Int64?,
+        isInstalled: Bool?,
+        residency: VoiceModelResidency,
+        activeModelName: String?,
+        configuredEffort: VoiceBarPerformanceEffort?,
+        activeEffort: VoiceBarPerformanceEffort?,
+        isBusy: Bool
+    ) {
+        self.availability = availability
+        self.configuredModelName = configuredModelName
+        self.configuredModelSizeBytes = configuredModelSizeBytes
+        self.isInstalled = isInstalled
+        self.residency = residency
+        self.activeModelName = activeModelName
+        self.configuredEffort = configuredEffort
+        self.activeEffort = activeEffort
+        self.isBusy = isBusy
+    }
 
     private static func nonempty(status value: Any?) -> String? {
         (value as? String).flatMap { $0.isEmpty ? nil : $0 }

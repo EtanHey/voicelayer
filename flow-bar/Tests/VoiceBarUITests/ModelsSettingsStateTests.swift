@@ -2,6 +2,25 @@
 import XCTest
 
 final class ModelsSettingsStateTests: XCTestCase {
+    func testRefreshFailsClosedOfflineAndSendsOnlyReadOnlyHealthWhenConnected() {
+        let voiceState = VoiceState()
+        var commands: [[String: Any]] = []
+        voiceState.sendCommand = { commands.append($0) }
+
+        voiceState.refreshModelsSettingsStatus()
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .unavailable)
+        XCTAssertTrue(commands.isEmpty)
+
+        voiceState.setConnectionStatus(true)
+        voiceState.handleEvent(Self.availableHealth)
+        voiceState.refreshModelsSettingsStatus()
+
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .loading)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands[0]["cmd"] as? String, "health")
+        XCTAssertEqual(commands[0].count, 1)
+    }
+
     func testDisconnectAndReconnectRequireFreshHealthBeforeModelsBecomeAvailable() {
         let health: [String: Any] = [
             "type": "health",
@@ -81,4 +100,16 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertEqual(state.residency, .unknown)
         XCTAssertTrue(state.isBusy)
     }
+
+    private static let availableHealth: [String: Any] = [
+        "type": "health",
+        "recording_state": "idle",
+        "model_status": [
+            "configured_model": ["name": "large-v3-turbo", "size_bytes": 10, "installed": true],
+            "residency": "loaded",
+            "active_model": "large-v3-turbo",
+            "configured_effort": "accurate",
+            "active_effort": "accurate",
+        ],
+    ]
 }

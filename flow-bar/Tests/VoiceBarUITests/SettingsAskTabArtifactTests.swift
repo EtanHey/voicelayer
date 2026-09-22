@@ -46,6 +46,8 @@ final class SettingsAskTabArtifactTests: XCTestCase {
             availableDevices: { [MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone")] },
             selectedDeviceID: { "built-in" },
             onSelectDevice: { _ in },
+            modelsStatus: { .loading },
+            onRefreshModelsStatus: {},
             vocabularyRevision: { 0 },
             initialHistoryPage: SettingsHistoryPage(
                 groups: Self.sampleRecordingGroups,

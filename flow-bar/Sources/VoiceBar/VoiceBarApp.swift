@@ -203,6 +203,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.onAckEvent = { [weak self] ack in
             self?.handlePerformanceEffortAck(ack)
         }
+        voiceState.onConnectionChange = { [weak self] connected in
+            guard connected else { return }
+            self?.voiceState.refreshModelsSettingsStatus()
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -1268,6 +1272,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
+        if previousVoiceMode == .recording || previousVoiceMode == .transcribing,
+           mode != .recording,
+           mode != .transcribing {
+            voiceState.refreshModelsSettingsStatus()
+        }
         let collapsesConverseHandoff = VoiceBarNotchPlaybackEdgeCommitPolicy
             .stagesContentBeforeGlass(from: previousVoiceMode, to: mode) &&
             voiceState.isCollapsed
@@ -2487,6 +2496,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             performanceEffort: { [weak self] in self?.currentPerformanceEffort() ?? .accurate },
             performanceEffortNotice: { [weak self] in self?.currentPerformanceEffortNotice() },
             onSelectPerformanceEffort: { [weak self] in self?.selectPerformanceEffort($0) },
+            modelsStatus: { [weak self] in self?.voiceState.modelsSettingsState ?? .unavailable },
+            onRefreshModelsStatus: { [weak self] in
+                self?.voiceState.refreshModelsSettingsStatus()
+            },
             vocabularyPreview: { [weak self] in
                 self?.currentVocabularyPreview() ?? STTVocabularyPreview(
                     updatedAt: nil,

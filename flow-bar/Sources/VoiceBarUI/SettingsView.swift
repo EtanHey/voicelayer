@@ -271,6 +271,8 @@ public struct SettingsView: View {
     public let performanceEffort: () -> VoiceBarPerformanceEffort
     public let performanceEffortNotice: () -> String?
     public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
+    public let modelsStatus: () -> ModelsSettingsState
+    public let onRefreshModelsStatus: () -> Void
     public let vocabularyPreview: () -> STTVocabularyPreview
     public let vocabularyRevision: () -> UInt64
     public let onAddVocabularyAlias: (String, String) -> Void
@@ -348,6 +350,8 @@ public struct SettingsView: View {
         performanceEffort: @escaping () -> VoiceBarPerformanceEffort = { .accurate },
         performanceEffortNotice: @escaping () -> String? = { nil },
         onSelectPerformanceEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
+        modelsStatus: @escaping () -> ModelsSettingsState,
+        onRefreshModelsStatus: @escaping () -> Void,
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
@@ -397,6 +401,8 @@ public struct SettingsView: View {
         self.performanceEffort = performanceEffort
         self.performanceEffortNotice = performanceEffortNotice
         self.onSelectPerformanceEffort = onSelectPerformanceEffort
+        self.modelsStatus = modelsStatus
+        self.onRefreshModelsStatus = onRefreshModelsStatus
         self.vocabularyPreview = vocabularyPreview
         self.vocabularyRevision = vocabularyRevision
         self.onAddVocabularyAlias = onAddVocabularyAlias
@@ -710,10 +716,13 @@ public struct SettingsView: View {
     }
 
     private var modelsTab: some View {
-        ContentUnavailableView(
-            "Model information unavailable",
-            systemImage: "cpu"
+        ModelsSettingsView(
+            state: modelsStatus(),
+            effort: $selectedPerformanceEffort,
+            notice: performanceEffortNotice(),
+            onSelectEffort: onSelectPerformanceEffort
         )
+        .onAppear(perform: onRefreshModelsStatus)
     }
 
     // MARK: - History Tab

@@ -50,6 +50,8 @@ final class AnchorVisualArtifactTests: XCTestCase {
                     onSelectDevice: { _ in },
                     anchorMode: { state.mode },
                     onSelectAnchorMode: { _ in },
+                    modelsStatus: { .loading },
+                    onRefreshModelsStatus: {},
                     vocabularyPreview: {
                         STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
                     },

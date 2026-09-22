@@ -2,6 +2,20 @@
 import XCTest
 
 final class SettingsViewContractTests: XCTestCase {
+    func testModelsStatusIsRequiredAndUsesTheProductionModelsView() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("modelsStatus: @escaping () -> ModelsSettingsState,"))
+        XCTAssertFalse(source.contains("modelsStatus: @escaping () -> ModelsSettingsState ="))
+        XCTAssertTrue(source.contains("ModelsSettingsView("))
+        XCTAssertTrue(source.contains("state: modelsStatus()"))
+        XCTAssertTrue(source.contains("effort: $selectedPerformanceEffort"))
+        XCTAssertTrue(source.contains("notice: performanceEffortNotice()"))
+        XCTAssertTrue(source.contains("onSelectEffort: onSelectPerformanceEffort"))
+        XCTAssertTrue(source.contains(".onAppear(perform: onRefreshModelsStatus)"))
+        XCTAssertFalse(source.contains("Model information unavailable"))
+    }
+
     func testVocabularyRevisionIsAnExplicitInitializerContract() throws {
         let source = try settingsViewSource()
 
