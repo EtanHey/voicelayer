@@ -8,6 +8,9 @@
  */
 
 import type { WhisperPerformanceEffort } from "./whisper-performance";
+import type { WhisperModelResidency, WhisperModelStatus } from "./model-status";
+import type { DictationReceiptMetadata } from "./dictation-receipt";
+import type { STTDictionaryDisplayEntry } from "./stt-vocabulary-store";
 import {
   PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
   type PlaybackAmplitudeEnvelope,
@@ -68,6 +71,8 @@ export interface TranscriptionEvent {
   partial?: boolean;
   /** Archived VoiceBar recording audio used to produce this transcript. */
   recording_path?: string;
+  /** Durations for a newly completed, archived VoiceBar dictation. */
+  dictation_receipt?: DictationReceiptMetadata;
   /** Whether the optional LLM polish layer produced the final candidate. */
   polished?: boolean;
   /** Outcome of the polish attempt; rejected means the safety gate kept cleaned text. */
@@ -219,7 +224,8 @@ export type AckCommand =
   | "vocab_add_term"
   | "vocab_remove_term"
   | "set_recording_hold"
-  | "set_whisper_effort";
+  | "set_whisper_effort"
+  | "set_whisper_residency";
 
 export interface AckEvent {
   type: "ack";
@@ -227,6 +233,8 @@ export interface AckEvent {
   outcome: IntentOutcome;
   id?: string;
   reason?: string;
+  model_status?: WhisperModelStatus;
+  residency?: WhisperModelResidency;
 }
 
 export type SocketEvent =
@@ -339,6 +347,11 @@ export interface SetWhisperEffortCommand extends SocketCommandBase {
   effort: WhisperPerformanceEffort;
 }
 
+export interface SetWhisperResidencyCommand extends SocketCommandBase {
+  cmd: "set_whisper_residency";
+  action: "load" | "unload";
+}
+
 export interface SetRecordingHoldCommand extends SocketCommandBase {
   cmd: "set_recording_hold";
   engaged: boolean;
@@ -361,13 +374,17 @@ export type SocketCommand =
   | VocabAddTermCommand
   | VocabRemoveTermCommand
   | SetRecordingHoldCommand
-  | SetWhisperEffortCommand;
+  | SetWhisperEffortCommand
+  | SetWhisperResidencyCommand;
 
 export interface HealthResponse {
   type: "health";
   uptime_seconds: number;
   queue_depth: number;
   recording_state: "idle" | "recording" | "transcribing";
+  model_status: WhisperModelStatus;
+  remote_stt_configured: boolean;
+  polish_controls: import("./polish-controls-status").PolishControlsStatus;
 }
 
 export interface VocabListResponse {
@@ -375,6 +392,8 @@ export interface VocabListResponse {
   id?: string;
   updated_at: string | null;
   entries: Array<{ canonical: string; variants: string[] }>;
+  /** Additive source-aware projection for newer clients; `entries` stays personal-only. */
+  display_entries: STTDictionaryDisplayEntry[];
 }
 
 export type SocketResponse = HealthResponse | AckEvent | VocabListResponse;
@@ -650,6 +669,12 @@ export function parseCommand(line: string): SocketCommand | null {
             effort: parsed.effort,
           },
           id,
+        );
+      }
+      case "set_whisper_residency": {
+        if (parsed.action !== "load" && parsed.action !== "unload") return null;
+        return withCommandId<SetWhisperResidencyCommand>(
+          { cmd: "set_whisper_residency", action: parsed.action }, id,
         );
       }
       case "set_recording_hold": {

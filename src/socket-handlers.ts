@@ -45,6 +45,7 @@ import { getRecordingState } from "./input";
 import {
   addAlias,
   addPromptTerm,
+  buildDictionaryDisplayEntries,
   listVocabulary,
   removeAlias,
   removePromptTerm,
@@ -58,6 +59,9 @@ import {
   setWhisperPerformanceEffort,
 } from "./whisper-performance";
 import { setRecordingHold } from "./recording-hold";
+import { readWhisperModelStatus } from "./model-status";
+import { ensureServer, unloadOwnedServer, verifiedWhisperServerLaunchRecord } from "./whisper-server";
+import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -255,10 +259,13 @@ export function handleSocketCommand(
       return buildAck(command, "accept");
     }
     case "health":
-      return buildHealthResponse({
-        queueDepth: playbackQueueDepth,
-        recordingState,
-      });
+      return readWhisperModelStatus().then((modelStatus) =>
+        buildHealthResponse({
+          queueDepth: getPlaybackQueueDepth(),
+          recordingState: getRecordingState(),
+          modelStatus,
+        }),
+      );
     case "command":
       broadcast({
         type: "command_mode",
@@ -301,6 +308,7 @@ export function handleSocketCommand(
         type: "vocab_list",
         ...(command.id ? { id: command.id } : {}),
         ...snapshot,
+        display_entries: buildDictionaryDisplayEntries(snapshot.entries),
       };
     }
     case "vocab_remove": {
@@ -343,7 +351,8 @@ export function handleSocketCommand(
       }
     }
     case "set_whisper_effort":
-      if (recordingState === "recording" || recordingState === "transcribing") {
+      if (recordingState === "recording" || recordingState === "transcribing" ||
+          whisperLifecycleGate.isUnloading) {
         return buildAck(command, "reject", "busy");
       }
       try {
@@ -353,6 +362,8 @@ export function handleSocketCommand(
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));
       }
+    case "set_whisper_residency":
+      return handleResidencyCommand(command);
     case "set_recording_hold":
       if (recordingState !== "recording") {
         return buildAck(command, "noop", "not recording");
@@ -363,6 +374,73 @@ export function handleSocketCommand(
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));
       }
+  }
+}
+
+function residencyBusy(): boolean {
+  return getRecordingState() !== "idle" ||
+    isVoiceBooked().booked || getPlaybackQueueDepth() > 0;
+}
+
+// Settings requests reserve their own admission slot. Capture booking remains
+// higher priority: it can proceed while load is pending, and the load then
+// rejects at its next busy check rather than refusing a live dictation.
+let residencyLoadPending = false;
+
+async function handleResidencyCommand(
+  command: Extract<SocketCommand, { cmd: "set_whisper_residency" }>,
+): Promise<AckEvent> {
+  let outcome: AckEvent["outcome"] = "reject";
+  let reason: string | undefined;
+  let ownsLoadSlot = false;
+  const backend = (process.env.QA_VOICE_STT_BACKEND ?? "auto").toLowerCase();
+  if (backend === "wispr" || backend === "whisper") {
+    reason = "resident backend is not configured";
+  } else if (residencyLoadPending || residencyBusy()) {
+    reason = "busy";
+  } else if (command.action === "load") {
+    residencyLoadPending = true;
+    ownsLoadSlot = true;
+    try {
+      await ensureServer();
+      if (residencyBusy()) reason = "busy";
+      else {
+        const port = Number.parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT ?? "", 10) || 8178;
+        const record = verifiedWhisperServerLaunchRecord(port);
+        if (!record || record.adopted) reason = "server is not owned by this daemon";
+        else outcome = "accept";
+      }
+    } catch (error) {
+      reason = vocabularyErrorReason(error);
+    }
+  } else {
+    const result = await unloadOwnedServer(residencyBusy);
+    outcome = result.outcome;
+    if (result.outcome === "reject") reason = result.reason;
+  }
+  try {
+    const modelStatus = await readWhisperModelStatus();
+    if (command.action === "load" && outcome === "accept" && residencyBusy()) {
+      outcome = "reject";
+      reason = "busy";
+    }
+    const expected = command.action === "load" ? "loaded" : "not_loaded";
+    if (outcome === "accept" && modelStatus.residency !== expected) {
+      outcome = "reject";
+      reason = "fresh residency differs from requested state";
+    }
+    return {
+      ...buildAck(command, outcome, reason),
+      residency: modelStatus.residency,
+      model_status: modelStatus,
+    };
+  } catch (error) {
+    return {
+      ...buildAck(command, "reject", reason ?? vocabularyErrorReason(error)),
+      residency: "unknown",
+    };
+  } finally {
+    if (ownsLoadSlot) residencyLoadPending = false;
   }
 }
 

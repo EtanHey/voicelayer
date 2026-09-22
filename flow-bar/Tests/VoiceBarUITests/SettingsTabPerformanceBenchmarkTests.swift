@@ -66,6 +66,8 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
             availableDevices: { [] },
             selectedDeviceID: { nil },
             onSelectDevice: { _ in },
+            modelsStatus: { .loading },
+            onRefreshModelsStatus: {},
             vocabularyPreview: { snapshotCalls += 1
                 return preview
             },

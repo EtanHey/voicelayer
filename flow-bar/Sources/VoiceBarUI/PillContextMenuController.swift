@@ -5,6 +5,13 @@ import Foundation
 public struct MicrophoneDevice: Equatable {
     public var id: String
     public var name: String
+    public var uid: String?
+
+    public init(id: String, name: String, uid: String? = nil) {
+        self.id = id
+        self.name = name
+        self.uid = uid
+    }
 }
 
 public struct MicrophoneDeviceOption: Equatable {
@@ -402,7 +409,8 @@ public enum MicrophoneDeviceManager {
             guard isInputDevice(deviceID) else { return nil }
             return MicrophoneDevice(
                 id: String(deviceID),
-                name: deviceName(for: deviceID) ?? "Unknown Microphone"
+                name: deviceName(for: deviceID) ?? "Unknown Microphone",
+                uid: deviceUID(for: deviceID)
             )
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -460,8 +468,19 @@ public enum MicrophoneDeviceManager {
     }
 
     private static func deviceName(for deviceID: AudioDeviceID) -> String? {
+        stringProperty(kAudioObjectPropertyName, for: deviceID)
+    }
+
+    private static func deviceUID(for deviceID: AudioDeviceID) -> String? {
+        stringProperty(kAudioDevicePropertyDeviceUID, for: deviceID)
+    }
+
+    private static func stringProperty(
+        _ selector: AudioObjectPropertySelector,
+        for deviceID: AudioDeviceID
+    ) -> String? {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioObjectPropertyName,
+            mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )

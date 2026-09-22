@@ -802,6 +802,14 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("unsnoozeNow()"))
     }
 
+    func testSettingsWindowWiresLiveModelsStatusAndReconnectRefresh() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertTrue(source.contains("modelsStatus: { [weak self] in self?.voiceState.modelsSettingsState"))
+        XCTAssertTrue(source.contains("self?.voiceState.refreshModelsSettingsStatus()"))
+        XCTAssertTrue(source.contains("voiceState.onConnectionChange = { [weak self] connected in"))
+    }
+
     @MainActor
     func testSettingsWindowSizingMatchesCandidateRootAndRepairsSmallHost() {
         XCTAssertEqual(SettingsWindowSizing.minimumContentSize, NSSize(width: 780, height: 620))

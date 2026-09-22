@@ -10,9 +10,10 @@ public enum IntentCommand: String {
     case record
     case setRecordingHold = "set_recording_hold"
     case setWhisperEffort = "set_whisper_effort"
+    case setWhisperResidency = "set_whisper_residency"
 }
 
-public enum VoiceBarPerformanceEffort: String, CaseIterable, Identifiable {
+public enum VoiceBarPerformanceEffort: String, CaseIterable, Identifiable, Sendable {
     case fast
     case balanced
     case accurate

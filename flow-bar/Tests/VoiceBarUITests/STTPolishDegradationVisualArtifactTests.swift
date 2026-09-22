@@ -32,6 +32,8 @@ final class STTPolishDegradationVisualArtifactTests: XCTestCase {
                 )
             },
             onDismissPolishDegradation: {},
+            modelsStatus: { .loading },
+            onRefreshModelsStatus: {},
             vocabularyRevision: { 0 },
             initialTab: .audio
         )

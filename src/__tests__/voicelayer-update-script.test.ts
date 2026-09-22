@@ -31,7 +31,10 @@ function run(command: string[], env: Record<string, string> = {}) {
     stderr: "pipe",
     env: {
       ...process.env,
+      BREW_CASK_SYNC_BREW_BIN: "/nonexistent/voicelayer-test-brew",
+      BREW_CASK_SYNC_TEST_FORMULA_VERSION: "",
       VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "0",
+      VOICELAYER_UPDATE_TEST_PACKAGE_VERSION: "",
       ...env,
     },
   });
@@ -404,6 +407,7 @@ describe("voicelayer-update.sh", () => {
         BREW_CASK_SYNC_TEST_CASK_VERSION: "2.2.6",
         BREW_CASK_SYNC_TEST_FORMULA_VERSION: "2.2.6",
         BREW_CASK_SYNC_TEST_OFFERED_VERSION: "2.2.6",
+        VOICELAYER_UPDATE_TEST_FORMULA_OFFERED_VERSION: "2.2.6",
       },
     );
     const stdout = text(result.stdout);
@@ -433,6 +437,7 @@ describe("voicelayer-update.sh", () => {
         BREW_CASK_SYNC_TEST_CASK_VERSION: "2.1.10",
         BREW_CASK_SYNC_TEST_FORMULA_VERSION: "2.2.6",
         BREW_CASK_SYNC_TEST_OFFERED_VERSION: "2.2.6",
+        VOICELAYER_UPDATE_TEST_FORMULA_OFFERED_VERSION: "2.2.6",
       },
     );
 
@@ -572,6 +577,176 @@ describe("voicelayer-update.sh", () => {
     expect(text(result.stderr)).toContain(
       "VoiceBar hotkey health did not become ready after 3 attempts",
     );
+  });
+
+  test("Secure Input held by another app warns and lets the summary run", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-secure-input-"));
+    const scriptsDir = join(tempRoot, "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "verify-voicebar-hotkey-health.sh"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "HOTKEY HEALTH FAILED: macOS Secure Input is held by PID 76956 (/Applications/Zed.app/Contents/MacOS/zed); change focus or quit that app" >&2\nexit 1\n');
+    const result = run(["bash", "-c", [
+      'source "$1"', 'PACKAGE_ROOT="$2"', 'VOICEBAR_HEALTH_MAX_ATTEMPTS=1',
+      'VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=0',
+      'verify_voicebar_hotkey_health',
+      'printf "SUMMARY REACHED\\n"',
+    ].join("; "), "_", updateScript, tempRoot]);
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("SUMMARY REACHED");
+    expect(text(result.stdout)).toContain("WARNING: macOS Secure Input is held by PID 76956 (/Applications/Zed.app/Contents/MacOS/zed)");
+    expect(text(result.stdout)).toContain("F5 won't work until that app releases Secure Input");
+  });
+
+  test("a missing hotkey relay still fails", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-relay-missing-"));
+    const scriptsDir = join(tempRoot, "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "verify-voicebar-hotkey-health.sh"),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "HOTKEY HEALTH FAILED: canonical LaunchAgent is not loaded" >&2\nexit 1\n');
+    const result = run(["bash", "-c", [
+      'source "$1"', 'PACKAGE_ROOT="$2"', 'VOICEBAR_HEALTH_MAX_ATTEMPTS=1',
+      'VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=0', 'verify_voicebar_hotkey_health',
+    ].join("; "), "_", updateScript, tempRoot]);
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stdout)).toContain("canonical LaunchAgent is not loaded");
+  });
+
+  test("installed formula upgrades by absolute brew path and reports package and formula versions", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'bcs_formula_version() { printf "2.2.20\\n"; }',
+      'bcs_tap_offered_version() { printf "2.2.21\\n"; }',
+      'formula_offered_version() { printf "2.2.21\\n"; }',
+      'bcs_brew_bin() { printf "/opt/homebrew/bin/brew\\n"; }',
+      'run_cmd() { printf "+ %s\\n" "$*"; }',
+      'update_formula',
+      'bcs_formula_version() { printf "2.2.21\\n"; }',
+      'NO_RELAUNCH=1',
+      'BREW_CASK_SYNC_TEST_APP_VERSION=2.2.21',
+      'BREW_CASK_SYNC_TEST_CASK_VERSION=2.2.21',
+      'BREW_CASK_SYNC_TEST_FORMULA_VERSION=2.2.21',
+      'BREW_CASK_SYNC_TEST_OFFERED_VERSION=2.2.21',
+      'VOICELAYER_UPDATE_TEST_PACKAGE_VERSION=2.2.21',
+      'verify_voicebar_stack',
+    ].join("; "), "_", updateScript]);
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("/opt/homebrew/bin/brew upgrade --formula etanhey/layers/voicelayer");
+    expect(text(result.stdout)).toContain("global package: voicelayer-mcp 2.2.21");
+    expect(text(result.stdout)).toContain("formula: voicelayer 2.2.21");
+  });
+
+  test("formula sync skips absent and current installations", () => {
+    for (const version of ["", "2.2.21"]) {
+      const result = run(["bash", "-c", [
+        'source "$1"',
+        `bcs_formula_version() { printf '${version}\\n'; }`,
+        'bcs_tap_offered_version() { printf "2.2.21\\n"; }',
+        'formula_offered_version() { printf "2.2.21\\n"; }',
+        'bcs_brew_run() { printf "UNEXPECTED BREW MUTATION\\n"; return 1; }',
+        'update_formula',
+      ].join("; "), "_", updateScript]);
+      expect(result.exitCode).toBe(0);
+      expect(text(result.stdout)).not.toContain("UNEXPECTED BREW MUTATION");
+    }
+  });
+
+  test("missing Homebrew makes formula sync a clean no-op", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'bcs_brew_bin() { return 1; }',
+      'unset BREW_CASK_SYNC_TEST_FORMULA_VERSION',
+      'update_formula',
+      'printf "CONTINUED\\n"',
+    ].join("; "), "_", updateScript], {
+      BREW_CASK_SYNC_TEST_FORMULA_VERSION: "",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("CONTINUED");
+    expect(text(result.stdout)).toContain("skipping formula upgrade");
+  });
+
+  test("absent Bun global package is unavailable without failing the summary", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'unset VOICELAYER_UPDATE_TEST_PACKAGE_VERSION',
+      'bun() { return 1; }',
+      'installed_package_version',
+      'printf "CONTINUED\\n"',
+    ].join("; "), "_", updateScript]);
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("CONTINUED");
+  });
+
+  test("installed formula upgrade failure remains fatal", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'bcs_formula_version() { printf "2.2.20\\n"; }',
+      'formula_offered_version() { printf "2.2.21\\n"; }',
+      'bcs_brew_run() { return 42; }',
+      'update_formula',
+    ].join("; "), "_", updateScript]);
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  test("formula ahead of cask does not request a repeated upgrade", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'bcs_formula_version() { printf "2.2.21\\n"; }',
+      'bcs_tap_offered_version() { printf "2.2.20\\n"; }',
+      'formula_offered_version() { printf "2.2.21\\n"; }',
+      'bcs_brew_run() { printf "UNEXPECTED BREW MUTATION\\n"; return 1; }',
+      'update_formula',
+    ].join("; "), "_", updateScript]);
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).not.toContain("UNEXPECTED BREW MUTATION");
+  });
+
+  test("formula behind while cask is equal upgrades once, then no-ops", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'FORMULA_INSTALLED=2.2.20',
+      'bcs_formula_version() { printf "%s\\n" "$FORMULA_INSTALLED"; }',
+      'bcs_tap_offered_version() { printf "2.2.20\\n"; }',
+      'formula_offered_version() { printf "2.2.21\\n"; }',
+      'bcs_brew_run() { printf "FORMULA UPGRADE %s\\n" "$*"; FORMULA_INSTALLED=2.2.21; }',
+      'update_formula',
+      'update_formula',
+    ].join("; "), "_", updateScript]);
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout).match(/FORMULA UPGRADE/g)).toHaveLength(1);
+    expect(text(result.stdout)).toContain("upgrade --formula etanhey/layers/voicelayer");
+  });
+
+  test("formula offer reads formula JSON including a Homebrew revision", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'bcs_brew() { printf \'{"formulae":[{"versions":{"stable":"2.2.21"},"revision":1}]}\\n\'; }',
+      'formula_offered_version',
+    ].join("; "), "_", updateScript]);
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout).trim()).toBe("2.2.21_1");
+  });
+
+  test("M1 Cellar package selects formula update without a Bun global package", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'PACKAGE_ROOT=/opt/homebrew/Cellar/voicelayer/2.2.20/libexec/lib/node_modules/voicelayer-mcp',
+      'bcs_brew_bin() { printf "/opt/homebrew/bin/brew\\n"; }',
+      'bcs_formula_version() { printf "2.2.20\\n"; }',
+      'bcs_tap_offered_version() { printf "2.2.21\\n"; }',
+      'formula_offered_version() { printf "2.2.21\\n"; }',
+      'bcs_tap_update() { :; }',
+      'run_cmd() { printf "+ %s\\n" "$*"; }',
+      'printf "TYPE=%s\\n" "$(detect_install_type)"',
+      'printf "LABEL=%s\\n" "$(package_update_label)"',
+      'update_package',
+    ].join("; "), "_", updateScript]);
+    const output = text(result.stdout);
+    expect(result.exitCode).toBe(0);
+    expect(output).toContain("TYPE=brew-formula");
+    expect(output).toContain("LABEL=/opt/homebrew/bin/brew upgrade --formula etanhey/layers/voicelayer");
+    expect(output).toContain("+ env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 /opt/homebrew/bin/brew upgrade --formula etanhey/layers/voicelayer");
+    expect(output).not.toContain("bun update -g");
   });
 
   test("the installed VoiceBar path stays canonical despite environment overrides", () => {

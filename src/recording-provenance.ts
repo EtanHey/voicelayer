@@ -736,12 +736,12 @@ function defaultWhisperServerProcess(kind: WhisperBackendKind): {
  */
 function defaultPerformanceEffort(
   kind: WhisperBackendKind,
-): WhisperPerformanceEffort {
+): WhisperPerformanceEffort | null {
   // The CLI reads the effort setting per invocation, so the configured value is
   // the truth for it; only a resident server has a launched-with effort.
   if (kind === "cli") return getWhisperPerformanceEffort();
-  return (
-    whisperServerLaunchRecord()?.performanceEffort ??
-    getWhisperPerformanceEffort()
-  );
+  const record = whisperServerLaunchRecord();
+  return record
+    ? record.performanceEffort
+    : getWhisperPerformanceEffort();
 }

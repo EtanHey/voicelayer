@@ -310,6 +310,39 @@ describe("performance_effort describes the launched server", () => {
   beforeEach(resetProbeState);
   afterEach(resetProbeState);
 
+  it("preserves unknown effort for an adopted resident server", () => {
+    const savedEffort = process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+    process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = "accurate";
+    try {
+      __setWhisperServerLaunchRecordForTests({
+        binary: "/opt/homebrew/Cellar/whisper-cpp/1.7.6/bin/whisper-server",
+        modelPath: "/fake/adopted-model.bin",
+        args: [
+          "/opt/homebrew/Cellar/whisper-cpp/1.7.6/bin/whisper-server",
+        ],
+        performanceEffort: null,
+        accelerationMode: "metal",
+        pid: 4242,
+        startedAt: "2026-09-05T07:00:00.000Z",
+        adopted: true,
+      });
+
+      const provenance = buildRecordingProvenance({
+        backend: "whisper-server",
+        languageMode: "auto",
+        probe: { machine: READY_MACHINE },
+      });
+
+      expect(provenance.performance_effort).toBeNull();
+    } finally {
+      if (savedEffort === undefined) {
+        delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+      } else {
+        process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = savedEffort;
+      }
+    }
+  });
+
   it("prefers the launch record's effort over the current setting", () => {
     const savedEffort = process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
     process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = "fast";

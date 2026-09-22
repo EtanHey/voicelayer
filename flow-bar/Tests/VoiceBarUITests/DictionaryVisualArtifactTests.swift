@@ -35,6 +35,8 @@ final class DictionaryVisualArtifactTests: XCTestCase {
                     onSelectDevice: { _ in },
                     anchorMode: { .follow },
                     onSelectAnchorMode: { _ in },
+                    modelsStatus: { .loading },
+                    onRefreshModelsStatus: {},
                     vocabularyPreview: { preview },
                     vocabularyRevision: { 0 },
                     onAddVocabularyAlias: { _, _ in },

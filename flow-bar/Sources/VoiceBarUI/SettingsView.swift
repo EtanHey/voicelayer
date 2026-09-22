@@ -130,6 +130,9 @@ struct SettingsHistoryActionEnablement: Equatable {
     ) -> Bool {
         guard part.isEnabled(action) else { return false }
 
+        if action == .play, isRecording || isTranscribing {
+            return false
+        }
         if action == .retranscribe, isRetranscribing || isRecording || isTranscribing {
             return false
         }
@@ -226,8 +229,14 @@ private enum DictionaryCardLayout {
 }
 
 private struct SettingsDictionarySection {
-    let source: SettingsDictionarySource
-    let entries: [STTDictionaryEntry]
+    let source: String
+    let entries: [STTDictionaryDisplayEntry]
+}
+
+enum SettingsDictionaryEditing {
+    static func isEditing(rowID: String, isEditable: Bool, activeRowID: String?) -> Bool {
+        isEditable && activeRowID == rowID
+    }
 }
 
 struct SettingsVocabularyRevisionObserver: ViewModifier {
@@ -258,12 +267,32 @@ struct SettingsHistoryLoadFence {
     }
 }
 
+public enum SettingsShortcutCheck {
+    public static func message(
+        hotkeyEnabled: Bool,
+        missingPermissions: [HotkeyPermission],
+        relayReady: Bool,
+        relaySummary: String
+    ) -> String {
+        if hotkeyEnabled, missingPermissions.isEmpty, relayReady {
+            return "Shortcut ready: F5 listener and relay are active."
+        }
+        var problems: [String] = []
+        if !hotkeyEnabled { problems.append("F5 listener unavailable") }
+        if !missingPermissions.isEmpty { problems.append("Required permissions missing") }
+        if !relayReady { problems.append(relaySummary) }
+        return "Shortcut needs attention: \(problems.joined(separator: "; "))."
+    }
+}
+
 public struct SettingsView: View {
     public let hotkeyEnabled: Bool
     public let missingPermissions: [HotkeyPermission]
     public let availableDevices: () -> [MicrophoneDevice]
     public let selectedDeviceID: () -> String?
     public let onSelectDevice: (String) -> Void
+    public let prioritySnapshot: () -> MicrophonePrioritySnapshot
+    public let onReorderPriority: ([String]) -> Void
     public let polishDegradation: () -> STTPolishDegradation?
     public let onDismissPolishDegradation: () -> Void
     public let anchorMode: () -> VoiceBarAnchorMode
@@ -271,6 +300,10 @@ public struct SettingsView: View {
     public let performanceEffort: () -> VoiceBarPerformanceEffort
     public let performanceEffortNotice: () -> String?
     public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
+    public let modelsStatus: () -> ModelsSettingsState
+    public let onRefreshModelsStatus: () -> Void
+    public let residencyNotice: () -> String?
+    public let onSelectResidency: ((VoiceModelResidency) -> Void)?
     public let vocabularyPreview: () -> STTVocabularyPreview
     public let vocabularyRevision: () -> UInt64
     public let onAddVocabularyAlias: (String, String) -> Void
@@ -278,11 +311,15 @@ public struct SettingsView: View {
     public let onAddPromptTerm: (String) -> Void
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
+    public let onCheckShortcut: (@escaping (String) -> Void) -> Void
     public let isMicrophonePermissionGranted: () -> Bool
     public let isVoiceBarHidden: () -> Bool
     public let onHideVoiceBar: () -> Void
     public let onShowVoiceBar: () -> Void
     public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
+    public let lastDictationEntry: () -> RecentTranscriptionEntry?
+    public let lastDictationInsertionStatus: () -> DictationInsertionStatus
+    public let onCopyLastDictation: (String) -> Void
     public let historyPage: @Sendable (Int) -> SettingsHistoryPage
     public let askHistoryPage: @Sendable (Int) -> SettingsAskHistoryPage
     public let onCopyHistoryTranscript: (String) -> Void
@@ -293,7 +330,7 @@ public struct SettingsView: View {
     public let isRecordingActive: () -> Bool
     public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
-    public let dictionarySource: (STTDictionaryEntry) -> SettingsDictionarySource
+    public let footerPresentation: () -> VoiceBarFooterPresentation
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -309,6 +346,7 @@ public struct SettingsView: View {
     @State private var historyLoadedEntryCount: Int
     @State private var historyLoadedEntryLimit: Int
     @State private var historyHasMore: Bool
+    @State private var selectedHistoryEntryID: String?
     @State private var isHistoryLoading = false
     @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
@@ -324,8 +362,8 @@ public struct SettingsView: View {
     @State private var dictionarySearch = ""
     @State private var dictionaryVisibleLimit = Self.dictionaryPageSize
     @State private var localEntries: [STTDictionaryEntry]
-    @State private var dictionaryIndex: STTDictionaryIndex
-    @State private var editingCanonical: String?
+    @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
+    @State private var editingRowID: String?
     @State private var editTermText = ""
     @State private var addingVariantFor: String?
     @State private var variantText = ""
@@ -333,6 +371,9 @@ public struct SettingsView: View {
     @State private var newTermText = ""
     @State private var relaySetupFeedback: String?
     @State private var relaySetupRunning = false
+    @State private var shortcutCheckRunning = false
+    @State private var shortcutCheckFeedback: String?
+    @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
@@ -341,6 +382,8 @@ public struct SettingsView: View {
         availableDevices: @escaping () -> [MicrophoneDevice],
         selectedDeviceID: @escaping () -> String?,
         onSelectDevice: @escaping (String) -> Void,
+        prioritySnapshot: @escaping () -> MicrophonePrioritySnapshot = { .unavailable },
+        onReorderPriority: @escaping ([String]) -> Void = { _ in },
         polishDegradation: @escaping () -> STTPolishDegradation? = { nil },
         onDismissPolishDegradation: @escaping () -> Void = {},
         anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
@@ -348,6 +391,10 @@ public struct SettingsView: View {
         performanceEffort: @escaping () -> VoiceBarPerformanceEffort = { .accurate },
         performanceEffortNotice: @escaping () -> String? = { nil },
         onSelectPerformanceEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
+        modelsStatus: @escaping () -> ModelsSettingsState,
+        onRefreshModelsStatus: @escaping () -> Void,
+        residencyNotice: @escaping () -> String? = { nil },
+        onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
@@ -357,6 +404,7 @@ public struct SettingsView: View {
         onAddPromptTerm: @escaping (String) -> Void = { _ in },
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
+        onCheckShortcut: @escaping (@escaping (String) -> Void) -> Void = { $0("Shortcut check unavailable.") },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
         isVoiceBarHidden: @escaping () -> Bool = { false },
         onHideVoiceBar: @escaping () -> Void = {},
@@ -364,6 +412,9 @@ public struct SettingsView: View {
         onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
             completion("Relay setup requested.")
         },
+        lastDictationEntry: @escaping () -> RecentTranscriptionEntry? = { nil },
+        lastDictationInsertionStatus: @escaping () -> DictationInsertionStatus = { .unverified },
+        onCopyLastDictation: @escaping (String) -> Void = { _ in },
         historyPage: @escaping @Sendable (Int) -> SettingsHistoryPage = { limit in
             SettingsHistoryArchive.loadPage(limit: limit)
         },
@@ -381,7 +432,15 @@ public struct SettingsView: View {
         isRecordingActive: @escaping () -> Bool = { false },
         isTranscribingActive: @escaping () -> Bool = { false },
         onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
-        dictionarySource: @escaping (STTDictionaryEntry) -> SettingsDictionarySource = { _ in .unknown },
+        footerPresentation: @escaping () -> VoiceBarFooterPresentation = {
+            .resolve(
+                isConnected: false,
+                mode: .disconnected,
+                captureLive: false,
+                errorMessage: nil,
+                remoteSTTConfigured: nil
+            )
+        },
         initialTab: SettingsTab = .general,
         initialHistoryScope: SettingsHistoryScope = .recording
     ) {
@@ -390,6 +449,8 @@ public struct SettingsView: View {
         self.availableDevices = availableDevices
         self.selectedDeviceID = selectedDeviceID
         self.onSelectDevice = onSelectDevice
+        self.prioritySnapshot = prioritySnapshot
+        self.onReorderPriority = onReorderPriority
         self.polishDegradation = polishDegradation
         self.onDismissPolishDegradation = onDismissPolishDegradation
         self.anchorMode = anchorMode
@@ -397,6 +458,10 @@ public struct SettingsView: View {
         self.performanceEffort = performanceEffort
         self.performanceEffortNotice = performanceEffortNotice
         self.onSelectPerformanceEffort = onSelectPerformanceEffort
+        self.modelsStatus = modelsStatus
+        self.onRefreshModelsStatus = onRefreshModelsStatus
+        self.residencyNotice = residencyNotice
+        self.onSelectResidency = onSelectResidency
         self.vocabularyPreview = vocabularyPreview
         self.vocabularyRevision = vocabularyRevision
         self.onAddVocabularyAlias = onAddVocabularyAlias
@@ -404,11 +469,15 @@ public struct SettingsView: View {
         self.onAddPromptTerm = onAddPromptTerm
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
+        self.onCheckShortcut = onCheckShortcut
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
         self.isVoiceBarHidden = isVoiceBarHidden
         self.onHideVoiceBar = onHideVoiceBar
         self.onShowVoiceBar = onShowVoiceBar
         self.onRunRelaySetup = onRunRelaySetup
+        self.lastDictationEntry = lastDictationEntry
+        self.lastDictationInsertionStatus = lastDictationInsertionStatus
+        self.onCopyLastDictation = onCopyLastDictation
         if let historyGroups {
             self.historyPage = { limit in
                 let groups = Self.newestFirstHistoryGroups(historyGroups())
@@ -431,7 +500,7 @@ public struct SettingsView: View {
         self.isRecordingActive = isRecordingActive
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
-        self.dictionarySource = dictionarySource
+        self.footerPresentation = footerPresentation
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
         let initialVocabulary = vocabularyPreview()
@@ -449,10 +518,15 @@ public struct SettingsView: View {
         let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
         _historyDayGroups = State(initialValue: initialHistoryPage?.groups ?? [])
         _historyLoadedEntryCount = State(initialValue: initialHistoryPage?.loadedEntryCount ?? 0)
+        _selectedHistoryEntryID = State(initialValue: initialHistoryPage?.groups.first?.entries.first?.id)
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialVocabulary.entries)
-        _dictionaryIndex = State(initialValue: STTDictionaryIndex(entries: initialVocabulary.entries))
+        _dictionaryDisplayIndex = State(initialValue: STTDictionaryDisplayIndex(
+            entries: initialVocabulary.displayEntries ?? initialVocabulary.entries.map {
+                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+            }
+        ))
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
                 ? initialAnchorMode
@@ -461,7 +535,7 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        SettingsNavigationShell(selection: $selectedTab) {
+        SettingsNavigationShell(selection: $selectedTab, footer: footerPresentation()) {
             switch selectedTab {
             case .audio:
                 settingsPage(title: "Audio") { audioTab }
@@ -486,7 +560,7 @@ public struct SettingsView: View {
         .modifier(
             SettingsVocabularyRevisionObserver(
                 revision: vocabularyRevision(),
-                onRefresh: { reconcileLocalEntries(with: vocabularyPreview().entries) }
+                onRefresh: { reconcileLocalEntries(with: vocabularyPreview()) }
             )
         )
         .onChange(of: selectedTab) { _, tab in
@@ -508,6 +582,9 @@ public struct SettingsView: View {
         .onDisappear {
             cancelHistoryLoads()
             historyPlayback.stop()
+        }
+        .onChange(of: isRecordingActive() || isTranscribingActive()) { _, active in
+            if active { historyPlayback.stop() }
         }
     }
 
@@ -562,6 +639,24 @@ public struct SettingsView: View {
                     }
                 }
 
+                LabeledContent("Shortcut check") {
+                    Button("Check shortcut") {
+                        shortcutCheckRunning = true
+                        onCheckShortcut { result in
+                            shortcutCheckFeedback = result
+                            shortcutCheckRunning = false
+                        }
+                    }
+                    .disabled(shortcutCheckRunning)
+                }
+                Text(
+                    "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+                if let shortcutCheckFeedback {
+                    Text(shortcutCheckFeedback).font(.caption).foregroundStyle(.secondary)
+                }
+
                 permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
                 permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
                 permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
@@ -584,6 +679,23 @@ public struct SettingsView: View {
             }
 
             visibilitySection
+
+            Section("Last dictation") {
+                if let entry = lastDictationEntry() {
+                    DictationCard(
+                        entry: entry,
+                        insertionStatus: lastDictationInsertionStatus(),
+                        onCopy: onCopyLastDictation
+                    )
+                    Button("View history →") {
+                        selectedTab = .history
+                    }
+                    .buttonStyle(.link)
+                } else {
+                    Text("No dictation yet")
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             Section("Gestures") {
                 LabeledContent("Single tap") {
@@ -644,24 +756,52 @@ public struct SettingsView: View {
 
     private var audioTab: some View {
         Form {
-            Section("Input Device") {
-                let devices = availableDevices()
-                let selected = selectedDeviceID()
-
-                if devices.isEmpty {
-                    Text("No input devices found")
+            Section("Input priority") {
+                LabeledContent("Next dictation") {
+                    Text(microphoneSnapshot.nextDeviceName ?? "Unavailable")
                         .foregroundStyle(.secondary)
-                } else {
-                    Picker("Microphone", selection: Binding(
-                        get: { selected ?? "" },
-                        set: { onSelectDevice($0) }
-                    )) {
-                        ForEach(devices, id: \.id) { device in
-                            Text(device.name).tag(device.id)
+                }
+
+                if microphoneSnapshot.rows.isEmpty {
+                    Text("No known input devices")
+                        .foregroundStyle(.secondary)
+                }
+                let prioritizedCount = microphoneSnapshot.rows.filter(\.canPrioritize).count
+                ForEach(Array(microphoneSnapshot.rows.enumerated()), id: \.offset) { index, row in
+                    HStack(spacing: 10) {
+                        Image(systemName: "mic")
+                            .foregroundStyle(.secondary)
+                        Text(row.label)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(row.isConnected ? "Connected" : "Disconnected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if row.canPrioritize {
+                            Button {
+                                moveMicrophone(at: index, by: -1)
+                            } label: {
+                                Image(systemName: "chevron.up")
+                            }
+                            .disabled(index == 0)
+                            .accessibilityLabel("Move \(row.label) up")
+                            Button {
+                                moveMicrophone(at: index, by: 1)
+                            } label: {
+                                Image(systemName: "chevron.down")
+                            }
+                            .disabled(index >= prioritizedCount - 1)
+                            .accessibilityLabel("Move \(row.label) down")
+                        } else {
+                            Text("UID unavailable")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    .pickerStyle(.radioGroup)
                 }
+                Text("Use the arrows to set priority. Disconnected microphones keep their place.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Performance") {
@@ -707,13 +847,35 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear(perform: refreshMicrophoneSnapshot)
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+            refreshMicrophoneSnapshot()
+        }
+    }
+
+    private func refreshMicrophoneSnapshot() {
+        let latest = prioritySnapshot()
+        if latest != microphoneSnapshot {
+            microphoneSnapshot = latest
+        }
+    }
+
+    private func moveMicrophone(at index: Int, by offset: Int) {
+        guard let uids = microphoneSnapshot.reorderedUIDs(moving: index, by: offset) else { return }
+        onReorderPriority(uids)
+        refreshMicrophoneSnapshot()
     }
 
     private var modelsTab: some View {
-        ContentUnavailableView(
-            "Model information unavailable",
-            systemImage: "cpu"
+        ModelsSettingsView(
+            state: modelsStatus(),
+            effort: $selectedPerformanceEffort,
+            notice: performanceEffortNotice(),
+            onSelectEffort: onSelectPerformanceEffort,
+            residencyNotice: residencyNotice(),
+            onSelectResidency: onSelectResidency
         )
+        .onAppear(perform: onRefreshModelsStatus)
     }
 
     // MARK: - History Tab
@@ -791,46 +953,49 @@ public struct SettingsView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        LazyVStack(
-                            alignment: .leading,
-                            spacing: 18,
-                            pinnedViews: [.sectionHeaders]
-                        ) {
-                            Color.clear
-                                .frame(height: 1)
-                                .id(latestHistoryAnchorID)
-
-                            ForEach(historyDayGroups) { group in
-                                historyDaySection(title: group.dayTitle()) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 2) {
+                                Color.clear.frame(height: 1).id(latestHistoryAnchorID)
+                                ForEach(historyDayGroups) { group in
                                     ForEach(group.entries) { entry in
-                                        historyEntryRow(SettingsHistoryRowModel.recording(entry))
+                                        Button {
+                                            selectedHistoryEntryID = entry.id
+                                        } label: {
+                                            recordingHistoryListRow(entry)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                             }
+                            .padding(12)
+                        }
+                        .frame(minHeight: 100)
 
+                        if let entry = selectedHistoryEntry {
+                            Divider()
+                            ScrollView {
+                                recordingHistoryDetail(entry)
+                                    .padding(18)
+                            }
+                            .frame(maxHeight: 260)
+                        }
+
+                        Divider()
+                        HStack {
+                            Text("\(historyLoadedEntryCount) saved shown")
+                                .foregroundStyle(.secondary)
+                            Spacer()
                             if historyHasMore {
-                                Button {
+                                Button(isHistoryLoading ? "Loading…" : "Load more") {
                                     loadOlderHistory()
-                                } label: {
-                                    if isHistoryLoading {
-                                        HStack(spacing: 6) {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                            Text("Loading older")
-                                        }
-                                    } else {
-                                        Label("Load older", systemImage: "chevron.down")
-                                    }
                                 }
-                                .buttonStyle(.bordered)
                                 .disabled(isHistoryLoading)
-                                .frame(maxWidth: .infinity)
-                                .help("Load older history")
-                                .accessibilityLabel("Load older history")
                             }
                         }
-                        .padding(18)
+                        .font(.caption)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
                     }
                 }
             }
@@ -843,6 +1008,59 @@ public struct SettingsView: View {
                 requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
             }
         }
+    }
+
+    private var selectedHistoryEntry: SettingsHistoryEntry? {
+        historyDayGroups.lazy.flatMap(\.entries).first { $0.id == selectedHistoryEntryID }
+    }
+
+    private func recordingHistoryListRow(_ entry: SettingsHistoryEntry) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.displayTranscript)
+                    .lineLimit(1)
+                Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if let duration = entry.durationLabel {
+                Text(duration)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            entry.id == selectedHistoryEntryID
+                ? Color.accentColor.opacity(0.13)
+                : Color.clear
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .accessibilityLabel(
+            "\(entry.displayTranscript), \(entry.createdAt.formatted()), \(entry.durationLabel ?? "duration unavailable")"
+        )
+    }
+
+    private func recordingHistoryDetail(_ entry: SettingsHistoryEntry) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            historyMediaPartRow(SettingsHistoryRowModel.recording(entry).parts[0])
+            Divider()
+            Label("Saved on this Mac", systemImage: "internaldrive")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            let attribution = [entry.inputDeviceLabel, entry.modelLabel]
+                .compactMap { $0 }.joined(separator: " · ")
+            if !attribution.isEmpty {
+                Text(attribution)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - History Tab (Ask scope)
@@ -1176,6 +1394,10 @@ public struct SettingsView: View {
         case .play:
             Button {
                 guard let audioPath = part.audioPath else { return }
+                guard !isRecordingActive(), !isTranscribingActive() else {
+                    historyPlayback.stop()
+                    return
+                }
                 historyPlayback.toggle(audioPath)
             } label: {
                 historyActionLabel(
@@ -1243,25 +1465,41 @@ public struct SettingsView: View {
 
     private var dictionaryTab: some View {
         ScrollView {
-            let page = dictionaryIndex.page(
+            let page = dictionaryDisplayIndex.page(
                 matching: dictionarySearch,
                 limit: dictionaryVisibleLimit
             )
             LazyVStack(alignment: .leading, spacing: 14) {
+                LabeledContent("Personal dictionary") { Text("✓ Always on") }
                 addTermRow
                 searchRow
 
+                if dictionaryDisplayIndex.personalCount == 0, dictionarySearch.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
+                        Text("No terms yet").font(.headline)
+                        Text("Add names, products, and other preferred spellings.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 170)
+                }
+
+                Text("\(dictionaryDisplayIndex.personalCount) words")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
                 ForEach(dictionarySections(for: page.entries), id: \.source) { section in
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(section.source.title)
+                        Text(section.source == "personal" ? "Personal" : "Included")
                             .font(.headline)
                             .padding(.top, 4)
                             .padding(.bottom, 6)
 
-                        ForEach(Array(section.entries.enumerated()), id: \.element.canonical) { offset, entry in
+                        ForEach(Array(section.entries.enumerated()), id: \.element.rowID) { offset, row in
                             dictionaryEntryCard(
-                                entry,
-                                isEditable: section.source != .included
+                                row.entry,
+                                rowID: row.rowID,
+                                isEditable: row.isPersonal
                             )
                             if offset < section.entries.count - 1 {
                                 Divider()
@@ -1270,8 +1508,8 @@ public struct SettingsView: View {
                     }
                 }
 
-                if page.hasMore {
-                    Button("Show \(min(Self.dictionaryPageSize, page.totalMatchCount - page.entries.count)) more") {
+                if page.entries.count < page.total {
+                    Button("Show \(min(Self.dictionaryPageSize, page.total - page.entries.count)) more") {
                         dictionaryVisibleLimit += Self.dictionaryPageSize
                     }
                     .buttonStyle(.bordered)
@@ -1285,7 +1523,10 @@ public struct SettingsView: View {
             dictionaryVisibleLimit = Self.dictionaryPageSize
         }
         .onChange(of: localEntries) { _, entries in
-            dictionaryIndex = STTDictionaryIndex(entries: entries)
+            let bundled = dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }
+            dictionaryDisplayIndex = STTDictionaryDisplayIndex(entries: bundled + entries.map {
+                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+            })
         }
     }
 
@@ -1329,10 +1570,11 @@ public struct SettingsView: View {
 
     private func dictionaryEntryCard(
         _ entry: STTDictionaryEntry,
+        rowID: String,
         isEditable: Bool = true
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            dictionaryEntryHeader(entry, isEditable: isEditable)
+            dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
             Divider()
             variantChips(entry, isEditable: isEditable)
             if isEditable, addingVariantFor == entry.canonical {
@@ -1343,11 +1585,11 @@ public struct SettingsView: View {
     }
 
     private func dictionarySections(
-        for entries: [STTDictionaryEntry]
+        for entries: [STTDictionaryDisplayEntry]
     ) -> [SettingsDictionarySection] {
-        let orderedSources: [SettingsDictionarySource] = [.user, .included, .unknown]
+        let orderedSources = ["personal", "bundled"]
         return orderedSources.compactMap { source in
-            let matching = entries.filter { dictionarySource($0) == source }
+            let matching = entries.filter { $0.source == source }
             guard !matching.isEmpty else { return nil }
             return SettingsDictionarySection(source: source, entries: matching)
         }
@@ -1356,9 +1598,12 @@ public struct SettingsView: View {
     @ViewBuilder
     private func dictionaryEntryHeader(
         _ entry: STTDictionaryEntry,
+        rowID: String,
         isEditable: Bool
     ) -> some View {
-        if editingCanonical == entry.canonical {
+        if SettingsDictionaryEditing.isEditing(
+            rowID: rowID, isEditable: isEditable, activeRowID: editingRowID
+        ) {
             VStack(alignment: .leading, spacing: 10) {
                 TextField("Term", text: $editTermText)
                     .dictionaryTextField()
@@ -1390,7 +1635,7 @@ public struct SettingsView: View {
                         deleteDictionaryEntryButton(entry.canonical)
                     } else {
                         Button {
-                            beginTermRename(entry.canonical)
+                            beginTermRename(rowID: rowID, canonical: entry.canonical)
                         } label: {
                             Image(systemName: "pencil")
                         }
@@ -1589,6 +1834,10 @@ public struct SettingsView: View {
 
     private func applyHistoryPage(_ page: SettingsHistoryPage) {
         historyDayGroups = Self.newestFirstHistoryGroups(page.groups)
+        let entries = historyDayGroups.flatMap(\.entries)
+        if !entries.contains(where: { $0.id == selectedHistoryEntryID }) {
+            selectedHistoryEntryID = entries.first?.id
+        }
         historyLoadedEntryCount = page.loadedEntryCount
         historyHasMore = page.hasMore
     }
@@ -1806,26 +2055,31 @@ public struct SettingsView: View {
     }
 
     private var hasPendingDictionaryEdit: Bool {
-        editingCanonical != nil ||
+        editingRowID != nil ||
             addingVariantFor != nil ||
             pendingDeleteCanonical != nil ||
             !newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func reconcileLocalEntries(with entries: [STTDictionaryEntry]) {
+    private func reconcileLocalEntries(with preview: STTVocabularyPreview) {
         guard !hasPendingDictionaryEdit else { return }
-        localEntries = entries
+        localEntries = preview.entries
+        dictionaryDisplayIndex = STTDictionaryDisplayIndex(
+            entries: preview.displayEntries ?? preview.entries.map {
+                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+            }
+        )
     }
 
-    private func beginTermRename(_ canonical: String) {
-        editingCanonical = canonical
+    private func beginTermRename(rowID: String, canonical: String) {
+        editingRowID = rowID
         editTermText = canonical
         pendingDeleteCanonical = nil
         focusedEditorField = .editTerm
     }
 
     private func cancelTermRename() {
-        editingCanonical = nil
+        editingRowID = nil
         editTermText = ""
         focusedEditorField = nil
     }
@@ -1839,7 +2093,7 @@ public struct SettingsView: View {
             onRemovePromptTerm: onRemovePromptTerm,
             onAddVocabularyAlias: onAddVocabularyAlias
         )
-        editingCanonical = nil
+        editingRowID = nil
         focusedEditorField = nil
     }
 

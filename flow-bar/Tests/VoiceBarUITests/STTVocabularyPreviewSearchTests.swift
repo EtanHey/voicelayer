@@ -2,6 +2,28 @@
 import XCTest
 
 final class STTVocabularyPreviewSearchTests: XCTestCase {
+    func testSourceQualifiedRowsKeepSameNameSeparateAndBoundSearch() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "vocab_list",
+            "entries": [["canonical": "Shared", "variants": []]],
+            "display_entries": [
+                ["row_id": "bundled:Shared", "source": "bundled", "canonical": "Shared", "variants": []],
+                ["row_id": "personal:Shared", "source": "personal", "canonical": "Shared", "variants": ["spoken"]],
+            ],
+        ])
+
+        let rows = try? XCTUnwrap(state.transcriptionVocabularyDisplayEntries)
+        XCTAssertEqual(rows?.map(\.rowID), ["bundled:Shared", "personal:Shared"])
+        XCTAssertEqual(rows?.map(\.isPersonal), [false, true])
+        XCTAssertEqual(rows?.filter(\.isPersonal).count, 1)
+        let page = STTDictionaryDisplayIndex(entries: rows ?? []).page(matching: "spoken", limit: 1)
+        XCTAssertEqual(page.entries.map(\.rowID), ["personal:Shared"])
+        XCTAssertEqual(STTDictionaryDisplayIndex(entries: rows?.filter { !$0.isPersonal } ?? []).personalCount, 0)
+        state.handleEvent(["type": "vocab_list", "entries": []])
+        XCTAssertNil(state.transcriptionVocabularyDisplayEntries)
+    }
+
     func testFilteredAliasesMatchesWrongOrRightSideCaseInsensitively() {
         let preview = STTVocabularyPreview(
             updatedAt: nil,
