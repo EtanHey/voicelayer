@@ -41,6 +41,9 @@ const HEALTH_TIMEOUT = 2000;
 /** Max time to wait for server startup in ms. */
 const STARTUP_TIMEOUT = 30000;
 
+/** A final health probe may finish after the launch deadline; ps rounds to seconds. */
+const MAX_VERIFIED_LAUNCH_WINDOW_MS = STARTUP_TIMEOUT + HEALTH_TIMEOUT + 1_000;
+
 /** Max time to wait for `whisper-server --help` capability probing. */
 const HELP_PROBE_TIMEOUT = 2000;
 
@@ -284,7 +287,7 @@ export function verifiedWhisperServerLaunchRecord(
     !Number.isFinite(processStartedAtMs) ||
     !Number.isFinite(recordedAtMs) ||
     processStartedAtMs > recordedAtMs ||
-    recordedAtMs - processStartedAtMs > STARTUP_TIMEOUT + 1_000
+    recordedAtMs - processStartedAtMs > MAX_VERIFIED_LAUNCH_WINDOW_MS
   ) return null;
   return record;
 }
