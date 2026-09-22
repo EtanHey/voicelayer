@@ -327,6 +327,16 @@ public final class VoiceState {
     /// Active STT vocabulary hints loaded from the daemon snapshot.
     public private(set) var transcriptionVocabularyRevision: UInt64 = 0
     public private(set) var modelsSettingsState = ModelsSettingsState.loading
+    public private(set) var residencyNotice: String?
+    private var pendingResidencyID: String?
+    private var modelsRecordingBusy = true
+
+    private func refreshModelsBusy() {
+        guard modelsSettingsState.availability == .available else { return }
+        modelsSettingsState = modelsSettingsState.settingBusy(
+            modelsRecordingBusy || queueDepth > 0 || pendingResidencyID != nil || Self.blocksModelsEffort(mode)
+        )
+    }
 
     public var transcriptionVocabularyTerms: [String] = [] {
         didSet {
@@ -627,6 +637,25 @@ public final class VoiceState {
         }
         modelsSettingsState = .loading
         sendCommand?(["cmd": "health"])
+    }
+
+    public func setWhisperResidency(_ target: VoiceModelResidency) {
+        guard isConnected,
+              modelsSettingsState.availability == .available,
+              !modelsSettingsState.isBusy,
+              pendingResidencyID == nil,
+              target != .unknown,
+              let sendCommand
+        else { return }
+        let id = UUID().uuidString
+        pendingResidencyID = id
+        residencyNotice = nil
+        refreshModelsBusy()
+        sendCommand([
+            "cmd": "set_whisper_residency",
+            "action": target == .loaded ? "load" : "unload",
+            "id": id,
+        ])
     }
 
     public func stop() {
@@ -1278,6 +1307,7 @@ public final class VoiceState {
         case "queue":
             if let depth = event["depth"] as? Int {
                 queueDepth = max(0, depth)
+                refreshModelsBusy()
             }
             if let items = event["items"] as? [[String: Any]] {
                 queueItems = items.compactMap { item in
@@ -1313,7 +1343,10 @@ public final class VoiceState {
 
         case "health":
             let status = ModelsSettingsState(healthEvent: event)
-            modelsSettingsState = status.settingBusy(status.isBusy || Self.blocksModelsEffort(mode))
+            modelsRecordingBusy = event["recording_state"] as? String != "idle"
+            if let depth = event["queue_depth"] as? Int { queueDepth = max(0, depth) }
+            modelsSettingsState = status
+            refreshModelsBusy()
 
         case "command_mode":
             handleCommandModeEvent(event)
@@ -1428,6 +1461,8 @@ public final class VoiceState {
         }
 
         modelsSettingsState = .unavailable
+        pendingResidencyID = nil
+        residencyNotice = nil
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -2571,6 +2606,22 @@ public final class VoiceState {
         }
 
         onAckEvent?(ack)
+
+        if ack.command == .setWhisperResidency,
+           ack.id == pendingResidencyID {
+            pendingResidencyID = nil
+            residencyNotice = ack.outcome == .accept ? nil : (ack.reason ?? "Could not change memory state")
+            if let modelStatus = event["model_status"] as? [String: Any] {
+                let fresh = ModelsSettingsState(healthEvent: [
+                    "type": "health", "recording_state": "idle", "model_status": modelStatus,
+                ])
+                modelsSettingsState = fresh
+                refreshModelsBusy()
+            } else {
+                refreshModelsSettingsStatus()
+            }
+            return
+        }
 
         if ack.command == .setRecordingHold,
            let pendingRecordingHold,

@@ -273,6 +273,8 @@ public struct SettingsView: View {
     public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
     public let modelsStatus: () -> ModelsSettingsState
     public let onRefreshModelsStatus: () -> Void
+    public let residencyNotice: () -> String?
+    public let onSelectResidency: ((VoiceModelResidency) -> Void)?
     public let vocabularyPreview: () -> STTVocabularyPreview
     public let vocabularyRevision: () -> UInt64
     public let onAddVocabularyAlias: (String, String) -> Void
@@ -352,6 +354,8 @@ public struct SettingsView: View {
         onSelectPerformanceEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
         modelsStatus: @escaping () -> ModelsSettingsState,
         onRefreshModelsStatus: @escaping () -> Void,
+        residencyNotice: @escaping () -> String? = { nil },
+        onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
@@ -403,6 +407,8 @@ public struct SettingsView: View {
         self.onSelectPerformanceEffort = onSelectPerformanceEffort
         self.modelsStatus = modelsStatus
         self.onRefreshModelsStatus = onRefreshModelsStatus
+        self.residencyNotice = residencyNotice
+        self.onSelectResidency = onSelectResidency
         self.vocabularyPreview = vocabularyPreview
         self.vocabularyRevision = vocabularyRevision
         self.onAddVocabularyAlias = onAddVocabularyAlias
@@ -720,7 +726,9 @@ public struct SettingsView: View {
             state: modelsStatus(),
             effort: $selectedPerformanceEffort,
             notice: performanceEffortNotice(),
-            onSelectEffort: onSelectPerformanceEffort
+            onSelectEffort: onSelectPerformanceEffort,
+            residencyNotice: residencyNotice(),
+            onSelectResidency: onSelectResidency
         )
         .onAppear(perform: onRefreshModelsStatus)
     }

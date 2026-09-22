@@ -2,6 +2,88 @@
 import XCTest
 
 final class ModelsSettingsStateTests: XCTestCase {
+    func testResidencyCommandUsesAckedModelStatusAndClearsOnDisconnect() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.availableHealth)
+        state.setWhisperResidency(.loaded)
+        XCTAssertEqual(commands.last?["cmd"] as? String, "set_whisper_residency")
+        XCTAssertEqual(commands.last?["action"] as? String, "load")
+        let id = try XCTUnwrap(commands.last?["id"] as? String)
+        state.handleEvent([
+            "type": "ack", "command": "set_whisper_residency", "id": id,
+            "outcome": "accept",
+            "model_status": [
+                "configured_model": ["name": "large-v3-turbo", "installed": true],
+                "residency": "loaded", "active_model": "large-v3-turbo",
+                "configured_effort": "accurate", "active_effort": "accurate",
+            ],
+        ])
+        XCTAssertEqual(state.modelsSettingsState.residency, .loaded)
+
+        state.setWhisperResidency(.notLoaded)
+        XCTAssertEqual(commands.last?["action"] as? String, "unload")
+        let unloadID = try XCTUnwrap(commands.last?["id"] as? String)
+        state.handleEvent([
+            "type": "ack", "command": "set_whisper_residency", "id": unloadID,
+            "outcome": "reject", "reason": "not owned",
+            "model_status": [
+                "configured_model": ["name": "large-v3-turbo", "installed": true],
+                "residency": "loaded", "active_model": "large-v3-turbo",
+                "configured_effort": "accurate", "active_effort": "accurate",
+            ],
+        ])
+        XCTAssertEqual(state.modelsSettingsState.residency, .loaded)
+        XCTAssertEqual(state.residencyNotice, "not owned")
+        state.setConnectionStatus(false)
+        XCTAssertEqual(state.modelsSettingsState.availability, .unavailable)
+        XCTAssertNil(state.residencyNotice)
+    }
+
+    func testPlaybackAndPendingResidencyKeepControlBusyAcrossHealth() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        var playbackHealth = Self.availableHealth
+        playbackHealth["queue_depth"] = 1
+        state.handleEvent(playbackHealth)
+        XCTAssertTrue(state.modelsSettingsState.isBusy)
+        var idleHealth = Self.availableHealth
+        idleHealth["queue_depth"] = 0
+        state.handleEvent(idleHealth)
+        XCTAssertFalse(state.modelsSettingsState.isBusy)
+
+        state.handleEvent(["type": "queue", "depth": 1])
+        XCTAssertTrue(state.modelsSettingsState.isBusy)
+        state.handleEvent(["type": "queue", "depth": 0])
+        XCTAssertFalse(state.modelsSettingsState.isBusy)
+
+        state.setWhisperResidency(.notLoaded)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertTrue(state.modelsSettingsState.isBusy)
+        state.handleEvent(["type": "queue", "depth": 1])
+        state.handleEvent(["type": "queue", "depth": 0])
+        XCTAssertTrue(state.modelsSettingsState.isBusy)
+        state.handleEvent(Self.availableHealth)
+        XCTAssertTrue(state.modelsSettingsState.isBusy)
+        state.setWhisperResidency(.notLoaded)
+        XCTAssertEqual(commands.count, 1)
+
+        for recordingState in ["recording", "transcribing"] {
+            let active = VoiceState()
+            active.setConnectionStatus(true)
+            var busyHealth = Self.availableHealth
+            busyHealth["recording_state"] = recordingState
+            active.handleEvent(busyHealth)
+            active.handleEvent(["type": "queue", "depth": 1])
+            active.handleEvent(["type": "queue", "depth": 0])
+            XCTAssertTrue(active.modelsSettingsState.isBusy)
+        }
+    }
+
     func testRefreshFailsClosedOfflineAndSendsOnlyReadOnlyHealthWhenConnected() {
         let voiceState = VoiceState()
         var commands: [[String: Any]] = []
