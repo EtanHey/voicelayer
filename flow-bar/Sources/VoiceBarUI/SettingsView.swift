@@ -267,6 +267,8 @@ public struct SettingsView: View {
     public let availableDevices: () -> [MicrophoneDevice]
     public let selectedDeviceID: () -> String?
     public let onSelectDevice: (String) -> Void
+    public let prioritySnapshot: () -> MicrophonePrioritySnapshot
+    public let onReorderPriority: ([String]) -> Void
     public let polishDegradation: () -> STTPolishDegradation?
     public let onDismissPolishDegradation: () -> Void
     public let anchorMode: () -> VoiceBarAnchorMode
@@ -343,6 +345,7 @@ public struct SettingsView: View {
     @State private var newTermText = ""
     @State private var relaySetupFeedback: String?
     @State private var relaySetupRunning = false
+    @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
@@ -351,6 +354,8 @@ public struct SettingsView: View {
         availableDevices: @escaping () -> [MicrophoneDevice],
         selectedDeviceID: @escaping () -> String?,
         onSelectDevice: @escaping (String) -> Void,
+        prioritySnapshot: @escaping () -> MicrophonePrioritySnapshot = { .unavailable },
+        onReorderPriority: @escaping ([String]) -> Void = { _ in },
         polishDegradation: @escaping () -> STTPolishDegradation? = { nil },
         onDismissPolishDegradation: @escaping () -> Void = {},
         anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
@@ -414,6 +419,8 @@ public struct SettingsView: View {
         self.availableDevices = availableDevices
         self.selectedDeviceID = selectedDeviceID
         self.onSelectDevice = onSelectDevice
+        self.prioritySnapshot = prioritySnapshot
+        self.onReorderPriority = onReorderPriority
         self.polishDegradation = polishDegradation
         self.onDismissPolishDegradation = onDismissPolishDegradation
         self.anchorMode = anchorMode
@@ -695,24 +702,52 @@ public struct SettingsView: View {
 
     private var audioTab: some View {
         Form {
-            Section("Input Device") {
-                let devices = availableDevices()
-                let selected = selectedDeviceID()
-
-                if devices.isEmpty {
-                    Text("No input devices found")
+            Section("Input priority") {
+                LabeledContent("Next dictation") {
+                    Text(microphoneSnapshot.nextDeviceName ?? "Unavailable")
                         .foregroundStyle(.secondary)
-                } else {
-                    Picker("Microphone", selection: Binding(
-                        get: { selected ?? "" },
-                        set: { onSelectDevice($0) }
-                    )) {
-                        ForEach(devices, id: \.id) { device in
-                            Text(device.name).tag(device.id)
+                }
+
+                if microphoneSnapshot.rows.isEmpty {
+                    Text("No known input devices")
+                        .foregroundStyle(.secondary)
+                }
+                let prioritizedCount = microphoneSnapshot.rows.filter(\.canPrioritize).count
+                ForEach(Array(microphoneSnapshot.rows.enumerated()), id: \.offset) { index, row in
+                    HStack(spacing: 10) {
+                        Image(systemName: "mic")
+                            .foregroundStyle(.secondary)
+                        Text(row.label)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(row.isConnected ? "Connected" : "Disconnected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if row.canPrioritize {
+                            Button {
+                                moveMicrophone(at: index, by: -1)
+                            } label: {
+                                Image(systemName: "chevron.up")
+                            }
+                            .disabled(index == 0)
+                            .accessibilityLabel("Move \(row.label) up")
+                            Button {
+                                moveMicrophone(at: index, by: 1)
+                            } label: {
+                                Image(systemName: "chevron.down")
+                            }
+                            .disabled(index >= prioritizedCount - 1)
+                            .accessibilityLabel("Move \(row.label) down")
+                        } else {
+                            Text("UID unavailable")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    .pickerStyle(.radioGroup)
                 }
+                Text("Use the arrows to set priority. Disconnected microphones keep their place.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Performance") {
@@ -758,6 +793,23 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear(perform: refreshMicrophoneSnapshot)
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+            refreshMicrophoneSnapshot()
+        }
+    }
+
+    private func refreshMicrophoneSnapshot() {
+        let latest = prioritySnapshot()
+        if latest != microphoneSnapshot {
+            microphoneSnapshot = latest
+        }
+    }
+
+    private func moveMicrophone(at index: Int, by offset: Int) {
+        guard let uids = microphoneSnapshot.reorderedUIDs(moving: index, by: offset) else { return }
+        onReorderPriority(uids)
+        refreshMicrophoneSnapshot()
     }
 
     private var modelsTab: some View {
