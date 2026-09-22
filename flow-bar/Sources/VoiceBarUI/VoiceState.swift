@@ -324,6 +324,8 @@ public final class VoiceState {
     }
 
     /// Active STT vocabulary hints loaded from the daemon snapshot.
+    public private(set) var modelsSettingsState = ModelsSettingsState.loading
+
     public var transcriptionVocabularyTerms: [String] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty) }
     }
@@ -1287,6 +1289,9 @@ public final class VoiceState {
                 }
                 noteFirstRecordingAudioLevelIfNeeded(socketRMS: socketAudioLevel)
             }
+
+        case "health":
+            modelsSettingsState = ModelsSettingsState(healthEvent: event)
 
         case "command_mode":
             handleCommandModeEvent(event)
