@@ -2,6 +2,37 @@
 import XCTest
 
 final class SettingsViewContractTests: XCTestCase {
+    func testVocabularyRevisionIsAnExplicitInitializerContract() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("vocabularyRevision: @escaping () -> UInt64,"))
+        XCTAssertFalse(source.contains("vocabularyRevision: @escaping () -> UInt64 = { 0 }"))
+    }
+
+    @MainActor
+    func testReturningToRecordingSupersedesADeferredOlderLoad() async {
+        var fence = SettingsHistoryLoadFence()
+        let recordingA = fence.begin()
+        let deferredA = Task {
+            try? await Task.sleep(for: .milliseconds(40))
+            return "recording A"
+        }
+
+        // Recording A -> Ask -> archive changes -> Recording B.
+        let recordingB = fence.begin()
+        var applied: [String] = []
+        if fence.accepts(recordingB) {
+            applied.append("recording B")
+        }
+
+        let oldPage = await deferredA.value
+        if fence.accepts(recordingA) {
+            applied.append(oldPage)
+        }
+
+        XCTAssertEqual(applied, ["recording B"])
+    }
+
     func testSettingsSourceDoesNotExposeStandalonePositionLock() throws {
         let source = try settingsViewSource()
 
@@ -426,6 +457,8 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(handler.contains("requestHistoryReload()"))
         XCTAssertTrue(handler.contains("requestAskHistoryReload()"))
         XCTAssertFalse(handler.contains("askHistoryDayGroups.isEmpty"))
+        XCTAssertFalse(handler.contains("if !isHistoryLoading"))
+        XCTAssertFalse(handler.contains("if !isAskHistoryLoading"))
     }
 
     func testGeneralTabProvidesVoiceBarHideAndUnhideAffordance() throws {

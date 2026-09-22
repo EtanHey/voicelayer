@@ -200,6 +200,34 @@ private enum DictionaryCardLayout {
     static let inlineFieldVerticalPadding: CGFloat = 5
 }
 
+struct SettingsVocabularyRevisionObserver: ViewModifier {
+    let revision: UInt64
+    let onRefresh: () -> Void
+
+    func body(content: Content) -> some View {
+        content.onChange(of: revision) {
+            onRefresh()
+        }
+    }
+}
+
+struct SettingsHistoryLoadFence {
+    private var generation = 0
+
+    mutating func begin() -> Int {
+        generation &+= 1
+        return generation
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+    }
+
+    func accepts(_ candidate: Int) -> Bool {
+        candidate == generation
+    }
+}
+
 public struct SettingsView: View {
     public let hotkeyEnabled: Bool
     public let missingPermissions: [HotkeyPermission]
@@ -251,7 +279,7 @@ public struct SettingsView: View {
     @State private var historyLoadedEntryLimit: Int
     @State private var historyHasMore: Bool
     @State private var isHistoryLoading = false
-    @State private var historyLoadGeneration = 0
+    @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
     @State private var selectedHistoryScope: SettingsHistoryScope
     @State private var askHistoryDayGroups: [SettingsAskHistoryDayGroup]
@@ -259,7 +287,7 @@ public struct SettingsView: View {
     @State private var askHistoryLoadedEntryLimit: Int
     @State private var askHistoryHasMore: Bool
     @State private var isAskHistoryLoading = false
-    @State private var askHistoryLoadGeneration = 0
+    @State private var askHistoryLoadFence = SettingsHistoryLoadFence()
     @State private var askHistoryRefreshTask: Task<Void, Never>?
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
@@ -292,7 +320,7 @@ public struct SettingsView: View {
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
-        vocabularyRevision: @escaping () -> UInt64 = { 0 },
+        vocabularyRevision: @escaping () -> UInt64,
         onAddVocabularyAlias: @escaping (String, String) -> Void = { _, _ in },
         onRemoveVocabularyAlias: @escaping (STTVocabularyAliasPreview) -> Void = { _ in },
         onAddPromptTerm: @escaping (String) -> Void = { _ in },
@@ -416,9 +444,12 @@ public struct SettingsView: View {
         }
         .frame(width: 520, height: 620)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: vocabularyRevision()) {
-            reconcileLocalEntries(with: vocabularyPreview().entries)
-        }
+        .modifier(
+            SettingsVocabularyRevisionObserver(
+                revision: vocabularyRevision(),
+                onRefresh: { reconcileLocalEntries(with: vocabularyPreview().entries) }
+            )
+        )
         .onChange(of: selectedTab) { _, tab in
             if tab == .history {
                 switch selectedHistoryScope {
@@ -666,13 +697,9 @@ public struct SettingsView: View {
             historyPlayback.stop()
             switch scope {
             case .recording:
-                if !isHistoryLoading {
-                    requestHistoryReload()
-                }
+                requestHistoryReload()
             case .ask:
-                if !isAskHistoryLoading {
-                    requestAskHistoryReload()
-                }
+                requestAskHistoryReload()
             }
         }
         .onDisappear {
@@ -1464,8 +1491,7 @@ public struct SettingsView: View {
         scrollToLatest shouldScrollToLatest: Bool = true,
         animated: Bool = true
     ) {
-        historyLoadGeneration += 1
-        let generation = historyLoadGeneration
+        let generation = historyLoadFence.begin()
         let loader = historyPage
         isHistoryLoading = true
         historyRefreshTask?.cancel()
@@ -1477,7 +1503,7 @@ public struct SettingsView: View {
             let page = loader(limit)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard generation == historyLoadGeneration, !Task.isCancelled else { return }
+                guard historyLoadFence.accepts(generation), !Task.isCancelled else { return }
                 applyHistoryPage(page)
                 isHistoryLoading = false
                 if shouldScrollToLatest, let scrollProxy {
@@ -1501,9 +1527,11 @@ public struct SettingsView: View {
     private func cancelHistoryLoads() {
         historyRefreshTask?.cancel()
         historyRefreshTask = nil
+        historyLoadFence.cancel()
         isHistoryLoading = false
         askHistoryRefreshTask?.cancel()
         askHistoryRefreshTask = nil
+        askHistoryLoadFence.cancel()
         isAskHistoryLoading = false
     }
 
@@ -1535,8 +1563,7 @@ public struct SettingsView: View {
         scrollToLatest shouldScrollToLatest: Bool = true,
         animated: Bool = true
     ) {
-        askHistoryLoadGeneration += 1
-        let generation = askHistoryLoadGeneration
+        let generation = askHistoryLoadFence.begin()
         let loader = askHistoryPage
         isAskHistoryLoading = true
         askHistoryRefreshTask?.cancel()
@@ -1548,7 +1575,7 @@ public struct SettingsView: View {
             let page = loader(limit)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard generation == askHistoryLoadGeneration, !Task.isCancelled else { return }
+                guard askHistoryLoadFence.accepts(generation), !Task.isCancelled else { return }
                 applyAskHistoryPage(page)
                 isAskHistoryLoading = false
                 if shouldScrollToLatest, let scrollProxy {

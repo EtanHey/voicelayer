@@ -1,3 +1,6 @@
+import AppKit
+import Observation
+import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
@@ -5,6 +8,36 @@ import XCTest
 /// (Etan QA: invisible-until-hover inputs, missing term add/delete,
 /// search reads as a label, stale gesture copy).
 final class SettingsViewTests: XCTestCase {
+    @MainActor
+    func testVocabularyRevisionObserverRefreshesOnlyWhenRevisionChanges() {
+        let model = VocabularyRevisionModel()
+        var refreshCount = 0
+        let host = NSHostingView(
+            rootView: VocabularyRevisionHarness(model: model) {
+                refreshCount += 1
+            }
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+        host.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(refreshCount, 0)
+
+        model.revision = 1
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(refreshCount, 1)
+
+        model.revision = 1
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(refreshCount, 1)
+
+        model.revision = 2
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(refreshCount, 2)
+    }
+
     // MARK: - Field visibility (the invisible-until-hover class dies)
 
     func testDictionaryInputsUseVisibleFieldTreatmentAtRest() throws {
@@ -292,8 +325,12 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(
-            source.contains(".onChange(of: vocabularyRevision())"),
-            "Dictionary cards should reconcile with later daemon vocabulary snapshots"
+            source.contains("SettingsVocabularyRevisionObserver("),
+            "Dictionary cards should observe later daemon vocabulary revisions"
+        )
+        XCTAssertTrue(
+            source.contains("onRefresh: { reconcileLocalEntries(with: vocabularyPreview().entries) }"),
+            "A revision change should project the new snapshot into local dictionary cards"
         )
         XCTAssertTrue(
             source.contains("guard !hasPendingDictionaryEdit else { return }"),
@@ -462,6 +499,27 @@ final class SettingsViewTests: XCTestCase {
             .appendingPathComponent("VoiceBarUI")
             .appendingPathComponent("SettingsView.swift")
         return try String(contentsOf: settingsURL)
+    }
+}
+
+@MainActor
+@Observable
+private final class VocabularyRevisionModel {
+    var revision: UInt64 = 0
+}
+
+@MainActor
+private struct VocabularyRevisionHarness: View {
+    let model: VocabularyRevisionModel
+    let onRefresh: () -> Void
+
+    var body: some View {
+        Color.clear.modifier(
+            SettingsVocabularyRevisionObserver(
+                revision: model.revision,
+                onRefresh: onRefresh
+            )
+        )
     }
 }
 

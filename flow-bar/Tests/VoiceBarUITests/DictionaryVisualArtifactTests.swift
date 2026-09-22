@@ -36,6 +36,7 @@ final class DictionaryVisualArtifactTests: XCTestCase {
                     anchorMode: { .follow },
                     onSelectAnchorMode: { _ in },
                     vocabularyPreview: { preview },
+                    vocabularyRevision: { 0 },
                     onAddVocabularyAlias: { _, _ in },
                     onRemoveVocabularyAlias: { _ in },
                     initialTab: .dictionary

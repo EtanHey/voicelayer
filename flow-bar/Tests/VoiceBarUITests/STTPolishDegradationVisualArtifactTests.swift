@@ -32,6 +32,7 @@ final class STTPolishDegradationVisualArtifactTests: XCTestCase {
                 )
             },
             onDismissPolishDegradation: {},
+            vocabularyRevision: { 0 },
             initialTab: .audio
         )
         .frame(width: 520, height: 620)
