@@ -31,6 +31,9 @@ import {
   getVoiceBarSocketPath,
   isDefaultVoiceBarSocketPath,
 } from "./paths";
+import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
+import type { UnloadResult } from "./whisper-lifecycle-gate";
+import { reserveVoiceMaintenance } from "./session-booking";
 
 /** Default port for the whisper-server sidecar. */
 const DEFAULT_PORT = 8178;
@@ -170,6 +173,8 @@ interface WhisperServerTestHooks {
   startupTimeoutMs?: number;
   inferenceTimeoutMs?: (wavData: Uint8Array) => number;
   residentLiveStack?: () => boolean;
+  reserveVoiceMaintenance?: () => (() => void) | null;
+  postUnloadListeners?: (port: number) => number[] | null;
 }
 
 let testHooks: WhisperServerTestHooks = {};
@@ -676,6 +681,23 @@ function findPortListenerPids(port: number): number[] {
   return portOwnerPids(port, PORT_OWNER_PROBE_TIMEOUT);
 }
 
+/** Null means the listener probe failed; only a confirmed empty port is unloaded. */
+function postUnloadListeners(port: number): number[] | null {
+  if (testHooks.postUnloadListeners) return testHooks.postUnloadListeners(port);
+  try {
+    const result = Bun.spawnSync(
+      ["lsof", "-nP", `-tiTCP:${port}`, "-sTCP:LISTEN"],
+      { stdout: "pipe", stderr: "pipe", timeout: PORT_OWNER_PROBE_TIMEOUT },
+    );
+    const pids = result.stdout.toString().split(/\s+/)
+      .map((raw) => Number.parseInt(raw, 10))
+      .filter((pid) => Number.isFinite(pid) && pid > 0);
+    if (result.exitCode === 0) return pids;
+    if (result.exitCode === 1 && result.stderr.toString().trim() === "") return [];
+  } catch {}
+  return null;
+}
+
 /**
  * Is the healthy listener on `port` the child we just spawned?
  *
@@ -825,6 +847,10 @@ async function reclaimExternalWhisperServers(port: number): Promise<boolean> {
  * Returns the port number.
  */
 export function ensureServer(portOverride?: number): Promise<number> {
+  return whisperLifecycleGate.use(() => ensureServerReserved(portOverride));
+}
+
+function ensureServerReserved(portOverride?: number): Promise<number> {
   const port =
     portOverride ||
     parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT || "", 10) ||
@@ -1124,6 +1150,48 @@ export function stopServer(): void {
   clearWhisperServerOwnership(state.port);
 }
 
+/** Explicit user unload. Only the live child this process launched may be stopped. */
+export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> {
+  return whisperLifecycleGate.unload(isBusy, async () => {
+    const release = (testHooks.reserveVoiceMaintenance ?? reserveVoiceMaintenance)();
+    if (!release) throw new Error("busy");
+    try {
+      const state = serverState;
+      if (!state || state.adopted || !state.proc) {
+        throw new Error("not owned");
+      }
+      const record = verifiedWhisperServerLaunchRecord(state.port);
+      if (!record || record.adopted || record.pid !== state.pid) {
+        throw new Error("owner identity unavailable");
+      }
+      if (!state.proc.exited) throw new Error("child exit unavailable");
+
+      state.proc.kill("SIGTERM");
+      if (!(await waitForWhisperProcessExit(state.proc))) {
+        throw new Error("child exit unconfirmed");
+      }
+      // The child exited; detach our stale state even if another listener arrived.
+      if (serverState === state) {
+        serverState = null;
+        lastLaunchRecord = null;
+      }
+      const owner = readWhisperServerOwnership(state.port);
+      if (owner?.pid === state.pid && owner.owner_pid === process.pid &&
+          owner.started_at === record.startedAt) {
+        clearWhisperServerOwnership(state.port);
+      }
+      const listeners = postUnloadListeners(state.port);
+      const healthy = await checkServerHealthy(state.port);
+      if (listeners === null || listeners.length !== 0 || healthy) {
+        throw new Error("fresh residency is not not_loaded");
+      }
+      return "not_loaded";
+    } finally {
+      release();
+    }
+  });
+}
+
 configureWhisperPerformanceRestart(stopServer);
 
 /**
@@ -1274,7 +1342,9 @@ export async function transcribeViaServer(
   port?: number,
   options?: WhisperServerTranscribeOptions,
 ): Promise<string> {
-  return transcribeViaServerAttempt(wavData, port, true, options);
+  return whisperLifecycleGate.use(() =>
+    transcribeViaServerAttempt(wavData, port, true, options)
+  );
 }
 
 function normalizeTranscriptionText(text: string): string {
