@@ -45,6 +45,7 @@ import { getRecordingState } from "./input";
 import {
   addAlias,
   addPromptTerm,
+  buildDictionaryDisplayEntries,
   listVocabulary,
   removeAlias,
   removePromptTerm,
@@ -305,6 +306,7 @@ export function handleSocketCommand(
         type: "vocab_list",
         ...(command.id ? { id: command.id } : {}),
         ...snapshot,
+        display_entries: buildDictionaryDisplayEntries(snapshot.entries),
       };
     }
     case "vocab_remove": {
