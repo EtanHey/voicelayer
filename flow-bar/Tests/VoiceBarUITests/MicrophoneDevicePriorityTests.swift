@@ -67,6 +67,15 @@ final class MicrophoneDevicePriorityTests: XCTestCase {
         XCTAssertEqual(priority.resolveDeviceID(in: devices, fallbackDeviceID: nil), "1")
     }
 
+    func testNonPreferredConnectedRowsFollowDeviceInputOrder() {
+        let priority = makePriority()
+        let devices = (0 ..< 12).map { index in
+            device(id: String(index), name: "Microphone \(index)", uid: "uid.\(index)")
+        }
+
+        XCTAssertEqual(priority.rows(for: devices).map(\.uid), devices.map(\.uid))
+    }
+
     func testFallsBackToCurrentDefaultWhenNoPreferredUIDIsAvailable() {
         let priority = makePriority()
         priority.replacePreferredUIDs(["uid.disconnected"], observing: [
@@ -120,22 +129,17 @@ final class MicrophoneDevicePriorityTests: XCTestCase {
         XCTAssertEqual(priority.preferredUIDs, [])
     }
 
-    func testResolutionIsPureAndNeverInvokesADeviceSelectionSink() {
+    func testResolutionReturnsPreferredConnectedDeviceID() {
         let priority = makePriority()
         priority.replacePreferredUIDs(["uid.usb"], observing: [
             device(id: "42", name: "USB", uid: "uid.usb"),
         ])
-        var selectedDeviceIDs: [String] = []
-        let selectionSink: (String) -> Void = { selectedDeviceIDs.append($0) }
-
         let resolution = priority.resolveDeviceID(
             in: [device(id: "77", name: "USB", uid: "uid.usb")],
             fallbackDeviceID: nil
         )
 
         XCTAssertEqual(resolution, "77")
-        XCTAssertTrue(selectedDeviceIDs.isEmpty)
-        _ = selectionSink
     }
 
     private func makePriority() -> MicrophoneDevicePriority {
