@@ -151,6 +151,16 @@ struct SettingsArchiveMetadata: Decodable {
     let durationMs: Int?
     /// The slice of that audio handed to speech-to-text.
     let transcribedDurationMs: Int?
+    let inputDeviceName: String?
+    let provenance: RecordingModelProvenance?
+
+    struct RecordingModelProvenance: Decodable {
+        let whisperModelPath: String?
+
+        enum CodingKeys: String, CodingKey {
+            case whisperModelPath = "whisper_model_path"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -158,6 +168,8 @@ struct SettingsArchiveMetadata: Decodable {
         case source
         case durationMs = "duration_ms"
         case transcribedDurationMs = "transcribed_duration_ms"
+        case inputDeviceName = "input_device_name"
+        case provenance
     }
 
     /// True when this archive is an ask exchange rather than an F5 dictation.

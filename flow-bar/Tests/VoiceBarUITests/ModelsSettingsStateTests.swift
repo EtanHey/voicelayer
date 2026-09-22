@@ -101,6 +101,29 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertTrue(state.isBusy)
     }
 
+    func testPolishControlsRequireAuthoritativeHealthAndClearOnDisconnect() {
+        let voiceState = VoiceState()
+        voiceState.setConnectionStatus(true)
+        voiceState.handleEvent(Self.availableHealth)
+        XCTAssertNil(voiceState.modelsSettingsState.polishControls)
+
+        var health = Self.availableHealth
+        health["polish_controls"] = [
+            "model_polish": ["source": "environment", "raw": "shadow", "effective": "shadow"],
+            "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
+            "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
+            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
+        ]
+        voiceState.handleEvent(health)
+        XCTAssertEqual(voiceState.modelsSettingsState.polishControls?.modelPolish.effective, .shadow)
+        XCTAssertEqual(voiceState.modelsSettingsState.polishControls?.modelPolish.source, .environment)
+        XCTAssertEqual(voiceState.modelsSettingsState.polishControls?.outroGate.effective, true)
+        XCTAssertEqual(voiceState.modelsSettingsState.polishControls?.smartChunks.effective, false)
+
+        voiceState.setConnectionStatus(false)
+        XCTAssertNil(voiceState.modelsSettingsState.polishControls)
+    }
+
     private static let availableHealth: [String: Any] = [
         "type": "health",
         "recording_state": "idle",

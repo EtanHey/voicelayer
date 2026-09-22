@@ -73,10 +73,29 @@ public typealias AsyncDictationInsertionHandler = (
 public struct RecentTranscriptionEntry: Codable, Equatable {
     public var text: String
     public var recordingPath: String?
+    public var dictationReceipt: DictationReceipt?
 
-    public init(text: String, recordingPath: String? = nil) {
+    public init(
+        text: String,
+        recordingPath: String? = nil,
+        dictationReceipt: DictationReceipt? = nil
+    ) {
         self.text = text
         self.recordingPath = recordingPath
+        self.dictationReceipt = dictationReceipt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case recordingPath
+        case dictationReceipt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+        recordingPath = try container.decodeIfPresent(String.self, forKey: .recordingPath)
+        dictationReceipt = try? container.decode(DictationReceipt.self, forKey: .dictationReceipt)
     }
 }
 
@@ -241,6 +260,8 @@ public final class VoiceState {
     // capture path is live. Only the daemon's first `audio_level` frame is.
     // `.recording` + false = booting; `.recording` + true = live.
     public private(set) var captureLive = false
+    /// Presentation-only guard for the brief idle frame before playback hands off to capture.
+    public private(set) var isRecordingHandoffPending = false
     public var recordingTimingClock: () -> TimeInterval = {
         ProcessInfo.processInfo.systemUptime
     }
@@ -319,6 +340,10 @@ public final class VoiceState {
         }
     }
 
+    public private(set) var latestDictationInsertionStatus: DictationInsertionStatus = .unverified
+    public private(set) var lastDictationCardEntry: RecentTranscriptionEntry?
+    private var latestDictationOperationID: UUID?
+
     /// Recent transcription text projection kept for older menu and hotkey paths.
     public var recentTranscriptions: [String] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != recentTranscriptions.isEmpty) }
@@ -334,6 +359,8 @@ public final class VoiceState {
             }
         }
     }
+
+    public private(set) var remoteSTTConfigured: Bool?
 
     public var transcriptionVocabularyTerms: [String] = [] {
         didSet {
@@ -618,6 +645,7 @@ public final class VoiceState {
             recentTranscriptionEntriesLoader(),
             fallbackTexts: recentTranscriptionsLoader()
         )
+        lastDictationCardEntry = recentTranscriptionEntries.first { $0.dictationReceipt != nil }
         recentTranscriptions = recentTranscriptionEntries.map(\.text)
         transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
         transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
@@ -803,6 +831,7 @@ public final class VoiceState {
         resetAudioLevels()
         hotkeyPhase = .idle
         mode = .disconnected
+        isRecordingHandoffPending = false
         onModeChange?(.disconnected)
         collapseTimer?.cancel()
         isCollapsed = false
@@ -1125,6 +1154,7 @@ public final class VoiceState {
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
+                isRecordingHandoffPending = false
                 let startsNewRecording = mode != .recording
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 // AIDEV-NOTE: `bar_owned` is optional on the wire. Only explicit `true` confirms
@@ -1244,6 +1274,7 @@ public final class VoiceState {
                 }
                 let recordingPath = (event["recording_path"] as? String)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+                let normalizedRecordingPath = recordingPath?.isEmpty == false ? recordingPath : nil
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
                     if isPartial {
@@ -1258,15 +1289,24 @@ public final class VoiceState {
                     return
                 }
 
+                let isHistoryRetranscription = normalizedRecordingPath.map {
+                    historyRetranscriptionRequest.suppressesPaste(for: $0)
+                } ?? false
+                let dictationReceipt = normalizedRecordingPath != nil && !isHistoryRetranscription
+                    ? DictationReceipt.parse(event["dictation_receipt"])
+                    : nil
+
                 if scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
                     trimmed,
-                    recordingPath: recordingPath?.isEmpty == false ? recordingPath : nil
+                    recordingPath: normalizedRecordingPath,
+                    dictationReceipt: dictationReceipt
                 ) {
                     return
                 }
                 handleFinalTranscription(
                     trimmed,
-                    recordingPath: recordingPath?.isEmpty == false ? recordingPath : nil
+                    recordingPath: normalizedRecordingPath,
+                    dictationReceipt: dictationReceipt
                 )
             }
 
@@ -1321,6 +1361,7 @@ public final class VoiceState {
         case "health":
             let status = ModelsSettingsState(healthEvent: event)
             modelsSettingsState = status.settingBusy(status.isBusy || Self.blocksModelsEffort(mode))
+            remoteSTTConfigured = event["remote_stt_configured"] as? Bool
 
         case "command_mode":
             handleCommandModeEvent(event)
@@ -1427,6 +1468,7 @@ public final class VoiceState {
         let previous = isConnected
         isConnected = connected
         guard previous != connected else { return }
+        remoteSTTConfigured = nil
 
         onConnectionChange?(connected)
 
@@ -1466,6 +1508,7 @@ public final class VoiceState {
         hotkeyPhase = .idle
         resetAudioLevels()
         mode = .disconnected
+        isRecordingHandoffPending = false
         onModeChange?(.disconnected)
         collapseTimer?.cancel()
         isCollapsed = false
@@ -1585,19 +1628,39 @@ public final class VoiceState {
         }
     }
 
-    private func rememberRecentTranscription(_ text: String, recordingPath: String? = nil) {
+    private func rememberRecentTranscription(
+        _ text: String,
+        recordingPath: String? = nil,
+        dictationReceipt: DictationReceipt? = nil,
+        preservingExistingReceipt: Bool = false
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         let trimmedPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedPath = trimmedPath?.isEmpty == false ? trimmedPath : nil
-        let entry = RecentTranscriptionEntry(text: trimmed, recordingPath: normalizedPath)
         if let normalizedPath,
            let existingIndex = recentTranscriptionEntries.firstIndex(where: { $0.recordingPath == normalizedPath }) {
+            let receipt = preservingExistingReceipt
+                ? recentTranscriptionEntries[existingIndex].dictationReceipt
+                : dictationReceipt
+            let entry = RecentTranscriptionEntry(
+                text: trimmed,
+                recordingPath: normalizedPath,
+                dictationReceipt: receipt
+            )
             recentTranscriptionEntries[existingIndex] = entry
         } else {
+            let entry = RecentTranscriptionEntry(
+                text: trimmed,
+                recordingPath: normalizedPath,
+                dictationReceipt: dictationReceipt
+            )
             recentTranscriptionEntries.removeAll { existing in
-                existing.text == trimmed || (normalizedPath != nil && existing.recordingPath == normalizedPath)
+                if let normalizedPath {
+                    return existing.recordingPath == normalizedPath
+                }
+                return existing.text == trimmed
             }
             recentTranscriptionEntries.insert(entry, at: 0)
         }
@@ -1685,7 +1748,11 @@ public final class VoiceState {
             let key = normalizedPath ?? text
             guard !seenKeys.contains(key) else { continue }
             seenKeys.insert(key)
-            unique.append(RecentTranscriptionEntry(text: text, recordingPath: normalizedPath))
+            unique.append(RecentTranscriptionEntry(
+                text: text,
+                recordingPath: normalizedPath,
+                dictationReceipt: entry.dictationReceipt
+            ))
             if unique.count == maxRecentTranscriptions {
                 break
             }
@@ -1760,6 +1827,7 @@ public final class VoiceState {
     }
 
     private func enterIdleState(clearQueue: Bool) {
+        isRecordingHandoffPending = false
         if clearQueue, mode == .speaking {
             let trimmed = statusText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
@@ -1795,6 +1863,7 @@ public final class VoiceState {
     /// material and its slots derive from the same collapsed presentation, so
     /// both disappear in one render transaction before recording is announced.
     private func enterPlaybackToRecordingTransition() {
+        isRecordingHandoffPending = true
         collapseTimer?.cancel()
         clearRetainedTeleprompter()
         statusText = ""
@@ -1895,7 +1964,8 @@ public final class VoiceState {
 
     private func scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
         _ text: String,
-        recordingPath: String?
+        recordingPath: String?,
+        dictationReceipt: DictationReceipt?
     ) -> Bool {
         guard mode == .transcribing, let transcribingStartedAt else { return false }
 
@@ -1910,19 +1980,35 @@ public final class VoiceState {
             guard let self, !Task.isCancelled else { return }
             deferredFinalTranscriptionTask = nil
             deferredFinalTranscriptionRecordingPath = nil
-            handleFinalTranscription(text, recordingPath: recordingPath)
+            handleFinalTranscription(
+                text,
+                recordingPath: recordingPath,
+                dictationReceipt: dictationReceipt
+            )
         }
         return true
     }
 
-    private func handleFinalTranscription(_ text: String, recordingPath: String? = nil) {
+    private func handleFinalTranscription(
+        _ text: String,
+        recordingPath: String? = nil,
+        dictationReceipt: DictationReceipt? = nil
+    ) {
         transcriptionTimeoutTask?.cancel()
         cancelDeferredFinalTranscription()
         transcribingStartedAt = nil
         transcribingStatusText = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         transcript = text
-        rememberRecentTranscription(text, recordingPath: recordingPath)
+        let wasHistoryRetranscription = recordingPath.map { path in
+            historyRetranscriptionRequest.suppressesPaste(for: path)
+        } ?? false
+        rememberRecentTranscription(
+            text,
+            recordingPath: recordingPath,
+            dictationReceipt: wasHistoryRetranscription ? nil : dictationReceipt,
+            preservingExistingReceipt: wasHistoryRetranscription
+        )
         if recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             onHistoryArchiveChange?()
         }
@@ -1935,9 +2021,6 @@ public final class VoiceState {
             "recordingPath": recordingPath ?? "nil",
         ])
 
-        let wasHistoryRetranscription = recordingPath.map { path in
-            historyRetranscriptionRequest.suppressesPaste(for: path)
-        } ?? false
         // AIDEV-NOTE: The effective remote-capture block is an independent second gate on top of
         // the classification fix in the "recording" handler. A remote-owned transcript belongs to
         // the blocked MCP caller; auto-pasting it leaks the answer into whatever app is frontmost
@@ -1953,6 +2036,19 @@ public final class VoiceState {
             pendingRecoveredTranscriptionPaste
                 && !remoteCaptureBlocksPaste
                 && !wasHistoryRetranscription
+        let normalizedRecordingPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cardIsThisDictation = !wasHistoryRetranscription && !remoteCaptureBlocksPaste
+            && (barInitiatedRecording || pendingRecoveredTranscriptionPaste || pendingRecordingIdleAfterFinal)
+            && recentTranscriptionEntries.first?.text == text.trimmingCharacters(in: .whitespacesAndNewlines)
+            && recentTranscriptionEntries.first?.recordingPath == (normalizedRecordingPath?.isEmpty == false
+                ? normalizedRecordingPath : nil)
+        let cardOperationID = cardIsThisDictation ? UUID() : nil
+        if let cardOperationID {
+            lastDictationCardEntry = recentTranscriptionEntries.first
+            latestDictationOperationID = cardOperationID
+            latestDictationInsertionStatus = shouldAutoPaste || shouldPasteRecoveredTranscription
+                ? .pending : .notInserted
+        }
         let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
         pendingRecordingIdleAfterFinal = false
         pendingRecoveredTranscriptionPaste = false
@@ -1966,9 +2062,19 @@ public final class VoiceState {
             barInitiatedRecording = false
             barInitiatedTimeout?.cancel()
             recordingIdleCleanupTask?.cancel()
-            pasteTranscript(text, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
+            pasteTranscript(
+                text,
+                for: resolvedPasteTarget(forRepaste: false),
+                plan: .autoPaste,
+                operationID: cardOperationID
+            )
         } else if shouldPasteRecoveredTranscription {
-            pasteTranscript(text, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
+            pasteTranscript(
+                text,
+                for: resolvedPasteTarget(forRepaste: true),
+                plan: .repaste,
+                operationID: cardOperationID
+            )
         }
 
         if shouldApplyPendingRecordingIdle, !shouldAutoPaste, !shouldPasteRecoveredTranscription {
@@ -2048,7 +2154,8 @@ public final class VoiceState {
         _ text: String,
         for targetApp: NSRunningApplication?,
         plan: VoicePastePlan,
-        allowAXInsertion: Bool = false
+        allowAXInsertion: Bool = false,
+        operationID: UUID? = nil
     ) {
         let recordStartTargetApp = frontmostAppOnRecordStart
         let insertionHandler = plan == .autoPaste ? recordStartInsertionHandler : nil
@@ -2069,7 +2176,8 @@ public final class VoiceState {
             recordStartInsertionHandler = nil
             finishPasteConfirmation(
                 outcome: pasteHandler(text) ? .pasted : .failed(Self.genericPasteFailureMessage),
-                text: text
+                text: text,
+                operationID: operationID
             )
             return
         } else {
@@ -2080,7 +2188,10 @@ public final class VoiceState {
                     "plan": String(describing: plan),
                     "hasCapturedInsertion": boolString(insertionHandler != nil),
                 ])
-                finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                finishPasteConfirmation(
+                    outcome: .failed(Self.genericPasteFailureMessage), text: text,
+                    operationID: operationID
+                )
                 return
             }
 
@@ -2110,7 +2221,10 @@ public final class VoiceState {
                         "plan": String(describing: plan),
                         "hasCapturedInsertion": boolString(capturedInsertionHandler != nil),
                     ])
-                    finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                    finishPasteConfirmation(
+                        outcome: .failed(Self.genericPasteFailureMessage), text: text,
+                        operationID: operationID
+                    )
                     return
                 }
 
@@ -2163,13 +2277,14 @@ public final class VoiceState {
                             text: text,
                             plan: plan,
                             targetBundleID: pasteTargetBundleID,
-                            source: "fresh"
+                            source: "fresh",
+                            operationID: operationID
                         )
                         if attempt == .started {
                             return
                         }
                         if attempt == .busy {
-                            rejectCompetingAXInsertion(text: text, plan: plan)
+                            rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
                             return
                         }
                     }
@@ -2180,20 +2295,21 @@ public final class VoiceState {
                             text: text,
                             plan: plan,
                             targetBundleID: pasteTargetBundleID,
-                            source: "captured"
+                            source: "captured",
+                            operationID: operationID
                         )
                         if attempt == .started {
                             return
                         }
                         if attempt == .busy {
-                            rejectCompetingAXInsertion(text: text, plan: plan)
+                            rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
                             return
                         }
                     }
 
                     if isAXInsertionInFlight,
                        activeAXInsertionTargetBundleID == pasteTargetBundleID {
-                        rejectCompetingAXInsertion(text: text, plan: plan)
+                        rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
                         return
                     }
 
@@ -2259,7 +2375,8 @@ public final class VoiceState {
                             pasted: typed,
                             plan: plan
                         ),
-                        text: deliveredText
+                        text: deliveredText,
+                        operationID: operationID
                     )
                 }
             }
@@ -2290,7 +2407,8 @@ public final class VoiceState {
         text: String,
         plan: VoicePastePlan,
         targetBundleID: String,
-        source: String
+        source: String,
+        operationID: UUID?
     ) -> AXInsertionAttempt {
         guard !isAXInsertionInFlight else {
             return .busy
@@ -2314,7 +2432,7 @@ public final class VoiceState {
                 "targetApp": targetBundleID,
                 "source": source,
             ])
-            finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
+            finishPasteConfirmation(outcome: .insertedAtCursor, text: text, operationID: operationID)
         }
 
         let started = handler(text) {
@@ -2353,7 +2471,8 @@ public final class VoiceState {
                 ])
                 finishPasteConfirmation(
                     outcome: .failed("Text insertion timed out"),
-                    text: text
+                    text: text,
+                    operationID: operationID
                 )
             }
             axInsertionWatchdog = watchdog
@@ -2365,14 +2484,19 @@ public final class VoiceState {
         return .started
     }
 
-    private func rejectCompetingAXInsertion(text: String, plan: VoicePastePlan) {
+    private func rejectCompetingAXInsertion(
+        text: String,
+        plan: VoicePastePlan,
+        operationID: UUID?
+    ) {
         logDiagnostic("paste_ax_insert_busy", details: [
             "plan": String(describing: plan),
             "textLength": String(text.count),
         ])
         finishPasteConfirmation(
             outcome: .failed("Text insertion already in progress"),
-            text: text
+            text: text,
+            operationID: operationID
         )
     }
 
@@ -2397,7 +2521,18 @@ public final class VoiceState {
         return lhs.processIdentifier == rhs.processIdentifier
     }
 
-    private func finishPasteConfirmation(outcome: VoicePasteOutcome, text: String) {
+    private func finishPasteConfirmation(
+        outcome: VoicePasteOutcome,
+        text: String,
+        operationID: UUID? = nil
+    ) {
+        if let operationID, operationID == latestDictationOperationID {
+            latestDictationInsertionStatus = switch outcome {
+            case .insertedAtCursor: .insertedAtCursor
+            case .pasted: .pasted
+            case .failed: .failed
+            }
+        }
         logDiagnostic("paste_confirmation", details: [
             "outcome": String(describing: outcome),
         ])

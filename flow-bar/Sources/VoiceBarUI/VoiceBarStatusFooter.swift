@@ -1,0 +1,82 @@
+import SwiftUI
+
+public struct VoiceBarFooterPresentation: Equatable {
+    public let status: String
+    public let privacy: String
+    public let isReady: Bool
+    public let isLocalOnly: Bool
+
+    public static func resolve(
+        isConnected: Bool,
+        mode: VoiceMode,
+        captureLive: Bool,
+        errorMessage: String?,
+        remoteSTTConfigured: Bool?,
+        hasFreshHealth: Bool = false
+    ) -> Self {
+        let status: String = if !isConnected || mode == .disconnected {
+            "Disconnected"
+        } else if mode == .error || errorMessage != nil {
+            "Error"
+        } else {
+            switch mode {
+            case .idle: hasFreshHealth ? "Ready" : "Starting…"
+            case .recording: captureLive ? "Recording" : "Starting microphone"
+            case .transcribing: "Transcribing"
+            case .speaking: "Speaking"
+            case .error: "Error"
+            case .disconnected: "Disconnected"
+            }
+        }
+
+        let privacy = switch remoteSTTConfigured {
+        case .some(false): "Only on this Mac"
+        case .some(true): "Remote speech backend configured"
+        case .none: "Processing location unavailable"
+        }
+        return Self(
+            status: status,
+            privacy: privacy,
+            isReady: status == "Ready",
+            isLocalOnly: remoteSTTConfigured == false
+        )
+    }
+
+    public static func resolve(state: VoiceState) -> Self {
+        resolve(
+            isConnected: state.isConnected,
+            mode: state.mode,
+            captureLive: state.captureLive,
+            errorMessage: state.errorMessage,
+            remoteSTTConfigured: state.remoteSTTConfigured,
+            hasFreshHealth: state.modelsSettingsState.availability == .available
+        )
+    }
+}
+
+public struct VoiceBarStatusFooter: View {
+    public let presentation: VoiceBarFooterPresentation
+
+    public init(presentation: VoiceBarFooterPresentation) {
+        self.presentation = presentation
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(presentation.isReady ? .green : .orange)
+                    .frame(width: 7, height: 7)
+                Text(presentation.status)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            Label(
+                presentation.privacy,
+                systemImage: presentation.isLocalOnly ? "lock" : "network"
+            )
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

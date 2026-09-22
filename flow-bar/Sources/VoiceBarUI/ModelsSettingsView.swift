@@ -62,6 +62,47 @@ public struct ModelsSettingsView: View {
                     Text(notice).font(.caption).foregroundStyle(.orange)
                 }
             }
+            Section("Dictation polish") {
+                if let controls = state.polishControls, state.availability == .available {
+                    LabeledContent("Model polish") {
+                        Text(controls.modelPolish.effective.displayName)
+                            .accessibilityIdentifier("models-polish-mode")
+                    }
+                    Text(
+                        "Off, Preview only, or On. Preview only runs model polish without applying its result; other transcription steps still run."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                    sourceLabel(controls.modelPolish)
+                    LabeledContent("Outro gate") {
+                        Text(controls.outroGate.effective ? "On" : "Off")
+                            .accessibilityIdentifier("models-outro-gate")
+                    }
+                    Text("Removes a hallucinated closing phrase like ‘Thank you.’")
+                        .font(.caption).foregroundStyle(.secondary)
+                    sourceLabel(controls.outroGate)
+                    LabeledContent("Smart chunks") {
+                        Text(controls.smartChunks.effective ? "On" : "Off")
+                            .accessibilityIdentifier("models-smart-chunks")
+                    }
+                    Text("Optional audio chunk placement.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    sourceLabel(controls.smartChunks)
+                    LabeledContent("Smart boundaries") {
+                        Text(controls.smartBoundaries.effective ? "On" : "Off")
+                            .accessibilityIdentifier("models-smart-boundaries")
+                    }
+                    Text("Optional sentence boundary detection.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    sourceLabel(controls.smartBoundaries)
+                    Text(
+                        "These values are read from the running daemon. Changing them requires restarting it while no recording is in progress."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Unavailable")
+                        .accessibilityIdentifier("models-polish-unavailable")
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -99,5 +140,10 @@ public struct ModelsSettingsView: View {
     private func value(_ value: String?, missing: String) -> String {
         guard state.availability == .available else { return availabilityLabel }
         return value ?? missing
+    }
+
+    private func sourceLabel(_ setting: PolishSetting<some Any>) -> some View {
+        Text(setting.source == .default ? "Default" : "Environment override")
+            .font(.caption).foregroundStyle(.secondary)
     }
 }
