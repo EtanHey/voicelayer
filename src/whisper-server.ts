@@ -261,6 +261,24 @@ export function whisperServerLaunchRecord(): WhisperServerLaunchRecord | null {
   return lastLaunchRecord;
 }
 
+/**
+ * Return launch provenance only while the recorded process is still the live
+ * listener on `port`. Health proves that some server answered; it does not
+ * prove that the historical launch record belongs to that server.
+ *
+ * Unlike launch ownership during startup, an empty listener probe is not
+ * accepted here: missing identity evidence must withhold display attribution.
+ */
+export function verifiedWhisperServerLaunchRecord(
+  port: number = DEFAULT_PORT,
+): WhisperServerLaunchRecord | null {
+  const record = lastLaunchRecord;
+  if (!record || !isPidAlive(record.pid)) return null;
+  const listeners = findPortListenerPids(port);
+  if (listeners.length === 0 || !listeners.includes(record.pid)) return null;
+  return record;
+}
+
 export function __clearWhisperServerLaunchRecordForTests(): void {
   lastLaunchRecord = null;
 }
@@ -491,6 +509,7 @@ export function readWhisperServerHelpText(
 export async function probeWhisperServerHealth(
   port: number = DEFAULT_PORT,
 ): Promise<boolean | null> {
+  if (testHooks.isServerHealthy) return testHooks.isServerHealthy(port);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT);
   try {
