@@ -13,6 +13,7 @@ import { LOCK_FILE, STOP_FILE, CANCEL_FILE, safeWriteFileSync } from "./paths";
 
 /** Maximum age for a lock before it's considered orphaned (5 minutes). */
 export const ORPHAN_TIMEOUT_MS = 5 * 60 * 1000;
+let voiceMaintenanceActive = false;
 
 export interface SessionLock {
   pid: number;
@@ -111,6 +112,9 @@ export function bookVoiceSession(sessionId?: string): {
   error?: string;
   lock?: SessionLock;
 } {
+  if (voiceMaintenanceActive) {
+    return { success: false, error: "whisper unload in progress" };
+  }
   // Clean stale locks first
   cleanStaleLock();
 
@@ -157,6 +161,7 @@ export function bookVoiceSession(sessionId?: string): {
  * Release the voice session lock. Only releases if we own it.
  */
 export function releaseVoiceSession(): void {
+  if (voiceMaintenanceActive) return;
   const lock = readLock();
   if (lock && lock.pid === process.pid) {
     try {
@@ -165,6 +170,20 @@ export function releaseVoiceSession(): void {
   }
   // Also clean stop signal
   clearStopSignal();
+}
+
+/** Hold the cross-process voice booking while an owned sidecar is stopping. */
+export function reserveVoiceMaintenance(): (() => void) | null {
+  if (voiceMaintenanceActive || isVoiceBooked().booked) return null;
+  if (!bookVoiceSession(`whisper-unload-${process.pid}`).success) return null;
+  voiceMaintenanceActive = true;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    voiceMaintenanceActive = false;
+    releaseVoiceSession();
+  };
 }
 
 /**

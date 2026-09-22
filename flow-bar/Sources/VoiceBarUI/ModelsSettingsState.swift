@@ -61,6 +61,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
         self.configuredEffort = configuredEffort
         activeEffort = (status["active_effort"] as? String).flatMap(VoiceBarPerformanceEffort.init)
         isBusy = healthEvent["recording_state"] as? String != "idle"
+            || (healthEvent["queue_depth"] as? Int ?? 0) > 0
         polishControls = PolishControlsState(healthEvent: healthEvent)
     }
 

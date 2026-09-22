@@ -152,6 +152,17 @@ describe("resident whisper model identity", () => {
     expect(status.active_effort).toBeNull();
   });
 
+  it("reports not loaded after an unavailable health probe and confirmed empty port", async () => {
+    __setWhisperServerTestHooksForTests({
+      findModel: () => configuredModel,
+      isServerHealthy: async () => null,
+      postUnloadListeners: () => [],
+    });
+    const status = await readWhisperModelStatus();
+    expect(status.residency).toBe("not_loaded");
+    expect(status.active_model).toBeNull();
+  });
+
   for (const adopted of [false, true]) {
     for (const elapsedMs of [31_000, 31_500]) {
       it(`keeps a healthy ${adopted ? "adopted" : "owned"} launch attributed at ${elapsedMs}ms`, async () => {

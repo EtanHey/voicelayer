@@ -21,6 +21,7 @@ import {
   hasStopSignal,
   clearStopSignal,
   ORPHAN_TIMEOUT_MS,
+  reserveVoiceMaintenance,
 } from "../session-booking";
 
 describe("session booking", () => {
@@ -33,6 +34,20 @@ describe("session booking", () => {
     expect(result.lock?.pid).toBe(process.pid);
     expect(result.lock?.sessionId).toBe("test-session");
     expect(existsSync(LOCK_FILE)).toBe(true);
+  });
+
+  it("reserves unload against new bookings and releases it afterward", () => {
+    const release = reserveVoiceMaintenance();
+    expect(release).toBeFunction();
+    expect(bookVoiceSession("recording").success).toBe(false);
+    expect(reserveVoiceMaintenance()).toBeNull();
+    release?.();
+    expect(bookVoiceSession("recording").success).toBe(true);
+  });
+
+  it("rejects maintenance while a voice session is booked", () => {
+    bookVoiceSession("recording");
+    expect(reserveVoiceMaintenance()).toBeNull();
   });
 
   it("returns already booked when same PID books again", () => {

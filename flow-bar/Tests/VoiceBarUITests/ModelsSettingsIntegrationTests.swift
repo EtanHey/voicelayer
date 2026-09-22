@@ -5,6 +5,28 @@ import XCTest
 
 @MainActor
 final class ModelsSettingsIntegrationTests: XCTestCase {
+    func testResidencyControlFollowsFreshHealthAndBusyState() throws {
+        let voiceState = VoiceState()
+        voiceState.setConnectionStatus(true)
+        voiceState.handleEvent(Self.availableHealth)
+        let host = NSHostingView(rootView: makeSettingsView(
+            voiceState: voiceState,
+            onSelectResidency: { _ in }
+        ))
+        host.frame = NSRect(origin: .zero, size: Self.productionHostSize)
+        settle(host)
+        let availablePixels = try renderedPixels(host)
+
+        voiceState.mode = .recording
+        settle(host)
+        XCTAssertNotEqual(try renderedPixels(host), availablePixels)
+
+        voiceState.setConnectionStatus(false)
+        settle(host)
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .unavailable)
+        XCTAssertNotEqual(try renderedPixels(host), availablePixels)
+    }
+
     func testProductionModelsViewRendersFreshPolishStatusAndClearsItOnDisconnect() throws {
         let voiceState = VoiceState()
         voiceState.setConnectionStatus(true)
@@ -120,7 +142,8 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
 
     private func makeSettingsView(
         voiceState: VoiceState,
-        onSelectEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in }
+        onSelectEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
+        onSelectResidency: ((VoiceModelResidency) -> Void)? = nil
     ) -> SettingsView {
         SettingsView(
             hotkeyEnabled: true,
@@ -133,6 +156,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
             onSelectPerformanceEffort: onSelectEffort,
             modelsStatus: { voiceState.modelsSettingsState },
             onRefreshModelsStatus: {},
+            onSelectResidency: onSelectResidency,
             vocabularyRevision: { 0 },
             initialTab: .models
         )
