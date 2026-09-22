@@ -31,7 +31,10 @@ function run(command: string[], env: Record<string, string> = {}) {
     stderr: "pipe",
     env: {
       ...process.env,
+      BREW_CASK_SYNC_BREW_BIN: "/nonexistent/voicelayer-test-brew",
+      BREW_CASK_SYNC_TEST_FORMULA_VERSION: "",
       VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "0",
+      VOICELAYER_UPDATE_TEST_PACKAGE_VERSION: "",
       ...env,
     },
   });
@@ -645,6 +648,44 @@ describe("voicelayer-update.sh", () => {
       expect(result.exitCode).toBe(0);
       expect(text(result.stdout)).not.toContain("UNEXPECTED BREW MUTATION");
     }
+  });
+
+  test("missing Homebrew makes formula sync a clean no-op", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'bcs_brew_bin() { return 1; }',
+      'unset BREW_CASK_SYNC_TEST_FORMULA_VERSION',
+      'update_formula',
+      'printf "CONTINUED\\n"',
+    ].join("; "), "_", updateScript], {
+      BREW_CASK_SYNC_TEST_FORMULA_VERSION: "",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("CONTINUED");
+    expect(text(result.stdout)).toContain("skipping formula upgrade");
+  });
+
+  test("absent Bun global package is unavailable without failing the summary", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'unset VOICELAYER_UPDATE_TEST_PACKAGE_VERSION',
+      'bun() { return 1; }',
+      'installed_package_version',
+      'printf "CONTINUED\\n"',
+    ].join("; "), "_", updateScript]);
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("CONTINUED");
+  });
+
+  test("installed formula upgrade failure remains fatal", () => {
+    const result = run(["bash", "-c", [
+      'source "$1"',
+      'bcs_formula_version() { printf "2.2.20\\n"; }',
+      'formula_offered_version() { printf "2.2.21\\n"; }',
+      'bcs_brew_run() { return 42; }',
+      'update_formula',
+    ].join("; "), "_", updateScript]);
+    expect(result.exitCode).not.toBe(0);
   });
 
   test("formula ahead of cask does not request a repeated upgrade", () => {

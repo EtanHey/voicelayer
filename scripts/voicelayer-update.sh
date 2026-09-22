@@ -525,7 +525,10 @@ print(f"{version}_{revision}" if revision else version)
 
 update_formula() {
     local installed offered
-    installed="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")"
+    if ! installed="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")"; then
+        log "Homebrew formula $VOICEBAR_FORMULA_NAME could not be queried; skipping formula upgrade."
+        return 0
+    fi
     if [[ -z "$installed" ]]; then
         log "Homebrew formula $VOICEBAR_FORMULA_NAME is not installed; skipping formula upgrade."
         return 0
@@ -547,11 +550,11 @@ installed_package_version() {
     elif command -v bun >/dev/null 2>&1; then
         bun pm ls -g 2>/dev/null | awk -v name="$PACKAGE_NAME" '
             index($0, name "@") { sub(".*" name "@", ""); print; exit }
-        '
+        ' || true
     elif command -v npm >/dev/null 2>&1; then
         npm list -g --depth=0 2>/dev/null | awk -v name="$PACKAGE_NAME" '
             index($0, name "@") { sub(".*" name "@", ""); print; exit }
-        '
+        ' || true
     fi
 }
 
