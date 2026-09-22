@@ -2468,6 +2468,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     aliases: []
                 )
             },
+            vocabularyRevision: { [weak self] in
+                self?.voiceState.transcriptionVocabularyRevision ?? 0
+            },
             onAddVocabularyAlias: { [weak self] correct, wrong in
                 self?.voiceState.addVocabularyAlias(
                     correct: correct,

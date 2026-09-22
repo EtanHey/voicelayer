@@ -292,7 +292,7 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(
-            source.contains(".onChange(of: vocabularyPreview())"),
+            source.contains(".onChange(of: vocabularyRevision())"),
             "Dictionary cards should reconcile with later daemon vocabulary snapshots"
         )
         XCTAssertTrue(

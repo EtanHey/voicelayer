@@ -47,6 +47,7 @@ enum SettingsArchiveScanner {
         var hasMore = false
 
         for dayURL in sortedDayURLs {
+            guard !Task.isCancelled else { break }
             let dayKey = dayURL.lastPathComponent
             guard let dayDate = parseDayKey(dayKey),
                   let entryURLs = try? fileManager.contentsOfDirectory(
@@ -65,6 +66,7 @@ enum SettingsArchiveScanner {
             var entries: [Entry] = []
             var reachedLimit = false
             for entryURL in candidates {
+                guard !Task.isCancelled else { break }
                 guard let entry = loadEntry(entryURL, dayKey, dayDate) else { continue }
                 if loadedEntryCount == boundedLimit {
                     // One entry past the limit materialized, so older entries genuinely exist.
@@ -80,6 +82,9 @@ enum SettingsArchiveScanner {
                 days.append(SettingsArchiveDayScan(dayKey: dayKey, date: dayDate, entries: entries))
             }
             if reachedLimit {
+                break
+            }
+            if Task.isCancelled {
                 break
             }
         }

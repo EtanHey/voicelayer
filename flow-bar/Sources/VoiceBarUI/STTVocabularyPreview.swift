@@ -1,6 +1,6 @@
 import Foundation
 
-public struct STTVocabularyAliasPreview: Codable, Equatable, Hashable {
+public struct STTVocabularyAliasPreview: Codable, Equatable, Hashable, Sendable {
     public var from: String
     public var to: String
 
@@ -10,7 +10,7 @@ public struct STTVocabularyAliasPreview: Codable, Equatable, Hashable {
     }
 }
 
-public struct STTDictionaryEntry: Codable, Equatable, Hashable {
+public struct STTDictionaryEntry: Codable, Equatable, Hashable, Sendable {
     public var canonical: String
     public var variants: [String]
 
@@ -20,7 +20,7 @@ public struct STTDictionaryEntry: Codable, Equatable, Hashable {
     }
 }
 
-public struct STTVocabularyPreview: Codable, Equatable {
+public struct STTVocabularyPreview: Codable, Equatable, Sendable {
     public var updatedAt: String?
     public var entries: [STTDictionaryEntry]
 
@@ -31,14 +31,14 @@ public struct STTVocabularyPreview: Codable, Equatable {
 
     public init(updatedAt: String?, promptTerms: [String], aliases: [STTVocabularyAliasPreview]) {
         self.updatedAt = updatedAt
-        var entries: [STTDictionaryEntry] = []
+        var accumulator = EntryAccumulator()
         for term in promptTerms {
-            Self.upsertEntry(canonical: term, in: &entries)
+            accumulator.upsertEntry(canonical: term)
         }
         for alias in aliases {
-            Self.upsertVariant(alias.from, canonical: alias.to, in: &entries)
+            accumulator.upsertVariant(alias.from, canonical: alias.to)
         }
-        self.entries = entries
+        entries = accumulator.entries
     }
 
     public enum CodingKeys: String, CodingKey {
@@ -57,14 +57,14 @@ public struct STTVocabularyPreview: Codable, Equatable {
         }
         let promptTerms = try container.decodeIfPresent([String].self, forKey: .promptTerms) ?? []
         let aliases = try container.decodeIfPresent([STTVocabularyAliasPreview].self, forKey: .aliases) ?? []
-        var migrated: [STTDictionaryEntry] = []
+        var accumulator = EntryAccumulator()
         for term in promptTerms {
-            Self.upsertEntry(canonical: term, in: &migrated)
+            accumulator.upsertEntry(canonical: term)
         }
         for alias in aliases {
-            Self.upsertVariant(alias.from, canonical: alias.to, in: &migrated)
+            accumulator.upsertVariant(alias.from, canonical: alias.to)
         }
-        entries = migrated
+        entries = accumulator.entries
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -84,39 +84,86 @@ public struct STTVocabularyPreview: Codable, Equatable {
     }
 
     private static func normalizedEntries(_ input: [STTDictionaryEntry]) -> [STTDictionaryEntry] {
-        var entries: [STTDictionaryEntry] = []
+        var accumulator = EntryAccumulator()
         for entry in input {
-            upsertEntry(canonical: entry.canonical, in: &entries)
+            accumulator.upsertEntry(canonical: entry.canonical)
             for variant in entry.variants {
-                upsertVariant(variant, canonical: entry.canonical, in: &entries)
+                accumulator.upsertVariant(variant, canonical: entry.canonical)
             }
         }
-        return entries
+        return accumulator.entries
     }
 
-    private static func upsertEntry(canonical: String, in entries: inout [STTDictionaryEntry]) {
-        let trimmed = canonical.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard !entries.contains(where: { $0.canonical.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
-            return
+    private struct EntryAccumulator {
+        private(set) var entries: [STTDictionaryEntry] = []
+        private var canonicalIndexes: [String: Int] = [:]
+        private var variantKeys: [Set<String>] = []
+
+        mutating func upsertEntry(canonical: String) {
+            _ = index(for: canonical)
         }
-        entries.append(STTDictionaryEntry(canonical: trimmed, variants: []))
+
+        mutating func upsertVariant(_ variant: String, canonical: String) {
+            let trimmedVariant = variant.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedVariant.isEmpty, let entryIndex = index(for: canonical) else { return }
+            let key = aliasKey(trimmedVariant)
+            guard key != aliasKey(entries[entryIndex].canonical) else { return }
+            guard variantKeys[entryIndex].insert(key).inserted else { return }
+            entries[entryIndex].variants.append(trimmedVariant)
+        }
+
+        private mutating func index(for canonical: String) -> Int? {
+            let trimmed = canonical.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let key = canonicalKey(trimmed)
+            if let existing = canonicalIndexes[key] {
+                return existing
+            }
+            let index = entries.count
+            entries.append(STTDictionaryEntry(canonical: trimmed, variants: []))
+            canonicalIndexes[key] = index
+            variantKeys.append([])
+            return index
+        }
+
+        private func canonicalKey(_ value: String) -> String {
+            value.folding(options: [.caseInsensitive, .widthInsensitive], locale: .current)
+        }
+    }
+}
+
+public struct STTDictionaryPage: Equatable, Sendable {
+    public let entries: [STTDictionaryEntry]
+    public let totalMatchCount: Int
+
+    public var hasMore: Bool {
+        entries.count < totalMatchCount
+    }
+}
+
+public struct STTDictionaryIndex: Equatable, Sendable {
+    public let sortedEntries: [STTDictionaryEntry]
+
+    public init(entries: [STTDictionaryEntry]) {
+        sortedEntries = entries.sorted {
+            $0.canonical.localizedCaseInsensitiveCompare($1.canonical) == .orderedAscending
+        }
     }
 
-    private static func upsertVariant(_ variant: String, canonical: String, in entries: inout [STTDictionaryEntry]) {
-        let trimmedVariant = variant.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedCanonical = canonical.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedVariant.isEmpty, !trimmedCanonical.isEmpty else { return }
-        upsertEntry(canonical: trimmedCanonical, in: &entries)
-        guard let index = entries
-            .firstIndex(where: { $0.canonical.localizedCaseInsensitiveCompare(trimmedCanonical) == .orderedSame })
-        else {
-            return
+    public func page(matching query: String, limit: Int) -> STTDictionaryPage {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matches: [STTDictionaryEntry] = if trimmed.isEmpty {
+            sortedEntries
+        } else {
+            sortedEntries.filter { entry in
+                entry.canonical.localizedCaseInsensitiveContains(trimmed) ||
+                    entry.variants.contains { $0.localizedCaseInsensitiveContains(trimmed) }
+            }
         }
-        let variantKey = aliasKey(trimmedVariant)
-        guard variantKey != aliasKey(entries[index].canonical) else { return }
-        guard !entries[index].variants.contains(where: { aliasKey($0) == variantKey }) else { return }
-        entries[index].variants.append(trimmedVariant)
+        return STTDictionaryPage(
+            entries: Array(matches.prefix(max(0, limit))),
+            totalMatchCount: matches.count
+        )
     }
 }
 

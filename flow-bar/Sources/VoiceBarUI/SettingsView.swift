@@ -214,6 +214,7 @@ public struct SettingsView: View {
     public let performanceEffortNotice: () -> String?
     public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
     public let vocabularyPreview: () -> STTVocabularyPreview
+    public let vocabularyRevision: () -> UInt64
     public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
     public let onAddPromptTerm: (String) -> Void
@@ -238,6 +239,7 @@ public struct SettingsView: View {
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
+    private static let dictionaryPageSize = 100
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
@@ -261,7 +263,9 @@ public struct SettingsView: View {
     @State private var askHistoryRefreshTask: Task<Void, Never>?
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
+    @State private var dictionaryVisibleLimit = Self.dictionaryPageSize
     @State private var localEntries: [STTDictionaryEntry]
+    @State private var dictionaryIndex: STTDictionaryIndex
     @State private var editingCanonical: String?
     @State private var editTermText = ""
     @State private var addingVariantFor: String?
@@ -288,6 +292,7 @@ public struct SettingsView: View {
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
+        vocabularyRevision: @escaping () -> UInt64 = { 0 },
         onAddVocabularyAlias: @escaping (String, String) -> Void = { _, _ in },
         onRemoveVocabularyAlias: @escaping (STTVocabularyAliasPreview) -> Void = { _ in },
         onAddPromptTerm: @escaping (String) -> Void = { _ in },
@@ -333,6 +338,7 @@ public struct SettingsView: View {
         self.performanceEffortNotice = performanceEffortNotice
         self.onSelectPerformanceEffort = onSelectPerformanceEffort
         self.vocabularyPreview = vocabularyPreview
+        self.vocabularyRevision = vocabularyRevision
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
         self.onAddPromptTerm = onAddPromptTerm
@@ -385,6 +391,7 @@ public struct SettingsView: View {
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialVocabulary.entries)
+        _dictionaryIndex = State(initialValue: STTDictionaryIndex(entries: initialVocabulary.entries))
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
                 ? initialAnchorMode
@@ -409,16 +416,20 @@ public struct SettingsView: View {
         }
         .frame(width: 520, height: 620)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: vocabularyPreview()) { _, preview in
-            reconcileLocalEntries(with: preview.entries)
+        .onChange(of: vocabularyRevision()) {
+            reconcileLocalEntries(with: vocabularyPreview().entries)
         }
         .onChange(of: selectedTab) { _, tab in
             if tab == .history {
                 switch selectedHistoryScope {
                 case .recording:
-                    requestHistoryReload()
+                    if !isHistoryLoading {
+                        requestHistoryReload()
+                    }
                 case .ask:
-                    requestAskHistoryReload()
+                    if !isAskHistoryLoading {
+                        requestAskHistoryReload()
+                    }
                 }
             } else {
                 historyPlayback.stop()
@@ -655,9 +666,13 @@ public struct SettingsView: View {
             historyPlayback.stop()
             switch scope {
             case .recording:
-                requestHistoryReload()
+                if !isHistoryLoading {
+                    requestHistoryReload()
+                }
             case .ask:
-                requestAskHistoryReload()
+                if !isAskHistoryLoading {
+                    requestAskHistoryReload()
+                }
             }
         }
         .onDisappear {
@@ -754,7 +769,7 @@ public struct SettingsView: View {
                 }
             }
             .onAppear {
-                if historyDayGroups.isEmpty {
+                if historyDayGroups.isEmpty, !isHistoryLoading {
                     requestHistoryReload(scrollProxy: proxy, animated: false)
                 }
             }
@@ -839,7 +854,7 @@ public struct SettingsView: View {
                 }
             }
             .onAppear {
-                if askHistoryDayGroups.isEmpty {
+                if askHistoryDayGroups.isEmpty, !isAskHistoryLoading {
                     requestAskHistoryReload(scrollProxy: proxy, animated: false)
                 }
             }
@@ -1162,15 +1177,34 @@ public struct SettingsView: View {
 
     private var dictionaryTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            let page = dictionaryIndex.page(
+                matching: dictionarySearch,
+                limit: dictionaryVisibleLimit
+            )
+            LazyVStack(alignment: .leading, spacing: 14) {
                 addTermRow
                 searchRow
 
-                ForEach(localVocabularyPreview.filteredEntries(matching: dictionarySearch), id: \.canonical) { entry in
+                ForEach(page.entries, id: \.canonical) { entry in
                     dictionaryEntryCard(entry)
+                }
+
+                if page.hasMore {
+                    Button("Show \(min(Self.dictionaryPageSize, page.totalMatchCount - page.entries.count)) more") {
+                        dictionaryVisibleLimit += Self.dictionaryPageSize
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("Show more dictionary entries")
                 }
             }
             .padding(18)
+        }
+        .onChange(of: dictionarySearch) {
+            dictionaryVisibleLimit = Self.dictionaryPageSize
+        }
+        .onChange(of: localEntries) { _, entries in
+            dictionaryIndex = STTDictionaryIndex(entries: entries)
         }
     }
 
@@ -1435,14 +1469,13 @@ public struct SettingsView: View {
         let loader = historyPage
         isHistoryLoading = true
         historyRefreshTask?.cancel()
-        historyRefreshTask = Task {
+        historyRefreshTask = Task.detached(priority: .utility) {
             if debounce {
                 try? await Task.sleep(for: .milliseconds(300))
             }
             guard !Task.isCancelled else { return }
-            let page = await Task.detached(priority: .utility) {
-                loader(limit)
-            }.value
+            let page = loader(limit)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard generation == historyLoadGeneration, !Task.isCancelled else { return }
                 applyHistoryPage(page)
@@ -1507,14 +1540,13 @@ public struct SettingsView: View {
         let loader = askHistoryPage
         isAskHistoryLoading = true
         askHistoryRefreshTask?.cancel()
-        askHistoryRefreshTask = Task {
+        askHistoryRefreshTask = Task.detached(priority: .utility) {
             if debounce {
                 try? await Task.sleep(for: .milliseconds(300))
             }
             guard !Task.isCancelled else { return }
-            let page = await Task.detached(priority: .utility) {
-                loader(limit)
-            }.value
+            let page = loader(limit)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard generation == askHistoryLoadGeneration, !Task.isCancelled else { return }
                 applyAskHistoryPage(page)
@@ -1670,10 +1702,6 @@ public struct SettingsView: View {
         case .accurate:
             "Accurate"
         }
-    }
-
-    private var localVocabularyPreview: STTVocabularyPreview {
-        STTVocabularyPreview(updatedAt: nil, entries: localEntries)
     }
 
     private var hasPendingDictionaryEdit: Bool {

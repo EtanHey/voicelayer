@@ -204,6 +204,25 @@ final class SettingsHistoryArchiveTests: XCTestCase {
         XCTAssertEqual(groups.flatMap(\.entries).map(\.transcript), ["Complete clip"])
     }
 
+    func testCancelledBackgroundScanDoesNotMaterializeStaleEntries() async throws {
+        try writeRecording(
+            day: "2026-06-25",
+            id: "2026-06-25T07-05-00-000Z-complete",
+            createdAt: "2026-06-25T07:05:00.000Z",
+            transcript: "Complete clip"
+        )
+
+        let root = try XCTUnwrap(tempRoot)
+        let page = await Task.detached {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return SettingsHistoryArchive.loadPage(from: root)
+        }.value
+
+        XCTAssertEqual(page.loadedEntryCount, 0)
+        XCTAssertTrue(page.groups.isEmpty)
+        XCTAssertFalse(page.hasMore)
+    }
+
     private func writeRecording(
         day: String,
         id: String,
