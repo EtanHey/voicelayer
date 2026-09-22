@@ -1,3 +1,4 @@
+import AppKit
 @testable import VoiceBarUI
 import XCTest
 
@@ -51,6 +52,85 @@ final class DictationReceiptTests: XCTestCase {
         XCTAssertEqual(receipt.processingDurationMilliseconds, 375)
         XCTAssertEqual(receipt.audioDuration, 1.25, accuracy: 0.0001)
         XCTAssertEqual(receipt.processingDuration, 0.375, accuracy: 0.0001)
+    }
+
+    func testCardTimingUsesMeasuredDurationsAndOmitsMissingReceipt() throws {
+        let receipt = try XCTUnwrap(DictationReceipt(
+            audioDurationMilliseconds: 19800,
+            processingDurationMilliseconds: 900
+        ))
+        XCTAssertEqual(DictationCard.timingLabel(receipt), "19.8 s audio · 0.9 s processing")
+        XCTAssertNil(DictationCard.timingLabel(nil))
+    }
+
+    func testPasteOutcomeUsesActualCompletionAndLateCompletionCannotMarkNewDictation() {
+        let state = state()
+        state.sendCommand = { _ in }
+        state.frontmostAppProvider = { NSRunningApplication.current }
+        state.targetAppActivator = { _ in }
+        state.pasteScheduler = { _, block in block() }
+        var finishFirst: (() -> Void)?
+        state.asyncDictationInsertionHandlerProvider = {
+            { _, completion in
+                finishFirst = completion
+                return true
+            }
+        }
+
+        state.record()
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        state.handleEvent(finalEvent(text: "Same words", path: firstPath))
+        XCTAssertEqual(state.latestDictationInsertionStatus, .pending)
+
+        state.pasteHandler = { _ in false }
+        state.mode = .idle
+        state.record()
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        XCTAssertTrue(state.barInitiatedRecordingForTesting)
+        state.handleEvent(finalEvent(text: "Same words", path: secondPath))
+        XCTAssertEqual(state.recentTranscriptionEntries.map(\.recordingPath), [secondPath, firstPath])
+        XCTAssertEqual(state.latestDictationInsertionStatus, .failed)
+        finishFirst?()
+        XCTAssertEqual(state.latestDictationInsertionStatus, .failed)
+        XCTAssertEqual(state.lastDictationCardEntry?.recordingPath, secondPath)
+    }
+
+    func testCursorInsertionAndRemoteFinalKeepTruthfulLocalCard() {
+        let state = state()
+        state.sendCommand = { _ in }
+        state.frontmostAppProvider = { NSRunningApplication.current }
+        state.targetAppActivator = { _ in }
+        state.pasteScheduler = { _, block in block() }
+        state.asyncDictationInsertionHandlerProvider = {
+            { _, completion in
+                completion()
+                return true
+            }
+        }
+
+        state.record()
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        state.handleEvent(finalEvent(text: "Local words", path: firstPath))
+        XCTAssertEqual(state.latestDictationInsertionStatus, .insertedAtCursor)
+        XCTAssertEqual(state.lastDictationCardEntry?.recordingPath, firstPath)
+
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": false])
+        state.handleEvent(finalEvent(text: "Remote words", path: secondPath))
+        XCTAssertEqual(state.lastDictationCardEntry?.recordingPath, firstPath)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .insertedAtCursor)
+    }
+
+    func testFallbackPasteHasItsOwnWording() {
+        let state = state()
+        state.sendCommand = { _ in }
+        state.pasteHandler = { _ in true }
+        state.record()
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        state.handleEvent(finalEvent(path: firstPath))
+
+        XCTAssertEqual(state.latestDictationInsertionStatus, .pasted)
+        XCTAssertEqual(state.latestDictationInsertionStatus.label, "Pasted")
+        XCTAssertNotEqual(state.latestDictationInsertionStatus.label, "Inserted at your cursor")
     }
 
     func testReceiptRequiresFinalEventWithRecordingPath() {

@@ -2544,6 +2544,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.runRelaySetupAsync(completion: completion)
                     ?? completion("Relay setup failed: VoiceBar is not available.")
             },
+            lastDictationEntry: { [weak self] in
+                self?.voiceState.lastDictationCardEntry
+            },
+            lastDictationInsertionStatus: { [weak self] in
+                self?.voiceState.latestDictationInsertionStatus ?? .unverified
+            },
+            onCopyLastDictation: { [weak self] text in
+                self?.voiceState.copyTranscript(text)
+            },
             historyPage: { limit in SettingsHistoryArchive.loadPage(limit: limit) },
             onCopyHistoryTranscript: { [weak self] text in
                 self?.voiceState.copyTranscript(text)
