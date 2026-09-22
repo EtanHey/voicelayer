@@ -73,10 +73,29 @@ public typealias AsyncDictationInsertionHandler = (
 public struct RecentTranscriptionEntry: Codable, Equatable {
     public var text: String
     public var recordingPath: String?
+    public var dictationReceipt: DictationReceipt?
 
-    public init(text: String, recordingPath: String? = nil) {
+    public init(
+        text: String,
+        recordingPath: String? = nil,
+        dictationReceipt: DictationReceipt? = nil
+    ) {
         self.text = text
         self.recordingPath = recordingPath
+        self.dictationReceipt = dictationReceipt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case recordingPath
+        case dictationReceipt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+        recordingPath = try container.decodeIfPresent(String.self, forKey: .recordingPath)
+        dictationReceipt = try? container.decode(DictationReceipt.self, forKey: .dictationReceipt)
     }
 }
 
@@ -1238,6 +1257,7 @@ public final class VoiceState {
                 }
                 let recordingPath = (event["recording_path"] as? String)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+                let normalizedRecordingPath = recordingPath?.isEmpty == false ? recordingPath : nil
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
                     if isPartial {
@@ -1252,15 +1272,24 @@ public final class VoiceState {
                     return
                 }
 
+                let isHistoryRetranscription = normalizedRecordingPath.map {
+                    historyRetranscriptionRequest.suppressesPaste(for: $0)
+                } ?? false
+                let dictationReceipt = normalizedRecordingPath != nil && !isHistoryRetranscription
+                    ? DictationReceipt.parse(event["dictation_receipt"])
+                    : nil
+
                 if scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
                     trimmed,
-                    recordingPath: recordingPath?.isEmpty == false ? recordingPath : nil
+                    recordingPath: normalizedRecordingPath,
+                    dictationReceipt: dictationReceipt
                 ) {
                     return
                 }
                 handleFinalTranscription(
                     trimmed,
-                    recordingPath: recordingPath?.isEmpty == false ? recordingPath : nil
+                    recordingPath: normalizedRecordingPath,
+                    dictationReceipt: dictationReceipt
                 )
             }
 
@@ -1575,19 +1604,39 @@ public final class VoiceState {
         }
     }
 
-    private func rememberRecentTranscription(_ text: String, recordingPath: String? = nil) {
+    private func rememberRecentTranscription(
+        _ text: String,
+        recordingPath: String? = nil,
+        dictationReceipt: DictationReceipt? = nil,
+        preservingExistingReceipt: Bool = false
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         let trimmedPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedPath = trimmedPath?.isEmpty == false ? trimmedPath : nil
-        let entry = RecentTranscriptionEntry(text: trimmed, recordingPath: normalizedPath)
         if let normalizedPath,
            let existingIndex = recentTranscriptionEntries.firstIndex(where: { $0.recordingPath == normalizedPath }) {
+            let receipt = preservingExistingReceipt
+                ? recentTranscriptionEntries[existingIndex].dictationReceipt
+                : dictationReceipt
+            let entry = RecentTranscriptionEntry(
+                text: trimmed,
+                recordingPath: normalizedPath,
+                dictationReceipt: receipt
+            )
             recentTranscriptionEntries[existingIndex] = entry
         } else {
+            let entry = RecentTranscriptionEntry(
+                text: trimmed,
+                recordingPath: normalizedPath,
+                dictationReceipt: dictationReceipt
+            )
             recentTranscriptionEntries.removeAll { existing in
-                existing.text == trimmed || (normalizedPath != nil && existing.recordingPath == normalizedPath)
+                if let normalizedPath {
+                    return existing.recordingPath == normalizedPath
+                }
+                return existing.text == trimmed
             }
             recentTranscriptionEntries.insert(entry, at: 0)
         }
@@ -1674,7 +1723,11 @@ public final class VoiceState {
             let key = normalizedPath ?? text
             guard !seenKeys.contains(key) else { continue }
             seenKeys.insert(key)
-            unique.append(RecentTranscriptionEntry(text: text, recordingPath: normalizedPath))
+            unique.append(RecentTranscriptionEntry(
+                text: text,
+                recordingPath: normalizedPath,
+                dictationReceipt: entry.dictationReceipt
+            ))
             if unique.count == maxRecentTranscriptions {
                 break
             }
@@ -1884,7 +1937,8 @@ public final class VoiceState {
 
     private func scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
         _ text: String,
-        recordingPath: String?
+        recordingPath: String?,
+        dictationReceipt: DictationReceipt?
     ) -> Bool {
         guard mode == .transcribing, let transcribingStartedAt else { return false }
 
@@ -1899,19 +1953,35 @@ public final class VoiceState {
             guard let self, !Task.isCancelled else { return }
             deferredFinalTranscriptionTask = nil
             deferredFinalTranscriptionRecordingPath = nil
-            handleFinalTranscription(text, recordingPath: recordingPath)
+            handleFinalTranscription(
+                text,
+                recordingPath: recordingPath,
+                dictationReceipt: dictationReceipt
+            )
         }
         return true
     }
 
-    private func handleFinalTranscription(_ text: String, recordingPath: String? = nil) {
+    private func handleFinalTranscription(
+        _ text: String,
+        recordingPath: String? = nil,
+        dictationReceipt: DictationReceipt? = nil
+    ) {
         transcriptionTimeoutTask?.cancel()
         cancelDeferredFinalTranscription()
         transcribingStartedAt = nil
         transcribingStatusText = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         transcript = text
-        rememberRecentTranscription(text, recordingPath: recordingPath)
+        let wasHistoryRetranscription = recordingPath.map { path in
+            historyRetranscriptionRequest.suppressesPaste(for: path)
+        } ?? false
+        rememberRecentTranscription(
+            text,
+            recordingPath: recordingPath,
+            dictationReceipt: wasHistoryRetranscription ? nil : dictationReceipt,
+            preservingExistingReceipt: wasHistoryRetranscription
+        )
         if recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             onHistoryArchiveChange?()
         }
@@ -1924,9 +1994,6 @@ public final class VoiceState {
             "recordingPath": recordingPath ?? "nil",
         ])
 
-        let wasHistoryRetranscription = recordingPath.map { path in
-            historyRetranscriptionRequest.suppressesPaste(for: path)
-        } ?? false
         // AIDEV-NOTE: The effective remote-capture block is an independent second gate on top of
         // the classification fix in the "recording" handler. A remote-owned transcript belongs to
         // the blocked MCP caller; auto-pasting it leaks the answer into whatever app is frontmost

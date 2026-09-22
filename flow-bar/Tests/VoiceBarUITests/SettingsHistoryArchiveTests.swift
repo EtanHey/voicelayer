@@ -99,6 +99,25 @@ final class SettingsHistoryArchiveTests: XCTestCase {
         )
     }
 
+    func testRecordingAttributionUsesStoredModelAndOmitsMissingDevice() throws {
+        try writeRecording(
+            day: "2026-06-25",
+            id: "2026-06-25T21-30-00-000Z-latest",
+            createdAt: "2026-06-25T21:30:00.000Z",
+            transcript: "Stored clip"
+        )
+        let metadataURL = tempRoot
+            .appendingPathComponent("2026-06-25/2026-06-25T21-30-00-000Z-latest/metadata.json")
+        var metadata = try XCTUnwrap(JSONSerialization
+            .jsonObject(with: Data(contentsOf: metadataURL)) as? [String: Any])
+        metadata["provenance"] = ["whisper_model_path": "/models/ggml-large-v3-turbo.bin"]
+        try JSONSerialization.data(withJSONObject: metadata).write(to: metadataURL)
+
+        let entry = try XCTUnwrap(SettingsHistoryArchive.loadPage(from: tempRoot).groups.first?.entries.first)
+        XCTAssertEqual(entry.modelLabel, "ggml-large-v3-turbo")
+        XCTAssertNil(entry.inputDeviceLabel)
+    }
+
     func testRecordingHistoryExcludesVoiceAskArchives() throws {
         try writeRecording(
             day: "2026-08-01",

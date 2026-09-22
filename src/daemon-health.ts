@@ -1,4 +1,5 @@
 import type { WhisperModelStatus } from "./model-status";
+import { readPolishControlsStatus, type PolishControlsStatus } from "./polish-controls-status";
 
 /**
  * Daemon health tracking — uptime, connection count, ping/pong.
@@ -63,6 +64,7 @@ export function buildHealthResponse(health: {
   recording_state: "idle" | "recording" | "transcribing";
   model_status: WhisperModelStatus;
   remote_stt_configured: boolean;
+  polish_controls: PolishControlsStatus;
 } {
   const preference = (environment.QA_VOICE_STT_BACKEND ?? "auto").toLowerCase();
   return {
@@ -75,6 +77,7 @@ export function buildHealthResponse(health: {
     // from the daemon environment, even when a forced local mode currently
     // prevents selection, so the UI never overclaims local-only processing.
     remote_stt_configured: preference === "wispr" || Boolean(environment.QA_VOICE_WISPR_KEY),
+    polish_controls: readPolishControlsStatus(),
   };
 }
 

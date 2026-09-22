@@ -371,6 +371,7 @@ export interface HealthResponse {
   recording_state: "idle" | "recording" | "transcribing";
   model_status: WhisperModelStatus;
   remote_stt_configured: boolean;
+  polish_controls: import("./polish-controls-status").PolishControlsStatus;
 }
 
 export interface VocabListResponse {
