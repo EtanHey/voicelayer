@@ -58,7 +58,11 @@ public final class MicrophoneDevicePriority {
         let preferred = preferredUIDs
         let labels = knownLabels
         var rowUIDs = preferred
-        rowUIDs.append(contentsOf: connected.keys.filter { !rowUIDs.contains($0) })
+        var seenUIDs = Set(preferred)
+        for device in devices {
+            guard let uid = Self.normalizedUID(device.uid), seenUIDs.insert(uid).inserted else { continue }
+            rowUIDs.append(uid)
+        }
         rowUIDs.append(contentsOf: labels.keys
             .filter { !rowUIDs.contains($0) }
             .sorted { labels[$0, default: $0] < labels[$1, default: $1] })
