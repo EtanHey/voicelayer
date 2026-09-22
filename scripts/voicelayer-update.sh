@@ -48,7 +48,7 @@ NO_RELAUNCH=0
 VOICEBAR_HEALTH_MAX_ATTEMPTS=10
 VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=1
 VERIFY_FAILURES=0
-VOICEBAR_FORMULA_NAME="${VOICELAYER_UPDATE_VOICEBAR_FORMULA_NAME:-voicelayer}"
+VOICEBAR_FORMULA_NAME="${VOICELAYER_UPDATE_VOICEBAR_FORMULA_NAME:-etanhey/layers/voicelayer}"
 VOICEBAR_CASK_TAP_BRANCH="${VOICELAYER_UPDATE_CASK_TAP_BRANCH:-main}"
 CASK_BACKUP_ROOT="${VOICELAYER_UPDATE_CASK_BACKUP_ROOT:-$HOME_DIR/Library/Application Support/VoiceBar/Backups}"
 MCP_SOCKET_PATH="${VOICELAYER_MCP_SOCKET_PATH:-${QA_VOICE_MCP_SOCKET_PATH:-/tmp/voicelayer-mcp.sock}}"
@@ -224,6 +224,12 @@ detect_install_type() {
         printf '%s\n' "$VOICELAYER_UPDATE_TEST_INSTALL_TYPE"
         return
     fi
+    case "$PACKAGE_ROOT" in
+        /opt/homebrew/Cellar/voicelayer/*/libexec/lib/node_modules/voicelayer-mcp|/usr/local/Cellar/voicelayer/*/libexec/lib/node_modules/voicelayer-mcp)
+            printf 'brew-formula\n'
+            return
+            ;;
+    esac
     local git_root
     local package_root_real
     local git_root_real
@@ -245,6 +251,9 @@ package_update_label() {
     case "$(detect_install_type)" in
         git-checkout)
             printf 'git pull --ff-only && bun install\n'
+            ;;
+        brew-formula)
+            printf '%s upgrade --formula %s\n' "$(bcs_brew_bin)" "$VOICEBAR_FORMULA_NAME"
             ;;
         *)
             if command -v bun >/dev/null 2>&1; then
@@ -274,6 +283,9 @@ voicebar_app_update_mode() {
     case "$(detect_install_type)" in
         git-checkout)
             printf 'local-build\n'
+            ;;
+        brew-formula)
+            printf 'cask-sync\n'
             ;;
         *)
             printf 'cask-sync\n'
@@ -355,6 +367,7 @@ print_plan() {
             log "  3. + $app_update (refresh the tap, detect drift, adopt with --force instead of a destructive upgrade)"
             ;;
     esac
+    log "     upgrade $VOICEBAR_FORMULA_NAME if the formula is installed and behind"
     log "  4. create/update $VENV_DIR and pull the Qwen3 model if missing"
     log "     $(qwen3_model_step_plan)"
     if [[ "$DATA_MODE" != "skip" ]]; then
@@ -481,6 +494,10 @@ update_package() {
             run_cmd git -C "$PACKAGE_ROOT" pull --ff-only
             run_cmd bun install --cwd "$PACKAGE_ROOT"
             ;;
+        brew-formula)
+            bcs_tap_update "$(bcs_cask_tap "$VOICEBAR_CASK_NAME")" "$VOICEBAR_CASK_TAP_BRANCH"
+            update_formula
+            ;;
         *)
             if command -v bun >/dev/null 2>&1; then
                 run_cmd bun update -g "$PACKAGE_NAME"
@@ -490,6 +507,52 @@ update_package() {
             fi
             ;;
     esac
+}
+
+formula_offered_version() {
+    if [[ -n "${VOICELAYER_UPDATE_TEST_FORMULA_OFFERED_VERSION+x}" ]]; then
+        printf '%s\n' "$VOICELAYER_UPDATE_TEST_FORMULA_OFFERED_VERSION"
+        return 0
+    fi
+    bcs_brew info --json=v2 --formula "$VOICEBAR_FORMULA_NAME" | python3 -c '
+import json, sys
+formula = json.load(sys.stdin)["formulae"][0]
+version = formula["versions"]["stable"]
+revision = formula.get("revision", 0)
+print(f"{version}_{revision}" if revision else version)
+'
+}
+
+update_formula() {
+    local installed offered
+    installed="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")"
+    if [[ -z "$installed" ]]; then
+        log "Homebrew formula $VOICEBAR_FORMULA_NAME is not installed; skipping formula upgrade."
+        return 0
+    fi
+    if ! offered="$(formula_offered_version)" || [[ -z "$offered" ]]; then
+        err "Cannot determine offered version for installed formula $VOICEBAR_FORMULA_NAME."
+        return 1
+    fi
+    if [[ "$installed" = "$offered" ]]; then
+        log "Homebrew formula $VOICEBAR_FORMULA_NAME is already at $installed."
+        return 0
+    fi
+    bcs_brew_run upgrade --formula "$VOICEBAR_FORMULA_NAME"
+}
+
+installed_package_version() {
+    if [[ -n "${VOICELAYER_UPDATE_TEST_PACKAGE_VERSION+x}" ]]; then
+        printf '%s\n' "$VOICELAYER_UPDATE_TEST_PACKAGE_VERSION"
+    elif command -v bun >/dev/null 2>&1; then
+        bun pm ls -g 2>/dev/null | awk -v name="$PACKAGE_NAME" '
+            index($0, name "@") { sub(".*" name "@", ""); print; exit }
+        '
+    elif command -v npm >/dev/null 2>&1; then
+        npm list -g --depth=0 2>/dev/null | awk -v name="$PACKAGE_NAME" '
+            index($0, name "@") { sub(".*" name "@", ""); print; exit }
+        '
+    fi
 }
 
 update_voicebar_app() {
@@ -515,9 +578,18 @@ verify_voicebar_hotkey_health() {
     local health_args=("$@")
     local health_script="$PACKAGE_ROOT/scripts/verify-voicebar-hotkey-health.sh"
     local attempt=1
+    local probe_output
 
     while [[ "$attempt" -le "$VOICEBAR_HEALTH_MAX_ATTEMPTS" ]]; do
-        if run_cmd bash "$health_script" "${health_args[@]+"${health_args[@]}"}"; then
+        if probe_output="$(run_cmd bash "$health_script" "${health_args[@]+"${health_args[@]}"}" 2>&1)"; then
+            log "$probe_output"
+            return 0
+        fi
+        log "$probe_output"
+        if [[ "$probe_output" == *"HOTKEY HEALTH FAILED: macOS Secure Input is held by PID "* ]]; then
+            local owner="${probe_output##*HOTKEY HEALTH FAILED: }"
+            owner="${owner%%; change focus*}"
+            log "WARNING: $owner. F5 won't work until that app releases Secure Input."
             return 0
         fi
         if [[ "$attempt" -lt "$VOICEBAR_HEALTH_MAX_ATTEMPTS" ]]; then
@@ -574,7 +646,7 @@ launchd_service_loaded() {
 }
 
 verify_voicebar_stack() {
-    local cask_name app_version cask_version formula_version offered
+    local cask_name app_version cask_version formula_version formula_offered package_version offered
     local expect_running=1
     VERIFY_FAILURES=0
 
@@ -586,10 +658,16 @@ verify_voicebar_stack() {
     app_version="$(bcs_app_bundle_version "$VOICEBAR_CANONICAL_APP")"
     cask_version="$(bcs_cask_registered_version "$cask_name")"
     formula_version="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")"
+    formula_offered=""
+    if [[ -n "$formula_version" ]]; then
+        formula_offered="$(formula_offered_version || true)"
+    fi
+    package_version="$(installed_package_version)"
     offered="$(bcs_tap_offered_version "$VOICEBAR_CASK_NAME")"
 
     log ""
     log "VoiceLayer sync summary"
+    log "  INFO  global package: $PACKAGE_NAME ${package_version:-Unavailable}"
 
     check_row "tap offer" "$([[ -n "$offered" ]] && printf 0 || printf 1)" \
         "${offered:-could not read the tapped cask}"
@@ -597,8 +675,12 @@ verify_voicebar_stack() {
         "${app_version:-not installed} ($VOICEBAR_CANONICAL_APP)"
     check_row "cask ledger" "$([[ -n "$cask_version" && ( -z "$offered" || "$cask_version" = "$offered" ) ]] && printf 0 || printf 1)" \
         "${cask_version:-not registered with brew}"
-    check_row "formula" "$([[ -n "$formula_version" && ( -z "$offered" || "$formula_version" = "$offered" ) ]] && printf 0 || printf 1)" \
-        "$VOICEBAR_FORMULA_NAME ${formula_version:-not installed}"
+    if [[ -n "$formula_version" ]]; then
+        check_row "formula" "$([[ -n "$formula_offered" && "$formula_version" = "$formula_offered" ]] && printf 0 || printf 1)" \
+            "${VOICEBAR_FORMULA_NAME##*/} $formula_version (offered ${formula_offered:-Unavailable})"
+    else
+        log "  SKIP  formula: ${VOICEBAR_FORMULA_NAME##*/} is not installed"
+    fi
     check_row "qwen3 model" "$QWEN3_MODEL_STEP_OK" "$QWEN3_MODEL_STEP_DETAIL"
 
     if [[ "$expect_running" -eq 1 ]]; then
@@ -637,6 +719,9 @@ main() {
         git-checkout)
             ensure_command bun
             ;;
+        brew-formula)
+            bcs_require_brew || exit 1
+            ;;
         *)
             if ! command -v bun >/dev/null 2>&1; then
                 ensure_command npm
@@ -657,6 +742,9 @@ main() {
 
     update_package
     update_voicebar_app
+    if [[ "$(detect_install_type)" != "brew-formula" ]]; then
+        update_formula
+    fi
     run_qwen3_model_step
     sync_personal_data
     repair_and_verify_voicebar_hotkey_path

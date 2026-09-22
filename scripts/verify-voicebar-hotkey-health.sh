@@ -249,12 +249,6 @@ mapping_has_pair "$mapping" "$DICTATION_USAGE" "$F18_USAGE" \
     || fail "Dictation/F5 -> F18 hidutil mapping is missing"
 
 if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
-    ioreg_output="$(ioreg -l -w 0 2>/dev/null || true)"
-    if secure_pid="$(secure_input_owner "$ioreg_output")"; then
-        secure_process="$(ps -p "$secure_pid" -o comm= 2>/dev/null | sed 's/^[[:space:]]*//' || true)"
-        fail "macOS Secure Input is held by PID $secure_pid (${secure_process:-unknown}); change focus or quit that app"
-    fi
-
     ps_output="$(ps -axo pid=,command=)"
     process_rows="$(
         voicebar_process_rows "$ps_output"
@@ -304,6 +298,14 @@ if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
             fail "current VoiceBar PID $voicebar_pid has no recent event-tap startup evidence"
             ;;
     esac
+
+    # Secure Input is an external, temporary block. Check it only after the
+    # app, relay and event tap are known healthy so the updater can warn safely.
+    ioreg_output="$(ioreg -l -w 0 2>/dev/null || true)"
+    if secure_pid="$(secure_input_owner "$ioreg_output")"; then
+        secure_process="$(ps -p "$secure_pid" -o comm= 2>/dev/null | sed 's/^[[:space:]]*//' || true)"
+        fail "macOS Secure Input is held by PID $secure_pid (${secure_process:-unknown}); change focus or quit that app"
+    fi
 fi
 
 printf 'HOTKEY HEALTH OK\n'
