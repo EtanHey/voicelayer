@@ -2,6 +2,38 @@
 import XCTest
 
 final class ModelsSettingsStateTests: XCTestCase {
+    func testDisconnectAndReconnectRequireFreshHealthBeforeModelsBecomeAvailable() {
+        let health: [String: Any] = [
+            "type": "health",
+            "recording_state": "idle",
+            "model_status": [
+                "configured_model": ["name": "large-v3-turbo", "size_bytes": 10, "installed": true],
+                "residency": "loaded",
+                "active_model": "large-v3-turbo",
+                "configured_effort": "accurate",
+                "active_effort": "accurate",
+            ],
+        ]
+        let voiceState = VoiceState()
+
+        voiceState.setConnectionStatus(true)
+        voiceState.handleEvent(health)
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .available)
+        XCTAssertFalse(voiceState.modelsSettingsState.isBusy)
+
+        voiceState.setConnectionStatus(false)
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .unavailable)
+        XCTAssertTrue(voiceState.modelsSettingsState.isBusy)
+
+        voiceState.setConnectionStatus(true)
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .loading)
+        XCTAssertTrue(voiceState.modelsSettingsState.isBusy)
+
+        voiceState.handleEvent(health)
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .available)
+        XCTAssertFalse(voiceState.modelsSettingsState.isBusy)
+    }
+
     func testParsesTruthfulConfiguredActiveAndBusyState() {
         let event: [String: Any] = [
             "type": "health",

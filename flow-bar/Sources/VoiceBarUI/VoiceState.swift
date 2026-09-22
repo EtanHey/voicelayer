@@ -1396,6 +1396,7 @@ public final class VoiceState {
         onConnectionChange?(connected)
 
         if connected {
+            modelsSettingsState = .loading
             if mode == .disconnected {
                 mode = .idle
                 onModeChange?(.idle)
@@ -1404,6 +1405,7 @@ public final class VoiceState {
             return
         }
 
+        modelsSettingsState = .unavailable
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()

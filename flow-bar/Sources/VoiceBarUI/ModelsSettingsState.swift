@@ -61,7 +61,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
         isBusy = healthEvent["recording_state"] as? String != "idle"
     }
 
-    private static let unavailable = ModelsSettingsState(availability: .unavailable)
+    static let unavailable = ModelsSettingsState(availability: .unavailable)
 
     private static func nonempty(status value: Any?) -> String? {
         (value as? String).flatMap { $0.isEmpty ? nil : $0 }
