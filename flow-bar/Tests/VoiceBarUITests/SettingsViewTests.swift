@@ -74,6 +74,25 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
+    func testBundledDictionaryRowsHaveNoEditAffordance() throws {
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains("isEditable: row.isPersonal"))
+        XCTAssertTrue(source.contains("id: \\.element.rowID"))
+    }
+
+    func testSameNamePersonalEditDoesNotOpenBundledEditor() {
+        let entry = STTDictionaryEntry(canonical: "Shared", variants: [])
+        let bundled = STTDictionaryDisplayEntry(source: "bundled", entry: entry)
+        let personal = STTDictionaryDisplayEntry(source: "personal", entry: entry)
+
+        XCTAssertTrue(SettingsDictionaryEditing.isEditing(
+            rowID: personal.rowID, isEditable: personal.isPersonal, activeRowID: personal.rowID
+        ))
+        XCTAssertFalse(SettingsDictionaryEditing.isEditing(
+            rowID: bundled.rowID, isEditable: bundled.isPersonal, activeRowID: personal.rowID
+        ))
+    }
+
     func testDictionaryCardsHaveVariantAddAffordance() throws {
         let source = try settingsViewSource()
 
@@ -113,7 +132,7 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
         let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
         let deleteConfirmBranch = try XCTUnwrap(headerSource.range(of: "if pendingDeleteCanonical == entry.canonical"))
-        let editButton = headerSource.range(of: "beginTermRename(entry.canonical)")
+        let editButton = headerSource.range(of: "beginTermRename(rowID: rowID, canonical: entry.canonical)")
 
         XCTAssertNotNil(editButton)
         XCTAssertTrue(
@@ -311,7 +330,7 @@ final class SettingsViewTests: XCTestCase {
             "Dictionary cards should observe later daemon vocabulary revisions"
         )
         XCTAssertTrue(
-            source.contains("onRefresh: { reconcileLocalEntries(with: vocabularyPreview().entries) }"),
+            source.contains("onRefresh: { reconcileLocalEntries(with: vocabularyPreview()) }"),
             "A revision change should project the new snapshot into local dictionary cards"
         )
         XCTAssertTrue(
@@ -437,6 +456,22 @@ final class SettingsViewTests: XCTestCase {
             VoiceBarHotkeyContract.shortcutChainLabel(remapDetected: false),
             "F5"
         )
+    }
+
+    func testShortcutCheckReportsObservedStatusWithoutChangingSettings() throws {
+        XCTAssertEqual(
+            SettingsShortcutCheck.message(
+                hotkeyEnabled: true, missingPermissions: [], relayReady: true,
+                relaySummary: "Relay ready"
+            ),
+            "Shortcut ready: F5 listener and relay are active."
+        )
+        XCTAssertTrue(SettingsShortcutCheck.message(
+            hotkeyEnabled: false, missingPermissions: [.inputMonitoring], relayReady: false,
+            relaySummary: "Relay needs attention"
+        ).contains("Relay needs attention"))
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains("Button(\"Check shortcut\")"))
     }
 
     func testPerformanceEffortPickerUpdatesLocalStateBeforeNotifyingApp() throws {

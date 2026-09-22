@@ -327,6 +327,13 @@ public final class VoiceState {
     /// Active STT vocabulary hints loaded from the daemon snapshot.
     public private(set) var transcriptionVocabularyRevision: UInt64 = 0
     public private(set) var modelsSettingsState = ModelsSettingsState.loading
+    public private(set) var transcriptionVocabularyDisplayEntries: [STTDictionaryDisplayEntry]? {
+        didSet {
+            if oldValue != transcriptionVocabularyDisplayEntries {
+                transcriptionVocabularyRevision &+= 1
+            }
+        }
+    }
 
     public var transcriptionVocabularyTerms: [String] = [] {
         didSet {
@@ -1372,6 +1379,12 @@ public final class VoiceState {
     private func applyVocabularyEvent(_ event: [String: Any]) {
         var appliedSnapshot = false
 
+        if let rows = event["display_entries"] as? [[String: Any]] {
+            transcriptionVocabularyDisplayEntries = rows.compactMap(STTDictionaryDisplayEntry.init(eventRow:))
+        } else {
+            transcriptionVocabularyDisplayEntries = nil
+        }
+
         if let entries = event["entries"] as? [[String: Any]] {
             let preview = STTVocabularyPreview(
                 updatedAt: event["updated_at"] as? String,
@@ -1597,6 +1610,7 @@ public final class VoiceState {
     }
 
     private func refreshTranscriptionVocabulary() {
+        transcriptionVocabularyDisplayEntries = nil
         transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
         transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
             transcriptionVocabularyAliasLoader()
