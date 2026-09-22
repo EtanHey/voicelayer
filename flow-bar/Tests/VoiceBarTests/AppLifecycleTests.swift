@@ -802,6 +802,65 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("unsnoozeNow()"))
     }
 
+    @MainActor
+    func testSettingsWindowSizingMatchesCandidateRootAndRepairsSmallHost() {
+        XCTAssertEqual(SettingsWindowSizing.minimumContentSize, NSSize(width: 780, height: 620))
+        XCTAssertEqual(
+            SettingsWindowSizing.correctedContentSize(for: NSSize(width: 520, height: 620)),
+            NSSize(width: 780, height: 620)
+        )
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 540),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        SettingsWindowSizing.apply(to: window)
+
+        XCTAssertEqual(window.contentMinSize, NSSize(width: 780, height: 620))
+        XCTAssertEqual(window.contentLayoutRect.size, NSSize(width: 780, height: 620))
+    }
+
+    @MainActor
+    func testSettingsWindowSizingPreservesLargerUserSize() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 920, height: 700),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        SettingsWindowSizing.apply(to: window)
+
+        XCTAssertEqual(window.contentMinSize, NSSize(width: 780, height: 620))
+        XCTAssertEqual(window.contentLayoutRect.size, NSSize(width: 920, height: 700))
+    }
+
+    func testSettingsWindowAppliesSizingContractOnInitialOpenAndReopen() throws {
+        let source = try voiceBarAppSource()
+        let openStart = try XCTUnwrap(source.range(of: "func openSettingsWindow()"))
+        let nextFunction = try XCTUnwrap(
+            source.range(
+                of: "static func historyFileRevealSelection",
+                range: openStart.upperBound ..< source.endIndex
+            )
+        )
+        let openSettingsWindow = source[openStart.lowerBound ..< nextFunction.lowerBound]
+        let existingWindowBranch = try XCTUnwrap(
+            openSettingsWindow.range(of: "if let settingsWindow")
+        )
+        let hostingController = try XCTUnwrap(
+            openSettingsWindow.range(of: "let hosting = NSHostingController")
+        )
+        let existingWindowPath = openSettingsWindow[
+            existingWindowBranch.lowerBound ..< hostingController.lowerBound
+        ]
+
+        XCTAssertTrue(existingWindowPath.contains("SettingsWindowSizing.apply(to: settingsWindow)"))
+        XCTAssertTrue(openSettingsWindow.contains("contentRect: SettingsWindowSizing.initialContentRect"))
+        XCTAssertTrue(openSettingsWindow.contains("SettingsWindowSizing.apply(to: window)"))
+    }
+
     func testVoiceModeChangesRefreshOpenSettingsActionEnablement() throws {
         let source = try voiceBarAppSource()
         let modeChangeStart = try XCTUnwrap(source.range(of: "private func handleVoiceModeChange"))
