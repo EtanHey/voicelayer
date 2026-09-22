@@ -136,6 +136,12 @@ describe("socket health command", () => {
         configured_effort: "accurate",
         active_effort: null,
       },
+      polish_controls: {
+        model_polish: { source: "default", raw: null, effective: "on" },
+        outro_gate: { source: "default", raw: null, effective: true },
+        smart_chunks: { source: "default", raw: null, effective: false },
+        smart_boundaries: { source: "default", raw: null, effective: false },
+      },
     });
   });
 

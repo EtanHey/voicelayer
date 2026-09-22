@@ -1,4 +1,5 @@
 import type { WhisperModelStatus } from "./model-status";
+import { readPolishControlsStatus, type PolishControlsStatus } from "./polish-controls-status";
 
 /**
  * Daemon health tracking — uptime, connection count, ping/pong.
@@ -62,6 +63,7 @@ export function buildHealthResponse(health: {
   queue_depth: number;
   recording_state: "idle" | "recording" | "transcribing";
   model_status: WhisperModelStatus;
+  polish_controls: PolishControlsStatus;
 } {
   return {
     type: "health",
@@ -69,6 +71,7 @@ export function buildHealthResponse(health: {
     queue_depth: health.queueDepth,
     recording_state: health.recordingState,
     model_status: health.modelStatus,
+    polish_controls: readPolishControlsStatus(),
   };
 }
 

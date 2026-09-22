@@ -8,6 +8,7 @@ import {
   getConnectionCount,
   getUptimeSeconds,
   buildPongResponse,
+  buildHealthResponse,
   isPingRequest,
   _resetForTest,
 } from "../daemon-health";
@@ -48,6 +49,18 @@ describe("daemon-health", () => {
     expect(pong.type).toBe("pong");
     expect(typeof pong.uptime_seconds).toBe("number");
     expect(pong.connections).toBe(2);
+  });
+
+  it("adds authoritative polish controls to the health payload", () => {
+    const health = buildHealthResponse({
+      queueDepth: 0,
+      recordingState: "idle",
+      modelStatus: {} as Parameters<typeof buildHealthResponse>[0]["modelStatus"],
+    });
+    expect(health.polish_controls.model_polish.effective).toBe("on");
+    expect(health.polish_controls.outro_gate.effective).toBe(true);
+    expect(health.polish_controls.smart_chunks.effective).toBe(false);
+    expect(health.polish_controls.smart_boundaries.effective).toBe(false);
   });
 
   it("isPingRequest detects ping messages", () => {
