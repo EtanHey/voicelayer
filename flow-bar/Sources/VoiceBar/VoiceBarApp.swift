@@ -59,6 +59,30 @@ private struct VoiceBarFirstRenderScaleReceipt: Codable {
     let layerScales: [Double]
 }
 
+enum SettingsWindowSizing {
+    static let minimumContentSize = NSSize(width: 780, height: 620)
+
+    static var initialContentRect: NSRect {
+        NSRect(origin: .zero, size: minimumContentSize)
+    }
+
+    static func correctedContentSize(for currentSize: NSSize) -> NSSize {
+        NSSize(
+            width: max(currentSize.width, minimumContentSize.width),
+            height: max(currentSize.height, minimumContentSize.height)
+        )
+    }
+
+    static func apply(to window: NSWindow) {
+        window.contentMinSize = minimumContentSize
+        let currentSize = window.contentLayoutRect.size
+        let correctedSize = correctedContentSize(for: currentSize)
+        if correctedSize != currentSize {
+            window.setContentSize(correctedSize)
+        }
+    }
+}
+
 // MARK: - App Delegate
 
 enum HotkeyInputSource {
@@ -2414,6 +2438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.captureSettingsHistoryPasteTarget()
         NSApp.activate(ignoringOtherApps: true)
         if let settingsWindow {
+            SettingsWindowSizing.apply(to: settingsWindow)
             settingsWindow.makeKeyAndOrderFront(nil)
             settingsWindow.orderFrontRegardless()
             refreshRelaySetupStatusAsync()
@@ -2422,7 +2447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let hosting = NSHostingController(rootView: makeSettingsView())
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
+            contentRect: SettingsWindowSizing.initialContentRect,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -2433,6 +2458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.isRestorable = false
         window.collectionBehavior = [.moveToActiveSpace]
         window.level = .floating
+        SettingsWindowSizing.apply(to: window)
         window.center()
         settingsWindow = window
 
@@ -2467,6 +2493,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     promptTerms: [],
                     aliases: []
                 )
+            },
+            vocabularyRevision: { [weak self] in
+                self?.voiceState.transcriptionVocabularyRevision ?? 0
             },
             onAddVocabularyAlias: { [weak self] correct, wrong in
                 self?.voiceState.addVocabularyAlias(

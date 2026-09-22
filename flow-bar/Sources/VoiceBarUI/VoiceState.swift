@@ -324,12 +324,24 @@ public final class VoiceState {
     }
 
     /// Active STT vocabulary hints loaded from the daemon snapshot.
+    public private(set) var transcriptionVocabularyRevision: UInt64 = 0
+
     public var transcriptionVocabularyTerms: [String] = [] {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty) }
+        didSet {
+            if oldValue != transcriptionVocabularyTerms {
+                transcriptionVocabularyRevision &+= 1
+            }
+            notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty)
+        }
     }
 
     public var transcriptionVocabularyAliases: [STTVocabularyAliasPreview] = [] {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyAliases.isEmpty) }
+        didSet {
+            if oldValue != transcriptionVocabularyAliases {
+                transcriptionVocabularyRevision &+= 1
+            }
+            notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyAliases.isEmpty)
+        }
     }
 
     /// Latest completed transcript safe for re-paste/copy actions.

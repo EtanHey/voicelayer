@@ -53,6 +53,7 @@ final class AnchorVisualArtifactTests: XCTestCase {
                     vocabularyPreview: {
                         STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
                     },
+                    vocabularyRevision: { 0 },
                     onAddVocabularyAlias: { _, _ in },
                     onRemoveVocabularyAlias: { _ in },
                     initialTab: .general
