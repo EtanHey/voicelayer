@@ -657,6 +657,9 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             backing: .buffered,
             defer: false
         )
+        // XCTest retains this offscreen window through its autorelease pool.
+        // Disable AppKit's release-on-close so ARC owns the final release.
+        window.isReleasedWhenClosed = false
         window.contentView = host
         presentOffscreenForInteraction(window)
         defer {
@@ -863,6 +866,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             backing: .buffered,
             defer: false
         )
+        askWindow.isReleasedWhenClosed = false
         askWindow.contentView = askHost
         presentOffscreenForInteraction(askWindow)
         defer {
