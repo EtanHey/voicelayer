@@ -207,13 +207,15 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("onRevealHistoryFile(audioPath)"))
     }
 
-    func testBothHistoryScopesUseTheSharedPinnedDayAndCardSeam() throws {
+    func testAskKeepsPinnedDayCardsWhileRecordingUsesListAndDetail() throws {
         let source = try settingsViewSource()
 
         XCTAssertEqual(
             source.components(separatedBy: "pinnedViews: [.sectionHeaders]").count - 1,
-            2
+            1
         )
+        XCTAssertTrue(source.contains("recordingHistoryListRow(entry)"))
+        XCTAssertTrue(source.contains("recordingHistoryDetail(entry)"))
         XCTAssertTrue(source.contains("private func historyDaySection"))
         XCTAssertTrue(source.contains("private func historyDayHeader"))
         XCTAssertTrue(source.contains("private func historyEntryRow"))
@@ -306,9 +308,9 @@ final class SettingsViewContractTests: XCTestCase {
         )] = [
             (false, false, false, [.play, .copy, .paste, .retranscribe, .finder]),
             (true, false, false, [.play, .finder]),
-            (false, true, false, [.play, .copy, .paste, .finder]),
-            (false, false, true, [.play, .copy, .paste, .finder]),
-            (true, true, true, [.play, .finder]),
+            (false, true, false, [.copy, .paste, .finder]),
+            (false, false, true, [.copy, .paste, .finder]),
+            (true, true, true, [.finder]),
         ]
 
         for testCase in cases {
