@@ -58,6 +58,7 @@ import {
   setWhisperPerformanceEffort,
 } from "./whisper-performance";
 import { setRecordingHold } from "./recording-hold";
+import { readWhisperModelStatus } from "./model-status";
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -255,10 +256,13 @@ export function handleSocketCommand(
       return buildAck(command, "accept");
     }
     case "health":
-      return buildHealthResponse({
-        queueDepth: playbackQueueDepth,
-        recordingState,
-      });
+      return readWhisperModelStatus().then((modelStatus) =>
+        buildHealthResponse({
+          queueDepth: getPlaybackQueueDepth(),
+          recordingState: getRecordingState(),
+          modelStatus,
+        }),
+      );
     case "command":
       broadcast({
         type: "command_mode",

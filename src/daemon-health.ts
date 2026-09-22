@@ -1,3 +1,5 @@
+import type { WhisperModelStatus } from "./model-status";
+
 /**
  * Daemon health tracking — uptime, connection count, ping/pong.
  *
@@ -53,17 +55,20 @@ export function buildPongResponse(): {
 export function buildHealthResponse(health: {
   queueDepth: number;
   recordingState: "idle" | "recording" | "transcribing";
+  modelStatus: WhisperModelStatus;
 }): {
   type: "health";
   uptime_seconds: number;
   queue_depth: number;
   recording_state: "idle" | "recording" | "transcribing";
+  model_status: WhisperModelStatus;
 } {
   return {
     type: "health",
     uptime_seconds: getUptimeSeconds(),
     queue_depth: health.queueDepth,
     recording_state: health.recordingState,
+    model_status: health.modelStatus,
   };
 }
 

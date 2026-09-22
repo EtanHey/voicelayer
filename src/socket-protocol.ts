@@ -8,6 +8,7 @@
  */
 
 import type { WhisperPerformanceEffort } from "./whisper-performance";
+import type { WhisperModelStatus } from "./model-status";
 import {
   PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
   type PlaybackAmplitudeEnvelope,
@@ -368,6 +369,7 @@ export interface HealthResponse {
   uptime_seconds: number;
   queue_depth: number;
   recording_state: "idle" | "recording" | "transcribing";
+  model_status: WhisperModelStatus;
 }
 
 export interface VocabListResponse {

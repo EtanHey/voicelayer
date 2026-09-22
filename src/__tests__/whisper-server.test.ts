@@ -12,6 +12,7 @@ import {
   inferenceTimeoutMsForWav,
   isServerAvailable,
   isServerHealthy,
+  probeWhisperServerHealth,
   readWhisperServerHelpText,
   resolveWhisperAccelerationPlan,
   stopServer,
@@ -89,9 +90,18 @@ describe("whisper-server", () => {
       expect(healthy).toBe(false);
     });
 
-    it("returns false on unreachable port", async () => {
-      const healthy = await isServerHealthy(1);
-      expect(healthy).toBe(false);
+    it("keeps an unavailable probe distinct from not loaded", async () => {
+      const healthy = await probeWhisperServerHealth(1);
+      expect(healthy).toBeNull();
+    });
+
+    it("keeps a malformed successful health body unavailable", async () => {
+      const server = Bun.serve({ port: 0, fetch: () => Response.json({ ready: true }) });
+      try {
+        expect(await probeWhisperServerHealth(server.port)).toBeNull();
+      } finally {
+        server.stop(true);
+      }
     });
   });
 
@@ -827,6 +837,34 @@ usage: whisper-server [options]
         expect(record?.pid).toBe(process.pid);
         expect(record?.modelPath).toBe(FAKE_MODEL);
         expect(record?.startedAt).toBe("2026-09-05T18:40:00.000Z");
+      } finally {
+        resetWhisperServerModule();
+        clearWhisperServerOwnership(fake.port);
+        fake.stop();
+      }
+    });
+
+    it("preserves adopted model provenance without inventing missing effort", async () => {
+      const fake = startFakeHealthyServer();
+      writeWhisperServerOwnership(fake.port, {
+        pid: process.pid,
+        owner_pid: process.pid,
+        started_at: "2026-09-05T18:40:00.000Z",
+        binary: "/opt/homebrew/bin/whisper-server",
+        args: ["/opt/homebrew/bin/whisper-server", "-m", FAKE_MODEL],
+        model_path: FAKE_MODEL,
+        performance_effort: "invalid",
+        acceleration_mode: "metal",
+      });
+      __setWhisperServerTestHooksForTests({
+        findModel: () => FAKE_MODEL,
+        findPortListenerPids: () => [process.pid],
+      });
+
+      try {
+        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        expect(whisperServerLaunchRecord()?.modelPath).toBe(FAKE_MODEL);
+        expect(whisperServerLaunchRecord()?.performanceEffort).toBeNull();
       } finally {
         resetWhisperServerModule();
         clearWhisperServerOwnership(fake.port);

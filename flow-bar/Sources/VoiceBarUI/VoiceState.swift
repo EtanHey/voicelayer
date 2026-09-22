@@ -325,6 +325,7 @@ public final class VoiceState {
 
     /// Active STT vocabulary hints loaded from the daemon snapshot.
     public private(set) var transcriptionVocabularyRevision: UInt64 = 0
+    public private(set) var modelsSettingsState = ModelsSettingsState.loading
 
     public var transcriptionVocabularyTerms: [String] = [] {
         didSet {
@@ -1300,6 +1301,9 @@ public final class VoiceState {
                 noteFirstRecordingAudioLevelIfNeeded(socketRMS: socketAudioLevel)
             }
 
+        case "health":
+            modelsSettingsState = ModelsSettingsState(healthEvent: event)
+
         case "command_mode":
             handleCommandModeEvent(event)
 
@@ -1403,6 +1407,7 @@ public final class VoiceState {
         onConnectionChange?(connected)
 
         if connected {
+            modelsSettingsState = .loading
             if mode == .disconnected {
                 mode = .idle
                 onModeChange?(.idle)
@@ -1411,6 +1416,7 @@ public final class VoiceState {
             return
         }
 
+        modelsSettingsState = .unavailable
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()

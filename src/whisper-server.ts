@@ -237,7 +237,7 @@ export interface WhisperServerLaunchRecord {
   binary: string;
   modelPath: string;
   args: string[];
-  performanceEffort: WhisperPerformanceEffort;
+  performanceEffort: WhisperPerformanceEffort | null;
   accelerationMode: WhisperAccelerationMode;
   /** PID of the resident server, so a server log line ties to a recording. */
   pid: number;
@@ -488,9 +488,9 @@ export function readWhisperServerHelpText(
 }
 
 /** Check if the server is healthy. */
-export async function isServerHealthy(
+export async function probeWhisperServerHealth(
   port: number = DEFAULT_PORT,
-): Promise<boolean> {
+): Promise<boolean | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT);
   try {
@@ -498,13 +498,18 @@ export async function isServerHealthy(
       signal: controller.signal,
     });
     if (!resp.ok) return false;
-    const body = await resp.json();
-    return body?.status === "ok";
+    const body: unknown = await resp.json();
+    if (typeof body !== "object" || body === null || !("status" in body)) return null;
+    return (body as { status?: unknown }).status === "ok" ? true : null;
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function isServerHealthy(port: number = DEFAULT_PORT): Promise<boolean> {
+  return (await probeWhisperServerHealth(port)) === true;
 }
 
 async function checkServerHealthy(port: number): Promise<boolean> {
@@ -717,9 +722,7 @@ function adoptHealthyServer(port: number): void {
       binary: record.binary,
       modelPath: record.model_path,
       args: record.args,
-      performanceEffort:
-        parseWhisperPerformanceEffort(record.performance_effort) ??
-        getWhisperPerformanceEffort(),
+      performanceEffort: parseWhisperPerformanceEffort(record.performance_effort),
       accelerationMode: normalizeAdoptedAccelerationMode(
         record.acceleration_mode,
       ),

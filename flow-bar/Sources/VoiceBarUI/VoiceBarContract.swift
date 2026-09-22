@@ -12,7 +12,7 @@ public enum IntentCommand: String {
     case setWhisperEffort = "set_whisper_effort"
 }
 
-public enum VoiceBarPerformanceEffort: String, CaseIterable, Identifiable {
+public enum VoiceBarPerformanceEffort: String, CaseIterable, Identifiable, Sendable {
     case fast
     case balanced
     case accurate
