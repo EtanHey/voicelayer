@@ -95,16 +95,8 @@ final class SettingsViewTests: XCTestCase {
         let borderedCount = source.components(separatedBy: ".buttonStyle(.bordered)").count - 1
         let prominentCount = source.components(separatedBy: ".buttonStyle(.borderedProminent)").count - 1
 
-        XCTAssertGreaterThanOrEqual(borderedCount, 3)
-        XCTAssertGreaterThanOrEqual(prominentCount, 3)
-        XCTAssertTrue(source
-            .contains(
-                "Button(\"Cancel\") {\n                    cancelTermRename()\n                }\n                .buttonStyle(.bordered)"
-            ))
-        XCTAssertTrue(source
-            .contains(
-                "Button(\"Save\") {\n                    saveTermRename(entry.canonical)\n                }\n                .buttonStyle(.borderedProminent)"
-            ))
+        XCTAssertGreaterThanOrEqual(borderedCount, 2)
+        XCTAssertGreaterThanOrEqual(prominentCount, 2)
         XCTAssertTrue(addVariantSource.contains("Button(\"Cancel\") {"))
         XCTAssertTrue(addVariantSource.contains(".buttonStyle(.bordered)"))
         XCTAssertTrue(addVariantSource.contains("Button(\"Add\") {"))
@@ -141,28 +133,18 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(functionSource.contains("RoundedRectangle(cornerRadius: 8)"))
     }
 
-    func testDictionaryHeaderModesShareStableControlHeight() throws {
+    func testDictionaryEditUsesNativeAlignedActionRow() throws {
         let source = try settingsViewSource()
         let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
-        let deleteButtonSource = try XCTUnwrap(source.functionBody(named: "deleteDictionaryEntryButton"))
 
-        XCTAssertTrue(source.contains("static let headerHeight"))
-        XCTAssertGreaterThanOrEqual(
-            headerSource.components(separatedBy: ".frame(minHeight: DictionaryCardLayout.headerHeight)").count - 1,
-            2,
-            "idle and edit header states must reserve the same row height"
-        )
-        XCTAssertGreaterThanOrEqual(
-            (headerSource + deleteButtonSource)
-                .components(separatedBy: ".frame(height: DictionaryCardLayout.headerHeight)").count - 1,
-            4,
-            "edit and delete-confirm text buttons must not be taller than the idle icon row"
-        )
-        XCTAssertGreaterThanOrEqual(
-            (headerSource + deleteButtonSource).components(separatedBy: ".controlSize(.small)").count - 1,
-            4,
-            "dictionary header text buttons need compact macOS control sizing"
-        )
+        XCTAssertTrue(headerSource.contains("VStack(alignment: .leading, spacing: 10)"))
+        XCTAssertTrue(headerSource.contains("HStack(spacing: 8)"))
+        XCTAssertTrue(headerSource.contains("Spacer()"))
+        XCTAssertTrue(headerSource.contains("Button(\"Cancel\")"))
+        XCTAssertTrue(headerSource.contains("Button(\"Save\")"))
+        XCTAssertTrue(headerSource.contains(".keyboardShortcut(.cancelAction)"))
+        XCTAssertTrue(headerSource.contains(".keyboardShortcut(.defaultAction)"))
+        XCTAssertTrue(headerSource.contains(".controlSize(.regular)"))
     }
 
     func testAddVariantInlineInputAndButtonsShareHeight() throws {

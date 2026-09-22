@@ -1,11 +1,36 @@
 import Foundation
 import SwiftUI
 
-public enum SettingsTab: Hashable {
-    case general
+public enum SettingsTab: Hashable, CaseIterable, Identifiable {
     case audio
-    case history
     case dictionary
+    case history
+    case models
+    case general
+
+    public var id: Self {
+        self
+    }
+
+    public var title: String {
+        switch self {
+        case .audio: "Audio"
+        case .dictionary: "Dictionary"
+        case .history: "History"
+        case .models: "Models"
+        case .general: "General"
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .audio: "waveform"
+        case .dictionary: "text.book.closed"
+        case .history: "clock.arrow.circlepath"
+        case .models: "cpu"
+        case .general: "gearshape"
+        }
+    }
 }
 
 /// The two lists inside Settings → History. Order is the on-screen order: recording sits on the
@@ -200,6 +225,11 @@ private enum DictionaryCardLayout {
     static let inlineFieldVerticalPadding: CGFloat = 5
 }
 
+private struct SettingsDictionarySection {
+    let source: SettingsDictionarySource
+    let entries: [STTDictionaryEntry]
+}
+
 struct SettingsVocabularyRevisionObserver: ViewModifier {
     let revision: UInt64
     let onRefresh: () -> Void
@@ -263,6 +293,7 @@ public struct SettingsView: View {
     public let isRecordingActive: () -> Bool
     public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
+    public let dictionarySource: (STTDictionaryEntry) -> SettingsDictionarySource
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -350,6 +381,7 @@ public struct SettingsView: View {
         isRecordingActive: @escaping () -> Bool = { false },
         isTranscribingActive: @escaping () -> Bool = { false },
         onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
+        dictionarySource: @escaping (STTDictionaryEntry) -> SettingsDictionarySource = { _ in .unknown },
         initialTab: SettingsTab = .general,
         initialHistoryScope: SettingsHistoryScope = .recording
     ) {
@@ -399,6 +431,7 @@ public struct SettingsView: View {
         self.isRecordingActive = isRecordingActive
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
+        self.dictionarySource = dictionarySource
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
         let initialVocabulary = vocabularyPreview()
@@ -428,21 +461,27 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        TabView(selection: $selectedTab) {
-            generalTab
-                .tabItem { Label("General", systemImage: "gear") }
-                .tag(SettingsTab.general)
-            audioTab
-                .tabItem { Label("Audio", systemImage: "mic.fill") }
-                .tag(SettingsTab.audio)
-            historyTab
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
-                .tag(SettingsTab.history)
-            dictionaryTab
-                .tabItem { Label("Dictionary", systemImage: "text.book.closed") }
-                .tag(SettingsTab.dictionary)
+        SettingsNavigationShell(selection: $selectedTab) {
+            switch selectedTab {
+            case .audio:
+                settingsPage(title: "Audio") { audioTab }
+            case .dictionary:
+                settingsPage(
+                    title: "Dictionary",
+                    subtitle: "Help VoiceLayer recognize the words you use."
+                ) { dictionaryTab }
+            case .history:
+                settingsPage(
+                    title: "History",
+                    subtitle: "Your recordings and conversations"
+                ) { historyTab }
+            case .models:
+                settingsPage(title: "Models") { modelsTab }
+            case .general:
+                settingsPage(title: "General") { generalTab }
+            }
         }
-        .frame(width: 520, height: 620)
+        .frame(width: 780, height: 620)
         .background(Color(nsColor: .windowBackgroundColor))
         .modifier(
             SettingsVocabularyRevisionObserver(
@@ -469,6 +508,30 @@ public struct SettingsView: View {
         .onDisappear {
             cancelHistoryLoads()
             historyPlayback.stop()
+        }
+    }
+
+    private func settingsPage(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 19)
+            .padding(.bottom, 14)
+
+            Divider()
+            content()
         }
     }
 
@@ -539,37 +602,6 @@ public struct SettingsView: View {
                     Text(VoiceBarHotkeyContract.repasteDescription)
                         .foregroundStyle(.secondary)
                 }
-            }
-
-            Section("Position") {
-                Toggle("Anchor", isOn: Binding(
-                    get: { selectedAnchorMode != .follow },
-                    set: { enabled in
-                        if enabled {
-                            selectAnchorMode(selectedAnchoredMode)
-                        } else {
-                            selectAnchorMode(.follow)
-                        }
-                    }
-                ))
-
-                if selectedAnchorMode != .follow {
-                    Picker("Position", selection: Binding(
-                        get: { selectedAnchoredMode },
-                        set: { mode in
-                            selectAnchorMode(mode)
-                        }
-                    )) {
-                        ForEach(VoiceBarAnchorMode.anchoredPositionModes) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                Text(positionModeDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -675,6 +707,13 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var modelsTab: some View {
+        ContentUnavailableView(
+            "Model information unavailable",
+            systemImage: "cpu"
+        )
     }
 
     // MARK: - History Tab
@@ -1212,8 +1251,23 @@ public struct SettingsView: View {
                 addTermRow
                 searchRow
 
-                ForEach(page.entries, id: \.canonical) { entry in
-                    dictionaryEntryCard(entry)
+                ForEach(dictionarySections(for: page.entries), id: \.source) { section in
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(section.source.title)
+                            .font(.headline)
+                            .padding(.top, 4)
+                            .padding(.bottom, 6)
+
+                        ForEach(Array(section.entries.enumerated()), id: \.element.canonical) { offset, entry in
+                            dictionaryEntryCard(
+                                entry,
+                                isEditable: section.source != .included
+                            )
+                            if offset < section.entries.count - 1 {
+                                Divider()
+                            }
+                        }
+                    }
                 }
 
                 if page.hasMore {
@@ -1273,96 +1327,116 @@ public struct SettingsView: View {
         }
     }
 
-    private func dictionaryEntryCard(_ entry: STTDictionaryEntry) -> some View {
+    private func dictionaryEntryCard(
+        _ entry: STTDictionaryEntry,
+        isEditable: Bool = true
+    ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            dictionaryEntryHeader(entry)
+            dictionaryEntryHeader(entry, isEditable: isEditable)
             Divider()
-            variantChips(entry)
-            if addingVariantFor == entry.canonical {
+            variantChips(entry, isEditable: isEditable)
+            if isEditable, addingVariantFor == entry.canonical {
                 addVariantInlineEditor(entry)
             }
         }
-        .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.vertical, 10)
+    }
+
+    private func dictionarySections(
+        for entries: [STTDictionaryEntry]
+    ) -> [SettingsDictionarySection] {
+        let orderedSources: [SettingsDictionarySource] = [.user, .included, .unknown]
+        return orderedSources.compactMap { source in
+            let matching = entries.filter { dictionarySource($0) == source }
+            guard !matching.isEmpty else { return nil }
+            return SettingsDictionarySection(source: source, entries: matching)
+        }
     }
 
     @ViewBuilder
-    private func dictionaryEntryHeader(_ entry: STTDictionaryEntry) -> some View {
+    private func dictionaryEntryHeader(
+        _ entry: STTDictionaryEntry,
+        isEditable: Bool
+    ) -> some View {
         if editingCanonical == entry.canonical {
-            HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 TextField("Term", text: $editTermText)
                     .dictionaryTextField()
                     .focused($focusedEditorField, equals: .editTerm)
                     .onSubmit { saveTermRename(entry.canonical) }
                     .frame(maxWidth: .infinity)
-                Button("Cancel") {
-                    cancelTermRename()
+
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button("Cancel") {
+                        cancelTermRename()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    Button("Save") {
+                        saveTermRename(entry.canonical)
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(editTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .frame(height: DictionaryCardLayout.headerHeight)
-                Button("Save") {
-                    saveTermRename(entry.canonical)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .frame(height: DictionaryCardLayout.headerHeight)
-                .disabled(editTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .controlSize(.regular)
             }
-            .frame(minHeight: DictionaryCardLayout.headerHeight)
         } else {
             HStack(spacing: 8) {
                 Text(entry.canonical)
                     .font(.headline)
                 Spacer()
-                if pendingDeleteCanonical == entry.canonical {
-                    deleteDictionaryEntryButton(entry.canonical)
-                } else {
-                    Button {
-                        beginTermRename(entry.canonical)
-                    } label: {
-                        Image(systemName: "pencil")
+                if isEditable {
+                    if pendingDeleteCanonical == entry.canonical {
+                        deleteDictionaryEntryButton(entry.canonical)
+                    } else {
+                        Button {
+                            beginTermRename(entry.canonical)
+                        } label: {
+                            Image(systemName: "pencil")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Edit term")
+                        .accessibilityLabel("Edit term \(entry.canonical)")
+                        deleteDictionaryEntryButton(entry.canonical)
                     }
-                    .buttonStyle(.borderless)
-                    .help("Edit term")
-                    .accessibilityLabel("Edit term \(entry.canonical)")
-                    deleteDictionaryEntryButton(entry.canonical)
                 }
             }
             .frame(minHeight: DictionaryCardLayout.headerHeight)
         }
     }
 
-    private func variantChips(_ entry: STTDictionaryEntry) -> some View {
+    private func variantChips(
+        _ entry: STTDictionaryEntry,
+        isEditable: Bool
+    ) -> some View {
         FlowLayout(spacing: 8) {
             ForEach(entry.variants, id: \.self) { variant in
                 HStack(spacing: 6) {
                     Text(variant)
-                    Button {
-                        SettingsDictionaryMutations.removeVariant(
-                            canonical: entry.canonical,
-                            variant: variant,
-                            localEntries: &localEntries,
-                            onRemoveVocabularyAlias: onRemoveVocabularyAlias
-                        )
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.caption)
+                    if isEditable {
+                        Button {
+                            SettingsDictionaryMutations.removeVariant(
+                                canonical: entry.canonical,
+                                variant: variant,
+                                localEntries: &localEntries,
+                                onRemoveVocabularyAlias: onRemoveVocabularyAlias
+                            )
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Remove variant \(variant)")
                     }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Remove variant \(variant)")
                 }
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
                 .background(Color(nsColor: .quaternaryLabelColor).opacity(0.24))
                 .clipShape(RoundedRectangle(cornerRadius: 7))
             }
-            addVariantButton(entry.canonical)
+            if isEditable {
+                addVariantButton(entry.canonical)
+            }
         }
     }
 

@@ -63,12 +63,28 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertLessThan(cardRange.lowerBound, addVariantRange.lowerBound)
     }
 
-    func testSettingsAnchorUsesOneToggleAndTopBottomPicker() throws {
+    func testSettingsDoesNotExposePositionControls() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("Toggle(\"Anchor\""))
-        XCTAssertTrue(source.contains("Picker(\"Position\""))
+        XCTAssertFalse(source.contains("Toggle(\"Anchor\""))
+        XCTAssertFalse(source.contains("Picker(\"Position\""))
         XCTAssertFalse(source.contains("Picker(\"Anchor\""))
+    }
+
+    func testSettingsUsesAcceptedFiveDestinationOrder() {
+        XCTAssertEqual(
+            SettingsTab.allCases,
+            [.audio, .dictionary, .history, .models, .general]
+        )
+        XCTAssertEqual(SettingsTab.allCases.map(\.title), [
+            "Audio", "Dictionary", "History", "Models", "General",
+        ])
+    }
+
+    func testDictionarySourceLabelsStayTypedAndPlainLanguage() {
+        XCTAssertEqual(SettingsDictionarySource.user.title, "Your terms")
+        XCTAssertEqual(SettingsDictionarySource.included.title, "Included terms")
+        XCTAssertEqual(SettingsDictionarySource.unknown.title, "Terms")
     }
 
     func testAudioTabIncludesPerformanceEffortPicker() throws {
@@ -86,7 +102,7 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("case history"))
-        XCTAssertTrue(source.contains("Label(\"History\""))
+        XCTAssertTrue(source.contains("title: \"History\""))
         XCTAssertTrue(source.contains("historyTab"))
         XCTAssertTrue(source.contains("historyGroups"))
         XCTAssertTrue(source.contains("SettingsHistoryArchive.load"))
