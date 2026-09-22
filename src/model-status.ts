@@ -3,7 +3,7 @@ import { basename } from "path";
 import {
   probeWhisperServerHealth,
   resolveWhisperModelPath,
-  whisperServerLaunchRecord,
+  verifiedWhisperServerLaunchRecord,
 } from "./whisper-server";
 import {
   getWhisperPerformanceEffort,
@@ -77,15 +77,19 @@ export async function readWhisperModelStatus(): Promise<WhisperModelStatus> {
     } catch {}
   }
   let residentHealthy: boolean | null = preference === "wispr" ? null : false;
+  let launchRecord: ModelStatusEvidence["launchRecord"] = null;
   if (preference !== "wispr" && preference !== "whisper") {
     const port = Number.parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT ?? "", 10) || 8178;
     residentHealthy = await probeWhisperServerHealth(port);
+    if (residentHealthy === true) {
+      launchRecord = verifiedWhisperServerLaunchRecord(port);
+    }
   }
   return buildWhisperModelStatus({
     configuredPath,
     configuredSizeBytes,
     residentHealthy,
-    launchRecord: whisperServerLaunchRecord(),
+    launchRecord,
     configuredEffort: getWhisperPerformanceEffort(),
   });
 }
