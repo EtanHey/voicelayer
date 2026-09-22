@@ -111,6 +111,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let commandModeAXHelper = CommandModeAXHelper()
 
     private let defaults = VoiceBarDefaults.make()
+    private lazy var microphonePriority = MicrophoneDevicePriority(defaults: defaults)
+    private lazy var microphonePriorityApply = MicrophonePriorityApplyCoordinator(
+        resolveDeviceID: { [weak self] in
+            guard let self else { return nil }
+            return microphonePriority.resolveDeviceID(
+                in: MicrophoneDeviceManager.availableInputDevices(),
+                fallbackDeviceID: MicrophoneDeviceManager.selectedInputDeviceID()
+            )
+        },
+        applyDeviceID: { deviceID in
+            MicrophoneDeviceManager.selectedInputDeviceID() == deviceID ||
+                MicrophoneDeviceManager.selectInputDevice(id: deviceID)
+        }
+    )
+    private var microphonePriorityTimer: Timer?
     private let pillContextMenuController = PillContextMenuController()
     private lazy var notchMorphSelection = VoiceBarNotchMorphSelection(
         environment: ProcessInfo.processInfo.environment,
@@ -639,6 +654,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ) { [weak self] _ in
             self?.reapplyAnchoredPanelPosition()
         }
+        if VoiceLayerPaths.enforcesSingletonInstance {
+            refreshAvailableMicrophones()
+            microphonePriorityTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+                self?.refreshAvailableMicrophones()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -646,6 +667,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func performTerminationCleanup() {
+        microphonePriorityTimer?.invalidate()
+        microphonePriorityTimer = nil
         if let isolatedInstanceMarkerPID {
             VoiceBarInstanceIsolationRegistry.unregister(pid: isolatedInstanceMarkerPID)
             self.isolatedInstanceMarkerPID = nil
@@ -1272,6 +1295,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
+        microphonePriorityApply.modeDidChange(
+            mode,
+            captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
+        )
         if previousVoiceMode == .recording || previousVoiceMode == .transcribing,
            mode != .recording,
            mode != .transcribing {
@@ -2487,6 +2514,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
             selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
             onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
+            prioritySnapshot: { [weak self] in
+                self?.currentMicrophonePrioritySnapshot() ?? .unavailable
+            },
+            onReorderPriority: { [weak self] uids in
+                self?.reorderMicrophonePriority(uids)
+            },
             polishDegradation: { [weak self] in self?.voiceState.polishDegradation },
             onDismissPolishDegradation: { [weak self] in
                 self?.voiceState.dismissPolishDegradation()
@@ -2571,6 +2604,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     Self.historyFileRevealSelection(for: audioPath)
                 )
             }
+        )
+    }
+
+    private func currentMicrophonePrioritySnapshot() -> MicrophonePrioritySnapshot {
+        let devices = MicrophoneDeviceManager.availableInputDevices()
+        refreshAvailableMicrophones(devices)
+        let selectedID = microphonePriority.resolveDeviceID(
+            in: devices,
+            fallbackDeviceID: MicrophoneDeviceManager.selectedInputDeviceID()
+        )
+        return MicrophonePrioritySnapshot(
+            rows: microphonePriority.rows(for: devices),
+            nextDeviceName: devices.first(where: { $0.id == selectedID })?.name
+        )
+    }
+
+    private func refreshAvailableMicrophones(
+        _ devices: [MicrophoneDevice] = MicrophoneDeviceManager.availableInputDevices()
+    ) {
+        microphonePriority.observe(devices)
+        guard VoiceLayerPaths.enforcesSingletonInstance,
+              !microphonePriority.preferredUIDs.isEmpty
+        else { return }
+        microphonePriorityApply.availableDevicesDidChange(
+            devices,
+            mode: voiceState.mode,
+            captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
+        )
+    }
+
+    private func reorderMicrophonePriority(_ uids: [String]) {
+        let devices = MicrophoneDeviceManager.availableInputDevices()
+        microphonePriority.replacePreferredUIDs(uids, observing: devices)
+        microphonePriorityApply.requestApply(
+            mode: voiceState.mode,
+            captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
         )
     }
 

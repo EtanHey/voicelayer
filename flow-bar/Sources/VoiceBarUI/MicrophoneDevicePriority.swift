@@ -11,6 +11,28 @@ public struct MicrophonePriorityRow: Equatable {
     }
 }
 
+public struct MicrophonePrioritySnapshot: Equatable {
+    public let rows: [MicrophonePriorityRow]
+    public let nextDeviceName: String?
+
+    public init(rows: [MicrophonePriorityRow], nextDeviceName: String?) {
+        self.rows = rows
+        self.nextDeviceName = nextDeviceName
+    }
+
+    public static let unavailable = Self(rows: [], nextDeviceName: nil)
+
+    public func reorderedUIDs(moving index: Int, by offset: Int) -> [String]? {
+        let target = index + offset
+        guard rows.indices.contains(index), rows.indices.contains(target),
+              rows[index].canPrioritize, rows[target].canPrioritize
+        else { return nil }
+        var uids = rows.compactMap(\.uid)
+        uids.swapAt(index, target)
+        return uids
+    }
+}
+
 public final class MicrophoneDevicePriority {
     private let defaults: UserDefaults
     private let orderKey: String

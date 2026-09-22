@@ -241,6 +241,8 @@ public final class VoiceState {
     // capture path is live. Only the daemon's first `audio_level` frame is.
     // `.recording` + false = booting; `.recording` + true = live.
     public private(set) var captureLive = false
+    /// Presentation-only guard for the brief idle frame before playback hands off to capture.
+    public private(set) var isRecordingHandoffPending = false
     public var recordingTimingClock: () -> TimeInterval = {
         ProcessInfo.processInfo.systemUptime
     }
@@ -796,6 +798,7 @@ public final class VoiceState {
         resetAudioLevels()
         hotkeyPhase = .idle
         mode = .disconnected
+        isRecordingHandoffPending = false
         onModeChange?(.disconnected)
         collapseTimer?.cancel()
         isCollapsed = false
@@ -1118,6 +1121,7 @@ public final class VoiceState {
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
+                isRecordingHandoffPending = false
                 let startsNewRecording = mode != .recording
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 // AIDEV-NOTE: `bar_owned` is optional on the wire. Only explicit `true` confirms
@@ -1453,6 +1457,7 @@ public final class VoiceState {
         hotkeyPhase = .idle
         resetAudioLevels()
         mode = .disconnected
+        isRecordingHandoffPending = false
         onModeChange?(.disconnected)
         collapseTimer?.cancel()
         isCollapsed = false
@@ -1746,6 +1751,7 @@ public final class VoiceState {
     }
 
     private func enterIdleState(clearQueue: Bool) {
+        isRecordingHandoffPending = false
         if clearQueue, mode == .speaking {
             let trimmed = statusText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
@@ -1781,6 +1787,7 @@ public final class VoiceState {
     /// material and its slots derive from the same collapsed presentation, so
     /// both disappear in one render transaction before recording is announced.
     private func enterPlaybackToRecordingTransition() {
+        isRecordingHandoffPending = true
         collapseTimer?.cancel()
         clearRetainedTeleprompter()
         statusText = ""
