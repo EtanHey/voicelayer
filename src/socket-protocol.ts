@@ -9,6 +9,7 @@
 
 import type { WhisperPerformanceEffort } from "./whisper-performance";
 import type { WhisperModelStatus } from "./model-status";
+import type { STTDictionaryDisplayEntry } from "./stt-vocabulary-store";
 import {
   PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
   type PlaybackAmplitudeEnvelope,
@@ -377,6 +378,8 @@ export interface VocabListResponse {
   id?: string;
   updated_at: string | null;
   entries: Array<{ canonical: string; variants: string[] }>;
+  /** Additive source-aware projection for newer clients; `entries` stays personal-only. */
+  display_entries: STTDictionaryDisplayEntry[];
 }
 
 export type SocketResponse = HealthResponse | AckEvent | VocabListResponse;
