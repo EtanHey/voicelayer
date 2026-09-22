@@ -123,6 +123,7 @@ import {
   clearRecordingHold,
   isRecordingHoldEngaged,
 } from "./recording-hold";
+import { buildDictationReceipt } from "./dictation-receipt";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -673,6 +674,17 @@ export interface WaitForInputOptions {
   onPhaseChange?: (phase: "transcribing") => void;
   onNoSpeech?: () => void;
   signal?: AbortSignal;
+  /** Monotonic clock seam for receipt tests; production uses performance.now(). */
+  monotonicNow?: () => number;
+}
+
+function readReceiptMonotonicNow(clock?: () => number): number | undefined {
+  try {
+    const value = clock ? clock() : performance.now();
+    return Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function invokeCaptureObserver(
@@ -2821,6 +2833,11 @@ export async function waitForInput(
     return null;
   }
 
+  const postCaptureProcessingStartedAtMs =
+    options.archiveSource === "voicebar"
+      ? readReceiptMonotonicNow(options.monotonicNow)
+      : undefined;
+
   const retainedWavData = createWavBuffer(pcmData);
   const sttTrim = trimTrailingSilenceForSTT(pcmData, pushToEnd);
   let voiceAskArchivePath: string | null = null;
@@ -3143,6 +3160,15 @@ export async function waitForInput(
     }
     throwIfWaitForInputAborted(options.signal);
     const text = finalized.text;
+    const finalTranscriptReadyAtMs =
+      options.archiveSource === "voicebar" && text
+        ? readReceiptMonotonicNow(options.monotonicNow)
+        : undefined;
+    const dictationReceipt = buildDictationReceipt({
+      audioDurationMs: sttTrim.rawDurationMs,
+      processingStartedAtMs: postCaptureProcessingStartedAtMs,
+      finalTranscriptReadyAtMs,
+    });
     console.error(`[voicelayer] Transcription: ${text}`);
 
     retainLastCaptureForRecovery(
@@ -3231,6 +3257,11 @@ export async function waitForInput(
         ...transcriptionPolishMetadata(finalized),
         ...(archivedRecordingPath
           ? { recording_path: join(archivedRecordingPath, "audio.wav") }
+          : {}),
+        ...(options.archiveSource === "voicebar" &&
+        archivedRecordingPath &&
+        dictationReceipt
+          ? { dictation_receipt: dictationReceipt }
           : {}),
       });
     }

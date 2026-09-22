@@ -1,5 +1,17 @@
-import { describe, expect, it } from "bun:test";
-import { buildWhisperModelStatus, selectConfiguredModelPath } from "../model-status";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { join } from "path";
+import {
+  buildWhisperModelStatus,
+  readWhisperModelStatus,
+  selectConfiguredModelPath,
+} from "../model-status";
+import {
+  __clearWhisperServerLaunchRecordForTests,
+  __setWhisperServerLaunchRecordForTests,
+  __setWhisperServerTestHooksForTests,
+  type WhisperServerLaunchRecord,
+} from "../whisper-server";
 
 describe("whisper model status", () => {
   it("uses the CLI model search result when that backend is configured", () => {
@@ -57,5 +69,216 @@ describe("whisper model status", () => {
     });
     expect(status.configured_model).toEqual({ name: null, size_bytes: null, installed: false });
     expect(status.residency).toBe("unknown");
+  });
+});
+
+describe("resident whisper model identity", () => {
+  const statusPort = 28_178;
+  const statusModelDir = join(
+    process.env.VOICELAYER_STATE_DIR ?? ".test-tmp",
+    "model-status",
+  );
+  const configuredModel = join(statusModelDir, "ggml-configured.bin");
+  const previousEnv = {
+    backend: process.env.QA_VOICE_STT_BACKEND,
+    port: process.env.QA_VOICE_WHISPER_SERVER_PORT,
+    effort: process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT,
+  };
+
+  function restoreEnv(name: string, value: string | undefined): void {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+
+  function launchRecord(
+    pid: number,
+    performanceEffort: WhisperServerLaunchRecord["performanceEffort"] = "balanced",
+  ): WhisperServerLaunchRecord {
+    return {
+      binary: "/opt/homebrew/bin/whisper-server",
+      modelPath: "/models/ggml-active.bin",
+      args: [],
+      performanceEffort,
+      accelerationMode: "metal",
+      pid,
+      startedAt: "2026-09-22T18:00:00.000Z",
+    };
+  }
+
+  function expectIndependentStatus(
+    status: Awaited<ReturnType<typeof readWhisperModelStatus>>,
+  ): void {
+    expect(status.configured_model).toEqual({
+      name: "configured",
+      size_bytes: 4,
+      installed: true,
+    });
+    expect(status.configured_effort).toBe("fast");
+    expect(status.residency).toBe("loaded");
+  }
+
+  beforeEach(() => {
+    mkdirSync(statusModelDir, { recursive: true });
+    writeFileSync(configuredModel, "test");
+    process.env.QA_VOICE_STT_BACKEND = "whisper-server";
+    process.env.QA_VOICE_WHISPER_SERVER_PORT = String(statusPort);
+    process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = "fast";
+    __clearWhisperServerLaunchRecordForTests();
+  });
+
+  afterEach(() => {
+    __setWhisperServerTestHooksForTests({});
+    __clearWhisperServerLaunchRecordForTests();
+    rmSync(statusModelDir, { recursive: true, force: true });
+    restoreEnv("QA_VOICE_STT_BACKEND", previousEnv.backend);
+    restoreEnv("QA_VOICE_WHISPER_SERVER_PORT", previousEnv.port);
+    restoreEnv("QA_VOICE_WHISPER_PERFORMANCE_EFFORT", previousEnv.effort);
+  });
+
+  it("attributes a healthy resident only when its live listener matches the record", async () => {
+    __setWhisperServerLaunchRecordForTests(launchRecord(51_001, null));
+    __setWhisperServerTestHooksForTests({
+      findModel: () => configuredModel,
+      isServerHealthy: async () => true,
+      findPortListenerPids: () => [51_001],
+      isPidAlive: () => true,
+      processStartTimeMs: () => Date.parse("2026-09-22T17:59:59.000Z"),
+    });
+
+    const status = await readWhisperModelStatus();
+
+    expectIndependentStatus(status);
+    expect(status.active_model).toBe("active");
+    expect(status.active_effort).toBeNull();
+  });
+
+  for (const adopted of [false, true]) {
+    for (const elapsedMs of [31_000, 31_500]) {
+      it(`keeps a healthy ${adopted ? "adopted" : "owned"} launch attributed at ${elapsedMs}ms`, async () => {
+        const record = { ...launchRecord(51_007), adopted };
+        __setWhisperServerLaunchRecordForTests(record);
+        __setWhisperServerTestHooksForTests({
+          findModel: () => configuredModel,
+          isServerHealthy: async () => true,
+          findPortListenerPids: () => [record.pid],
+          isPidAlive: () => true,
+          // The health probe can finish after the 30-second launch deadline.
+          processStartTimeMs: () => Date.parse(record.startedAt) - elapsedMs,
+        });
+
+        const status = await readWhisperModelStatus();
+        expectIndependentStatus(status);
+        expect(status.active_model).toBe("active");
+        expect(status.active_effort).toBe("balanced");
+      });
+    }
+  }
+
+  it("withholds a launch outside the health-check window", async () => {
+    const record = launchRecord(51_008);
+    __setWhisperServerLaunchRecordForTests(record);
+    __setWhisperServerTestHooksForTests({
+      findModel: () => configuredModel,
+      isServerHealthy: async () => true,
+      findPortListenerPids: () => [record.pid],
+      isPidAlive: () => true,
+      processStartTimeMs: () => Date.parse(record.startedAt) - 33_001,
+    });
+
+    const status = await readWhisperModelStatus();
+    expectIndependentStatus(status);
+    expect(status.active_model).toBeNull();
+    expect(status.active_effort).toBeNull();
+  });
+
+  for (const processStartTimeMs of [
+    () => Date.parse("2026-09-22T18:01:00.000Z"),
+    () => null,
+  ]) {
+    it("withholds a healthy listener's stale or unknown process identity", async () => {
+      __setWhisperServerLaunchRecordForTests(launchRecord(51_006));
+      __setWhisperServerTestHooksForTests({
+        findModel: () => configuredModel,
+        isServerHealthy: async () => true,
+        findPortListenerPids: () => [51_006],
+        isPidAlive: () => true,
+        processStartTimeMs,
+      });
+
+      const status = await readWhisperModelStatus();
+
+      expectIndependentStatus(status);
+      expect(status.active_model).toBeNull();
+      expect(status.active_effort).toBeNull();
+    });
+  }
+
+  it("withholds active identity when the recorded PID is dead", async () => {
+    __setWhisperServerLaunchRecordForTests(launchRecord(51_002));
+    __setWhisperServerTestHooksForTests({
+      findModel: () => configuredModel,
+      isServerHealthy: async () => true,
+      findPortListenerPids: () => [51_002],
+      isPidAlive: () => false,
+    });
+
+    const status = await readWhisperModelStatus();
+
+    expectIndependentStatus(status);
+    expect(status.active_model).toBeNull();
+    expect(status.active_effort).toBeNull();
+  });
+
+  it("withholds active identity when another PID owns the healthy listener", async () => {
+    __setWhisperServerLaunchRecordForTests(launchRecord(51_003));
+    __setWhisperServerTestHooksForTests({
+      findModel: () => configuredModel,
+      isServerHealthy: async () => true,
+      findPortListenerPids: () => [61_003],
+      isPidAlive: () => true,
+    });
+
+    const status = await readWhisperModelStatus();
+
+    expectIndependentStatus(status);
+    expect(status.active_model).toBeNull();
+    expect(status.active_effort).toBeNull();
+  });
+
+  it("keeps a healthy resident unattributed when listener evidence is absent", async () => {
+    __setWhisperServerLaunchRecordForTests(launchRecord(51_004));
+    __setWhisperServerTestHooksForTests({
+      findModel: () => configuredModel,
+      isServerHealthy: async () => true,
+      findPortListenerPids: () => [],
+      isPidAlive: () => true,
+    });
+
+    const status = await readWhisperModelStatus();
+
+    expectIndependentStatus(status);
+    expect(status.active_model).toBeNull();
+    expect(status.active_effort).toBeNull();
+  });
+
+  it("revalidates identity after asynchronous health sampling", async () => {
+    let listenerPid = 51_005;
+    __setWhisperServerLaunchRecordForTests(launchRecord(51_005));
+    __setWhisperServerTestHooksForTests({
+      findModel: () => configuredModel,
+      isServerHealthy: async () => {
+        await Promise.resolve();
+        listenerPid = 61_005;
+        return true;
+      },
+      findPortListenerPids: () => [listenerPid],
+      isPidAlive: () => true,
+    });
+
+    const status = await readWhisperModelStatus();
+
+    expectIndependentStatus(status);
+    expect(status.active_model).toBeNull();
+    expect(status.active_effort).toBeNull();
   });
 });
