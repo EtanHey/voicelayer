@@ -1657,6 +1657,10 @@ function findModel(): string | null {
   return null;
 }
 
+export function resolveWhisperCliModelPath(): string | null {
+  return findModel();
+}
+
 /** Get homebrew prefix for Metal shader resources (cached) */
 let cachedBrewPrefix: string | null | undefined = undefined;
 function getBrewPrefix(): string | null {
