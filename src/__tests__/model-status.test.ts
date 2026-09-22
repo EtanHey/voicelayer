@@ -142,6 +142,7 @@ describe("resident whisper model identity", () => {
       isServerHealthy: async () => true,
       findPortListenerPids: () => [51_001],
       isPidAlive: () => true,
+      processStartTimeMs: () => Date.parse("2026-09-22T17:59:59.000Z"),
     });
 
     const status = await readWhisperModelStatus();
@@ -150,6 +151,28 @@ describe("resident whisper model identity", () => {
     expect(status.active_model).toBe("active");
     expect(status.active_effort).toBeNull();
   });
+
+  for (const processStartTimeMs of [
+    () => Date.parse("2026-09-22T18:01:00.000Z"),
+    () => null,
+  ]) {
+    it("withholds a healthy listener's stale or unknown process identity", async () => {
+      __setWhisperServerLaunchRecordForTests(launchRecord(51_006));
+      __setWhisperServerTestHooksForTests({
+        findModel: () => configuredModel,
+        isServerHealthy: async () => true,
+        findPortListenerPids: () => [51_006],
+        isPidAlive: () => true,
+        processStartTimeMs,
+      });
+
+      const status = await readWhisperModelStatus();
+
+      expectIndependentStatus(status);
+      expect(status.active_model).toBeNull();
+      expect(status.active_effort).toBeNull();
+    });
+  }
 
   it("withholds active identity when the recorded PID is dead", async () => {
     __setWhisperServerLaunchRecordForTests(launchRecord(51_002));

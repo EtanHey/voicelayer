@@ -165,6 +165,7 @@ interface WhisperServerTestHooks {
   findPortListenerPids?: (port: number) => number[];
   killExternalPid?: (pid: number, signal: NodeJS.Signals) => void;
   isPidAlive?: (pid: number) => boolean;
+  processStartTimeMs?: (pid: number) => number | null;
   sleep?: (ms: number) => Promise<void>;
   startupTimeoutMs?: number;
   inferenceTimeoutMs?: (wavData: Uint8Array) => number;
@@ -276,6 +277,15 @@ export function verifiedWhisperServerLaunchRecord(
   if (!record || !isPidAlive(record.pid)) return null;
   const listeners = findPortListenerPids(port);
   if (listeners.length === 0 || !listeners.includes(record.pid)) return null;
+  const processStartedAtMs = processStartTimeMs(record.pid);
+  const recordedAtMs = Date.parse(record.startedAt);
+  if (
+    processStartedAtMs === null ||
+    !Number.isFinite(processStartedAtMs) ||
+    !Number.isFinite(recordedAtMs) ||
+    processStartedAtMs > recordedAtMs ||
+    recordedAtMs - processStartedAtMs > STARTUP_TIMEOUT + 1_000
+  ) return null;
   return record;
 }
 
@@ -590,6 +600,22 @@ function isPidAlive(pid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function processStartTimeMs(pid: number): number | null {
+  if (testHooks.processStartTimeMs) return testHooks.processStartTimeMs(pid);
+  try {
+    const result = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: PORT_OWNER_PROBE_TIMEOUT,
+    });
+    if (result.exitCode !== 0) return null;
+    const startedAt = Date.parse(result.stdout.toString().trim());
+    return Number.isFinite(startedAt) ? startedAt : null;
+  } catch {
+    return null;
   }
 }
 
