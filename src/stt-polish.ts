@@ -30,6 +30,7 @@ export interface STTPolishEnv {
   QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS?: string;
   QA_VOICE_STT_POLISH_TIMEOUT_MS?: string;
   QA_VOICE_STT_POLISH_LOG_PATH?: string;
+  VOICELAYER_STT_POLISH_ADDED_CONTENT_GUARD?: string;
   VOICELAYER_STT_POLISH_WARMUP?: string;
   VOICELAYER_STT_POLISH_WARMUP_TIMEOUT_MS?: string;
   VOICELAYER_STT_SMART_BOUNDARIES?: string;
@@ -476,6 +477,8 @@ const POLISH_REJECTION_REASONS = {
   DELETED_RETRACTION: "polish response deleted retraction content",
   RETRACTION_CHECK_UNAVAILABLE:
     "polish response too long to verify retraction fidelity",
+  ADDED_UNGROUNDED_CONTENT: "polish response added ungrounded content",
+  INVENTED_LIST_ITEM: "polish response invented a list item",
   DROPPED_TOO_MUCH_TEXT: "polish response dropped too much text",
   DROPPED_TOO_MANY_WORDS: "polish response dropped too many words",
 } as const;
@@ -1163,9 +1166,6 @@ const LETS_DO_REPEATED_NEGATED_CORRECTION_PATTERN =
 const LETS_DO_WELL_REPLACEMENT_PATTERN =
   /^(?<prefix>.*?\blet(?:'|’)s\s+do\s+)(?:a\s+)?(?<old>[^,.?!]+?)(?:,\s*)?\bwell\s*,\s*(?<replacement>[^.?!]+)(?<ending>[.?!]?)$/iu;
 
-const SPOKEN_LIST_CUE_PATTERN =
-  /\b(?:first\s+of\s+all|second\s+of\s+all|third\s+of\s+all|number\s+(?:one|two|three|four|five)|firstly|secondly|thirdly)\b/iu;
-
 function hasExplicitSelfCorrectionCue(text: string): boolean {
   return (
     SELF_CORRECTION_CUE_PATTERN.test(text) ||
@@ -1174,12 +1174,46 @@ function hasExplicitSelfCorrectionCue(text: string): boolean {
   );
 }
 
-function hasSpokenListCue(text: string): boolean {
-  return SPOKEN_LIST_CUE_PATTERN.test(text);
-}
-
 function hasNumberedMarkdownList(text: string): boolean {
   return /(?:^|\n)\s*1\.\s+\S/u.test(text) && /(?:^|\n)\s*2\.\s+\S/u.test(text);
+}
+
+function explicitSpokenListItemCount(text: string): number {
+  // Match the ordinal and sequence heads the rules stage recognizes, including
+  // mixed phrasing that it currently leaves as prose for polish to format.
+  // Explicit cues ("first of all", "firstly", "number one"/"number 1") are
+  // unambiguous and Whisper often leaves them unpunctuated. Bare ordinals and
+  // sequence words need a spoken comma/colon so a casual "first" or "next"
+  // inside an item cannot authorize a new numbered item.
+  const headPattern = /\b(first\s+of\s+all|first\s+off|firstly|number\s+(?:one|1)|first|second\s+of\s+all|secondly|number\s+(?:two|2)|second|third\s+of\s+all|thirdly|number\s+(?:three|3)|third|fourthly|number\s+(?:four|4)|fourth|fifthly|number\s+(?:five|5)|fifth|sixth|seventh|eighth|ninth|tenth|then\s+next|then\s+lastly|next|finally|lastly)\b(\s*[:,])?/giu;
+  const numberedHeads: Record<string, number> = {
+    "first of all": 1, "first off": 1, firstly: 1, "number one": 1, "number 1": 1, first: 1,
+    "second of all": 2, secondly: 2, "number two": 2, "number 2": 2, second: 2,
+    "third of all": 3, thirdly: 3, "number three": 3, "number 3": 3, third: 3,
+    fourthly: 4, "number four": 4, "number 4": 4, fourth: 4,
+    fifthly: 5, "number five": 5, "number 5": 5, fifth: 5,
+    sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+  };
+  const needsPunctuation = /^(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|then next|then lastly|next|finally|lastly)$/u;
+  let count = 0;
+  for (const match of text.matchAll(headPattern)) {
+    const head = match[1].toLowerCase().replace(/\s+/gu, " ");
+    if (needsPunctuation.test(head) && !match[2]) continue;
+    const ordinal = numberedHeads[head];
+    if (ordinal === count + 1 || (ordinal === undefined && count >= 1)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function isAddedContentGuardEnabled(env: STTPolishEnv): boolean {
+  const value = env.VOICELAYER_STT_POLISH_ADDED_CONTENT_GUARD?.trim().toLowerCase();
+  return value === "on" || value === "true" || value === "yes" || value === "1";
+}
+
+function numberedMarkdownListMarkers(text: string): number[] {
+  return [...text.matchAll(/\b(\d{1,2})\.\s+/gu)].map((match) => Number(match[1]));
 }
 
 function isAllowedSelfCorrectionRewrite(
@@ -1197,32 +1231,75 @@ function isAllowedSelfCorrectionRewrite(
 }
 
 function normalizeContentToken(token: string): string {
-  const lower = token.toLowerCase().replace(/’/g, "'");
+  const lower = token.toLowerCase().replace(/['’]/g, "");
   if (lower === "a" || lower === "an") return "a";
   return NUMBER_WORD_VALUES[lower] !== undefined
     ? String(NUMBER_WORD_VALUES[lower])
     : lower;
 }
 
+function normalizeSpokenNumberPairs(text: string): string {
+  return text.replace(
+    /\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-]+(one|two|three|four|five|six|seven|eight|nine)\b/giu,
+    (_, tens: string, units: string) =>
+      String(
+        TENS_NUMBER_WORD_VALUES[tens.toLowerCase()]! +
+          UNIT_NUMBER_WORD_VALUES[units.toLowerCase()]!,
+      ),
+  );
+}
+
 function contentTokens(text: string): string[] {
   return (
-    normalizeZeroQuantifierNegation(text)
+    normalizeSpokenNumberPairs(normalizeZeroQuantifierNegation(text))
       .normalize("NFKC")
       .match(/[\p{L}\p{N}'’]+/gu)
       ?.map(normalizeContentToken) ?? []
   );
 }
 
-function hasUngroundedContent(cleanedText: string, candidate: string): boolean {
-  const cleanedCounts = new Map<string, number>();
-  for (const token of contentTokens(cleanedText)) {
-    cleanedCounts.set(token, (cleanedCounts.get(token) ?? 0) + 1);
-  }
+function compactContentSequence(text: string): string {
+  const numberWords = new RegExp(`\\b(?:${NUMBER_WORD_PATTERN})\\b`, "giu");
+  return normalizeSpokenNumberPairs(normalizeZeroQuantifierNegation(text))
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(numberWords, (word) => String(NUMBER_WORD_VALUES[word] ?? word))
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
 
-  for (const token of contentTokens(candidate)) {
-    const available = cleanedCounts.get(token) ?? 0;
-    if (available <= 0) return true;
-    cleanedCounts.set(token, available - 1);
+function hasUngroundedContent(cleanedText: string, candidate: string): boolean {
+  const source = contentTokens(cleanedText);
+  const used = new Set<number>();
+  // Longer candidates claim their source first. This lets BrainLayer consume
+  // "brain layer" while another spoken "brain" remains available, and still
+  // enforces multiplicity for every word that the model emits.
+  const candidates = contentTokens(candidate).sort(
+    (left, right) => right.length - left.length,
+  );
+  for (const token of candidates) {
+    const exact = source.findIndex(
+      (word, index) => !used.has(index) && word === token,
+    );
+    if (exact >= 0) {
+      used.add(exact);
+      continue;
+    }
+    let joined = false;
+    for (let start = 0; start < source.length && !joined; start++) {
+      if (used.has(start)) continue;
+      let combined = "";
+      for (let end = start; end < Math.min(source.length, start + 4); end++) {
+        if (used.has(end)) break;
+        combined += source[end];
+        if (combined === token && end > start) {
+          for (let index = start; index <= end; index++) used.add(index);
+          joined = true;
+          break;
+        }
+        if (!token.startsWith(combined)) break;
+      }
+    }
+    if (!joined) return true;
   }
 
   return false;
@@ -1242,10 +1319,14 @@ function isAllowedSpokenListRewrite(
   // The exception exists only for converting spoken prose into a list. Once
   // the deterministic rules stage has already numbered the items, bypassing
   // protected-token checks would let polish merge or drop whole spoken beats.
+  const spokenItems = explicitSpokenListItemCount(cleanedText);
+  const markers = numberedMarkdownListMarkers(candidate);
   if (
     hasNumberedMarkdownList(cleanedText) ||
-    !hasSpokenListCue(cleanedText) ||
-    !hasNumberedMarkdownList(candidate)
+    spokenItems < 2 ||
+    !hasNumberedMarkdownList(candidate) ||
+    markers.length !== spokenItems ||
+    markers.some((marker, index) => marker !== index + 1)
   ) {
     return false;
   }
@@ -1255,6 +1336,7 @@ function isAllowedSpokenListRewrite(
 function validatePolishCandidate(
   cleanedText: string,
   polishedText: string,
+  env: STTPolishEnv,
 ): string | null {
   const candidate = polishedText.trim();
   const allowedSelfCorrectionRewrite = isAllowedSelfCorrectionRewrite(
@@ -1285,6 +1367,13 @@ function validatePolishCandidate(
   }
   if (isLowSimilaritySelfCorrectionRewrite) {
     return "polish response self-correction rewrite changed too much text";
+  }
+  if (
+    /(?:^|\n)\s*\d{1,2}\.\s+\S/u.test(candidate) &&
+    !hasNumberedMarkdownList(cleanedText) &&
+    !allowedSpokenListRewrite
+  ) {
+    return POLISH_REJECTION_REASONS.INVENTED_LIST_ITEM;
   }
   if (
     negationCount(cleanedText) !== negationCount(candidate) &&
@@ -1347,6 +1436,21 @@ function validatePolishCandidate(
     return POLISH_REJECTION_REASONS.CHANGED_NEGATION_TOKENS;
   }
 
+  // List markers are formatting only when every item has an explicit spoken
+  // head. Every other candidate word must already exist in the cleaned text,
+  // with the same multiplicity. A model can otherwise add a plausible clause
+  // while staying under the old 35% length and similarity thresholds.
+  const contentCandidate = allowedSpokenListRewrite
+    ? candidate.replace(/(^|\n)\s*\d{1,2}\.\s+/gu, "$1")
+    : candidate;
+  if (
+    isAddedContentGuardEnabled(env) &&
+    hasUngroundedContent(cleanedText, contentCandidate) &&
+    compactContentSequence(cleanedText) !== compactContentSequence(contentCandidate)
+  ) {
+    return POLISH_REJECTION_REASONS.ADDED_UNGROUNDED_CONTENT;
+  }
+
   return null;
 }
 
@@ -1362,11 +1466,12 @@ function applyPolishCandidate(
     retried?: boolean,
   ) => STTPolishResult,
   buildFallbackText: (rejectedCandidateText?: string) => string,
+  env: STTPolishEnv,
   retried = false,
 ): STTPolishResult {
   const trimmedPolishedText = polishedText.trim();
   const candidateText = trimmedPolishedText;
-  const rejectionReason = validatePolishCandidate(cleanedText, candidateText);
+  const rejectionReason = validatePolishCandidate(cleanedText, candidateText, env);
   if (mode === "shadow") {
     return buildResult(
       cleanedText,
@@ -1827,6 +1932,7 @@ export async function polishTranscriptionText(
         mode,
         buildResult,
         buildFallbackText,
+        env,
       );
       const retryReason =
         result.status === "applied" &&
@@ -1859,6 +1965,7 @@ export async function polishTranscriptionText(
                 mode,
                 buildResult,
                 buildFallbackText,
+                env,
                 true,
               );
               if (
@@ -1922,6 +2029,7 @@ export async function polishTranscriptionText(
             mode,
             buildResult,
             buildFallbackText,
+            env,
             true,
           );
           writePolishLog(retryResult, input.rawText, input.cleanedText, env);
@@ -1981,6 +2089,7 @@ export async function polishTranscriptionText(
       mode,
       buildResult,
       buildFallbackText,
+      env,
     );
     writePolishLog(result, input.rawText, input.cleanedText, env);
     return result;

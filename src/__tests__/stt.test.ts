@@ -1564,6 +1564,193 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks+witness");
     });
 
+    it("keeps three spoken tail repetitions when the extension boundary is missing", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-tail-missing-boundary-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "please keep these exact spoken words";
+      const spoken = Array(3).fill(repeated).join(" ");
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${spoken}`;
+          if (calls === 3 || calls === 4) {
+            return `the boundary ${repeated} ${repeated} extension was reworded`;
+          }
+          if (calls === 5) return "separate acoustic extension begins now";
+          return "next topic continues onward";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+      expect(result.text.match(/please keep these exact spoken words/gu)).toHaveLength(3);
+    });
+
+    for (const chunkCopies of [4, 3]) {
+      it(`collapses ${chunkCopies} tail loop copies to one with an unlocated extension boundary`, async () => {
+        const wavPath = `/tmp/voicelayer-whisper-server-tail-margin-${chunkCopies}-test.wav`;
+        await Bun.write(wavPath, makePcm16Wav(95));
+        const repeated = "these repeated words are an unsupported loop";
+        let calls = 0;
+        const backend = new WhisperServerBackend({
+          isServerAvailable: () => true,
+          transcribeViaServer: async () => {
+            calls++;
+            if (calls === 1) return "intro reaches the boundary";
+            if (calls === 2) {
+              return `the boundary ${Array(chunkCopies).fill(repeated).join(" ")}`;
+            }
+            if (calls === 3 || calls === 4) {
+              return `the boundary ${repeated} extension was reworded`;
+            }
+            if (calls === 5) return "separate acoustic extension begins now";
+            return "next topic continues onward";
+          },
+        });
+
+        const result = await backend.transcribe(wavPath);
+        expect(result.text.match(/these repeated words are an unsupported loop/gu)).toHaveLength(1);
+        expect(result.backend).toBe("whisper-server+chunks+witness");
+      });
+    }
+
+    it("collapses a tail loop when two acoustic witnesses agree but the extension wording drifts", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-tail-loop-drift-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "the spoken status remains correct today";
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${Array(7).fill(repeated).join(" ")}`;
+          if (calls === 3) return `the boundary ${Array(4).fill(repeated).join(" ")} next topic begins here`;
+          if (calls === 4) return `the boundary ${repeated} next topic begins here`;
+          if (calls === 5) return `intro reaches the boundary ${repeated} next topic begins here and finishes`;
+          if (calls === 6) return "a differently worded next topic begins";
+          if (calls === 7) return "next topic begins here and finishes";
+          return "and finishes";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(`intro reaches the boundary ${repeated} next topic begins here and finishes`);
+      expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
+    it("keeps a retraction and cutoff fragment outside an acoustically rejected loop", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-loop-retraction-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const spoken = "I want the red — no, the blue one fu…";
+      const repeated = "the spoken status remains correct today";
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${spoken} ${Array(7).fill(repeated).join(" ")}`;
+          if (calls === 3) return `the boundary ${spoken} ${Array(4).fill(repeated).join(" ")} next topic begins here`;
+          if (calls === 4) return `the boundary ${spoken} ${repeated} next topic begins here`;
+          if (calls === 5) return `intro reaches the boundary ${spoken} ${repeated} next topic begins here and finishes`;
+          if (calls === 6) return "a differently worded next topic begins";
+          if (calls === 7) return "next topic begins here and finishes";
+          return "and finishes";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toContain(spoken);
+      expect(result.text.match(/the spoken status remains correct today/gu)).toHaveLength(1);
+      expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
+    it("keeps different consecutive sentences that share a long prefix beside a loop", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-shared-prefix-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "the status remains correct for this recording";
+      const different = "the status remains correct for this session";
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${Array(7).fill(repeated).join(". ")}. ${different}.`;
+          if (calls === 3) return `the boundary ${Array(4).fill(repeated).join(". ")}. ${different}. next topic begins here`;
+          if (calls === 4) return `the boundary ${repeated}. ${different}. next topic begins here`;
+          if (calls === 5) return `intro reaches the boundary ${repeated}. ${different}. next topic begins here and finishes`;
+          if (calls === 6) return "a differently worded next topic begins";
+          if (calls === 7) return "next topic begins here and finishes";
+          return "and finishes";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toContain(`${repeated}. ${different}.`);
+      expect(result.text.match(/the status remains correct for this recording/gu)).toHaveLength(1);
+      expect(result.text.match(/the status remains correct for this session/gu)).toHaveLength(1);
+    });
+
+    it("removes acoustically unsupported five-word copies without losing intervening words", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-five-word-loop-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "the status stays correct today";
+      const bridges = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
+      const loop = [repeated, ...bridges.flatMap((bridge) => [bridge, repeated])].join(" ");
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${loop}`;
+          if (calls === 3) return `the boundary ${Array(3).fill(repeated).join(" ")} a later topic follows`;
+          if (calls === 4) return `the boundary ${repeated} a later topic follows`;
+          if (calls === 5) return `intro reaches the boundary ${repeated} a later topic follows and finishes`;
+          if (calls === 6) return "different later topic starts here";
+          if (calls === 7) return "a later topic follows and finishes";
+          return "and finishes";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text.match(/the status stays correct today/gu)).toHaveLength(1);
+      for (const bridge of bridges) expect(result.text).toContain(bridge);
+      expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
+    it("keeps five-word repetition when acoustic witnesses hear all copies", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-five-word-genuine-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "repeat this thought exactly today";
+      const spoken = Array(3).fill(repeated).join(" ");
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${spoken} and then continue`;
+          if (calls === 3 || calls === 4) return `the boundary ${spoken} and then continue onward`;
+          if (calls === 5) return "continue onward to the end";
+          return "onward to the end";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text.match(/repeat this thought exactly today/gu)).toHaveLength(3);
+      expect(result.backend).toBe("whisper-server+chunks");
+    });
+
     it("preserves a tail loop when the extension boundary repeats the same phrase", async () => {
       const wavPath =
         "/tmp/voicelayer-whisper-server-chunked-ambiguous-tail-boundary-test.wav";

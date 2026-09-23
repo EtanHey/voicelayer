@@ -1068,9 +1068,6 @@ class PlaybackQueueManager {
       this.processNext();
       return;
     }
-    if (next.metadata?.wordBoundaries?.length) {
-      broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
-    }
     if (next.metadata?.clipMarker) {
       broadcast({
         type: "clip_marker",
@@ -1117,6 +1114,9 @@ class PlaybackQueueManager {
         voice: next.metadata.voice,
         playback_amplitude: next.playbackAmplitude,
       });
+      if (next.metadata.wordBoundaries?.length) {
+        broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
+      }
     }
     next.metadata?.onStarted?.(this.current.startedAt);
     this.startProgressTimer();

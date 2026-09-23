@@ -72,7 +72,9 @@ public struct ModelsSettingsView: View {
                 .accessibilityIdentifier("models-effort-picker")
                 .disabled(state.isBusy || state.availability != .available)
                 if state.isBusy, state.availability == .available {
-                    Text("Effort can be changed when recording and transcription are idle.")
+                    Text(state.busyReason
+                        .map { "Effort unavailable: \($0)." } ??
+                        "Effort unavailable while voice activity is in progress.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

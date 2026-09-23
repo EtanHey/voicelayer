@@ -37,4 +37,21 @@ describe("whisper lifecycle gate", () => {
     await next;
     expect(ran).toBe(true);
   });
+
+  test("capture arriving during unload yields its result and releases waiting inference", async () => {
+    const gate = new WhisperLifecycleGate();
+    let finish!: () => void;
+    const unload = gate.unload(() => false, () => new Promise<"not_loaded">((resolve) => {
+      finish = () => resolve("not_loaded");
+    }));
+    gate.yieldToCapture();
+    let ran = false;
+    const inference = gate.use(async () => { ran = true; });
+    await Promise.resolve();
+    expect(ran).toBe(false);
+    finish();
+    expect(await unload).toEqual({ outcome: "reject", reason: "capture took priority" });
+    await inference;
+    expect(ran).toBe(true);
+  });
 });

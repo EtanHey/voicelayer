@@ -33,7 +33,7 @@ import {
 } from "./paths";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 import type { UnloadResult } from "./whisper-lifecycle-gate";
-import { reserveVoiceMaintenance } from "./session-booking";
+import { reserveVoiceMaintenance, isVoiceBooked, EXTERNAL_VOICE_SESSION_REASON } from "./session-booking";
 
 /** Default port for the whisper-server sidecar. */
 const DEFAULT_PORT = 8178;
@@ -265,6 +265,16 @@ export interface WhisperServerLaunchRecord {
 }
 
 let lastLaunchRecord: WhisperServerLaunchRecord | null = null;
+const modelStateListeners = new Set<() => void>();
+
+export function onWhisperModelStateChange(listener: () => void): () => void {
+  modelStateListeners.add(listener);
+  return () => modelStateListeners.delete(listener);
+}
+
+function notifyWhisperModelStateChange(): void {
+  for (const listener of modelStateListeners) listener();
+}
 
 export function whisperServerLaunchRecord(): WhisperServerLaunchRecord | null {
   return lastLaunchRecord;
@@ -802,6 +812,7 @@ function adoptHealthyServer(port: number): void {
       ownerPid: record.owner_pid,
       flagsMatch,
     };
+    notifyWhisperModelStateChange();
     return;
   }
 
@@ -813,6 +824,7 @@ function adoptHealthyServer(port: number): void {
   // No ownership record means no provenance. Reporting the flags we *would*
   // have used would be a guess, not provenance.
   lastLaunchRecord = null;
+  notifyWhisperModelStateChange();
 }
 
 function normalizeAdoptedAccelerationMode(
@@ -927,6 +939,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     console.error("[voicelayer] whisper-server died, restarting...");
     serverState = null;
     lastLaunchRecord = null;
+    notifyWhisperModelStateChange();
   }
 
   // A healthy occupant is somebody's live server. Adopt it — never kill it,
@@ -1098,6 +1111,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
         console.error(
           `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
         );
+        notifyWhisperModelStateChange();
         return true;
       }
       await sleep(500);
@@ -1138,6 +1152,7 @@ export function stopServer(): void {
   const state = serverState;
   serverState = null;
   lastLaunchRecord = null;
+  notifyWhisperModelStateChange();
 
   if (state.adopted || !state.proc) {
     console.error(
@@ -1150,14 +1165,21 @@ export function stopServer(): void {
   try {
     state.proc.kill();
   } catch {}
+  void state.proc.exited?.then(() => {
+    if (!serverState) notifyWhisperModelStateChange();
+  });
   clearWhisperServerOwnership(state.port);
 }
 
 /** Explicit user unload. Only the live child this process launched may be stopped. */
 export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> {
   return whisperLifecycleGate.unload(isBusy, async () => {
-    const release = (testHooks.reserveVoiceMaintenance ?? reserveVoiceMaintenance)();
-    if (!release) throw new Error("busy");
+    const release = (testHooks.reserveVoiceMaintenance ?? reserveVoiceMaintenance)(isBusy);
+    if (!release) {
+      const booking = isVoiceBooked();
+      throw new Error(booking.booked && !booking.ownedByUs
+        ? EXTERNAL_VOICE_SESSION_REASON : "busy");
+    }
     try {
       const state = serverState;
       if (!state || state.adopted || !state.proc) {
@@ -1169,6 +1191,8 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
       }
       if (!state.proc.exited) throw new Error("child exit unavailable");
 
+      if (whisperLifecycleGate.shouldYieldToCapture) throw new Error("capture took priority");
+
       state.proc.kill("SIGTERM");
       if (!(await waitForWhisperProcessExit(state.proc))) {
         throw new Error("child exit unconfirmed");
@@ -1177,6 +1201,7 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
       if (serverState === state) {
         serverState = null;
         lastLaunchRecord = null;
+        notifyWhisperModelStateChange();
       }
       const owner = readWhisperServerOwnership(state.port);
       if (owner?.pid === state.pid && owner.owner_pid === process.pid &&
@@ -1188,6 +1213,7 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
       if (listeners === null || listeners.length !== 0 || healthy) {
         throw new Error("fresh residency is not not_loaded");
       }
+      if (whisperLifecycleGate.shouldYieldToCapture) throw new Error("capture took priority");
       return "not_loaded";
     } finally {
       release();
@@ -1464,6 +1490,7 @@ async function markServerUnhealthy(): Promise<void> {
   const unhealthyState = serverState;
   serverState = null;
   lastLaunchRecord = null;
+  notifyWhisperModelStateChange();
   // An adopted server is not ours to terminate, however sick it looks: the
   // process that launched it owns its lifecycle. Drop our reference instead.
   if (unhealthyState.adopted || !unhealthyState.proc) return;

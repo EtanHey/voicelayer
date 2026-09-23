@@ -675,7 +675,9 @@ export function isSmartWavChunkingEnabled(
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
-const MIN_SUSPECT_LOOP_WORDS = 6;
+// Five-word clauses can survive a first compound-loop collapse as a shorter
+// residual repeat. Acoustic witnesses still decide whether copies are spoken.
+const MIN_SUSPECT_LOOP_WORDS = 5;
 const MAX_SUSPECT_LOOP_WORDS = 16;
 const MIN_SUSPECT_LOOP_OCCURRENCES = 3;
 const MAX_SUSPECT_LOOP_CANDIDATES = 2_048;
@@ -707,7 +709,20 @@ function findSuspectChunkLoops(text: string): SuspectChunkLoop[] {
   ) {
     const occurrences = new Map<string, number[]>();
     for (let index = 0; index + loopWords <= words.length; index++) {
-      const key = overlapKey(words.slice(index, index + loopWords));
+      const phraseWords = words.slice(index, index + loopWords);
+      // A drawn-out "no no no" is speech, not a repeated clause. Shorter
+      // overlapping windows can otherwise make fifteen spoken tokens look
+      // like three copies of a five-word hallucination.
+      if (
+        phraseWords.every(
+          (word) =>
+            normalizeChunkWordForOverlap(word) ===
+            normalizeChunkWordForOverlap(phraseWords[0]),
+        )
+      ) {
+        continue;
+      }
+      const key = overlapKey(phraseWords);
       const indexes = occurrences.get(key) ?? [];
       if (
         indexes.length === 0 ||
@@ -806,6 +821,65 @@ function collapseAcousticallyRejectedLoop(
     suspect,
     supportedOccurrences,
   ).join(" ");
+}
+
+function preservesWitnessedOccurrenceContexts(
+  originalText: string,
+  suspect: SuspectChunkLoop,
+  collapsedText: string,
+  witnessTexts: string[],
+): boolean {
+  const originalWords = normalizeChunkWords(originalText);
+  const collapsedKey = canonicalWitnessText(collapsedText);
+  const suffixWords = originalWords.slice(
+    suspect.lastOccurrenceEnd,
+    suspect.lastOccurrenceEnd + SUSPECT_CONTEXT_WORDS,
+  );
+  const witnessKeys = witnessTexts.map((witnessText) => {
+    const witnessWords = normalizeChunkWords(witnessText);
+    if (!hasDistinctSuspectSuffix(originalText, suspect)) {
+      return canonicalWitnessText(witnessText);
+    }
+    const phraseWords = originalWords.slice(
+      suspect.firstOccurrence,
+      suspect.firstOccurrence + suspect.loopWordCount,
+    );
+    const firstPhrase = findChunkWordSequence(witnessWords, phraseWords, 0);
+    const boundary = findChunkWordSequence(
+      witnessWords,
+      suffixWords,
+      firstPhrase?.end ?? 0,
+    );
+    // A phrase repeated after the original suffix belongs to the acoustic
+    // extension, so it cannot protect a copy inside the original chunk.
+    return canonicalWitnessText(
+      witnessWords.slice(0, boundary?.end).join(" "),
+    );
+  });
+  for (const start of suspect.occurrenceStarts) {
+    // A repeated prefix can belong to a different sentence on its last
+    // occurrence. Keep that occurrence when both witnesses hear its distinct
+    // continuation; blindly keeping the first N copies would erase it.
+    for (let extra = 1; extra <= SUSPECT_CONTEXT_WORDS; extra++) {
+      for (const [from, to] of [
+        [start - extra, start + suspect.loopWordCount],
+        [start, start + suspect.loopWordCount + extra],
+      ]) {
+        if (from < 0 || to > originalWords.length) continue;
+        const contextKey = canonicalWitnessText(
+          originalWords.slice(from, to).join(" "),
+        );
+        if (
+          contextKey &&
+          witnessKeys.every((witness) => witness.includes(contextKey)) &&
+          !collapsedKey.includes(contextKey)
+        ) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
 }
 
 function hasDistinctSuspectSuffix(
@@ -927,9 +1001,24 @@ function countSuspectPhraseOccurrences(
         )
       : null;
   const boundaryRange = suffixRange ?? extensionRange;
-  if (!boundaryRange) return null;
+  // A loop at the tail can consume the original suffix, while the isolated
+  // extension may be worded differently in the longer acoustic witnesses.
+  // Only consider a witness-end count when the extension has a distinct start
+  // and contains no copy of the suspect phrase. The caller also requires two
+  // independent witnesses to agree before removing any copies.
+  if (
+    !boundaryRange &&
+    !(
+      !suffixBoundaryIsDistinct &&
+      extensionBoundaryWords.length >= EXTENSION_BOUNDARY_ANCHOR_WORDS &&
+      !ambiguousExtensionBoundary &&
+      !canonicalWitnessText(extensionBoundaryText ?? "").includes(phraseKey)
+    )
+  ) {
+    return null;
+  }
   const originalRegionKey = canonicalWitnessText(
-    witnessWords.slice(searchFrom, boundaryRange.start).join(" "),
+    witnessWords.slice(searchFrom, boundaryRange?.start).join(" "),
   );
   let count = 0;
   let searchOffset = 0;
@@ -938,6 +1027,12 @@ function countSuspectPhraseOccurrences(
     if (matchOffset < 0) break;
     count++;
     searchOffset = matchOffset + phraseKey.length;
+  }
+  // An unlocated boundary can make a genuine triple look like a double.
+  // Require a large gap before trusting the witness-end count in this case.
+  const chunkCopies = suspect.occurrenceStarts.length;
+  if (!boundaryRange && (chunkCopies < 2 * count || chunkCopies - count < 2)) {
+    return null;
   }
   return count;
 }
@@ -2562,23 +2657,41 @@ export class WhisperServerBackend implements STTBackend {
                   const rightUnsupported =
                     right.candidate.occurrenceStarts.length -
                     Math.max(1, right.acousticOccurrences);
-                  // Prefer the candidate that explains the most unsupported
-                  // copies without leaving a repeated fragment below the
-                  // detector floor, then one ending at a distinct suffix.
+                  // Remove the repeated core first when several overlapping
+                  // candidate phrases describe the same hallucinated run.
+                  // A longer compound can otherwise leave a short clause
+                  // repeated after its surrounding words have been removed.
                   return (
+                    right.acousticOccurrences - left.acousticOccurrences ||
+                    rightUnsupported - leftUnsupported ||
                     Number(right.detectableResidualLoop) -
                       Number(left.detectableResidualLoop) ||
-                    rightUnsupported - leftUnsupported ||
                     Number(right.distinctSuffixBoundary) -
                       Number(left.distinctSuffixBoundary) ||
-                    right.acousticOccurrences - left.acousticOccurrences ||
                     right.candidate.loopWordCount -
                       left.candidate.loopWordCount
                   );
                 },
               );
-              const supported = supportedCandidates[0];
-              if (!supported) break;
+              const supported = supportedCandidates.find(({ candidate, acousticOccurrences }) =>
+                Math.max(1, acousticOccurrences) <
+                  candidate.occurrenceStarts.length &&
+                preservesWitnessedOccurrenceContexts(
+                  text,
+                  candidate,
+                  collapseAcousticallyRejectedLoop(
+                    text,
+                    candidate,
+                    Math.max(1, acousticOccurrences),
+                  ),
+                  supportingWitnesses,
+                ),
+              );
+              if (!supported) {
+                genuineRepeatedSpeech ||= !acousticallyRejectedLoop &&
+                  supportedCandidates.length > 0;
+                break;
+              }
               const supportedOccurrences = Math.max(
                 1,
                 supported.acousticOccurrences,

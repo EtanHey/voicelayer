@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { writeFileSync, unlinkSync } from "fs";
+import { LOCK_FILE } from "../paths";
+import { handleSocketCommand } from "../socket-handlers";
+import * as input from "../input";
 import {
   __resetWhisperServerStateForTests,
   __setWhisperServerLaunchRecordForTests,
@@ -85,5 +89,53 @@ describe("explicit whisper-server unload", () => {
     listeners = [];
     exit(0);
     expect(await pending).toEqual({ outcome: "accept", residency: "not_loaded" });
+  });
+
+  test("F5 capture starts while a signalled unload yields its result", async () => {
+    let exit!: (code: number) => void;
+    let listeners = [55103];
+    const exited = new Promise<number>((resolve) => { exit = resolve; });
+    __resetWhisperServerStateForTests({
+      proc: { pid: 55103, kill: () => {}, exited } as never,
+      port: 18883, pid: 55103, adopted: false,
+    });
+    __setWhisperServerLaunchRecordForTests({
+      pid: 55103, startedAt: "2026-09-23T00:00:00.000Z",
+      binary: "/tmp/whisper-server", modelPath: "/tmp/model.bin", args: [],
+      performanceEffort: "accurate", accelerationMode: "metal",
+    });
+    __setWhisperServerTestHooksForTests({
+      reserveVoiceMaintenance: () => () => {},
+      isPidAlive: () => true,
+      findPortListenerPids: () => listeners,
+      processStartTimeMs: () => Date.parse("2026-09-22T23:59:59.000Z"),
+      isServerHealthy: async () => false,
+      postUnloadListeners: () => listeners,
+    });
+    const recording = spyOn(input, "getRecordingState").mockReturnValue("idle");
+    const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+    try {
+      const unload = unloadOwnedServer(() => false);
+      expect(handleSocketCommand({ cmd: "record", id: "f5-unload-race" }))
+        .toMatchObject({ outcome: "accept" });
+      expect(capture).toHaveBeenCalledTimes(1);
+      listeners = [];
+      exit(0);
+      expect(await unload).toEqual({ outcome: "reject", reason: "capture took priority" });
+    } finally {
+      recording.mockRestore();
+      capture.mockRestore();
+    }
+  });
+
+  test("a late external booking names the competing session at unload reservation", async () => {
+    writeFileSync(LOCK_FILE, JSON.stringify({
+      pid: 1, sessionId: "other-process", startedAt: new Date().toISOString(),
+    }));
+    try {
+      expect(await unloadOwnedServer(() => false)).toEqual({
+        outcome: "reject", reason: "Another app is using the voice session",
+      });
+    } finally { unlinkSync(LOCK_FILE); }
   });
 });

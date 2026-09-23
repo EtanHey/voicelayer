@@ -2,6 +2,44 @@
 import XCTest
 
 final class VoiceStateTests: XCTestCase {
+    func testQueuedSpeaksKeepCurrentTeleprompterThenAdvanceItsWords() {
+        let state = VoiceState()
+        let firstWords: [[String: Any]] = [
+            ["offset_ms": 0, "duration_ms": 200, "text": "First"],
+            ["offset_ms": 200, "duration_ms": 200, "text": "sentence"],
+        ]
+        let secondWords: [[String: Any]] = [
+            ["offset_ms": 0, "duration_ms": 180, "text": "Second"],
+            ["offset_ms": 180, "duration_ms": 240, "text": "sentence"],
+        ]
+        func item(_ text: String, current: Bool) -> [String: Any] {
+            ["text": text, "voice": "fixture", "priority": "normal", "is_current": current, "progress": 0.0]
+        }
+
+        state.handleEvent(["type": "queue", "depth": 1, "items": [item("First sentence", current: false)]])
+        state.handleEvent(["type": "state", "state": "speaking", "text": "First sentence"])
+        state.handleEvent(["type": "subtitle", "words": firstWords])
+        state.handleEvent(["type": "queue", "depth": 1, "items": [item("First sentence", current: true)]])
+        state.handleEvent([
+            "type": "queue", "depth": 2,
+            "items": [item("First sentence", current: true), item("Second sentence", current: false)],
+        ])
+
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(state.teleprompterText, "First sentence")
+        XCTAssertEqual(state.teleprompterWordBoundaries.map(\.text), ["First", "sentence"])
+        XCTAssertEqual(state.queuedSpeakCount, 1)
+
+        state.handleEvent(["type": "queue", "depth": 1, "items": [item("Second sentence", current: false)]])
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Second sentence"])
+        state.handleEvent(["type": "subtitle", "words": secondWords])
+        state.handleEvent(["type": "queue", "depth": 1, "items": [item("Second sentence", current: true)]])
+
+        XCTAssertEqual(state.teleprompterText, "Second sentence")
+        XCTAssertEqual(state.teleprompterWordBoundaries.map(\.text), ["Second", "sentence"])
+        XCTAssertEqual(state.queuedSpeakCount, 0)
+    }
+
     func testRepeatedSpeakingReceiptAdvancesPlaybackEpochForInPlaceReplay() {
         let state = VoiceState()
 

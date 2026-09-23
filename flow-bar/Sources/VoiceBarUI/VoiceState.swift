@@ -354,12 +354,19 @@ public final class VoiceState {
     public private(set) var modelsSettingsState = ModelsSettingsState.loading
     public private(set) var residencyNotice: String?
     private var pendingResidencyID: String?
+    private var timedOutResidencyID: String?
+    private var pendingResidencyTimeout: Task<Void, Never>?
     private var modelsRecordingBusy = true
+    private var modelsRecordingReason: String?
 
     private func refreshModelsBusy() {
         guard modelsSettingsState.availability == .available else { return }
+        let reason = pendingResidencyID != nil ? "Changing model residency"
+            : Self.blocksModelsEffort(mode) ? (mode == .recording ? "Recording" : "Transcribing")
+            : modelsRecordingReason ?? (queueDepth > 0 ? "Playing back" : nil)
         modelsSettingsState = modelsSettingsState.settingBusy(
-            modelsRecordingBusy || queueDepth > 0 || pendingResidencyID != nil || Self.blocksModelsEffort(mode)
+            modelsRecordingBusy || queueDepth > 0 || pendingResidencyID != nil || Self.blocksModelsEffort(mode),
+            reason: reason
         )
     }
 
@@ -403,6 +410,12 @@ public final class VoiceState {
 
     public var queueItems: [QueueItemState] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.count != queueItems.count) }
+    }
+
+    /// The queue snapshot includes the currently playing utterance.
+    public var queuedSpeakCount: Int {
+        guard mode == .speaking else { return 0 }
+        return queueItems.filter { !$0.isCurrent }.count
     }
 
     public var commandModeState: CommandModeState? {
@@ -684,14 +697,36 @@ public final class VoiceState {
               let sendCommand
         else { return }
         let id = UUID().uuidString
+        timedOutResidencyID = nil
         pendingResidencyID = id
         residencyNotice = nil
         refreshModelsBusy()
+        scheduleResidencyTimeout(id: id, after: 8)
         sendCommand([
             "cmd": "set_whisper_residency",
             "action": target == .loaded ? "load" : "unload",
             "id": id,
         ])
+    }
+
+    private func scheduleResidencyTimeout(id: String, after seconds: Int) {
+        pendingResidencyTimeout?.cancel()
+        pendingResidencyTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, self?.pendingResidencyID == id else { return }
+            self?.expirePendingResidencyForTests()
+        }
+    }
+
+    func expirePendingResidencyForTests() {
+        guard pendingResidencyID != nil else { return }
+        timedOutResidencyID = pendingResidencyID
+        pendingResidencyID = nil
+        pendingResidencyTimeout?.cancel()
+        pendingResidencyTimeout = nil
+        residencyNotice = "Model request timed out. Checking current state."
+        refreshModelsBusy()
+        sendCommand?(["cmd": "health"])
     }
 
     public func stop() {
@@ -1142,6 +1177,8 @@ public final class VoiceState {
                 // stale idle events would kill the paste flag. Recording-sourced
                 // idle gets a short final-transcript grace before clearing it.
                 if idleSource == "recording" {
+                    modelsRecordingBusy = false
+                    modelsRecordingReason = nil
                     releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
                     barInitiatedTimeout?.cancel()
                     if historyRetranscriptionRequest.currentPath() != nil,
@@ -1158,6 +1195,7 @@ public final class VoiceState {
                 } else {
                     enterIdleState(clearQueue: idleSource == "playback")
                 }
+                if idleSource == "recording" { refreshModelsBusy() }
             case "speaking":
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 pendingRecordingIdleAfterFinal = false
@@ -1392,10 +1430,22 @@ public final class VoiceState {
         case "health":
             let status = ModelsSettingsState(healthEvent: event)
             modelsRecordingBusy = event["recording_state"] as? String != "idle"
+            modelsRecordingReason = (event["recording_state"] as? String).flatMap {
+                $0 == "recording" ? "Recording" : $0 == "transcribing" ? "Transcribing" : nil
+            }
             if let depth = event["queue_depth"] as? Int { queueDepth = max(0, depth) }
             modelsSettingsState = status
             refreshModelsBusy()
             remoteSTTConfigured = event["remote_stt_configured"] as? Bool
+
+        case "model_status":
+            if isConnected, let modelStatus = event["model_status"] as? [String: Any] {
+                let fresh = ModelsSettingsState(healthEvent: [
+                    "type": "health", "recording_state": "idle", "model_status": modelStatus,
+                ])
+                modelsSettingsState = fresh.retainingPolishControls(from: modelsSettingsState)
+                refreshModelsBusy()
+            }
 
         case "command_mode":
             handleCommandModeEvent(event)
@@ -1518,6 +1568,9 @@ public final class VoiceState {
 
         modelsSettingsState = .unavailable
         pendingResidencyID = nil
+        timedOutResidencyID = nil
+        pendingResidencyTimeout?.cancel()
+        pendingResidencyTimeout = nil
         residencyNotice = nil
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
@@ -1552,7 +1605,9 @@ public final class VoiceState {
 
     private func synchronizeModelsSettingsState(from oldMode: VoiceMode, to newMode: VoiceMode) {
         if Self.blocksModelsEffort(newMode) {
-            modelsSettingsState = modelsSettingsState.settingBusy(true)
+            modelsSettingsState = modelsSettingsState.settingBusy(
+                true, reason: newMode == .recording ? "Recording" : "Transcribing"
+            )
         } else if Self.blocksModelsEffort(oldMode) {
             modelsSettingsState = isConnected ? .loading : .unavailable
         }
@@ -2758,14 +2813,24 @@ public final class VoiceState {
         onAckEvent?(ack)
 
         if ack.command == .setWhisperResidency,
-           ack.id == pendingResidencyID {
+           ack.id == pendingResidencyID || ack.id == timedOutResidencyID {
+            if ack.outcome == .loading {
+                if ack.id == pendingResidencyID {
+                    // Two 30 s STARTUP_TIMEOUT attempts (CoreML then Metal), plus health and cleanup probes.
+                    scheduleResidencyTimeout(id: ack.id, after: 75)
+                }
+                return
+            }
             pendingResidencyID = nil
+            timedOutResidencyID = nil
+            pendingResidencyTimeout?.cancel()
+            pendingResidencyTimeout = nil
             residencyNotice = ack.outcome == .accept ? nil : (ack.reason ?? "Could not change memory state")
             if let modelStatus = event["model_status"] as? [String: Any] {
                 let fresh = ModelsSettingsState(healthEvent: [
                     "type": "health", "recording_state": "idle", "model_status": modelStatus,
                 ])
-                modelsSettingsState = fresh
+                modelsSettingsState = fresh.retainingPolishControls(from: modelsSettingsState)
                 refreshModelsBusy()
             } else {
                 refreshModelsSettingsStatus()

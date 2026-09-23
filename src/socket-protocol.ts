@@ -207,7 +207,7 @@ export interface ClipMarkerEvent {
   status: "marked" | "consumed";
 }
 
-export type IntentOutcome = "accept" | "noop" | "reject";
+export type IntentOutcome = "accept" | "noop" | "reject" | "loading";
 
 export type AckCommand =
   | "stop"
@@ -237,6 +237,11 @@ export interface AckEvent {
   residency?: WhisperModelResidency;
 }
 
+export interface ModelStatusEvent {
+  type: "model_status";
+  model_status: WhisperModelStatus;
+}
+
 export type SocketEvent =
   | StateEvent
   | SpeechEvent
@@ -251,7 +256,8 @@ export type SocketEvent =
   | PlaybackOutcomeEvent
   | CommandModeEvent
   | ClipMarkerEvent
-  | AckEvent;
+  | AckEvent
+  | ModelStatusEvent;
 
 // --- Commands: Voice Bar → VoiceLayer ---
 

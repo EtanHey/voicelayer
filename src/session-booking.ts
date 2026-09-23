@@ -14,6 +14,14 @@ import { LOCK_FILE, STOP_FILE, CANCEL_FILE, safeWriteFileSync } from "./paths";
 /** Maximum age for a lock before it's considered orphaned (5 minutes). */
 export const ORPHAN_TIMEOUT_MS = 5 * 60 * 1000;
 let voiceMaintenanceActive = false;
+let releaseMaintenanceForCapture: (() => void) | null = null;
+
+export const EXTERNAL_VOICE_SESSION_REASON = "Another app is using the voice session";
+
+/** Capture has priority over a Settings unload, including its temporary booking. */
+export function yieldVoiceMaintenanceToCapture(): void {
+  releaseMaintenanceForCapture?.();
+}
 
 export interface SessionLock {
   pid: number;
@@ -172,18 +180,24 @@ export function releaseVoiceSession(): void {
   clearStopSignal();
 }
 
-/** Hold the cross-process voice booking while an owned sidecar is stopping. */
-export function reserveVoiceMaintenance(): (() => void) | null {
-  if (voiceMaintenanceActive || isVoiceBooked().booked) return null;
-  if (!bookVoiceSession(`whisper-unload-${process.pid}`).success) return null;
+/** Reserve maintenance without mistaking our session-long booking for active work. */
+export function reserveVoiceMaintenance(isBusy: () => boolean): (() => void) | null {
+  if (voiceMaintenanceActive || isBusy()) return null;
+  const booking = isVoiceBooked();
+  if (booking.booked && !booking.ownedByUs) return null;
+  const createdLock = !booking.booked;
+  if (createdLock && !bookVoiceSession(`whisper-unload-${process.pid}`).success) return null;
   voiceMaintenanceActive = true;
   let released = false;
-  return () => {
+  const release = () => {
     if (released) return;
     released = true;
     voiceMaintenanceActive = false;
-    releaseVoiceSession();
+    if (releaseMaintenanceForCapture === release) releaseMaintenanceForCapture = null;
+    if (createdLock) releaseVoiceSession();
   };
+  releaseMaintenanceForCapture = release;
+  return release;
 }
 
 /**

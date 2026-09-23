@@ -28,6 +28,7 @@ import {
 import {
   bookVoiceSession,
   isVoiceBooked,
+  yieldVoiceMaintenanceToCapture,
   clearStopSignal,
 } from "./session-booking";
 import {
@@ -72,6 +73,7 @@ import {
 } from "./push-to-end";
 import { appendControlLayerEvent } from "./control-layer-journal";
 import { reserveStandardVoiceOperation } from "./voice-operation-reservation";
+import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 
 // --- MCP result helper ---
 
@@ -527,20 +529,37 @@ export async function handleConverse(
 
   const silenceMode = validated.silence_mode ?? DEFAULT_CONVERSE_SILENCE_MODE;
 
-  // Session booking — auto-book if not already booked
-  const booking = isVoiceBooked();
-  if (booking.booked && !booking.ownedByUs) {
+  // Reject an external booking before yielding maintenance, so an ask that
+  // cannot record does not cancel an in-flight unload.
+  const pre = isVoiceBooked();
+  if (pre.booked && !pre.ownedByUs) {
     return textResult(
       formatBusy(
-        booking.owner?.sessionId ?? "unknown",
-        booking.owner?.pid ?? 0,
-        booking.owner?.startedAt ?? "unknown",
+        pre.owner?.sessionId ?? "unknown",
+        pre.owner?.pid ?? 0,
+        pre.owner?.startedAt ?? "unknown",
       ),
       true,
     );
   }
 
-  if (!booking.booked) {
+  whisperLifecycleGate.yieldToCapture();
+  yieldVoiceMaintenanceToCapture();
+
+  // Yield may have released our temporary maintenance lock. Recheck and book
+  // the mic for capture; another process can win the lock during that handoff.
+  const post = isVoiceBooked();
+  if (post.booked && !post.ownedByUs) {
+    return textResult(
+      formatBusy(
+        post.owner?.sessionId ?? "unknown",
+        post.owner?.pid ?? 0,
+        post.owner?.startedAt ?? "unknown",
+      ),
+      true,
+    );
+  }
+  if (!post.booked) {
     const result = bookVoiceSession();
     if (!result.success) {
       return textResult(`[converse] ${result.error}`, true);
