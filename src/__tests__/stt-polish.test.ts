@@ -1322,12 +1322,32 @@ describe("stt-polish", () => {
         QA_VOICE_STT_POLISH: "on",
         QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
         QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        VOICELAYER_STT_POLISH_ADDED_CONTENT_GUARD: "on",
       },
     });
 
     expect(result.status).toBe("rejected");
     expect(result.text).toBe(cleanedText);
     expect(result.error).toContain("added ungrounded content");
+  });
+
+  it("leaves the added-content guard off by default for the hotfix", async () => {
+    const cleanedText = "We can publish the release after the checks finish and the package is ready for review by the whole team.";
+    const candidate = "We can publish the approved release after the checks finish and the package is ready for review by the whole team.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result.status).toBe("applied");
+    expect(result.text).toBe(candidate);
   });
 
   it("rejects an extra copy of a word already present in the source", async () => {
@@ -1343,6 +1363,7 @@ describe("stt-polish", () => {
         QA_VOICE_STT_POLISH: "on",
         QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
         QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        VOICELAYER_STT_POLISH_ADDED_CONTENT_GUARD: "on",
       },
     });
 
@@ -1351,9 +1372,9 @@ describe("stt-polish", () => {
   });
 
   it("does not invent a third list item from an unnumbered alternative", async () => {
-    const cleanedText = "First of all, verify the recording state before release. Second of all, check the transcript and keep every spoken word. Or checking, keep that phrase in the same sentence.";
+    const cleanedText = "First of all, verify the recording state before release. Second of all, check the transcript and keep every spoken word. Or recording: keep that phrase in the same sentence.";
     server = createMockPolishServer(() => ({
-      text: "1. Verify the recording state before release.\n2. Check the transcript and keep every spoken word.\n3. Or checking, keep that phrase in the same sentence.",
+      text: "1. Verify the recording state before release.\n2. Check the transcript and keep every spoken word.\n3. Or recording: keep that phrase in the same sentence.",
     }));
 
     const result = await polishTranscriptionText({
@@ -1368,7 +1389,57 @@ describe("stt-polish", () => {
 
     expect(result.status).toBe("rejected");
     expect(result.text).toBe(cleanedText);
+
+    const withAddedContentGuard = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        VOICELAYER_STT_POLISH_ADDED_CONTENT_GUARD: "on",
+      },
+    });
+    expect(withAddedContentGuard.status).toBe("rejected");
+    expect(withAddedContentGuard.text).toBe(cleanedText);
   });
+
+  for (const [name, cleanedText] of [
+    [
+      "first of all / second / third",
+      "First of all, verify the recording state before sending it to the team. Second, inspect the transcript and keep every spoken word. Third, save the recording in the archive for later review.",
+    ],
+    [
+      "first of all / second of all / third",
+      "First of all, verify the recording state before sending it to the team. Second of all, inspect the transcript and keep every spoken word. Third, save the recording in the archive for later review.",
+    ],
+    [
+      "firstly / secondly / finally",
+      "Firstly, verify the recording state before sending it to the team. Secondly, inspect the transcript and keep every spoken word. Finally, save the recording in the archive for later review.",
+    ],
+  ] as const) {
+    it(`accepts a genuine mixed-cue list: ${name}`, async () => {
+      const candidate = [
+        "1. Verify the recording state before sending it to the team.",
+        "2. Inspect the transcript and keep every spoken word.",
+        "3. Save the recording in the archive for later review.",
+      ].join("\n");
+      server = createMockPolishServer(() => ({ text: candidate }));
+
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result.status).toBe("applied");
+      expect(result.text).toBe(candidate);
+    });
+  }
 
   it("keeps a spoken retraction and cutoff fragment when polishing punctuation", async () => {
     const cleanedText = "I want the red — no, the blue one fu… before release.";

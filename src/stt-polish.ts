@@ -30,6 +30,7 @@ export interface STTPolishEnv {
   QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS?: string;
   QA_VOICE_STT_POLISH_TIMEOUT_MS?: string;
   QA_VOICE_STT_POLISH_LOG_PATH?: string;
+  VOICELAYER_STT_POLISH_ADDED_CONTENT_GUARD?: string;
   VOICELAYER_STT_POLISH_WARMUP?: string;
   VOICELAYER_STT_POLISH_WARMUP_TIMEOUT_MS?: string;
   VOICELAYER_STT_SMART_BOUNDARIES?: string;
@@ -1166,7 +1167,7 @@ const LETS_DO_WELL_REPLACEMENT_PATTERN =
   /^(?<prefix>.*?\blet(?:'|’)s\s+do\s+)(?:a\s+)?(?<old>[^,.?!]+?)(?:,\s*)?\bwell\s*,\s*(?<replacement>[^.?!]+)(?<ending>[.?!]?)$/iu;
 
 const SPOKEN_LIST_CUE_PATTERN =
-  /\b(?:first\s+of\s+all|second\s+of\s+all|third\s+of\s+all|number\s+(?:one|two|three|four|five)|firstly|secondly|thirdly)\b/iu;
+  /\b(?:first\s+of\s+all|first\s+off|second\s+of\s+all|third\s+of\s+all|number\s+(?:one|two|three|four|five)|firstly|secondly|thirdly)\b/iu;
 
 function hasExplicitSelfCorrectionCue(text: string): boolean {
   return (
@@ -1185,19 +1186,33 @@ function hasNumberedMarkdownList(text: string): boolean {
 }
 
 function explicitSpokenListItemCount(text: string): number {
-  const cues = [
-    /\b(?:first\s+of\s+all|firstly|number\s+one)\b/iu,
-    /\b(?:second\s+of\s+all|secondly|number\s+two)\b/iu,
-    /\b(?:third\s+of\s+all|thirdly|number\s+three)\b/iu,
-    /\b(?:fourth\s+of\s+all|fourthly|number\s+four)\b/iu,
-    /\b(?:fifth\s+of\s+all|fifthly|number\s+five)\b/iu,
-  ];
+  // Match the ordinal and sequence heads the rules stage recognizes, including
+  // mixed phrasing that it currently leaves as prose for polish to format.
+  // Require a spoken comma/colon after each head so a casual ordinal mention
+  // inside an item cannot authorize a new numbered item.
+  const headPattern = /\b(first\s+of\s+all|first\s+off|firstly|number\s+one|first|second\s+of\s+all|secondly|number\s+two|second|third\s+of\s+all|thirdly|number\s+three|third|fourthly|number\s+four|fourth|fifthly|number\s+five|fifth|sixth|seventh|eighth|ninth|tenth|then\s+next|then\s+lastly|next|finally|lastly)\b(?=\s*[:,])/giu;
+  const numberedHeads: Record<string, number> = {
+    "first of all": 1, "first off": 1, firstly: 1, "number one": 1, first: 1,
+    "second of all": 2, secondly: 2, "number two": 2, second: 2,
+    "third of all": 3, thirdly: 3, "number three": 3, third: 3,
+    fourthly: 4, "number four": 4, fourth: 4,
+    fifthly: 5, "number five": 5, fifth: 5,
+    sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+  };
   let count = 0;
-  for (const cue of cues) {
-    if (!cue.test(text)) break;
-    count++;
+  for (const match of text.matchAll(headPattern)) {
+    const head = match[1].toLowerCase().replace(/\s+/gu, " ");
+    const ordinal = numberedHeads[head];
+    if (ordinal === count + 1 || (ordinal === undefined && count >= 1)) {
+      count++;
+    }
   }
   return count;
+}
+
+function isAddedContentGuardEnabled(env: STTPolishEnv): boolean {
+  const value = env.VOICELAYER_STT_POLISH_ADDED_CONTENT_GUARD?.trim().toLowerCase();
+  return value === "on" || value === "true" || value === "yes" || value === "1";
 }
 
 function numberedMarkdownListMax(text: string): number {
@@ -1321,6 +1336,7 @@ function isAllowedSpokenListRewrite(
 function validatePolishCandidate(
   cleanedText: string,
   polishedText: string,
+  env: STTPolishEnv,
 ): string | null {
   const candidate = polishedText.trim();
   const allowedSelfCorrectionRewrite = isAllowedSelfCorrectionRewrite(
@@ -1428,6 +1444,7 @@ function validatePolishCandidate(
     ? candidate.replace(/(^|\n)\s*\d{1,2}\.\s+/gu, "$1")
     : candidate;
   if (
+    isAddedContentGuardEnabled(env) &&
     hasUngroundedContent(cleanedText, contentCandidate) &&
     compactContentSequence(cleanedText) !== compactContentSequence(contentCandidate)
   ) {
@@ -1449,11 +1466,12 @@ function applyPolishCandidate(
     retried?: boolean,
   ) => STTPolishResult,
   buildFallbackText: (rejectedCandidateText?: string) => string,
+  env: STTPolishEnv,
   retried = false,
 ): STTPolishResult {
   const trimmedPolishedText = polishedText.trim();
   const candidateText = trimmedPolishedText;
-  const rejectionReason = validatePolishCandidate(cleanedText, candidateText);
+  const rejectionReason = validatePolishCandidate(cleanedText, candidateText, env);
   if (mode === "shadow") {
     return buildResult(
       cleanedText,
@@ -1914,6 +1932,7 @@ export async function polishTranscriptionText(
         mode,
         buildResult,
         buildFallbackText,
+        env,
       );
       const retryReason =
         result.status === "applied" &&
@@ -1946,6 +1965,7 @@ export async function polishTranscriptionText(
                 mode,
                 buildResult,
                 buildFallbackText,
+                env,
                 true,
               );
               if (
@@ -2009,6 +2029,7 @@ export async function polishTranscriptionText(
             mode,
             buildResult,
             buildFallbackText,
+            env,
             true,
           );
           writePolishLog(retryResult, input.rawText, input.cleanedText, env);
@@ -2068,6 +2089,7 @@ export async function polishTranscriptionText(
       mode,
       buildResult,
       buildFallbackText,
+      env,
     );
     writePolishLog(result, input.rawText, input.cleanedText, env);
     return result;
