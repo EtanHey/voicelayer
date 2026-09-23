@@ -26,6 +26,7 @@ import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import { handleConverse, handleVoiceAsk } from "../handlers";
 import { reserveArchiveRetranscription } from "../voice-operation-reservation";
+import { whisperLifecycleGate } from "../whisper-lifecycle-gate";
 
 const capturedPrompt = () => ({
   displayText: "test question",
@@ -78,6 +79,28 @@ describe("handleConverse resilience — P0-2", () => {
     clearStopSpy = spyOn(sessionBooking, "clearStopSignal").mockImplementation(
       () => {},
     );
+  });
+
+  it("voice_ask preempts unload maintenance and reaches capture", async () => {
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+    waitSpy = spyOn(input, "waitForInput").mockResolvedValue("dictated answer");
+    const release = sessionBooking.reserveVoiceMaintenance(() => false);
+    let finishUnload!: () => void;
+    const unload = whisperLifecycleGate.unload(() => false, () => new Promise<"not_loaded">((resolve) => {
+      finishUnload = () => resolve("not_loaded");
+    }));
+    try {
+      expect(release).toBeFunction();
+      const result = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      expect(result.isError).not.toBe(true);
+      expect(waitSpy).toHaveBeenCalledTimes(1);
+      finishUnload();
+      expect(await unload).toEqual({ outcome: "reject", reason: "capture took priority" });
+    } finally {
+      finishUnload();
+      await unload;
+      release?.();
+    }
   });
 
   afterEach(() => {

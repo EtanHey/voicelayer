@@ -33,7 +33,7 @@ import {
 } from "./paths";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 import type { UnloadResult } from "./whisper-lifecycle-gate";
-import { reserveVoiceMaintenance } from "./session-booking";
+import { reserveVoiceMaintenance, isVoiceBooked, EXTERNAL_VOICE_SESSION_REASON } from "./session-booking";
 
 /** Default port for the whisper-server sidecar. */
 const DEFAULT_PORT = 8178;
@@ -1156,8 +1156,12 @@ export function stopServer(): void {
 /** Explicit user unload. Only the live child this process launched may be stopped. */
 export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> {
   return whisperLifecycleGate.unload(isBusy, async () => {
-    const release = (testHooks.reserveVoiceMaintenance ?? reserveVoiceMaintenance)();
-    if (!release) throw new Error("busy");
+    const release = (testHooks.reserveVoiceMaintenance ?? reserveVoiceMaintenance)(isBusy);
+    if (!release) {
+      const booking = isVoiceBooked();
+      throw new Error(booking.booked && !booking.ownedByUs
+        ? EXTERNAL_VOICE_SESSION_REASON : "busy");
+    }
     try {
       const state = serverState;
       if (!state || state.adopted || !state.proc) {
@@ -1169,6 +1173,7 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
       }
       if (!state.proc.exited) throw new Error("child exit unavailable");
 
+      if (whisperLifecycleGate.shouldYieldToCapture) throw new Error("capture took priority");
       state.proc.kill("SIGTERM");
       if (!(await waitForWhisperProcessExit(state.proc))) {
         throw new Error("child exit unconfirmed");
@@ -1188,6 +1193,7 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
       if (listeners === null || listeners.length !== 0 || healthy) {
         throw new Error("fresh residency is not not_loaded");
       }
+      if (whisperLifecycleGate.shouldYieldToCapture) throw new Error("capture took priority");
       return "not_loaded";
     } finally {
       release();

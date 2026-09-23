@@ -6,10 +6,17 @@ export type UnloadResult =
 export class WhisperLifecycleGate {
   private users = 0;
   private unloading = false;
+  private captureRequested = false;
   private release: (() => void) | null = null;
   private cleared: Promise<void> | null = null;
 
   get isUnloading(): boolean { return this.unloading; }
+  get isInUse(): boolean { return this.users > 0; }
+  get shouldYieldToCapture(): boolean { return this.unloading && this.captureRequested; }
+
+  yieldToCapture(): void {
+    if (this.unloading) this.captureRequested = true;
+  }
 
   async use<T>(work: () => Promise<T>): Promise<T> {
     while (this.cleared) await this.cleared;
@@ -29,11 +36,14 @@ export class WhisperLifecycleGate {
       return { outcome: "reject", reason: "busy" };
     }
     this.unloading = true;
+    this.captureRequested = false;
     this.cleared = new Promise<void>((resolve) => { this.release = resolve; });
     try {
       // Recheck after the reservation is established. Future use() calls wait.
       if (isBusy()) return { outcome: "reject", reason: "busy" };
-      return { outcome: "accept", residency: await stop() };
+      const residency = await stop();
+      if (this.captureRequested) return { outcome: "reject", reason: "capture took priority" };
+      return { outcome: "accept", residency };
     } catch (error) {
       return {
         outcome: "reject",
@@ -41,6 +51,7 @@ export class WhisperLifecycleGate {
       };
     } finally {
       this.unloading = false;
+      this.captureRequested = false;
       this.cleared = null;
       this.release?.();
       this.release = null;

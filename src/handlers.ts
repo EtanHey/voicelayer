@@ -28,6 +28,7 @@ import {
 import {
   bookVoiceSession,
   isVoiceBooked,
+  yieldVoiceMaintenanceToCapture,
   clearStopSignal,
 } from "./session-booking";
 import {
@@ -72,6 +73,7 @@ import {
 } from "./push-to-end";
 import { appendControlLayerEvent } from "./control-layer-journal";
 import { reserveStandardVoiceOperation } from "./voice-operation-reservation";
+import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 
 // --- MCP result helper ---
 
@@ -526,6 +528,9 @@ export async function handleConverse(
   );
 
   const silenceMode = validated.silence_mode ?? DEFAULT_CONVERSE_SILENCE_MODE;
+
+  whisperLifecycleGate.yieldToCapture();
+  yieldVoiceMaintenanceToCapture();
 
   // Session booking — auto-book if not already booked
   const booking = isVoiceBooked();

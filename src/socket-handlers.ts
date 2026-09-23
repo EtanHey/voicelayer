@@ -29,6 +29,8 @@ import {
 import {
   bookVoiceSession,
   isVoiceBooked,
+  yieldVoiceMaintenanceToCapture,
+  EXTERNAL_VOICE_SESSION_REASON,
   setCancelSignal,
 } from "./session-booking";
 import { broadcast } from "./socket-client";
@@ -62,6 +64,7 @@ import { setRecordingHold } from "./recording-hold";
 import { readWhisperModelStatus } from "./model-status";
 import { ensureServer, unloadOwnedServer, verifiedWhisperServerLaunchRecord } from "./whisper-server";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
+import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -179,6 +182,8 @@ export function handleSocketCommand(
         });
         return buildAck(command, "reject", "mic disabled");
       }
+      whisperLifecycleGate.yieldToCapture();
+      yieldVoiceMaintenanceToCapture();
       // H5 fix: check session booking to prevent concurrent recordings
       const booking = isVoiceBooked();
       if (booking.booked && !booking.ownedByUs) {
@@ -351,9 +356,11 @@ export function handleSocketCommand(
       }
     }
     case "set_whisper_effort":
-      if (recordingState === "recording" || recordingState === "transcribing" ||
-          whisperLifecycleGate.isUnloading) {
-        return buildAck(command, "reject", "busy");
+      if (residencyBusy() || residencyLoadPending || whisperLifecycleGate.isUnloading ||
+          whisperLifecycleGate.isInUse) {
+        const booking = isVoiceBooked();
+        return buildAck(command, "reject", booking.booked && !booking.ownedByUs
+          ? EXTERNAL_VOICE_SESSION_REASON : "busy");
       }
       try {
         setWhisperPerformanceEffort(command.effort);
@@ -378,8 +385,21 @@ export function handleSocketCommand(
 }
 
 function residencyBusy(): boolean {
+  const booking = isVoiceBooked();
   return getRecordingState() !== "idle" ||
-    isVoiceBooked().booked || getPlaybackQueueDepth() > 0;
+    getPlaybackQueueDepth() > 0 || hasActiveVoiceOperation() ||
+    (booking.booked && !booking.ownedByUs);
+}
+
+function residencyBusyReason(): string {
+  const state = getRecordingState();
+  const booking = isVoiceBooked();
+  if (booking.booked && !booking.ownedByUs) return EXTERNAL_VOICE_SESSION_REASON;
+  if (state === "recording") return "Recording in progress";
+  if (state === "transcribing") return "Transcription in progress";
+  if (getPlaybackQueueDepth() > 0) return "Playing back audio";
+  if (hasActiveVoiceOperation()) return "Voice session in progress";
+  return "busy";
 }
 
 // Settings requests reserve their own admission slot. Capture booking remains
@@ -397,13 +417,13 @@ async function handleResidencyCommand(
   if (backend === "wispr" || backend === "whisper") {
     reason = "resident backend is not configured";
   } else if (residencyLoadPending || residencyBusy()) {
-    reason = "busy";
+    reason = residencyLoadPending ? "Model load in progress" : residencyBusyReason();
   } else if (command.action === "load") {
     residencyLoadPending = true;
     ownsLoadSlot = true;
     try {
       await ensureServer();
-      if (residencyBusy()) reason = "busy";
+      if (residencyBusy()) reason = residencyBusyReason();
       else {
         const port = Number.parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT ?? "", 10) || 8178;
         const record = verifiedWhisperServerLaunchRecord(port);
@@ -422,7 +442,7 @@ async function handleResidencyCommand(
     const modelStatus = await readWhisperModelStatus();
     if (command.action === "load" && outcome === "accept" && residencyBusy()) {
       outcome = "reject";
-      reason = "busy";
+      reason = residencyBusyReason();
     }
     const expected = command.action === "load" ? "loaded" : "not_loaded";
     if (outcome === "accept" && modelStatus.residency !== expected) {
