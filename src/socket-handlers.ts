@@ -33,7 +33,7 @@ import {
   EXTERNAL_VOICE_SESSION_REASON,
   setCancelSignal,
 } from "./session-booking";
-import { broadcast } from "./socket-client";
+import { broadcast, isConnected } from "./socket-client";
 import type {
   AckCommand,
   AckEvent,
@@ -62,9 +62,28 @@ import {
 } from "./whisper-performance";
 import { setRecordingHold } from "./recording-hold";
 import { readWhisperModelStatus } from "./model-status";
-import { ensureServer, unloadOwnedServer, verifiedWhisperServerLaunchRecord } from "./whisper-server";
+import {
+  ensureServer,
+  onWhisperModelStateChange,
+  unloadOwnedServer,
+  verifiedWhisperServerLaunchRecord,
+} from "./whisper-server";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
+
+let modelStatusRevision = 0;
+function publishModelStatusEvent(): void {
+  const revision = ++modelStatusRevision;
+  if (!isConnected()) return;
+  void readWhisperModelStatus().then((modelStatus) => {
+    if (revision === modelStatusRevision) {
+      broadcast({ type: "model_status", model_status: modelStatus });
+    }
+  }).catch((error) => {
+    console.error(`[voicelayer] Model status event failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+onWhisperModelStateChange(publishModelStatusEvent);
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -365,6 +384,7 @@ export function handleSocketCommand(
       try {
         setWhisperPerformanceEffort(command.effort);
         restartWhisperServerForPerformanceChange();
+        publishModelStatusEvent();
         return buildAck(command, "accept");
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));
@@ -413,6 +433,8 @@ async function handleResidencyCommand(
   let outcome: AckEvent["outcome"] = "reject";
   let reason: string | undefined;
   let ownsLoadSlot = false;
+  const startedAt = Date.now();
+  console.error(`[voicelayer] Residency request ${command.id} ${command.action} started`);
   const backend = (process.env.QA_VOICE_STT_BACKEND ?? "auto").toLowerCase();
   if (backend === "wispr" || backend === "whisper") {
     reason = "resident backend is not configured";
@@ -455,12 +477,19 @@ async function handleResidencyCommand(
       model_status: modelStatus,
     };
   } catch (error) {
+    outcome = "reject";
+    reason ??= vocabularyErrorReason(error);
     return {
-      ...buildAck(command, "reject", reason ?? vocabularyErrorReason(error)),
+      ...buildAck(command, "reject", reason),
       residency: "unknown",
     };
   } finally {
     if (ownsLoadSlot) residencyLoadPending = false;
+    publishModelStatusEvent();
+    console.error(
+      `[voicelayer] Residency request ${command.id} ${command.action} ${outcome}` +
+      ` reason=${reason ?? "none"} elapsed_ms=${Date.now() - startedAt}`,
+    );
   }
 }
 

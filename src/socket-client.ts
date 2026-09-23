@@ -153,11 +153,34 @@ function startConnection(): void {
               `[socket-client] Command from VoiceBar: ${JSON.stringify(command)}`,
             );
             if (commandHandler) {
-              Promise.resolve(commandHandler(command))
+              const responsePromise = commandHandler(command);
+              if (command.cmd === "set_whisper_residency" &&
+                  command.action === "load" && responsePromise instanceof Promise &&
+                  connection && connected) {
+                try {
+                  connection.write(JSON.stringify({
+                    type: "ack", command: command.cmd, id: command.id,
+                    outcome: "loading",
+                  }) + "\n");
+                } catch (error) {
+                  console.error(`[socket-client] Residency loading ack failed: ${String(error)}`);
+                }
+              }
+              Promise.resolve(responsePromise)
                 .then((response) => {
-                  if (!response || !connection || !connected) return;
+                  if (!response || !connection || !connected) {
+                    if (command.cmd === "set_whisper_residency") {
+                      console.error(`[socket-client] Residency response ${command.id} dropped: disconnected`);
+                    }
+                    return;
+                  }
                   try {
                     connection.write(JSON.stringify(response) + "\n");
+                    if (command.cmd === "set_whisper_residency" && response.type === "ack") {
+                      console.error(
+                        `[socket-client] Residency response ${command.id} written outcome=${response.outcome}`,
+                      );
+                    }
                   } catch (err) {
                     console.error(
                       `[socket-client] Failed to write response: ${err instanceof Error ? err.message : String(err)}`,
