@@ -1237,10 +1237,10 @@ describe("stt-polish", () => {
     server = createMockPolishServer(() => ({ text: polished }));
 
     const cleanedText =
-      "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's 0 numbering and there's no corrections. The .at file seems to be 1 of the only things that's fixed other than punctuation as well seems to work now pretty reliably.";
+      "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's 0 numbering and there's no corrections. The .at file seems to be 1 of the only things that's fixed other than punctuation it seems to work now pretty reliably.";
     const result = await polishTranscriptionText({
       rawText:
-        "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's zero numbering and there's no corrections. The .at file seems to be one of the only things that's fixed other than punctuation as well seems to work now pretty reliably.",
+        "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's zero numbering and there's no corrections. The .at file seems to be one of the only things that's fixed other than punctuation it seems to work now pretty reliably.",
       cleanedText,
       env: {
         QA_VOICE_STT_POLISH: "on",
@@ -1307,6 +1307,103 @@ describe("stt-polish", () => {
       changed: false,
     });
     expect(result.error).toContain("introduced new content");
+  });
+
+  it("rejects an added content word in ordinary dictation", async () => {
+    const cleanedText = "We can publish the release after the checks finish and the package is ready for review by the whole team.";
+    server = createMockPolishServer(() => ({
+      text: "We can publish the approved release after the checks finish and the package is ready for review by the whole team.",
+    }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result.status).toBe("rejected");
+    expect(result.text).toBe(cleanedText);
+    expect(result.error).toContain("added ungrounded content");
+  });
+
+  it("rejects an extra copy of a word already present in the source", async () => {
+    const cleanedText = "The release is ready after the checks finish and the package reaches the team for review.";
+    server = createMockPolishServer(() => ({
+      text: "The release is ready after the checks finish and the package reaches the team for the review.",
+    }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result.status).toBe("rejected");
+    expect(result.text).toBe(cleanedText);
+  });
+
+  it("does not invent a third list item from an unnumbered alternative", async () => {
+    const cleanedText = "First of all, verify the recording state before release. Second of all, check the transcript and keep every spoken word. Or checking, keep that phrase in the same sentence.";
+    server = createMockPolishServer(() => ({
+      text: "1. Verify the recording state before release.\n2. Check the transcript and keep every spoken word.\n3. Or checking, keep that phrase in the same sentence.",
+    }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result.status).toBe("rejected");
+    expect(result.text).toBe(cleanedText);
+  });
+
+  it("keeps a spoken retraction and cutoff fragment when polishing punctuation", async () => {
+    const cleanedText = "I want the red — no, the blue one fu… before release.";
+    server = createMockPolishServer(() => ({ text: cleanedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result.status).toBe("applied");
+    expect(result.text).toBe(cleanedText);
+  });
+
+  it("falls back to the complete retraction and fragment when polish drops them", async () => {
+    const cleanedText = "I want the red — no, the blue one fu… before release.";
+    server = createMockPolishServer(() => ({ text: "I want the blue one before release." }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result.status).toBe("rejected");
+    expect(result.text).toBe(cleanedText);
   });
 
   it("allows explicit spoken-list restructuring into numbered markdown", async () => {

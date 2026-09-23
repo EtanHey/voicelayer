@@ -476,6 +476,8 @@ const POLISH_REJECTION_REASONS = {
   DELETED_RETRACTION: "polish response deleted retraction content",
   RETRACTION_CHECK_UNAVAILABLE:
     "polish response too long to verify retraction fidelity",
+  ADDED_UNGROUNDED_CONTENT: "polish response added ungrounded content",
+  INVENTED_LIST_ITEM: "polish response invented a list item",
   DROPPED_TOO_MUCH_TEXT: "polish response dropped too much text",
   DROPPED_TOO_MANY_WORDS: "polish response dropped too many words",
 } as const;
@@ -1182,6 +1184,26 @@ function hasNumberedMarkdownList(text: string): boolean {
   return /(?:^|\n)\s*1\.\s+\S/u.test(text) && /(?:^|\n)\s*2\.\s+\S/u.test(text);
 }
 
+function explicitSpokenListItemCount(text: string): number {
+  const cues = [
+    /\b(?:first\s+of\s+all|firstly|number\s+one)\b/iu,
+    /\b(?:second\s+of\s+all|secondly|number\s+two)\b/iu,
+    /\b(?:third\s+of\s+all|thirdly|number\s+three)\b/iu,
+    /\b(?:fourth\s+of\s+all|fourthly|number\s+four)\b/iu,
+    /\b(?:fifth\s+of\s+all|fifthly|number\s+five)\b/iu,
+  ];
+  let count = 0;
+  for (const cue of cues) {
+    if (!cue.test(text)) break;
+    count++;
+  }
+  return count;
+}
+
+function numberedMarkdownListMax(text: string): number {
+  return Math.max(0, ...[...text.matchAll(/(?:^|\n)\s*(\d{1,2})\.\s+\S/gu)].map((match) => Number(match[1])));
+}
+
 function isAllowedSelfCorrectionRewrite(
   cleanedText: string,
   candidate: string,
@@ -1197,32 +1219,75 @@ function isAllowedSelfCorrectionRewrite(
 }
 
 function normalizeContentToken(token: string): string {
-  const lower = token.toLowerCase().replace(/’/g, "'");
+  const lower = token.toLowerCase().replace(/['’]/g, "");
   if (lower === "a" || lower === "an") return "a";
   return NUMBER_WORD_VALUES[lower] !== undefined
     ? String(NUMBER_WORD_VALUES[lower])
     : lower;
 }
 
+function normalizeSpokenNumberPairs(text: string): string {
+  return text.replace(
+    /\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-]+(one|two|three|four|five|six|seven|eight|nine)\b/giu,
+    (_, tens: string, units: string) =>
+      String(
+        TENS_NUMBER_WORD_VALUES[tens.toLowerCase()]! +
+          UNIT_NUMBER_WORD_VALUES[units.toLowerCase()]!,
+      ),
+  );
+}
+
 function contentTokens(text: string): string[] {
   return (
-    normalizeZeroQuantifierNegation(text)
+    normalizeSpokenNumberPairs(normalizeZeroQuantifierNegation(text))
       .normalize("NFKC")
       .match(/[\p{L}\p{N}'’]+/gu)
       ?.map(normalizeContentToken) ?? []
   );
 }
 
-function hasUngroundedContent(cleanedText: string, candidate: string): boolean {
-  const cleanedCounts = new Map<string, number>();
-  for (const token of contentTokens(cleanedText)) {
-    cleanedCounts.set(token, (cleanedCounts.get(token) ?? 0) + 1);
-  }
+function compactContentSequence(text: string): string {
+  const numberWords = new RegExp(`\\b(?:${NUMBER_WORD_PATTERN})\\b`, "giu");
+  return normalizeSpokenNumberPairs(normalizeZeroQuantifierNegation(text))
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(numberWords, (word) => String(NUMBER_WORD_VALUES[word] ?? word))
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
 
-  for (const token of contentTokens(candidate)) {
-    const available = cleanedCounts.get(token) ?? 0;
-    if (available <= 0) return true;
-    cleanedCounts.set(token, available - 1);
+function hasUngroundedContent(cleanedText: string, candidate: string): boolean {
+  const source = contentTokens(cleanedText);
+  const used = new Set<number>();
+  // Longer candidates claim their source first. This lets BrainLayer consume
+  // "brain layer" while another spoken "brain" remains available, and still
+  // enforces multiplicity for every word that the model emits.
+  const candidates = contentTokens(candidate).sort(
+    (left, right) => right.length - left.length,
+  );
+  for (const token of candidates) {
+    const exact = source.findIndex(
+      (word, index) => !used.has(index) && word === token,
+    );
+    if (exact >= 0) {
+      used.add(exact);
+      continue;
+    }
+    let joined = false;
+    for (let start = 0; start < source.length && !joined; start++) {
+      if (used.has(start)) continue;
+      let combined = "";
+      for (let end = start; end < Math.min(source.length, start + 4); end++) {
+        if (used.has(end)) break;
+        combined += source[end];
+        if (combined === token && end > start) {
+          for (let index = start; index <= end; index++) used.add(index);
+          joined = true;
+          break;
+        }
+        if (!token.startsWith(combined)) break;
+      }
+    }
+    if (!joined) return true;
   }
 
   return false;
@@ -1245,7 +1310,8 @@ function isAllowedSpokenListRewrite(
   if (
     hasNumberedMarkdownList(cleanedText) ||
     !hasSpokenListCue(cleanedText) ||
-    !hasNumberedMarkdownList(candidate)
+    !hasNumberedMarkdownList(candidate) ||
+    numberedMarkdownListMax(candidate) > explicitSpokenListItemCount(cleanedText)
   ) {
     return false;
   }
@@ -1285,6 +1351,13 @@ function validatePolishCandidate(
   }
   if (isLowSimilaritySelfCorrectionRewrite) {
     return "polish response self-correction rewrite changed too much text";
+  }
+  if (
+    hasNumberedMarkdownList(candidate) &&
+    !hasNumberedMarkdownList(cleanedText) &&
+    !allowedSpokenListRewrite
+  ) {
+    return POLISH_REJECTION_REASONS.INVENTED_LIST_ITEM;
   }
   if (
     negationCount(cleanedText) !== negationCount(candidate) &&
@@ -1345,6 +1418,20 @@ function validatePolishCandidate(
   // the speaker's retracted wording survives even when the rewrite is fluent.
   if (changedNegationTokens(cleanedText, candidate)) {
     return POLISH_REJECTION_REASONS.CHANGED_NEGATION_TOKENS;
+  }
+
+  // List markers are formatting only when every item has an explicit spoken
+  // head. Every other candidate word must already exist in the cleaned text,
+  // with the same multiplicity. A model can otherwise add a plausible clause
+  // while staying under the old 35% length and similarity thresholds.
+  const contentCandidate = allowedSpokenListRewrite
+    ? candidate.replace(/(^|\n)\s*\d{1,2}\.\s+/gu, "$1")
+    : candidate;
+  if (
+    hasUngroundedContent(cleanedText, contentCandidate) &&
+    compactContentSequence(cleanedText) !== compactContentSequence(contentCandidate)
+  ) {
+    return POLISH_REJECTION_REASONS.ADDED_UNGROUNDED_CONTENT;
   }
 
   return null;
