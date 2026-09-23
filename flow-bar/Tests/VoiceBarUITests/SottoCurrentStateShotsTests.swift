@@ -59,7 +59,6 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         let router = NoopRouter()
         for (name, mode, hover) in [
             ("idle", VoiceMode.idle, false),
-            ("idle-hover", .idle, true),
             ("recording", .recording, false),
             ("transcribing", .transcribing, false),
             ("error", .error, false),
@@ -71,7 +70,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             if mode == .error { state.errorMessage = "Synthetic error" }
             try shot("pill-\(name).png", "Pill: \(name)", BarView(
                 state: state, commandRouter: router, includesPanelOutsets: true
-            ), size: CGSize(width: 420, height: 180))
+            ), size: CGSize(width: 600, height: 180))
         }
 
         let panelState = syntheticState()
@@ -158,7 +157,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             "",
             "## Limits",
             "",
-            "The right-click menu images are drawn from the production `NSMenu` model because AppKit cannot snapshot a tracking menu in an offscreen window. The idle and idle-hover pill PNGs are pixel-identical in this host; hover and pressed optics need a live pointer event and are not proven here. These are source-state artifacts, not installed-app screenshots.",
+            "The right-click menu images are drawn from the production `NSMenu` model because AppKit cannot snapshot a tracking menu in an offscreen window. The idle-hover pill shot is omitted because an offscreen state flag does not produce a real pointer hover. Hover and pressed optics need a live pointer event and are not proven here. These are source-state artifacts, not installed-app screenshots.",
         ])
         try (lines.joined(separator: "\n") + "\n").write(
             to: directory.appendingPathComponent("index.md"),
