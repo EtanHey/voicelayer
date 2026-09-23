@@ -29,7 +29,11 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             "|---|---|",
         ]
         func shot(_ name: String, _ description: String, _ view: some View, size: CGSize) throws {
-            try render(view, size: size, to: directory.appendingPathComponent(name))
+            if name.hasPrefix("popover-") {
+                try renderPopover(view, size: size, to: directory.appendingPathComponent(name))
+            } else {
+                try render(view, size: size, to: directory.appendingPathComponent(name))
+            }
             lines.append("| [\(name)](\(name)) | \(description) |")
         }
 
@@ -38,6 +42,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             ("recording", .recording, ""),
             ("transcribing", .transcribing, ""),
             ("no-transcript-yet", .idle, ""),
+            ("remote-stt-configured", .idle, ""),
             (
                 "long-transcript",
                 .idle,
@@ -46,13 +51,13 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         ] {
             let footer = VoiceBarFooterPresentation.resolve(
                 isConnected: true, mode: mode, captureLive: mode == .recording,
-                errorMessage: nil, remoteSTTConfigured: false, hasFreshHealth: true
+                errorMessage: nil, remoteSTTConfigured: name == "remote-stt-configured", hasFreshHealth: true
             )
             try shot("popover-\(name).png", "Menu bar popover: \(name)", MenuBarPopoverView(
                 footer: footer, hotkeyHint: "Hold F5 to dictate",
                 microphoneName: "Built-in Microphone", transcript: transcript
             ).environment(\.colorScheme, .light).background(Color.white),
-            size: CGSize(width: 334, height: transcript.isEmpty ? 194 : 270))
+            size: CGSize(width: 334, height: transcript.isEmpty ? 240 : 320))
         }
 
         let router = NoopRouter()
@@ -291,5 +296,18 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         }
         try data.write(to: url, options: .atomic)
         window.contentView = nil
+    }
+
+    private func renderPopover(_ view: some View, size: CGSize, to url: URL) throws {
+        let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height,
+                                                         alignment: .topLeading).background(Color.white))
+        renderer.scale = 2
+        guard let image = renderer.nsImage,
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw NSError(domain: "SottoCurrentStateShots", code: 3)
+        }
+        try png.write(to: url, options: .atomic)
     }
 }
