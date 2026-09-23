@@ -1417,6 +1417,22 @@ describe("stt-polish", () => {
       "firstly / secondly / finally",
       "Firstly, verify the recording state before sending it to the team. Secondly, inspect the transcript and keep every spoken word. Finally, save the recording in the archive for later review.",
     ],
+    [
+      "comma-less first of all / second of all / third of all",
+      "First of all verify the recording state before sending it to the team. Second of all inspect the transcript and keep every spoken word. Third of all save the recording in the archive for later review.",
+    ],
+    [
+      "comma-less firstly / secondly / thirdly",
+      "Firstly verify the recording state before sending it to the team. Secondly inspect the transcript and keep every spoken word. Thirdly save the recording in the archive for later review.",
+    ],
+    [
+      "comma-less number 1 / number 2 / number 3",
+      "Number 1 verify the recording state before sending it to the team. Number 2 inspect the transcript and keep every spoken word. Number 3 save the recording in the archive for later review.",
+    ],
+    [
+      "mixed comma-less first of all / secondly / and thirdly",
+      "First of all verify the recording state before sending it to the team, secondly inspect the transcript and keep every spoken word, and thirdly save the recording in the archive for later review.",
+    ],
   ] as const) {
     it(`accepts a genuine mixed-cue list: ${name}`, async () => {
       const candidate = [

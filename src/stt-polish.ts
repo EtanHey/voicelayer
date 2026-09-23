@@ -1167,7 +1167,7 @@ const LETS_DO_WELL_REPLACEMENT_PATTERN =
   /^(?<prefix>.*?\blet(?:'|’)s\s+do\s+)(?:a\s+)?(?<old>[^,.?!]+?)(?:,\s*)?\bwell\s*,\s*(?<replacement>[^.?!]+)(?<ending>[.?!]?)$/iu;
 
 const SPOKEN_LIST_CUE_PATTERN =
-  /\b(?:first\s+of\s+all|first\s+off|second\s+of\s+all|third\s+of\s+all|number\s+(?:one|two|three|four|five)|firstly|secondly|thirdly)\b/iu;
+  /\b(?:first\s+of\s+all|first\s+off|second\s+of\s+all|third\s+of\s+all|number\s+(?:one|two|three|four|five|[1-5])|firstly|secondly|thirdly)\b/iu;
 
 function hasExplicitSelfCorrectionCue(text: string): boolean {
   return (
@@ -1188,20 +1188,24 @@ function hasNumberedMarkdownList(text: string): boolean {
 function explicitSpokenListItemCount(text: string): number {
   // Match the ordinal and sequence heads the rules stage recognizes, including
   // mixed phrasing that it currently leaves as prose for polish to format.
-  // Require a spoken comma/colon after each head so a casual ordinal mention
+  // Explicit cues ("first of all", "firstly", "number one"/"number 1") are
+  // unambiguous and Whisper often leaves them unpunctuated. Bare ordinals and
+  // sequence words need a spoken comma/colon so a casual "first" or "next"
   // inside an item cannot authorize a new numbered item.
-  const headPattern = /\b(first\s+of\s+all|first\s+off|firstly|number\s+one|first|second\s+of\s+all|secondly|number\s+two|second|third\s+of\s+all|thirdly|number\s+three|third|fourthly|number\s+four|fourth|fifthly|number\s+five|fifth|sixth|seventh|eighth|ninth|tenth|then\s+next|then\s+lastly|next|finally|lastly)\b(?=\s*[:,])/giu;
+  const headPattern = /\b(first\s+of\s+all|first\s+off|firstly|number\s+(?:one|1)|first|second\s+of\s+all|secondly|number\s+(?:two|2)|second|third\s+of\s+all|thirdly|number\s+(?:three|3)|third|fourthly|number\s+(?:four|4)|fourth|fifthly|number\s+(?:five|5)|fifth|sixth|seventh|eighth|ninth|tenth|then\s+next|then\s+lastly|next|finally|lastly)\b(\s*[:,])?/giu;
   const numberedHeads: Record<string, number> = {
-    "first of all": 1, "first off": 1, firstly: 1, "number one": 1, first: 1,
-    "second of all": 2, secondly: 2, "number two": 2, second: 2,
-    "third of all": 3, thirdly: 3, "number three": 3, third: 3,
-    fourthly: 4, "number four": 4, fourth: 4,
-    fifthly: 5, "number five": 5, fifth: 5,
+    "first of all": 1, "first off": 1, firstly: 1, "number one": 1, "number 1": 1, first: 1,
+    "second of all": 2, secondly: 2, "number two": 2, "number 2": 2, second: 2,
+    "third of all": 3, thirdly: 3, "number three": 3, "number 3": 3, third: 3,
+    fourthly: 4, "number four": 4, "number 4": 4, fourth: 4,
+    fifthly: 5, "number five": 5, "number 5": 5, fifth: 5,
     sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
   };
+  const needsPunctuation = /^(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|then next|then lastly|next|finally|lastly)$/u;
   let count = 0;
   for (const match of text.matchAll(headPattern)) {
     const head = match[1].toLowerCase().replace(/\s+/gu, " ");
+    if (needsPunctuation.test(head) && !match[2]) continue;
     const ordinal = numberedHeads[head];
     if (ordinal === count + 1 || (ordinal === undefined && count >= 1)) {
       count++;
