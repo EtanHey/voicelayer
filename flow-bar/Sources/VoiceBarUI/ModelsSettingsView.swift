@@ -5,6 +5,9 @@ public struct ModelsSettingsView: View {
     @Binding private var effort: VoiceBarPerformanceEffort
     private let notice: String?
     private let residencyNotice: String?
+    private let lastDictationLabel: String?
+    private let degradation: STTPolishDegradation?
+    private let onDismissDegradation: () -> Void
     private let onSelectEffort: (VoiceBarPerformanceEffort) -> Void
     private let onSelectResidency: ((VoiceModelResidency) -> Void)?
 
@@ -14,7 +17,10 @@ public struct ModelsSettingsView: View {
         notice: String? = nil,
         onSelectEffort: @escaping (VoiceBarPerformanceEffort) -> Void,
         residencyNotice: String? = nil,
-        onSelectResidency: ((VoiceModelResidency) -> Void)? = nil
+        onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
+        lastDictationLabel: String? = nil,
+        degradation: STTPolishDegradation? = nil,
+        onDismissDegradation: @escaping () -> Void = {}
     ) {
         self.state = state
         _effort = effort
@@ -22,42 +28,55 @@ public struct ModelsSettingsView: View {
         self.onSelectEffort = onSelectEffort
         self.residencyNotice = residencyNotice
         self.onSelectResidency = onSelectResidency
+        self.lastDictationLabel = lastDictationLabel
+        self.degradation = degradation
+        self.onDismissDegradation = onDismissDegradation
     }
 
     public var body: some View {
         Form {
-            Section("Speech recognition") {
-                LabeledContent("Configured model") {
-                    Text(configuredName).accessibilityIdentifier("models-configured-model")
-                }
-                LabeledContent("Model file") {
-                    Text(installedLabel).accessibilityIdentifier("models-model-file")
-                }
-                LabeledContent("Residency") {
-                    Text(residencyLabel).accessibilityIdentifier("models-residency")
-                }
-                LabeledContent("Active model") {
-                    Text(activeName).accessibilityIdentifier("models-active-model")
-                }
-                LabeledContent("Active effort") {
-                    Text(state.activeEffort?.displayName ?? "Unknown")
-                        .accessibilityIdentifier("models-active-effort")
-                }
-                if state.availability == .available,
-                   let onSelectResidency,
-                   state.residency != .unknown {
-                    Button(state.residency == .loaded ? "Unload from memory" : "Load into memory") {
-                        onSelectResidency(state.residency == .loaded ? .notLoaded : .loaded)
+            if let degradation {
+                Section {
+                    HStack {
+                        Label(degradation.hint, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("Dismiss", action: onDismissDegradation)
                     }
-                    .disabled(state.isBusy)
-                    .accessibilityIdentifier("models-residency-control")
+                }
+            }
+
+            Section {
+                LabeledContent("Speech model") {
+                    Text(modelSummary)
+                        .accessibilityIdentifier("models-configured-model")
+                }
+                LabeledContent("In memory") {
+                    HStack(spacing: 10) {
+                        Text(residencyLabel)
+                            .accessibilityIdentifier("models-residency")
+                        if state.availability == .available,
+                           let onSelectResidency,
+                           state.residency != .unknown {
+                            Button(state.residency == .loaded ? "Unload" : "Load") {
+                                onSelectResidency(state.residency == .loaded ? .notLoaded : .loaded)
+                            }
+                            .disabled(state.isBusy)
+                            .accessibilityIdentifier("models-residency-control")
+                        }
+                    }
+                }
+                LabeledContent("Last dictation used") {
+                    Text(lastDictationLabel ?? "Unavailable")
+                        .accessibilityIdentifier("models-last-dictation")
                 }
                 if let residencyNotice {
                     Text(residencyNotice).font(.caption).foregroundStyle(.orange)
                 }
             }
+
             Section("Transcription effort") {
-                Picker("Effort", selection: Binding(
+                Picker("Transcription effort", selection: Binding(
                     get: { effort },
                     set: { selected in
                         effort = selected
@@ -68,58 +87,55 @@ public struct ModelsSettingsView: View {
                         Text(option.displayName).tag(option)
                     }
                 }
+                .labelsHidden()
                 .pickerStyle(.segmented)
+                .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("models-effort-picker")
                 .disabled(state.isBusy || state.availability != .available)
+                Text("Applies to your next dictation. Each transcript in History shows which one it used.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if state.isBusy, state.availability == .available {
-                    Text(state.busyReason
-                        .map { "Effort unavailable: \($0)." } ??
-                        "Effort unavailable while voice activity is in progress.")
+                    Text(state.busyReason ?? "Voice session in progress")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("models-busy-reason")
                 }
                 if let notice {
                     Text(notice).font(.caption).foregroundStyle(.orange)
                 }
             }
-            Section("Dictation polish") {
+
+            Section("Processing") {
                 if let controls = state.polishControls, state.availability == .available {
-                    LabeledContent("Model polish") {
-                        Text(controls.modelPolish.effective.displayName)
-                            .accessibilityIdentifier("models-polish-mode")
-                    }
-                    Text(
-                        "Off, Preview only, or On. Preview only runs model polish without applying its result; other transcription steps still run."
+                    processingRow(
+                        "Polish: fixes punctuation and casing locally",
+                        status: controls.modelPolish.effective.displayName,
+                        source: controls.modelPolish.source
                     )
-                    .font(.caption).foregroundStyle(.secondary)
-                    sourceLabel(controls.modelPolish)
-                    LabeledContent("Outro gate") {
-                        Text(controls.outroGate.effective ? "On" : "Off")
-                            .accessibilityIdentifier("models-outro-gate")
-                    }
-                    Text("Removes a hallucinated closing phrase like ‘Thank you.’")
-                        .font(.caption).foregroundStyle(.secondary)
-                    sourceLabel(controls.outroGate)
-                    LabeledContent("Smart chunks") {
-                        Text(controls.smartChunks.effective ? "On" : "Off")
-                            .accessibilityIdentifier("models-smart-chunks")
-                    }
-                    Text("Optional audio chunk placement.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    sourceLabel(controls.smartChunks)
-                    LabeledContent("Smart boundaries") {
-                        Text(controls.smartBoundaries.effective ? "On" : "Off")
-                            .accessibilityIdentifier("models-smart-boundaries")
-                    }
-                    Text("Optional sentence boundary detection.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    sourceLabel(controls.smartBoundaries)
-                    Text(
-                        "These values are read from the running daemon. Changing them requires restarting it while no recording is in progress."
+                    .accessibilityIdentifier("models-polish-mode")
+                    processingRow(
+                        "Closing-phrase filter: removes an invented ‘Thank you.’ at the end",
+                        status: controls.outroGate.effective ? "On" : "Off",
+                        source: controls.outroGate.source
                     )
-                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("models-outro-gate")
+                    processingRow("Smart chunks: places optional audio chunks",
+                                  status: controls.smartChunks.effective ? "On" : "Off",
+                                  source: controls.smartChunks.source)
+                        .accessibilityIdentifier("models-smart-chunks")
+                    processingRow("Smart boundaries: detects sentence boundaries",
+                                  status: controls.smartBoundaries.effective ? "On" : "Off",
+                                  source: controls.smartBoundaries.source)
+                        .accessibilityIdentifier("models-smart-boundaries")
+                    Text(
+                        "Read from the running daemon. To change these settings, edit its configuration and restart it when voice activity is idle."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 } else {
-                    Text("Unavailable")
+                    Text("Status unavailable")
                         .accessibilityIdentifier("models-polish-unavailable")
                 }
             }
@@ -129,19 +145,11 @@ public struct ModelsSettingsView: View {
         .accessibilityIdentifier("models-settings-form")
     }
 
-    private var configuredName: String {
-        value(state.configuredModelName, missing: "Not found")
-    }
-
-    private var activeName: String {
-        value(state.activeModelName, missing: "Unknown")
-    }
-
-    private var installedLabel: String {
+    private var modelSummary: String {
         guard state.availability == .available else { return availabilityLabel }
-        guard state.isInstalled == true else { return "Not installed" }
-        guard let bytes = state.configuredModelSizeBytes else { return "Installed" }
-        return "Installed · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
+        let name = VoiceModelDisplayName.normalize(state.configuredModelName) ?? "Not found"
+        guard let bytes = state.configuredModelSizeBytes, bytes > 0 else { return name }
+        return "\(name) · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
     }
 
     private var residencyLabel: String {
@@ -149,7 +157,7 @@ public struct ModelsSettingsView: View {
         switch state.residency {
         case .loaded: return "Loaded"
         case .notLoaded: return "Not loaded"
-        case .unknown: return "Unknown"
+        case .unknown: return "Unavailable"
         }
     }
 
@@ -157,13 +165,10 @@ public struct ModelsSettingsView: View {
         state.availability == .loading ? "Checking…" : "Status unavailable"
     }
 
-    private func value(_ value: String?, missing: String) -> String {
-        guard state.availability == .available else { return availabilityLabel }
-        return value ?? missing
-    }
-
-    private func sourceLabel(_ setting: PolishSetting<some Any>) -> some View {
-        Text(setting.source == .default ? "Default" : "Environment override")
-            .font(.caption).foregroundStyle(.secondary)
+    private func processingRow(_ description: String, status: String, source: PolishSettingSource) -> some View {
+        LabeledContent(description) {
+            Text(status)
+                .help(source == .default ? "Daemon default" : "Environment setting")
+        }
     }
 }

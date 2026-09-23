@@ -62,7 +62,6 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("variantChips"))
         XCTAssertFalse(source.contains("Section(\"Find\")"))
         XCTAssertFalse(source.contains("Section(\"Prompt Terms\")"))
-        XCTAssertFalse(source.contains("DisclosureGroup"))
     }
 
     func testDictionaryAddAndSearchAppearBeforeCanonicalCards() throws {
@@ -85,13 +84,13 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Picker(\"Anchor\""))
     }
 
-    func testSettingsUsesAcceptedFiveDestinationOrder() {
+    func testSettingsUsesApprovedFourDestinationOrder() {
         XCTAssertEqual(
             SettingsTab.allCases,
-            [.audio, .dictionary, .history, .models, .general]
+            [.general, .models, .dictionary, .history]
         )
         XCTAssertEqual(SettingsTab.allCases.map(\.title), [
-            "Audio", "Dictionary", "History", "Models", "General",
+            "General", "Models", "Dictionary", "History",
         ])
     }
 
@@ -101,15 +100,13 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertEqual(SettingsDictionarySource.unknown.title, "Terms")
     }
 
-    func testAudioTabIncludesPerformanceEffortPicker() throws {
+    func testOnlyModelsOwnsPerformanceEffortPicker() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("Section(\"Performance\")"))
-        XCTAssertTrue(source.contains("Picker(\"Effort\""))
-        XCTAssertTrue(source.contains("Fast"))
-        XCTAssertTrue(source.contains("Balanced"))
-        XCTAssertTrue(source.contains("Accurate"))
-        XCTAssertTrue(source.contains("onSelectPerformanceEffort"))
+        XCTAssertFalse(source.contains("case .audio:"))
+        XCTAssertFalse(source.contains("private var audioTab"))
+        XCTAssertTrue(source.contains("microphonePrioritySection"))
+        XCTAssertTrue(source.contains("ModelsSettingsView("))
     }
 
     func testSettingsIncludesFullHistoryTabWithEntryActions() throws {
@@ -504,14 +501,16 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("Hide for 1 hour"))
     }
 
-    func testGeneralTabShowsGranularPermissionAndRelayRows() throws {
+    func testGeneralTabShowsPermissionsAndAdvancedF5Helper() throws {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("permissionRow"))
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
         XCTAssertTrue(source.contains("Section(\"Permissions & Hotkey Setup\")"))
-        XCTAssertTrue(source.contains("Relay (hidutil LaunchAgent)"))
+        XCTAssertTrue(source.contains("DisclosureGroup(\"Advanced\", isExpanded:"))
+        XCTAssertTrue(source.contains("F5 key helper"))
+        XCTAssertFalse(source.contains("Relay (hidutil LaunchAgent)"))
         XCTAssertTrue(source.contains("runRelaySetup"))
         XCTAssertTrue(source.contains(".disabled(relaySetupRunning)"))
         XCTAssertFalse(source.contains("Section(\"Karabiner\")"))

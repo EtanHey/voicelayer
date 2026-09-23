@@ -355,13 +355,15 @@ public final class VoiceState {
     public private(set) var residencyNotice: String?
     private var pendingResidencyID: String?
     private var timedOutResidencyID: String?
+    private var pendingResidencyTarget: VoiceModelResidency?
     private var pendingResidencyTimeout: Task<Void, Never>?
     private var modelsRecordingBusy = true
     private var modelsRecordingReason: String?
 
     private func refreshModelsBusy() {
         guard modelsSettingsState.availability == .available else { return }
-        let reason = pendingResidencyID != nil ? "Changing model residency"
+        let reason = pendingResidencyID != nil
+            ? (pendingResidencyTarget == .loaded ? "Loading model…" : "Unloading model…")
             : Self.blocksModelsEffort(mode) ? (mode == .recording ? "Recording" : "Transcribing")
             : modelsRecordingReason ?? (queueDepth > 0 ? "Playing back" : nil)
         modelsSettingsState = modelsSettingsState.settingBusy(
@@ -699,6 +701,7 @@ public final class VoiceState {
         let id = UUID().uuidString
         timedOutResidencyID = nil
         pendingResidencyID = id
+        pendingResidencyTarget = target
         residencyNotice = nil
         refreshModelsBusy()
         scheduleResidencyTimeout(id: id, after: 8)
@@ -722,6 +725,7 @@ public final class VoiceState {
         guard pendingResidencyID != nil else { return }
         timedOutResidencyID = pendingResidencyID
         pendingResidencyID = nil
+        pendingResidencyTarget = nil
         pendingResidencyTimeout?.cancel()
         pendingResidencyTimeout = nil
         residencyNotice = "Model request timed out. Checking current state."
@@ -1569,6 +1573,7 @@ public final class VoiceState {
         modelsSettingsState = .unavailable
         pendingResidencyID = nil
         timedOutResidencyID = nil
+        pendingResidencyTarget = nil
         pendingResidencyTimeout?.cancel()
         pendingResidencyTimeout = nil
         residencyNotice = nil
@@ -2823,6 +2828,7 @@ public final class VoiceState {
             }
             pendingResidencyID = nil
             timedOutResidencyID = nil
+            pendingResidencyTarget = nil
             pendingResidencyTimeout?.cancel()
             pendingResidencyTimeout = nil
             residencyNotice = ack.outcome == .accept ? nil : (ack.reason ?? "Could not change memory state")

@@ -61,6 +61,7 @@ private struct VoiceBarFirstRenderScaleReceipt: Codable {
 
 enum SettingsWindowSizing {
     static let minimumContentSize = NSSize(width: 780, height: 620)
+    static let autosaveName = "VoiceBar.SettingsWindow"
 
     static var initialContentRect: NSRect {
         NSRect(origin: .zero, size: minimumContentSize)
@@ -2520,6 +2521,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.level = .floating
         SettingsWindowSizing.apply(to: window)
         window.center()
+        window.setFrameAutosaveName(SettingsWindowSizing.autosaveName)
+        SettingsWindowSizing.apply(to: window)
         settingsWindow = window
 
         window.makeKeyAndOrderFront(nil)

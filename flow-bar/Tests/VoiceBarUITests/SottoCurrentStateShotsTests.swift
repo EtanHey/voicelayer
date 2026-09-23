@@ -6,6 +6,7 @@ import XCTest
 /// Production views in an offscreen AppKit host. Fixtures are deliberately synthetic.
 @MainActor
 final class SottoCurrentStateShotsTests: XCTestCase {
+    private var syntheticRecordingPath: String?
     private final class NoopRouter: BarCommandRouting {
         func handlePrimaryTap() {}
         func handleCancel() {}
@@ -20,10 +21,18 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         }
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let recordingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sotto-shots-\(ProcessInfo.processInfo.processIdentifier)")
+        try FileManager.default.createDirectory(at: recordingDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: recordingDirectory) }
+        try Data("{\"provenance\":{\"whisper_model_path\":\"/fixture/ggml-whisper-model.bin\",\"performance_effort\":\"balanced\"}}"
+            .utf8)
+            .write(to: recordingDirectory.appendingPathComponent("metadata.json"))
+        syntheticRecordingPath = recordingDirectory.appendingPathComponent("audio.wav").path
         var lines = [
-            "# Origin/main current state",
+            "# Current source-state screenshots",
             "",
-            "Base: `b0180a3`. All content below uses synthetic fixtures. PNGs are rendered by production SwiftUI views inside offscreen AppKit windows at 2×.",
+            "All content below uses synthetic fixtures. PNGs are rendered by production SwiftUI views inside offscreen AppKit windows at 2×. Record the generating checkout SHA in the lane report.",
             "",
             "| File | Surface and state |",
             "|---|---|",
@@ -129,6 +138,12 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                      settings(tab: tab, vocabulary: tab == .dictionary ? populated : empty),
                      size: CGSize(width: 780, height: 620))
         }
+        try shot("settings-resized.png", "Settings: General at 960×740 pt",
+                 settings(tab: .general, vocabulary: empty),
+                 size: CGSize(width: 960, height: 740))
+        try shot("settings-general-advanced.png", "Settings General: Advanced F5 helper expanded",
+                 settings(tab: .general, vocabulary: empty, advanced: true),
+                 size: CGSize(width: 960, height: 740))
         try shot(
             "settings-dictionary-empty.png",
             "Settings Dictionary: empty",
@@ -197,6 +212,12 @@ final class SottoCurrentStateShotsTests: XCTestCase {
     private func modelState(residency: String, recordingState: String, queueDepth: Int) -> ModelsSettingsState {
         ModelsSettingsState(healthEvent: [
             "type": "health", "recording_state": recordingState, "queue_depth": queueDepth,
+            "polish_controls": [
+                "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
+                "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
+                "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
+                "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
+            ],
             "model_status": [
                 "configured_model": ["name": "fixture-whisper-model", "size_bytes": 1_000_000, "installed": true],
                 "residency": residency,
@@ -211,6 +232,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         tab: SettingsTab,
         vocabulary: STTVocabularyPreview,
         search: String = "",
+        advanced: Bool = false,
         modelState: ModelsSettingsState = .loading
     ) -> SettingsView {
         let date = Date(timeIntervalSince1970: 1_758_590_400)
@@ -220,19 +242,48 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             recordingID: "fixture-recording",
             createdAt: date,
             transcript: "This is a synthetic dictation for screenshot review.",
-            audioPath: URL(fileURLWithPath: "/tmp/voicelayer-sotto-synthetic.wav")
+            audioPath: URL(fileURLWithPath: "/tmp/voicelayer-sotto-synthetic.wav"),
+            modelLabel: "fixture-whisper-model",
+            performanceEffort: .balanced
         )
         let group = SettingsHistoryDayGroup(dayKey: "2025-09-23", date: date, entries: [entry])
         let historyFixture = SettingsHistoryPage(groups: [group], loadedEntryCount: 1, hasMore: false)
         let emptyAskFixture = SettingsAskHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
+        let recordingPath = syntheticRecordingPath
         return SettingsView(hotkeyEnabled: true, missingPermissions: [],
                             availableDevices: { [MicrophoneDevice(id: "fixture-mic", name: "Fixture Microphone")] },
                             selectedDeviceID: { "fixture-mic" }, onSelectDevice: { _ in },
+                            prioritySnapshot: {
+                                MicrophonePrioritySnapshot(rows: [
+                                    .init(
+                                        uid: "fixture-mic",
+                                        deviceID: "fixture-mic",
+                                        label: "Fixture Microphone",
+                                        isConnected: true
+                                    ),
+                                    .init(
+                                        uid: "CADefaultDeviceAggregate-fixture",
+                                        deviceID: "fixture-virtual",
+                                        label: "Virtual Audio",
+                                        isConnected: true
+                                    ),
+                                ], nextDeviceName: "Fixture Microphone")
+                            },
                             modelsStatus: { modelState }, onRefreshModelsStatus: {},
+                            onSelectResidency: { _ in },
                             vocabularyPreview: { vocabulary }, vocabularyRevision: { 0 },
+                            lastDictationEntry: {
+                                RecentTranscriptionEntry(text: "Synthetic dictation for visual review.",
+                                                         recordingPath: recordingPath)
+                            },
                             historyPage: { _ in historyFixture }, initialHistoryPage: historyFixture,
                             askHistoryPage: { _ in emptyAskFixture }, initialAskHistoryPage: emptyAskFixture,
-                            initialTab: tab, initialDictionarySearch: search)
+                            footerPresentation: {
+                                .resolve(isConnected: true, mode: .idle, captureLive: false,
+                                         errorMessage: nil, remoteSTTConfigured: false, hasFreshHealth: true)
+                            },
+                            initialTab: tab, initialDictionarySearch: search,
+                            initialAdvancedExpanded: advanced)
     }
 
     private func menuShots(
