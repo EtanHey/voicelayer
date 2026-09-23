@@ -246,10 +246,14 @@ final class AppLifecycleTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let uiSourceDirectory = repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBarUI")
+        // AIDEV-NOTE: The menu-bar popover is also a legitimate home for the Quit control.
         let uiSources = try FileManager.default.contentsOfDirectory(
             at: uiSourceDirectory,
             includingPropertiesForKeys: nil
-        ).filter { $0.pathExtension == "swift" && $0.lastPathComponent != "VoiceBarMenu.swift" }
+        ).filter {
+            $0.pathExtension == "swift" &&
+                !["VoiceBarMenu.swift", "MenuBarPopoverView.swift"].contains($0.lastPathComponent)
+        }
         let surfaceSources = uiSources + [
             repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift"),
         ]
