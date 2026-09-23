@@ -65,7 +65,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
         isBusy = healthEvent["recording_state"] as? String != "idle"
             || (healthEvent["queue_depth"] as? Int ?? 0) > 0
         busyReason = (healthEvent["recording_state"] as? String).flatMap {
-            $0 == "recording" ? "Recording" : $0 == "transcribing" ? "Transcribing" : nil
+            $0 == "recording" ? "Recording…" : $0 == "transcribing" ? "Transcribing…" : nil
         } ?? ((healthEvent["queue_depth"] as? Int ?? 0) > 0 ? "Playing back" : nil)
         polishControls = PolishControlsState(healthEvent: healthEvent)
     }

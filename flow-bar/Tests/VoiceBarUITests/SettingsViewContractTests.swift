@@ -12,7 +12,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("effort: $selectedPerformanceEffort"))
         XCTAssertTrue(source.contains("notice: performanceEffortNotice()"))
         XCTAssertTrue(source.contains("onSelectEffort: onSelectPerformanceEffort"))
-        XCTAssertTrue(source.contains(".onAppear(perform: onRefreshModelsStatus)"))
+        XCTAssertTrue(source.contains("onRefreshModelsStatus()"))
         XCTAssertFalse(source.contains("Model information unavailable"))
     }
 
@@ -507,7 +507,9 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("permissionRow"))
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
-        XCTAssertTrue(source.contains("Section(\"Permissions & Hotkey Setup\")"))
+        XCTAssertTrue(source.contains("Section(\"Shortcut\")"))
+        XCTAssertTrue(source.contains("Section(\"Permissions\")"))
+        XCTAssertTrue(source.contains("DisclosureGroup(\"All permissions granted\""))
         XCTAssertTrue(source.contains("DisclosureGroup(\"Advanced\", isExpanded:"))
         XCTAssertTrue(source.contains("F5 key helper"))
         XCTAssertFalse(source.contains("Relay (hidutil LaunchAgent)"))
