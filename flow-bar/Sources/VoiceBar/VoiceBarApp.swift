@@ -2819,62 +2819,21 @@ struct VoiceBarApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            VStack(alignment: .leading, spacing: 10) {
-                if let degradation = appDelegate.voiceState.polishDegradation {
-                    Label(degradation.hint, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(.caption, weight: .medium))
-                        .foregroundStyle(.orange)
-                    Divider()
-                }
-                VoiceBarStatusFooter(
-                    presentation: .resolve(state: appDelegate.voiceState)
-                )
-                Text(
-                    appDelegate.hotkeyEnabled
-                        ? "Hold F5 to dictate"
-                        : VoiceBarPresentation.hotkeyPermissionHint(
-                            hotkeyEnabled: appDelegate.hotkeyEnabled,
-                            missingPermissions: appDelegate.missingHotkeyPermissions
-                        )
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    Image(systemName: "mic")
-                    Text(menuInputDeviceName)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .font(.caption)
-                .padding(9)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
-                if !appDelegate.voiceState.latestReusableTranscript.isEmpty {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(appDelegate.voiceState.latestReusableTranscript)
-                            .font(.caption)
-                            .lineLimit(3)
-                        Button {
-                            appDelegate.voiceState.copyLastTranscript()
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Copy last transcript")
-                    }
-                    .padding(9)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
-                }
-                Divider()
-                Button("Open Settings…") {
-                    appDelegate.openSettingsWindow()
-                }
-                Button("Quit VoiceBar") {
-                    appDelegate.quitFromMenuBar()
-                }
-            }
-            .frame(width: 310)
-            .padding(12)
+            MenuBarPopoverView(
+                footer: .resolve(state: appDelegate.voiceState),
+                hotkeyHint: appDelegate.hotkeyEnabled
+                    ? "Hold F5 to dictate"
+                    : VoiceBarPresentation.hotkeyPermissionHint(
+                        hotkeyEnabled: appDelegate.hotkeyEnabled,
+                        missingPermissions: appDelegate.missingHotkeyPermissions
+                    ),
+                microphoneName: menuInputDeviceName,
+                transcript: appDelegate.voiceState.latestReusableTranscript,
+                degradationHint: appDelegate.voiceState.polishDegradation?.hint,
+                onCopy: { appDelegate.voiceState.copyLastTranscript() },
+                onSettings: { appDelegate.openSettingsWindow() },
+                onQuit: { appDelegate.quitFromMenuBar() }
+            )
             .onAppear {
                 appDelegate.voiceState.acknowledgePolishMenuSignal()
             }
