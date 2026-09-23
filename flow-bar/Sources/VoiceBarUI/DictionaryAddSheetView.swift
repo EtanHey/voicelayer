@@ -6,14 +6,17 @@ public struct DictionaryAddSheetView: View {
 
     private let onSave: (STTVocabularyDraft) -> Void
     private let onCancel: () -> Void
+    private let allowTermOnly: Bool
 
     public init(
         draft: STTVocabularyDraft,
+        allowTermOnly: Bool = false,
         onSave: @escaping (STTVocabularyDraft) -> Void,
         onCancel: @escaping () -> Void
     ) {
         _correct = State(initialValue: draft.correct)
         _wrong = State(initialValue: draft.wrong)
+        self.allowTermOnly = allowTermOnly
         self.onSave = onSave
         self.onCancel = onCancel
     }
@@ -28,14 +31,17 @@ public struct DictionaryAddSheetView: View {
                     TextField("Intended text", text: $correct)
                         .dictionaryTextField()
                 }
-                LabeledContent("Transcribed") {
+                LabeledContent("Misheard as") {
                     HStack(spacing: 8) {
                         TextField("Misheard text", text: $wrong)
                             .dictionaryTextField()
-                        Button("⇄") {
+                        Button {
                             swap(&correct, &wrong)
+                        } label: {
+                            Image(systemName: "arrow.left.arrow.right")
                         }
                         .help("Swap correct and transcribed text")
+                        .accessibilityLabel("Swap correct and misheard text")
                     }
                 }
             }
@@ -50,7 +56,7 @@ public struct DictionaryAddSheetView: View {
                     onSave(currentDraft)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!currentDraft.canSaveAlias)
+                .disabled(currentDraft.trimmedCorrect.isEmpty || (!allowTermOnly && !currentDraft.canSaveAlias))
             }
         }
         .padding(18)

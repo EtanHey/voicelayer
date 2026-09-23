@@ -19,11 +19,28 @@ struct SettingsNavigationShell<Detail: View>: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                List(SettingsTab.allCases, selection: $selection) { tab in
-                    Label(tab.title, systemImage: tab.systemImage)
-                        .tag(tab)
+                VStack(spacing: 4) {
+                    ForEach(SettingsTab.allCases) { tab in
+                        Button {
+                            selection = tab
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: tab.systemImage)
+                                    .frame(width: 18)
+                                Text(tab.title)
+                            }
+                            .foregroundColor(selection == tab ? .white : Color.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .frame(height: 32)
+                        }
+                        .buttonStyle(.plain)
+                        .background(selection == tab ? Color.accentColor : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 8))
+                    }
                 }
-                .listStyle(.sidebar)
+                .padding(12)
+                Spacer(minLength: 0)
 
                 Divider()
                 VoiceBarStatusFooter(presentation: footer)
