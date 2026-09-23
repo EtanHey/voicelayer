@@ -709,7 +709,20 @@ function findSuspectChunkLoops(text: string): SuspectChunkLoop[] {
   ) {
     const occurrences = new Map<string, number[]>();
     for (let index = 0; index + loopWords <= words.length; index++) {
-      const key = overlapKey(words.slice(index, index + loopWords));
+      const phraseWords = words.slice(index, index + loopWords);
+      // A drawn-out "no no no" is speech, not a repeated clause. Shorter
+      // overlapping windows can otherwise make fifteen spoken tokens look
+      // like three copies of a five-word hallucination.
+      if (
+        phraseWords.every(
+          (word) =>
+            normalizeChunkWordForOverlap(word) ===
+            normalizeChunkWordForOverlap(phraseWords[0]),
+        )
+      ) {
+        continue;
+      }
+      const key = overlapKey(phraseWords);
       const indexes = occurrences.get(key) ?? [];
       if (
         indexes.length === 0 ||
@@ -2656,6 +2669,8 @@ export class WhisperServerBackend implements STTBackend {
                 },
               );
               const supported = supportedCandidates.find(({ candidate, acousticOccurrences }) =>
+                Math.max(1, acousticOccurrences) <
+                  candidate.occurrenceStarts.length &&
                 preservesWitnessedOccurrenceContexts(
                   text,
                   candidate,
@@ -2667,7 +2682,11 @@ export class WhisperServerBackend implements STTBackend {
                   supportingWitnesses,
                 ),
               );
-              if (!supported) break;
+              if (!supported) {
+                genuineRepeatedSpeech ||= !acousticallyRejectedLoop &&
+                  supportedCandidates.length > 0;
+                break;
+              }
               const supportedOccurrences = Math.max(
                 1,
                 supported.acousticOccurrences,
