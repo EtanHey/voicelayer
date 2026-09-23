@@ -2816,6 +2816,7 @@ func shouldIgnoreHotkeyEvent(
 @main
 struct VoiceBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @State private var menuSelectedMicrophoneID: String?
 
     var body: some Scene {
         MenuBarExtra {
@@ -2828,14 +2829,22 @@ struct VoiceBarApp: App {
                         missingPermissions: appDelegate.missingHotkeyPermissions
                     ),
                 microphoneName: menuInputDeviceName,
+                microphones: MicrophoneDeviceManager.availableInputDevices(),
+                selectedMicrophoneID: menuSelectedMicrophoneID,
                 transcript: appDelegate.voiceState.latestReusableTranscript,
                 degradationHint: appDelegate.voiceState.polishDegradation?.hint,
                 onCopy: { appDelegate.voiceState.copyLastTranscript() },
                 onSettings: { appDelegate.openSettingsWindow() },
-                onQuit: { appDelegate.quitFromMenuBar() }
+                onQuit: { appDelegate.quitFromMenuBar() },
+                onSelectMicrophone: { id in
+                    if MicrophoneDeviceManager.selectInputDevice(id: id) {
+                        menuSelectedMicrophoneID = id
+                    }
+                }
             )
             .onAppear {
                 appDelegate.voiceState.acknowledgePolishMenuSignal()
+                menuSelectedMicrophoneID = MicrophoneDeviceManager.selectedInputDeviceID()
             }
         } label: {
             Label(
@@ -2857,7 +2866,7 @@ struct VoiceBarApp: App {
     }
 
     private var menuInputDeviceName: String {
-        let selected = MicrophoneDeviceManager.selectedInputDeviceID()
+        let selected = menuSelectedMicrophoneID ?? MicrophoneDeviceManager.selectedInputDeviceID()
         return MicrophoneDeviceManager.availableInputDevices()
             .first(where: { $0.id == selected })?.name ?? "Input unavailable"
     }
