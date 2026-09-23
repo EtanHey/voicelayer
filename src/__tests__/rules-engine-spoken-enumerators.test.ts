@@ -80,6 +80,13 @@ describe("spoken enumerators -> deterministic numbered list", () => {
     expect(applyRules(DEPLOY_RAW)).not.toBe(withoutStage(DEPLOY_RAW));
   });
 
+  it("does not promote an unnumbered or-clause after two spoken items", () => {
+    const text = "First of all, check the microphone before launch. Second of all, inspect the transcript before sending it. Or checking: keep this alternative attached to the second thought.";
+    const result = applySpokenEnumeratorsWithDetail(text).text;
+    expect(result).toContain("Or checking: keep this alternative");
+    expect(result).not.toMatch(/(?:^|\n)3\.\s/u);
+  });
+
   it("is deterministic — the same input gives the same list every time", () => {
     const runs = new Set(
       Array.from({ length: 5 }, () => applyRules(HARDWARE_RAW)),
