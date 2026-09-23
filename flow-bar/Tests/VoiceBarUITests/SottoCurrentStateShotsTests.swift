@@ -167,6 +167,66 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         )
     }
 
+    func testWriteQueuedSpeakShotsWhenRequested() throws {
+        guard let path = ProcessInfo.processInfo.environment["VOICEBAR_P13_SHOTS_DIR"], !path.isEmpty else {
+            throw XCTSkip("Set VOICEBAR_P13_SHOTS_DIR to write queued speech artifacts")
+        }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let router = NoopRouter()
+        var lines = ["# P13 queued speech", "", "Synthetic, offscreen 2× production-view renders.", ""]
+
+        for (appearanceName, appearance, scheme) in [
+            ("dark", NSAppearance.Name.darkAqua, ColorScheme.dark),
+            ("light", NSAppearance.Name.aqua, ColorScheme.light),
+        ] {
+            let state = syntheticState()
+            func item(_ text: String, current: Bool) -> [String: Any] {
+                ["text": text, "voice": "fixture", "priority": "normal", "is_current": current]
+            }
+            state.handleEvent(["type": "state", "state": "speaking", "text": "First sentence is playing now."])
+            state.handleEvent(["type": "subtitle", "words": [
+                ["offset_ms": 0, "duration_ms": 220, "text": "First"],
+                ["offset_ms": 220, "duration_ms": 350, "text": "sentence"],
+            ]])
+            state.handleEvent([
+                "type": "queue", "depth": 2,
+                "items": [
+                    item("First sentence is playing now.", current: true),
+                    item("Second sentence follows.", current: false),
+                ],
+            ])
+
+            func shot(_ name: String) throws {
+                let filename = "speaking-\(name)-\(appearanceName).png"
+                try render(
+                    BarView(state: state, commandRouter: router, includesPanelOutsets: true)
+                        .environment(\.colorScheme, scheme),
+                    size: CGSize(width: 540, height: 300),
+                    to: directory.appendingPathComponent(filename),
+                    appearance: appearance
+                )
+                lines.append("- [\(filename)](\(filename))")
+            }
+            try shot("first-plus-one")
+            state.handleEvent([
+                "type": "queue",
+                "depth": 1,
+                "items": [item("Second sentence follows.", current: false)],
+            ])
+            state.handleEvent(["type": "state", "state": "speaking", "text": "Second sentence follows."])
+            state.handleEvent(["type": "subtitle", "words": [
+                ["offset_ms": 0, "duration_ms": 210, "text": "Second"],
+                ["offset_ms": 210, "duration_ms": 360, "text": "sentence"],
+            ]])
+            state.handleEvent(["type": "queue", "depth": 1, "items": [item("Second sentence follows.", current: true)]])
+            try shot("second-current")
+        }
+        try (lines.joined(separator: "\n") + "\n").write(
+            to: directory.appendingPathComponent("index.md"), atomically: true, encoding: .utf8
+        )
+    }
+
     private func syntheticState() -> VoiceState {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
                                recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
@@ -260,14 +320,15 @@ final class SottoCurrentStateShotsTests: XCTestCase {
     }
 
     private func render(_ view: some View, size: CGSize, to url: URL,
-                        settingsWindow: Bool = false) throws {
+                        settingsWindow: Bool = false,
+                        appearance: NSAppearance.Name = .darkAqua) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading))
-        host.appearance = NSAppearance(named: .darkAqua)
+        host.appearance = NSAppearance(named: appearance)
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame,
                               styleMask: settingsWindow ? [.titled, .resizable] : .borderless,
                               backing: .buffered, defer: false)
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: appearance)
         window.backgroundColor = .windowBackgroundColor
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))

@@ -405,6 +405,12 @@ public final class VoiceState {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.count != queueItems.count) }
     }
 
+    /// The queue snapshot includes the currently playing utterance.
+    public var queuedSpeakCount: Int {
+        guard mode == .speaking else { return 0 }
+        return queueItems.filter { !$0.isCurrent }.count
+    }
+
     public var commandModeState: CommandModeState? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != commandModeState) }
     }
