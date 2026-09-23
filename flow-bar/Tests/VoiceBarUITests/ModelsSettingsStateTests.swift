@@ -2,6 +2,100 @@
 import XCTest
 
 final class ModelsSettingsStateTests: XCTestCase {
+    func testModelStatusEventUpdatesActiveEffortWithoutHealthRequestOrTabReopen() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        var health = Self.availableHealth
+        health["polish_controls"] = [
+            "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
+            "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
+            "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
+            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
+        ]
+        state.handleEvent(health)
+        var changed = try XCTUnwrap(health["model_status"] as? [String: Any])
+        changed["active_effort"] = "fast"
+        state.handleEvent(["type": "model_status", "model_status": changed])
+        XCTAssertEqual(state.modelsSettingsState.activeEffort, .fast)
+        XCTAssertNotNil(state.modelsSettingsState.polishControls)
+        XCTAssertTrue(commands.isEmpty)
+    }
+
+    func testRecordingIdleEventClearsModelsBusyWithoutPolling() throws {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        var health = Self.availableHealth
+        health["recording_state"] = "transcribing"
+        state.handleEvent(health)
+        state.mode = .transcribing
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        let modelStatus = try XCTUnwrap(health["model_status"] as? [String: Any])
+        state.handleEvent(["type": "model_status", "model_status": modelStatus])
+        XCTAssertFalse(state.modelsSettingsState.isBusy)
+    }
+
+    func testResidencyAckRetainsPolishUntilFreshFullHealthAndReturnsIdle() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        var health = Self.availableHealth
+        health["polish_controls"] = [
+            "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
+            "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
+            "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
+            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
+        ]
+        state.handleEvent(health)
+        state.setWhisperResidency(.notLoaded)
+        let id = try XCTUnwrap(commands.last?["id"] as? String)
+        XCTAssertTrue(state.modelsSettingsState.isBusy)
+        state.handleEvent([
+            "type": "ack", "command": "set_whisper_residency", "id": id,
+            "outcome": "accept", "model_status": health["model_status"] as Any,
+        ])
+        XCTAssertFalse(state.modelsSettingsState.isBusy)
+        XCTAssertNotNil(state.modelsSettingsState.polishControls)
+        XCTAssertEqual(commands.last?["cmd"] as? String, "set_whisper_residency")
+        state.handleEvent(health)
+        XCTAssertFalse(state.modelsSettingsState.isBusy)
+    }
+
+    func testLostResidencyAckExpiresWithVisibleError() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.availableHealth)
+        state.setWhisperResidency(.notLoaded)
+        XCTAssertTrue(state.modelsSettingsState.isBusy)
+        state.expirePendingResidencyForTests()
+        XCTAssertFalse(state.modelsSettingsState.isBusy)
+        XCTAssertNotNil(state.residencyNotice)
+    }
+
+    func testLoadingAckKeepsResidencyPendingUntilFinalAck() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.availableHealth)
+        state.setWhisperResidency(.notLoaded)
+        let id = try XCTUnwrap(commands.last?["id"] as? String)
+        state.handleEvent([
+            "type": "ack", "command": "set_whisper_residency", "id": id, "outcome": "loading",
+        ])
+        XCTAssertTrue(state.modelsSettingsState.isBusy)
+        state.setWhisperResidency(.notLoaded)
+        XCTAssertEqual(commands.count, 1)
+        state.handleEvent([
+            "type": "ack", "command": "set_whisper_residency", "id": id,
+            "outcome": "accept", "model_status": Self.availableHealth["model_status"] as Any,
+        ])
+        XCTAssertFalse(state.modelsSettingsState.isBusy)
+    }
+
     func testResidencyCommandUsesAckedModelStatusAndClearsOnDisconnect() throws {
         let state = VoiceState()
         var commands: [[String: Any]] = []

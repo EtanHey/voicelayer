@@ -22,6 +22,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
     public let configuredEffort: VoiceBarPerformanceEffort?
     public let activeEffort: VoiceBarPerformanceEffort?
     public let isBusy: Bool
+    public let busyReason: String?
     public let polishControls: PolishControlsState?
 
     private init(availability: ModelsStatusAvailability) {
@@ -34,6 +35,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
         configuredEffort = nil
         activeEffort = nil
         isBusy = true
+        busyReason = nil
         polishControls = nil
     }
 
@@ -62,12 +64,15 @@ public struct ModelsSettingsState: Equatable, Sendable {
         activeEffort = (status["active_effort"] as? String).flatMap(VoiceBarPerformanceEffort.init)
         isBusy = healthEvent["recording_state"] as? String != "idle"
             || (healthEvent["queue_depth"] as? Int ?? 0) > 0
+        busyReason = (healthEvent["recording_state"] as? String).flatMap {
+            $0 == "recording" ? "Recording" : $0 == "transcribing" ? "Transcribing" : nil
+        } ?? ((healthEvent["queue_depth"] as? Int ?? 0) > 0 ? "Playing back" : nil)
         polishControls = PolishControlsState(healthEvent: healthEvent)
     }
 
     public static let unavailable = ModelsSettingsState(availability: .unavailable)
 
-    func settingBusy(_ isBusy: Bool) -> ModelsSettingsState {
+    func settingBusy(_ isBusy: Bool, reason: String? = nil) -> ModelsSettingsState {
         ModelsSettingsState(
             availability: availability,
             configuredModelName: configuredModelName,
@@ -78,7 +83,24 @@ public struct ModelsSettingsState: Equatable, Sendable {
             configuredEffort: configuredEffort,
             activeEffort: activeEffort,
             isBusy: isBusy,
+            busyReason: isBusy ? reason : nil,
             polishControls: polishControls
+        )
+    }
+
+    func retainingPolishControls(from previous: ModelsSettingsState) -> ModelsSettingsState {
+        ModelsSettingsState(
+            availability: availability,
+            configuredModelName: configuredModelName,
+            configuredModelSizeBytes: configuredModelSizeBytes,
+            isInstalled: isInstalled,
+            residency: residency,
+            activeModelName: activeModelName,
+            configuredEffort: configuredEffort,
+            activeEffort: activeEffort,
+            isBusy: isBusy,
+            busyReason: busyReason,
+            polishControls: previous.polishControls
         )
     }
 
@@ -92,6 +114,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
         configuredEffort: VoiceBarPerformanceEffort?,
         activeEffort: VoiceBarPerformanceEffort?,
         isBusy: Bool,
+        busyReason: String?,
         polishControls: PolishControlsState?
     ) {
         self.availability = availability
@@ -103,6 +126,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
         self.configuredEffort = configuredEffort
         self.activeEffort = activeEffort
         self.isBusy = isBusy
+        self.busyReason = busyReason
         self.polishControls = polishControls
     }
 

@@ -38,6 +38,7 @@ public enum IntentOutcome: String {
     case accept
     case noop
     case reject
+    case loading
 }
 
 public struct PendingIntent {
