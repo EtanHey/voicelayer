@@ -675,7 +675,9 @@ export function isSmartWavChunkingEnabled(
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
-const MIN_SUSPECT_LOOP_WORDS = 6;
+// Five-word clauses can survive a first compound-loop collapse as a shorter
+// residual repeat. Acoustic witnesses still decide whether copies are spoken.
+const MIN_SUSPECT_LOOP_WORDS = 5;
 const MAX_SUSPECT_LOOP_WORDS = 16;
 const MIN_SUSPECT_LOOP_OCCURRENCES = 3;
 const MAX_SUSPECT_LOOP_CANDIDATES = 2_048;
@@ -808,6 +810,65 @@ function collapseAcousticallyRejectedLoop(
   ).join(" ");
 }
 
+function preservesWitnessedOccurrenceContexts(
+  originalText: string,
+  suspect: SuspectChunkLoop,
+  collapsedText: string,
+  witnessTexts: string[],
+): boolean {
+  const originalWords = normalizeChunkWords(originalText);
+  const collapsedKey = canonicalWitnessText(collapsedText);
+  const suffixWords = originalWords.slice(
+    suspect.lastOccurrenceEnd,
+    suspect.lastOccurrenceEnd + SUSPECT_CONTEXT_WORDS,
+  );
+  const witnessKeys = witnessTexts.map((witnessText) => {
+    const witnessWords = normalizeChunkWords(witnessText);
+    if (!hasDistinctSuspectSuffix(originalText, suspect)) {
+      return canonicalWitnessText(witnessText);
+    }
+    const phraseWords = originalWords.slice(
+      suspect.firstOccurrence,
+      suspect.firstOccurrence + suspect.loopWordCount,
+    );
+    const firstPhrase = findChunkWordSequence(witnessWords, phraseWords, 0);
+    const boundary = findChunkWordSequence(
+      witnessWords,
+      suffixWords,
+      firstPhrase?.end ?? 0,
+    );
+    // A phrase repeated after the original suffix belongs to the acoustic
+    // extension, so it cannot protect a copy inside the original chunk.
+    return canonicalWitnessText(
+      witnessWords.slice(0, boundary?.end).join(" "),
+    );
+  });
+  for (const start of suspect.occurrenceStarts) {
+    // A repeated prefix can belong to a different sentence on its last
+    // occurrence. Keep that occurrence when both witnesses hear its distinct
+    // continuation; blindly keeping the first N copies would erase it.
+    for (let extra = 1; extra <= SUSPECT_CONTEXT_WORDS; extra++) {
+      for (const [from, to] of [
+        [start - extra, start + suspect.loopWordCount],
+        [start, start + suspect.loopWordCount + extra],
+      ]) {
+        if (from < 0 || to > originalWords.length) continue;
+        const contextKey = canonicalWitnessText(
+          originalWords.slice(from, to).join(" "),
+        );
+        if (
+          contextKey &&
+          witnessKeys.every((witness) => witness.includes(contextKey)) &&
+          !collapsedKey.includes(contextKey)
+        ) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 function hasDistinctSuspectSuffix(
   originalText: string,
   suspect: SuspectChunkLoop,
@@ -927,9 +988,25 @@ function countSuspectPhraseOccurrences(
         )
       : null;
   const boundaryRange = suffixRange ?? extensionRange;
-  if (!boundaryRange) return null;
+  // An end-of-chunk loop can consume the original suffix, while the isolated
+  // extension decode may word its first sentence differently from both longer
+  // witnesses. Count to the witness end only when the isolated extension is
+  // present, starts with words absent from the suspect chunk, and contains no
+  // copy of this phrase. The two independently selected acoustic witnesses
+  // still have to agree on the count before any copy can be removed.
+  if (
+    !boundaryRange &&
+    !(
+      !suffixBoundaryIsDistinct &&
+      extensionBoundaryWords.length >= EXTENSION_BOUNDARY_ANCHOR_WORDS &&
+      !ambiguousExtensionBoundary &&
+      !canonicalWitnessText(extensionBoundaryText ?? "").includes(phraseKey)
+    )
+  ) {
+    return null;
+  }
   const originalRegionKey = canonicalWitnessText(
-    witnessWords.slice(searchFrom, boundaryRange.start).join(" "),
+    witnessWords.slice(searchFrom, boundaryRange?.start).join(" "),
   );
   let count = 0;
   let searchOffset = 0;
@@ -2562,22 +2639,34 @@ export class WhisperServerBackend implements STTBackend {
                   const rightUnsupported =
                     right.candidate.occurrenceStarts.length -
                     Math.max(1, right.acousticOccurrences);
-                  // Prefer the candidate that explains the most unsupported
-                  // copies without leaving a repeated fragment below the
-                  // detector floor, then one ending at a distinct suffix.
+                  // Remove the repeated core first when several overlapping
+                  // candidate phrases describe the same hallucinated run.
+                  // A longer compound can otherwise leave a short clause
+                  // repeated after its surrounding words have been removed.
                   return (
+                    right.acousticOccurrences - left.acousticOccurrences ||
+                    rightUnsupported - leftUnsupported ||
                     Number(right.detectableResidualLoop) -
                       Number(left.detectableResidualLoop) ||
-                    rightUnsupported - leftUnsupported ||
                     Number(right.distinctSuffixBoundary) -
                       Number(left.distinctSuffixBoundary) ||
-                    right.acousticOccurrences - left.acousticOccurrences ||
                     right.candidate.loopWordCount -
                       left.candidate.loopWordCount
                   );
                 },
               );
-              const supported = supportedCandidates[0];
+              const supported = supportedCandidates.find(({ candidate, acousticOccurrences }) =>
+                preservesWitnessedOccurrenceContexts(
+                  text,
+                  candidate,
+                  collapseAcousticallyRejectedLoop(
+                    text,
+                    candidate,
+                    Math.max(1, acousticOccurrences),
+                  ),
+                  supportingWitnesses,
+                ),
+              );
               if (!supported) break;
               const supportedOccurrences = Math.max(
                 1,
