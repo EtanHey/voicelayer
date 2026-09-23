@@ -38,7 +38,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             "|---|---|",
         ]
         func shot(_ name: String, _ description: String, _ view: some View, size: CGSize) throws {
-            try render(view, size: size, to: directory.appendingPathComponent(name))
+            try render(view, size: size, to: directory.appendingPathComponent(name),
+                       settingsWindow: name.hasPrefix("settings-"))
             lines.append("| [\(name)](\(name)) | \(description) |")
         }
 
@@ -309,15 +310,19 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         }
     }
 
-    private func render(_ view: some View, size: CGSize, to url: URL) throws {
+    private func render(_ view: some View, size: CGSize, to url: URL,
+                        settingsWindow: Bool = false) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading))
         host.appearance = NSAppearance(named: .darkAqua)
         host.frame = NSRect(origin: .zero, size: size)
-        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: host.frame,
+                              styleMask: settingsWindow ? [.titled, .resizable] : .borderless,
+                              backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = .windowBackgroundColor
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        if settingsWindow { window.makeKeyAndOrderFront(nil) }
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         host.layoutSubtreeIfNeeded()
@@ -341,6 +346,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             throw NSError(domain: "SottoCurrentStateShots", code: 2)
         }
         try data.write(to: url, options: .atomic)
+        if settingsWindow { window.orderOut(nil) }
         window.contentView = nil
     }
 }
