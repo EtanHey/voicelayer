@@ -246,6 +246,38 @@ describe("socket residency command", () => {
     } finally { operation?.release(); }
   });
 
+  test("an accepted effort change supplies different decode args at the next server launch", () => {
+    spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
+    spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    const restart = spyOn(performance, "restartWhisperServerForPerformanceChange")
+      .mockImplementation(() => {});
+    spies.push(restart);
+    const previous = performance.getWhisperPerformanceEffort();
+    try {
+      expect(handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "next-decode-fast" }))
+        .toMatchObject({ outcome: "accept" });
+      const fast = server.buildWhisperServerLaunchPlan({
+        binary: "/fixture/whisper-server", model: "/fixture/model.bin", port: 8178,
+        inheritedEnv: process.env,
+      });
+      expect(fast.args.slice(fast.args.indexOf("-bo"), fast.args.indexOf("-bo") + 4))
+        .toEqual(["-bo", "1", "-bs", "1"]);
+
+      expect(handleSocketCommand({ cmd: "set_whisper_effort", effort: "accurate", id: "next-decode-accurate" }))
+        .toMatchObject({ outcome: "accept" });
+      const accurate = server.buildWhisperServerLaunchPlan({
+        binary: "/fixture/whisper-server", model: "/fixture/model.bin", port: 8178,
+        inheritedEnv: process.env,
+      });
+      expect(accurate.args.slice(accurate.args.indexOf("-bo"), accurate.args.indexOf("-bo") + 4))
+        .toEqual(["-bo", "5", "-bs", "5"]);
+      expect(restart).toHaveBeenCalledTimes(2);
+    } finally {
+      performance.setWhisperPerformanceEffort(previous);
+    }
+  });
+
   test("effort changes wait for model inference even without a voice booking", async () => {
     spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
