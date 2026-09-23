@@ -7,6 +7,9 @@ import XCTest
 final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
     @MainActor
     func testDictionaryHostMountDoesNotWaitForVocabularyProvider() {
+        let warmHost = NSHostingView(rootView: Text("Warm AppKit host"))
+        warmHost.frame = NSRect(x: 0, y: 0, width: 780, height: 620)
+        warmHost.layoutSubtreeIfNeeded()
         let loaded = expectation(description: "background vocabulary snapshot")
         let view = SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
@@ -14,7 +17,7 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: {
                 XCTAssertFalse(Thread.isMainThread, "Vocabulary processing must leave the main thread")
-                Thread.sleep(forTimeInterval: 0.2)
+                Thread.sleep(forTimeInterval: 0.8)
                 loaded.fulfill()
                 return STTVocabularyPreview(updatedAt: nil, entries: [])
             },
