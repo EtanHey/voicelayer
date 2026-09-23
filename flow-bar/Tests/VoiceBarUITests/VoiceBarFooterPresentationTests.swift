@@ -86,7 +86,7 @@ final class VoiceBarFooterPresentationTests: XCTestCase {
             VoiceBarFooterPresentation
                 .resolve(isConnected: true, mode: .idle, captureLive: false, errorMessage: nil,
                          remoteSTTConfigured: false).privacy,
-            "Only on this Mac"
+            "Transcribed on this Mac"
         )
     }
 }

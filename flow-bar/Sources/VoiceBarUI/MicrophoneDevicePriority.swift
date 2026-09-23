@@ -9,6 +9,12 @@ public struct MicrophonePriorityRow: Equatable {
     public var canPrioritize: Bool {
         uid != nil
     }
+
+    public var isVirtualOrAggregate: Bool {
+        let identity = "\(uid ?? "") \(label)".lowercased()
+        return ["cadefaultdeviceaggregate-", "aggregate", "virtual", "blackhole", "loopback"]
+            .contains { identity.contains($0) }
+    }
 }
 
 public struct MicrophonePrioritySnapshot: Equatable {
@@ -29,6 +35,30 @@ public struct MicrophonePrioritySnapshot: Equatable {
         else { return nil }
         var uids = rows.compactMap(\.uid)
         uids.swapAt(index, target)
+        return uids
+    }
+
+    public var visibleRows: [MicrophonePriorityRow] {
+        rows.filter { !$0.isVirtualOrAggregate }
+    }
+
+    public var nextVisibleDeviceName: String? {
+        guard let nextDeviceName else { return nil }
+        return rows.contains { $0.label == nextDeviceName && $0.isVirtualOrAggregate }
+            ? "System selected device" : nextDeviceName
+    }
+
+    public func reorderedVisibleUIDs(moving index: Int, by offset: Int) -> [String]? {
+        let visible = visibleRows
+        let target = index + offset
+        guard visible.indices.contains(index), visible.indices.contains(target),
+              let sourceUID = visible[index].uid, let targetUID = visible[target].uid
+        else { return nil }
+        var uids = rows.compactMap(\.uid)
+        guard let source = uids.firstIndex(of: sourceUID),
+              let destination = uids.firstIndex(of: targetUID)
+        else { return nil }
+        uids.swapAt(source, destination)
         return uids
     }
 }

@@ -30,7 +30,7 @@ public struct VoiceBarFooterPresentation: Equatable {
         }
 
         let privacy = switch remoteSTTConfigured {
-        case .some(false): "Only on this Mac"
+        case .some(false): "Transcribed on this Mac"
         case .some(true): "Remote speech backend configured"
         case .none: "Processing location unavailable"
         }

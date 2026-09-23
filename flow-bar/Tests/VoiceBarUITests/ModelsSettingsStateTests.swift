@@ -52,6 +52,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         state.setWhisperResidency(.notLoaded)
         let id = try XCTUnwrap(commands.last?["id"] as? String)
         XCTAssertTrue(state.modelsSettingsState.isBusy)
+        XCTAssertEqual(state.modelsSettingsState.busyReason, "Unloading model…")
         state.handleEvent([
             "type": "ack", "command": "set_whisper_residency", "id": id,
             "outcome": "accept", "model_status": health["model_status"] as Any,
