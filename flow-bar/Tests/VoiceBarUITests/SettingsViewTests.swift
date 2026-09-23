@@ -44,10 +44,12 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
         let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1
 
-        XCTAssertGreaterThanOrEqual(
-            visibleFieldCount, 4,
-            "search + correct + transcribed + add-term fields must all be visible at rest"
-        )
+        XCTAssertGreaterThanOrEqual(visibleFieldCount, 3, "search, rename, and variant fields need visible styling")
+        let sheetURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift")
+        let sheetSource = try String(contentsOf: sheetURL)
+        XCTAssertEqual(sheetSource.components(separatedBy: ".dictionaryTextField()").count - 1, 2)
     }
 
     func testSearchFieldReadsAsSearchInput() throws {
@@ -76,8 +78,8 @@ final class SettingsViewTests: XCTestCase {
 
     func testBundledDictionaryRowsHaveNoEditAffordance() throws {
         let source = try settingsViewSource()
-        XCTAssertTrue(source.contains("isEditable: row.isPersonal"))
-        XCTAssertTrue(source.contains("id: \\.element.rowID"))
+        XCTAssertTrue(source.contains("isEditable: false"))
+        XCTAssertTrue(source.contains("ForEach(included, id: \\.rowID)"))
     }
 
     func testSameNamePersonalEditDoesNotOpenBundledEditor() {
@@ -97,7 +99,7 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("addVariantButton"))
-        XCTAssertTrue(source.contains("add misheard variant"))
+        XCTAssertTrue(source.contains("misheard as…"))
     }
 
     func testVariantAddAffordanceUsesChipMatchingVerticalPadding() throws {
@@ -330,7 +332,7 @@ final class SettingsViewTests: XCTestCase {
             "Dictionary cards should observe later daemon vocabulary revisions"
         )
         XCTAssertTrue(
-            source.contains("onRefresh: { reconcileLocalEntries(with: vocabularyPreview()) }"),
+            source.contains("onRefresh: { loadDictionaryPreview() }"),
             "A revision change should project the new snapshot into local dictionary cards"
         )
         XCTAssertTrue(
