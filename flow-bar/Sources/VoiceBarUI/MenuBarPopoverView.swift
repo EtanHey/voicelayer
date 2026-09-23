@@ -52,15 +52,9 @@ public struct MenuBarPopoverView: View {
                 Divider()
             }
             HStack(spacing: 8) {
-                HStack(spacing: 7) {
-                    Circle()
-                        .fill(footer.isReady ? .green : .orange)
-                        .frame(width: 7, height: 7)
-                    Text(footer.status)
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .accessibilityIdentifier("popover-status")
-                .popoverFrame("status")
+                VoiceBarStatusIndicator(presentation: footer)
+                    .accessibilityIdentifier("popover-status")
+                    .popoverFrame("status")
                 Spacer(minLength: 0)
                 Text(hotkeyHint)
                     .font(.system(size: 11))
@@ -71,7 +65,7 @@ public struct MenuBarPopoverView: View {
                     .popoverFrame("hotkey")
             }
             HStack(spacing: 6) {
-                Image(systemName: footer.isLocalOnly ? "lock.fill" : "network")
+                Image(systemName: footer.privacySymbol)
                 Text(footer.isLocalOnly ? "Transcribed on this Mac" : footer.privacy)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -124,7 +118,7 @@ public struct MenuBarPopoverView: View {
             .popoverFrame("mic")
             if !transcript.isEmpty {
                 HStack(alignment: .center, spacing: 8) {
-                    Text(transcript)
+                    Text(popoverTranscriptPreview(transcript))
                         .accessibilityIdentifier("popover-transcript")
                         .popoverFrame("transcript")
                         .font(.system(size: 12))
@@ -132,6 +126,9 @@ public struct MenuBarPopoverView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Button(action: onCopy) {
                         Image(systemName: "doc.on.doc")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help("Copy last transcript")
@@ -170,9 +167,14 @@ public struct MenuBarPopoverView: View {
         }
         .frame(width: 276)
         .padding(12)
+        .focusEffectDisabled()
         .coordinateSpace(name: "popover")
         .onPreferenceChange(PopoverFramesKey.self, perform: onLayout)
     }
+}
+
+func popoverTranscriptPreview(_ transcript: String) -> String {
+    transcript.split(whereSeparator: \.isNewline).joined(separator: " ")
 }
 
 private struct PopoverFramesKey: PreferenceKey {

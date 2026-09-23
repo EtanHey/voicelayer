@@ -739,10 +739,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.unsnoozeNow()
         }
         pillContextMenuController.onSelectDevice = { [weak self] deviceID in
-            guard MicrophoneDeviceManager.selectInputDevice(id: deviceID) else { return }
-            if self?.voiceState.mode == .recording {
-                self?.audioLevelMonitor.restart()
-            }
+            _ = self?.selectMicrophone(id: deviceID)
         }
         pillContextMenuController.onTranscribeLatestRecording = { [weak self] in
             self?.logDiagnostic(event: "context_menu_transcribe_latest_recording_tapped")
@@ -2540,7 +2537,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             missingPermissions: missingHotkeyPermissions,
             availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
             selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
-            onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
+            onSelectDevice: { [weak self] in _ = self?.selectMicrophone(id: $0) },
             prioritySnapshot: { [weak self] in
                 self?.currentMicrophonePrioritySnapshot() ?? .unavailable
             },
@@ -2690,6 +2687,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
+    @discardableResult
+    func selectMicrophone(id: String) -> Bool {
+        guard MicrophoneDeviceManager.selectInputDevice(id: id) else { return false }
+        if voiceState.mode == .recording {
+            audioLevelMonitor.restart()
+        }
+        return true
+    }
+
     private func reorderMicrophonePriority(_ uids: [String]) {
         let devices = MicrophoneDeviceManager.availableInputDevices()
         microphonePriority.replacePreferredUIDs(uids, observing: devices)
@@ -2816,10 +2822,11 @@ func shouldIgnoreHotkeyEvent(
 @main
 struct VoiceBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @State private var menuSelectedMicrophoneID: String?
+    @State private var menuMicrophoneRefresh = 0
 
     var body: some Scene {
         MenuBarExtra {
+            let microphone = menuMicrophoneSnapshot
             MenuBarPopoverView(
                 footer: .resolve(state: appDelegate.voiceState),
                 hotkeyHint: appDelegate.hotkeyEnabled
@@ -2828,23 +2835,27 @@ struct VoiceBarApp: App {
                         hotkeyEnabled: appDelegate.hotkeyEnabled,
                         missingPermissions: appDelegate.missingHotkeyPermissions
                     ),
-                microphoneName: menuInputDeviceName,
-                microphones: MicrophoneDeviceManager.availableInputDevices(),
-                selectedMicrophoneID: menuSelectedMicrophoneID,
+                microphoneName: microphone.devices.first(where: { $0.id == microphone.selectedID })?.name
+                    ?? "Input unavailable",
+                microphones: microphone.devices,
+                selectedMicrophoneID: microphone.selectedID,
                 transcript: appDelegate.voiceState.latestReusableTranscript,
                 degradationHint: appDelegate.voiceState.polishDegradation?.hint,
                 onCopy: { appDelegate.voiceState.copyLastTranscript() },
                 onSettings: { appDelegate.openSettingsWindow() },
                 onQuit: { appDelegate.quitFromMenuBar() },
                 onSelectMicrophone: { id in
-                    if MicrophoneDeviceManager.selectInputDevice(id: id) {
-                        menuSelectedMicrophoneID = id
+                    if appDelegate.selectMicrophone(id: id) {
+                        menuMicrophoneRefresh &+= 1
                     }
                 }
             )
             .onAppear {
                 appDelegate.voiceState.acknowledgePolishMenuSignal()
-                menuSelectedMicrophoneID = MicrophoneDeviceManager.selectedInputDeviceID()
+                menuMicrophoneRefresh &+= 1
+            }
+            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+                menuMicrophoneRefresh &+= 1
             }
         } label: {
             Label(
@@ -2865,9 +2876,8 @@ struct VoiceBarApp: App {
         }
     }
 
-    private var menuInputDeviceName: String {
-        let selected = menuSelectedMicrophoneID ?? MicrophoneDeviceManager.selectedInputDeviceID()
-        return MicrophoneDeviceManager.availableInputDevices()
-            .first(where: { $0.id == selected })?.name ?? "Input unavailable"
+    private var menuMicrophoneSnapshot: (devices: [MicrophoneDevice], selectedID: String?) {
+        _ = menuMicrophoneRefresh
+        return (MicrophoneDeviceManager.availableInputDevices(), MicrophoneDeviceManager.selectedInputDeviceID())
     }
 }

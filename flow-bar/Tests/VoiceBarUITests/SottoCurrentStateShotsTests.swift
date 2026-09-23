@@ -43,21 +43,33 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             ("transcribing", .transcribing, ""),
             ("no-transcript-yet", .idle, ""),
             ("remote-stt-configured", .idle, ""),
+            ("unknown-locality", .idle, ""),
+            ("numbered-list", .idle,
+             "Three things.\n1. Fix the popover and its focus ring.\n2. Ship it with a clean preview.\n3. Tell Etan."),
             (
                 "long-transcript",
                 .idle,
                 "A synthetic paragraph about a sample recording.\nIt continues on a second line.\nThe third line is also synthetic."
             ),
         ] {
+            let remote: Bool? = switch name {
+            case "remote-stt-configured": true
+            case "unknown-locality": nil
+            default: false
+            }
             let footer = VoiceBarFooterPresentation.resolve(
                 isConnected: true, mode: mode, captureLive: mode == .recording,
-                errorMessage: nil, remoteSTTConfigured: name == "remote-stt-configured", hasFreshHealth: true
+                errorMessage: nil, remoteSTTConfigured: remote, hasFreshHealth: true
             )
-            try shot("popover-\(name).png", "Menu bar popover: \(name)", MenuBarPopoverView(
-                footer: footer, hotkeyHint: "Hold F5 to dictate",
-                microphoneName: "Built-in Microphone", transcript: transcript
-            ).environment(\.colorScheme, .light).background(Color.white),
-            size: CGSize(width: 334, height: transcript.isEmpty ? 240 : 320))
+            for (appearance, scheme) in [("light", ColorScheme.light), ("dark", .dark)] {
+                let suffix = appearance == "light" ? "" : "-dark"
+                try shot("popover-\(name)\(suffix).png", "Menu bar popover: \(name), \(appearance)",
+                         MenuBarPopoverView(
+                             footer: footer, hotkeyHint: "Hold F5 to dictate",
+                             microphoneName: "Built-in Microphone", transcript: transcript
+                         ).environment(\.colorScheme, scheme),
+                         size: CGSize(width: 334, height: transcript.isEmpty ? 240 : 320))
+            }
         }
 
         let router = NoopRouter()
@@ -299,8 +311,10 @@ final class SottoCurrentStateShotsTests: XCTestCase {
     }
 
     private func renderPopover(_ view: some View, size: CGSize, to url: URL) throws {
+        let isDark = url.lastPathComponent.hasSuffix("-dark.png")
+        let background = Color(.sRGB, white: isDark ? 0.12 : 1, opacity: 1)
         let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height,
-                                                         alignment: .topLeading).background(Color.white))
+                                                         alignment: .topLeading).background(background))
         renderer.scale = 2
         guard let image = renderer.nsImage,
               let tiff = image.tiffRepresentation,
