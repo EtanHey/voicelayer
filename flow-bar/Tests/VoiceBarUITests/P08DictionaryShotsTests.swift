@@ -80,8 +80,9 @@ final class P08DictionaryShotsTests: XCTestCase {
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
         host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
         guard let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2),
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,

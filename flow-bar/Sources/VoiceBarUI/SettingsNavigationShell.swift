@@ -21,21 +21,28 @@ struct SettingsNavigationShell<Detail: View>: View {
             VStack(spacing: 0) {
                 VStack(spacing: 4) {
                     ForEach(SettingsTab.allCases) { tab in
-                        Button {
-                            selection = tab
-                        } label: {
+                        ZStack {
+                            Button {
+                                selection = tab
+                            } label: {
+                                Color.clear.frame(height: 32).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(tab.title)
                             HStack(spacing: 10) {
                                 Image(systemName: tab.systemImage)
+                                    .foregroundStyle(Color.primary)
                                     .frame(width: 18)
                                 Text(tab.title)
+                                    .foregroundStyle(Color.primary)
                             }
-                            .foregroundColor(selection == tab ? .white : Color.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 12)
                             .frame(height: 32)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                         }
-                        .buttonStyle(.plain)
-                        .background(selection == tab ? Color.accentColor : Color.clear,
+                        .background(selection == tab ? Color.accentColor.opacity(0.22) : Color.clear,
                                     in: RoundedRectangle(cornerRadius: 8))
                     }
                 }
