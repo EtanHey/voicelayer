@@ -103,6 +103,34 @@ describe("handleConverse resilience — P0-2", () => {
     }
   });
 
+  it("holds the mic booking when capture preempts maintenance's temporary lock", async () => {
+    bookingSpy.mockRestore();
+    sessionBooking.releaseVoiceSession();
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+    let bookingAtCapture: ReturnType<typeof sessionBooking.isVoiceBooked> | undefined;
+    waitSpy = spyOn(input, "waitForInput").mockImplementation(async () => {
+      bookingAtCapture = sessionBooking.isVoiceBooked();
+      return "dictated answer";
+    });
+    const release = sessionBooking.reserveVoiceMaintenance(() => false);
+    try {
+      expect(release).toBeFunction();
+      expect(sessionBooking.isVoiceBooked()).toMatchObject({
+        booked: true,
+        ownedByUs: true,
+        owner: { sessionId: `whisper-unload-${process.pid}` },
+      });
+
+      const result = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      expect(result.isError).not.toBe(true);
+      expect(bookingAtCapture).toMatchObject({ booked: true, ownedByUs: true });
+      expect(bookingAtCapture?.owner?.sessionId?.startsWith("whisper-unload-")).toBe(false);
+    } finally {
+      release?.();
+      sessionBooking.releaseVoiceSession();
+    }
+  });
+
   it("a voice_ask rejected by external booking does not cancel an unload", async () => {
     let finishUnload!: () => void;
     const unload = whisperLifecycleGate.unload(() => false, () => new Promise<"not_loaded">((resolve) => {
