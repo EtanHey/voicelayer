@@ -235,6 +235,79 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         )
     }
 
+    func testWritePillButtonShotsWhenRequested() throws {
+        guard let path = ProcessInfo.processInfo.environment["VOICEBAR_P05_SHOTS_DIR"], !path.isEmpty else {
+            throw XCTSkip("Set VOICEBAR_P05_SHOTS_DIR to write pill button artifacts")
+        }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let router = NoopRouter()
+        var lines = ["# P05 pill buttons", "", "Synthetic, offscreen 2× production-view renders.", ""]
+        for (appearanceName, appearance, scheme, isDark) in [
+            ("dark", NSAppearance.Name.darkAqua, ColorScheme.dark, true),
+            ("light", NSAppearance.Name.aqua, ColorScheme.light, false),
+        ] {
+            for (name, mode, hover) in [
+                ("idle", VoiceMode.idle, false),
+                ("recording", .recording, false),
+                ("transcribing", .transcribing, false),
+                ("error", .error, false),
+            ] {
+                let state = syntheticState()
+                state.mode = mode
+                state.isHovering = hover
+                if mode == .recording { state.recordingMode = "vad" }
+                if mode == .error { state.errorMessage = "Synthetic error" }
+                let filename = "pill-\(name)-\(appearanceName).png"
+                try render(
+                    BarView(state: state, commandRouter: router, includesPanelOutsets: true)
+                        .environment(\.colorScheme, scheme),
+                    size: CGSize(width: 600, height: 180),
+                    to: directory.appendingPathComponent(filename),
+                    appearance: appearance
+                )
+                lines.append("- [\(filename)](\(filename)): \(name), \(appearanceName)")
+            }
+            for (name, icon, destructive) in [
+                ("mic", "mic.fill", false),
+                ("history", "clock.arrow.circlepath", false),
+                ("settings", "gearshape", false),
+                ("stop", "stop.fill", true),
+                ("cancel", "xmark", false),
+                ("lock", "lock.fill", false),
+            ] {
+                for visualState in ["hover", "pressed"] {
+                    let button = VoiceBarPillControlButton(
+                        icon: icon,
+                        optics: VoiceBarNotchControlOptics.resolve(for: icon),
+                        foreground: isDark ? .white : .black,
+                        halo: .clear,
+                        isSelected: false,
+                        isDestructive: destructive,
+                        accessibilityLabel: name,
+                        accessibilityHint: "",
+                        previewHovered: visualState == "hover",
+                        previewPressed: visualState == "pressed",
+                        action: {}
+                    )
+                    let filename = "control-\(name)-\(visualState)-\(appearanceName).png"
+                    try render(
+                        button.frame(width: 100, height: 88)
+                            .background(isDark ? Color.black : Color.white)
+                            .environment(\.colorScheme, scheme),
+                        size: CGSize(width: 100, height: 88),
+                        to: directory.appendingPathComponent(filename),
+                        appearance: appearance
+                    )
+                    lines.append("- [\(filename)](\(filename)): \(name) \(visualState), \(appearanceName)")
+                }
+            }
+        }
+        try (lines.joined(separator: "\n") + "\n").write(
+            to: directory.appendingPathComponent("index.md"), atomically: true, encoding: .utf8
+        )
+    }
+
     private func syntheticState() -> VoiceState {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
                                recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
