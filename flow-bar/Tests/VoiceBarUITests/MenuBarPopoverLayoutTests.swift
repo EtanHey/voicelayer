@@ -25,6 +25,8 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
 
         XCTAssertEqual(status.midY, hotkey.midY, accuracy: 1)
         XCTAssertEqual(transcript.midY, copy.midY, accuracy: 1)
+        XCTAssertEqual(copy.width, 24, accuracy: 1)
+        XCTAssertEqual(copy.height, 24, accuracy: 1)
         XCTAssertEqual(settings.midY, quit.midY, accuracy: 1)
         XCTAssertEqual(settings.width, quit.width, accuracy: 1)
         XCTAssertEqual(locality.minY - max(status.maxY, hotkey.maxY), 10, accuracy: 1)
@@ -34,12 +36,32 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         XCTAssertEqual(footer.minY - divider.maxY, 10, accuracy: 1)
     }
 
-    func testNoInitialFirstResponderAcrossRebuilds() {
+    func testNoFocusRingWhenPopoverOpensAcrossRebuilds() {
         for _ in 0 ..< 2 {
-            let (window, _) = makeHost(transcript: "Synthetic")
-            XCTAssertNil(window.initialFirstResponder)
+            let (window, host) = makeHost(transcript: "Synthetic", key: true)
+            XCTAssertEqual(focusRingCount(in: host), 0)
             window.contentView = nil
+            window.orderOut(nil)
         }
+    }
+
+    func testNumberedListPreviewCollapsesNewlinesWithoutChangingOriginal() {
+        let original = "Three things.\n1. Fix the popover.\n2. Ship it.\n3. Tell Etan."
+        XCTAssertEqual(popoverTranscriptPreview(original),
+                       "Three things. 1. Fix the popover. 2. Ship it. 3. Tell Etan.")
+        XCTAssertTrue(original.contains("\n"))
+    }
+
+    func testLongNumberedListPreviewUsesThreeLines() throws {
+        let original = "Three things.\n1. Fix the popover and its focus ring.\n" +
+            "2. Ship it with a clean preview.\n3. Tell Etan."
+        var frames: [String: CGRect] = [:]
+        let (window, _) = makeHost(transcript: original) { frames = $0 }
+        defer { window.contentView = nil }
+        let text = try XCTUnwrap(frames["transcript"])
+        XCTAssertGreaterThanOrEqual(text.height, 42)
+        XCTAssertLessThanOrEqual(text.height, 48)
+        XCTAssertEqual(popoverTranscriptPreview(original).components(separatedBy: "\n").count, 1)
     }
 
     func testTranscribingStateLaysOutCompletePopover() {
@@ -61,6 +83,7 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         transcript: String,
         mode: VoiceMode = .idle,
         remoteSTTConfigured: Bool = false,
+        key: Bool = false,
         onLayout: @escaping ([String: CGRect]) -> Void = { _ in }
     ) -> (NSWindow, NSHostingView<MenuBarPopoverView>) {
         let view = MenuBarPopoverView(
@@ -71,13 +94,19 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         )
         let host = NSHostingView(rootView: view)
         host.frame = NSRect(x: 0, y: 0, width: 334, height: 300)
-        let window = NSWindow(contentRect: host.frame, styleMask: .borderless,
+        let window = NSWindow(contentRect: host.frame, styleMask: key ? [.titled] : .borderless,
                               backing: .buffered, defer: false)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        if key { window.makeKeyAndOrderFront(nil) }
         host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        RunLoop.main.run(until: Date().addingTimeInterval(key ? 0.3 : 0.05))
         host.layoutSubtreeIfNeeded()
         return (window, host)
+    }
+
+    private func focusRingCount(in view: NSView) -> Int {
+        (String(describing: type(of: view)).contains("_FocusRingView") ? 1 : 0)
+            + view.subviews.reduce(0) { $0 + focusRingCount(in: $1) }
     }
 }
