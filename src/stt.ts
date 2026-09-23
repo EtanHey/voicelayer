@@ -1001,11 +1001,24 @@ function countSuspectPhraseOccurrences(
         )
       : null;
   const boundaryRange = suffixRange ?? extensionRange;
-  // Without a located original-chunk boundary, witness-end counts may omit
-  // genuine repetitions. Leave the original speech intact.
-  if (!boundaryRange) return null;
+  // A loop at the tail can consume the original suffix, while the isolated
+  // extension may be worded differently in the longer acoustic witnesses.
+  // Only consider a witness-end count when the extension has a distinct start
+  // and contains no copy of the suspect phrase. The caller also requires two
+  // independent witnesses to agree before removing any copies.
+  if (
+    !boundaryRange &&
+    !(
+      !suffixBoundaryIsDistinct &&
+      extensionBoundaryWords.length >= EXTENSION_BOUNDARY_ANCHOR_WORDS &&
+      !ambiguousExtensionBoundary &&
+      !canonicalWitnessText(extensionBoundaryText ?? "").includes(phraseKey)
+    )
+  ) {
+    return null;
+  }
   const originalRegionKey = canonicalWitnessText(
-    witnessWords.slice(searchFrom, boundaryRange.start).join(" "),
+    witnessWords.slice(searchFrom, boundaryRange?.start).join(" "),
   );
   let count = 0;
   let searchOffset = 0;
@@ -1014,6 +1027,12 @@ function countSuspectPhraseOccurrences(
     if (matchOffset < 0) break;
     count++;
     searchOffset = matchOffset + phraseKey.length;
+  }
+  // An unlocated boundary can make a genuine triple look like a double.
+  // Require a large gap before trusting the witness-end count in this case.
+  const chunkCopies = suspect.occurrenceStarts.length;
+  if (!boundaryRange && (chunkCopies < 2 * count || chunkCopies - count < 2)) {
+    return null;
   }
   return count;
 }
