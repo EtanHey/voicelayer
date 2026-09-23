@@ -214,7 +214,6 @@ struct SettingsHistoryRowModel: Equatable {
 
 private enum DictEditorField: Hashable {
     case search
-    case newTerm
     case editTerm
     case addVariant
 }
@@ -223,11 +222,6 @@ private enum DictionaryCardLayout {
     static let headerHeight: CGFloat = 24
     static let inlineControlHeight: CGFloat = 28
     static let inlineFieldVerticalPadding: CGFloat = 5
-}
-
-private struct SettingsDictionarySection {
-    let source: String
-    let entries: [STTDictionaryDisplayEntry]
 }
 
 enum SettingsDictionaryEditing {
@@ -302,6 +296,7 @@ public struct SettingsView: View {
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
     public let vocabularyPreview: () -> STTVocabularyPreview
+    private let hasInitialDictionaryPreview: Bool
     public let vocabularyRevision: () -> UInt64
     public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
@@ -332,7 +327,6 @@ public struct SettingsView: View {
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
-    private static let dictionaryPageSize = 100
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
@@ -357,7 +351,9 @@ public struct SettingsView: View {
     @State private var askHistoryRefreshTask: Task<Void, Never>?
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
-    @State private var dictionaryVisibleLimit = Self.dictionaryPageSize
+    @State private var includedTermsExpanded = false
+    @State private var dictionaryLoading = false
+    @State private var dictionaryReloadQueued = false
     @State private var localEntries: [STTDictionaryEntry]
     @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
     @State private var editingRowID: String?
@@ -366,6 +362,8 @@ public struct SettingsView: View {
     @State private var variantText = ""
     @State private var pendingDeleteCanonical: String?
     @State private var newTermText = ""
+    @State private var showingAddTerm = false
+    @State private var addTermDraft = STTVocabularyDraft(correct: "", wrong: "")
     @State private var relaySetupFeedback: String?
     @State private var relaySetupRunning = false
     @State private var shortcutCheckRunning = false
@@ -444,7 +442,10 @@ public struct SettingsView: View {
         initialTab: SettingsTab = .general,
         initialHistoryScope: SettingsHistoryScope = .recording,
         initialDictionarySearch: String = "",
-        initialAdvancedExpanded: Bool = false
+        initialAdvancedExpanded: Bool = false,
+        initialDictionaryPreview: STTVocabularyPreview? = nil,
+        initialAddingVariantFor: String? = nil,
+        initialIncludedTermsExpanded: Bool = false
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -465,6 +466,7 @@ public struct SettingsView: View {
         self.residencyNotice = residencyNotice
         self.onSelectResidency = onSelectResidency
         self.vocabularyPreview = vocabularyPreview
+        hasInitialDictionaryPreview = initialDictionaryPreview != nil
         self.vocabularyRevision = vocabularyRevision
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
@@ -505,10 +507,11 @@ public struct SettingsView: View {
         self.footerPresentation = footerPresentation
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
-        let initialVocabulary = vocabularyPreview()
         _selectedTab = State(initialValue: initialTab)
         _dictionarySearch = State(initialValue: initialDictionarySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
+        _addingVariantFor = State(initialValue: initialAddingVariantFor)
+        _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         _askHistoryDayGroups = State(initialValue: initialAskHistoryPage?.groups ?? [])
         _askHistoryLoadedEntryCount = State(initialValue: initialAskHistoryPage?.loadedEntryCount ?? 0)
@@ -525,12 +528,11 @@ public struct SettingsView: View {
         _selectedHistoryEntryID = State(initialValue: initialHistoryPage?.groups.first?.entries.first?.id)
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
-        _localEntries = State(initialValue: initialVocabulary.entries)
-        _dictionaryDisplayIndex = State(initialValue: STTDictionaryDisplayIndex(
-            entries: initialVocabulary.displayEntries ?? initialVocabulary.entries.map {
+        _localEntries = State(initialValue: initialDictionaryPreview?.entries ?? [])
+        _dictionaryDisplayIndex = State(initialValue: STTDictionaryDisplayIndex(entries:
+            initialDictionaryPreview?.displayEntries ?? initialDictionaryPreview?.entries.map {
                 STTDictionaryDisplayEntry(source: "personal", entry: $0)
-            }
-        ))
+            } ?? []))
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
                 ? initialAnchorMode
@@ -542,10 +544,7 @@ public struct SettingsView: View {
         SettingsNavigationShell(selection: $selectedTab, footer: footerPresentation()) {
             switch selectedTab {
             case .dictionary:
-                settingsPage(
-                    title: "Dictionary",
-                    subtitle: "Help VoiceLayer recognize the words you use."
-                ) { dictionaryTab }
+                dictionaryTab
             case .history:
                 settingsPage(
                     title: "History",
@@ -562,9 +561,12 @@ public struct SettingsView: View {
         .modifier(
             SettingsVocabularyRevisionObserver(
                 revision: vocabularyRevision(),
-                onRefresh: { reconcileLocalEntries(with: vocabularyPreview()) }
+                onRefresh: { loadDictionaryPreview() }
             )
         )
+        .task(id: selectedTab) {
+            if selectedTab == .dictionary, !hasInitialDictionaryPreview { loadDictionaryPreview() }
+        }
         .onChange(of: selectedTab) { _, tab in
             if tab == .history {
                 switch selectedHistoryScope {
@@ -1451,92 +1453,86 @@ public struct SettingsView: View {
     // MARK: - Dictionary Tab
 
     private var dictionaryTab: some View {
-        ScrollView {
-            let page = dictionaryDisplayIndex.page(
-                matching: dictionarySearch,
-                limit: dictionaryVisibleLimit
-            )
-            LazyVStack(alignment: .leading, spacing: 14) {
-                LabeledContent("Personal dictionary") { Text("✓ Always on") }
-                addTermRow
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Dictionary").font(.title2.weight(.semibold))
+                Text("Used on every dictation").font(.subheadline).foregroundStyle(.secondary)
                 searchRow
-
-                if dictionaryDisplayIndex.personalCount == 0, dictionarySearch.isEmpty {
-                    VStack(spacing: 10) {
-                        Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
-                        Text("No terms yet").font(.headline)
-                        Text("Add names, products, and other preferred spellings.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 170)
+                Button {
+                    addTermDraft = STTVocabularyDraft(correct: "", wrong: "")
+                    showingAddTerm = true
+                } label: {
+                    Label("Add term", systemImage: "plus")
                 }
-
-                Text("\(dictionaryDisplayIndex.personalCount) words")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-
-                ForEach(dictionarySections(for: page.entries), id: \.source) { section in
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(section.source == "personal" ? "Personal" : "Included")
-                            .font(.headline)
-                            .padding(.top, 4)
-                            .padding(.bottom, 6)
-
-                        ForEach(Array(section.entries.enumerated()), id: \.element.rowID) { offset, row in
-                            dictionaryEntryCard(
-                                row.entry,
-                                rowID: row.rowID,
-                                isEditable: row.isPersonal
-                            )
-                            if offset < section.entries.count - 1 {
-                                Divider()
-                            }
+                .help("Add a term to your dictionary")
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 19)
+            .padding(.bottom, 14)
+            Divider()
+            ScrollView {
+                let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
+                let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    Text("Your terms (\(dictionaryDisplayIndex.personalCount))")
+                        .font(.headline).padding(.bottom, 8)
+                    if personal.isEmpty, dictionarySearch.isEmpty {
+                        VStack(spacing: 10) {
+                            Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
+                            Text("No terms yet").font(.headline)
+                            Text("Add names, products, and other preferred spellings.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 170)
+                    }
+                    ForEach(personal, id: \.rowID) { row in
+                        dictionaryEntryCard(row.entry, rowID: row.rowID)
+                        Divider()
+                    }
+                    Button {
+                        includedTermsExpanded.toggle()
+                    } label: {
+                        HStack {
+                            Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
+                            Text("Included terms (\(dictionaryDisplayIndex.includedCount))")
+                            Spacer()
+                            Text("built in").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .font(.headline)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
+                    .padding(.top, 18)
+                    if includedTermsExpanded || !dictionarySearch.isEmpty {
+                        ForEach(included, id: \.rowID) { row in
+                            dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
+                            Divider()
                         }
                     }
                 }
-
-                if page.entries.count < page.total {
-                    Button("Show \(min(Self.dictionaryPageSize, page.total - page.entries.count)) more") {
-                        dictionaryVisibleLimit += Self.dictionaryPageSize
-                    }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityLabel("Show more dictionary entries")
-                }
+                .padding(18)
             }
-            .padding(18)
         }
-        .onChange(of: dictionarySearch) {
-            dictionaryVisibleLimit = Self.dictionaryPageSize
+        .sheet(isPresented: $showingAddTerm) {
+            DictionaryAddSheetView(draft: addTermDraft, allowTermOnly: true, onSave: { draft in
+                if draft.trimmedWrong.isEmpty {
+                    newTermText = draft.trimmedCorrect
+                    commitNewTerm()
+                } else {
+                    variantText = draft.trimmedWrong
+                    addingVariantFor = draft.trimmedCorrect
+                    saveVariant(draft.trimmedCorrect)
+                }
+                showingAddTerm = false
+            }, onCancel: { showingAddTerm = false })
+                .frame(width: 420)
         }
         .onChange(of: localEntries) { _, entries in
             let bundled = dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }
             dictionaryDisplayIndex = STTDictionaryDisplayIndex(entries: bundled + entries.map {
                 STTDictionaryDisplayEntry(source: "personal", entry: $0)
             })
-        }
-    }
-
-    private var addTermRow: some View {
-        HStack(spacing: 8) {
-            HStack {
-                TextField("Add a term, e.g. VoiceLayer", text: $newTermText)
-                    .dictionaryTextField()
-                    .focused($focusedEditorField, equals: .newTerm)
-                    .onSubmit(commitNewTerm)
-            }
-            .dictionaryFieldContainer()
-            .contentShape(Rectangle())
-            .onTapGesture {
-                focusedEditorField = .newTerm
-            }
-            Button(action: commitNewTerm) {
-                Image(systemName: "plus.circle.fill")
-            }
-            .buttonStyle(.borderless)
-            .disabled(newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .help("Add term")
-            .accessibilityLabel("Add term")
         }
     }
 
@@ -1564,22 +1560,8 @@ public struct SettingsView: View {
             dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
             Divider()
             variantChips(entry, isEditable: isEditable)
-            if isEditable, addingVariantFor == entry.canonical {
-                addVariantInlineEditor(entry)
-            }
         }
         .padding(.vertical, 10)
-    }
-
-    private func dictionarySections(
-        for entries: [STTDictionaryDisplayEntry]
-    ) -> [SettingsDictionarySection] {
-        let orderedSources = ["personal", "bundled"]
-        return orderedSources.compactMap { source in
-            let matching = entries.filter { $0.source == source }
-            guard !matching.isEmpty else { return nil }
-            return SettingsDictionarySection(source: source, entries: matching)
-        }
     }
 
     @ViewBuilder
@@ -1658,6 +1640,7 @@ public struct SettingsView: View {
                                 .font(.caption)
                         }
                         .buttonStyle(.borderless)
+                        .help("Remove misheard spelling \(variant)")
                         .accessibilityLabel("Remove variant \(variant)")
                     }
                 }
@@ -1667,7 +1650,11 @@ public struct SettingsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 7))
             }
             if isEditable {
-                addVariantButton(entry.canonical)
+                if addingVariantFor == entry.canonical {
+                    addVariantInlineEditor(entry)
+                } else {
+                    addVariantButton(entry.canonical)
+                }
             }
         }
     }
@@ -1678,7 +1665,7 @@ public struct SettingsView: View {
             variantText = ""
             focusedEditorField = .addVariant
         } label: {
-            Text("+ add misheard variant")
+            Label("misheard as…", systemImage: "plus")
                 .padding(.vertical, 5)
         }
         .buttonStyle(.borderless)
@@ -1687,8 +1674,8 @@ public struct SettingsView: View {
     }
 
     private func addVariantInlineEditor(_ entry: STTDictionaryEntry) -> some View {
-        HStack(spacing: 8) {
-            TextField("Type the misheard spelling...", text: $variantText)
+        HStack(spacing: 5) {
+            TextField("Misheard spelling", text: $variantText)
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .addVariant)
                 .onSubmit { saveVariant(entry.canonical) }
@@ -1702,7 +1689,7 @@ public struct SettingsView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.accentColor, lineWidth: 1.5)
                 )
-                .frame(maxWidth: .infinity)
+                .frame(width: 180)
                 .frame(height: DictionaryCardLayout.inlineControlHeight)
             Button("Cancel") {
                 addingVariantFor = nil
@@ -2061,14 +2048,31 @@ public struct SettingsView: View {
             !newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func reconcileLocalEntries(with preview: STTVocabularyPreview) {
-        guard !hasPendingDictionaryEdit else { return }
-        localEntries = preview.entries
-        dictionaryDisplayIndex = STTDictionaryDisplayIndex(
-            entries: preview.displayEntries ?? preview.entries.map {
-                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+    private func loadDictionaryPreview() {
+        guard !dictionaryLoading else {
+            dictionaryReloadQueued = true
+            return
+        }
+        dictionaryLoading = true
+        let provider = vocabularyPreview
+        Task {
+            let (preview, index) = await Task.detached(priority: .userInitiated) {
+                let preview = provider()
+                let index = STTDictionaryDisplayIndex(entries: preview.displayEntries ?? preview.entries.map {
+                    STTDictionaryDisplayEntry(source: "personal", entry: $0)
+                })
+                return (preview, index)
+            }.value
+            dictionaryLoading = false
+            if dictionaryReloadQueued {
+                dictionaryReloadQueued = false
+                loadDictionaryPreview()
+                return
             }
-        )
+            guard !hasPendingDictionaryEdit else { return }
+            localEntries = preview.entries
+            dictionaryDisplayIndex = index
+        }
     }
 
     private func beginTermRename(rowID: String, canonical: String) {
@@ -2117,7 +2121,7 @@ public struct SettingsView: View {
     }
 
     private var addVariantInputFill: Color {
-        Color(red: 31 / 255, green: 39 / 255, blue: 51 / 255)
+        Color(nsColor: .controlBackgroundColor)
     }
 }
 

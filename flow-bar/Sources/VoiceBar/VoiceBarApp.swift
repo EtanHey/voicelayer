@@ -2386,14 +2386,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func currentVocabularyPreview() -> STTVocabularyPreview {
-        STTVocabularyPreview(
+        let snapshot: ([String], [STTVocabularyAliasPreview], [STTDictionaryDisplayEntry]?) = if Thread.isMainThread {
+            (
+                voiceState.transcriptionVocabularyTerms,
+                voiceState.transcriptionVocabularyAliases,
+                voiceState.transcriptionVocabularyDisplayEntries
+            )
+        } else {
+            DispatchQueue.main.sync {
+                (
+                    voiceState.transcriptionVocabularyTerms,
+                    voiceState.transcriptionVocabularyAliases,
+                    voiceState.transcriptionVocabularyDisplayEntries
+                )
+            }
+        }
+        return STTVocabularyPreview(
             updatedAt: nil,
             entries: STTVocabularyPreview(
                 updatedAt: nil,
-                promptTerms: voiceState.transcriptionVocabularyTerms,
-                aliases: voiceState.transcriptionVocabularyAliases
+                promptTerms: snapshot.0,
+                aliases: snapshot.1
             ).entries,
-            displayEntries: voiceState.transcriptionVocabularyDisplayEntries
+            displayEntries: snapshot.2
         )
     }
 
