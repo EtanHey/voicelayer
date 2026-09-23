@@ -714,7 +714,7 @@ public struct BarView: View {
         }
     }
 
-    private var historyPopover: some View {
+    var historyPopover: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent Transcriptions")
                 .font(.system(size: 13, weight: .semibold))
@@ -791,7 +791,7 @@ public struct BarView: View {
         }
     }
 
-    private var vocabularyPopover: some View {
+    var vocabularyPopover: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Transcription Vocabulary")
                 .font(.system(size: 13, weight: .semibold))
