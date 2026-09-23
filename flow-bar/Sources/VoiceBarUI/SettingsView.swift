@@ -371,7 +371,9 @@ public struct SettingsView: View {
     @State private var shortcutCheckRunning = false
     @State private var shortcutCheckFeedback: String?
     @State private var isAdvancedExpanded = false
+    @State private var isPermissionsExpanded = false
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
+    @State private var lastDictationProvenanceLabel: String?
     @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
@@ -616,7 +618,7 @@ public struct SettingsView: View {
 
     private var generalTab: some View {
         Form {
-            Section("Permissions & Hotkey Setup") {
+            Section("Shortcut") {
                 LabeledContent("Shortcut") {
                     HStack(spacing: 6) {
                         Image(systemName: "keyboard")
@@ -625,11 +627,6 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if isHotkeyRemapActive() {
-                    Text(VoiceBarHotkeyContract.remapExplanation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
                         Circle()
@@ -637,9 +634,7 @@ public struct SettingsView: View {
                             .frame(width: 8, height: 8)
                         Text(hotkeyStatusText)
                     }
-                }
-
-                LabeledContent("Shortcut check") {
+                    Spacer(minLength: 8)
                     Button("Check shortcut") {
                         shortcutCheckRunning = true
                         onCheckShortcut { result in
@@ -649,24 +644,41 @@ public struct SettingsView: View {
                     }
                     .disabled(shortcutCheckRunning)
                 }
-                Text(
-                    "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
-                )
-                .font(.caption).foregroundStyle(.secondary)
+                if !hotkeyEnabled {
+                    Text(
+                        "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
                 if let shortcutCheckFeedback {
                     Text(shortcutCheckFeedback).font(.caption).foregroundStyle(.secondary)
                 }
-
-                permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
-                permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
-                permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
             }
+
+            Section("Permissions") {
+                if allPermissionsGranted {
+                    DisclosureGroup("All permissions granted", isExpanded: $isPermissionsExpanded) {
+                        permissionRows
+                    }
+                } else {
+                    permissionRows
+                }
+            }
+
+            visibilitySection
+            microphonePrioritySection
 
             DisclosureGroup("Advanced", isExpanded: $isAdvancedExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
                     LabeledContent("F5 key helper") {
                         HStack(spacing: 8) {
-                            statusBadge(isHotkeyRemapActive() ? "Ready" : "Needs setup", isReady: isHotkeyRemapActive())
+                            if isHotkeyRemapActive() {
+                                statusBadge("Installed", isReady: true)
+                            } else if hotkeyEnabled {
+                                Text("Not installed").foregroundStyle(.secondary)
+                            } else {
+                                statusBadge("Needs setup", isReady: false)
+                            }
                             Button("Set up") {
                                 runRelaySetup()
                             }
@@ -675,16 +687,24 @@ public struct SettingsView: View {
                     }
                     Text("Lets F5 start dictation even if your Mac remaps the dictation key.")
                         .font(.caption).foregroundStyle(.secondary)
+                    if isHotkeyRemapActive() {
+                        Text(VoiceBarHotkeyContract.remapExplanation)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if let relaySetupFeedback {
                         Text(relaySetupFeedback)
                             .font(.caption)
                             .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
                     }
+                    Divider()
+                    Text("Gestures").font(.headline)
+                    LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)
+                    LabeledContent("Hold", value: VoiceBarHotkeyContract.holdDescription)
+                    LabeledContent("Double-tap", value: VoiceBarHotkeyContract.doubleTapDescription)
+                    LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel,
+                                   value: VoiceBarHotkeyContract.repasteDescription)
                 }
             }
-
-            visibilitySection
-            microphonePrioritySection
 
             Section("Last dictation") {
                 if let entry = lastDictationEntry() {
@@ -699,25 +719,6 @@ public struct SettingsView: View {
                     .buttonStyle(.link)
                 } else {
                     Text("No dictation yet")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section("Gestures") {
-                LabeledContent("Single tap") {
-                    Text(VoiceBarHotkeyContract.singleTapDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent("Hold") {
-                    Text(VoiceBarHotkeyContract.holdDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent("Double-tap") {
-                    Text(VoiceBarHotkeyContract.doubleTapDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel) {
-                    Text(VoiceBarHotkeyContract.repasteDescription)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -836,13 +837,16 @@ public struct SettingsView: View {
             onSelectEffort: onSelectPerformanceEffort,
             residencyNotice: residencyNotice(),
             onSelectResidency: onSelectResidency,
-            lastDictationLabel: SettingsHistoryArchive.lastDictationProvenanceLabel(
-                for: lastDictationEntry()?.recordingPath
-            ),
+            lastDictationLabel: lastDictationProvenanceLabel,
             degradation: polishDegradation(),
             onDismissDegradation: onDismissPolishDegradation
         )
-        .onAppear(perform: onRefreshModelsStatus)
+        .onAppear {
+            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(
+                for: lastDictationEntry()?.recordingPath
+            )
+            onRefreshModelsStatus()
+        }
     }
 
     // MARK: - History Tab
@@ -1986,6 +1990,19 @@ public struct SettingsView: View {
                     openPermissionSettings(permission)
                 }
             }
+        }
+    }
+
+    private var allPermissionsGranted: Bool {
+        isMicrophonePermissionGranted() && !missingPermissions.contains(.accessibility) &&
+            !missingPermissions.contains(.inputMonitoring)
+    }
+
+    private var permissionRows: some View {
+        Group {
+            permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
+            permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
+            permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
         }
     }
 

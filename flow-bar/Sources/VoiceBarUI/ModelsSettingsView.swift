@@ -42,6 +42,7 @@ public struct ModelsSettingsView: View {
                             .foregroundStyle(.orange)
                         Spacer()
                         Button("Dismiss", action: onDismissDegradation)
+                            .accessibilityLabel("Dismiss STT polish warning")
                     }
                 }
             }
@@ -121,16 +122,16 @@ public struct ModelsSettingsView: View {
                         source: controls.outroGate.source
                     )
                     .accessibilityIdentifier("models-outro-gate")
-                    processingRow("Smart chunks: places optional audio chunks",
+                    processingRow("Smart chunks: splits long recordings at pauses",
                                   status: controls.smartChunks.effective ? "On" : "Off",
                                   source: controls.smartChunks.source)
                         .accessibilityIdentifier("models-smart-chunks")
-                    processingRow("Smart boundaries: detects sentence boundaries",
+                    processingRow("Smart boundaries: turns false full stops into commas using your pauses",
                                   status: controls.smartBoundaries.effective ? "On" : "Off",
                                   source: controls.smartBoundaries.source)
                         .accessibilityIdentifier("models-smart-boundaries")
                     Text(
-                        "Read from the running daemon. To change these settings, edit its configuration and restart it when voice activity is idle."
+                        "Set in VoiceLayer's configuration; shown here for reference."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)

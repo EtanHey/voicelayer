@@ -7,6 +7,7 @@ import XCTest
 @MainActor
 final class SottoCurrentStateShotsTests: XCTestCase {
     private var syntheticRecordingPath: String?
+    private var syntheticHistoryPage: SettingsHistoryPage?
     private final class NoopRouter: BarCommandRouting {
         func handlePrimaryTap() {}
         func handleCancel() {}
@@ -21,14 +22,21 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         }
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let recordingDirectory = FileManager.default.temporaryDirectory
+        let recordingRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("sotto-shots-\(ProcessInfo.processInfo.processIdentifier)")
+        let recordingDirectory = recordingRoot
+            .appendingPathComponent("2025-09-23/2025-09-23T04-20-00-000Z-fixture")
         try FileManager.default.createDirectory(at: recordingDirectory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: recordingDirectory) }
-        try Data("{\"provenance\":{\"whisper_model_path\":\"/fixture/ggml-whisper-model.bin\",\"performance_effort\":\"balanced\"}}"
+        defer { try? FileManager.default.removeItem(at: recordingRoot) }
+        try Data("{\"created_at\":\"2025-09-23T04:20:00.000Z\",\"provenance\":{\"whisper_model_path\":\"/fixture/ggml-whisper-model.bin\",\"performance_effort\":\"balanced\"}}"
             .utf8)
             .write(to: recordingDirectory.appendingPathComponent("metadata.json"))
+        try "This is a synthetic dictation for screenshot review."
+            .write(to: recordingDirectory.appendingPathComponent("voicelayer-transcript.txt"),
+                   atomically: true, encoding: .utf8)
+        try Data([0]).write(to: recordingDirectory.appendingPathComponent("audio.wav"))
         syntheticRecordingPath = recordingDirectory.appendingPathComponent("audio.wav").path
+        syntheticHistoryPage = SettingsHistoryArchive.loadPage(from: recordingRoot)
         var lines = [
             "# Current source-state screenshots",
             "",
@@ -37,9 +45,10 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             "| File | Surface and state |",
             "|---|---|",
         ]
-        func shot(_ name: String, _ description: String, _ view: some View, size: CGSize) throws {
+        func shot(_ name: String, _ description: String, _ view: some View, size: CGSize,
+                  appearance: NSAppearance.Name = .darkAqua) throws {
             try render(view, size: size, to: directory.appendingPathComponent(name),
-                       settingsWindow: name.hasPrefix("settings-"))
+                       settingsWindow: name.hasPrefix("settings-"), appearance: appearance)
             lines.append("| [\(name)](\(name)) | \(description) |")
         }
 
@@ -119,12 +128,20 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         )
         for tab in SettingsTab.allCases {
             try shot("settings-\(tab.title.lowercased()).png", "Settings: \(tab.title)",
-                     settings(tab: tab, vocabulary: tab == .dictionary ? populated : empty),
+                     settings(tab: tab, vocabulary: tab == .dictionary ? populated : empty,
+                              historyDetail: tab != .history),
                      size: CGSize(width: 780, height: 620))
+            try shot("settings-\(tab.title.lowercased())-light.png", "Settings: \(tab.title), light",
+                     settings(tab: tab, vocabulary: tab == .dictionary ? populated : empty,
+                              historyDetail: tab != .history),
+                     size: CGSize(width: 780, height: 620), appearance: .aqua)
         }
         try shot("settings-resized.png", "Settings: General at 960×740 pt",
                  settings(tab: .general, vocabulary: empty),
                  size: CGSize(width: 960, height: 740))
+        try shot("settings-resized-light.png", "Settings: General at 960×740 pt, light",
+                 settings(tab: .general, vocabulary: empty),
+                 size: CGSize(width: 960, height: 740), appearance: .aqua)
         try shot("settings-general-advanced.png", "Settings General: Advanced F5 helper expanded",
                  settings(tab: .general, vocabulary: empty, advanced: true),
                  size: CGSize(width: 960, height: 740))
@@ -164,7 +181,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             "",
             "## Popover geometry for the design spec",
             "",
-            "Measurements are points, read from the 2× light-appearance PNGs; button and text bounds are approximate visible-pixel bounds. Source spacing is exact.",
+            "Measurements are points, read from the 2× PNGs; button and text bounds are approximate visible-pixel bounds. Source spacing is exact.",
             "",
             "- Main column spacing: **10 pt** (`VStack`). Footer status lines: **5 pt**. Mic and transcript cards: **9 pt** internal padding; transcript text and copy button: **8 pt** horizontal spacing, top aligned.",
             "- Long transcript visible text block midpoint: about **148 pt** from the popover top; copy glyph midpoint: about **139 pt**. The text block center is about **9 pt lower** because the HStack is top aligned.",
@@ -217,21 +234,12 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         vocabulary: STTVocabularyPreview,
         search: String = "",
         advanced: Bool = false,
+        historyDetail: Bool = true,
         modelState: ModelsSettingsState = .loading
     ) -> SettingsView {
-        let date = Date(timeIntervalSince1970: 1_758_590_400)
-        let entry = SettingsHistoryEntry(
-            id: "fixture-recording",
-            dayKey: "2025-09-23",
-            recordingID: "fixture-recording",
-            createdAt: date,
-            transcript: "This is a synthetic dictation for screenshot review.",
-            audioPath: URL(fileURLWithPath: "/tmp/voicelayer-sotto-synthetic.wav"),
-            modelLabel: "fixture-whisper-model",
-            performanceEffort: .balanced
-        )
-        let group = SettingsHistoryDayGroup(dayKey: "2025-09-23", date: date, entries: [entry])
-        let historyFixture = SettingsHistoryPage(groups: [group], loadedEntryCount: 1, hasMore: false)
+        let historyFixture = historyDetail
+            ? syntheticHistoryPage ?? SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
+            : SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
         let emptyAskFixture = SettingsAskHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
         let recordingPath = syntheticRecordingPath
         return SettingsView(hotkeyEnabled: true, missingPermissions: [],
@@ -311,14 +319,14 @@ final class SottoCurrentStateShotsTests: XCTestCase {
     }
 
     private func render(_ view: some View, size: CGSize, to url: URL,
-                        settingsWindow: Bool = false) throws {
+                        settingsWindow: Bool = false, appearance: NSAppearance.Name = .darkAqua) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading))
-        host.appearance = NSAppearance(named: .darkAqua)
+        host.appearance = NSAppearance(named: appearance)
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame,
                               styleMask: settingsWindow ? [.titled, .resizable] : .borderless,
                               backing: .buffered, defer: false)
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: appearance)
         window.backgroundColor = .windowBackgroundColor
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))

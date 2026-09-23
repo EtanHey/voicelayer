@@ -13,11 +13,46 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.nextVisibleDeviceName, "Built-in Microphone")
         XCTAssertEqual(
             MicrophonePrioritySnapshot(rows: snapshot.rows, nextDeviceName: "System Audio").nextVisibleDeviceName,
-            "System selected device"
+            "Hidden microphone selected"
         )
         XCTAssertEqual(snapshot.reorderedVisibleUIDs(moving: 1, by: -1), [
-            "physical-b", "CADefaultDeviceAggregate-7", "physical-a",
+            "physical-b", "physical-a", "CADefaultDeviceAggregate-7",
         ])
+    }
+
+    func testTransportTypeOverridesNameAndNameIsOnlyFallback() {
+        let namedLikeVirtual = MicrophonePriorityRow(
+            uid: "physical", deviceID: "1", label: "Virtual Studio Mic", isConnected: true,
+            isVirtualOrAggregateTransport: false
+        )
+        let unlabelledVirtual = MicrophonePriorityRow(
+            uid: "zoom", deviceID: "2", label: "Studio Mic", isConnected: true,
+            isVirtualOrAggregateTransport: true
+        )
+        let fallback = MicrophonePriorityRow(
+            uid: "CADefaultDeviceAggregate-7", deviceID: nil, label: "System Audio", isConnected: false
+        )
+        XCTAssertFalse(namedLikeVirtual.isVirtualOrAggregate)
+        XCTAssertTrue(unlabelledVirtual.isVirtualOrAggregate)
+        XCTAssertTrue(fallback.isVirtualOrAggregate)
+    }
+
+    func testHiddenAggregateSavedFirstDoesNotKeepCapturingAfterVisibleReorder() throws {
+        let devices = [
+            MicrophoneDevice(id: "aggregate", name: "System Audio", uid: "CADefaultDeviceAggregate-7"),
+            MicrophoneDevice(id: "built-in", name: "Built-in Microphone", uid: "physical-a"),
+            MicrophoneDevice(id: "usb", name: "USB Microphone", uid: "physical-b"),
+        ]
+        let suiteName = "p07-hidden-priority-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let priority = MicrophoneDevicePriority(defaults: defaults)
+        priority.observe(devices)
+        let snapshot = MicrophonePrioritySnapshot(rows: priority.rows(for: devices), nextDeviceName: "System Audio")
+        let reordered = snapshot.reorderedVisibleUIDs(moving: 1, by: -1)
+        XCTAssertEqual(reordered, ["physical-b", "physical-a", "CADefaultDeviceAggregate-7"])
+        if let reordered { priority.replacePreferredUIDs(reordered, observing: devices) }
+        XCTAssertEqual(priority.resolveDeviceID(in: devices, fallbackDeviceID: "aggregate"), "usb")
     }
 
     func testReorderIncludesRememberedDisconnectedUIDAndExcludesUIDlessDevice() {

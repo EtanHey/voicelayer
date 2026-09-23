@@ -19,9 +19,27 @@ struct SettingsNavigationShell<Detail: View>: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                List(SettingsTab.allCases, selection: $selection) { tab in
-                    Label(tab.title, systemImage: tab.systemImage)
-                        .tag(tab)
+                List(SettingsTab.allCases) { tab in
+                    Button {
+                        selection = tab
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: tab.systemImage)
+                                .symbolRenderingMode(.monochrome)
+                                .foregroundColor(selection == tab ? .white : .secondary)
+                                .frame(width: 20)
+                            Text(tab.title)
+                                .foregroundColor(selection == tab ? .white : .primary)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .background(selection == tab ? Color.accentColor : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
                 .listStyle(.sidebar)
 
