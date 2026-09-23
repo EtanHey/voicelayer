@@ -442,7 +442,8 @@ public struct SettingsView: View {
             )
         },
         initialTab: SettingsTab = .general,
-        initialHistoryScope: SettingsHistoryScope = .recording
+        initialHistoryScope: SettingsHistoryScope = .recording,
+        initialDictionarySearch: String = ""
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -505,6 +506,7 @@ public struct SettingsView: View {
         let initialPerformanceEffort = performanceEffort()
         let initialVocabulary = vocabularyPreview()
         _selectedTab = State(initialValue: initialTab)
+        _dictionarySearch = State(initialValue: initialDictionarySearch)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         _askHistoryDayGroups = State(initialValue: initialAskHistoryPage?.groups ?? [])
         _askHistoryLoadedEntryCount = State(initialValue: initialAskHistoryPage?.loadedEntryCount ?? 0)
