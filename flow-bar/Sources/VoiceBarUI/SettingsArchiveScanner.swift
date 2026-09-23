@@ -156,9 +156,11 @@ struct SettingsArchiveMetadata: Decodable {
 
     struct RecordingModelProvenance: Decodable {
         let whisperModelPath: String?
+        let performanceEffort: String?
 
         enum CodingKeys: String, CodingKey {
             case whisperModelPath = "whisper_model_path"
+            case performanceEffort = "performance_effort"
         }
     }
 
