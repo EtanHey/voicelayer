@@ -103,6 +103,28 @@ describe("handleConverse resilience — P0-2", () => {
     }
   });
 
+  it("a voice_ask rejected by external booking does not cancel an unload", async () => {
+    let finishUnload!: () => void;
+    const unload = whisperLifecycleGate.unload(() => false, () => new Promise<"not_loaded">((resolve) => {
+      finishUnload = () => resolve("not_loaded");
+    }));
+    bookingSpy.mockReturnValue({
+      booked: true,
+      ownedByUs: false,
+      owner: { pid: 12345, sessionId: "external", startedAt: new Date().toISOString() },
+    });
+    try {
+      const result = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toContain("busy");
+      finishUnload();
+      expect(await unload).toEqual({ outcome: "accept", residency: "not_loaded" });
+    } finally {
+      finishUnload();
+      await unload;
+    }
+  });
+
   afterEach(() => {
     broadcastSpy.mockRestore();
     speakSpy?.mockRestore();

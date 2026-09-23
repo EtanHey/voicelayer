@@ -75,6 +75,27 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertNotNil(state.residencyNotice)
     }
 
+    func testLateResidencyRejectReplacesTimeoutWithDaemonReason() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.availableHealth)
+        state.setWhisperResidency(.loaded)
+        let id = try XCTUnwrap(commands.last?["id"] as? String)
+        XCTAssertEqual(state.modelsSettingsState.busyReason, "Changing model residency")
+        state.handleEvent([
+            "type": "ack", "command": "set_whisper_residency", "id": id, "outcome": "loading",
+        ])
+        state.expirePendingResidencyForTests()
+        XCTAssertFalse(state.modelsSettingsState.isBusy)
+        state.handleEvent([
+            "type": "ack", "command": "set_whisper_residency", "id": id,
+            "outcome": "reject", "reason": "whisper-server failed to start within 30s",
+        ])
+        XCTAssertEqual(state.residencyNotice, "whisper-server failed to start within 30s")
+    }
+
     func testLoadingAckKeepsResidencyPendingUntilFinalAck() throws {
         let state = VoiceState()
         var commands: [[String: Any]] = []

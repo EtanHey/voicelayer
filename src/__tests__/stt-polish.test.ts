@@ -1389,6 +1389,7 @@ describe("stt-polish", () => {
 
     expect(result.status).toBe("rejected");
     expect(result.text).toBe(cleanedText);
+    expect(result.error).toContain("polish response invented a list item");
 
     const withAddedContentGuard = await polishTranscriptionText({
       rawText: cleanedText,
@@ -1402,6 +1403,73 @@ describe("stt-polish", () => {
     });
     expect(withAddedContentGuard.status).toBe("rejected");
     expect(withAddedContentGuard.text).toBe(cleanedText);
+    expect(withAddedContentGuard.error).toContain("polish response invented a list item");
+  });
+
+  for (const [name, candidate] of [
+    [
+      "duplicate second marker",
+      "1. Verify the recording state before release.\n2. Inspect the transcript before sending it.\n2. Inspect the transcript before sending it.",
+    ],
+    [
+      "two first markers in one item",
+      "1. 1. Verify the recording state before release.\n2. Inspect the transcript before sending it.",
+    ],
+    [
+      "skipped second marker",
+      "1. Verify the recording state before release.\n3. Inspect the transcript before sending it.",
+    ],
+  ] as const) {
+    it(`rejects an invented list item from ${name}`, async () => {
+      const cleanedText = "First of all, verify the recording state before release. Second of all, inspect the transcript before sending it.";
+      server = createMockPolishServer(() => ({ text: candidate }));
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+      expect(result.status).toBe("rejected");
+      expect(result.text).toBe(cleanedText);
+      expect(result.error).toContain("polish response invented a list item");
+    });
+  }
+
+  it("accepts punctuated bare First and Second as a spoken list", async () => {
+    const cleanedText = "First, verify the recording state before release. Second, inspect the transcript before sending it.";
+    const candidate = "1. Verify the recording state before release.\n2. Inspect the transcript before sending it.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+    expect(result.status).toBe("applied");
+    expect(result.text).toBe(candidate);
+  });
+
+  it("does not treat unpunctuated bare ordinals as list heads", async () => {
+    const cleanedText = "First verify the recording state before release. Second inspect the transcript before sending it.";
+    const candidate = "1. Verify the recording state before release.\n2. Inspect the transcript before sending it.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+    expect(result.status).toBe("rejected");
+    expect(result.error).toContain("polish response invented a list item");
   });
 
   for (const [name, cleanedText] of [

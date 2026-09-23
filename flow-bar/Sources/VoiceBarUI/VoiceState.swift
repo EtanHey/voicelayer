@@ -354,13 +354,14 @@ public final class VoiceState {
     public private(set) var modelsSettingsState = ModelsSettingsState.loading
     public private(set) var residencyNotice: String?
     private var pendingResidencyID: String?
+    private var timedOutResidencyID: String?
     private var pendingResidencyTimeout: Task<Void, Never>?
     private var modelsRecordingBusy = true
     private var modelsRecordingReason: String?
 
     private func refreshModelsBusy() {
         guard modelsSettingsState.availability == .available else { return }
-        let reason = pendingResidencyID != nil ? "Changing model residency…"
+        let reason = pendingResidencyID != nil ? "Changing model residency"
             : Self.blocksModelsEffort(mode) ? (mode == .recording ? "Recording" : "Transcribing")
             : modelsRecordingReason ?? (queueDepth > 0 ? "Playing back" : nil)
         modelsSettingsState = modelsSettingsState.settingBusy(
@@ -690,6 +691,7 @@ public final class VoiceState {
               let sendCommand
         else { return }
         let id = UUID().uuidString
+        timedOutResidencyID = nil
         pendingResidencyID = id
         residencyNotice = nil
         refreshModelsBusy()
@@ -712,6 +714,7 @@ public final class VoiceState {
 
     func expirePendingResidencyForTests() {
         guard pendingResidencyID != nil else { return }
+        timedOutResidencyID = pendingResidencyID
         pendingResidencyID = nil
         pendingResidencyTimeout?.cancel()
         pendingResidencyTimeout = nil
@@ -1559,6 +1562,7 @@ public final class VoiceState {
 
         modelsSettingsState = .unavailable
         pendingResidencyID = nil
+        timedOutResidencyID = nil
         pendingResidencyTimeout?.cancel()
         pendingResidencyTimeout = nil
         residencyNotice = nil
@@ -2803,12 +2807,16 @@ public final class VoiceState {
         onAckEvent?(ack)
 
         if ack.command == .setWhisperResidency,
-           ack.id == pendingResidencyID {
+           ack.id == pendingResidencyID || ack.id == timedOutResidencyID {
             if ack.outcome == .loading {
-                scheduleResidencyTimeout(id: ack.id, after: 40)
+                if ack.id == pendingResidencyID {
+                    // Two 30 s STARTUP_TIMEOUT attempts (CoreML then Metal), plus health and cleanup probes.
+                    scheduleResidencyTimeout(id: ack.id, after: 75)
+                }
                 return
             }
             pendingResidencyID = nil
+            timedOutResidencyID = nil
             pendingResidencyTimeout?.cancel()
             pendingResidencyTimeout = nil
             residencyNotice = ack.outcome == .accept ? nil : (ack.reason ?? "Could not change memory state")

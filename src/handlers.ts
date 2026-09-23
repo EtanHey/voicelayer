@@ -529,9 +529,6 @@ export async function handleConverse(
 
   const silenceMode = validated.silence_mode ?? DEFAULT_CONVERSE_SILENCE_MODE;
 
-  whisperLifecycleGate.yieldToCapture();
-  yieldVoiceMaintenanceToCapture();
-
   // Session booking — auto-book if not already booked
   const booking = isVoiceBooked();
   if (booking.booked && !booking.ownedByUs) {
@@ -551,6 +548,9 @@ export async function handleConverse(
       return textResult(`[converse] ${result.error}`, true);
     }
   }
+
+  whisperLifecycleGate.yieldToCapture();
+  yieldVoiceMaintenanceToCapture();
 
   clearInput();
   clearStopSignal();

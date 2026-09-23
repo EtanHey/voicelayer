@@ -1166,19 +1166,12 @@ const LETS_DO_REPEATED_NEGATED_CORRECTION_PATTERN =
 const LETS_DO_WELL_REPLACEMENT_PATTERN =
   /^(?<prefix>.*?\blet(?:'|’)s\s+do\s+)(?:a\s+)?(?<old>[^,.?!]+?)(?:,\s*)?\bwell\s*,\s*(?<replacement>[^.?!]+)(?<ending>[.?!]?)$/iu;
 
-const SPOKEN_LIST_CUE_PATTERN =
-  /\b(?:first\s+of\s+all|first\s+off|second\s+of\s+all|third\s+of\s+all|number\s+(?:one|two|three|four|five|[1-5])|firstly|secondly|thirdly)\b/iu;
-
 function hasExplicitSelfCorrectionCue(text: string): boolean {
   return (
     SELF_CORRECTION_CUE_PATTERN.test(text) ||
     LETS_DO_REPEATED_NEGATED_CORRECTION_PATTERN.test(text) ||
     LETS_DO_WELL_REPLACEMENT_PATTERN.test(text)
   );
-}
-
-function hasSpokenListCue(text: string): boolean {
-  return SPOKEN_LIST_CUE_PATTERN.test(text);
 }
 
 function hasNumberedMarkdownList(text: string): boolean {
@@ -1219,8 +1212,8 @@ function isAddedContentGuardEnabled(env: STTPolishEnv): boolean {
   return value === "on" || value === "true" || value === "yes" || value === "1";
 }
 
-function numberedMarkdownListMax(text: string): number {
-  return Math.max(0, ...[...text.matchAll(/(?:^|\n)\s*(\d{1,2})\.\s+\S/gu)].map((match) => Number(match[1])));
+function numberedMarkdownListMarkers(text: string): number[] {
+  return [...text.matchAll(/\b(\d{1,2})\.\s+/gu)].map((match) => Number(match[1]));
 }
 
 function isAllowedSelfCorrectionRewrite(
@@ -1326,11 +1319,14 @@ function isAllowedSpokenListRewrite(
   // The exception exists only for converting spoken prose into a list. Once
   // the deterministic rules stage has already numbered the items, bypassing
   // protected-token checks would let polish merge or drop whole spoken beats.
+  const spokenItems = explicitSpokenListItemCount(cleanedText);
+  const markers = numberedMarkdownListMarkers(candidate);
   if (
     hasNumberedMarkdownList(cleanedText) ||
-    !hasSpokenListCue(cleanedText) ||
+    spokenItems < 2 ||
     !hasNumberedMarkdownList(candidate) ||
-    numberedMarkdownListMax(candidate) > explicitSpokenListItemCount(cleanedText)
+    markers.length !== spokenItems ||
+    markers.some((marker, index) => marker !== index + 1)
   ) {
     return false;
   }
@@ -1373,7 +1369,7 @@ function validatePolishCandidate(
     return "polish response self-correction rewrite changed too much text";
   }
   if (
-    hasNumberedMarkdownList(candidate) &&
+    /(?:^|\n)\s*\d{1,2}\.\s+\S/u.test(candidate) &&
     !hasNumberedMarkdownList(cleanedText) &&
     !allowedSpokenListRewrite
   ) {

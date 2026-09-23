@@ -1001,25 +1001,11 @@ function countSuspectPhraseOccurrences(
         )
       : null;
   const boundaryRange = suffixRange ?? extensionRange;
-  // An end-of-chunk loop can consume the original suffix, while the isolated
-  // extension decode may word its first sentence differently from both longer
-  // witnesses. Count to the witness end only when the isolated extension is
-  // present, starts with words absent from the suspect chunk, and contains no
-  // copy of this phrase. The two independently selected acoustic witnesses
-  // still have to agree on the count before any copy can be removed.
-  if (
-    !boundaryRange &&
-    !(
-      !suffixBoundaryIsDistinct &&
-      extensionBoundaryWords.length >= EXTENSION_BOUNDARY_ANCHOR_WORDS &&
-      !ambiguousExtensionBoundary &&
-      !canonicalWitnessText(extensionBoundaryText ?? "").includes(phraseKey)
-    )
-  ) {
-    return null;
-  }
+  // Without a located original-chunk boundary, witness-end counts may omit
+  // genuine repetitions. Leave the original speech intact.
+  if (!boundaryRange) return null;
   const originalRegionKey = canonicalWitnessText(
-    witnessWords.slice(searchFrom, boundaryRange?.start).join(" "),
+    witnessWords.slice(searchFrom, boundaryRange.start).join(" "),
   );
   let count = 0;
   let searchOffset = 0;
