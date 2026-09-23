@@ -98,16 +98,7 @@ public struct VoiceBarNotchControlOptics: Equatable {
     public let offsetY: CGFloat
 
     public static func resolve(for systemName: String) -> Self {
-        switch systemName {
-        case "eye", "eye.slash":
-            VoiceBarNotchControlOptics(pointSize: 8.5, offsetX: 0, offsetY: 0)
-        case "arrow.counterclockwise":
-            VoiceBarNotchControlOptics(pointSize: 9.5, offsetX: 0, offsetY: 0)
-        case "stop.fill":
-            VoiceBarNotchControlOptics(pointSize: 8, offsetX: 0, offsetY: 0)
-        default:
-            VoiceBarNotchControlOptics(pointSize: 10, offsetX: 0, offsetY: 0)
-        }
+        VoiceBarNotchControlOptics(pointSize: systemName == "stop.fill" ? 10 : 15, offsetX: 0, offsetY: 0)
     }
 }
 
@@ -120,11 +111,100 @@ private extension View {
     }
 }
 
+private struct VoiceBarPillPressStyle: ButtonStyle {
+    var previewPressed = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed || previewPressed
+        return configuration.label
+            .scaleEffect(pressed ? 0.88 : 1)
+            .opacity(pressed ? 0.78 : 1)
+            .animation(.easeOut(duration: 0.12), value: pressed)
+    }
+}
+
+struct VoiceBarPillControlButton: View {
+    let icon: String
+    let optics: VoiceBarNotchControlOptics
+    let foreground: Color
+    let halo: Color
+    let isSelected: Bool
+    let isDestructive: Bool
+    let accessibilityLabel: String
+    let accessibilityHint: String
+    let action: () -> Void
+    let previewHovered: Bool
+    let previewPressed: Bool
+    @State private var isHovered = false
+
+    init(
+        icon: String,
+        optics: VoiceBarNotchControlOptics,
+        foreground: Color,
+        halo: Color,
+        isSelected: Bool,
+        isDestructive: Bool,
+        accessibilityLabel: String,
+        accessibilityHint: String,
+        previewHovered: Bool = false,
+        previewPressed: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.optics = optics
+        self.foreground = foreground
+        self.halo = halo
+        self.isSelected = isSelected
+        self.isDestructive = isDestructive
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityHint = accessibilityHint
+        self.previewHovered = previewHovered
+        self.previewPressed = previewPressed
+        self.action = action
+    }
+
+    var body: some View {
+        Button {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            action()
+        } label: {
+            glyph
+                .offset(x: optics.offsetX, y: optics.offsetY)
+                .frame(width: 26, height: 26)
+                .background {
+                    Circle()
+                        .fill(isDestructive ? Theme.recordingColor
+                            : isSelected ? Theme.recordingColor.opacity(0.30)
+                            : isHovered || previewHovered || previewPressed ? foreground.opacity(0.12) : .clear)
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(VoiceBarPillPressStyle(previewPressed: previewPressed))
+        .onHover { isHovered = $0 }
+        .padding(-3)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint)
+        .help(accessibilityLabel)
+    }
+
+    @ViewBuilder private var glyph: some View {
+        let image = Image(systemName: icon)
+            .font(.system(size: optics.pointSize, weight: .medium))
+            .foregroundStyle(isDestructive ? Color.white : foreground)
+        if isDestructive {
+            image
+        } else {
+            image.notchAdaptiveGlyphEdge(halo)
+        }
+    }
+}
+
 // MARK: - Bar View
 
 public struct BarView: View {
     public var state: VoiceState
     public var commandRouter: BarCommandRouting
+    public var onOpenSettings: () -> Void
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
@@ -154,6 +234,7 @@ public struct BarView: View {
     public init(
         state: VoiceState,
         commandRouter: BarCommandRouting,
+        onOpenSettings: @escaping () -> Void = {},
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false
@@ -165,6 +246,7 @@ public struct BarView: View {
         )
         self.state = state
         self.commandRouter = commandRouter
+        self.onOpenSettings = onOpenSettings
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
@@ -332,7 +414,7 @@ public struct BarView: View {
         case .hoverLauncher:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
                 historyButton
-                vocabularyButton
+                settingsButton
             }
         case .recording:
             notchWaveform
@@ -468,14 +550,14 @@ public struct BarView: View {
     private var notchTeleprompterControls: some View {
         HStack(spacing: 10) {
             if state.canReplay {
-                notchButton(
+                notchTeleprompterButton(
                     icon: "arrow.counterclockwise",
                     accessibilityLabel: "Replay"
                 ) {
                     commandRouter.handleReplay()
                 }
             }
-            notchButton(
+            notchTeleprompterButton(
                 icon: state.isTeleprompterDismissed ? "eye" : "eye.slash",
                 accessibilityLabel: state.isTeleprompterDismissed
                     ? "Show teleprompter"
@@ -488,7 +570,7 @@ public struct BarView: View {
                 }
             }
             if state.mode == .speaking {
-                notchButton(
+                notchTeleprompterButton(
                     icon: "stop.fill",
                     isDestructive: true,
                     accessibilityLabel: "Stop speaking"
@@ -497,7 +579,7 @@ public struct BarView: View {
                 }
             }
             if state.isTeleprompterReadback {
-                notchButton(icon: "xmark", accessibilityLabel: "Dismiss teleprompter") {
+                notchTeleprompterButton(icon: "xmark", accessibilityLabel: "Dismiss teleprompter") {
                     state.dismissRetainedTeleprompter()
                 }
             }
@@ -714,6 +796,12 @@ public struct BarView: View {
         }
     }
 
+    private var settingsButton: some View {
+        notchButton(icon: "gearshape", accessibilityLabel: "Settings") {
+            onOpenSettings()
+        }
+    }
+
     var historyPopover: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent Transcriptions")
@@ -893,44 +981,57 @@ public struct BarView: View {
         action: @escaping () -> Void
     ) -> some View {
         let optics = VoiceBarNotchControlOptics.resolve(for: icon)
-        let hasStopContainer = isDestructive && icon == "stop.fill"
         let foregroundRole = VoiceBarNotchGlyphForegroundRole.resolve(
             isDestructive: isDestructive,
             isSelected: isSelected
         )
+        return VoiceBarPillControlButton(
+            icon: icon,
+            optics: optics,
+            foreground: foregroundRole == .stateAccent ? Theme.recordingColor : notchPrimaryLabelColor,
+            halo: notchGlyphContrastHaloColor,
+            isSelected: isSelected,
+            isDestructive: isDestructive && icon == "stop.fill",
+            accessibilityLabel: accessibilityLabel ?? icon,
+            accessibilityHint: accessibilityHint ?? "",
+            action: action
+        )
+    }
+
+    private func notchTeleprompterButton(
+        icon: String,
+        isDestructive: Bool = false,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        let pointSize: CGFloat = switch icon {
+        case "eye", "eye.slash": 8.5
+        case "arrow.counterclockwise": 9.5
+        case "stop.fill": 8
+        default: 10
+        }
+        let hasStopContainer = isDestructive && icon == "stop.fill"
         return Button {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
             action()
         } label: {
             Image(systemName: icon)
-                .font(.system(size: optics.pointSize, weight: .semibold))
-                .foregroundStyle(
-                    hasStopContainer
-                        ? Color.white
-                        : foregroundRole == .stateAccent
-                        ? Theme.recordingColor
-                        : notchPrimaryLabelColor
-                )
+                .font(.system(size: pointSize, weight: .semibold))
+                .foregroundStyle(hasStopContainer ? Color.white : notchPrimaryLabelColor)
                 .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
-                .offset(x: optics.offsetX, y: optics.offsetY)
                 .frame(
                     width: VoiceBarNotchContract.material.compactControlSize,
                     height: VoiceBarNotchContract.material.compactControlSize
                 )
                 .background {
                     if hasStopContainer {
-                        Circle()
-                            .fill(Theme.recordingColor)
-                    } else if isSelected {
-                        Circle()
-                            .fill(Theme.recordingColor.opacity(0.30))
+                        Circle().fill(Theme.recordingColor)
                     }
                 }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel ?? icon)
-        .accessibilityHint(accessibilityHint ?? "")
-        .help(accessibilityLabel ?? icon)
+        .accessibilityLabel(accessibilityLabel)
+        .help(accessibilityLabel)
     }
 }

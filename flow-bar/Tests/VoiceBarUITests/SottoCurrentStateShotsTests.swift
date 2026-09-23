@@ -58,7 +58,6 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         let router = NoopRouter()
         for (name, mode, hover) in [
             ("idle", VoiceMode.idle, false),
-            ("idle-hover", .idle, true),
             ("recording", .recording, false),
             ("transcribing", .transcribing, false),
             ("error", .error, false),
@@ -70,7 +69,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             if mode == .error { state.errorMessage = "Synthetic error" }
             try shot("pill-\(name).png", "Pill: \(name)", BarView(
                 state: state, commandRouter: router, includesPanelOutsets: true
-            ), size: CGSize(width: 420, height: 180))
+            ), size: CGSize(width: 600, height: 180))
         }
 
         let panelState = syntheticState()
@@ -157,12 +156,85 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             "",
             "## Limits",
             "",
-            "The right-click menu images are drawn from the production `NSMenu` model because AppKit cannot snapshot a tracking menu in an offscreen window. The idle and idle-hover pill PNGs are pixel-identical in this host; hover and pressed optics need a live pointer event and are not proven here. These are source-state artifacts, not installed-app screenshots.",
+            "The right-click menu images are drawn from the production `NSMenu` model because AppKit cannot snapshot a tracking menu in an offscreen window. The idle-hover pill shot is omitted because an offscreen state flag does not produce a real pointer hover. Hover and pressed optics need a live pointer event and are not proven here. These are source-state artifacts, not installed-app screenshots.",
         ])
         try (lines.joined(separator: "\n") + "\n").write(
             to: directory.appendingPathComponent("index.md"),
             atomically: true,
             encoding: .utf8
+        )
+    }
+
+    func testWritePillButtonShotsWhenRequested() throws {
+        guard let path = ProcessInfo.processInfo.environment["VOICEBAR_P05_SHOTS_DIR"], !path.isEmpty else {
+            throw XCTSkip("Set VOICEBAR_P05_SHOTS_DIR to write pill button artifacts")
+        }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let router = NoopRouter()
+        var lines = ["# P05 pill buttons", "", "Synthetic, offscreen 2× production-view renders.", ""]
+        for (appearanceName, appearance, scheme, isDark) in [
+            ("dark", NSAppearance.Name.darkAqua, ColorScheme.dark, true),
+            ("light", NSAppearance.Name.aqua, ColorScheme.light, false),
+        ] {
+            for (name, mode, hover) in [
+                ("idle", VoiceMode.idle, false),
+                ("recording", .recording, false),
+                ("transcribing", .transcribing, false),
+                ("error", .error, false),
+            ] {
+                let state = syntheticState()
+                state.mode = mode
+                state.isHovering = hover
+                if mode == .recording { state.recordingMode = "vad" }
+                if mode == .error { state.errorMessage = "Synthetic error" }
+                let filename = "pill-\(name)-\(appearanceName).png"
+                try render(
+                    BarView(state: state, commandRouter: router, includesPanelOutsets: true)
+                        .environment(\.colorScheme, scheme),
+                    size: CGSize(width: 600, height: 180),
+                    to: directory.appendingPathComponent(filename),
+                    appearance: appearance
+                )
+                lines.append("- [\(filename)](\(filename)): \(name), \(appearanceName)")
+            }
+            for (name, icon, destructive) in [
+                ("mic", "mic.fill", false),
+                ("history", "clock.arrow.circlepath", false),
+                ("settings", "gearshape", false),
+                ("stop", "stop.fill", true),
+                ("cancel", "xmark", false),
+                ("lock", "lock.fill", false),
+            ] {
+                for visualState in ["hover", "pressed"] {
+                    let button = VoiceBarPillControlButton(
+                        icon: icon,
+                        optics: VoiceBarNotchControlOptics.resolve(for: icon),
+                        foreground: isDark ? .white : .black,
+                        halo: .clear,
+                        isSelected: false,
+                        isDestructive: destructive,
+                        accessibilityLabel: name,
+                        accessibilityHint: "",
+                        previewHovered: visualState == "hover",
+                        previewPressed: visualState == "pressed",
+                        action: {}
+                    )
+                    let filename = "control-\(name)-\(visualState)-\(appearanceName).png"
+                    try render(
+                        button.frame(width: 100, height: 88)
+                            .background(isDark ? Color.black : Color.white)
+                            .environment(\.colorScheme, scheme),
+                        size: CGSize(width: 100, height: 88),
+                        to: directory.appendingPathComponent(filename),
+                        appearance: appearance
+                    )
+                    lines.append("- [\(filename)](\(filename)): \(name) \(visualState), \(appearanceName)")
+                }
+            }
+        }
+        try (lines.joined(separator: "\n") + "\n").write(
+            to: directory.appendingPathComponent("index.md"), atomically: true, encoding: .utf8
         )
     }
 
@@ -258,12 +330,15 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         }
     }
 
-    private func render(_ view: some View, size: CGSize, to url: URL) throws {
+    private func render(
+        _ view: some View, size: CGSize, to url: URL,
+        appearance: NSAppearance.Name = .darkAqua
+    ) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading))
-        host.appearance = NSAppearance(named: .darkAqua)
+        host.appearance = NSAppearance(named: appearance)
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: appearance)
         window.backgroundColor = .windowBackgroundColor
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
