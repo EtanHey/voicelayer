@@ -409,14 +409,8 @@ public struct BarView: View {
     private var notchLowerContent: some View {
         if isMorphTeleprompterContentPresented {
             VStack(spacing: 12) {
-                Group {
-                    if state.queueItems.count > 1 {
-                        queueVisualization
-                    } else {
-                        notchTeleprompterTimeline
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                notchTeleprompterTimeline
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 notchTeleprompterControls
             }
             .padding(
@@ -467,6 +461,12 @@ public struct BarView: View {
 
     private var notchTeleprompterControls: some View {
         HStack(spacing: 10) {
+            if state.queuedSpeakCount > 0 {
+                Text("+\(state.queuedSpeakCount) queued")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(notchPalette.secondary.color)
+                    .accessibilityLabel("\(state.queuedSpeakCount) queued speeches")
+            }
             if state.canReplay {
                 notchButton(
                     icon: "arrow.counterclockwise",
@@ -544,55 +544,6 @@ public struct BarView: View {
             .background(Theme.speakingColor.opacity(0.22))
             .clipShape(Capsule())
             .contentTransition(.numericText())
-    }
-
-    private var queueVisualization: some View {
-        let preview = VoiceBarPresentation.queuePreview(from: state.queueItems)
-
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Text("Queue")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(notchPalette.secondary.color)
-                if preview.overflowCount > 0 {
-                    Text("+\(preview.overflowCount) more")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(notchPalette.tertiary.color)
-                }
-            }
-
-            Text(preview.currentText)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(notchPalette.primary.color)
-                .lineLimit(1)
-                .truncationMode(.tail)
-
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(notchPalette.subtleTrack.color)
-                    Capsule()
-                        .fill(Theme.speakingColor.opacity(0.95))
-                        .frame(width: max(10, geometry.size.width * preview.progress))
-                }
-                .animation(Theme.queueProgressTransition, value: preview.progress)
-            }
-            .frame(height: 4)
-
-            if let nextText = preview.nextText {
-                HStack(spacing: 6) {
-                    Text("Up next")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(notchPalette.tertiary.color)
-                    Text(nextText)
-                        .font(.system(size: 11))
-                        .foregroundStyle(notchPalette.secondary.color)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Status icon

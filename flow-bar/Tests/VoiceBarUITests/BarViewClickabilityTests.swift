@@ -5,6 +5,17 @@ import XCTest
 
 @MainActor
 final class BarViewClickabilityTests: XCTestCase {
+    func testQueuedSpeechKeepsTeleprompterMountedInTheLowerSurface() throws {
+        let source = try barViewSource()
+        let start = try XCTUnwrap(source.range(of: "private var notchLowerContent"))
+        let end = try XCTUnwrap(source.range(of: "private var notchTeleprompterTimeline"))
+        let lowerContent = source[start.lowerBound ..< end.lowerBound]
+
+        XCTAssertTrue(lowerContent.contains("notchTeleprompterTimeline"))
+        XCTAssertFalse(lowerContent.contains("queueVisualization"))
+        XCTAssertFalse(lowerContent.contains("state.queueItems.count > 1"))
+    }
+
     private var windows: [NSWindow] = []
 
     final class SpyCommandRouter: BarCommandRouting {
@@ -424,11 +435,12 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("VoiceBarNotchWaveform("))
     }
 
-    func testQueuedSpeechUsesTheExistingQueuePreviewInTheNativeShell() throws {
+    func testQueuedSpeechUsesOnlyASmallBadgeBesideTeleprompterControls() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("if state.queueItems.count > 1"))
-        XCTAssertTrue(source.contains("VoiceBarPresentation.queuePreview(from: state.queueItems)"))
+        XCTAssertTrue(source.contains("if state.queuedSpeakCount > 0"))
+        XCTAssertTrue(source.contains("Text(\"+\\(state.queuedSpeakCount) queued\")"))
+        XCTAssertFalse(source.contains("private var queueVisualization"))
     }
 
     func testOpenPopoversKeepTheLauncherMountedAfterPointerExit() throws {
@@ -475,7 +487,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let source = try barViewSource()
         let buttonStart = try XCTUnwrap(source.range(of: "private var vocabularyButton"))
         let popoverStart = try XCTUnwrap(
-            source.range(of: "private var vocabularyPopover", range: buttonStart.upperBound ..< source.endIndex)
+            source.range(of: "var vocabularyPopover", range: buttonStart.upperBound ..< source.endIndex)
         )
         let button = source[buttonStart.lowerBound ..< popoverStart.lowerBound]
 

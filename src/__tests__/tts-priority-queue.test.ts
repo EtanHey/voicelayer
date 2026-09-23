@@ -208,6 +208,41 @@ describe("tts priority queue", () => {
     expect(lastQueueEvent).toMatchObject({ type: "queue", depth: 0 });
   });
 
+  it("starts each queued utterance before publishing its own word timings", async () => {
+    const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
+    const words = (text: string) => [{ offset_ms: 0, duration_ms: 200, text }];
+
+    playAudioNonBlocking(`${TEST_TMP}/words-1.mp3`, {
+      text: "First sentence", voice: "voice", wordBoundaries: words("First"),
+    });
+    playAudioNonBlocking(`${TEST_TMP}/words-2.mp3`, {
+      text: "Second sentence", voice: "voice", wordBoundaries: words("Second"),
+    });
+    await Bun.sleep(30);
+
+    const queued = broadcasts.find((event: any) =>
+      event.type === "queue" && event.depth === 2 && event.items?.[0]?.is_current,
+    ) as any;
+    expect(queued.items.map((item: any) => item.text)).toEqual(["First sentence", "Second sentence"]);
+    expect(queued.items.map((item: any) => item.is_current)).toEqual([true, false]);
+
+    playerMocks[0].resolveExit();
+    await Bun.sleep(30);
+    playerMocks[1].resolveExit();
+    await awaitCurrentPlayback();
+
+    for (const [text, word] of [["First sentence", "First"], ["Second sentence", "Second"]]) {
+      const stateIndex = broadcasts.findIndex((event: any) =>
+        event.type === "state" && event.state === "speaking" && event.text === text,
+      );
+      const subtitleIndex = broadcasts.findIndex((event: any) =>
+        event.type === "subtitle" && event.words?.[0]?.text === word,
+      );
+      expect(stateIndex).toBeGreaterThanOrEqual(0);
+      expect(subtitleIndex).toBeGreaterThan(stateIndex);
+    }
+  });
+
   it("preserves unrelated low-priority chatter when collapse keys differ", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
 
