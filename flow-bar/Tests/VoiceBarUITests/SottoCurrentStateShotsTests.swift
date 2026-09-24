@@ -256,6 +256,13 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                  settings(tab: .models, vocabulary: empty,
                           modelState: modelState(residency: "loaded", recordingState: "idle", queueDepth: 0)),
                  size: CGSize(width: 780, height: 900), appearance: .aqua)
+        for (suffix, appearance) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
+            try shot("settings-models-processing-busy\(suffix).png",
+                     "Settings Models: Processing while busy (the reason shown in the card)",
+                     settings(tab: .models, vocabulary: empty,
+                              modelState: modelState(residency: "loaded", recordingState: "idle", queueDepth: 1)),
+                     size: CGSize(width: 780, height: 940), appearance: appearance)
+        }
         try shot("settings-history-detail.png", "Settings History: synthetic list and selected detail",
                  settings(tab: .history, vocabulary: empty), size: CGSize(width: 780, height: 620))
         lines.append(contentsOf: [

@@ -128,6 +128,12 @@ public struct ModelsSettingsView: View {
                     ForEach(Self.processingRows(for: controls), id: \.key) { row in
                         processingToggle(row)
                     }
+                    if let busyReason = Self.processingBusyReason(for: state) {
+                        Text(busyReason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("models-processing-busy-reason")
+                    }
                     Text("Applies to your next dictation.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -249,6 +255,12 @@ public struct ModelsSettingsView: View {
         let experimental: Bool
         let isOn: Bool
         let lockedReason: String?
+    }
+
+    /// Spec §5: busy always shows a reason, here as under the effort picker. nil when the
+    /// section already shows its own placeholder (status unavailable or still loading).
+    static func processingBusyReason(for state: ModelsSettingsState) -> String? {
+        state.availability == .available ? effortDisabledReason(for: state) : nil
     }
 
     static func processingRows(for controls: PolishControlsState) -> [ProcessingRow] {

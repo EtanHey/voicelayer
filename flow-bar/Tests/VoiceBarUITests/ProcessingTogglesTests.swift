@@ -106,4 +106,16 @@ final class ProcessingTogglesTests: XCTestCase {
         state.setConnectionStatus(false)
         XCTAssertTrue(state.processingPending.isEmpty)
     }
+
+    func testBusyShowsTheSameReasonInTheProcessingCard() throws {
+        var busy = Self.health(Self.controls())
+        busy["queue_depth"] = 1
+        let state = ModelsSettingsState(healthEvent: busy)
+        let reason = try XCTUnwrap(ModelsSettingsView.effortDisabledReason(for: state))
+        XCTAssertEqual(ModelsSettingsView.processingBusyReason(for: state), reason)
+        XCTAssertNil(ModelsSettingsView
+            .processingBusyReason(for: ModelsSettingsState(healthEvent: Self.health(Self.controls()))))
+        XCTAssertNil(ModelsSettingsView.processingBusyReason(for: .unavailable),
+                     "unavailable already shows its own Processing placeholder")
+    }
 }
