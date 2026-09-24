@@ -410,6 +410,29 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertNil(addingVariantFor)
     }
 
+    /// Fold 3 review M1: "swiftui" + "swift you eye" against an existing "SwiftUI" used to add nothing, leave
+    /// addingVariantFor set to a canonical no row has, and jam every later dictionary reload.
+    func testAddVariantWithCaseDifferentCanonicalLandsOnTheExistingTerm() {
+        var localEntries = [STTDictionaryEntry(canonical: "SwiftUI", variants: [])]
+        var variantText = "swift you eye"
+        var addingVariantFor: String? = "swiftui"
+        var addedAliases: [(correct: String, wrong: String)] = []
+
+        SettingsDictionaryMutations.addVariant(
+            canonical: "swiftui",
+            variantText: &variantText,
+            addingVariantFor: &addingVariantFor,
+            localEntries: &localEntries,
+            onAddVocabularyAlias: { correct, wrong in addedAliases.append((correct, wrong)) }
+        )
+
+        XCTAssertEqual(addedAliases.map(\.correct), ["SwiftUI"], "the alias goes to the existing spelling")
+        XCTAssertEqual(addedAliases.map(\.wrong), ["swift you eye"])
+        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "SwiftUI", variants: ["swift you eye"])])
+        XCTAssertEqual(variantText, "")
+        XCTAssertNil(addingVariantFor, "no pending edit may be left behind")
+    }
+
     func testAddVariantMatchingCanonicalAliasKeyIsNoOp() {
         var localEntries = [
             STTDictionaryEntry(canonical: "La La", variants: ["la law"]),

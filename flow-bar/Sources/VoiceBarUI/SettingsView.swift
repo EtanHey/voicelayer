@@ -2215,19 +2215,20 @@ enum SettingsDictionaryMutations {
     ) {
         let trimmed = variantText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        upsertEntry(canonical, in: &localEntries)
-        guard let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else { return }
-        guard aliasKey(trimmed) != aliasKey(localEntries[index].canonical) else {
+        defer {
+            // AIDEV-NOTE: every exit clears the editor; a leftover addingVariantFor blocks all later reloads.
             variantText = ""
             addingVariantFor = nil
-            return
         }
+        upsertEntry(canonical, in: &localEntries)
+        // Same case-insensitive match as upsertEntry, so "swiftui" lands on an existing "SwiftUI".
+        guard let index = localEntries.firstIndex(where: { sameCanonical($0.canonical, canonical) }) else { return }
+        let existingCanonical = localEntries[index].canonical
+        guard aliasKey(trimmed) != aliasKey(existingCanonical) else { return }
         if !localEntries[index].variants.contains(where: { aliasKey($0) == aliasKey(trimmed) }) {
             localEntries[index].variants.append(trimmed)
-            onAddVocabularyAlias(canonical, trimmed)
+            onAddVocabularyAlias(existingCanonical, trimmed)
         }
-        variantText = ""
-        addingVariantFor = nil
     }
 
     static func removeVariant(
@@ -2242,11 +2243,12 @@ enum SettingsDictionaryMutations {
     }
 
     private static func upsertEntry(_ canonical: String, in entries: inout [STTDictionaryEntry]) {
-        guard !entries.contains(where: { $0.canonical.localizedCaseInsensitiveCompare(canonical) == .orderedSame })
-        else {
-            return
-        }
+        guard !entries.contains(where: { sameCanonical($0.canonical, canonical) }) else { return }
         entries.append(STTDictionaryEntry(canonical: canonical, variants: []))
+    }
+
+    private static func sameCanonical(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.localizedCaseInsensitiveCompare(rhs) == .orderedSame
     }
 
     private static func aliasKey(_ value: String) -> String {
