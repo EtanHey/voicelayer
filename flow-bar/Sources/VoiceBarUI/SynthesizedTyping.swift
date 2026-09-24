@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 /// One synthesized keyboard event in a typed delivery.
@@ -9,7 +8,9 @@ public enum SynthesizedKeystroke: Equatable {
     case newline
 }
 
-/// Turns a transcript into keyboard events. Never touches the pasteboard.
+/// Plans a transcript as keyboard events. Never touches the pasteboard.
+/// Building and posting the events is the executable's job (`SynthesizedKeyEvents`
+/// in the VoiceBar target): VoiceBarUI stays presentation-only.
 ///
 /// AIDEV-NOTE: No keystroke may carry a control character. v2.2.19 typed
 /// ESC[200~ … ESC[201~ (and `\r` for each newline) inside the Unicode strings of
@@ -27,11 +28,6 @@ public enum SynthesizedKeystroke: Equatable {
 public enum SynthesizedTyping {
     /// A keyboard event carries at most ~20 UTF-16 units of text.
     public static let maxUTF16UnitsPerEvent = 20
-    /// kVK_Return.
-    public static let returnKeyCode: CGKeyCode = 36
-    /// Carrier key for Unicode-string events. The receiving app types the string,
-    /// not the key, as long as the string is printable — which is the invariant.
-    public static let textCarrierKeyCode: CGKeyCode = 0
 
     public static func keystrokes(for text: String) -> [SynthesizedKeystroke] {
         var keystrokes: [SynthesizedKeystroke] = []
@@ -76,40 +72,6 @@ public enum SynthesizedTyping {
         }
         flush()
         return keystrokes
-    }
-
-    /// Key-down/key-up pairs for `keystrokes`, in order, or nil if one could not
-    /// be created. Posting them requires Accessibility.
-    public static func events(for keystrokes: [SynthesizedKeystroke], source: CGEventSource?) -> [CGEvent]? {
-        var events: [CGEvent] = []
-        for keystroke in keystrokes {
-            let keyCode: CGKeyCode
-            let flags: CGEventFlags
-            var unicode: [UniChar] = []
-            switch keystroke {
-            case let .text(payload):
-                keyCode = textCarrierKeyCode
-                // Explicitly no modifiers: Shift is physically held during a Shift+F5
-                // re-paste, and it must not ride along on the typed text.
-                flags = []
-                unicode = Array(payload.utf16)
-            case .newline:
-                keyCode = returnKeyCode
-                flags = .maskShift
-            }
-            guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-            else { return nil }
-            down.flags = flags
-            up.flags = flags
-            if !unicode.isEmpty {
-                down.keyboardSetUnicodeString(stringLength: unicode.count, unicodeString: &unicode)
-                up.keyboardSetUnicodeString(stringLength: unicode.count, unicodeString: &unicode)
-            }
-            events.append(down)
-            events.append(up)
-        }
-        return events
     }
 
     private static func isControl(_ scalar: Unicode.Scalar) -> Bool {
