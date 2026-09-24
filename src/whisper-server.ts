@@ -1445,7 +1445,14 @@ async function transcribeViaServerAttempt(
         if (options?.preserveServerOnTimeout) {
           throw controller.signal.reason ?? err;
         }
-        if (allowRetry) {
+        // An adopted server is never killed, so it is still running the
+        // aborted decode: a retry re-adopts the same busy process and spends
+        // a second full timeout before the whisper-cli fallback. The skip is
+        // for that server only; `serverPort` is the port this attempt hit
+        // (explicit or from ensureServer), so another port keeps its retry.
+        const timedOutOnAdoptedServer =
+          serverState?.adopted === true && serverState.port === serverPort;
+        if (allowRetry && !timedOutOnAdoptedServer) {
           await markServerUnhealthy();
           const retryPort = await ensureServer(port);
           return transcribeViaServerAttempt(wavData, retryPort, false, options);
