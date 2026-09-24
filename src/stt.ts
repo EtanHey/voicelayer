@@ -499,21 +499,14 @@ type ChunkSeam =
 
 /** The exact anchor merge, unless the compact match covers more of the overlap. */
 function findChunkSeam(mergedWords: string[], nextWords: string[]): ChunkSeam {
-  let exact = findChunkOverlap(mergedWords, nextWords);
-  // The exact merge's prefix shift drops up to three next-chunk words. With the
-  // overlap now really re-decoded, hold it to the same rule (review #139).
-  if (
-    exact.skipPrefix > 0 &&
-    !skippedPrefixIsOverlap(
-      nextWords.slice(0, exact.skipPrefix).map(compactSeamKey),
-      mergedWords
-        .slice(0, mergedWords.length - exact.overlap)
-        .slice(-(exact.skipPrefix + 3))
-        .map(compactSeamKey),
-    )
-  ) {
-    exact = { overlap: 0, skipPrefix: 0 };
-  }
+  // AIDEV-NOTE: the exact merge's own prefix shift (≤ 3 next-chunk words,
+  // MAX_PREFIX_SHIFTED_SKIP_WORDS) is main's behaviour and is NOT held to the
+  // immediately-before rule: gating it made ordinary re-decode differences
+  // ("be sender" / "be a sender") duplicate whole overlaps (#139 round 2
+  // ablation: +13 and +7 duplicated words on two long recordings). A genuine
+  // ≤3-word lead-in the earlier chunk missed can still be dropped there, as on
+  // main (Macroscope #139, stt.ts:433 example).
+  const exact = findChunkOverlap(mergedWords, nextWords);
   if (exact.overlap >= MAX_COMPACT_SEAM_SUFFIX_WORDS) {
     return { kind: "exact", ...exact };
   }
