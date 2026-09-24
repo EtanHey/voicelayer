@@ -130,6 +130,7 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.makingDefaultUIDs(at: 1), ["mic-b", "mic-a", "mic-c", "CADefaultDeviceAggregate-7"])
         XCTAssertNil(snapshot.makingDefaultUIDs(at: 0), "the first row is already the default")
         XCTAssertNil(snapshot.makingDefaultUIDs(at: 3), "out of range")
+        XCTAssertNil(snapshot.makingDefaultUIDs(at: -1), "a negative index is refused, not trapped (#140 Macroscope)")
     }
 
     func testMakeDefaultRefusesAUIDlessRow() {
@@ -154,6 +155,7 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
             nil,
             "a no-op move writes nothing"
         )
+        XCTAssertNil(snapshot.movingVisibleUIDs(from: IndexSet(integer: -1), to: 0), "a negative source is refused")
     }
 
     func testDragNeverPlacesAMicBelowAUIDlessRow() {

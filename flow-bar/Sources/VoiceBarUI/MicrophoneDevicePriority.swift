@@ -100,7 +100,7 @@ public struct MicrophonePrioritySnapshot: Equatable {
     public func movingVisibleUIDs(from source: IndexSet, to destination: Int) -> [String]? {
         let visible = visibleRows
         let movableCount = visible.prefix { $0.canPrioritize }.count
-        guard !source.isEmpty, source.allSatisfy({ $0 < movableCount }) else { return nil }
+        guard !source.isEmpty, source.allSatisfy({ (0 ..< movableCount).contains($0) }) else { return nil }
         let current = visible.prefix(movableCount).compactMap(\.uid)
         let landing = min(max(destination, 0), movableCount)
         let picked = source.map { current[$0] }
