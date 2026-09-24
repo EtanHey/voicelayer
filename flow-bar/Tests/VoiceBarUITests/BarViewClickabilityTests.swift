@@ -18,6 +18,22 @@ final class BarViewClickabilityTests: XCTestCase {
 
     private var windows: [NSWindow] = []
 
+    /// XCTest keeps every test-case instance alive until the process ends, so windows this
+    /// suite orders in would otherwise stay on screen (animating) for the whole run. On CI all
+    /// bundles share one xctest process, and leaked recording panels starved later suites'
+    /// main-queue drains.
+    override func tearDown() {
+        MainActor.assumeIsolated {
+            for window in windows {
+                window.isReleasedWhenClosed = false
+                window.orderOut(nil)
+                window.close()
+            }
+            windows.removeAll()
+        }
+        super.tearDown()
+    }
+
     final class SpyCommandRouter: BarCommandRouting {
         var cancelCount = 0
         var stopCount = 0
