@@ -287,6 +287,9 @@ public struct SettingsView: View {
     public let onRefreshModelsStatus: () -> Void
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
+    public let processingPending: () -> [ProcessingKey: Bool]
+    public let processingNotice: () -> String?
+    public let onToggleProcessing: ((ProcessingKey, Bool) -> Void)?
     public let vocabularyPreview: () -> STTVocabularyPreview
     private let hasInitialDictionaryPreview: Bool
     public let vocabularyRevision: () -> UInt64
@@ -387,6 +390,9 @@ public struct SettingsView: View {
         onRefreshModelsStatus: @escaping () -> Void,
         residencyNotice: @escaping () -> String? = { nil },
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
+        processingPending: @escaping () -> [ProcessingKey: Bool] = { [:] },
+        processingNotice: @escaping () -> String? = { nil },
+        onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil,
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
@@ -460,6 +466,9 @@ public struct SettingsView: View {
         self.onRefreshModelsStatus = onRefreshModelsStatus
         self.residencyNotice = residencyNotice
         self.onSelectResidency = onSelectResidency
+        self.processingPending = processingPending
+        self.processingNotice = processingNotice
+        self.onToggleProcessing = onToggleProcessing
         self.vocabularyPreview = vocabularyPreview
         hasInitialDictionaryPreview = initialDictionaryPreview != nil
         self.vocabularyRevision = vocabularyRevision
@@ -889,7 +898,10 @@ public struct SettingsView: View {
             onSelectResidency: onSelectResidency,
             lastDictationLabel: lastDictationProvenanceLabel,
             degradation: polishDegradation(),
-            onDismissDegradation: onDismissPolishDegradation
+            onDismissDegradation: onDismissPolishDegradation,
+            processingPending: processingPending(),
+            processingNotice: processingNotice(),
+            onToggleProcessing: onToggleProcessing
         )
         // The picker's local state gives one click instant feedback; it follows the app's value
         // (the selection in flight, else the daemon's effort) so a reject or a daemon-side change

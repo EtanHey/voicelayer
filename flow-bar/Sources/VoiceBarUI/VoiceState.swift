@@ -362,6 +362,15 @@ public final class VoiceState {
     /// An effort change the daemon acked `loading`: it is relaunching the model (E2).
     private var pendingEffortReloadID: String?
     private var pendingEffortReloadTimeout: Task<Void, Never>?
+    /// Processing toggles sent and not yet acked (P1): the value the row shows meanwhile.
+    public private(set) var processingPending: [ProcessingKey: Bool] = [:]
+    public private(set) var processingNotice: String?
+    private var processingPendingIDs: [String: ProcessingKey] = [:]
+    /// Called whenever an in-flight Processing toggle settles (accept, reject, timeout,
+    /// disconnect), so the settings window rebuilds and the row re-enables at once.
+    public var onProcessingSettled: (() -> Void)?
+    /// How long a toggle may wait for its ack before it falls back to the daemon's value.
+    public var processingAckTimeout: Duration = .seconds(10)
 
     private func refreshModelsBusy() {
         guard modelsSettingsState.availability == .available else { return }
@@ -724,6 +733,55 @@ public final class VoiceState {
         }
         modelsSettingsState = .loading
         sendCommand?(["cmd": "health"])
+    }
+
+    /// Save one Processing toggle in the daemon. It applies from the next dictation.
+    public func setProcessingSetting(_ key: ProcessingKey, _ value: Bool) {
+        guard isConnected,
+              modelsSettingsState.availability == .available,
+              !modelsSettingsState.isBusy,
+              processingPending[key] == nil,
+              let sendCommand
+        else { return }
+        let id = UUID().uuidString
+        processingPending[key] = value
+        processingPendingIDs[id] = key
+        processingNotice = nil
+        sendCommand([
+            "cmd": "set_processing_setting",
+            "key": key.rawValue,
+            "value": value,
+            "id": id,
+        ])
+        let timeout = processingAckTimeout
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard let self, processingPendingIDs.removeValue(forKey: id) != nil else { return }
+            processingPending[key] = nil
+            processingNotice = "Couldn't confirm the \(key.title) change - showing VoiceLayer's current setting"
+            self.sendCommand?(["cmd": "health"])
+            onProcessingSettled?()
+        }
+    }
+
+    private func handleProcessingAck(_ ack: SocketAckEvent, event: [String: Any]) {
+        guard ack.outcome != .loading,
+              let key = processingPendingIDs.removeValue(forKey: ack.id)
+        else { return }
+        processingPending[key] = nil
+        if ack.outcome == .accept {
+            processingNotice = nil
+            if let raw = event["polish_controls"] as? [String: Any],
+               let controls = PolishControlsState(controls: raw) {
+                modelsSettingsState = modelsSettingsState.replacingPolishControls(controls)
+            } else {
+                sendCommand?(["cmd": "health"])
+            }
+        } else {
+            let reason = ack.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            processingNotice = "Couldn't change \(key.title)" + (reason.isEmpty ? "" : " - \(reason)")
+        }
+        onProcessingSettled?()
     }
 
     public func setWhisperResidency(_ target: VoiceModelResidency) {
@@ -1615,6 +1673,11 @@ public final class VoiceState {
         pendingEffortReloadID = nil
         pendingEffortReloadTimeout?.cancel()
         pendingEffortReloadTimeout = nil
+        let hadPendingProcessing = !processingPending.isEmpty
+        processingPending = [:]
+        processingPendingIDs = [:]
+        processingNotice = nil
+        if hadPendingProcessing { onProcessingSettled?() }
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -2857,6 +2920,11 @@ public final class VoiceState {
 
         if ack.command == .setWhisperEffort {
             handleEffortAck(ack, event: event)
+            return
+        }
+
+        if ack.command == .setProcessingSetting {
+            handleProcessingAck(ack, event: event)
             return
         }
 

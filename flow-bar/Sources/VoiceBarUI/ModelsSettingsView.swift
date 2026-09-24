@@ -8,6 +8,9 @@ public struct ModelsSettingsView: View {
     private let lastDictationLabel: String?
     private let degradation: STTPolishDegradation?
     private let onDismissDegradation: () -> Void
+    private let processingPending: [ProcessingKey: Bool]
+    private let processingNotice: String?
+    private let onToggleProcessing: ((ProcessingKey, Bool) -> Void)?
     private let onSelectEffort: (VoiceBarPerformanceEffort) -> Void
     private let onSelectResidency: ((VoiceModelResidency) -> Void)?
 
@@ -20,7 +23,10 @@ public struct ModelsSettingsView: View {
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
         lastDictationLabel: String? = nil,
         degradation: STTPolishDegradation? = nil,
-        onDismissDegradation: @escaping () -> Void = {}
+        onDismissDegradation: @escaping () -> Void = {},
+        processingPending: [ProcessingKey: Bool] = [:],
+        processingNotice: String? = nil,
+        onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil
     ) {
         self.state = state
         _effort = effort
@@ -31,6 +37,9 @@ public struct ModelsSettingsView: View {
         self.lastDictationLabel = lastDictationLabel
         self.degradation = degradation
         self.onDismissDegradation = onDismissDegradation
+        self.processingPending = processingPending
+        self.processingNotice = processingNotice
+        self.onToggleProcessing = onToggleProcessing
     }
 
     public var body: some View {
@@ -116,31 +125,21 @@ public struct ModelsSettingsView: View {
 
             Section("Processing") {
                 if let controls = state.polishControls, state.availability == .available {
-                    processingRow(
-                        "Polish: fixes punctuation and casing locally",
-                        status: controls.modelPolish.effective.displayName,
-                        source: controls.modelPolish.source
-                    )
-                    .accessibilityIdentifier("models-polish-mode")
-                    processingRow(
-                        "Closing-phrase filter: removes an invented ‘Thank you.’ at the end",
-                        status: controls.outroGate.effective ? "On" : "Off",
-                        source: controls.outroGate.source
-                    )
-                    .accessibilityIdentifier("models-outro-gate")
-                    processingRow("Smart chunks: splits long recordings at pauses",
-                                  status: controls.smartChunks.effective ? "On" : "Off",
-                                  source: controls.smartChunks.source)
-                        .accessibilityIdentifier("models-smart-chunks")
-                    processingRow("Smart boundaries: turns false full stops into commas using your pauses",
-                                  status: controls.smartBoundaries.effective ? "On" : "Off",
-                                  source: controls.smartBoundaries.source)
-                        .accessibilityIdentifier("models-smart-boundaries")
-                    Text(
-                        "Set in VoiceLayer's configuration; shown here for reference."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    ForEach(Self.processingRows(for: controls), id: \.key) { row in
+                        processingToggle(row)
+                    }
+                    if let busyReason = Self.processingBusyReason(for: state) {
+                        Text(busyReason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("models-processing-busy-reason")
+                    }
+                    Text("Applies to your next dictation.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let processingNotice {
+                        Text(processingNotice).font(.caption).foregroundStyle(.orange)
+                    }
                 } else if let placeholder = Self.processingPlaceholder(for: state) {
                     Text(placeholder)
                         .foregroundStyle(.secondary)
@@ -221,10 +220,85 @@ public struct ModelsSettingsView: View {
         }
     }
 
-    private func processingRow(_ description: String, status: String, source: PolishSettingSource) -> some View {
-        LabeledContent(description) {
-            Text(status)
-                .help(source == .default ? "Daemon default" : "Environment setting")
+    private func processingToggle(_ row: ProcessingRow) -> some View {
+        let busyReason = Self.effortDisabledReason(for: state)
+        return VStack(alignment: .leading, spacing: 2) {
+            Toggle(isOn: Binding(
+                get: { processingPending[row.key] ?? row.isOn },
+                set: { onToggleProcessing?(row.key, $0) }
+            )) {
+                HStack(spacing: 6) {
+                    Text(row.key.title)
+                    if row.experimental {
+                        Text("Experimental")
+                            .font(.caption2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.quaternary, in: Capsule())
+                    }
+                }
+            }
+            .disabled(row.lockedReason != nil || busyReason != nil || onToggleProcessing == nil
+                || processingPending[row.key] != nil)
+            .accessibilityIdentifier("models-processing-\(row.key.rawValue)")
+            Text(row.lockedReason ?? row.line)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// One Processing toggle: what it does, and why it cannot be changed here, if it cannot.
+    struct ProcessingRow: Equatable {
+        let key: ProcessingKey
+        let line: String
+        let experimental: Bool
+        let isOn: Bool
+        let lockedReason: String?
+    }
+
+    /// Spec §5: busy always shows a reason, here as under the effort picker. nil when the
+    /// section already shows its own placeholder (status unavailable or still loading).
+    static func processingBusyReason(for state: ModelsSettingsState) -> String? {
+        state.availability == .available ? effortDisabledReason(for: state) : nil
+    }
+
+    static func processingRows(for controls: PolishControlsState) -> [ProcessingRow] {
+        func locked(_ key: ProcessingKey, _ setting: PolishSetting<some Any>) -> String? {
+            setting.source == .environment ? "Set by \(key.environmentVariable)" : nil
+        }
+        let polishLock = controls.modelPolish.effective == .shadow
+            ? "Preview only (set by \(ProcessingKey.modelPolish.environmentVariable))"
+            : locked(.modelPolish, controls.modelPolish)
+        return [
+            ProcessingRow(
+                key: .modelPolish,
+                line: "Fixes punctuation and capitals with a small local model.",
+                experimental: false,
+                isOn: controls.modelPolish.effective == .on,
+                lockedReason: polishLock
+            ),
+            ProcessingRow(
+                key: .outroGate,
+                line: "Removes a ‘Thank you.’ the model invented over silence.",
+                experimental: false,
+                isOn: controls.outroGate.effective,
+                lockedReason: locked(.outroGate, controls.outroGate)
+            ),
+            ProcessingRow(
+                key: .smartChunks,
+                line: "Long recordings (90 s+): cut at your pauses instead of every 30 s.",
+                experimental: true,
+                isOn: controls.smartChunks.effective,
+                lockedReason: locked(.smartChunks, controls.smartChunks)
+            ),
+            ProcessingRow(
+                key: .smartBoundaries,
+                line: "Turns a full stop into a comma when you didn't actually pause.",
+                experimental: true,
+                isOn: controls.smartBoundaries.effective,
+                lockedReason: locked(.smartBoundaries, controls.smartBoundaries)
+            ),
+        ]
     }
 }

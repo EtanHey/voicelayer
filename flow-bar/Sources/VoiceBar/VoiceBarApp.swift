@@ -222,6 +222,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.onAckEvent = { [weak self] ack in
             self?.handlePerformanceEffortAck(ack)
         }
+        voiceState.onProcessingSettled = { [weak self] in
+            self?.refreshSettingsWindowAnchorState()
+        }
         voiceState.onConnectionChange = { [weak self] connected in
             guard connected else {
                 // Its ack can no longer arrive; fall back to what the daemon reports.
@@ -2609,6 +2612,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             residencyNotice: { [weak self] in self?.voiceState.residencyNotice },
             onSelectResidency: { [weak self] target in
                 self?.voiceState.setWhisperResidency(target)
+            },
+            processingPending: { [weak self] in self?.voiceState.processingPending ?? [:] },
+            processingNotice: { [weak self] in self?.voiceState.processingNotice },
+            onToggleProcessing: { [weak self] key, value in
+                self?.voiceState.setProcessingSetting(key, value)
+                self?.refreshSettingsWindowAnchorState()
             },
             vocabularyPreview: { [weak self] in
                 self?.currentVocabularyPreview() ?? STTVocabularyPreview(

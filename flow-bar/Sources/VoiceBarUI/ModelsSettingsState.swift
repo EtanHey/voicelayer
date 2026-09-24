@@ -104,6 +104,22 @@ public struct ModelsSettingsState: Equatable, Sendable {
         )
     }
 
+    func replacingPolishControls(_ controls: PolishControlsState?) -> ModelsSettingsState {
+        ModelsSettingsState(
+            availability: availability,
+            configuredModelName: configuredModelName,
+            configuredModelSizeBytes: configuredModelSizeBytes,
+            isInstalled: isInstalled,
+            residency: residency,
+            activeModelName: activeModelName,
+            configuredEffort: configuredEffort,
+            activeEffort: activeEffort,
+            isBusy: isBusy,
+            busyReason: busyReason,
+            polishControls: controls
+        )
+    }
+
     func retainingPolishControls(from previous: ModelsSettingsState) -> ModelsSettingsState {
         ModelsSettingsState(
             availability: availability,
