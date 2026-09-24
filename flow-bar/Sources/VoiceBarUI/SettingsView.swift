@@ -1457,8 +1457,10 @@ public struct SettingsView: View {
     private var dictionaryTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Dictionary").font(.title2.weight(.semibold))
-                Text("Used on every dictation").font(.subheadline).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Dictionary").font(.title2.weight(.semibold))
+                    Text("Used on every dictation").font(.subheadline).foregroundStyle(.secondary)
+                }
                 searchRow
                 Button {
                     addTermDraft = STTVocabularyDraft(correct: "", wrong: "")
@@ -1477,7 +1479,8 @@ public struct SettingsView: View {
                 let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
                 LazyVStack(alignment: .leading, spacing: 0) {
                     Text(Self.dictionarySectionTitle(
-                        "Your terms", count: dictionaryDisplayIndex.personalCount, loaded: hasLoadedDictionaryOnce
+                        "Your terms", count: dictionaryDisplayIndex.personalCount,
+                        matches: dictionarySearch.isEmpty ? nil : personal.count, loaded: hasLoadedDictionaryOnce
                     ))
                     .font(.headline).padding(.bottom, 8)
                     switch Self.dictionaryPlaceholder(
@@ -1510,8 +1513,10 @@ public struct SettingsView: View {
                     } label: {
                         HStack {
                             Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
+                                .frame(width: 14)
                             Text(Self.dictionarySectionTitle(
                                 "Included terms", count: dictionaryDisplayIndex.includedCount,
+                                matches: dictionarySearch.isEmpty ? nil : included.count,
                                 loaded: hasLoadedDictionaryOnce
                             ))
                             Spacer()
@@ -1522,6 +1527,8 @@ public struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
+                    .accessibilityValue(includedTermsExpanded ? "Expanded" : "Collapsed")
+                    .accessibilityHint("Built-in terms are read-only")
                     .padding(.top, 18)
                     if includedTermsExpanded || !dictionarySearch.isEmpty {
                         ForEach(included, id: \.rowID) { row in
@@ -1706,6 +1713,10 @@ public struct SettingsView: View {
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .addVariant)
                 .onSubmit { saveVariant(entry.canonical) }
+                .onExitCommand {
+                    addingVariantFor = nil
+                    variantText = ""
+                }
                 .padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)
                 .padding(.horizontal, 12)
                 .background(
@@ -2115,8 +2126,10 @@ public struct SettingsView: View {
         return loaded ? .empty : .loading
     }
 
-    static func dictionarySectionTitle(_ title: String, count: Int, loaded: Bool) -> String {
-        loaded ? "\(title) (\(count))" : title
+    static func dictionarySectionTitle(_ title: String, count: Int, matches: Int? = nil, loaded: Bool) -> String {
+        guard loaded else { return title }
+        guard let matches else { return "\(title) (\(count))" }
+        return "\(title) (\(matches) of \(count))"
     }
 
     private func beginTermRename(rowID: String, canonical: String) {

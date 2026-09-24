@@ -448,6 +448,30 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertEqual(SettingsView.dictionarySectionTitle("Your terms", count: 296, loaded: true), "Your terms (296)")
     }
 
+    /// Fold 3 review N1: while a search is active the header counts matches, so "1 of 3", never a bare "(3)".
+    func testDictionarySectionTitleCountsMatchesWhileSearching() {
+        XCTAssertEqual(
+            SettingsView.dictionarySectionTitle("Your terms", count: 3, matches: 1, loaded: true), "Your terms (1 of 3)"
+        )
+        XCTAssertEqual(
+            SettingsView.dictionarySectionTitle("Your terms", count: 3, matches: nil, loaded: true), "Your terms (3)"
+        )
+    }
+
+    /// Fold 3 review A2/A3/N2/N4: the Included toggle announces its state, Esc cancels the inline editor, the
+    /// chevron has a fixed width so the row does not shift, and the header rhythm matches the other tabs.
+    func testDictionaryAccessibilityAndRhythmPins() throws {
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains(".accessibilityValue(includedTermsExpanded ? \"Expanded\" : \"Collapsed\")"))
+        XCTAssertTrue(source.contains(".onExitCommand {"))
+        XCTAssertTrue(source
+            .contains(
+                "Image(systemName: includedTermsExpanded ? \"chevron.down\" : \"chevron.right\")\n                                .frame(width: 14)"
+            ))
+        XCTAssertTrue(source
+            .contains("VStack(alignment: .leading, spacing: 3) {\n                    Text(\"Dictionary\")"))
+    }
+
     /// Fold 3 review M3 + A1: the Add-term sheet reads as an editor (chrome on both fields) and names its
     /// fields for VoiceOver instead of reading placeholders.
     func testAddTermSheetFieldsHaveChromeAndAccessibilityLabels() throws {
