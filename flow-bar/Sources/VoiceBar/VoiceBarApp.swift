@@ -222,6 +222,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.onAckEvent = { [weak self] ack in
             self?.handlePerformanceEffortAck(ack)
         }
+        voiceState.onProcessingSettled = { [weak self] in
+            self?.refreshSettingsWindowAnchorState()
+        }
         voiceState.onConnectionChange = { [weak self] connected in
             guard connected else {
                 // Its ack can no longer arrive; fall back to what the daemon reports.

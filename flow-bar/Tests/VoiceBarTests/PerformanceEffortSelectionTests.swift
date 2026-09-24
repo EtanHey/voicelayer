@@ -175,4 +175,10 @@ final class PerformanceEffortSelectionTests: XCTestCase {
             "Couldn't change effort - VoiceLayer is starting, try again"
         )
     }
+
+    func testSettledProcessingTogglesRebuildTheSettingsWindow() {
+        let app = AppDelegate()
+        XCTAssertNotNil(app.voiceState.onProcessingSettled,
+                        "a settled Processing toggle must rebuild Settings so the row re-enables")
+    }
 }

@@ -366,6 +366,11 @@ public final class VoiceState {
     public private(set) var processingPending: [ProcessingKey: Bool] = [:]
     public private(set) var processingNotice: String?
     private var processingPendingIDs: [String: ProcessingKey] = [:]
+    /// Called whenever an in-flight Processing toggle settles (accept, reject, timeout,
+    /// disconnect), so the settings window rebuilds and the row re-enables at once.
+    public var onProcessingSettled: (() -> Void)?
+    /// How long a toggle may wait for its ack before it falls back to the daemon's value.
+    public var processingAckTimeout: Duration = .seconds(10)
 
     private func refreshModelsBusy() {
         guard modelsSettingsState.availability == .available else { return }
@@ -748,12 +753,14 @@ public final class VoiceState {
             "value": value,
             "id": id,
         ])
+        let timeout = processingAckTimeout
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(10))
+            try? await Task.sleep(for: timeout)
             guard let self, processingPendingIDs.removeValue(forKey: id) != nil else { return }
             processingPending[key] = nil
             processingNotice = "Couldn't confirm the \(key.title) change - showing VoiceLayer's current setting"
             self.sendCommand?(["cmd": "health"])
+            onProcessingSettled?()
         }
     }
 
@@ -774,6 +781,7 @@ public final class VoiceState {
             let reason = ack.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             processingNotice = "Couldn't change \(key.title)" + (reason.isEmpty ? "" : " - \(reason)")
         }
+        onProcessingSettled?()
     }
 
     public func setWhisperResidency(_ target: VoiceModelResidency) {
@@ -1665,9 +1673,11 @@ public final class VoiceState {
         pendingEffortReloadID = nil
         pendingEffortReloadTimeout?.cancel()
         pendingEffortReloadTimeout = nil
+        let hadPendingProcessing = !processingPending.isEmpty
         processingPending = [:]
         processingPendingIDs = [:]
         processingNotice = nil
+        if hadPendingProcessing { onProcessingSettled?() }
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()

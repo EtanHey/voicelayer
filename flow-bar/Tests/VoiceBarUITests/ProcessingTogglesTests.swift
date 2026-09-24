@@ -118,4 +118,48 @@ final class ProcessingTogglesTests: XCTestCase {
         XCTAssertNil(ModelsSettingsView.processingBusyReason(for: .unavailable),
                      "unavailable already shows its own Processing placeholder")
     }
+
+    func testEverySettledToggleAsksForARebuild() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        var settled = 0
+        state.sendCommand = { commands.append($0) }
+        state.onProcessingSettled = { settled += 1 }
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.health(Self.controls()))
+
+        state.setProcessingSetting(.outroGate, false)
+        state.handleEvent([
+            "type": "ack", "command": "set_processing_setting", "outcome": "accept",
+            "id": commands.last?["id"] as Any,
+            "polish_controls": Self.controls(outro: ("settings", NSNull(), false)),
+        ])
+        XCTAssertEqual(settled, 1, "accept")
+
+        state.setProcessingSetting(.smartChunks, true)
+        state.handleEvent([
+            "type": "ack", "command": "set_processing_setting", "outcome": "reject",
+            "id": commands.last?["id"] as Any, "reason": "busy",
+        ])
+        XCTAssertEqual(settled, 2, "reject")
+        XCTAssertNil(state.processingPending[.smartChunks])
+    }
+
+    @MainActor
+    func testATimedOutToggleAsksForARebuild() async throws {
+        let state = VoiceState()
+        var settled = 0
+        state.sendCommand = { _ in }
+        state.onProcessingSettled = { settled += 1 }
+        state.processingAckTimeout = .milliseconds(30)
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.health(Self.controls()))
+
+        state.setProcessingSetting(.outroGate, false)
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertNil(state.processingPending[.outroGate])
+        XCTAssertEqual(settled, 1)
+        XCTAssertNotNil(state.processingNotice)
+    }
 }
