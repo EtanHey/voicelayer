@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { STATE_DIR, safeWriteFileSync } from "./paths";
 
@@ -42,6 +42,27 @@ export function whisperPerformanceArgsForEffort(
     case "accurate":
       return ["-bo", "5", "-bs", "5"];
   }
+}
+
+/** Only what the file holds (no env override); null when nothing valid is saved. */
+export function getPersistedWhisperPerformanceEffort(
+  env: NodeJS.ProcessEnv = process.env,
+): WhisperPerformanceEffort | null {
+  try {
+    const raw = readFileSync(whisperPerformanceConfigPath(env), "utf8");
+    return parseWhisperPerformanceEffort((JSON.parse(raw) as { effort?: unknown }).effort);
+  } catch {
+    return null;
+  }
+}
+
+/** Put the saved preference back exactly: a value, or no file at all. */
+export function restorePersistedWhisperPerformanceEffort(
+  previous: WhisperPerformanceEffort | null,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (previous) setWhisperPerformanceEffort(previous, env);
+  else rmSync(whisperPerformanceConfigPath(env), { force: true });
 }
 
 export function getWhisperPerformanceEffort(

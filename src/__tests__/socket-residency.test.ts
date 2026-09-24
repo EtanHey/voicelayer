@@ -408,6 +408,55 @@ describe("socket residency command", () => {
       expect(ensure).not.toHaveBeenCalled();
     });
 
+    test("a failed reload restores the SAVED effort, never an env override (#142 r3 C)", async () => {
+      const path = `${process.env.VOICELAYER_STATE_DIR ?? "/tmp"}/e2-r3-effort.json`;
+      const savedPath = process.env.QA_VOICE_WHISPER_PERFORMANCE_PATH;
+      const savedOverride = process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+      spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
+      spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: false, ownedByUs: false }));
+      process.env.QA_VOICE_WHISPER_PERFORMANCE_PATH = path;
+      try {
+        delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+        performance.setWhisperPerformanceEffort("accurate");
+        process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = "balanced";
+        spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange")
+          .mockRejectedValue(new Error("the old model server did not stop")));
+        spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+
+        const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-r3c" });
+
+        expect(ack).toMatchObject({ outcome: "reject" });
+        delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+        expect(performance.getWhisperPerformanceEffort()).toBe("accurate");
+      } finally {
+        if (savedPath === undefined) delete process.env.QA_VOICE_WHISPER_PERFORMANCE_PATH;
+        else process.env.QA_VOICE_WHISPER_PERFORMANCE_PATH = savedPath;
+        if (savedOverride === undefined) delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+        else process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = savedOverride;
+      }
+    });
+
+    test("a rollback that fails still sends a reject naming both failures (#142 r3 D)", async () => {
+      spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
+      spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: false, ownedByUs: false }));
+      spies.push(spyOn(performance, "setWhisperPerformanceEffort").mockImplementation(() => {}));
+      spies.push(spyOn(performance, "restorePersistedWhisperPerformanceEffort").mockImplementation(() => {
+        throw new Error("config write failed");
+      }));
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange")
+        .mockRejectedValue(new Error("the old model server did not stop")));
+      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+
+      const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-r3d" });
+
+      expect(ack).toMatchObject({ outcome: "reject" });
+      const reason = (ack as { reason?: string }).reason ?? "";
+      expect(reason).toContain("did not stop");
+      expect(reason).toContain("config write failed");
+    });
+
     test("a Load or another effort change waits while the reload runs", async () => {
       idle();
       spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange").mockImplementation(() => {}));

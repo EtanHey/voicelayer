@@ -57,8 +57,9 @@ import {
   isRecordingConflictError,
 } from "./recording-state";
 import {
-  getWhisperPerformanceEffort,
+  getPersistedWhisperPerformanceEffort,
   restartWhisperServerForPerformanceChange,
+  restorePersistedWhisperPerformanceEffort,
   setWhisperPerformanceEffort,
 } from "./whisper-performance";
 import { setRecordingHold } from "./recording-hold";
@@ -511,7 +512,9 @@ async function handleEffortCommand(
     if (residencyBusy() || whisperLifecycleGate.isInUse) {
       return buildAck(command, "reject", residencyBusyReason());
     }
-    const previousEffort = getWhisperPerformanceEffort();
+    // The SAVED preference, not an env override: restoring the override would
+    // write it into the file and lose the user's choice (#142 round 3).
+    const previousEffort = getPersistedWhisperPerformanceEffort();
     try {
       setWhisperPerformanceEffort(command.effort);
     } catch (error) {
@@ -522,7 +525,16 @@ async function handleEffortCommand(
     } catch (error) {
       // The old server is still running its old flags: say so, and keep the
       // setting truthful rather than report an effort that is not in effect.
-      setWhisperPerformanceEffort(previousEffort);
+      try {
+        restorePersistedWhisperPerformanceEffort(previousEffort);
+      } catch (rollbackError) {
+        return buildAck(
+          command,
+          "reject",
+          `Effort change failed (${vocabularyErrorReason(error)}) and the saved effort ` +
+            `could not be restored (${vocabularyErrorReason(rollbackError)})`,
+        );
+      }
       return buildAck(
         command,
         "reject",
