@@ -38,10 +38,12 @@ struct SettingsNavigationShell<Detail: View>: View {
                                     in: RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityAddTraits(selection == tab ? .isSelected : [])
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 }
                 .listStyle(.sidebar)
+                .onMoveCommand { selection = selection.moved($0) }
 
                 Divider()
                 VoiceBarStatusFooter(presentation: footer)
