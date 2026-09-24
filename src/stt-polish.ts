@@ -1666,7 +1666,8 @@ export async function warmPolishEndpoint(
     error,
   });
 
-  if (!isSTTPolishWarmupEnabled(env)) {
+  // Polish off (a Settings toggle since P1) means no health check and no warm-up request.
+  if (getSTTPolishMode(env) === "off" || !isSTTPolishWarmupEnabled(env)) {
     return buildResult("skipped");
   }
 

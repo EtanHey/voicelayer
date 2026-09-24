@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, renameSync, rmSync } from "fs";
 import { join } from "path";
 import { STATE_DIR, safeWriteFileSync } from "./paths";
 
@@ -76,7 +76,17 @@ export function setProcessingSetting(
   }
   next[key] = key === "model_polish" ? (value ? "on" : "off") : value;
   next.updated_at = new Date().toISOString();
-  safeWriteFileSync(processingSettingsPath(env), JSON.stringify(next, null, 2) + "\n");
+  // Temp file + rename: a crash mid-write must never leave partial JSON, which
+  // would read as {} and silently reset every toggle to its default.
+  const path = processingSettingsPath(env);
+  const tmp = `${path}.${process.pid}.tmp`;
+  safeWriteFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
+  try {
+    renameSync(tmp, path);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
+  }
 }
 
 /** `base`, with each file setting filled in as the env string its parser reads, where `base` leaves it unset. */
