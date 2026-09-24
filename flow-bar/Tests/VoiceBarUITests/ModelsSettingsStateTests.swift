@@ -45,6 +45,48 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertEqual(fromMode.modelsSettingsState.busyReason, "Transcribing…")
     }
 
+    /// Spec §5 "Busy always shows a reason": a disabled effort picker says why, directly under it.
+    func testDisabledEffortPickerAlwaysNamesItsReason() {
+        let idle = ModelsSettingsState(healthEvent: Self.availableHealth)
+        XCTAssertNil(ModelsSettingsView.effortDisabledReason(for: idle))
+        XCTAssertEqual(ModelsSettingsView.effortDisabledReason(for: .loading), "Checking VoiceLayer…")
+        XCTAssertEqual(
+            ModelsSettingsView.effortDisabledReason(for: .unavailable),
+            "Available when VoiceLayer is running"
+        )
+        XCTAssertEqual(
+            ModelsSettingsView.effortDisabledReason(for: idle.settingBusy(true, reason: "Recording…")),
+            "Recording…"
+        )
+        XCTAssertEqual(
+            ModelsSettingsView.effortDisabledReason(for: ModelsSettingsState.loading.settingBusy(
+                true, reason: "Transcribing…"
+            )),
+            "Transcribing…"
+        )
+    }
+
+    /// Spec §8 "busy/Unavailable → a named reason": Processing never shows a bare "Status unavailable".
+    func testProcessingNamesItsReasonInsteadOfStatusUnavailable() {
+        var withControls = Self.availableHealth
+        withControls["polish_controls"] = [
+            "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
+            "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
+            "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
+            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
+        ]
+        XCTAssertNil(ModelsSettingsView.processingPlaceholder(for: ModelsSettingsState(healthEvent: withControls)))
+        XCTAssertEqual(ModelsSettingsView.processingPlaceholder(for: .loading), "Checking…")
+        XCTAssertEqual(
+            ModelsSettingsView.processingPlaceholder(for: .unavailable),
+            "VoiceLayer isn't connected. These appear when it reconnects."
+        )
+        XCTAssertEqual(
+            ModelsSettingsView.processingPlaceholder(for: ModelsSettingsState(healthEvent: Self.availableHealth)),
+            "Not reported by this VoiceLayer version"
+        )
+    }
+
     func testRecordingIdleEventClearsModelsBusyWithoutPolling() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)

@@ -92,17 +92,17 @@ public struct ModelsSettingsView: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("models-effort-picker")
-                .disabled(state.isBusy || state.availability != .available)
-                Text("Applies to your next dictation. Each transcript in History shows which one it used.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if state.isBusy, state.availability == .available {
-                    Text(state.busyReason ?? "Voice session in progress")
+                .disabled(Self.effortDisabledReason(for: state) != nil)
+                if let reason = Self.effortDisabledReason(for: state) {
+                    Text(reason)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("models-busy-reason")
                 }
+                Text("Applies to your next dictation. Each transcript in History shows which one it used.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let notice {
                     Text(notice).font(.caption).foregroundStyle(.orange)
                 }
@@ -135,8 +135,9 @@ public struct ModelsSettingsView: View {
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                } else {
-                    Text("Status unavailable")
+                } else if let placeholder = Self.processingPlaceholder(for: state) {
+                    Text(placeholder)
+                        .foregroundStyle(.secondary)
                         .accessibilityIdentifier("models-polish-unavailable")
                 }
             }
@@ -163,7 +164,33 @@ public struct ModelsSettingsView: View {
     }
 
     private var availabilityLabel: String {
-        state.availability == .loading ? "Checking…" : "Status unavailable"
+        state.availability == .loading ? "Checking…" : "Not connected"
+    }
+
+    /// Why the effort picker is disabled, shown directly under it (spec §5). nil means it is enabled.
+    /// The daemon owns effort, so the picker stays disabled until VoiceLayer reports it is available.
+    static func effortDisabledReason(for state: ModelsSettingsState) -> String? {
+        switch state.availability {
+        case .unavailable:
+            "Available when VoiceLayer is running"
+        case .loading:
+            state.busyReason ?? "Checking VoiceLayer…"
+        case .available:
+            state.isBusy ? state.busyReason ?? "Voice session in progress" : nil
+        }
+    }
+
+    /// What the Processing section says instead of its rows (spec §8: a named reason, never a bare
+    /// "Status unavailable"). nil means the rows are shown.
+    static func processingPlaceholder(for state: ModelsSettingsState) -> String? {
+        switch state.availability {
+        case .loading:
+            "Checking…"
+        case .unavailable:
+            "VoiceLayer isn't connected. These appear when it reconnects."
+        case .available:
+            state.polishControls == nil ? "Not reported by this VoiceLayer version" : nil
+        }
     }
 
     private func processingRow(_ description: String, status: String, source: PolishSettingSource) -> some View {
