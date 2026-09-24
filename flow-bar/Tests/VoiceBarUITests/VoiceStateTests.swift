@@ -937,7 +937,7 @@ final class VoiceStateTests: XCTestCase {
             "type": "state",
             "state": "recording",
         ])
-        try? await Task.sleep(for: .milliseconds(90))
+        await waitForDeferredFinal(in: state, text: "Etan confirmed the corrected transcript")
 
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
             "Etan confirmed the corrected transcript",
@@ -993,7 +993,7 @@ final class VoiceStateTests: XCTestCase {
         ])
 
         state.record()
-        try? await Task.sleep(for: .milliseconds(90))
+        await waitForDeferredFinal(in: state, text: "Etan confirmed the corrected transcript")
 
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
             "Etan confirmed the corrected transcript",
@@ -1624,5 +1624,17 @@ final class VoiceStateTests: XCTestCase {
         ])
 
         XCTAssertFalse(state.isRecordingHoldEngaged)
+    }
+
+    /// Waits for a deferred final (held back by `minimumTranscribingDisplayDuration`)
+    /// to land in history. A fixed 90 ms sleep against the 50 ms display floor lost
+    /// under load (8/10 runs at background QoS). If the final was dropped, this
+    /// times out and the caller's assertions fail. The deadline is liveness only.
+    @MainActor
+    private func waitForDeferredFinal(in state: VoiceState, text: String) async {
+        let deadline = Date().addingTimeInterval(2)
+        while state.recentTranscriptionEntries.map(\.text) != [text], Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
     }
 }
