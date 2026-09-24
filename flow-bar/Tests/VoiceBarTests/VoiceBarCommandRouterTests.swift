@@ -622,7 +622,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         app.configureHotkeyCallbacksForTesting()
 
         app.handleLocalControlCommand(.startRecording)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        runMainLoop(until: { spyRouter.holdStartCount == 1 })
         app.handleLocalControlCommand(.stopRecording)
 
         XCTAssertEqual(spyRouter.holdStartCount, 1)
@@ -642,7 +642,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         app.configureHotkeyCallbacksForTesting()
 
         app.handleLocalControlCommand(.startRecording)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        runMainLoop(until: { diagnostics.contains { $0.event == "hotkey_hold_start" } })
 
         let keyDown = try XCTUnwrap(diagnostics.first { $0.event == "hotkey_key_down" })
         XCTAssertNotNil(try Int(XCTUnwrap(keyDown.details["hotkeyEventUptimeMs"])))
@@ -671,5 +671,15 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(spyRouter.holdEndCount, 0)
         XCTAssertEqual(spyRouter.doubleTapCount, 1)
         XCTAssertTrue(spyRouter.handledURLs.isEmpty)
+    }
+
+    /// Pumps the main run loop until `condition` holds. The hold timer is 160 ms;
+    /// a fixed 200 ms window lost that race on the macOS CI runner, so wait on
+    /// the transition itself. The deadline is liveness only.
+    private func runMainLoop(until condition: () -> Bool, timeout: TimeInterval = 2) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
     }
 }

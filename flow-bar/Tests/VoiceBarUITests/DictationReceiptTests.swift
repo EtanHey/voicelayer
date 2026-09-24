@@ -179,7 +179,13 @@ final class DictationReceiptTests: XCTestCase {
 
         state.handleEvent(finalEvent(audioMilliseconds: 2000, processingMilliseconds: 420))
         XCTAssertTrue(state.recentTranscriptionEntries.isEmpty)
-        try await Task.sleep(for: .milliseconds(60))
+        // Wait for the deferred final itself, not a fixed 60 ms against the 20 ms
+        // floor: that lost under load (1 of 5 full runs at background QoS). The
+        // deadline is liveness only; a dropped final still fails below.
+        let deadline = Date().addingTimeInterval(2)
+        while state.recentTranscriptionEntries.isEmpty, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
 
         let receipt = try XCTUnwrap(state.recentTranscriptionEntries.first?.dictationReceipt)
         XCTAssertEqual(receipt.audioDurationMilliseconds, 2000)
