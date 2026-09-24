@@ -34,6 +34,36 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
         XCTAssertNil(visibleNext.visibleFirstUIDs, "offered only while a hidden device would be used")
     }
 
+    /// #119 Macroscope follow-up: a hidden aggregate that shares the selected physical mic's name must not make
+    /// General claim "Hidden microphone selected". The snapshot compares device identity, not labels.
+    func testSameNamedHiddenAggregateDoesNotHideTheSelectedPhysicalMic() {
+        let rows: [MicrophonePriorityRow] = [
+            .init(uid: "aggregate-uid", deviceID: "9", label: "Studio Mic", isConnected: true,
+                  isVirtualOrAggregateTransport: true),
+            .init(uid: "physical-uid", deviceID: "3", label: "Studio Mic", isConnected: true,
+                  isVirtualOrAggregateTransport: false),
+        ]
+        let physicalNext = MicrophonePrioritySnapshot(
+            rows: rows, nextDeviceName: "Studio Mic", nextDeviceUID: "physical-uid", nextDeviceID: "3"
+        )
+        XCTAssertFalse(physicalNext.nextDeviceIsHidden)
+        XCTAssertEqual(physicalNext.nextVisibleDeviceName, "Studio Mic")
+        XCTAssertNil(physicalNext.visibleFirstUIDs)
+
+        let aggregateNext = MicrophonePrioritySnapshot(
+            rows: rows, nextDeviceName: "Studio Mic", nextDeviceUID: "aggregate-uid", nextDeviceID: "9"
+        )
+        XCTAssertTrue(aggregateNext.nextDeviceIsHidden)
+        XCTAssertEqual(aggregateNext.nextVisibleDeviceName, "Hidden microphone selected")
+
+        let noUID = MicrophonePrioritySnapshot(
+            rows: [.init(uid: nil, deviceID: "4", label: "Studio Mic", isConnected: true,
+                         isVirtualOrAggregateTransport: false)] + rows,
+            nextDeviceName: "Studio Mic", nextDeviceUID: nil, nextDeviceID: "4"
+        )
+        XCTAssertFalse(noUID.nextDeviceIsHidden, "a device without a UID is matched by its device ID")
+    }
+
     func testTransportTypeOverridesNameAndNameIsOnlyFallback() {
         let namedLikeVirtual = MicrophonePriorityRow(
             uid: "physical", deviceID: "1", label: "Virtual Studio Mic", isConnected: true,

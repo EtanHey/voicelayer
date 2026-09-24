@@ -31,10 +31,19 @@ public struct MicrophonePriorityRow: Equatable {
 public struct MicrophonePrioritySnapshot: Equatable {
     public let rows: [MicrophonePriorityRow]
     public let nextDeviceName: String?
+    public let nextDeviceUID: String?
+    public let nextDeviceID: String?
 
-    public init(rows: [MicrophonePriorityRow], nextDeviceName: String?) {
+    public init(
+        rows: [MicrophonePriorityRow],
+        nextDeviceName: String?,
+        nextDeviceUID: String? = nil,
+        nextDeviceID: String? = nil
+    ) {
         self.rows = rows
         self.nextDeviceName = nextDeviceName
+        self.nextDeviceUID = nextDeviceUID
+        self.nextDeviceID = nextDeviceID
     }
 
     public static let unavailable = Self(rows: [], nextDeviceName: nil)
@@ -58,7 +67,16 @@ public struct MicrophonePrioritySnapshot: Equatable {
         return nextDeviceIsHidden ? "Hidden microphone selected" : nextDeviceName
     }
 
+    /// Matches the next device by identity (UID, then device ID) so a hidden aggregate that shares a physical
+    /// mic's name never hides it; the label is only a fallback for callers that know no identity.
     public var nextDeviceIsHidden: Bool {
+        if nextDeviceUID != nil || nextDeviceID != nil {
+            return rows.contains { row in
+                row.isVirtualOrAggregate
+                    && ((nextDeviceUID != nil && row.uid == nextDeviceUID)
+                        || (nextDeviceID != nil && row.deviceID == nextDeviceID))
+            }
+        }
         guard let nextDeviceName else { return false }
         return rows.contains { $0.label == nextDeviceName && $0.isVirtualOrAggregate }
     }
