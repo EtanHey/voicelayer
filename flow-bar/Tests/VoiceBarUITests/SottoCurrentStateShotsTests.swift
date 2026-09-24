@@ -122,7 +122,19 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         menu.transcriptProvider = { "A synthetic recent transcription." }
         menu.recentTranscriptionsProvider = { ["A synthetic recent transcription.", "Another sample."] }
         menu.transcriptionVocabularyTermsProvider = { ["SwiftUI", "whisper.cpp"] }
-        menu.availableDevicesProvider = { [MicrophoneDevice(id: "fixture-mic", name: "Fixture Microphone")] }
+        // Mixed on purpose: the aggregate and the Teams/Zoom loopbacks must not reach the Microphone submenu.
+        menu.availableDevicesProvider = { [
+            MicrophoneDevice(id: "fixture-aggregate", name: "CADefaultDeviceAggregate-1234-0",
+                             uid: "CADefaultDeviceAggregate-1234-0", isVirtualOrAggregateTransport: true),
+            MicrophoneDevice(id: "fixture-mic", name: "Fixture Microphone", uid: "fixture-mic",
+                             isVirtualOrAggregateTransport: false),
+            MicrophoneDevice(id: "fixture-teams", name: "Microsoft Teams Audio", uid: "fixture-teams",
+                             isVirtualOrAggregateTransport: true),
+            MicrophoneDevice(id: "fixture-usb", name: "Fixture USB Microphone", uid: "fixture-usb",
+                             isVirtualOrAggregateTransport: false),
+            MicrophoneDevice(id: "fixture-zoom", name: "ZoomAudioDevice", uid: "fixture-zoom",
+                             isVirtualOrAggregateTransport: true),
+        ] }
         menu.selectedDeviceIDProvider = { "fixture-mic" }
         try menuShots(
             menu.makeMenu(),
@@ -131,6 +143,17 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             directory: directory,
             lines: &lines
         )
+
+        // #141 round 2: the device in use is a hidden one; the submenu still says so, checked and disabled.
+        menu.selectedDeviceIDProvider = { "fixture-teams" }
+        try menuShots(
+            menu.makeMicrophoneSubmenu(),
+            prefix: "menu-microphone-hidden-in-use",
+            description: "Right-click → Microphone while a hidden device is in use",
+            directory: directory,
+            lines: &lines
+        )
+        menu.selectedDeviceIDProvider = { "fixture-mic" }
 
         let empty = STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         let populated = STTVocabularyPreview(

@@ -6,6 +6,8 @@ public struct MenuBarPopoverView: View {
     public let hotkeyHint: String
     public let microphoneName: String
     public let microphones: [MicrophoneDevice]
+    /// The selected device when the pickers hide it (#141 review): shown checked and disabled on top.
+    public let hiddenInUseMicrophone: MicrophoneDevice?
     public let selectedMicrophoneID: String?
     public let transcript: String
     public let degradationHint: String?
@@ -32,7 +34,8 @@ public struct MenuBarPopoverView: View {
         self.footer = footer
         self.hotkeyHint = hotkeyHint
         self.microphoneName = microphoneName
-        self.microphones = microphones
+        self.microphones = MicrophoneDevice.pickable(microphones)
+        hiddenInUseMicrophone = MicrophoneDevice.hiddenInUse(microphones, selectedID: selectedMicrophoneID)
         self.selectedMicrophoneID = selectedMicrophoneID
         self.transcript = transcript
         self.degradationHint = degradationHint
@@ -80,6 +83,13 @@ public struct MenuBarPopoverView: View {
             .foregroundStyle(.secondary)
             .popoverFrame("locality")
             Menu {
+                if let hiddenInUseMicrophone {
+                    Button {} label: {
+                        Label(MicrophoneDevice.hiddenInUseTitle(hiddenInUseMicrophone.name), systemImage: "checkmark")
+                    }
+                    .disabled(true)
+                    Divider()
+                }
                 if microphones.isEmpty {
                     Text("No input devices found")
                 } else {

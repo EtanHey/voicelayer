@@ -16,10 +16,55 @@ public struct MicrophoneDevice: Equatable {
     }
 }
 
+/// AIDEV-NOTE: The ONE rule for which input devices a user may pick. The menu-bar popover, the right-click
+/// Microphone submenu and Settings' priority list all use it (R4 UI pass #2: the menus used to list VoiceBar's
+/// own `CADefaultDeviceAggregate-<pid>-0` and the Teams/Zoom loopbacks while Settings hid them).
+public extension MicrophoneDevice {
+    /// CoreAudio's transport type decides when it is known; the device identity is only the fallback. (That
+    /// fallback's "aggregate" substring would also hide a user-built aggregate, but only when the transport
+    /// read fails, and then an aggregate is the safer guess.)
+    static func isVirtualOrAggregate(uid: String?, name: String, transport: Bool?) -> Bool {
+        if let transport { return transport }
+        let identity = "\(uid ?? "") \(name)".lowercased()
+        return [
+            "cadefaultdeviceaggregate-", "aggregate", "virtual", "blackhole", "loopback",
+            "microsoft teams audio", "msteamsaudio", "zoomaudiodevice",
+        ].contains { identity.contains($0) }
+    }
+
+    var isVirtualOrAggregate: Bool {
+        Self.isVirtualOrAggregate(uid: uid, name: name, transport: isVirtualOrAggregateTransport)
+    }
+
+    /// The devices every microphone picker offers, in the order given.
+    static func pickable(_ devices: [MicrophoneDevice]) -> [MicrophoneDevice] {
+        devices.filter { !$0.isVirtualOrAggregate }
+    }
+
+    /// The selected device when it is one the pickers hide (#141 review): every picker still shows it, checked
+    /// and not selectable, so the user sees what is actually recording and can switch away.
+    static func hiddenInUse(_ devices: [MicrophoneDevice], selectedID: String?) -> MicrophoneDevice? {
+        guard let selectedID, let selected = devices.first(where: { $0.id == selectedID }),
+              selected.isVirtualOrAggregate
+        else { return nil }
+        return selected
+    }
+
+    /// The one label for a hidden device in use, shared by the popover, the right-click menu and Settings.
+    static func hiddenDeviceLabel(_ name: String) -> String {
+        "\(name) (hidden device)"
+    }
+
+    static func hiddenInUseTitle(_ name: String) -> String {
+        "In use: \(hiddenDeviceLabel(name))"
+    }
+}
+
 public struct MicrophoneDeviceOption: Equatable {
     public var id: String
     public var title: String
     public var isSelected: Bool
+    public var isEnabled: Bool = true
 }
 
 public final class PillContextMenuController: NSObject {
@@ -281,13 +326,17 @@ public final class PillContextMenuController: NSObject {
         for option in options {
             let item = NSMenuItem(
                 title: option.title,
-                action: #selector(handleSelectDevice(_:)),
+                action: option.isEnabled ? #selector(handleSelectDevice(_:)) : nil,
                 keyEquivalent: ""
             )
-            item.target = self
+            item.target = option.isEnabled ? self : nil
+            item.isEnabled = option.isEnabled
             item.state = option.isSelected ? .on : .off
             item.representedObject = option.id
             menu.addItem(item)
+            if !option.isEnabled {
+                menu.addItem(.separator())
+            }
         }
 
         return menu
@@ -297,7 +346,15 @@ public final class PillContextMenuController: NSObject {
         devices: [MicrophoneDevice],
         selectedID: String?
     ) -> [MicrophoneDeviceOption] {
-        devices.map {
+        let inUse = MicrophoneDevice.hiddenInUse(devices, selectedID: selectedID).map {
+            MicrophoneDeviceOption(
+                id: $0.id,
+                title: MicrophoneDevice.hiddenInUseTitle($0.name),
+                isSelected: true,
+                isEnabled: false
+            )
+        }
+        return (inUse.map { [$0] } ?? []) + MicrophoneDevice.pickable(devices).map {
             MicrophoneDeviceOption(
                 id: $0.id,
                 title: $0.name,
