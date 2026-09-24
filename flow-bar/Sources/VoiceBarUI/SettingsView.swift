@@ -344,6 +344,13 @@ public struct SettingsView: View {
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
     @State private var includedTermsExpanded = false
+    /// Etan (M27): "a collapsible Personal section". Expanded by default.
+    @State private var yourTermsExpanded = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// UI pass #18: after Add/Edit the saved term is scrolled to, selected and flashed.
+    @State private var selectedTermRowID: String?
+    @State private var flashingTermRowID: String?
+    @State private var pendingScrollRowID: String?
     @State private var dictionaryLoading = false
     @State private var hasLoadedDictionaryOnce: Bool
     @State private var dictionaryReloadQueued = false
@@ -431,7 +438,9 @@ public struct SettingsView: View {
         initialDictionarySearch: String = "",
         initialAdvancedExpanded: Bool = false,
         initialDictionaryPreview: STTVocabularyPreview? = nil,
-        initialIncludedTermsExpanded: Bool = false
+        initialIncludedTermsExpanded: Bool = false,
+        initialYourTermsExpanded: Bool = true,
+        initialSelectedTermRowID: String? = nil
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -497,6 +506,8 @@ public struct SettingsView: View {
         _dictionarySearch = State(initialValue: initialDictionarySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
         _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
+        _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
+        _selectedTermRowID = State(initialValue: initialSelectedTermRowID)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         _askHistoryDayGroups = State(initialValue: initialAskHistoryPage?.groups ?? [])
         _askHistoryLoadedEntryCount = State(initialValue: initialAskHistoryPage?.loadedEntryCount ?? 0)
@@ -1507,70 +1518,101 @@ public struct SettingsView: View {
             .padding(.top, 19)
             .padding(.bottom, 14)
             Divider()
-            ScrollView {
-                let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
-                let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    Text(Self.dictionarySectionTitle(
-                        "Your terms", count: dictionaryDisplayIndex.personalCount,
-                        matches: dictionarySearch.isEmpty ? nil : personal.count, loaded: hasLoadedDictionaryOnce
-                    ))
-                    .font(.headline).padding(.bottom, 8)
-                    switch Self.dictionaryPlaceholder(
-                        loaded: hasLoadedDictionaryOnce, personalIsEmpty: personal.isEmpty,
-                        searching: !dictionarySearch.isEmpty
-                    ) {
-                    case .loading:
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Loading…").foregroundStyle(.secondary)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    let isSearching = !Self.dictionaryQuery(dictionarySearch).isEmpty
+                    let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
+                    let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        Button {
+                            yourTermsExpanded.toggle()
+                        } label: {
+                            HStack {
+                                Image(systemName: yourTermsExpanded ? "chevron.down" : "chevron.right")
+                                    .frame(width: 14)
+                                Text(Self.dictionarySectionTitle(
+                                    "Your terms", count: dictionaryDisplayIndex.personalCount,
+                                    matches: isSearching ? personal.count : nil,
+                                    loaded: hasLoadedDictionaryOnce
+                                ))
+                                Spacer()
+                            }
+                            .font(.headline)
+                            .contentShape(Rectangle())
                         }
-                        .frame(maxWidth: .infinity, minHeight: 170)
-                    case .empty:
-                        VStack(spacing: 10) {
-                            Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
-                            Text("No terms yet").font(.headline)
-                            Text("Add names, products, and other preferred spellings.")
-                                .font(.caption).foregroundStyle(.secondary)
+                        .buttonStyle(.plain)
+                        .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
+                        .accessibilityValue(yourTermsExpanded ? "Expanded" : "Collapsed")
+                        .padding(.bottom, 8)
+                        if yourTermsExpanded || isSearching {
+                            switch Self.dictionaryPlaceholder(
+                                loaded: hasLoadedDictionaryOnce, personalIsEmpty: personal.isEmpty,
+                                searching: isSearching
+                            ) {
+                            case .loading:
+                                HStack(spacing: 8) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Loading…").foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 170)
+                            case .empty:
+                                VStack(spacing: 10) {
+                                    Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
+                                    Text("No terms yet").font(.headline)
+                                    Text("Add names, products, and other preferred spellings.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 170)
+                            case nil:
+                                EmptyView()
+                            }
+                            ForEach(personal, id: \.rowID) { row in
+                                dictionaryEntryCard(row.entry, rowID: row.rowID)
+                                    .id(row.rowID)
+                                Divider()
+                            }
                         }
-                        .frame(maxWidth: .infinity, minHeight: 170)
-                    case nil:
-                        EmptyView()
+                        Button {
+                            includedTermsExpanded.toggle()
+                        } label: {
+                            HStack {
+                                Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
+                                    .frame(width: 14)
+                                Text(Self.dictionarySectionTitle(
+                                    "Included terms", count: dictionaryDisplayIndex.includedCount,
+                                    matches: isSearching ? included.count : nil,
+                                    loaded: hasLoadedDictionaryOnce
+                                ))
+                                Spacer()
+                                Text("built in").font(.caption).foregroundStyle(.secondary)
+                            }
+                            .font(.headline)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
+                        .accessibilityValue(includedTermsExpanded ? "Expanded" : "Collapsed")
+                        .accessibilityHint("Built-in terms are read-only")
+                        .padding(.top, 18)
+                        if includedTermsExpanded || isSearching {
+                            ForEach(included, id: \.rowID) { row in
+                                dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
+                                Divider()
+                            }
+                        }
                     }
-                    ForEach(personal, id: \.rowID) { row in
-                        dictionaryEntryCard(row.entry, rowID: row.rowID)
-                        Divider()
-                    }
-                    Button {
-                        includedTermsExpanded.toggle()
-                    } label: {
-                        HStack {
-                            Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
-                                .frame(width: 14)
-                            Text(Self.dictionarySectionTitle(
-                                "Included terms", count: dictionaryDisplayIndex.includedCount,
-                                matches: dictionarySearch.isEmpty ? nil : included.count,
-                                loaded: hasLoadedDictionaryOnce
-                            ))
-                            Spacer()
-                            Text("built in").font(.caption).foregroundStyle(.secondary)
+                    .padding(18)
+                }
+                .onChange(of: pendingScrollRowID) { _, rowID in
+                    guard let rowID else { return }
+                    // The saved row lands in the list on the same update; scroll once it has been laid out.
+                    DispatchQueue.main.async {
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                            proxy.scrollTo(rowID, anchor: .center)
                         }
-                        .font(.headline)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
-                    .accessibilityValue(includedTermsExpanded ? "Expanded" : "Collapsed")
-                    .accessibilityHint("Built-in terms are read-only")
-                    .padding(.top, 18)
-                    if includedTermsExpanded || !dictionarySearch.isEmpty {
-                        ForEach(included, id: \.rowID) { row in
-                            dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
-                            Divider()
-                        }
+                        pendingScrollRowID = nil
                     }
                 }
-                .padding(18)
             }
         }
         .sheet(item: $termSheet) { edit in
@@ -1622,11 +1664,23 @@ public struct SettingsView: View {
             }
         }
         .padding(.vertical, 8)
+        .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.accentColor.opacity(
+                    flashingTermRowID == rowID ? 0.28 : selectedTermRowID == rowID ? 0.12 : 0
+                ))
+        )
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: flashingTermRowID)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             if isEditable { termSheet = DictionaryTermEdit(original: entry) }
         }
+        .onTapGesture {
+            selectedTermRowID = rowID
+        }
+        .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
     }
 
     /// A term's misheard spellings on one quiet line under it, only when it has some.
@@ -1989,6 +2043,33 @@ public struct SettingsView: View {
         }
     }
 
+    struct DictionaryFocus: Equatable {
+        let rowID: String
+        let clearsSearch: Bool
+    }
+
+    /// Where the list goes after a save (UI pass #18): the saved term's row, and the search cleared if it
+    /// would hide that term.
+    /// The one trimmed search every Dictionary check uses; matching already trims (#148 Macroscope).
+    static func dictionaryQuery(_ search: String) -> String {
+        search.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func dictionaryFocus(afterSaving canonical: String, variants: [String] = [],
+                                search: String) -> DictionaryFocus {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return DictionaryFocus(
+            rowID: STTDictionaryDisplayEntry(
+                source: "personal",
+                entry: STTDictionaryEntry(canonical: canonical, variants: [])
+            ).rowID,
+            // The list matches misheard spellings too, so a search that still shows the term through one is kept.
+            clearsSearch: !query.isEmpty && !([canonical] + variants).contains {
+                $0.localizedCaseInsensitiveContains(query)
+            }
+        )
+    }
+
     private var hasPendingDictionaryEdit: Bool {
         termSheet != nil || pendingDeleteCanonical != nil
     }
@@ -2000,7 +2081,7 @@ public struct SettingsView: View {
     }
 
     private func saveTermSheet(_ edit: DictionaryTermEdit) {
-        SettingsDictionaryMutations.apply(
+        let saved = SettingsDictionaryMutations.apply(
             edit,
             localEntries: &localEntries,
             onAddPromptTerm: onAddPromptTerm,
@@ -2009,6 +2090,17 @@ public struct SettingsView: View {
             onRemoveVocabularyAlias: onRemoveVocabularyAlias
         )
         termSheet = nil
+        guard let saved else { return }
+        let savedVariants = localEntries.first { $0.canonical == saved }?.variants ?? []
+        let focus = Self.dictionaryFocus(afterSaving: saved, variants: savedVariants, search: dictionarySearch)
+        if focus.clearsSearch { dictionarySearch = "" }
+        yourTermsExpanded = true
+        selectedTermRowID = focus.rowID
+        flashingTermRowID = focus.rowID
+        pendingScrollRowID = focus.rowID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            if flashingTermRowID == focus.rowID { flashingTermRowID = nil }
+        }
     }
 
     private func loadDictionaryPreview() {

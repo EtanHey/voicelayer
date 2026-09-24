@@ -15,6 +15,8 @@ final class P08DictionaryShotsTests: XCTestCase {
             STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair", "voice layer"]),
             STTDictionaryEntry(canonical: "SwiftUI", variants: ["swift you eye"]),
             STTDictionaryEntry(canonical: "whisper.cpp", variants: []),
+            STTDictionaryEntry(canonical: "/batch", variants: []),
+            STTDictionaryEntry(canonical: "-s", variants: []),
         ]
         let included = [
             STTDictionaryEntry(canonical: "AppKit", variants: []),
@@ -47,7 +49,7 @@ final class P08DictionaryShotsTests: XCTestCase {
                 size: CGSize(width: 420, height: 270),
                 to: directory.appendingPathComponent("dictionary-edit-term-\(scheme).png")
             )
-            for state in ["empty", "populated", "searching", "collapsed"] {
+            for state in ["empty", "populated", "searching", "collapsed", "selected", "your-terms-collapsed"] {
                 let data = state == "empty" ? preview([]) : preview(personal)
                 let view = SettingsView(
                     hotkeyEnabled: true,
@@ -62,7 +64,9 @@ final class P08DictionaryShotsTests: XCTestCase {
                     initialTab: .dictionary,
                     initialDictionarySearch: state == "searching" ? "Swift" : "",
                     initialDictionaryPreview: data,
-                    initialIncludedTermsExpanded: state == "populated"
+                    initialIncludedTermsExpanded: state == "populated",
+                    initialYourTermsExpanded: state != "your-terms-collapsed",
+                    initialSelectedTermRowID: state == "selected" ? "personal:VoiceLayer" : nil
                 )
                 try render(
                     view.environment(\.colorScheme, scheme == "light" ? .light : .dark),

@@ -405,10 +405,11 @@ final class SettingsViewTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift"))
         XCTAssertTrue(sheet.contains(".keyboardShortcut(.cancelAction)"))
-        XCTAssertTrue(source
-            .contains(
-                "Image(systemName: includedTermsExpanded ? \"chevron.down\" : \"chevron.right\")\n                                .frame(width: 14)"
-            ))
+        // The chevron keeps its 14 pt column (independent of how deep the header is indented).
+        let chevron = try XCTUnwrap(
+            source.range(of: "Image(systemName: includedTermsExpanded ? \"chevron.down\" : \"chevron.right\")")
+        )
+        XCTAssertTrue(source[chevron.upperBound...].drop { $0.isWhitespace }.hasPrefix(".frame(width: 14)"))
         XCTAssertTrue(source
             .contains("VStack(alignment: .leading, spacing: 3) {\n                    Text(\"Dictionary\")"))
     }
