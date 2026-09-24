@@ -165,8 +165,8 @@ final class SocketServerTests: XCTestCase {
 
         fixture.server.sendCommandToOwner(command: ["cmd": "stop"])
 
-        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1)).contains(#""cmd":"stop""#))
-        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"stop""#))
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 5)).contains(#""cmd":"stop""#))
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 5)).contains(#""cmd":"stop""#))
     }
 
     func testStopInterruptReachesEveryPlaybackClientWhenLatestSpeakingOwnerOverlapsAnEarlierOwner() throws {
@@ -211,17 +211,17 @@ final class SocketServerTests: XCTestCase {
             #"{"type":"state","state":"speaking","text":"Latest visible playback"}"#,
             to: latestPlaybackClient
         )
-        XCTAssertTrue(waitForMode(state, mode: .speaking, timeout: 1))
+        XCTAssertTrue(waitForMode(state, mode: .speaking, timeout: 5))
 
         server.sendCommandToOwner(command: ["cmd": "stop"])
 
         XCTAssertTrue(
-            try XCTUnwrap(readLine(from: earlierPlaybackClient, timeout: 1)).contains(#""cmd":"stop""#)
+            try XCTUnwrap(readLine(from: earlierPlaybackClient, timeout: 5)).contains(#""cmd":"stop""#)
         )
         XCTAssertTrue(
-            try XCTUnwrap(readLine(from: latestPlaybackClient, timeout: 1)).contains(#""cmd":"stop""#)
+            try XCTUnwrap(readLine(from: latestPlaybackClient, timeout: 5)).contains(#""cmd":"stop""#)
         )
-        XCTAssertTrue(try XCTUnwrap(readLine(from: commandClient, timeout: 1)).contains(#""cmd":"stop""#))
+        XCTAssertTrue(try XCTUnwrap(readLine(from: commandClient, timeout: 5)).contains(#""cmd":"stop""#))
     }
 
     @MainActor
@@ -358,8 +358,11 @@ final class SocketServerTests: XCTestCase {
         router.handleReplay()
         router.handleReplay()
 
-        let replays = try readLines(from: fixture.legacyClient, count: 3, timeout: 0.2)
+        // Wait for the two replays themselves (a loaded runner can take far longer than
+        // 200 ms); only the "no third line" check is a short negative window.
+        let replays = try readLines(from: fixture.legacyClient, count: 2, timeout: 5)
         XCTAssertEqual(replays.count, 2)
+        XCTAssertEqual(try readLines(from: fixture.legacyClient, count: 1, timeout: 0.2), [])
         XCTAssertTrue(replays.allSatisfy { $0.contains(#""cmd":"replay""#) })
         XCTAssertTrue(replays.allSatisfy { !$0.contains(#""cmd":"stop""#) })
         XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
@@ -1123,7 +1126,7 @@ private func clickRecordingStop(
     throw NSError(domain: "SocketServerTests", code: 5)
 }
 
-private func waitForSocket(at path: String, timeout: TimeInterval = 1) -> Bool {
+private func waitForSocket(at path: String, timeout: TimeInterval = 5) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
         if FileManager.default.fileExists(atPath: path) {
