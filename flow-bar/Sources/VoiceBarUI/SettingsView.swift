@@ -214,20 +214,12 @@ struct SettingsHistoryRowModel: Equatable {
 
 private enum DictEditorField: Hashable {
     case search
-    case editTerm
-    case addVariant
 }
 
 private enum DictionaryCardLayout {
     static let headerHeight: CGFloat = 24
-    static let inlineControlHeight: CGFloat = 28
-    static let inlineFieldVerticalPadding: CGFloat = 5
-}
-
-enum SettingsDictionaryEditing {
-    static func isEditing(rowID: String, isEditable: Bool, activeRowID: String?) -> Bool {
-        isEditable && activeRowID == rowID
-    }
+    /// UI pass #19: the pencil and trash were 10–12 pt targets.
+    static let actionTarget: CGFloat = 24
 }
 
 struct SettingsVocabularyRevisionObserver: ViewModifier {
@@ -357,14 +349,9 @@ public struct SettingsView: View {
     @State private var dictionaryReloadQueued = false
     @State private var localEntries: [STTDictionaryEntry]
     @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
-    @State private var editingRowID: String?
-    @State private var editTermText = ""
-    @State private var addingVariantFor: String?
-    @State private var variantText = ""
+    /// The one Add/Edit sheet (nil = closed). Etan's 2.2.24 review #3: no inline box, no per-term misheard row.
+    @State private var termSheet: DictionaryTermEdit?
     @State private var pendingDeleteCanonical: String?
-    @State private var newTermText = ""
-    @State private var showingAddTerm = false
-    @State private var addTermDraft = STTVocabularyDraft(correct: "", wrong: "")
     @State private var relaySetupFeedback: String?
     @State private var relaySetupRunning = false
     @State private var shortcutCheckRunning = false
@@ -445,7 +432,6 @@ public struct SettingsView: View {
         initialDictionarySearch: String = "",
         initialAdvancedExpanded: Bool = false,
         initialDictionaryPreview: STTVocabularyPreview? = nil,
-        initialAddingVariantFor: String? = nil,
         initialIncludedTermsExpanded: Bool = false
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -511,7 +497,6 @@ public struct SettingsView: View {
         _selectedTab = State(initialValue: initialTab)
         _dictionarySearch = State(initialValue: initialDictionarySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
-        _addingVariantFor = State(initialValue: initialAddingVariantFor)
         _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         _askHistoryDayGroups = State(initialValue: initialAskHistoryPage?.groups ?? [])
@@ -1463,8 +1448,7 @@ public struct SettingsView: View {
                 }
                 searchRow
                 Button {
-                    addTermDraft = STTVocabularyDraft(correct: "", wrong: "")
-                    showingAddTerm = true
+                    termSheet = DictionaryTermEdit()
                 } label: {
                     Label("Add term", systemImage: "plus")
                 }
@@ -1540,19 +1524,14 @@ public struct SettingsView: View {
                 .padding(18)
             }
         }
-        .sheet(isPresented: $showingAddTerm) {
-            DictionaryAddSheetView(draft: addTermDraft, allowTermOnly: true, onSave: { draft in
-                if draft.trimmedWrong.isEmpty {
-                    newTermText = draft.trimmedCorrect
-                    commitNewTerm()
-                } else {
-                    variantText = draft.trimmedWrong
-                    addingVariantFor = draft.trimmedCorrect
-                    saveVariant(draft.trimmedCorrect)
-                }
-                showingAddTerm = false
-            }, onCancel: { showingAddTerm = false })
+        .sheet(item: $termSheet) { edit in
+            DictionaryAddSheetView(edit: edit, onSave: { saved in
+                saveTermSheet(saved)
+            }, onCancel: { termSheet = nil })
                 .frame(width: 420)
+        }
+        .onAppear {
+            resetDictionaryEditors()
         }
         .onChange(of: localEntries) { _, entries in
             let bundled = dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }
@@ -1582,168 +1561,59 @@ public struct SettingsView: View {
         rowID: String,
         isEditable: Bool = true
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 4) {
             dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
-            if Self.showsVariantRow(for: entry, isEditable: isEditable) {
-                Divider()
-                variantChips(entry, isEditable: isEditable)
+            if !entry.variants.isEmpty {
+                Text(Self.variantSummary(entry.variants))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(Self.variantSummary(entry.variants))
             }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            if isEditable { termSheet = DictionaryTermEdit(original: entry) }
+        }
     }
 
-    /// Your terms always keep the "misheard as…" row; a read-only built-in term shows it only when it has
-    /// variants, so a bare included term draws no empty band.
-    static func showsVariantRow(for entry: STTDictionaryEntry, isEditable: Bool) -> Bool {
-        isEditable || !entry.variants.isEmpty
+    /// A term's misheard spellings on one quiet line under it, only when it has some.
+    static func variantSummary(_ variants: [String]) -> String {
+        "misheard as " + variants.joined(separator: ", ")
     }
 
-    @ViewBuilder
     private func dictionaryEntryHeader(
         _ entry: STTDictionaryEntry,
         rowID: String,
         isEditable: Bool
     ) -> some View {
-        if SettingsDictionaryEditing.isEditing(
-            rowID: rowID, isEditable: isEditable, activeRowID: editingRowID
-        ) {
-            VStack(alignment: .leading, spacing: 10) {
-                TextField("Term", text: $editTermText)
-                    .dictionaryTextField()
-                    .focused($focusedEditorField, equals: .editTerm)
-                    .onSubmit { saveTermRename(entry.canonical) }
-                    .frame(maxWidth: .infinity)
-
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button("Cancel") {
-                        cancelTermRename()
-                    }
-                    .keyboardShortcut(.cancelAction)
-                    Button("Save") {
-                        saveTermRename(entry.canonical)
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(editTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .controlSize(.regular)
-            }
-        } else {
-            HStack(spacing: 8) {
-                Text(entry.canonical)
-                    .font(.headline)
-                Spacer()
-                if isEditable {
-                    if pendingDeleteCanonical == entry.canonical {
-                        deleteDictionaryEntryButton(entry.canonical)
-                    } else {
-                        Button {
-                            beginTermRename(rowID: rowID, canonical: entry.canonical)
-                        } label: {
-                            Image(systemName: "pencil")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Edit term")
-                        .accessibilityLabel("Edit term \(entry.canonical)")
-                        deleteDictionaryEntryButton(entry.canonical)
-                    }
-                }
-            }
-            .frame(minHeight: DictionaryCardLayout.headerHeight)
-        }
-    }
-
-    private func variantChips(
-        _ entry: STTDictionaryEntry,
-        isEditable: Bool
-    ) -> some View {
-        FlowLayout(spacing: 8) {
-            ForEach(entry.variants, id: \.self) { variant in
-                HStack(spacing: 6) {
-                    Text(variant)
-                    if isEditable {
-                        Button {
-                            SettingsDictionaryMutations.removeVariant(
-                                canonical: entry.canonical,
-                                variant: variant,
-                                localEntries: &localEntries,
-                                onRemoveVocabularyAlias: onRemoveVocabularyAlias
-                            )
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Remove misheard spelling \(variant)")
-                        .accessibilityLabel("Remove variant \(variant)")
-                    }
-                }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(Color(nsColor: .quaternaryLabelColor).opacity(0.24))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-            }
+        HStack(spacing: 4) {
+            Text(entry.canonical)
+                .font(.headline)
+            Spacer()
             if isEditable {
-                if addingVariantFor == entry.canonical {
-                    addVariantInlineEditor(entry)
+                if pendingDeleteCanonical == entry.canonical {
+                    deleteDictionaryEntryButton(entry.canonical)
                 } else {
-                    addVariantButton(entry.canonical)
+                    Button {
+                        pendingDeleteCanonical = nil
+                        termSheet = DictionaryTermEdit(original: entry)
+                    } label: {
+                        Image(systemName: "pencil")
+                            .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Edit term")
+                    .accessibilityLabel("Edit term \(entry.canonical)")
+                    deleteDictionaryEntryButton(entry.canonical)
                 }
             }
         }
-    }
-
-    private func addVariantButton(_ canonical: String) -> some View {
-        Button {
-            addingVariantFor = canonical
-            variantText = ""
-            focusedEditorField = .addVariant
-        } label: {
-            Label("misheard as…", systemImage: "plus")
-                .padding(.vertical, 5)
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
-        .accessibilityLabel("Add misheard variant for \(canonical)")
-    }
-
-    private func addVariantInlineEditor(_ entry: STTDictionaryEntry) -> some View {
-        HStack(spacing: 5) {
-            TextField("Misheard spelling", text: $variantText)
-                .dictionaryTextField()
-                .focused($focusedEditorField, equals: .addVariant)
-                .onSubmit { saveVariant(entry.canonical) }
-                .onExitCommand {
-                    addingVariantFor = nil
-                    variantText = ""
-                }
-                .padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)
-                .padding(.horizontal, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(addVariantInputFill)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.accentColor, lineWidth: 1.5)
-                )
-                .frame(width: 180)
-                .frame(height: DictionaryCardLayout.inlineControlHeight)
-            Button("Cancel") {
-                addingVariantFor = nil
-                variantText = ""
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .frame(height: DictionaryCardLayout.inlineControlHeight)
-            Button("Add") {
-                saveVariant(entry.canonical)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .frame(height: DictionaryCardLayout.inlineControlHeight)
-            .disabled(variantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
+        .frame(minHeight: DictionaryCardLayout.headerHeight)
     }
 
     @ViewBuilder
@@ -1775,20 +1645,14 @@ public struct SettingsView: View {
                 )
             } label: {
                 Image(systemName: "trash")
+                    .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.red)
             .help("Delete term")
             .accessibilityLabel("Delete term \(canonical)")
         }
-    }
-
-    private func commitNewTerm() {
-        SettingsDictionaryMutations.commitNewTerm(
-            newTermText: &newTermText,
-            localEntries: &localEntries,
-            onAddPromptTerm: onAddPromptTerm
-        )
     }
 
     // MARK: - Helpers
@@ -2080,10 +1944,25 @@ public struct SettingsView: View {
     }
 
     private var hasPendingDictionaryEdit: Bool {
-        editingRowID != nil ||
-            addingVariantFor != nil ||
-            pendingDeleteCanonical != nil ||
-            !newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        termSheet != nil || pendingDeleteCanonical != nil
+    }
+
+    /// Arriving on the tab never finds an editor already open (UI pass #17: the first row was).
+    private func resetDictionaryEditors() {
+        termSheet = nil
+        pendingDeleteCanonical = nil
+    }
+
+    private func saveTermSheet(_ edit: DictionaryTermEdit) {
+        SettingsDictionaryMutations.apply(
+            edit,
+            localEntries: &localEntries,
+            onAddPromptTerm: onAddPromptTerm,
+            onRemovePromptTerm: onRemovePromptTerm,
+            onAddVocabularyAlias: onAddVocabularyAlias,
+            onRemoveVocabularyAlias: onRemoveVocabularyAlias
+        )
+        termSheet = nil
     }
 
     private func loadDictionaryPreview() {
@@ -2132,43 +2011,6 @@ public struct SettingsView: View {
         return "\(title) (\(matches) of \(count))"
     }
 
-    private func beginTermRename(rowID: String, canonical: String) {
-        editingRowID = rowID
-        editTermText = canonical
-        pendingDeleteCanonical = nil
-        focusedEditorField = .editTerm
-    }
-
-    private func cancelTermRename() {
-        editingRowID = nil
-        editTermText = ""
-        focusedEditorField = nil
-    }
-
-    private func saveTermRename(_ canonical: String) {
-        SettingsDictionaryMutations.renameTerm(
-            canonical,
-            editText: &editTermText,
-            localEntries: &localEntries,
-            onAddPromptTerm: onAddPromptTerm,
-            onRemovePromptTerm: onRemovePromptTerm,
-            onAddVocabularyAlias: onAddVocabularyAlias
-        )
-        editingRowID = nil
-        focusedEditorField = nil
-    }
-
-    private func saveVariant(_ canonical: String) {
-        SettingsDictionaryMutations.addVariant(
-            canonical: canonical,
-            variantText: &variantText,
-            addingVariantFor: &addingVariantFor,
-            localEntries: &localEntries,
-            onAddVocabularyAlias: onAddVocabularyAlias
-        )
-        focusedEditorField = nil
-    }
-
     private func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
         selectedAnchorMode = mode
         if mode != .follow {
@@ -2176,13 +2018,49 @@ public struct SettingsView: View {
         }
         onSelectAnchorMode(mode)
     }
-
-    private var addVariantInputFill: Color {
-        Color(nsColor: .controlBackgroundColor)
-    }
 }
 
 enum SettingsDictionaryMutations {
+    /// Applies one Add/Edit sheet save through the existing single-step mutations (remove variants, rename,
+    /// add), and returns the canonical spelling the term ends up under, so the list can scroll to it.
+    @discardableResult
+    static func apply(
+        _ edit: DictionaryTermEdit,
+        localEntries: inout [STTDictionaryEntry],
+        onAddPromptTerm: (String) -> Void,
+        onRemovePromptTerm: (String) -> Void,
+        onAddVocabularyAlias: (String, String) -> Void,
+        onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
+    ) -> String? {
+        let correct = edit.trimmedCorrect
+        guard !correct.isEmpty else { return nil }
+        var canonical = correct
+        if let original = edit.original {
+            canonical = original.canonical
+            for variant in edit.removedVariants where original.variants.contains(variant) {
+                removeVariant(canonical: canonical, variant: variant, localEntries: &localEntries,
+                              onRemoveVocabularyAlias: onRemoveVocabularyAlias)
+            }
+            if correct != canonical {
+                var editText = correct
+                renameTerm(canonical, editText: &editText, localEntries: &localEntries,
+                           onAddPromptTerm: onAddPromptTerm, onRemovePromptTerm: onRemovePromptTerm,
+                           onAddVocabularyAlias: onAddVocabularyAlias)
+            }
+        } else if edit.trimmedWrong.isEmpty, !localEntries.contains(where: { sameCanonical($0.canonical, correct) }) {
+            var newTermText = correct
+            commitNewTerm(newTermText: &newTermText, localEntries: &localEntries, onAddPromptTerm: onAddPromptTerm)
+        }
+        let resolved = localEntries.first(where: { sameCanonical($0.canonical, correct) })?.canonical ?? correct
+        if !edit.trimmedWrong.isEmpty {
+            var variantText = edit.trimmedWrong
+            var pending: String? = resolved
+            addVariant(canonical: resolved, variantText: &variantText, addingVariantFor: &pending,
+                       localEntries: &localEntries, onAddVocabularyAlias: onAddVocabularyAlias)
+        }
+        return localEntries.first(where: { sameCanonical($0.canonical, resolved) })?.canonical ?? resolved
+    }
+
     static func commitNewTerm(
         newTermText: inout String,
         localEntries: inout [STTDictionaryEntry],

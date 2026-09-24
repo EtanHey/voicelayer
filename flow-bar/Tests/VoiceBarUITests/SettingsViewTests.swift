@@ -44,7 +44,7 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
         let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1
 
-        XCTAssertGreaterThanOrEqual(visibleFieldCount, 3, "search, rename, and variant fields need visible styling")
+        XCTAssertEqual(visibleFieldCount, 1, "the tab keeps only search; rename and variants live in the sheet (R4/D1)")
         let sheetURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift")
@@ -76,14 +76,18 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
-    /// A read-only built-in term with no misheard spellings has nothing to show under its name, so it must not
-    /// draw an empty band and a second divider (seen in the P08 shots between two included terms).
-    func testReadOnlyTermWithoutVariantsHasNoVariantRow() {
-        let bare = STTDictionaryEntry(canonical: "AppKit", variants: [])
-        let withVariant = STTDictionaryEntry(canonical: "SwiftUI", variants: ["swift you eye"])
-        XCTAssertFalse(SettingsView.showsVariantRow(for: bare, isEditable: false))
-        XCTAssertTrue(SettingsView.showsVariantRow(for: withVariant, isEditable: false))
-        XCTAssertTrue(SettingsView.showsVariantRow(for: bare, isEditable: true), "your terms keep the misheard-as add")
+    /// R4/D1: a term's misheard spellings are one quiet line under it, only when it has some. There is no
+    /// "+ misheard as…" row under every term any more (Etan's 2.2.24 review #3).
+    func testVariantSummaryIsOneQuietLineOnlyWhenThereAreVariants() throws {
+        let source = try settingsViewSource()
+        let card = try XCTUnwrap(source.functionBody(named: "dictionaryEntryCard"))
+
+        XCTAssertTrue(card.contains("if !entry.variants.isEmpty"))
+        XCTAssertTrue(card.contains(".lineLimit(1)"))
+        XCTAssertEqual(
+            SettingsView.variantSummary(["voice lair", "voice layer"]),
+            "misheard as voice lair, voice layer"
+        )
     }
 
     func testBundledDictionaryRowsHaveNoEditAffordance() throws {
@@ -92,46 +96,25 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(source.contains("ForEach(included, id: \\.rowID)"))
     }
 
-    func testSameNamePersonalEditDoesNotOpenBundledEditor() {
-        let entry = STTDictionaryEntry(canonical: "Shared", variants: [])
-        let bundled = STTDictionaryDisplayEntry(source: "bundled", entry: entry)
-        let personal = STTDictionaryDisplayEntry(source: "personal", entry: entry)
-
-        XCTAssertTrue(SettingsDictionaryEditing.isEditing(
-            rowID: personal.rowID, isEditable: personal.isPersonal, activeRowID: personal.rowID
-        ))
-        XCTAssertFalse(SettingsDictionaryEditing.isEditing(
-            rowID: bundled.rowID, isEditable: bundled.isPersonal, activeRowID: personal.rowID
-        ))
-    }
-
-    func testDictionaryCardsHaveVariantAddAffordance() throws {
+    /// A built-in row can't open the editor, by pencil or by double-click, even when a personal term shares
+    /// its name: the sheet is opened from the row's own entry, and only on editable rows.
+    func testOnlyYourTermsOpenTheEditSheet() throws {
         let source = try settingsViewSource()
+        let card = try XCTUnwrap(source.functionBody(named: "dictionaryEntryCard"))
+        let header = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
 
-        XCTAssertTrue(source.contains("addVariantButton"))
-        XCTAssertTrue(source.contains("misheard as…"))
-    }
-
-    func testVariantAddAffordanceUsesChipMatchingVerticalPadding() throws {
-        let source = try settingsViewSource()
-        let functionSource = try XCTUnwrap(source.functionBody(named: "addVariantButton"))
-
-        XCTAssertTrue(functionSource.contains(".padding(.vertical, 5)"))
+        XCTAssertTrue(card.contains("if isEditable { termSheet = DictionaryTermEdit(original: entry) }"))
+        let editable = try XCTUnwrap(header.range(of: "if isEditable {"))
+        let pencil = try XCTUnwrap(header.range(of: "termSheet = DictionaryTermEdit(original: entry)"))
+        XCTAssertLessThan(editable.lowerBound, pencil.lowerBound)
     }
 
     func testDictionaryTextActionsUseStyledButtons() throws {
         let source = try settingsViewSource()
-        let addVariantSource = try XCTUnwrap(source.functionBody(named: "addVariantInlineEditor"))
         let deleteButtonSource = try XCTUnwrap(source.functionBody(named: "deleteDictionaryEntryButton"))
-        let borderedCount = source.components(separatedBy: ".buttonStyle(.bordered)").count - 1
-        let prominentCount = source.components(separatedBy: ".buttonStyle(.borderedProminent)").count - 1
 
-        XCTAssertGreaterThanOrEqual(borderedCount, 2)
-        XCTAssertGreaterThanOrEqual(prominentCount, 2)
-        XCTAssertTrue(addVariantSource.contains("Button(\"Cancel\") {"))
-        XCTAssertTrue(addVariantSource.contains(".buttonStyle(.bordered)"))
-        XCTAssertTrue(addVariantSource.contains("Button(\"Add\") {"))
-        XCTAssertTrue(addVariantSource.contains(".buttonStyle(.borderedProminent)"))
+        XCTAssertTrue(deleteButtonSource.contains("Button(\"Cancel\") {"))
+        XCTAssertTrue(deleteButtonSource.contains(".buttonStyle(.bordered)"))
         XCTAssertTrue(deleteButtonSource
             .contains(
                 "Button(\"Delete?\", role: .destructive) {\n                SettingsDictionaryMutations.confirmDeleteTerm("
@@ -144,56 +127,12 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
         let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
         let deleteConfirmBranch = try XCTUnwrap(headerSource.range(of: "if pendingDeleteCanonical == entry.canonical"))
-        let editButton = headerSource.range(of: "beginTermRename(rowID: rowID, canonical: entry.canonical)")
+        let editButton = headerSource.range(of: "termSheet = DictionaryTermEdit(original: entry)")
 
         XCTAssertNotNil(editButton)
         XCTAssertTrue(
             try XCTUnwrap(editButton?.lowerBound) > deleteConfirmBranch.upperBound,
             "the edit pencil must only render outside the delete-confirm branch"
-        )
-    }
-
-    func testAddVariantInlineInputUsesOptionDAccentStyleAtRest() throws {
-        let source = try settingsViewSource()
-        let functionSource = try XCTUnwrap(source.functionBody(named: "addVariantInlineEditor"))
-
-        XCTAssertTrue(functionSource.contains(".padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)"))
-        XCTAssertTrue(functionSource.contains(".padding(.horizontal, 12)"))
-        XCTAssertTrue(functionSource.contains(".fill(addVariantInputFill)"))
-        XCTAssertTrue(functionSource.contains(".stroke(Color.accentColor, lineWidth: 1.5)"))
-        XCTAssertTrue(functionSource.contains("RoundedRectangle(cornerRadius: 8)"))
-    }
-
-    func testDictionaryEditUsesNativeAlignedActionRow() throws {
-        let source = try settingsViewSource()
-        let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
-
-        XCTAssertTrue(headerSource.contains("VStack(alignment: .leading, spacing: 10)"))
-        XCTAssertTrue(headerSource.contains("HStack(spacing: 8)"))
-        XCTAssertTrue(headerSource.contains("Spacer()"))
-        XCTAssertTrue(headerSource.contains("Button(\"Cancel\")"))
-        XCTAssertTrue(headerSource.contains("Button(\"Save\")"))
-        XCTAssertTrue(headerSource.contains(".keyboardShortcut(.cancelAction)"))
-        XCTAssertTrue(headerSource.contains(".keyboardShortcut(.defaultAction)"))
-        XCTAssertTrue(headerSource.contains(".controlSize(.regular)"))
-    }
-
-    func testAddVariantInlineInputAndButtonsShareHeight() throws {
-        let source = try settingsViewSource()
-        let functionSource = try XCTUnwrap(source.functionBody(named: "addVariantInlineEditor"))
-
-        XCTAssertTrue(source.contains("static let inlineControlHeight"))
-        XCTAssertTrue(functionSource.contains(".padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)"))
-        XCTAssertGreaterThanOrEqual(
-            functionSource.components(separatedBy: ".frame(height: DictionaryCardLayout.inlineControlHeight)")
-                .count - 1,
-            3,
-            "add-variant input, Add button, and Cancel button must be the same height"
-        )
-        XCTAssertGreaterThanOrEqual(
-            functionSource.components(separatedBy: ".controlSize(.small)").count - 1,
-            2,
-            "add-variant action buttons need compact macOS control sizing"
         )
     }
 
@@ -463,7 +402,11 @@ final class SettingsViewTests: XCTestCase {
     func testDictionaryAccessibilityAndRhythmPins() throws {
         let source = try settingsViewSource()
         XCTAssertTrue(source.contains(".accessibilityValue(includedTermsExpanded ? \"Expanded\" : \"Collapsed\")"))
-        XCTAssertTrue(source.contains(".onExitCommand {"))
+        // Esc closes the Add/Edit sheet (its Cancel is the cancel action); there is no inline editor any more.
+        let sheet = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift"))
+        XCTAssertTrue(sheet.contains(".keyboardShortcut(.cancelAction)"))
         XCTAssertTrue(source
             .contains(
                 "Image(systemName: includedTermsExpanded ? \"chevron.down\" : \"chevron.right\")\n                                .frame(width: 14)"
