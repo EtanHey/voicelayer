@@ -510,6 +510,9 @@ describe("stt-cleanup", () => {
       ["בגאו", "ב-Go"],
       ["מגאו", "מ-Go"],
       ["ובגאו", "וב-Go"],
+      // The context cue is rewritten (גאו → Go) before בק is gated; the
+      // gate must still see the cue the speaker said.
+      ["כתבתי גאו וגם בק", "כתבתי Go וגם Back"],
       ["פיגמה", "Figma"],
       ["ובפיגמה", "וב-Figma"],
       ["ריאקט נייטיב", "React Native"],

@@ -125,6 +125,29 @@ describe("rules-engine", () => {
       }
     });
 
+    it("keeps a capitalised article after an opening quote or paren", () => {
+      const cases: Array<[string, string, number]> = [
+        [
+          "double quote The question mark is wrong double quote",
+          '"The question mark is wrong"',
+          4,
+        ],
+        [
+          "open paren The question mark close paren",
+          "(The question mark)",
+          4,
+        ],
+      ];
+
+      for (const [raw, expected, commandWordCount] of cases) {
+        const cleaned = applyRules(raw);
+        expect(cleaned, raw).toBe(expected);
+        expect(wordCount(cleaned), raw).toBe(
+          wordCount(raw) - commandWordCount,
+        );
+      }
+    });
+
     it("still converts multi-word mark phrases when spoken as commands", () => {
       const cases: Array<[string, string, number]> = [
         ["end full stop", "End.", 2],

@@ -681,7 +681,11 @@ function markNounArticleBefore(text: string, start: number): boolean {
   return (
     head.trim() === "" ||
     /\n\s*$/.test(head) ||
-    /[.!?]["'\u2019)\]]?\s*$/.test(head)
+    /[.!?]["'\u2019)\]]?\s*$/.test(head) ||
+    // Whisper capitalises after an opening quote or paren the same way it
+    // does after a newline. "double quote The question mark" is a noun;
+    // "option A question mark" still has a letter, not a delimiter, in head.
+    /["'`\u201C(\[{]\s*$/.test(head)
   );
 }
 
@@ -1239,7 +1243,13 @@ function applyAliases(
   const lowerResult = result.toLowerCase();
   for (const [fromLower, pattern, to, prefixMode] of cached.patterns) {
     if (!lowerResult.includes(fromLower)) continue;
-    if (shouldApplyAlias && !shouldApplyAlias(fromLower, result)) continue;
+    // Gate on what the speaker said as well as the rewritten text: an
+    // earlier alias (גאו → Go) can rewrite away the cue a later one needs.
+    if (
+      shouldApplyAlias &&
+      !shouldApplyAlias(fromLower, text) &&
+      !shouldApplyAlias(fromLower, result)
+    ) continue;
     result = result.replace(pattern, (_match, prefix?: string) => {
       if (!prefix || prefixMode === "plain") return to;
       return prefixMode === "separate-prefix"
