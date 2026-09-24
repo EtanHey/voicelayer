@@ -200,12 +200,10 @@ final class SettingsViewTests: XCTestCase {
     func testDictionaryDoesNotRenderOldSplitSections() throws {
         let source = try settingsViewSource()
 
-        // AIDEV-NOTE: General's two approved disclosures (spec §7) are the only DisclosureGroups allowed;
-        // the Dictionary must not bring back the old collapsible split sections.
-        let otherDisclosures = source
-            .replacingOccurrences(of: "DisclosureGroup(\"All permissions granted\"", with: "")
-            .replacingOccurrences(of: "DisclosureGroup(\"Advanced\"", with: "")
-        XCTAssertFalse(otherDisclosures.contains("DisclosureGroup"))
+        // AIDEV-NOTE: Settings has no stock DisclosureGroup at all: General's Advanced uses the
+        // full-row SettingsDisclosureRow, and the Dictionary must not bring back the old
+        // collapsible split sections.
+        XCTAssertFalse(source.contains("DisclosureGroup"))
         XCTAssertFalse(source.contains("Prompt Terms"))
         XCTAssertFalse(source.contains("Corrections"))
     }

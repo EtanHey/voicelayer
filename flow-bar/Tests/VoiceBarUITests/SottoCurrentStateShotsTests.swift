@@ -172,6 +172,16 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         try shot("settings-general-advanced.png", "Settings General: Advanced F5 helper expanded",
                  settings(tab: .general, vocabulary: empty, advanced: true),
                  size: CGSize(width: 960, height: 740))
+        for (suffix, appearance) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
+            try shot("settings-general-advanced-installed\(suffix).png",
+                     "Settings General: Advanced expanded, F5 key helper installed (Reinstall, plain copy)",
+                     settings(tab: .general, vocabulary: empty, advanced: true, remapActive: true),
+                     size: CGSize(width: 960, height: 1180), appearance: appearance)
+            try shot("settings-general-permission-missing\(suffix).png",
+                     "Settings General: Input Monitoring missing (Open shown only on the missing row)",
+                     settings(tab: .general, vocabulary: empty, missingPermissions: [.inputMonitoring]),
+                     size: CGSize(width: 780, height: 620), appearance: appearance)
+        }
         try shot(
             "settings-dictionary-empty.png",
             "Settings Dictionary: empty",
@@ -351,6 +361,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         vocabulary: STTVocabularyPreview,
         search: String = "",
         advanced: Bool = false,
+        remapActive: Bool = false,
+        missingPermissions: [HotkeyPermission] = [],
         historyDetail: Bool = true,
         modelState: ModelsSettingsState = .loading,
         footerMode: VoiceMode = .idle
@@ -360,7 +372,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             : SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
         let emptyAskFixture = SettingsAskHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
         let recordingPath = syntheticRecordingPath
-        return SettingsView(hotkeyEnabled: true, missingPermissions: [],
+        return SettingsView(hotkeyEnabled: true, missingPermissions: missingPermissions,
                             availableDevices: { [MicrophoneDevice(id: "fixture-mic", name: "Fixture Microphone")] },
                             selectedDeviceID: { "fixture-mic" }, onSelectDevice: { _ in },
                             prioritySnapshot: {
@@ -382,6 +394,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                             modelsStatus: { modelState }, onRefreshModelsStatus: {},
                             onSelectResidency: { _ in },
                             vocabularyPreview: { vocabulary }, vocabularyRevision: { 0 },
+                            isHotkeyRemapActive: { remapActive },
                             lastDictationEntry: {
                                 RecentTranscriptionEntry(text: "Synthetic dictation for visual review.",
                                                          recordingPath: recordingPath)
