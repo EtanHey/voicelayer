@@ -110,4 +110,106 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
         XCTAssertNil(snapshot.reorderedUIDs(moving: 2, by: -1))
         XCTAssertNil(snapshot.reorderedUIDs(moving: 1, by: 1))
     }
+
+    // MARK: - Etan's 2.2.24 review #5: "make default" on click, or drag to reorder, instead of up/up/up arrows
+
+    private var threeMicsAndAHiddenAggregate: MicrophonePrioritySnapshot {
+        MicrophonePrioritySnapshot(rows: [
+            .init(uid: "mic-a", deviceID: "1", label: "Wireless Mic Rx", isConnected: true),
+            .init(uid: "CADefaultDeviceAggregate-7", deviceID: "2", label: "System Audio", isConnected: true),
+            .init(uid: "mic-b", deviceID: "3", label: "MacBook Pro Microphone", isConnected: true),
+            .init(uid: "mic-c", deviceID: nil, label: "AirPods", isConnected: false),
+        ], nextDeviceName: "Wireless Mic Rx", nextDeviceUID: "mic-a", nextDeviceID: "1")
+    }
+
+    func testMakeDefaultMovesOneRowToTheTopInOneStepAndKeepsTheRestInOrder() {
+        let snapshot = threeMicsAndAHiddenAggregate
+        XCTAssertEqual(snapshot.makingDefaultUIDs(at: 2), [
+            "mic-c", "mic-a", "mic-b", "CADefaultDeviceAggregate-7",
+        ], "one click, not two swaps; hidden devices are written after the visible ones")
+        XCTAssertEqual(snapshot.makingDefaultUIDs(at: 1), ["mic-b", "mic-a", "mic-c", "CADefaultDeviceAggregate-7"])
+        XCTAssertNil(snapshot.makingDefaultUIDs(at: 0), "the first row is already the default")
+        XCTAssertNil(snapshot.makingDefaultUIDs(at: 3), "out of range")
+        XCTAssertNil(snapshot.makingDefaultUIDs(at: -1), "a negative index is refused, not trapped (#140 Macroscope)")
+    }
+
+    func testMakeDefaultRefusesAUIDlessRow() {
+        let snapshot = MicrophonePrioritySnapshot(rows: [
+            .init(uid: "mic-a", deviceID: "1", label: "A", isConnected: true),
+            .init(uid: nil, deviceID: "9", label: "No UID", isConnected: true),
+        ], nextDeviceName: "A")
+        XCTAssertNil(snapshot.makingDefaultUIDs(at: 1))
+    }
+
+    func testDragUsesOnMoveIndicesAndKeepsHiddenDevicesLast() {
+        let snapshot = threeMicsAndAHiddenAggregate
+        // SwiftUI onMove: destination is the index *before which* the item lands, in pre-move indices.
+        XCTAssertEqual(snapshot.movingVisibleUIDs(from: IndexSet(integer: 0), to: 3), [
+            "mic-b", "mic-c", "mic-a", "CADefaultDeviceAggregate-7",
+        ])
+        XCTAssertEqual(snapshot.movingVisibleUIDs(from: IndexSet(integer: 2), to: 0), [
+            "mic-c", "mic-a", "mic-b", "CADefaultDeviceAggregate-7",
+        ])
+        XCTAssertEqual(
+            snapshot.movingVisibleUIDs(from: IndexSet(integer: 1), to: 2),
+            nil,
+            "a no-op move writes nothing"
+        )
+        XCTAssertNil(snapshot.movingVisibleUIDs(from: IndexSet(integer: -1), to: 0), "a negative source is refused")
+    }
+
+    /// #140 Macroscope (Medium): rows(for:) always puts UID-less devices last, but the public init can be fed
+    /// [A, B, no-UID, C]. A reorder must never drop C from the saved order.
+    func testAUIDRowAfterAUIDlessRowIsKeptWhenReordering() {
+        let snapshot = MicrophonePrioritySnapshot(rows: [
+            .init(uid: "mic-a", deviceID: "1", label: "A", isConnected: true),
+            .init(uid: "mic-b", deviceID: "2", label: "B", isConnected: true),
+            .init(uid: nil, deviceID: "9", label: "No UID", isConnected: true),
+            .init(uid: "mic-c", deviceID: "3", label: "C", isConnected: true),
+            .init(uid: "CADefaultDeviceAggregate-7", deviceID: "8", label: "System Audio", isConnected: true),
+        ], nextDeviceName: "A")
+
+        XCTAssertEqual(snapshot.makingDefaultUIDs(at: 1), ["mic-b", "mic-a", "mic-c", "CADefaultDeviceAggregate-7"])
+    }
+
+    func testDragNeverPlacesAMicBelowAUIDlessRow() {
+        let snapshot = MicrophonePrioritySnapshot(rows: [
+            .init(uid: "mic-a", deviceID: "1", label: "A", isConnected: true),
+            .init(uid: "mic-b", deviceID: "2", label: "B", isConnected: true),
+            .init(uid: nil, deviceID: "9", label: "No UID", isConnected: true),
+        ], nextDeviceName: "A")
+        XCTAssertEqual(snapshot.movingVisibleUIDs(from: IndexSet(integer: 0), to: 3), ["mic-b", "mic-a"])
+        XCTAssertNil(snapshot.movingVisibleUIDs(from: IndexSet(integer: 2), to: 0), "a UID-less row cannot move")
+    }
+
+    /// P07 R2 invariant: after either gesture the saved order resolves to the new visible row 0, even with a
+    /// hidden aggregate saved first.
+    func testMakeDefaultAndDragBothResolveToTheNewFirstVisibleMic() throws {
+        let devices = [
+            MicrophoneDevice(id: "aggregate", name: "System Audio", uid: "CADefaultDeviceAggregate-7"),
+            MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone", uid: "mic-a"),
+            MicrophoneDevice(id: "usb", name: "USB Microphone", uid: "mic-b"),
+            MicrophoneDevice(id: "rx", name: "Wireless Mic Rx", uid: "mic-c"),
+        ]
+        let suiteName = "r4-g1-make-default-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let priority = MicrophoneDevicePriority(defaults: defaults)
+        priority.observe(devices)
+
+        func snapshot() -> MicrophonePrioritySnapshot {
+            MicrophonePrioritySnapshot(rows: priority.rows(for: devices), nextDeviceName: nil)
+        }
+        let madeDefault = try XCTUnwrap(snapshot().makingDefaultUIDs(at: 2))
+        priority.replacePreferredUIDs(madeDefault, observing: devices)
+        XCTAssertEqual(snapshot().visibleRows.first?.uid, "mic-c")
+        XCTAssertEqual(priority.resolveDeviceID(in: devices, fallbackDeviceID: "aggregate"), "rx")
+        XCTAssertEqual(priority.preferredUIDs.last, "CADefaultDeviceAggregate-7")
+
+        let dragged = try XCTUnwrap(snapshot().movingVisibleUIDs(from: IndexSet(integer: 1), to: 0))
+        priority.replacePreferredUIDs(dragged, observing: devices)
+        XCTAssertEqual(snapshot().visibleRows.first?.uid, "mic-a")
+        XCTAssertEqual(priority.resolveDeviceID(in: devices, fallbackDeviceID: "aggregate"), "built-in")
+        XCTAssertEqual(priority.preferredUIDs.last, "CADefaultDeviceAggregate-7")
+    }
 }

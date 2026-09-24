@@ -169,6 +169,18 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                  "Settings General: sidebar footer while an agent speaks, light",
                  settings(tab: .general, vocabulary: empty, footerMode: .speaking),
                  size: CGSize(width: 780, height: 620), appearance: .aqua)
+        let threeMics: [MicrophonePriorityRow] = [
+            .init(uid: "fixture-rx", deviceID: "1", label: "Wireless Mic Rx", isConnected: true),
+            .init(uid: "fixture-built-in", deviceID: "2", label: "MacBook Pro Microphone", isConnected: true),
+            .init(uid: "fixture-airpods", deviceID: nil, label: "AirPods", isConnected: false),
+            .init(uid: "CADefaultDeviceAggregate-fixture", deviceID: "9", label: "Virtual Audio", isConnected: true),
+        ]
+        for (suffix, appearance) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
+            try shot("settings-general-mic-priority\(suffix).png",
+                     "Settings General: microphone priority (Default badge, Make default, drag handles)",
+                     settings(tab: .general, vocabulary: empty, micRows: threeMics),
+                     size: CGSize(width: 780, height: 1000), appearance: appearance)
+        }
         try shot("settings-general-advanced.png", "Settings General: Advanced F5 helper expanded",
                  settings(tab: .general, vocabulary: empty, advanced: true),
                  size: CGSize(width: 960, height: 740))
@@ -363,6 +375,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         advanced: Bool = false,
         remapActive: Bool = false,
         missingPermissions: [HotkeyPermission] = [],
+        micRows: [MicrophonePriorityRow]? = nil,
         historyDetail: Bool = true,
         modelState: ModelsSettingsState = .loading,
         footerMode: VoiceMode = .idle
@@ -376,7 +389,12 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                             availableDevices: { [MicrophoneDevice(id: "fixture-mic", name: "Fixture Microphone")] },
                             selectedDeviceID: { "fixture-mic" }, onSelectDevice: { _ in },
                             prioritySnapshot: {
-                                MicrophonePrioritySnapshot(rows: [
+                                if let micRows {
+                                    return MicrophonePrioritySnapshot(
+                                        rows: micRows, nextDeviceName: micRows.first?.label
+                                    )
+                                }
+                                return MicrophonePrioritySnapshot(rows: [
                                     .init(
                                         uid: "fixture-mic",
                                         deviceID: "fixture-mic",
