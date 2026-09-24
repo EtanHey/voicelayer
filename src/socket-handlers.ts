@@ -553,7 +553,12 @@ async function handleEffortCommand(
   }
   try {
     const modelStatus = await readWhisperModelStatus();
-    if (!reason && modelStatus.residency === "loaded" &&
+    if (!reason && modelStatus.configured_effort !== command.effort) {
+      // QA_VOICE_WHISPER_PERFORMANCE_EFFORT outranks the saved choice, so the
+      // relaunched server runs the override: say that, not "not ours".
+      reason = `Saved. QA_VOICE_WHISPER_PERFORMANCE_EFFORT=${modelStatus.configured_effort} ` +
+        "overrides it, so the model uses that until the override is removed.";
+    } else if (!reason && modelStatus.residency === "loaded" &&
         modelStatus.active_effort !== command.effort) {
       reason = "Saved. The running model server was not started by VoiceLayer, " +
         "so it keeps its current effort until it restarts.";

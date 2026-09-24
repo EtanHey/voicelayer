@@ -367,7 +367,10 @@ describe("socket residency command", () => {
       idle();
       spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange").mockImplementation(() => {}));
       spies.push(spyOn(server, "ensureServer").mockResolvedValue(8178));
-      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+      // The setting says fast (as the daemon reports after saving); the adopted server runs accurate.
+      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue({
+        ...loaded("accurate"), configured_effort: "fast",
+      }));
 
       const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-adopted" });
 
@@ -388,24 +391,49 @@ describe("socket residency command", () => {
       expect((ack as { reason?: string }).reason).toContain("whisper-server failed to start");
     });
 
-    test("rejects visibly and keeps the old effort when the old server will not stop", async () => {
+    for (const persisted of ["accurate", null] as const) {
+      test(`a stuck old server rejects and restores the saved effort (${persisted ?? "nothing saved"})`, async () => {
+        idle();
+        const restored: Array<string | null> = [];
+        spies.push(spyOn(performance, "getPersistedWhisperPerformanceEffort").mockReturnValue(persisted));
+        spies.push(spyOn(performance, "restorePersistedWhisperPerformanceEffort")
+          .mockImplementation((previous) => { restored.push(previous); }));
+        spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange")
+          .mockRejectedValue(new Error("the old model server did not stop")));
+        const ensure = spyOn(server, "ensureServer").mockResolvedValue(8178);
+        spies.push(ensure);
+        spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+
+        const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-stuck" });
+
+        expect(ack).toMatchObject({ outcome: "reject" });
+        expect((ack as { reason?: string }).reason).toContain("did not stop");
+        expect(restored).toEqual([persisted]);
+        expect(ensure).not.toHaveBeenCalled();
+      });
+    }
+
+    test("names the environment override when it, not the setting, decides the running effort", async () => {
       idle();
-      const saved: string[] = [];
-      spies.push(spyOn(performance, "getWhisperPerformanceEffort").mockReturnValue("accurate"));
-      spies.push(spyOn(performance, "setWhisperPerformanceEffort")
-        .mockImplementation((effort) => { saved.push(effort); }));
-      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange")
-        .mockRejectedValue(new Error("the old model server did not stop")));
-      const ensure = spyOn(server, "ensureServer").mockResolvedValue(8178);
-      spies.push(ensure);
-      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+      const saved = process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+      process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = "balanced";
+      try {
+        spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange").mockResolvedValue(undefined));
+        spies.push(spyOn(server, "ensureServer").mockResolvedValue(8178));
+        spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue({
+          ...loaded("accurate"), configured_effort: "balanced", active_effort: "balanced",
+        }));
 
-      const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-stuck" });
+        const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-override" });
 
-      expect(ack).toMatchObject({ outcome: "reject" });
-      expect((ack as { reason?: string }).reason).toContain("did not stop");
-      expect(saved).toEqual(["fast", "accurate"]);
-      expect(ensure).not.toHaveBeenCalled();
+        expect(ack).toMatchObject({ outcome: "accept" });
+        const reason = (ack as { reason?: string }).reason ?? "";
+        expect(reason).toContain("QA_VOICE_WHISPER_PERFORMANCE_EFFORT");
+        expect(reason).not.toContain("not started by VoiceLayer");
+      } finally {
+        if (saved === undefined) delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+        else process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = saved;
+      }
     });
 
     test("a failed reload restores the SAVED effort, never an env override (#142 r3 C)", async () => {
