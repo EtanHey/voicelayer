@@ -5,6 +5,9 @@
  * broadcast() to communicate state back to Voice Bar clients.
  */
 
+import { PROCESSING_ENV_VARS, setProcessingSetting } from "./processing-settings";
+import { readPolishControlsStatus } from "./polish-controls-status";
+import { ensureSTTPolishServer, stopSTTPolishServer } from "./stt-polish-server";
 import { existsSync, unlinkSync } from "fs";
 import {
   TTS_DISABLED_FILE,
@@ -389,6 +392,8 @@ export function handleSocketCommand(
       return handleEffortCommand(command);
     case "set_whisper_residency":
       return handleResidencyCommand(command);
+    case "set_processing_setting":
+      return handleProcessingSettingCommand(command);
     case "set_recording_hold":
       if (recordingState !== "recording") {
         return buildAck(command, "noop", "not recording");
@@ -568,6 +573,39 @@ async function handleEffortCommand(
   } finally {
     publishModelStatusEvent();
   }
+}
+
+/**
+ * Settings → Models → Processing (P1). The toggle applies from the next
+ * dictation. Rejected while busy (as effort is), so one transcription never
+ * mixes settings, and when the environment sets the flag, because the file
+ * could not change what the pipeline reads.
+ */
+function handleProcessingSettingCommand(
+  command: Extract<SocketCommand, { cmd: "set_processing_setting" }>,
+): AckEvent {
+  if (residencyBusy() || residencyLoadPending || whisperLifecycleGate.isInUse) {
+    const booking = isVoiceBooked();
+    return buildAck(command, "reject", booking.booked && !booking.ownedByUs
+      ? EXTERNAL_VOICE_SESSION_REASON : "busy");
+  }
+  const envVar = PROCESSING_ENV_VARS[command.key];
+  if (process.env[envVar] !== undefined) {
+    return buildAck(command, "reject", `set by ${envVar}`);
+  }
+  try {
+    setProcessingSetting(command.key, command.value);
+  } catch (error) {
+    return buildAck(command, "reject", vocabularyErrorReason(error));
+  }
+  if (command.key === "model_polish") {
+    // Off frees the local polish model; either way the server status is re-published.
+    if (!command.value) stopSTTPolishServer();
+    void ensureSTTPolishServer().catch((error: unknown) => {
+      console.error(`[voicelayer] polish server after toggle: ${vocabularyErrorReason(error)}`);
+    });
+  }
+  return { ...buildAck(command, "accept"), polish_controls: readPolishControlsStatus() };
 }
 
 function vocabularyErrorReason(error: unknown): string {
