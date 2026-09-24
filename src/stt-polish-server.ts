@@ -151,11 +151,18 @@ export async function ensureSTTPolishServer(
   const publishIfCurrent = (status: STTPolishServerStatus) =>
     generation === polishGeneration ? publishSTTPolishServerStatus(status) : status;
   if (polishLaunch) return polishLaunch.then(publishIfCurrent);
-  const launch = startAndWaitForPolishServer(endpoint, options, generation);
-  polishLaunch = launch.finally(() => {
-    if (polishLaunch === launch) polishLaunch = null;
+  // Compare against the TRACKED promise: a settled launch must be cleared, or a
+  // later forceRestart (failure recovery) would reuse its stale result and never
+  // relaunch (#146 round 3).
+  const tracked: Promise<STTPolishServerStatus> = startAndWaitForPolishServer(
+    endpoint,
+    options,
+    generation,
+  ).finally(() => {
+    if (polishLaunch === tracked) polishLaunch = null;
   });
-  return polishLaunch.then(publishIfCurrent);
+  polishLaunch = tracked;
+  return tracked.then(publishIfCurrent);
 }
 
 export function recoverDefaultSTTPolishServerAfterFailure(

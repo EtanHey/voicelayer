@@ -459,6 +459,28 @@ describe("stt-polish-server", () => {
       }
     });
 
+    it("relaunches after a failed start: a settled launch is not reused (#146 round 3)", async () => {
+      resetSTTPolishServerManagerForTests();
+      let spawns = 0;
+      const options = {
+        env: { QA_VOICE_STT_POLISH: "on" },
+        findBinary: () => "/tmp/mlx_lm.server",
+        isEndpointReady: async () => false,
+        spawn: () => { spawns++; return fakeProc(() => true).proc; },
+        appendEvent: () => {},
+        sleep: async () => {},
+        startupTimeoutMs: 20,
+        log: () => {},
+      };
+      try {
+        expect(await ensureSTTPolishServer(options)).toMatchObject({ status: "timeout" });
+        await ensureSTTPolishServer({ ...options, forceRestart: true });
+        expect(spawns).toBe(2);
+      } finally {
+        resetSTTPolishServerManagerForTests();
+      }
+    });
+
     it("escalates to SIGKILL when our polish server ignores SIGTERM", async () => {
       resetSTTPolishServerManagerForTests();
       const { signals, proc } = fakeProc((signal) => signal === "SIGKILL");
