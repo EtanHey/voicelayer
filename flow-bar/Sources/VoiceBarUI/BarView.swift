@@ -211,7 +211,6 @@ public struct BarView: View {
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     @State private var isHistoryPresented = false
-    @State private var isVocabularyPresented = false
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -295,9 +294,6 @@ public struct BarView: View {
         .onChange(of: isHistoryPresented) { _, _ in
             synchronizeLauncherRetention()
         }
-        .onChange(of: isVocabularyPresented) { _, _ in
-            synchronizeLauncherRetention()
-        }
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             presentationModel?.setReducedMotion(isEnabled)
         }
@@ -310,16 +306,6 @@ public struct BarView: View {
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
                 isHistoryPresented = false
-            }
-        }
-        .onChange(of: state.transcriptionVocabularyTerms.count) { _, count in
-            if count == 0, state.transcriptionVocabularyAliases.isEmpty {
-                isVocabularyPresented = false
-            }
-        }
-        .onChange(of: state.transcriptionVocabularyAliases.count) { _, count in
-            if count == 0, state.transcriptionVocabularyTerms.isEmpty {
-                isVocabularyPresented = false
             }
         }
     }
@@ -352,7 +338,7 @@ public struct BarView: View {
     }
 
     private var keepsLauncherMounted: Bool {
-        isHistoryPresented || isVocabularyPresented
+        isHistoryPresented
     }
 
     private func synchronizeLauncherRetention() {
@@ -593,7 +579,6 @@ public struct BarView: View {
         if newMode != .idle,
            !(newMode == .transcribing && state.isHistoryRetranscriptionPending) {
             isHistoryPresented = false
-            isVocabularyPresented = false
         }
     }
 
@@ -817,90 +802,6 @@ public struct BarView: View {
                 }
             }
             .frame(width: 320, height: 220)
-        }
-        .padding(14)
-    }
-
-    private var vocabularyButton: some View {
-        notchButton(icon: "text.book.closed", accessibilityLabel: "Dictionary") {
-            isVocabularyPresented.toggle()
-        }
-        .popover(isPresented: $isVocabularyPresented, arrowEdge: .top) {
-            vocabularyPopover
-        }
-    }
-
-    var vocabularyPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Transcription Vocabulary")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-
-            Text("Built-ins plus Wispr-derived hints used by local STT cleanup.")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if !state.transcriptionVocabularyTerms.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Preserved Terms (\(state.transcriptionVocabularyTerms.count))")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
-                                    id: \.offset) { index, item in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    if index == 0 {
-                                        Text("Highest priority")
-                                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Text(item)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.primary)
-                                        .textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 6)
-
-                                if index < state.transcriptionVocabularyTerms.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        }
-                    }
-
-                    if !state.transcriptionVocabularyAliases.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Learned Corrections (\(state.transcriptionVocabularyAliases.count))")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
-                                    id: \.offset) { index, alias in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(alias.to)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.primary)
-                                    Text(alias.from)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                        .textSelection(.enabled)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 6)
-
-                                if index < state.transcriptionVocabularyAliases.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(width: 320, height: 260)
         }
         .padding(14)
     }

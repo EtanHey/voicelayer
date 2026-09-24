@@ -467,10 +467,18 @@ final class BarViewClickabilityTests: XCTestCase {
         let source = try barViewSource()
 
         XCTAssertTrue(source
-            .contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented || isVocabularyPresented"))
-        XCTAssertTrue(source.contains("vocabularyButton"))
-        XCTAssertTrue(source.contains("accessibilityLabel: \"Dictionary\""))
+            .contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented\n    }"))
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
+    }
+
+    /// Spec §4: the Transcription Vocabulary notch panel is removed; the gear opens Settings › Dictionary.
+    func testNotchNoLongerCarriesTheVocabularyPanel() throws {
+        let source = try barViewSource()
+
+        XCTAssertFalse(source.contains("vocabularyButton"))
+        XCTAssertFalse(source.contains("vocabularyPopover"))
+        XCTAssertFalse(source.contains("isVocabularyPresented"))
+        XCTAssertFalse(source.contains("accessibilityLabel: \"Dictionary\""))
     }
 
     func testSettingsButtonMountsOnlyInHoveredLauncher() throws {

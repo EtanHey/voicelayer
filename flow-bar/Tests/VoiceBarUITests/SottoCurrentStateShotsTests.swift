@@ -114,12 +114,9 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             RecentTranscriptionEntry(text: "A synthetic recent transcription."),
             RecentTranscriptionEntry(text: "Another short sample with no personal content."),
         ]
-        panelState.transcriptionVocabularyTerms = ["SwiftUI", "whisper.cpp"]
         let panel = BarView(state: panelState, commandRouter: router)
         try shot("notch-recent.png", "Notch panel: Recent Transcriptions", panel.historyPopover,
                  size: CGSize(width: 348, height: 274))
-        try shot("notch-vocabulary.png", "Notch panel: Transcription Vocabulary", panel.vocabularyPopover,
-                 size: CGSize(width: 348, height: 314))
 
         let menu = PillContextMenuController()
         menu.transcriptProvider = { "A synthetic recent transcription." }
@@ -249,6 +246,9 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         ] {
             for (name, mode, hover) in [
                 ("idle", VoiceMode.idle, false),
+                // The hovered launcher (Mic · History · Settings). The per-button hover circle needs a
+                // live pointer; the launcher layout itself follows state.isHovering.
+                ("idle-hover", .idle, true),
                 ("recording", .recording, false),
                 ("transcribing", .transcribing, false),
                 ("error", .error, false),
