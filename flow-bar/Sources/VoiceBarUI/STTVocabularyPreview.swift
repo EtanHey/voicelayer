@@ -423,10 +423,13 @@ final class STTVocabularySnapshotMirror: @unchecked Sendable {
 
     private let lock = NSLock()
     private var snapshot = Snapshot()
+    /// Publishes so far (tests: one vocabulary event must publish exactly one consistent snapshot).
+    private(set) var storeCount = 0
 
     func store(terms: [String], aliases: [STTVocabularyAliasPreview], displayEntries: [STTDictionaryDisplayEntry]?) {
         lock.lock()
         snapshot = Snapshot(terms: terms, aliases: aliases, displayEntries: displayEntries)
+        storeCount += 1
         lock.unlock()
     }
 

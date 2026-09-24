@@ -27,6 +27,17 @@ final class DictionaryReloadGateTests: XCTestCase {
         XCTAssertFalse(gate.editEnded(), "the clean load already brought the list up to date")
     }
 
+    /// #151 CodeRabbit: when the edit ends because a save/delete went to the daemon, reloading at once can read
+    /// the mirror before the daemon's update lands and briefly undo the edit. The daemon's revision bump reloads
+    /// anyway, so a sent mutation cancels the deferral; a cancelled edit still re-runs it.
+    func testASentMutationCancelsTheDeferredReload() {
+        var gate = SettingsView.DictionaryReloadGate()
+
+        XCTAssertFalse(gate.loadFinished(duringEdit: true))
+        gate.mutationSent()
+        XCTAssertFalse(gate.editEnded(), "the revision observer reloads once the daemon applied the edit")
+    }
+
     func testTheViewDefersAndReloadsThroughTheGate() throws {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -37,5 +48,7 @@ final class DictionaryReloadGateTests: XCTestCase {
         XCTAssertTrue(source.contains(".onChange(of: hasPendingDictionaryEdit)"))
         XCTAssertTrue(source.contains("if !pending, dictionaryReloadGate.editEnded()"))
         XCTAssertFalse(source.contains("guard !hasPendingDictionaryEdit else { return }"))
+        XCTAssertEqual(source.components(separatedBy: "dictionaryReloadGate.mutationSent()").count - 1, 2,
+                       "both the sheet save and the delete confirm cancel the deferral")
     }
 }

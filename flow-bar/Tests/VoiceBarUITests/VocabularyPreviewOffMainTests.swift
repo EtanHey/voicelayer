@@ -41,4 +41,23 @@ final class VocabularyPreviewOffMainTests: XCTestCase {
         wait(for: [read], timeout: 2)
         XCTAssertEqual(terms, ["A", "B"])
     }
+
+    /// #151 CodeRabbit: one vocabulary event sets three fields; publishing the mirror per field let a detached
+    /// read see new terms with old aliases. An event publishes exactly one consistent snapshot.
+    func testAVocabularyEventPublishesOneConsistentSnapshot() {
+        let state = VoiceState()
+        let before = state.vocabularyMirror.storeCount
+        state.handleEvent([
+            "type": "vocabulary",
+            "display_entries": [["row_id": "personal:VoiceLayer", "source": "personal", "canonical": "VoiceLayer",
+                                 "variants": ["voice later"]]],
+            "entries": [["canonical": "VoiceLayer", "variants": ["voice later"]]],
+        ])
+
+        XCTAssertEqual(state.vocabularyMirror.storeCount - before, 1)
+        XCTAssertEqual(
+            state.vocabularyPreviewOffMain().entries,
+            [STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice later"])]
+        )
+    }
 }

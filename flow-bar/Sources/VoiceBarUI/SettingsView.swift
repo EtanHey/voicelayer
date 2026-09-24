@@ -1751,6 +1751,7 @@ public struct SettingsView: View {
                     localEntries: &localEntries,
                     onRemovePromptTerm: onRemovePromptTerm
                 )
+                dictionaryReloadGate.mutationSent()
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
@@ -2097,6 +2098,12 @@ public struct SettingsView: View {
             return !duringEdit
         }
 
+        /// A save or delete went to the daemon as the edit ended: its revision bump reloads with fresh data, so a
+        /// deferred load must not run first and briefly undo the edit (#151 CodeRabbit).
+        mutating func mutationSent() {
+            reloadWhenEditEnds = false
+        }
+
         /// True (once) when a deferred reload must run now that the edit ended.
         mutating func editEnded() -> Bool {
             defer { reloadWhenEditEnds = false }
@@ -2115,6 +2122,7 @@ public struct SettingsView: View {
     }
 
     private func saveTermSheet(_ edit: DictionaryTermEdit) {
+        let entriesBefore = localEntries
         let saved = SettingsDictionaryMutations.apply(
             edit,
             localEntries: &localEntries,
@@ -2123,6 +2131,7 @@ public struct SettingsView: View {
             onAddVocabularyAlias: onAddVocabularyAlias,
             onRemoveVocabularyAlias: onRemoveVocabularyAlias
         )
+        if localEntries != entriesBefore { dictionaryReloadGate.mutationSent() }
         termSheet = nil
         guard let saved else { return }
         let savedVariants = localEntries.first { $0.canonical == saved }?.variants ?? []
