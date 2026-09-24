@@ -364,7 +364,7 @@ public final class VoiceState {
         guard modelsSettingsState.availability == .available else { return }
         let reason = pendingResidencyID != nil
             ? (pendingResidencyTarget == .loaded ? "Loading model…" : "Unloading model…")
-            : Self.blocksModelsEffort(mode) ? (mode == .recording ? "Recording" : "Transcribing")
+            : Self.blocksModelsEffort(mode) ? ModelsSettingsState.busyReason(mode: mode)
             : modelsRecordingReason ?? (queueDepth > 0 ? "Playing back" : nil)
         modelsSettingsState = modelsSettingsState.settingBusy(
             modelsRecordingBusy || queueDepth > 0 || pendingResidencyID != nil || Self.blocksModelsEffort(mode),
@@ -1434,9 +1434,8 @@ public final class VoiceState {
         case "health":
             let status = ModelsSettingsState(healthEvent: event)
             modelsRecordingBusy = event["recording_state"] as? String != "idle"
-            modelsRecordingReason = (event["recording_state"] as? String).flatMap {
-                $0 == "recording" ? "Recording" : $0 == "transcribing" ? "Transcribing" : nil
-            }
+            modelsRecordingReason = (event["recording_state"] as? String)
+                .flatMap(ModelsSettingsState.busyReason(recordingState:))
             if let depth = event["queue_depth"] as? Int { queueDepth = max(0, depth) }
             modelsSettingsState = status
             refreshModelsBusy()
@@ -1611,7 +1610,7 @@ public final class VoiceState {
     private func synchronizeModelsSettingsState(from oldMode: VoiceMode, to newMode: VoiceMode) {
         if Self.blocksModelsEffort(newMode) {
             modelsSettingsState = modelsSettingsState.settingBusy(
-                true, reason: newMode == .recording ? "Recording" : "Transcribing"
+                true, reason: ModelsSettingsState.busyReason(mode: newMode)
             )
         } else if Self.blocksModelsEffort(oldMode) {
             modelsSettingsState = isConnected ? .loading : .unavailable

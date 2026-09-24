@@ -23,6 +23,28 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertTrue(commands.isEmpty)
     }
 
+    /// Spec §5 busy reasons carry the ellipsis on the runtime path, not only in the health initializer.
+    func testRuntimeBusyReasonsKeepTheEllipsis() {
+        let fromHealth = VoiceState()
+        fromHealth.setConnectionStatus(true)
+        var recordingHealth = Self.availableHealth
+        recordingHealth["recording_state"] = "recording"
+        fromHealth.handleEvent(recordingHealth)
+        XCTAssertEqual(fromHealth.modelsSettingsState.busyReason, "Recording…")
+        var transcribingHealth = Self.availableHealth
+        transcribingHealth["recording_state"] = "transcribing"
+        fromHealth.handleEvent(transcribingHealth)
+        XCTAssertEqual(fromHealth.modelsSettingsState.busyReason, "Transcribing…")
+
+        let fromMode = VoiceState()
+        fromMode.setConnectionStatus(true)
+        fromMode.handleEvent(Self.availableHealth)
+        fromMode.mode = .recording
+        XCTAssertEqual(fromMode.modelsSettingsState.busyReason, "Recording…")
+        fromMode.mode = .transcribing
+        XCTAssertEqual(fromMode.modelsSettingsState.busyReason, "Transcribing…")
+    }
+
     func testRecordingIdleEventClearsModelsBusyWithoutPolling() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)
