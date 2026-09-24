@@ -412,3 +412,27 @@ public struct DictionaryTermEdit: Equatable, Identifiable {
         !trimmedCorrect.isEmpty
     }
 }
+
+/// A thread-safe copy of VoiceState's vocabulary fields for the Dictionary's off-main load (D1-c / S1).
+final class STTVocabularySnapshotMirror: @unchecked Sendable {
+    struct Snapshot {
+        var terms: [String] = []
+        var aliases: [STTVocabularyAliasPreview] = []
+        var displayEntries: [STTDictionaryDisplayEntry]?
+    }
+
+    private let lock = NSLock()
+    private var snapshot = Snapshot()
+
+    func store(terms: [String], aliases: [STTVocabularyAliasPreview], displayEntries: [STTDictionaryDisplayEntry]?) {
+        lock.lock()
+        snapshot = Snapshot(terms: terms, aliases: aliases, displayEntries: displayEntries)
+        lock.unlock()
+    }
+
+    func load() -> Snapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return snapshot
+    }
+}

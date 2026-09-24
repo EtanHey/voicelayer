@@ -2418,31 +2418,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// Called off-main by the Settings Dictionary's detached load; reads VoiceState's lock-protected mirror
+    /// instead of hopping to main (fold-3 review S1).
     func currentVocabularyPreview() -> STTVocabularyPreview {
-        let snapshot: ([String], [STTVocabularyAliasPreview], [STTDictionaryDisplayEntry]?) = if Thread.isMainThread {
-            (
-                voiceState.transcriptionVocabularyTerms,
-                voiceState.transcriptionVocabularyAliases,
-                voiceState.transcriptionVocabularyDisplayEntries
-            )
-        } else {
-            DispatchQueue.main.sync {
-                (
-                    voiceState.transcriptionVocabularyTerms,
-                    voiceState.transcriptionVocabularyAliases,
-                    voiceState.transcriptionVocabularyDisplayEntries
-                )
-            }
-        }
-        return STTVocabularyPreview(
-            updatedAt: nil,
-            entries: STTVocabularyPreview(
-                updatedAt: nil,
-                promptTerms: snapshot.0,
-                aliases: snapshot.1
-            ).entries,
-            displayEntries: snapshot.2
-        )
+        voiceState.vocabularyPreviewOffMain()
     }
 
     private func presentAddToDictionarySheetFromSelection() {

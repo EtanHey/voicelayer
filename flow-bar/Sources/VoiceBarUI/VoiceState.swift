@@ -417,11 +417,36 @@ public final class VoiceState {
         refreshModelsBusy()
     }
 
+    /// A lock-protected copy of the three vocabulary fields, written on main by their `didSet` (and at the end of
+    /// init, where `didSet` does not run), so the Dictionary's detached load reads it without hopping to main.
+    @ObservationIgnored private let vocabularyMirror = STTVocabularySnapshotMirror()
+
+    private func syncVocabularyMirror() {
+        vocabularyMirror.store(
+            terms: transcriptionVocabularyTerms,
+            aliases: transcriptionVocabularyAliases,
+            displayEntries: transcriptionVocabularyDisplayEntries
+        )
+    }
+
+    /// The Dictionary tab's off-main vocabulary read (D1-c / fold-3 review S1). It used to hop to main with
+    /// `DispatchQueue.main.sync`, which deadlocks as soon as main waits synchronously on the load.
+    public nonisolated func vocabularyPreviewOffMain() -> STTVocabularyPreview {
+        let snapshot = vocabularyMirror.load()
+        return STTVocabularyPreview(
+            updatedAt: nil,
+            entries: STTVocabularyPreview(updatedAt: nil, promptTerms: snapshot.terms, aliases: snapshot.aliases)
+                .entries,
+            displayEntries: snapshot.displayEntries
+        )
+    }
+
     public private(set) var transcriptionVocabularyDisplayEntries: [STTDictionaryDisplayEntry]? {
         didSet {
             if oldValue != transcriptionVocabularyDisplayEntries {
                 transcriptionVocabularyRevision &+= 1
             }
+            syncVocabularyMirror()
         }
     }
 
@@ -432,6 +457,7 @@ public final class VoiceState {
             if oldValue != transcriptionVocabularyTerms {
                 transcriptionVocabularyRevision &+= 1
             }
+            syncVocabularyMirror()
             notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty)
         }
     }
@@ -441,6 +467,7 @@ public final class VoiceState {
             if oldValue != transcriptionVocabularyAliases {
                 transcriptionVocabularyRevision &+= 1
             }
+            syncVocabularyMirror()
             notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyAliases.isEmpty)
         }
     }
@@ -722,6 +749,7 @@ public final class VoiceState {
         transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
             transcriptionVocabularyAliasLoader()
         )
+        syncVocabularyMirror()
     }
 
     // MARK: - Commands
