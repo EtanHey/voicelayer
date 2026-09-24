@@ -553,6 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let barView = BarView(
             state: voiceState,
             commandRouter: commandRouter,
+            onOpenSettings: { [weak self] in self?.openSettingsWindow() },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
             includesPanelOutsets: true
