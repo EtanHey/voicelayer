@@ -2671,9 +2671,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             in: devices,
             fallbackDeviceID: MicrophoneDeviceManager.selectedInputDeviceID()
         )
+        let next = devices.first(where: { $0.id == selectedID })
         return MicrophonePrioritySnapshot(
             rows: microphonePriority.rows(for: devices),
-            nextDeviceName: devices.first(where: { $0.id == selectedID })?.name
+            nextDeviceName: next?.name,
+            nextDeviceUID: next?.uid?.trimmingCharacters(in: .whitespacesAndNewlines),
+            nextDeviceID: next?.id
         )
     }
 
