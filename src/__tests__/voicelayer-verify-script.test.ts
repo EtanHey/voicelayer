@@ -19,19 +19,24 @@ const scriptPath = join(repoRoot, "scripts", "voicelayer-verify.sh");
 let tempRoot = "";
 
 function run(command: string[], options: { env?: Record<string, string>; cwd?: string; input?: string } = {}) {
+  // AIDEV-NOTE: drop EVERY inherited GIT_* variable, not a denylist. A plain
+  // `git config` honours GIT_COMMON_DIR and GIT_CONFIG, and a caller exporting
+  // either (a git hook, a rebase --exec) sent this suite's "Test User" identity
+  // into the real repo's .git/config (2026-09-24).
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+  );
   const env = {
-    ...process.env,
+    ...inherited,
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
     ...options.env,
   };
-  delete env.GIT_DIR;
-  delete env.GIT_WORK_TREE;
-  delete env.GIT_INDEX_FILE;
-  delete env.GIT_PREFIX;
+  const cwd = options.cwd ?? tempRoot;
+  if (!cwd) throw new Error("run() needs a temp repo: tempRoot is not set");
 
   return Bun.spawnSync(command, {
-    cwd: options.cwd ?? tempRoot,
+    cwd,
     stdin: options.input ? new TextEncoder().encode(options.input) : undefined,
     stdout: "pipe",
     stderr: "pipe",
@@ -51,8 +56,8 @@ function initFakeRepo() {
     { mode: 0o755 },
   );
   run(["git", "init"]);
-  run(["git", "config", "user.email", "test@example.com"]);
-  run(["git", "config", "user.name", "Test User"]);
+  run(["git", "-C", tempRoot, "config", "--local", "user.email", "test@example.com"]);
+  run(["git", "-C", tempRoot, "config", "--local", "user.name", "Test User"]);
   writeFileSync(join(tempRoot, "README.md"), "fake\n");
   writeFileSync(
     join(tempRoot, ".gitignore"),
@@ -90,6 +95,43 @@ beforeEach(() => {
 
 afterEach(() => {
   if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
+});
+
+describe("the fake-repo helper stays inside its temp repo", () => {
+  // A stray `[user] Test User / test@example.com` landed in the REAL repo's
+  // .git/config (2026-09-24). A plain `git config` honours GIT_COMMON_DIR and
+  // GIT_CONFIG, so a caller that exports either (a git hook, a rebase --exec)
+  // redirects initFakeRepo()'s identity write into another repository.
+  test("initFakeRepo writes nothing to a repo named by GIT_COMMON_DIR or GIT_CONFIG", () => {
+    const victim = mkdtempSync(join(tmpdir(), "voicelayer-verify-victim-"));
+    const saved = { common: process.env.GIT_COMMON_DIR, config: process.env.GIT_CONFIG };
+    const realUser = () => text(run(["git", "config", "--local", "--get", "user.name"], { cwd: repoRoot }).stdout);
+    const realBefore = realUser();
+    try {
+      run(["git", "init", "-q", victim], { cwd: victim });
+      for (const [key, value] of [
+        ["GIT_COMMON_DIR", join(victim, ".git")],
+        ["GIT_CONFIG", join(victim, ".git", "config")],
+      ] as const) {
+        process.env[key] = value;
+        tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
+        initFakeRepo();
+        delete process.env[key];
+        const leaked = text(run(["git", "config", "--local", "--get", "user.name"], { cwd: victim }).stdout);
+        expect({ via: key, leaked }).toEqual({ via: key, leaked: "" });
+        expect(text(run(["git", "-C", tempRoot, "config", "--local", "--get", "user.name"]).stdout).trim())
+          .toBe("Test User");
+        rmSync(tempRoot, { recursive: true, force: true });
+      }
+      expect(realUser()).toBe(realBefore);
+    } finally {
+      if (saved.common === undefined) delete process.env.GIT_COMMON_DIR;
+      else process.env.GIT_COMMON_DIR = saved.common;
+      if (saved.config === undefined) delete process.env.GIT_CONFIG;
+      else process.env.GIT_CONFIG = saved.config;
+      rmSync(victim, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("voicelayer-verify.sh", () => {
