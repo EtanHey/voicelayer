@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
 import {
@@ -88,5 +88,40 @@ describe("processing settings (P1)", () => {
       smart_chunks: { source: "default", raw: null, effective: false },
       smart_boundaries: { source: "settings", raw: null, effective: true },
     });
+  });
+});
+
+describe("Polish off also stops the recording-start warm-up (#145 round 2)", () => {
+  test("warmPolishEndpoint makes no request when Polish is off", async () => {
+    const { warmPolishEndpoint } = await import("../stt-polish");
+    const realFetch = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const result = await warmPolishEndpoint(processingEnv({
+        ...fileEnv(JSON.stringify({ version: 1, model_polish: "off" })),
+        VOICELAYER_STT_POLISH_WARMUP: "1",
+        QA_VOICE_STT_POLISH_ENDPOINT: "http://127.0.0.1:59999",
+      }));
+      expect(result.status).toBe("skipped");
+      expect(requests).toBe(0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+describe("the settings file is replaced atomically (#145 round 2)", () => {
+  test("a write leaves only the settings file behind", () => {
+    const env = fileEnv();
+    setProcessingSetting("outro_gate", false, env);
+    setProcessingSetting("smart_chunks", true, env);
+    const path = env.VOICELAYER_PROCESSING_SETTINGS_PATH!;
+    const siblings = readdirSync(dir).filter((name) => name.startsWith(path.split("/").at(-1)!));
+    expect(siblings).toEqual([path.split("/").at(-1)!]);
+    expect(readProcessingSettings(env)).toEqual({ outro_gate: false, smart_chunks: true });
   });
 });
