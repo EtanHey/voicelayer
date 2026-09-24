@@ -1239,7 +1239,13 @@ function applyAliases(
   const lowerResult = result.toLowerCase();
   for (const [fromLower, pattern, to, prefixMode] of cached.patterns) {
     if (!lowerResult.includes(fromLower)) continue;
-    if (shouldApplyAlias && !shouldApplyAlias(fromLower, result)) continue;
+    // Gate on what the speaker said as well as the rewritten text: an
+    // earlier alias (גאו → Go) can rewrite away the cue a later one needs.
+    if (
+      shouldApplyAlias &&
+      !shouldApplyAlias(fromLower, text) &&
+      !shouldApplyAlias(fromLower, result)
+    ) continue;
     result = result.replace(pattern, (_match, prefix?: string) => {
       if (!prefix || prefixMode === "plain") return to;
       return prefixMode === "separate-prefix"
