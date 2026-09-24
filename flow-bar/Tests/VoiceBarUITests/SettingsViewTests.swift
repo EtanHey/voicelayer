@@ -44,10 +44,12 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
         let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1
 
-        XCTAssertGreaterThanOrEqual(
-            visibleFieldCount, 4,
-            "search + correct + transcribed + add-term fields must all be visible at rest"
-        )
+        XCTAssertGreaterThanOrEqual(visibleFieldCount, 3, "search, rename, and variant fields need visible styling")
+        let sheetURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift")
+        let sheetSource = try String(contentsOf: sheetURL)
+        XCTAssertEqual(sheetSource.components(separatedBy: ".dictionaryTextField()").count - 1, 2)
     }
 
     func testSearchFieldReadsAsSearchInput() throws {
@@ -74,10 +76,20 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
+    /// A read-only built-in term with no misheard spellings has nothing to show under its name, so it must not
+    /// draw an empty band and a second divider (seen in the P08 shots between two included terms).
+    func testReadOnlyTermWithoutVariantsHasNoVariantRow() {
+        let bare = STTDictionaryEntry(canonical: "AppKit", variants: [])
+        let withVariant = STTDictionaryEntry(canonical: "SwiftUI", variants: ["swift you eye"])
+        XCTAssertFalse(SettingsView.showsVariantRow(for: bare, isEditable: false))
+        XCTAssertTrue(SettingsView.showsVariantRow(for: withVariant, isEditable: false))
+        XCTAssertTrue(SettingsView.showsVariantRow(for: bare, isEditable: true), "your terms keep the misheard-as add")
+    }
+
     func testBundledDictionaryRowsHaveNoEditAffordance() throws {
         let source = try settingsViewSource()
-        XCTAssertTrue(source.contains("isEditable: row.isPersonal"))
-        XCTAssertTrue(source.contains("id: \\.element.rowID"))
+        XCTAssertTrue(source.contains("isEditable: false"))
+        XCTAssertTrue(source.contains("ForEach(included, id: \\.rowID)"))
     }
 
     func testSameNamePersonalEditDoesNotOpenBundledEditor() {
@@ -97,7 +109,7 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("addVariantButton"))
-        XCTAssertTrue(source.contains("add misheard variant"))
+        XCTAssertTrue(source.contains("misheard as…"))
     }
 
     func testVariantAddAffordanceUsesChipMatchingVerticalPadding() throws {
@@ -335,7 +347,7 @@ final class SettingsViewTests: XCTestCase {
             "Dictionary cards should observe later daemon vocabulary revisions"
         )
         XCTAssertTrue(
-            source.contains("onRefresh: { reconcileLocalEntries(with: vocabularyPreview()) }"),
+            source.contains("onRefresh: { loadDictionaryPreview() }"),
             "A revision change should project the new snapshot into local dictionary cards"
         )
         XCTAssertTrue(
@@ -396,6 +408,82 @@ final class SettingsViewTests: XCTestCase {
         )
         XCTAssertEqual(variantText, "")
         XCTAssertNil(addingVariantFor)
+    }
+
+    /// Fold 3 review M1: "swiftui" + "swift you eye" against an existing "SwiftUI" used to add nothing, leave
+    /// addingVariantFor set to a canonical no row has, and jam every later dictionary reload.
+    func testAddVariantWithCaseDifferentCanonicalLandsOnTheExistingTerm() {
+        var localEntries = [STTDictionaryEntry(canonical: "SwiftUI", variants: [])]
+        var variantText = "swift you eye"
+        var addingVariantFor: String? = "swiftui"
+        var addedAliases: [(correct: String, wrong: String)] = []
+
+        SettingsDictionaryMutations.addVariant(
+            canonical: "swiftui",
+            variantText: &variantText,
+            addingVariantFor: &addingVariantFor,
+            localEntries: &localEntries,
+            onAddVocabularyAlias: { correct, wrong in addedAliases.append((correct, wrong)) }
+        )
+
+        XCTAssertEqual(addedAliases.map(\.correct), ["SwiftUI"], "the alias goes to the existing spelling")
+        XCTAssertEqual(addedAliases.map(\.wrong), ["swift you eye"])
+        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "SwiftUI", variants: ["swift you eye"])])
+        XCTAssertEqual(variantText, "")
+        XCTAssertNil(addingVariantFor, "no pending edit may be left behind")
+    }
+
+    /// Fold 3 review M2: until the first async load lands, the Dictionary must not claim "No terms yet" or "(0)".
+    func testDictionaryShowsLoadingNotEmptyBeforeTheFirstLoad() {
+        XCTAssertEqual(
+            SettingsView.dictionaryPlaceholder(loaded: false, personalIsEmpty: true, searching: false), .loading
+        )
+        XCTAssertEqual(
+            SettingsView.dictionaryPlaceholder(loaded: true, personalIsEmpty: true, searching: false),
+            .empty
+        )
+        XCTAssertNil(SettingsView.dictionaryPlaceholder(loaded: true, personalIsEmpty: false, searching: false))
+        XCTAssertNil(SettingsView.dictionaryPlaceholder(loaded: true, personalIsEmpty: true, searching: true))
+        XCTAssertEqual(SettingsView.dictionarySectionTitle("Your terms", count: 0, loaded: false), "Your terms")
+        XCTAssertEqual(SettingsView.dictionarySectionTitle("Your terms", count: 296, loaded: true), "Your terms (296)")
+    }
+
+    /// Fold 3 review N1: while a search is active the header counts matches, so "1 of 3", never a bare "(3)".
+    func testDictionarySectionTitleCountsMatchesWhileSearching() {
+        XCTAssertEqual(
+            SettingsView.dictionarySectionTitle("Your terms", count: 3, matches: 1, loaded: true), "Your terms (1 of 3)"
+        )
+        XCTAssertEqual(
+            SettingsView.dictionarySectionTitle("Your terms", count: 3, matches: nil, loaded: true), "Your terms (3)"
+        )
+    }
+
+    /// Fold 3 review A2/A3/N2/N4: the Included toggle announces its state, Esc cancels the inline editor, the
+    /// chevron has a fixed width so the row does not shift, and the header rhythm matches the other tabs.
+    func testDictionaryAccessibilityAndRhythmPins() throws {
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains(".accessibilityValue(includedTermsExpanded ? \"Expanded\" : \"Collapsed\")"))
+        XCTAssertTrue(source.contains(".onExitCommand {"))
+        XCTAssertTrue(source
+            .contains(
+                "Image(systemName: includedTermsExpanded ? \"chevron.down\" : \"chevron.right\")\n                                .frame(width: 14)"
+            ))
+        XCTAssertTrue(source
+            .contains("VStack(alignment: .leading, spacing: 3) {\n                    Text(\"Dictionary\")"))
+    }
+
+    /// Fold 3 review M3 + A1: the Add-term sheet reads as an editor (chrome on both fields) and names its
+    /// fields for VoiceOver instead of reading placeholders.
+    func testAddTermSheetFieldsHaveChromeAndAccessibilityLabels() throws {
+        let sheetURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift")
+        let sheet = try String(contentsOf: sheetURL)
+        XCTAssertEqual(sheet.components(separatedBy: ".dictionaryFieldContainer()").count - 1, 2)
+        XCTAssertTrue(sheet.contains(".accessibilityLabel(\"Correct spelling\")"))
+        XCTAssertTrue(sheet.contains(".accessibilityLabel(\"Misheard as\")"))
+        XCTAssertTrue(sheet.contains(".help(\"Swap correct and misheard\")"))
+        XCTAssertFalse(sheet.contains("transcribed text"))
     }
 
     func testAddVariantMatchingCanonicalAliasKeyIsNoOp() {

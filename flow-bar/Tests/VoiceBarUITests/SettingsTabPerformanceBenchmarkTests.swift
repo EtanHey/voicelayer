@@ -1,8 +1,71 @@
+import AppKit
 import Foundation
+import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
 final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
+    @MainActor
+    func testDictionaryHostMountDoesNotWaitForVocabularyProvider() {
+        let warmHost = NSHostingView(rootView: Text("Warm AppKit host"))
+        warmHost.frame = NSRect(x: 0, y: 0, width: 780, height: 620)
+        warmHost.layoutSubtreeIfNeeded()
+        let loaded = expectation(description: "background vocabulary snapshot")
+        let view = SettingsView(
+            hotkeyEnabled: true, missingPermissions: [],
+            availableDevices: { [] }, selectedDeviceID: { nil }, onSelectDevice: { _ in },
+            modelsStatus: { .loading }, onRefreshModelsStatus: {},
+            vocabularyPreview: {
+                XCTAssertFalse(Thread.isMainThread, "Vocabulary processing must leave the main thread")
+                Thread.sleep(forTimeInterval: 0.8)
+                loaded.fulfill()
+                return STTVocabularyPreview(updatedAt: nil, entries: [])
+            },
+            vocabularyRevision: { 0 }, initialTab: .dictionary
+        )
+        let host = NSHostingView(rootView: view)
+        host.frame = NSRect(x: 0, y: 0, width: 780, height: 620)
+        let start = DispatchTime.now().uptimeNanoseconds
+        host.layoutSubtreeIfNeeded()
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        print(String(format: "P08_DICTIONARY host_mount_ms=%.3f", elapsed))
+        XCTAssertLessThan(elapsed, 150)
+        wait(for: [loaded], timeout: 2)
+    }
+
+    @MainActor
+    func testDictionaryOpensWithoutWaitingForLargeVocabularySnapshot() {
+        let entries = (0 ..< 300).map { STTDictionaryEntry(canonical: "Personal \($0)", variants: []) }
+        let display = entries.map { STTDictionaryDisplayEntry(source: "personal", entry: $0) }
+            + (0 ..< 120).map {
+                STTDictionaryDisplayEntry(
+                    source: "bundled",
+                    entry: STTDictionaryEntry(canonical: "Built in \($0)", variants: [])
+                )
+            }
+        let preview = STTVocabularyPreview(updatedAt: nil, entries: entries, displayEntries: display)
+        let start = DispatchTime.now().uptimeNanoseconds
+        let view = SettingsView(
+            hotkeyEnabled: true,
+            missingPermissions: [],
+            availableDevices: { [] },
+            selectedDeviceID: { nil },
+            onSelectDevice: { _ in },
+            modelsStatus: { .loading },
+            onRefreshModelsStatus: {},
+            vocabularyPreview: {
+                Thread.sleep(forTimeInterval: 0.2)
+                return preview
+            },
+            vocabularyRevision: { 0 },
+            initialTab: .dictionary
+        )
+        _ = view.body
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        print(String(format: "P08_DICTIONARY first_body_ms=%.3f personal=300 bundled=120", elapsed))
+        XCTAssertLessThan(elapsed, 150, "Dictionary construction and first body must stay interactive")
+    }
+
     @MainActor
     func testSyntheticSettingsTabBenchmark() throws {
         guard ProcessInfo.processInfo.environment["VOICELAYER_SETTINGS_PERF_BENCHMARK"] == "1" else {
@@ -75,13 +138,13 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
                 return 0
             }
         )
-        XCTAssertEqual(snapshotCalls, 1)
+        XCTAssertEqual(snapshotCalls, 0)
         _ = view.body
         _ = view.body
-        XCTAssertEqual(snapshotCalls, 1)
+        XCTAssertEqual(snapshotCalls, 0)
         XCTAssertEqual(revisionCalls, 2)
         print("SETTINGS_PERF surface=dictionary phase=vocabulary_provider_calls "
-            + "snapshot_init_calls=1 snapshot_calls_per_body=0 revision_calls_per_body=1 body_passes=2")
+            + "snapshot_init_calls=0 snapshot_calls_per_body=0 revision_calls_per_body=1 body_passes=2")
     }
 
     private func query(_ iteration: Int) -> String {

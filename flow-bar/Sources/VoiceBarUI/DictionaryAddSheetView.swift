@@ -6,14 +6,17 @@ public struct DictionaryAddSheetView: View {
 
     private let onSave: (STTVocabularyDraft) -> Void
     private let onCancel: () -> Void
+    private let allowTermOnly: Bool
 
     public init(
         draft: STTVocabularyDraft,
+        allowTermOnly: Bool = false,
         onSave: @escaping (STTVocabularyDraft) -> Void,
         onCancel: @escaping () -> Void
     ) {
         _correct = State(initialValue: draft.correct)
         _wrong = State(initialValue: draft.wrong)
+        self.allowTermOnly = allowTermOnly
         self.onSave = onSave
         self.onCancel = onCancel
     }
@@ -23,21 +26,31 @@ public struct DictionaryAddSheetView: View {
             Text("Add to Dictionary")
                 .font(.headline)
 
-            VStack(alignment: .leading, spacing: 10) {
-                LabeledContent("Correct") {
-                    TextField("Intended text", text: $correct)
-                        .dictionaryTextField()
-                }
-                LabeledContent("Transcribed") {
-                    HStack(spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Correct")
+                            .gridColumnAlignment(.trailing)
+                        TextField("Intended text", text: $correct)
+                            .dictionaryTextField()
+                            .dictionaryFieldContainer()
+                            .accessibilityLabel("Correct spelling")
+                    }
+                    GridRow {
+                        Text("Misheard as")
                         TextField("Misheard text", text: $wrong)
                             .dictionaryTextField()
-                        Button("⇄") {
-                            swap(&correct, &wrong)
-                        }
-                        .help("Swap correct and transcribed text")
+                            .dictionaryFieldContainer()
+                            .accessibilityLabel("Misheard as")
                     }
                 }
+                Button {
+                    swap(&correct, &wrong)
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                }
+                .help("Swap correct and misheard")
+                .accessibilityLabel("Swap correct and misheard text")
             }
 
             HStack {
@@ -50,7 +63,7 @@ public struct DictionaryAddSheetView: View {
                     onSave(currentDraft)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!currentDraft.canSaveAlias)
+                .disabled(currentDraft.trimmedCorrect.isEmpty || (!allowTermOnly && !currentDraft.canSaveAlias))
             }
         }
         .padding(18)
