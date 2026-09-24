@@ -159,6 +159,12 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         try shot("settings-resized-light.png", "Settings: General at 960×740 pt, light",
                  settings(tab: .general, vocabulary: empty),
                  size: CGSize(width: 960, height: 740), appearance: .aqua)
+        for (suffix, appearance) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
+            try shot("settings-models-sidebar-focused\(suffix).png",
+                     "Settings: sidebar has keyboard focus (native selection highlight under the row)",
+                     settings(tab: .models, vocabulary: empty),
+                     size: CGSize(width: 780, height: 620), appearance: appearance)
+        }
         try shot("settings-general-agent-speaking.png", "Settings General: sidebar footer while an agent speaks",
                  settings(tab: .general, vocabulary: empty, footerMode: .speaking),
                  size: CGSize(width: 780, height: 620))
@@ -349,6 +355,11 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         }
     }
 
+    private func firstTable(in view: NSView) -> NSTableView? {
+        if let table = view as? NSTableView { return table }
+        return view.subviews.lazy.compactMap { self.firstTable(in: $0) }.first
+    }
+
     private func render(_ view: some View, size: CGSize, to url: URL,
                         settingsWindow: Bool = false, appearance: NSAppearance.Name = .darkAqua) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading))
@@ -364,6 +375,10 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         if settingsWindow { window.makeKeyAndOrderFront(nil) }
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        if url.lastPathComponent.contains("sidebar-focused"), let table = firstTable(in: host) {
+            window.makeFirstResponder(table)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
         host.layoutSubtreeIfNeeded()
         guard let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,

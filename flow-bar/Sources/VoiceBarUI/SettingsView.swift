@@ -11,17 +11,6 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
         self
     }
 
-    /// Arrow-key neighbour in sidebar order; stays put at either end and for left/right.
-    func moved(_ direction: MoveCommandDirection) -> SettingsTab {
-        let tabs = Self.allCases
-        guard let index = tabs.firstIndex(of: self) else { return self }
-        switch direction {
-        case .up: return index > tabs.startIndex ? tabs[index - 1] : self
-        case .down: return index < tabs.endIndex - 1 ? tabs[index + 1] : self
-        default: return self
-        }
-    }
-
     public var title: String {
         switch self {
         case .general: "General"
