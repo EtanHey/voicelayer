@@ -327,6 +327,33 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.stopCount, 0)
     }
 
+    /// #137 review MUST-FIX 1: P05's 26 pt system is for the pill controls only. The voice_speak
+    /// surface (teleprompter controls, the speaking wing's eye + Stop, and the non-button status
+    /// glyph) keeps the pre-P05 compact optics, or eye and Stop crowd the waveform.
+    func testVoiceSpeakSurfaceKeepsPreP05CompactOptics() throws {
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "eye").pointSize, 8.5)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "eye.slash").pointSize, 8.5)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "arrow.counterclockwise").pointSize, 9.5)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "stop.fill").pointSize, 8)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "speaker.wave.2.fill").pointSize, 10)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "bolt.horizontal.circle.fill").pointSize, 10)
+
+        let source = try barViewSource()
+        let compactStart = try XCTUnwrap(source.range(of: "private var notchCompactStatusContent"))
+        let compact = String(source[compactStart.lowerBound...])
+        let speaking = try XCTUnwrap(
+            compact.components(separatedBy: "case .speaking:").dropFirst().first?
+                .components(separatedBy: "case .error:").first
+        )
+        XCTAssertFalse(speaking.contains("notchButton("))
+        XCTAssertTrue(speaking.contains("notchTeleprompterButton(\n                        icon: \"eye\""))
+        XCTAssertTrue(speaking.contains("notchTeleprompterButton(\n                    icon: \"stop.fill\""))
+
+        let teleprompterStart = try XCTUnwrap(source.range(of: "private func notchTeleprompterButton"))
+        XCTAssertTrue(source[teleprompterStart.lowerBound...]
+            .contains("VoiceBarNotchControlOptics.legacyCompact(for: icon)"))
+    }
+
     func testIdleStatusMicReusesLauncherMicOpticsAndPrimaryForeground() throws {
         let source = try barViewSource()
         let statusStart = try XCTUnwrap(source.range(of: "private var statusIcon"))
@@ -336,9 +363,11 @@ final class BarViewClickabilityTests: XCTestCase {
         )
         let statusIconImage = source[imageStart.lowerBound ..< iconNameStart.lowerBound]
 
+        // Only non-idle, non-error modes reach statusIconImage (speaker, bolt, waveform); the mic
+        // is always the notchButton pinned below, so it shares the launcher mic's optics.
         XCTAssertTrue(
-            statusIconImage.contains("VoiceBarNotchControlOptics.resolve(for: iconName)"),
-            "the hotkey-transition mic must use the same optical sizing contract as the launcher mic"
+            statusIconImage.contains("VoiceBarNotchControlOptics.legacyCompact(for: iconName)"),
+            "the non-button status glyph keeps its pre-P05 compact size (#137 review)"
         )
         XCTAssertTrue(
             statusIconImage.contains("state.mode == .idle ? notchPrimaryLabelColor"),
@@ -526,6 +555,14 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(teleprompterLeading.contains("EmptyView()"))
         XCTAssertFalse(teleprompterLeading.contains("settingsButton"))
         XCTAssertFalse(teleprompterLeading.contains("Dictionary"))
+    }
+
+    /// #137 review N3: a BarView site that forgets the handler must not compile into a dead gear.
+    func testOpenSettingsHandlerIsRequired() throws {
+        let source = try barViewSource()
+
+        XCTAssertTrue(source.contains("onOpenSettings: @escaping () -> Void,\n"))
+        XCTAssertFalse(source.contains("onOpenSettings: @escaping () -> Void = {}"))
     }
 
     func testSettingsButtonCallsTheExistingOpenSettingsHandler() {
@@ -770,6 +807,7 @@ final class BarViewClickabilityTests: XCTestCase {
             rootView: BarView(
                 state: state,
                 commandRouter: router,
+                onOpenSettings: {},
                 presentationModel: presentationModel
             )
         )

@@ -100,6 +100,22 @@ public struct VoiceBarNotchControlOptics: Equatable {
     public static func resolve(for systemName: String) -> Self {
         VoiceBarNotchControlOptics(pointSize: systemName == "stop.fill" ? 10 : 15, offsetX: 0, offsetY: 0)
     }
+
+    /// The pre-P05 compact optics. P05's 26 pt system (`resolve`) is for the pill controls only;
+    /// the agent-speech surface (teleprompter controls, the speaking wing's eye and Stop, and the
+    /// non-button status glyph) keeps these, or eye and Stop crowd the waveform (#137 review).
+    public static func legacyCompact(for systemName: String) -> Self {
+        switch systemName {
+        case "eye", "eye.slash":
+            VoiceBarNotchControlOptics(pointSize: 8.5, offsetX: 0, offsetY: 0)
+        case "arrow.counterclockwise":
+            VoiceBarNotchControlOptics(pointSize: 9.5, offsetX: 0, offsetY: 0)
+        case "stop.fill":
+            VoiceBarNotchControlOptics(pointSize: 8, offsetX: 0, offsetY: 0)
+        default:
+            VoiceBarNotchControlOptics(pointSize: 10, offsetX: 0, offsetY: 0)
+        }
+    }
 }
 
 private extension View {
@@ -233,7 +249,7 @@ public struct BarView: View {
     public init(
         state: VoiceState,
         commandRouter: BarCommandRouting,
-        onOpenSettings: @escaping () -> Void = {},
+        onOpenSettings: @escaping () -> Void,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false
@@ -427,14 +443,14 @@ public struct BarView: View {
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
                 notchWaveform
                 if state.isTeleprompterDismissed {
-                    notchButton(
+                    notchTeleprompterButton(
                         icon: "eye",
                         accessibilityLabel: "Show teleprompter"
                     ) {
                         state.showTeleprompter()
                     }
                 }
-                notchButton(
+                notchTeleprompterButton(
                     icon: "stop.fill",
                     isDestructive: true,
                     accessibilityLabel: "Stop speaking"
@@ -632,7 +648,7 @@ public struct BarView: View {
     }
 
     private var statusIconImage: some View {
-        let optics = VoiceBarNotchControlOptics.resolve(for: iconName)
+        let optics = VoiceBarNotchControlOptics.legacyCompact(for: iconName)
         return Image(systemName: iconName)
             .font(.system(size: optics.pointSize, weight: .semibold))
             .foregroundStyle(
@@ -856,12 +872,7 @@ public struct BarView: View {
         accessibilityLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        let pointSize: CGFloat = switch icon {
-        case "eye", "eye.slash": 8.5
-        case "arrow.counterclockwise": 9.5
-        case "stop.fill": 8
-        default: 10
-        }
+        let pointSize = VoiceBarNotchControlOptics.legacyCompact(for: icon).pointSize
         let hasStopContainer = isDestructive && icon == "stop.fill"
         return Button {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)

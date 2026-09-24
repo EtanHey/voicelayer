@@ -105,7 +105,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             if mode == .recording { state.recordingMode = "vad" }
             if mode == .error { state.errorMessage = "Synthetic error" }
             try shot("pill-\(name).png", "Pill: \(name)", BarView(
-                state: state, commandRouter: router, includesPanelOutsets: true
+                state: state, commandRouter: router, onOpenSettings: {}, includesPanelOutsets: true
             ), size: CGSize(width: 600, height: 180))
         }
 
@@ -114,7 +114,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             RecentTranscriptionEntry(text: "A synthetic recent transcription."),
             RecentTranscriptionEntry(text: "Another short sample with no personal content."),
         ]
-        let panel = BarView(state: panelState, commandRouter: router)
+        let panel = BarView(state: panelState, commandRouter: router, onOpenSettings: {})
         try shot("notch-recent.png", "Notch panel: Recent Transcriptions", panel.historyPopover,
                  size: CGSize(width: 348, height: 274))
 
@@ -245,22 +245,30 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             ("light", NSAppearance.Name.aqua, ColorScheme.light, false),
         ] {
             for (name, mode, hover) in [
+                // Idle with the notch expanded: the launcher (Mic · History · Settings). A collapsed,
+                // resting idle draws only the hardware notch, so offscreen it renders blank. The
+                // per-button hover circle needs a live pointer and is shot separately below.
                 ("idle", VoiceMode.idle, false),
-                // The hovered launcher (Mic · History · Settings). The per-button hover circle needs a
-                // live pointer; the launcher layout itself follows state.isHovering.
-                ("idle-hover", .idle, true),
                 ("recording", .recording, false),
                 ("transcribing", .transcribing, false),
                 ("error", .error, false),
+                // voice_speak with the teleprompter hidden: waveform · eye · Stop on the pre-P05 optics.
+                ("speaking-dismissed", .speaking, false),
+                ("disconnected", .disconnected, false),
             ] {
                 let state = syntheticState()
                 state.mode = mode
                 state.isHovering = hover
                 if mode == .recording { state.recordingMode = "vad" }
                 if mode == .error { state.errorMessage = "Synthetic error" }
+                if mode == .speaking {
+                    state.statusText = "A synthetic spoken reply."
+                    state.dismissTeleprompter()
+                }
+                if mode == .disconnected { state.isConnected = false }
                 let filename = "pill-\(name)-\(appearanceName).png"
                 try render(
-                    BarView(state: state, commandRouter: router, includesPanelOutsets: true)
+                    BarView(state: state, commandRouter: router, onOpenSettings: {}, includesPanelOutsets: true)
                         .environment(\.colorScheme, scheme),
                     size: CGSize(width: 600, height: 180),
                     to: directory.appendingPathComponent(filename),

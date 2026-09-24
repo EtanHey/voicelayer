@@ -177,7 +177,7 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
                 .fill(Color.red.opacity(0.8))
                 .frame(height: 2)
                 .frame(maxHeight: .infinity, alignment: .bottom)
-            BarView(state: state, commandRouter: ArtifactCommandRouter())
+            BarView(state: state, commandRouter: ArtifactCommandRouter(), onOpenSettings: {})
                 .frame(width: pillSize.width, height: pillSize.height)
                 .position(x: plan.frame.midX, y: swiftUIY)
         }
@@ -228,7 +228,7 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
     private func pillHost(state: VoiceState) -> NSHostingView<AnyView> {
         let host = NSHostingView(
             rootView: AnyView(
-                BarView(state: state, commandRouter: ArtifactCommandRouter())
+                BarView(state: state, commandRouter: ArtifactCommandRouter(), onOpenSettings: {})
                     .frame(width: pillSize.width, height: pillSize.height, alignment: .top)
             )
         )
@@ -241,7 +241,7 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
         let host = NSHostingView(
             rootView: AnyView(
                 ZStack {
-                    BarView(state: state, commandRouter: ArtifactCommandRouter())
+                    BarView(state: state, commandRouter: ArtifactCommandRouter(), onOpenSettings: {})
                         .frame(width: pillSize.width, height: pillSize.height, alignment: .top)
                 }
                 .frame(

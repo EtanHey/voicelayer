@@ -115,7 +115,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         let layout = VoiceBarPanelLayout.make(
             presentation: notchPresentation(for: state)
         )
-        let view = BarView(state: state, commandRouter: SnapshotCommandRouter())
+        let view = BarView(state: state, commandRouter: SnapshotCommandRouter(), onOpenSettings: {})
             .frame(
                 width: layout.visibleContentRect.width,
                 height: layout.visibleContentRect.height
@@ -219,6 +219,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
             rootView: BarView(
                 state: state,
                 commandRouter: SnapshotCommandRouter(),
+                onOpenSettings: {},
                 includesPanelOutsets: true
             )
         )
