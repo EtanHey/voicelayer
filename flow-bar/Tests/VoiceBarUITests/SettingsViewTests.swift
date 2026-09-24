@@ -479,6 +479,12 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(source.contains("Button(\"Check shortcut\")"))
     }
 
+    /// Fold 2 review S3: dictating while Models is open must refresh "Last dictation used", not only on appear.
+    func testModelsLastDictationLabelFollowsTheNextDictation() throws {
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains(".onChange(of: lastDictationEntry()?.recordingPath) { _, path in"))
+    }
+
     func testPerformanceEffortPickerUpdatesLocalStateBeforeNotifyingApp() throws {
         // The one effort control lives in Models (spec §5); it writes SettingsView's state through a binding.
         let source = try settingsViewSource()

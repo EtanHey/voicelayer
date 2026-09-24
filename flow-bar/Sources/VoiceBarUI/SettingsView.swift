@@ -858,6 +858,9 @@ public struct SettingsView: View {
             )
             onRefreshModelsStatus()
         }
+        .onChange(of: lastDictationEntry()?.recordingPath) { _, path in
+            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(for: path)
+        }
     }
 
     // MARK: - History Tab
