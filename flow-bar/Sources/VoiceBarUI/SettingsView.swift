@@ -370,7 +370,6 @@ public struct SettingsView: View {
     @State private var shortcutCheckRunning = false
     @State private var shortcutCheckFeedback: String?
     @State private var isAdvancedExpanded = false
-    @State private var isPermissionsExpanded = false
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @State private var lastDictationProvenanceLabel: String?
     @FocusState private var focusedEditorField: DictEditorField?
@@ -659,20 +658,15 @@ public struct SettingsView: View {
                 }
             }
 
+            // Always flat, even when everything is granted (Etan's 2.2.24 review #4; BrainBar #920).
             Section("Permissions") {
-                if allPermissionsGranted {
-                    DisclosureGroup("All permissions granted", isExpanded: $isPermissionsExpanded) {
-                        permissionRows
-                    }
-                } else {
-                    permissionRows
-                }
+                permissionRows
             }
 
             visibilitySection
             microphonePrioritySection
 
-            DisclosureGroup("Advanced", isExpanded: $isAdvancedExpanded) {
+            SettingsDisclosureRow("Advanced", isExpanded: $isAdvancedExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
                     LabeledContent("F5 key helper") {
                         HStack(spacing: 8) {
@@ -683,16 +677,17 @@ public struct SettingsView: View {
                             } else {
                                 statusBadge("Needs setup", isReady: false)
                             }
-                            Button("Set up") {
+                            Button(isHotkeyRemapActive() ? "Reinstall" : "Set up") {
                                 runRelaySetup()
                             }
                             .disabled(relaySetupRunning)
                         }
                     }
+                    .help(VoiceBarHotkeyContract.remapExplanation)
                     Text("Lets F5 start dictation even if your Mac remaps the dictation key.")
                         .font(.caption).foregroundStyle(.secondary)
                     if isHotkeyRemapActive() {
-                        Text(VoiceBarHotkeyContract.remapExplanation)
+                        Text(VoiceBarHotkeyContract.remapPlainSummary)
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if let relaySetupFeedback {
@@ -2022,16 +2017,13 @@ public struct SettingsView: View {
         LabeledContent(permission.label) {
             HStack(spacing: 8) {
                 statusBadge(isGranted ? "Granted" : "Missing", isReady: isGranted)
-                Button("Open") {
-                    openPermissionSettings(permission)
+                if !isGranted {
+                    Button("Open") {
+                        openPermissionSettings(permission)
+                    }
                 }
             }
         }
-    }
-
-    private var allPermissionsGranted: Bool {
-        isMicrophonePermissionGranted() && !missingPermissions.contains(.accessibility) &&
-            !missingPermissions.contains(.inputMonitoring)
     }
 
     private var permissionRows: some View {
