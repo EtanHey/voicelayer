@@ -188,7 +188,12 @@ final class SettingsViewTests: XCTestCase {
     func testDictionaryDoesNotRenderOldSplitSections() throws {
         let source = try settingsViewSource()
 
-        XCTAssertFalse(source.contains("DisclosureGroup"))
+        // AIDEV-NOTE: General's two approved disclosures (spec §7) are the only DisclosureGroups allowed;
+        // the Dictionary must not bring back the old collapsible split sections.
+        let otherDisclosures = source
+            .replacingOccurrences(of: "DisclosureGroup(\"All permissions granted\"", with: "")
+            .replacingOccurrences(of: "DisclosureGroup(\"Advanced\"", with: "")
+        XCTAssertFalse(otherDisclosures.contains("DisclosureGroup"))
         XCTAssertFalse(source.contains("Prompt Terms"))
         XCTAssertFalse(source.contains("Corrections"))
     }
@@ -475,14 +480,20 @@ final class SettingsViewTests: XCTestCase {
     }
 
     func testPerformanceEffortPickerUpdatesLocalStateBeforeNotifyingApp() throws {
+        // The one effort control lives in Models (spec §5); it writes SettingsView's state through a binding.
         let source = try settingsViewSource()
+        XCTAssertTrue(source.contains("effort: $selectedPerformanceEffort"))
+        let modelsURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift")
+        let modelsSource = try String(contentsOf: modelsURL)
 
         XCTAssertTrue(
-            source.contains(
+            modelsSource.contains(
                 """
-                set: { effort in
-                                        selectedPerformanceEffort = effort
-                                        onSelectPerformanceEffort(effort)
+                set: { selected in
+                                        effort = selected
+                                        onSelectEffort(selected)
                                     }
                 """
             ),
