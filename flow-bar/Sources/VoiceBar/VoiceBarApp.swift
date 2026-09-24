@@ -2610,6 +2610,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onSelectResidency: { [weak self] target in
                 self?.voiceState.setWhisperResidency(target)
             },
+            processingPending: { [weak self] in self?.voiceState.processingPending ?? [:] },
+            processingNotice: { [weak self] in self?.voiceState.processingNotice },
+            onToggleProcessing: { [weak self] key, value in
+                self?.voiceState.setProcessingSetting(key, value)
+                self?.refreshSettingsWindowAnchorState()
+            },
             vocabularyPreview: { [weak self] in
                 self?.currentVocabularyPreview() ?? STTVocabularyPreview(
                     updatedAt: nil,

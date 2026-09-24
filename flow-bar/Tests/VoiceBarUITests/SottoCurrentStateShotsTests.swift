@@ -252,6 +252,10 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                      ),
                      size: CGSize(width: 780, height: 620))
         }
+        try shot("settings-models-processing-light.png", "Settings Models: Processing toggles, light",
+                 settings(tab: .models, vocabulary: empty,
+                          modelState: modelState(residency: "loaded", recordingState: "idle", queueDepth: 0)),
+                 size: CGSize(width: 780, height: 900), appearance: .aqua)
         try shot("settings-history-detail.png", "Settings History: synthetic list and selected detail",
                  settings(tab: .history, vocabulary: empty), size: CGSize(width: 780, height: 620))
         lines.append(contentsOf: [
@@ -379,7 +383,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                 "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
                 "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
                 "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
-                "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
+                "smart_boundaries": ["source": "environment", "raw": "1", "effective": true],
             ],
             "model_status": [
                 "configured_model": ["name": "fixture-whisper-model", "size_bytes": 1_000_000, "installed": true],
@@ -434,6 +438,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                             },
                             modelsStatus: { modelState }, onRefreshModelsStatus: {},
                             onSelectResidency: { _ in },
+                            onToggleProcessing: { _, _ in },
                             vocabularyPreview: { vocabulary }, vocabularyRevision: { 0 },
                             isHotkeyRemapActive: { remapActive },
                             lastDictationEntry: {
