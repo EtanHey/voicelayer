@@ -88,7 +88,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                              footer: footer, hotkeyHint: "Hold F5 to dictate",
                              microphoneName: "Built-in Microphone", transcript: transcript
                          ).environment(\.colorScheme, scheme),
-                         size: CGSize(width: 334, height: transcript.isEmpty ? 240 : 320))
+                         size: CGSize(width: 300, height: transcript.isEmpty ? 240 : 320))
             }
         }
 
@@ -203,14 +203,15 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                  settings(tab: .history, vocabulary: empty), size: CGSize(width: 780, height: 620))
         lines.append(contentsOf: [
             "",
-            "## Popover geometry for the design spec",
+            "## Popover geometry",
             "",
-            "Measurements are points, read from the 2× PNGs; button and text bounds are approximate visible-pixel bounds. Source spacing is exact.",
+            "Popover shots use a 300 pt canvas, the popover's own width (276 pt column + 12 pt padding each side), so every PNG shows even left and right margins. `MenuBarPopoverLayoutTests` pins the geometry, not this index:",
             "",
-            "- Main column spacing: **10 pt** (`VStack`). Footer status lines: **5 pt**. Mic and transcript cards: **9 pt** internal padding; transcript text and copy button: **8 pt** horizontal spacing, top aligned.",
-            "- Long transcript visible text block midpoint: about **148 pt** from the popover top; copy glyph midpoint: about **139 pt**. The text block center is about **9 pt lower** because the HStack is top aligned.",
-            "- Idle footer visible button frames `(x, y, width, height)`: Settings about **(12, 131, 121, 24) pt**; Quit about **(12, 165, 107, 24) pt**. Long-transcript frames: about **(12, 198, 121, 24) pt** and **(12, 232, 107, 24) pt**.",
-            "- The mic row has a quaternary fill on every rendering. Its view has no selected/highlight state, so closing and rebuilding this view preserves the same fill. Actual MenuBarExtra focus ring and first responder require a live menu-open probe and are **not established** by an offscreen NSWindow.",
+            "- Rows are one 10 pt `VStack` rhythm. The status word sits left and \"Hold F5 to dictate\" right, on one row.",
+            "- The mic picker is a bordered row with no fill and no selected or highlight state.",
+            "- The transcript text and the copy button share a vertical midline (midY equal ± 1 pt).",
+            "- Open Settings… and Quit VoiceBar sit side by side in one row, equal width.",
+            "- `.focusEffectDisabled()` is set on the root, so no focus ring draws when the popover opens. The real MenuBarExtra open is still a P10 live check.",
             "",
             "## Limits",
             "",
