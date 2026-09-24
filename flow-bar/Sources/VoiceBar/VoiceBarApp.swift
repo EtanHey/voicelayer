@@ -61,6 +61,7 @@ private struct VoiceBarFirstRenderScaleReceipt: Codable {
 
 enum SettingsWindowSizing {
     static let minimumContentSize = NSSize(width: 780, height: 620)
+    static let autosaveName = "VoiceBar.SettingsWindow"
 
     static var initialContentRect: NSRect {
         NSRect(origin: .zero, size: minimumContentSize)
@@ -739,10 +740,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.unsnoozeNow()
         }
         pillContextMenuController.onSelectDevice = { [weak self] deviceID in
-            guard MicrophoneDeviceManager.selectInputDevice(id: deviceID) else { return }
-            if self?.voiceState.mode == .recording {
-                self?.audioLevelMonitor.restart()
-            }
+            _ = self?.selectMicrophone(id: deviceID)
         }
         pillContextMenuController.onTranscribeLatestRecording = { [weak self] in
             self?.logDiagnostic(event: "context_menu_transcribe_latest_recording_tapped")
@@ -2388,14 +2386,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func currentVocabularyPreview() -> STTVocabularyPreview {
-        STTVocabularyPreview(
+        let snapshot: ([String], [STTVocabularyAliasPreview], [STTDictionaryDisplayEntry]?) = if Thread.isMainThread {
+            (
+                voiceState.transcriptionVocabularyTerms,
+                voiceState.transcriptionVocabularyAliases,
+                voiceState.transcriptionVocabularyDisplayEntries
+            )
+        } else {
+            DispatchQueue.main.sync {
+                (
+                    voiceState.transcriptionVocabularyTerms,
+                    voiceState.transcriptionVocabularyAliases,
+                    voiceState.transcriptionVocabularyDisplayEntries
+                )
+            }
+        }
+        return STTVocabularyPreview(
             updatedAt: nil,
             entries: STTVocabularyPreview(
                 updatedAt: nil,
-                promptTerms: voiceState.transcriptionVocabularyTerms,
-                aliases: voiceState.transcriptionVocabularyAliases
+                promptTerms: snapshot.0,
+                aliases: snapshot.1
             ).entries,
-            displayEntries: voiceState.transcriptionVocabularyDisplayEntries
+            displayEntries: snapshot.2
         )
     }
 
@@ -2524,6 +2537,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.level = .floating
         SettingsWindowSizing.apply(to: window)
         window.center()
+        window.setFrameAutosaveName(SettingsWindowSizing.autosaveName)
+        SettingsWindowSizing.apply(to: window)
         settingsWindow = window
 
         window.makeKeyAndOrderFront(nil)
@@ -2541,7 +2556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             missingPermissions: missingHotkeyPermissions,
             availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
             selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
-            onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
+            onSelectDevice: { [weak self] in _ = self?.selectMicrophone(id: $0) },
             prioritySnapshot: { [weak self] in
                 self?.currentMicrophonePrioritySnapshot() ?? .unavailable
             },
@@ -2671,9 +2686,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             in: devices,
             fallbackDeviceID: MicrophoneDeviceManager.selectedInputDeviceID()
         )
+        let next = devices.first(where: { $0.id == selectedID })
         return MicrophonePrioritySnapshot(
             rows: microphonePriority.rows(for: devices),
-            nextDeviceName: devices.first(where: { $0.id == selectedID })?.name
+            nextDeviceName: next?.name,
+            nextDeviceUID: next?.uid?.trimmingCharacters(in: .whitespacesAndNewlines),
+            nextDeviceID: next?.id
         )
     }
 
@@ -2689,6 +2707,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             mode: voiceState.mode,
             captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
         )
+    }
+
+    @discardableResult
+    func selectMicrophone(id: String) -> Bool {
+        guard MicrophoneDeviceManager.selectInputDevice(id: id) else { return false }
+        if voiceState.mode == .recording {
+            audioLevelMonitor.restart()
+        }
+        return true
     }
 
     private func reorderMicrophonePriority(_ uids: [String]) {
@@ -2817,67 +2844,40 @@ func shouldIgnoreHotkeyEvent(
 @main
 struct VoiceBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @State private var menuMicrophoneRefresh = 0
 
     var body: some Scene {
         MenuBarExtra {
-            VStack(alignment: .leading, spacing: 10) {
-                if let degradation = appDelegate.voiceState.polishDegradation {
-                    Label(degradation.hint, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(.caption, weight: .medium))
-                        .foregroundStyle(.orange)
-                    Divider()
-                }
-                VoiceBarStatusFooter(
-                    presentation: .resolve(state: appDelegate.voiceState)
-                )
-                Text(
-                    appDelegate.hotkeyEnabled
-                        ? "Hold F5 to dictate"
-                        : VoiceBarPresentation.hotkeyPermissionHint(
-                            hotkeyEnabled: appDelegate.hotkeyEnabled,
-                            missingPermissions: appDelegate.missingHotkeyPermissions
-                        )
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    Image(systemName: "mic")
-                    Text(menuInputDeviceName)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .font(.caption)
-                .padding(9)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
-                if !appDelegate.voiceState.latestReusableTranscript.isEmpty {
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(appDelegate.voiceState.latestReusableTranscript)
-                            .font(.caption)
-                            .lineLimit(3)
-                        Button {
-                            appDelegate.voiceState.copyLastTranscript()
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Copy last transcript")
+            let microphone = menuMicrophoneSnapshot
+            MenuBarPopoverView(
+                footer: .resolve(state: appDelegate.voiceState),
+                hotkeyHint: appDelegate.hotkeyEnabled
+                    ? "Hold F5 to dictate"
+                    : VoiceBarPresentation.hotkeyPermissionHint(
+                        hotkeyEnabled: appDelegate.hotkeyEnabled,
+                        missingPermissions: appDelegate.missingHotkeyPermissions
+                    ),
+                microphoneName: microphone.devices.first(where: { $0.id == microphone.selectedID })?.name
+                    ?? "Input unavailable",
+                microphones: microphone.devices,
+                selectedMicrophoneID: microphone.selectedID,
+                transcript: appDelegate.voiceState.latestReusableTranscript,
+                degradationHint: appDelegate.voiceState.polishDegradation?.hint,
+                onCopy: { appDelegate.voiceState.copyLastTranscript() },
+                onSettings: { appDelegate.openSettingsWindow() },
+                onQuit: { appDelegate.quitFromMenuBar() },
+                onSelectMicrophone: { id in
+                    if appDelegate.selectMicrophone(id: id) {
+                        menuMicrophoneRefresh &+= 1
                     }
-                    .padding(9)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
                 }
-                Divider()
-                Button("Open Settings…") {
-                    appDelegate.openSettingsWindow()
-                }
-                Button("Quit VoiceBar") {
-                    appDelegate.quitFromMenuBar()
-                }
-            }
-            .frame(width: 310)
-            .padding(12)
+            )
             .onAppear {
                 appDelegate.voiceState.acknowledgePolishMenuSignal()
+                menuMicrophoneRefresh &+= 1
+            }
+            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+                menuMicrophoneRefresh &+= 1
             }
         } label: {
             Label(
@@ -2898,9 +2898,8 @@ struct VoiceBarApp: App {
         }
     }
 
-    private var menuInputDeviceName: String {
-        let selected = MicrophoneDeviceManager.selectedInputDeviceID()
-        return MicrophoneDeviceManager.availableInputDevices()
-            .first(where: { $0.id == selected })?.name ?? "Input unavailable"
+    private var menuMicrophoneSnapshot: (devices: [MicrophoneDevice], selectedID: String?) {
+        _ = menuMicrophoneRefresh
+        return (MicrophoneDeviceManager.availableInputDevices(), MicrophoneDeviceManager.selectedInputDeviceID())
     }
 }

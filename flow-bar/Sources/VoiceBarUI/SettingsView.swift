@@ -2,11 +2,10 @@ import Foundation
 import SwiftUI
 
 public enum SettingsTab: Hashable, CaseIterable, Identifiable {
-    case audio
+    case general
+    case models
     case dictionary
     case history
-    case models
-    case general
 
     public var id: Self {
         self
@@ -14,21 +13,19 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
 
     public var title: String {
         switch self {
-        case .audio: "Audio"
+        case .general: "General"
+        case .models: "Models"
         case .dictionary: "Dictionary"
         case .history: "History"
-        case .models: "Models"
-        case .general: "General"
         }
     }
 
     public var systemImage: String {
         switch self {
-        case .audio: "waveform"
+        case .general: "gearshape"
+        case .models: "cpu"
         case .dictionary: "text.book.closed"
         case .history: "clock.arrow.circlepath"
-        case .models: "cpu"
-        case .general: "gearshape"
         }
     }
 }
@@ -217,7 +214,6 @@ struct SettingsHistoryRowModel: Equatable {
 
 private enum DictEditorField: Hashable {
     case search
-    case newTerm
     case editTerm
     case addVariant
 }
@@ -226,11 +222,6 @@ private enum DictionaryCardLayout {
     static let headerHeight: CGFloat = 24
     static let inlineControlHeight: CGFloat = 28
     static let inlineFieldVerticalPadding: CGFloat = 5
-}
-
-private struct SettingsDictionarySection {
-    let source: String
-    let entries: [STTDictionaryDisplayEntry]
 }
 
 enum SettingsDictionaryEditing {
@@ -305,6 +296,7 @@ public struct SettingsView: View {
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
     public let vocabularyPreview: () -> STTVocabularyPreview
+    private let hasInitialDictionaryPreview: Bool
     public let vocabularyRevision: () -> UInt64
     public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
@@ -335,7 +327,6 @@ public struct SettingsView: View {
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
-    private static let dictionaryPageSize = 100
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
@@ -360,7 +351,10 @@ public struct SettingsView: View {
     @State private var askHistoryRefreshTask: Task<Void, Never>?
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
-    @State private var dictionaryVisibleLimit = Self.dictionaryPageSize
+    @State private var includedTermsExpanded = false
+    @State private var dictionaryLoading = false
+    @State private var hasLoadedDictionaryOnce: Bool
+    @State private var dictionaryReloadQueued = false
     @State private var localEntries: [STTDictionaryEntry]
     @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
     @State private var editingRowID: String?
@@ -369,11 +363,16 @@ public struct SettingsView: View {
     @State private var variantText = ""
     @State private var pendingDeleteCanonical: String?
     @State private var newTermText = ""
+    @State private var showingAddTerm = false
+    @State private var addTermDraft = STTVocabularyDraft(correct: "", wrong: "")
     @State private var relaySetupFeedback: String?
     @State private var relaySetupRunning = false
     @State private var shortcutCheckRunning = false
     @State private var shortcutCheckFeedback: String?
+    @State private var isAdvancedExpanded = false
+    @State private var isPermissionsExpanded = false
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
+    @State private var lastDictationProvenanceLabel: String?
     @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
@@ -442,7 +441,12 @@ public struct SettingsView: View {
             )
         },
         initialTab: SettingsTab = .general,
-        initialHistoryScope: SettingsHistoryScope = .recording
+        initialHistoryScope: SettingsHistoryScope = .recording,
+        initialDictionarySearch: String = "",
+        initialAdvancedExpanded: Bool = false,
+        initialDictionaryPreview: STTVocabularyPreview? = nil,
+        initialAddingVariantFor: String? = nil,
+        initialIncludedTermsExpanded: Bool = false
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -463,6 +467,7 @@ public struct SettingsView: View {
         self.residencyNotice = residencyNotice
         self.onSelectResidency = onSelectResidency
         self.vocabularyPreview = vocabularyPreview
+        hasInitialDictionaryPreview = initialDictionaryPreview != nil
         self.vocabularyRevision = vocabularyRevision
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
@@ -503,8 +508,11 @@ public struct SettingsView: View {
         self.footerPresentation = footerPresentation
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
-        let initialVocabulary = vocabularyPreview()
         _selectedTab = State(initialValue: initialTab)
+        _dictionarySearch = State(initialValue: initialDictionarySearch)
+        _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
+        _addingVariantFor = State(initialValue: initialAddingVariantFor)
+        _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         _askHistoryDayGroups = State(initialValue: initialAskHistoryPage?.groups ?? [])
         _askHistoryLoadedEntryCount = State(initialValue: initialAskHistoryPage?.loadedEntryCount ?? 0)
@@ -521,12 +529,12 @@ public struct SettingsView: View {
         _selectedHistoryEntryID = State(initialValue: initialHistoryPage?.groups.first?.entries.first?.id)
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
-        _localEntries = State(initialValue: initialVocabulary.entries)
-        _dictionaryDisplayIndex = State(initialValue: STTDictionaryDisplayIndex(
-            entries: initialVocabulary.displayEntries ?? initialVocabulary.entries.map {
+        _localEntries = State(initialValue: initialDictionaryPreview?.entries ?? [])
+        _hasLoadedDictionaryOnce = State(initialValue: initialDictionaryPreview != nil)
+        _dictionaryDisplayIndex = State(initialValue: STTDictionaryDisplayIndex(entries:
+            initialDictionaryPreview?.displayEntries ?? initialDictionaryPreview?.entries.map {
                 STTDictionaryDisplayEntry(source: "personal", entry: $0)
-            }
-        ))
+            } ?? []))
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
                 ? initialAnchorMode
@@ -537,13 +545,8 @@ public struct SettingsView: View {
     public var body: some View {
         SettingsNavigationShell(selection: $selectedTab, footer: footerPresentation()) {
             switch selectedTab {
-            case .audio:
-                settingsPage(title: "Audio") { audioTab }
             case .dictionary:
-                settingsPage(
-                    title: "Dictionary",
-                    subtitle: "Help VoiceLayer recognize the words you use."
-                ) { dictionaryTab }
+                dictionaryTab
             case .history:
                 settingsPage(
                     title: "History",
@@ -555,14 +558,17 @@ public struct SettingsView: View {
                 settingsPage(title: "General") { generalTab }
             }
         }
-        .frame(width: 780, height: 620)
+        .frame(minWidth: 780, maxWidth: .infinity, minHeight: 620, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         .modifier(
             SettingsVocabularyRevisionObserver(
                 revision: vocabularyRevision(),
-                onRefresh: { reconcileLocalEntries(with: vocabularyPreview()) }
+                onRefresh: { loadDictionaryPreview() }
             )
         )
+        .task(id: selectedTab) {
+            if selectedTab == .dictionary, !hasInitialDictionaryPreview { loadDictionaryPreview() }
+        }
         .onChange(of: selectedTab) { _, tab in
             if tab == .history {
                 switch selectedHistoryScope {
@@ -616,7 +622,7 @@ public struct SettingsView: View {
 
     private var generalTab: some View {
         Form {
-            Section("Permissions & Hotkey Setup") {
+            Section("Shortcut") {
                 LabeledContent("Shortcut") {
                     HStack(spacing: 6) {
                         Image(systemName: "keyboard")
@@ -625,11 +631,6 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if isHotkeyRemapActive() {
-                    Text(VoiceBarHotkeyContract.remapExplanation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
                         Circle()
@@ -637,9 +638,7 @@ public struct SettingsView: View {
                             .frame(width: 8, height: 8)
                         Text(hotkeyStatusText)
                     }
-                }
-
-                LabeledContent("Shortcut check") {
+                    Spacer(minLength: 8)
                     Button("Check shortcut") {
                         shortcutCheckRunning = true
                         onCheckShortcut { result in
@@ -649,36 +648,68 @@ public struct SettingsView: View {
                     }
                     .disabled(shortcutCheckRunning)
                 }
-                Text(
-                    "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
-                )
-                .font(.caption).foregroundStyle(.secondary)
+                if !hotkeyEnabled {
+                    Text(
+                        "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
                 if let shortcutCheckFeedback {
                     Text(shortcutCheckFeedback).font(.caption).foregroundStyle(.secondary)
                 }
+            }
 
-                permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
-                permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
-                permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
-
-                LabeledContent("Relay (hidutil LaunchAgent)") {
-                    HStack(spacing: 8) {
-                        statusBadge(isHotkeyRemapActive() ? "Ready" : "Needs setup", isReady: isHotkeyRemapActive())
-                        Button("Set up") {
-                            runRelaySetup()
-                        }
-                        .disabled(relaySetupRunning)
+            Section("Permissions") {
+                if allPermissionsGranted {
+                    DisclosureGroup("All permissions granted", isExpanded: $isPermissionsExpanded) {
+                        permissionRows
                     }
-                }
-
-                if let relaySetupFeedback {
-                    Text(relaySetupFeedback)
-                        .font(.caption)
-                        .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
+                } else {
+                    permissionRows
                 }
             }
 
             visibilitySection
+            microphonePrioritySection
+
+            DisclosureGroup("Advanced", isExpanded: $isAdvancedExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledContent("F5 key helper") {
+                        HStack(spacing: 8) {
+                            if isHotkeyRemapActive() {
+                                statusBadge("Installed", isReady: true)
+                            } else if hotkeyEnabled {
+                                Text("Not installed").foregroundStyle(.secondary)
+                            } else {
+                                statusBadge("Needs setup", isReady: false)
+                            }
+                            Button("Set up") {
+                                runRelaySetup()
+                            }
+                            .disabled(relaySetupRunning)
+                        }
+                    }
+                    Text("Lets F5 start dictation even if your Mac remaps the dictation key.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if isHotkeyRemapActive() {
+                        Text(VoiceBarHotkeyContract.remapExplanation)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let relaySetupFeedback {
+                        Text(relaySetupFeedback)
+                            .font(.caption)
+                            .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
+                    }
+                    Divider()
+                    Text("Gestures").font(.headline)
+                    LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)
+                    LabeledContent("Hold", value: VoiceBarHotkeyContract.holdDescription)
+                    LabeledContent("Double-tap", value: VoiceBarHotkeyContract.doubleTapDescription)
+                    LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel,
+                                   value: VoiceBarHotkeyContract.repasteDescription)
+                }
+                .padding(.top, 6)
+            }
 
             Section("Last dictation") {
                 if let entry = lastDictationEntry() {
@@ -696,27 +727,12 @@ public struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
-            Section("Gestures") {
-                LabeledContent("Single tap") {
-                    Text(VoiceBarHotkeyContract.singleTapDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent("Hold") {
-                    Text(VoiceBarHotkeyContract.holdDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent("Double-tap") {
-                    Text(VoiceBarHotkeyContract.doubleTapDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel) {
-                    Text(VoiceBarHotkeyContract.repasteDescription)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .formStyle(.grouped)
+        .onAppear(perform: refreshMicrophoneSnapshot)
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+            refreshMicrophoneSnapshot()
+        }
     }
 
     private var visibilitySection: some View {
@@ -752,104 +768,63 @@ public struct SettingsView: View {
         }
     }
 
-    // MARK: - Audio Tab
+    // MARK: - General microphone priority
 
-    private var audioTab: some View {
-        Form {
-            Section("Input priority") {
-                LabeledContent("Next dictation") {
-                    Text(microphoneSnapshot.nextDeviceName ?? "Unavailable")
-                        .foregroundStyle(.secondary)
-                }
-
-                if microphoneSnapshot.rows.isEmpty {
-                    Text("No known input devices")
-                        .foregroundStyle(.secondary)
-                }
-                let prioritizedCount = microphoneSnapshot.rows.filter(\.canPrioritize).count
-                ForEach(Array(microphoneSnapshot.rows.enumerated()), id: \.offset) { index, row in
-                    HStack(spacing: 10) {
-                        Image(systemName: "mic")
-                            .foregroundStyle(.secondary)
-                        Text(row.label)
-                            .lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text(row.isConnected ? "Connected" : "Disconnected")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if row.canPrioritize {
-                            Button {
-                                moveMicrophone(at: index, by: -1)
-                            } label: {
-                                Image(systemName: "chevron.up")
-                            }
-                            .disabled(index == 0)
-                            .accessibilityLabel("Move \(row.label) up")
-                            Button {
-                                moveMicrophone(at: index, by: 1)
-                            } label: {
-                                Image(systemName: "chevron.down")
-                            }
-                            .disabled(index >= prioritizedCount - 1)
-                            .accessibilityLabel("Move \(row.label) down")
-                        } else {
-                            Text("UID unavailable")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                Text("Use the arrows to set priority. Disconnected microphones keep their place.")
-                    .font(.caption)
+    private var microphonePrioritySection: some View {
+        Section("Microphone priority") {
+            LabeledContent("Next dictation") {
+                Text(microphoneSnapshot.nextVisibleDeviceName ?? "Unavailable")
                     .foregroundStyle(.secondary)
             }
+            if let visibleFirst = microphoneSnapshot.visibleFirstUIDs {
+                Button("Use visible microphones first") {
+                    onReorderPriority(visibleFirst)
+                    refreshMicrophoneSnapshot()
+                }
+                .help("A hidden system or virtual device would be used next. This puts your microphones ahead of it.")
+            }
 
-            Section("Performance") {
-                if let degradation = polishDegradation() {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .accessibilityHidden(true)
-                        Text(degradation.hint)
+            if microphoneSnapshot.visibleRows.isEmpty {
+                Text("No known input devices")
+                    .foregroundStyle(.secondary)
+            }
+            let visibleRows = microphoneSnapshot.visibleRows
+            let prioritizedCount = visibleRows.filter(\.canPrioritize).count
+            ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
+                HStack(spacing: 10) {
+                    Image(systemName: "mic")
+                        .foregroundStyle(.secondary)
+                    Text(row.label)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(row.isConnected ? "Connected" : "Disconnected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if row.canPrioritize {
+                        Button {
+                            moveMicrophone(at: index, by: -1)
+                        } label: {
+                            Image(systemName: "chevron.up")
+                        }
+                        .disabled(index == 0)
+                        .accessibilityLabel("Move \(row.label) up")
+                        Button {
+                            moveMicrophone(at: index, by: 1)
+                        } label: {
+                            Image(systemName: "chevron.down")
+                        }
+                        .disabled(index >= prioritizedCount - 1)
+                        .accessibilityLabel("Move \(row.label) down")
+                    } else {
+                        Text("UID unavailable")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                        Button {
-                            onDismissPolishDegradation()
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Dismiss STT polish warning")
-                        .accessibilityLabel("Dismiss STT polish warning")
                     }
-                    .accessibilityElement(children: .combine)
-                }
-                Picker("Effort", selection: Binding(
-                    get: { selectedPerformanceEffort },
-                    set: { effort in
-                        selectedPerformanceEffort = effort
-                        onSelectPerformanceEffort(effort)
-                    }
-                )) {
-                    ForEach(VoiceBarPerformanceEffort.allCases) { effort in
-                        Text(performanceEffortLabel(effort)).tag(effort)
-                    }
-                }
-                .pickerStyle(.segmented)
-                if let notice = performanceEffortNotice() {
-                    Text(notice)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
                 }
             }
-        }
-        .formStyle(.grouped)
-        .onAppear(perform: refreshMicrophoneSnapshot)
-        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
-            refreshMicrophoneSnapshot()
+            Text("Use the arrows to set priority. Disconnected microphones keep their place.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -861,7 +836,7 @@ public struct SettingsView: View {
     }
 
     private func moveMicrophone(at index: Int, by offset: Int) {
-        guard let uids = microphoneSnapshot.reorderedUIDs(moving: index, by: offset) else { return }
+        guard let uids = microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: offset) else { return }
         onReorderPriority(uids)
         refreshMicrophoneSnapshot()
     }
@@ -873,9 +848,20 @@ public struct SettingsView: View {
             notice: performanceEffortNotice(),
             onSelectEffort: onSelectPerformanceEffort,
             residencyNotice: residencyNotice(),
-            onSelectResidency: onSelectResidency
+            onSelectResidency: onSelectResidency,
+            lastDictationLabel: lastDictationProvenanceLabel,
+            degradation: polishDegradation(),
+            onDismissDegradation: onDismissPolishDegradation
         )
-        .onAppear(perform: onRefreshModelsStatus)
+        .onAppear {
+            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(
+                for: lastDictationEntry()?.recordingPath
+            )
+            onRefreshModelsStatus()
+        }
+        .onChange(of: lastDictationEntry()?.recordingPath) { _, path in
+            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(for: path)
+        }
     }
 
     // MARK: - History Tab
@@ -1031,6 +1017,11 @@ public struct SettingsView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            if let effort = entry.performanceEffort {
+                Text(effort.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1052,7 +1043,7 @@ public struct SettingsView: View {
             Label("Saved on this Mac", systemImage: "internaldrive")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            let attribution = [entry.inputDeviceLabel, entry.modelLabel]
+            let attribution = [entry.inputDeviceLabel, entry.modelLabel, entry.performanceEffort?.displayName]
                 .compactMap { $0 }.joined(separator: " · ")
             if !attribution.isEmpty {
                 Text(attribution)
@@ -1464,92 +1455,110 @@ public struct SettingsView: View {
     // MARK: - Dictionary Tab
 
     private var dictionaryTab: some View {
-        ScrollView {
-            let page = dictionaryDisplayIndex.page(
-                matching: dictionarySearch,
-                limit: dictionaryVisibleLimit
-            )
-            LazyVStack(alignment: .leading, spacing: 14) {
-                LabeledContent("Personal dictionary") { Text("✓ Always on") }
-                addTermRow
-                searchRow
-
-                if dictionaryDisplayIndex.personalCount == 0, dictionarySearch.isEmpty {
-                    VStack(spacing: 10) {
-                        Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
-                        Text("No terms yet").font(.headline)
-                        Text("Add names, products, and other preferred spellings.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 170)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Dictionary").font(.title2.weight(.semibold))
+                    Text("Used on every dictation").font(.subheadline).foregroundStyle(.secondary)
                 }
-
-                Text("\(dictionaryDisplayIndex.personalCount) words")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-
-                ForEach(dictionarySections(for: page.entries), id: \.source) { section in
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(section.source == "personal" ? "Personal" : "Included")
-                            .font(.headline)
-                            .padding(.top, 4)
-                            .padding(.bottom, 6)
-
-                        ForEach(Array(section.entries.enumerated()), id: \.element.rowID) { offset, row in
-                            dictionaryEntryCard(
-                                row.entry,
-                                rowID: row.rowID,
-                                isEditable: row.isPersonal
-                            )
-                            if offset < section.entries.count - 1 {
-                                Divider()
-                            }
+                searchRow
+                Button {
+                    addTermDraft = STTVocabularyDraft(correct: "", wrong: "")
+                    showingAddTerm = true
+                } label: {
+                    Label("Add term", systemImage: "plus")
+                }
+                .help("Add a term to your dictionary")
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 19)
+            .padding(.bottom, 14)
+            Divider()
+            ScrollView {
+                let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
+                let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    Text(Self.dictionarySectionTitle(
+                        "Your terms", count: dictionaryDisplayIndex.personalCount,
+                        matches: dictionarySearch.isEmpty ? nil : personal.count, loaded: hasLoadedDictionaryOnce
+                    ))
+                    .font(.headline).padding(.bottom, 8)
+                    switch Self.dictionaryPlaceholder(
+                        loaded: hasLoadedDictionaryOnce, personalIsEmpty: personal.isEmpty,
+                        searching: !dictionarySearch.isEmpty
+                    ) {
+                    case .loading:
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Loading…").foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 170)
+                    case .empty:
+                        VStack(spacing: 10) {
+                            Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
+                            Text("No terms yet").font(.headline)
+                            Text("Add names, products, and other preferred spellings.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 170)
+                    case nil:
+                        EmptyView()
+                    }
+                    ForEach(personal, id: \.rowID) { row in
+                        dictionaryEntryCard(row.entry, rowID: row.rowID)
+                        Divider()
+                    }
+                    Button {
+                        includedTermsExpanded.toggle()
+                    } label: {
+                        HStack {
+                            Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
+                                .frame(width: 14)
+                            Text(Self.dictionarySectionTitle(
+                                "Included terms", count: dictionaryDisplayIndex.includedCount,
+                                matches: dictionarySearch.isEmpty ? nil : included.count,
+                                loaded: hasLoadedDictionaryOnce
+                            ))
+                            Spacer()
+                            Text("built in").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .font(.headline)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
+                    .accessibilityValue(includedTermsExpanded ? "Expanded" : "Collapsed")
+                    .accessibilityHint("Built-in terms are read-only")
+                    .padding(.top, 18)
+                    if includedTermsExpanded || !dictionarySearch.isEmpty {
+                        ForEach(included, id: \.rowID) { row in
+                            dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
+                            Divider()
                         }
                     }
                 }
-
-                if page.entries.count < page.total {
-                    Button("Show \(min(Self.dictionaryPageSize, page.total - page.entries.count)) more") {
-                        dictionaryVisibleLimit += Self.dictionaryPageSize
-                    }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityLabel("Show more dictionary entries")
-                }
+                .padding(18)
             }
-            .padding(18)
         }
-        .onChange(of: dictionarySearch) {
-            dictionaryVisibleLimit = Self.dictionaryPageSize
+        .sheet(isPresented: $showingAddTerm) {
+            DictionaryAddSheetView(draft: addTermDraft, allowTermOnly: true, onSave: { draft in
+                if draft.trimmedWrong.isEmpty {
+                    newTermText = draft.trimmedCorrect
+                    commitNewTerm()
+                } else {
+                    variantText = draft.trimmedWrong
+                    addingVariantFor = draft.trimmedCorrect
+                    saveVariant(draft.trimmedCorrect)
+                }
+                showingAddTerm = false
+            }, onCancel: { showingAddTerm = false })
+                .frame(width: 420)
         }
         .onChange(of: localEntries) { _, entries in
             let bundled = dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }
             dictionaryDisplayIndex = STTDictionaryDisplayIndex(entries: bundled + entries.map {
                 STTDictionaryDisplayEntry(source: "personal", entry: $0)
             })
-        }
-    }
-
-    private var addTermRow: some View {
-        HStack(spacing: 8) {
-            HStack {
-                TextField("Add a term, e.g. VoiceLayer", text: $newTermText)
-                    .dictionaryTextField()
-                    .focused($focusedEditorField, equals: .newTerm)
-                    .onSubmit(commitNewTerm)
-            }
-            .dictionaryFieldContainer()
-            .contentShape(Rectangle())
-            .onTapGesture {
-                focusedEditorField = .newTerm
-            }
-            Button(action: commitNewTerm) {
-                Image(systemName: "plus.circle.fill")
-            }
-            .buttonStyle(.borderless)
-            .disabled(newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .help("Add term")
-            .accessibilityLabel("Add term")
         }
     }
 
@@ -1575,24 +1584,18 @@ public struct SettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
-            Divider()
-            variantChips(entry, isEditable: isEditable)
-            if isEditable, addingVariantFor == entry.canonical {
-                addVariantInlineEditor(entry)
+            if Self.showsVariantRow(for: entry, isEditable: isEditable) {
+                Divider()
+                variantChips(entry, isEditable: isEditable)
             }
         }
         .padding(.vertical, 10)
     }
 
-    private func dictionarySections(
-        for entries: [STTDictionaryDisplayEntry]
-    ) -> [SettingsDictionarySection] {
-        let orderedSources = ["personal", "bundled"]
-        return orderedSources.compactMap { source in
-            let matching = entries.filter { $0.source == source }
-            guard !matching.isEmpty else { return nil }
-            return SettingsDictionarySection(source: source, entries: matching)
-        }
+    /// Your terms always keep the "misheard as…" row; a read-only built-in term shows it only when it has
+    /// variants, so a bare included term draws no empty band.
+    static func showsVariantRow(for entry: STTDictionaryEntry, isEditable: Bool) -> Bool {
+        isEditable || !entry.variants.isEmpty
     }
 
     @ViewBuilder
@@ -1671,6 +1674,7 @@ public struct SettingsView: View {
                                 .font(.caption)
                         }
                         .buttonStyle(.borderless)
+                        .help("Remove misheard spelling \(variant)")
                         .accessibilityLabel("Remove variant \(variant)")
                     }
                 }
@@ -1680,7 +1684,11 @@ public struct SettingsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 7))
             }
             if isEditable {
-                addVariantButton(entry.canonical)
+                if addingVariantFor == entry.canonical {
+                    addVariantInlineEditor(entry)
+                } else {
+                    addVariantButton(entry.canonical)
+                }
             }
         }
     }
@@ -1691,7 +1699,7 @@ public struct SettingsView: View {
             variantText = ""
             focusedEditorField = .addVariant
         } label: {
-            Text("+ add misheard variant")
+            Label("misheard as…", systemImage: "plus")
                 .padding(.vertical, 5)
         }
         .buttonStyle(.borderless)
@@ -1700,11 +1708,15 @@ public struct SettingsView: View {
     }
 
     private func addVariantInlineEditor(_ entry: STTDictionaryEntry) -> some View {
-        HStack(spacing: 8) {
-            TextField("Type the misheard spelling...", text: $variantText)
+        HStack(spacing: 5) {
+            TextField("Misheard spelling", text: $variantText)
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .addVariant)
                 .onSubmit { saveVariant(entry.canonical) }
+                .onExitCommand {
+                    addingVariantFor = nil
+                    variantText = ""
+                }
                 .padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)
                 .padding(.horizontal, 12)
                 .background(
@@ -1715,7 +1727,7 @@ public struct SettingsView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.accentColor, lineWidth: 1.5)
                 )
-                .frame(maxWidth: .infinity)
+                .frame(width: 180)
                 .frame(height: DictionaryCardLayout.inlineControlHeight)
             Button("Cancel") {
                 addingVariantFor = nil
@@ -2017,6 +2029,19 @@ public struct SettingsView: View {
         }
     }
 
+    private var allPermissionsGranted: Bool {
+        isMicrophonePermissionGranted() && !missingPermissions.contains(.accessibility) &&
+            !missingPermissions.contains(.inputMonitoring)
+    }
+
+    private var permissionRows: some View {
+        Group {
+            permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
+            permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
+            permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
+        }
+    }
+
     private func statusBadge(_ text: String, isReady: Bool) -> some View {
         HStack(spacing: 6) {
             Circle()
@@ -2061,14 +2086,50 @@ public struct SettingsView: View {
             !newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func reconcileLocalEntries(with preview: STTVocabularyPreview) {
-        guard !hasPendingDictionaryEdit else { return }
-        localEntries = preview.entries
-        dictionaryDisplayIndex = STTDictionaryDisplayIndex(
-            entries: preview.displayEntries ?? preview.entries.map {
-                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+    private func loadDictionaryPreview() {
+        guard !dictionaryLoading else {
+            dictionaryReloadQueued = true
+            return
+        }
+        dictionaryLoading = true
+        let provider = vocabularyPreview
+        Task {
+            let (preview, index) = await Task.detached(priority: .userInitiated) {
+                let preview = provider()
+                let index = STTDictionaryDisplayIndex(entries: preview.displayEntries ?? preview.entries.map {
+                    STTDictionaryDisplayEntry(source: "personal", entry: $0)
+                })
+                return (preview, index)
+            }.value
+            dictionaryLoading = false
+            if dictionaryReloadQueued {
+                dictionaryReloadQueued = false
+                loadDictionaryPreview()
+                return
             }
-        )
+            guard !hasPendingDictionaryEdit else { return }
+            localEntries = preview.entries
+            dictionaryDisplayIndex = index
+            hasLoadedDictionaryOnce = true
+        }
+    }
+
+    enum DictionaryPlaceholder: Equatable {
+        case loading
+        case empty
+    }
+
+    /// What stands in for "Your terms" rows: nothing while there are rows or a search, a quiet "Loading…" before
+    /// the first async load lands (never a false "No terms yet"), and the empty state only once it has.
+    static func dictionaryPlaceholder(loaded: Bool, personalIsEmpty: Bool, searching: Bool) -> DictionaryPlaceholder? {
+        guard personalIsEmpty, !searching else { return nil }
+        return loaded ? .empty : .loading
+    }
+
+    static func dictionarySectionTitle(_ title: String, count: Int, matches: Int? = nil, loaded: Bool) -> String {
+        guard loaded else { return title }
+        guard let matches else { return "\(title) (\(count))" }
+        return "\(title) (\(matches) of \(count))"
     }
 
     private func beginTermRename(rowID: String, canonical: String) {
@@ -2117,7 +2178,7 @@ public struct SettingsView: View {
     }
 
     private var addVariantInputFill: Color {
-        Color(red: 31 / 255, green: 39 / 255, blue: 51 / 255)
+        Color(nsColor: .controlBackgroundColor)
     }
 }
 
@@ -2203,19 +2264,20 @@ enum SettingsDictionaryMutations {
     ) {
         let trimmed = variantText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        upsertEntry(canonical, in: &localEntries)
-        guard let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else { return }
-        guard aliasKey(trimmed) != aliasKey(localEntries[index].canonical) else {
+        defer {
+            // AIDEV-NOTE: every exit clears the editor; a leftover addingVariantFor blocks all later reloads.
             variantText = ""
             addingVariantFor = nil
-            return
         }
+        upsertEntry(canonical, in: &localEntries)
+        // Same case-insensitive match as upsertEntry, so "swiftui" lands on an existing "SwiftUI".
+        guard let index = localEntries.firstIndex(where: { sameCanonical($0.canonical, canonical) }) else { return }
+        let existingCanonical = localEntries[index].canonical
+        guard aliasKey(trimmed) != aliasKey(existingCanonical) else { return }
         if !localEntries[index].variants.contains(where: { aliasKey($0) == aliasKey(trimmed) }) {
             localEntries[index].variants.append(trimmed)
-            onAddVocabularyAlias(canonical, trimmed)
+            onAddVocabularyAlias(existingCanonical, trimmed)
         }
-        variantText = ""
-        addingVariantFor = nil
     }
 
     static func removeVariant(
@@ -2230,11 +2292,12 @@ enum SettingsDictionaryMutations {
     }
 
     private static func upsertEntry(_ canonical: String, in entries: inout [STTDictionaryEntry]) {
-        guard !entries.contains(where: { $0.canonical.localizedCaseInsensitiveCompare(canonical) == .orderedSame })
-        else {
-            return
-        }
+        guard !entries.contains(where: { sameCanonical($0.canonical, canonical) }) else { return }
         entries.append(STTDictionaryEntry(canonical: canonical, variants: []))
+    }
+
+    private static func sameCanonical(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.localizedCaseInsensitiveCompare(rhs) == .orderedSame
     }
 
     private static func aliasKey(_ value: String) -> String {

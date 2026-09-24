@@ -69,6 +69,17 @@ final class VoiceBarFooterPresentationTests: XCTestCase {
         )
     }
 
+    /// Etan, 2026-09-24: "i'd like it to say "agent speaking" for clarity". The Settings sidebar footer
+    /// and the menu-bar popover share this word; the notch stays textless.
+    func testSpeakingStatusNamesTheAgent() {
+        XCTAssertEqual(
+            VoiceBarFooterPresentation
+                .resolve(isConnected: true, mode: .speaking, captureLive: false, errorMessage: nil,
+                         remoteSTTConfigured: false, hasFreshHealth: true).status,
+            "Agent speaking"
+        )
+    }
+
     func testPrivacyNeverClaimsLocalForUnknownOrRemoteConfiguration() {
         XCTAssertEqual(
             VoiceBarFooterPresentation
@@ -86,7 +97,19 @@ final class VoiceBarFooterPresentationTests: XCTestCase {
             VoiceBarFooterPresentation
                 .resolve(isConnected: true, mode: .idle, captureLive: false, errorMessage: nil,
                          remoteSTTConfigured: false).privacy,
-            "Only on this Mac"
+            "Transcribed on this Mac"
         )
+    }
+
+    func testPrivacySymbolDistinguishesUnknownFromRemote() {
+        func symbol(_ remote: Bool?) -> String {
+            VoiceBarFooterPresentation.resolve(
+                isConnected: true, mode: .idle, captureLive: false,
+                errorMessage: nil, remoteSTTConfigured: remote
+            ).privacySymbol
+        }
+        XCTAssertEqual(symbol(false), "lock.fill")
+        XCTAssertEqual(symbol(true), "network")
+        XCTAssertEqual(symbol(nil), "questionmark.circle")
     }
 }

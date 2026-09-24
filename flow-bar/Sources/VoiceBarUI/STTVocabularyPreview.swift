@@ -52,6 +52,7 @@ public struct STTDictionaryDisplayEntry: Equatable, Sendable {
 public struct STTDictionaryDisplayIndex {
     public let sortedEntries: [STTDictionaryDisplayEntry]
     public let personalCount: Int
+    public let includedCount: Int
 
     public init(entries: [STTDictionaryDisplayEntry]) {
         sortedEntries = entries.sorted {
@@ -59,6 +60,16 @@ public struct STTDictionaryDisplayIndex {
             return $0.entry.canonical.localizedCaseInsensitiveCompare($1.entry.canonical) == .orderedAscending
         }
         personalCount = entries.filter(\.isPersonal).count
+        includedCount = entries.count - personalCount
+    }
+
+    public func entries(source: String, matching query: String) -> [STTDictionaryDisplayEntry] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sortedEntries.filter {
+            $0.source == source && (term.isEmpty ||
+                $0.entry.canonical.localizedCaseInsensitiveContains(term) ||
+                $0.entry.variants.contains { $0.localizedCaseInsensitiveContains(term) })
+        }
     }
 
     public func page(matching query: String, limit: Int) -> (entries: [STTDictionaryDisplayEntry], total: Int) {

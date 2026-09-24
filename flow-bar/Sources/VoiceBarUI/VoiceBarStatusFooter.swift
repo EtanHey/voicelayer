@@ -5,6 +5,7 @@ public struct VoiceBarFooterPresentation: Equatable {
     public let privacy: String
     public let isReady: Bool
     public let isLocalOnly: Bool
+    public let privacySymbol: String
 
     public static func resolve(
         isConnected: Bool,
@@ -23,22 +24,28 @@ public struct VoiceBarFooterPresentation: Equatable {
             case .idle: hasFreshHealth ? "Ready" : "Starting…"
             case .recording: captureLive ? "Recording" : "Starting microphone"
             case .transcribing: "Transcribing"
-            case .speaking: "Speaking"
+            case .speaking: "Agent speaking"
             case .error: "Error"
             case .disconnected: "Disconnected"
             }
         }
 
         let privacy = switch remoteSTTConfigured {
-        case .some(false): "Only on this Mac"
+        case .some(false): "Transcribed on this Mac"
         case .some(true): "Remote speech backend configured"
         case .none: "Processing location unavailable"
+        }
+        let privacySymbol = switch remoteSTTConfigured {
+        case .some(false): "lock.fill"
+        case .some(true): "network"
+        case .none: "questionmark.circle"
         }
         return Self(
             status: status,
             privacy: privacy,
             isReady: status == "Ready",
-            isLocalOnly: remoteSTTConfigured == false
+            isLocalOnly: remoteSTTConfigured == false,
+            privacySymbol: privacySymbol
         )
     }
 
@@ -54,6 +61,24 @@ public struct VoiceBarFooterPresentation: Equatable {
     }
 }
 
+public struct VoiceBarStatusIndicator: View {
+    public let presentation: VoiceBarFooterPresentation
+
+    public init(presentation: VoiceBarFooterPresentation) {
+        self.presentation = presentation
+    }
+
+    public var body: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(presentation.isReady ? .green : .orange)
+                .frame(width: 7, height: 7)
+            Text(presentation.status)
+                .font(.system(size: 12, weight: .medium))
+        }
+    }
+}
+
 public struct VoiceBarStatusFooter: View {
     public let presentation: VoiceBarFooterPresentation
 
@@ -63,16 +88,10 @@ public struct VoiceBarStatusFooter: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(presentation.isReady ? .green : .orange)
-                    .frame(width: 7, height: 7)
-                Text(presentation.status)
-                    .font(.system(size: 12, weight: .medium))
-            }
+            VoiceBarStatusIndicator(presentation: presentation)
             Label(
                 presentation.privacy,
-                systemImage: presentation.isLocalOnly ? "lock" : "network"
+                systemImage: presentation.privacySymbol
             )
             .font(.system(size: 11))
             .foregroundStyle(.secondary)

@@ -17,6 +17,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     /// when the trailing-silence trim fired.
     public let transcribedDurationMs: Int?
     public let modelLabel: String?
+    public let performanceEffort: VoiceBarPerformanceEffort?
     public let inputDeviceLabel: String?
 
     public init(
@@ -29,6 +30,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         durationMs: Int? = nil,
         transcribedDurationMs: Int? = nil,
         modelLabel: String? = nil,
+        performanceEffort: VoiceBarPerformanceEffort? = nil,
         inputDeviceLabel: String? = nil
     ) {
         self.id = id
@@ -40,6 +42,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         self.durationMs = durationMs
         self.transcribedDurationMs = transcribedDurationMs
         self.modelLabel = modelLabel
+        self.performanceEffort = performanceEffort
         self.inputDeviceLabel = inputDeviceLabel
     }
 
@@ -122,6 +125,18 @@ public struct SettingsHistoryPage: Equatable, Sendable {
 public enum SettingsHistoryArchive {
     public static let defaultPageSize = 100
 
+    public static func lastDictationProvenanceLabel(for recordingPath: String?) -> String? {
+        guard let recordingPath, !recordingPath.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: recordingPath)
+        let directory = url.pathExtension.lowercased() == "wav" ? url.deletingLastPathComponent() : url
+        let metadata = SettingsArchiveMetadata.load(from: directory.appendingPathComponent("metadata.json"))
+        let model = VoiceModelDisplayName.normalize(metadata?.provenance?.whisperModelPath)
+        let effort = metadata?.provenance?.performanceEffort
+            .flatMap(VoiceBarPerformanceEffort.init)?.displayName
+        let parts = [model, effort].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     public static var defaultRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local")
@@ -188,9 +203,8 @@ public enum SettingsHistoryArchive {
             audioPath: audioURL,
             durationMs: metadata?.durationMs,
             transcribedDurationMs: metadata?.transcribedDurationMs,
-            modelLabel: metadata?.provenance?.whisperModelPath
-                .flatMap { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent.settingsArchiveNilIfEmpty
-                },
+            modelLabel: VoiceModelDisplayName.normalize(metadata?.provenance?.whisperModelPath),
+            performanceEffort: metadata?.provenance?.performanceEffort.flatMap(VoiceBarPerformanceEffort.init),
             inputDeviceLabel: metadata?.inputDeviceName?
                 .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty
         )

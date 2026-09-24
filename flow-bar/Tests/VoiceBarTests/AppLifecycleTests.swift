@@ -246,10 +246,14 @@ final class AppLifecycleTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let uiSourceDirectory = repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBarUI")
+        // AIDEV-NOTE: The menu-bar popover is also a legitimate home for the Quit control.
         let uiSources = try FileManager.default.contentsOfDirectory(
             at: uiSourceDirectory,
             includingPropertiesForKeys: nil
-        ).filter { $0.pathExtension == "swift" && $0.lastPathComponent != "VoiceBarMenu.swift" }
+        ).filter {
+            $0.pathExtension == "swift" &&
+                !["VoiceBarMenu.swift", "MenuBarPopoverView.swift"].contains($0.lastPathComponent)
+        }
         let surfaceSources = uiSources + [
             repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift"),
         ]
@@ -844,6 +848,26 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(window.contentLayoutRect.size, NSSize(width: 920, height: 700))
     }
 
+    @MainActor
+    func testSettingsWindowFrameAutosaveRestoresLargerContentSizeOffscreen() {
+        let name = "VoiceBar.SettingsWindow.Test.\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(name)") }
+        let first = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 940, height: 760),
+            styleMask: [.titled, .resizable], backing: .buffered, defer: false
+        )
+        first.saveFrame(usingName: name)
+
+        let restored = NSWindow(
+            contentRect: SettingsWindowSizing.initialContentRect,
+            styleMask: [.titled, .resizable], backing: .buffered, defer: false
+        )
+        XCTAssertTrue(restored.setFrameUsingName(name))
+        SettingsWindowSizing.apply(to: restored)
+        XCTAssertGreaterThanOrEqual(restored.contentLayoutRect.width, 940)
+        XCTAssertGreaterThanOrEqual(restored.contentLayoutRect.height, 760)
+    }
+
     func testSettingsWindowAppliesSizingContractOnInitialOpenAndReopen() throws {
         let source = try voiceBarAppSource()
         let openStart = try XCTUnwrap(source.range(of: "func openSettingsWindow()"))
@@ -867,6 +891,7 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(existingWindowPath.contains("SettingsWindowSizing.apply(to: settingsWindow)"))
         XCTAssertTrue(openSettingsWindow.contains("contentRect: SettingsWindowSizing.initialContentRect"))
         XCTAssertTrue(openSettingsWindow.contains("SettingsWindowSizing.apply(to: window)"))
+        XCTAssertTrue(openSettingsWindow.contains("setFrameAutosaveName(SettingsWindowSizing.autosaveName)"))
     }
 
     func testVoiceModeChangesRefreshOpenSettingsActionEnablement() throws {

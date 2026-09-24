@@ -12,7 +12,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("effort: $selectedPerformanceEffort"))
         XCTAssertTrue(source.contains("notice: performanceEffortNotice()"))
         XCTAssertTrue(source.contains("onSelectEffort: onSelectPerformanceEffort"))
-        XCTAssertTrue(source.contains(".onAppear(perform: onRefreshModelsStatus)"))
+        XCTAssertTrue(source.contains("onRefreshModelsStatus()"))
         XCTAssertFalse(source.contains("Model information unavailable"))
     }
 
@@ -62,18 +62,18 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("variantChips"))
         XCTAssertFalse(source.contains("Section(\"Find\")"))
         XCTAssertFalse(source.contains("Section(\"Prompt Terms\")"))
-        XCTAssertFalse(source.contains("DisclosureGroup"))
     }
 
+    /// Approved spec §6: the sticky header shows the search field first, then "Add term".
     func testDictionaryAddAndSearchAppearBeforeCanonicalCards() throws {
         let source = try settingsViewSource()
-        let addRange = try XCTUnwrap(source.range(of: "addTermRow"))
         let searchRange = try XCTUnwrap(source.range(of: "searchRow"))
+        let addRange = try XCTUnwrap(source.range(of: "Label(\"Add term\""))
         let cardRange = try XCTUnwrap(source.range(of: "dictionaryEntryCard"))
         let addVariantRange = try XCTUnwrap(source.range(of: "addVariantInlineEditor"))
 
-        XCTAssertLessThan(addRange.lowerBound, searchRange.lowerBound)
-        XCTAssertLessThan(searchRange.lowerBound, cardRange.lowerBound)
+        XCTAssertLessThan(searchRange.lowerBound, addRange.lowerBound)
+        XCTAssertLessThan(addRange.lowerBound, cardRange.lowerBound)
         XCTAssertLessThan(cardRange.lowerBound, addVariantRange.lowerBound)
     }
 
@@ -85,13 +85,13 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Picker(\"Anchor\""))
     }
 
-    func testSettingsUsesAcceptedFiveDestinationOrder() {
+    func testSettingsUsesApprovedFourDestinationOrder() {
         XCTAssertEqual(
             SettingsTab.allCases,
-            [.audio, .dictionary, .history, .models, .general]
+            [.general, .models, .dictionary, .history]
         )
         XCTAssertEqual(SettingsTab.allCases.map(\.title), [
-            "Audio", "Dictionary", "History", "Models", "General",
+            "General", "Models", "Dictionary", "History",
         ])
     }
 
@@ -101,15 +101,13 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertEqual(SettingsDictionarySource.unknown.title, "Terms")
     }
 
-    func testAudioTabIncludesPerformanceEffortPicker() throws {
+    func testOnlyModelsOwnsPerformanceEffortPicker() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("Section(\"Performance\")"))
-        XCTAssertTrue(source.contains("Picker(\"Effort\""))
-        XCTAssertTrue(source.contains("Fast"))
-        XCTAssertTrue(source.contains("Balanced"))
-        XCTAssertTrue(source.contains("Accurate"))
-        XCTAssertTrue(source.contains("onSelectPerformanceEffort"))
+        XCTAssertFalse(source.contains("case .audio:"))
+        XCTAssertFalse(source.contains("private var audioTab"))
+        XCTAssertTrue(source.contains("microphonePrioritySection"))
+        XCTAssertTrue(source.contains("ModelsSettingsView("))
     }
 
     func testSettingsIncludesFullHistoryTabWithEntryActions() throws {
@@ -504,14 +502,18 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("Hide for 1 hour"))
     }
 
-    func testGeneralTabShowsGranularPermissionAndRelayRows() throws {
+    func testGeneralTabShowsPermissionsAndAdvancedF5Helper() throws {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("permissionRow"))
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
-        XCTAssertTrue(source.contains("Section(\"Permissions & Hotkey Setup\")"))
-        XCTAssertTrue(source.contains("Relay (hidutil LaunchAgent)"))
+        XCTAssertTrue(source.contains("Section(\"Shortcut\")"))
+        XCTAssertTrue(source.contains("Section(\"Permissions\")"))
+        XCTAssertTrue(source.contains("DisclosureGroup(\"All permissions granted\""))
+        XCTAssertTrue(source.contains("DisclosureGroup(\"Advanced\", isExpanded:"))
+        XCTAssertTrue(source.contains("F5 key helper"))
+        XCTAssertFalse(source.contains("Relay (hidutil LaunchAgent)"))
         XCTAssertTrue(source.contains("runRelaySetup"))
         XCTAssertTrue(source.contains(".disabled(relaySetupRunning)"))
         XCTAssertFalse(source.contains("Section(\"Karabiner\")"))
