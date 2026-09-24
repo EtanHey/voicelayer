@@ -16,6 +16,7 @@ import {
   readWhisperServerHelpText,
   resolveWhisperAccelerationPlan,
   stopServer,
+  stopServerAndWait,
   transcribeViaServer,
   whisperServerLaunchRecord,
 } from "../whisper-server";
@@ -289,6 +290,47 @@ usage: whisper-server [options]
       expect(result.helpText).toBe("");
       expect(result.warning).toContain("failed");
       expect(result.warning).toContain("falling back");
+    });
+  });
+
+  describe("stopServerAndWait (effort reload, #142 round 2)", () => {
+    function ownedChild(exitOn: (signal: string) => boolean) {
+      const signals: string[] = [];
+      let exit!: () => void;
+      const exited = new Promise<number>((resolve) => { exit = () => resolve(0); });
+      const proc = {
+        pid: 424242,
+        stderr: null,
+        exitCode: null,
+        exited,
+        kill: (signal?: string) => {
+          const name = signal ?? "SIGTERM";
+          signals.push(name);
+          if (exitOn(name)) exit();
+        },
+      };
+      __resetWhisperServerStateForTests({ proc: proc as any, port: 18993, pid: 424242, adopted: false } as any);
+      return signals;
+    }
+
+    it("escalates to SIGKILL when the old server ignores SIGTERM", async () => {
+      const signals = ownedChild((signal) => signal === "SIGKILL");
+      try {
+        await stopServerAndWait();
+        expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+      } finally {
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("fails loudly instead of letting a relaunch adopt a server that will not stop", async () => {
+      const signals = ownedChild(() => false);
+      try {
+        await expect(stopServerAndWait()).rejects.toThrow(/did not stop/);
+        expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+      } finally {
+        __resetWhisperServerStateForTests(null);
+      }
     });
   });
 

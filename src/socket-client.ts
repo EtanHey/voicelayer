@@ -154,8 +154,10 @@ function startConnection(): void {
             );
             if (commandHandler) {
               const responsePromise = commandHandler(command);
-              if (command.cmd === "set_whisper_residency" &&
-                  command.action === "load" && responsePromise instanceof Promise &&
+              const reloadsModel =
+                (command.cmd === "set_whisper_residency" && command.action === "load") ||
+                command.cmd === "set_whisper_effort";
+              if (reloadsModel && responsePromise instanceof Promise &&
                   connection && connected) {
                 try {
                   connection.write(JSON.stringify({

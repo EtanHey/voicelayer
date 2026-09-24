@@ -227,26 +227,28 @@ describe("socket residency command", () => {
     expect(save).not.toHaveBeenCalled();
   });
 
-  test("effort changes admit an idle daemon booking but reject active voice work", () => {
+  test("effort changes admit an idle daemon booking but reject active voice work", async () => {
+    spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(status));
     spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
     const save = spyOn(performance, "setWhisperPerformanceEffort").mockImplementation(() => {});
     const restart = spyOn(performance, "restartWhisperServerForPerformanceChange").mockImplementation(() => {});
     spies.push(save, restart);
-    expect(handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "idle-effort" }))
+    expect(await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "idle-effort" }))
       .toMatchObject({ outcome: "accept" });
     const operation = reserveStandardVoiceOperation();
     try {
       expect(operation).not.toBeNull();
-      expect(handleSocketCommand({ cmd: "set_whisper_effort", effort: "accurate", id: "active-effort" }))
+      expect(await handleSocketCommand({ cmd: "set_whisper_effort", effort: "accurate", id: "active-effort" }))
         .toMatchObject({ outcome: "reject", reason: "busy" });
       expect(save).toHaveBeenCalledTimes(1);
       expect(restart).toHaveBeenCalledTimes(1);
     } finally { operation?.release(); }
   });
 
-  test("an accepted effort change supplies different decode args at the next server launch", () => {
+  test("an accepted effort change supplies different decode args at the next server launch", async () => {
+    spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(status));
     spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
@@ -255,7 +257,7 @@ describe("socket residency command", () => {
     spies.push(restart);
     const previous = performance.getWhisperPerformanceEffort();
     try {
-      expect(handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "next-decode-fast" }))
+      expect(await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "next-decode-fast" }))
         .toMatchObject({ outcome: "accept" });
       const fast = server.buildWhisperServerLaunchPlan({
         binary: "/fixture/whisper-server", model: "/fixture/model.bin", port: 8178,
@@ -264,7 +266,7 @@ describe("socket residency command", () => {
       expect(fast.args.slice(fast.args.indexOf("-bo"), fast.args.indexOf("-bo") + 4))
         .toEqual(["-bo", "1", "-bs", "1"]);
 
-      expect(handleSocketCommand({ cmd: "set_whisper_effort", effort: "accurate", id: "next-decode-accurate" }))
+      expect(await handleSocketCommand({ cmd: "set_whisper_effort", effort: "accurate", id: "next-decode-accurate" }))
         .toMatchObject({ outcome: "accept" });
       const accurate = server.buildWhisperServerLaunchPlan({
         binary: "/fixture/whisper-server", model: "/fixture/model.bin", port: 8178,
@@ -291,6 +293,188 @@ describe("socket residency command", () => {
         .toMatchObject({ outcome: "reject", reason: "busy" });
       expect(save).not.toHaveBeenCalled();
     } finally { finish(); await inference; }
+  });
+
+  describe("effort change reloads a loaded model (E2)", () => {
+    function idle(): void {
+      spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
+      spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: false, ownedByUs: false }));
+      spies.push(spyOn(performance, "setWhisperPerformanceEffort").mockImplementation(() => {}));
+    }
+    const loaded = (effort: "fast" | "accurate") => ({
+      ...status, residency: "loaded" as const, active_model: "large-v3-turbo", active_effort: effort,
+    });
+
+    test("relaunches the model after stopping it, so In memory returns to Loaded", async () => {
+      idle();
+      const calls: string[] = [];
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange")
+        .mockImplementation(() => { calls.push("stop"); }));
+      spies.push(spyOn(server, "ensureServer").mockImplementation(async () => {
+        calls.push("launch");
+        return 8178;
+      }));
+      const statuses = [loaded("accurate"), { ...loaded("fast"), configured_effort: "fast" as const }];
+      spies.push(spyOn(model, "readWhisperModelStatus").mockImplementation(async () => statuses.shift()!));
+
+      const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-reload" });
+
+      expect(calls).toEqual(["stop", "launch"]);
+      expect(ack).toMatchObject({
+        type: "ack", command: "set_whisper_effort", id: "e2-reload", outcome: "accept",
+        model_status: { residency: "loaded", active_effort: "fast" },
+      });
+      expect((ack as { reason?: string }).reason).toBeUndefined();
+    });
+
+    test("relaunches only after the stopped server has exited", async () => {
+      idle();
+      const calls: string[] = [];
+      let exited!: () => void;
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange").mockImplementation(
+        () => new Promise<void>((resolve) => { exited = () => { calls.push("exited"); resolve(); }; }),
+      ));
+      spies.push(spyOn(server, "ensureServer").mockImplementation(async () => {
+        calls.push("launch");
+        return 8178;
+      }));
+      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("fast")));
+
+      const ack = handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-order" });
+      for (let i = 0; i < 20 && !exited; i++) await Bun.sleep(5);
+      await Bun.sleep(20);
+      expect(calls).toEqual([]);
+      exited();
+      await ack;
+      expect(calls).toEqual(["exited", "launch"]);
+    });
+
+    test("does not load a model the user had unloaded", async () => {
+      idle();
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange").mockImplementation(() => {}));
+      const ensure = spyOn(server, "ensureServer").mockResolvedValue(8178);
+      spies.push(ensure);
+      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(status));
+
+      const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-unloaded" });
+
+      expect(ensure).not.toHaveBeenCalled();
+      expect(ack).toMatchObject({ outcome: "accept", model_status: { residency: "not_loaded" } });
+    });
+
+    test("says so when a server it did not launch keeps the old effort", async () => {
+      idle();
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange").mockImplementation(() => {}));
+      spies.push(spyOn(server, "ensureServer").mockResolvedValue(8178));
+      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+
+      const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-adopted" });
+
+      expect(ack).toMatchObject({ outcome: "accept", model_status: { active_effort: "accurate" } });
+      expect((ack as { reason?: string }).reason).toContain("restarts");
+    });
+
+    test("says so when the reload fails, keeping the saved effort", async () => {
+      idle();
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange").mockImplementation(() => {}));
+      spies.push(spyOn(server, "ensureServer").mockRejectedValue(new Error("whisper-server failed to start")));
+      const statuses = [loaded("accurate"), status];
+      spies.push(spyOn(model, "readWhisperModelStatus").mockImplementation(async () => statuses.shift()!));
+
+      const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-failed" });
+
+      expect(ack).toMatchObject({ outcome: "accept", model_status: { residency: "not_loaded" } });
+      expect((ack as { reason?: string }).reason).toContain("whisper-server failed to start");
+    });
+
+    test("rejects visibly and keeps the old effort when the old server will not stop", async () => {
+      idle();
+      const saved: string[] = [];
+      spies.push(spyOn(performance, "getWhisperPerformanceEffort").mockReturnValue("accurate"));
+      spies.push(spyOn(performance, "setWhisperPerformanceEffort")
+        .mockImplementation((effort) => { saved.push(effort); }));
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange")
+        .mockRejectedValue(new Error("the old model server did not stop")));
+      const ensure = spyOn(server, "ensureServer").mockResolvedValue(8178);
+      spies.push(ensure);
+      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+
+      const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-stuck" });
+
+      expect(ack).toMatchObject({ outcome: "reject" });
+      expect((ack as { reason?: string }).reason).toContain("did not stop");
+      expect(saved).toEqual(["fast", "accurate"]);
+      expect(ensure).not.toHaveBeenCalled();
+    });
+
+    test("a failed reload restores the SAVED effort, never an env override (#142 r3 C)", async () => {
+      const path = `${process.env.VOICELAYER_STATE_DIR ?? "/tmp"}/e2-r3-effort.json`;
+      const savedPath = process.env.QA_VOICE_WHISPER_PERFORMANCE_PATH;
+      const savedOverride = process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+      spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
+      spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: false, ownedByUs: false }));
+      process.env.QA_VOICE_WHISPER_PERFORMANCE_PATH = path;
+      try {
+        delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+        performance.setWhisperPerformanceEffort("accurate");
+        process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = "balanced";
+        spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange")
+          .mockRejectedValue(new Error("the old model server did not stop")));
+        spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+
+        const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-r3c" });
+
+        expect(ack).toMatchObject({ outcome: "reject" });
+        delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+        expect(performance.getWhisperPerformanceEffort()).toBe("accurate");
+      } finally {
+        if (savedPath === undefined) delete process.env.QA_VOICE_WHISPER_PERFORMANCE_PATH;
+        else process.env.QA_VOICE_WHISPER_PERFORMANCE_PATH = savedPath;
+        if (savedOverride === undefined) delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+        else process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = savedOverride;
+      }
+    });
+
+    test("a rollback that fails still sends a reject naming both failures (#142 r3 D)", async () => {
+      spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
+      spies.push(spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0));
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: false, ownedByUs: false }));
+      spies.push(spyOn(performance, "setWhisperPerformanceEffort").mockImplementation(() => {}));
+      spies.push(spyOn(performance, "restorePersistedWhisperPerformanceEffort").mockImplementation(() => {
+        throw new Error("config write failed");
+      }));
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange")
+        .mockRejectedValue(new Error("the old model server did not stop")));
+      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+
+      const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-r3d" });
+
+      expect(ack).toMatchObject({ outcome: "reject" });
+      const reason = (ack as { reason?: string }).reason ?? "";
+      expect(reason).toContain("did not stop");
+      expect(reason).toContain("config write failed");
+    });
+
+    test("a Load or another effort change waits while the reload runs", async () => {
+      idle();
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange").mockImplementation(() => {}));
+      let finish!: (port: number) => void;
+      spies.push(spyOn(server, "ensureServer").mockImplementation(
+        () => new Promise<number>((resolve) => { finish = resolve; }),
+      ));
+      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+
+      const first = handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-first" });
+      for (let i = 0; i < 20 && !finish; i++) await Bun.sleep(5);
+      expect(await handleSocketCommand({ cmd: "set_whisper_effort", effort: "balanced", id: "e2-second" }))
+        .toMatchObject({ outcome: "reject", reason: "Model load in progress" });
+      expect(await handleSocketCommand({ cmd: "set_whisper_residency", action: "load", id: "e2-load" }))
+        .toMatchObject({ outcome: "reject", reason: "Model load in progress" });
+      finish(8178);
+      expect(await first).toMatchObject({ outcome: "accept" });
+    });
   });
 
   test("F5 capture preempts unload maintenance and keeps the daemon booking", () => {

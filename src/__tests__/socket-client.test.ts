@@ -290,6 +290,21 @@ describe("socket-client", () => {
       event.type === "ack" && event.outcome === "accept"))).toBe(true);
   });
 
+  it("acknowledges an effort change as loading while the model reloads", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const { connectToBar, onCommand } = await import("../socket-client");
+    let finish!: (value: { type: "ack"; command: "set_whisper_effort"; id: string; outcome: "accept" }) => void;
+    onCommand(() => new Promise((resolve) => { finish = resolve; }));
+    connectToBar(TEST_SOCKET);
+    expect(await waitFor(() => mockServer!.clients.size === 1)).toBe(true);
+    mockServer.sendToAll('{"cmd":"set_whisper_effort","effort":"fast","id":"effort-1"}\n');
+    expect(await waitFor(() => parseReceived(mockServer!).some((event) =>
+      event.type === "ack" && event.outcome === "loading"))).toBe(true);
+    finish({ type: "ack", command: "set_whisper_effort", id: "effort-1", outcome: "accept" });
+    expect(await waitFor(() => parseReceived(mockServer!).some((event) =>
+      event.type === "ack" && event.outcome === "accept"))).toBe(true);
+  });
+
   it("auto-reconnects when connection drops", async () => {
     mockServer = createMockVoiceBarServer(TEST_SOCKET);
 
