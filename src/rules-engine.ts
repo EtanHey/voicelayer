@@ -685,7 +685,9 @@ function markNounArticleBefore(text: string, start: number): boolean {
     // Whisper capitalises after an opening quote or paren the same way it
     // does after a newline. "double quote The question mark" is a noun;
     // "option A question mark" still has a letter, not a delimiter, in head.
-    /["'`\u201C(\[{]\s*$/.test(head)
+    // A lone capital "A" there is the option label itself ("single quote A
+    // question mark" is 'A?), so the label safeguard wins over the delimiter.
+    (raw !== "A" && /["'`\u201C(\[{]\s*$/.test(head))
   );
 }
 
