@@ -375,20 +375,16 @@ export function handleSocketCommand(
       }
     }
     case "set_whisper_effort":
-      if (residencyBusy() || residencyLoadPending || whisperLifecycleGate.isUnloading ||
+      if (residencyLoadPending) {
+        return buildAck(command, "reject", "Model load in progress");
+      }
+      if (residencyBusy() || whisperLifecycleGate.isUnloading ||
           whisperLifecycleGate.isInUse) {
         const booking = isVoiceBooked();
         return buildAck(command, "reject", booking.booked && !booking.ownedByUs
           ? EXTERNAL_VOICE_SESSION_REASON : "busy");
       }
-      try {
-        setWhisperPerformanceEffort(command.effort);
-        restartWhisperServerForPerformanceChange();
-        publishModelStatusEvent();
-        return buildAck(command, "accept");
-      } catch (error) {
-        return buildAck(command, "reject", vocabularyErrorReason(error));
-      }
+      return handleEffortCommand(command);
     case "set_whisper_residency":
       return handleResidencyCommand(command);
     case "set_recording_hold":
@@ -490,6 +486,62 @@ async function handleResidencyCommand(
       `[voicelayer] Residency request ${command.id} ${command.action} ${outcome}` +
       ` reason=${reason ?? "none"} elapsed_ms=${Date.now() - startedAt}`,
     );
+  }
+}
+
+/**
+ * Effort is a whisper-server launch flag, so a change stops the server. If the
+ * model was in memory, relaunch it with the new effort before acking, so "In
+ * memory" returns to Loaded without a click (E2). The socket client sends the
+ * same `loading` ack a Load gets while this runs.
+ *
+ * AIDEV-NOTE: a server this daemon did not launch is only detached by the stop
+ * and re-adopted with its old flags, so the ack says the effort is not active
+ * yet instead of claiming it applied.
+ */
+async function handleEffortCommand(
+  command: Extract<SocketCommand, { cmd: "set_whisper_effort" }>,
+): Promise<AckEvent> {
+  residencyLoadPending = true;
+  let reason: string | undefined;
+  try {
+    const wasLoaded = (await readWhisperModelStatus()).residency === "loaded";
+    // The status probe yielded; a capture may have started meanwhile.
+    if (residencyBusy() || whisperLifecycleGate.isInUse) {
+      return buildAck(command, "reject", residencyBusyReason());
+    }
+    try {
+      setWhisperPerformanceEffort(command.effort);
+    } catch (error) {
+      return buildAck(command, "reject", vocabularyErrorReason(error));
+    }
+    await restartWhisperServerForPerformanceChange();
+    if (wasLoaded) {
+      try {
+        await ensureServer();
+      } catch (error) {
+        reason = `Saved, but the model did not reload: ${vocabularyErrorReason(error)}`;
+      }
+    }
+  } finally {
+    residencyLoadPending = false;
+  }
+  try {
+    const modelStatus = await readWhisperModelStatus();
+    if (!reason && modelStatus.residency === "loaded" &&
+        modelStatus.active_effort !== command.effort) {
+      reason = "Saved. The running model server was not started by VoiceLayer, " +
+        "so it keeps its current effort until it restarts.";
+    }
+    return {
+      ...buildAck(command, "accept", reason),
+      residency: modelStatus.residency,
+      model_status: modelStatus,
+    };
+  } catch (error) {
+    return buildAck(command, "accept", reason ?? vocabularyErrorReason(error));
+  } finally {
+    publishModelStatusEvent();
   }
 }
 

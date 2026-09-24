@@ -7,7 +7,7 @@ export type WhisperPerformanceEffort = "fast" | "balanced" | "accurate";
 const CONFIG_OVERRIDE_ENV = "QA_VOICE_WHISPER_PERFORMANCE_PATH";
 const DEFAULT_EFFORT: WhisperPerformanceEffort = "accurate";
 
-let restartWhisperServer: () => void = () => {};
+let restartWhisperServer: () => void | Promise<void> = () => {};
 
 export function whisperPerformanceConfigPath(
   env: NodeJS.ProcessEnv = process.env,
@@ -78,10 +78,13 @@ export function setWhisperPerformanceEffort(
   );
 }
 
-export function configureWhisperPerformanceRestart(callback: () => void): void {
+export function configureWhisperPerformanceRestart(
+  callback: () => void | Promise<void>,
+): void {
   restartWhisperServer = callback;
 }
 
-export function restartWhisperServerForPerformanceChange(): void {
-  restartWhisperServer();
+/** Resolves once the server this process launched has exited (E2 relaunches right after). */
+export async function restartWhisperServerForPerformanceChange(): Promise<void> {
+  await restartWhisperServer();
 }

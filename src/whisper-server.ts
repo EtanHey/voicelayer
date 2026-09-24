@@ -1171,6 +1171,17 @@ export function stopServer(): void {
   clearWhisperServerOwnership(state.port);
 }
 
+/**
+ * `stopServer`, then wait for the owned child to exit. A relaunch that does not
+ * wait finds the dying server still answering health and adopts it (seen in the
+ * E2 real-client check: "adopting … PID 0", then nothing loaded).
+ */
+export async function stopServerAndWait(): Promise<void> {
+  const proc = serverState && !serverState.adopted ? serverState.proc : null;
+  stopServer();
+  if (proc) await waitForWhisperProcessExit(proc);
+}
+
 /** Explicit user unload. Only the live child this process launched may be stopped. */
 export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> {
   return whisperLifecycleGate.unload(isBusy, async () => {
@@ -1221,7 +1232,7 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
   });
 }
 
-configureWhisperPerformanceRestart(stopServer);
+configureWhisperPerformanceRestart(stopServerAndWait);
 
 /**
  * Transcribe a WAV audio buffer via whisper-server HTTP API.
