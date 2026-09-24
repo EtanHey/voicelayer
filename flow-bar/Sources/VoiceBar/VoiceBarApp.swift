@@ -1162,7 +1162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Type text into the focused app with synthesized keyboard events. Never
     /// touches the pasteboard — see the AIDEV-NOTE at VoiceState's paste call site.
     /// What goes into each event, and why no control character may, is
-    /// `SynthesizedTyping`. Requires Accessibility.
+    /// `SynthesizedTyping`; the events themselves are `SynthesizedKeyEvents`.
+    /// Requires Accessibility.
     @discardableResult
     private static func typeText(_ text: String) -> Bool {
         guard isAccessibilityTrusted(prompt: false) else {
@@ -1173,7 +1174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("[VoiceBar] typeText: failed to create CGEventSource")
             return false
         }
-        guard let events = SynthesizedTyping.events(
+        guard let events = SynthesizedKeyEvents.events(
             for: SynthesizedTyping.keystrokes(for: text),
             source: source
         ) else {
