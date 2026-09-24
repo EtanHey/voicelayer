@@ -784,43 +784,90 @@ public struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             let visibleRows = microphoneSnapshot.visibleRows
-            let prioritizedCount = visibleRows.filter(\.canPrioritize).count
             ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
-                HStack(spacing: 10) {
-                    Image(systemName: "mic")
-                        .foregroundStyle(.secondary)
-                    Text(row.label)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text(row.isConnected ? "Connected" : "Disconnected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if row.canPrioritize {
-                        Button {
-                            moveMicrophone(at: index, by: -1)
-                        } label: {
-                            Image(systemName: "chevron.up")
-                        }
-                        .disabled(index == 0)
-                        .accessibilityLabel("Move \(row.label) up")
-                        Button {
-                            moveMicrophone(at: index, by: 1)
-                        } label: {
-                            Image(systemName: "chevron.down")
-                        }
-                        .disabled(index >= prioritizedCount - 1)
-                        .accessibilityLabel("Move \(row.label) down")
-                    } else {
-                        Text("UID unavailable")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                microphonePriorityRow(row, at: index, visibleCount: visibleRows.count)
             }
-            Text("Use the arrows to set priority. Disconnected microphones keep their place.")
+            Text("Make a microphone the default, or drag to reorder. Disconnected microphones keep their place.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// Etan's 2.2.24 review #5: one click makes a microphone the default, and rows drag to reorder. The
+    /// arrows are gone; VoiceOver keeps Make default / Move up / Move down as named actions.
+    @ViewBuilder
+    private func microphonePriorityRow(_ row: MicrophonePriorityRow, at index: Int, visibleCount: Int) -> some View {
+        let content = HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.tertiary)
+                .opacity(row.canPrioritize ? 1 : 0)
+                .accessibilityHidden(true)
+            Image(systemName: "mic")
+                .foregroundStyle(.secondary)
+            Text(row.label)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(row.isConnected ? "Connected" : "Disconnected")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !row.canPrioritize {
+                Text("UID unavailable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if index == 0 {
+                Text("Default")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+            } else {
+                Button("Make default") {
+                    makeMicrophoneDefault(at: index)
+                }
+                .controlSize(.small)
+            }
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "Make default") {
+            makeMicrophoneDefault(at: index)
+        }
+        .accessibilityAction(named: "Move up") {
+            moveMicrophone(at: index, by: -1)
+        }
+        .accessibilityAction(named: "Move down") {
+            moveMicrophone(at: index, by: 1)
+        }
+        if let uid = row.uid {
+            content
+                .draggable(uid)
+                .dropDestination(for: String.self) { uids, _ in
+                    dropMicrophone(uids.first, onto: index)
+                }
+        } else {
+            content
+        }
+    }
+
+    private func makeMicrophoneDefault(at index: Int) {
+        guard let uids = microphoneSnapshot.makingDefaultUIDs(at: index) else { return }
+        onReorderPriority(uids)
+        refreshMicrophoneSnapshot()
+    }
+
+    /// Dropping onto a row lands the dragged mic in that row's place: below it when dragged down, above it
+    /// when dragged up (SwiftUI onMove indices).
+    private func dropMicrophone(_ uid: String?, onto index: Int) -> Bool {
+        guard let uid,
+              let source = microphoneSnapshot.visibleRows.firstIndex(where: { $0.uid == uid }),
+              let uids = microphoneSnapshot.movingVisibleUIDs(
+                  from: IndexSet(integer: source),
+                  to: index > source ? index + 1 : index
+              )
+        else { return false }
+        onReorderPriority(uids)
+        refreshMicrophoneSnapshot()
+        return true
     }
 
     private func refreshMicrophoneSnapshot() {

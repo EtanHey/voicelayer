@@ -88,6 +88,29 @@ public struct MicrophonePrioritySnapshot: Equatable {
         return visibleRows.compactMap(\.uid) + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
     }
 
+    /// "Make default" (Etan's 2.2.24 review #5): the visible row at `index` goes to the top in one step, the
+    /// other visible rows keep their order, and hidden devices are written after them. nil when the row is
+    /// already first, out of range, or has no UID to persist.
+    public func makingDefaultUIDs(at index: Int) -> [String]? {
+        movingVisibleUIDs(from: IndexSet(integer: index), to: 0)
+    }
+
+    /// Drag to reorder, with SwiftUI `onMove` semantics: `destination` is the pre-move index the rows land
+    /// before. Only rows with a UID move, and never below a UID-less row. nil when nothing would change.
+    public func movingVisibleUIDs(from source: IndexSet, to destination: Int) -> [String]? {
+        let visible = visibleRows
+        let movableCount = visible.prefix { $0.canPrioritize }.count
+        guard !source.isEmpty, source.allSatisfy({ $0 < movableCount }) else { return nil }
+        let current = visible.prefix(movableCount).compactMap(\.uid)
+        let landing = min(max(destination, 0), movableCount)
+        let picked = source.map { current[$0] }
+        let stayingBefore = current.indices.filter { $0 < landing && !source.contains($0) }.map { current[$0] }
+        let stayingAfter = current.indices.filter { $0 >= landing && !source.contains($0) }.map { current[$0] }
+        let moved = stayingBefore + picked + stayingAfter
+        guard moved != current else { return nil }
+        return moved + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
+    }
+
     public func reorderedVisibleUIDs(moving index: Int, by offset: Int) -> [String]? {
         let visible = visibleRows
         let target = index + offset
