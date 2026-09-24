@@ -89,4 +89,16 @@ final class VoiceBarFooterPresentationTests: XCTestCase {
             "Only on this Mac"
         )
     }
+
+    func testPrivacySymbolDistinguishesUnknownFromRemote() {
+        func symbol(_ remote: Bool?) -> String {
+            VoiceBarFooterPresentation.resolve(
+                isConnected: true, mode: .idle, captureLive: false,
+                errorMessage: nil, remoteSTTConfigured: remote
+            ).privacySymbol
+        }
+        XCTAssertEqual(symbol(false), "lock.fill")
+        XCTAssertEqual(symbol(true), "network")
+        XCTAssertEqual(symbol(nil), "questionmark.circle")
+    }
 }
