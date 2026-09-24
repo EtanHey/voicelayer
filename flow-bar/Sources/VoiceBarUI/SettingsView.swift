@@ -2047,7 +2047,9 @@ enum SettingsDictionaryMutations {
                            onAddPromptTerm: onAddPromptTerm, onRemovePromptTerm: onRemovePromptTerm,
                            onAddVocabularyAlias: onAddVocabularyAlias)
             }
-        } else if edit.trimmedWrong.isEmpty, !localEntries.contains(where: { sameCanonical($0.canonical, correct) }) {
+        } else if !localEntries.contains(where: { sameCanonical($0.canonical, correct) }) {
+            // A new term is always persisted as a term, even when its misheard spelling is dropped below
+            // (equal to it by alias key), or it would vanish on the next reload (#144 CodeRabbit).
             var newTermText = correct
             commitNewTerm(newTermText: &newTermText, localEntries: &localEntries, onAddPromptTerm: onAddPromptTerm)
         }

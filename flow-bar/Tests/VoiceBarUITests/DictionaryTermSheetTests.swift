@@ -42,7 +42,19 @@ final class DictionaryTermSheetTests: XCTestCase {
 
         XCTAssertEqual(result, "VoiceLayer")
         XCTAssertEqual(entries, [STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice later"])])
+        XCTAssertEqual(calls.addedTerms, ["VoiceLayer"])
         XCTAssertEqual(calls.addedAliases, ["voice later→VoiceLayer"])
+    }
+
+    /// #144 CodeRabbit (Major): a new term whose misheard spelling equals it by alias key ("voice layer" for
+    /// VoiceLayer) used to be added only locally; no daemon call ran, so it vanished on the next reload.
+    func testANewTermIsPersistedEvenWhenItsMisheardSpellingIsDropped() {
+        var entries: [STTDictionaryEntry] = []
+        let (result, calls) = apply(DictionaryTermEdit(correct: "VoiceLayer", wrong: "voice layer"), to: &entries)
+
+        XCTAssertEqual(result, "VoiceLayer")
+        XCTAssertEqual(calls.addedTerms, ["VoiceLayer"])
+        XCTAssertEqual(calls.addedAliases, [])
     }
 
     func testAddingAMisheardSpellingToAnExistingTermLandsOnItCaseInsensitively() {
