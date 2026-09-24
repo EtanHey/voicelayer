@@ -448,6 +448,20 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertEqual(SettingsView.dictionarySectionTitle("Your terms", count: 296, loaded: true), "Your terms (296)")
     }
 
+    /// Fold 3 review M3 + A1: the Add-term sheet reads as an editor (chrome on both fields) and names its
+    /// fields for VoiceOver instead of reading placeholders.
+    func testAddTermSheetFieldsHaveChromeAndAccessibilityLabels() throws {
+        let sheetURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift")
+        let sheet = try String(contentsOf: sheetURL)
+        XCTAssertEqual(sheet.components(separatedBy: ".dictionaryFieldContainer()").count - 1, 2)
+        XCTAssertTrue(sheet.contains(".accessibilityLabel(\"Correct spelling\")"))
+        XCTAssertTrue(sheet.contains(".accessibilityLabel(\"Misheard as\")"))
+        XCTAssertTrue(sheet.contains(".help(\"Swap correct and misheard\")"))
+        XCTAssertFalse(sheet.contains("transcribed text"))
+    }
+
     func testAddVariantMatchingCanonicalAliasKeyIsNoOp() {
         var localEntries = [
             STTDictionaryEntry(canonical: "La La", variants: ["la law"]),
