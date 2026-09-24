@@ -195,10 +195,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var missingHotkeyPermissions: [HotkeyPermission] = []
     /// Whether VoiceBar is snoozed (hidden for a timed period).
     var isSnoozed: Bool = false
-    private var performanceEffort: VoiceBarPerformanceEffort = .accurate
     private var pendingPerformanceEffortID: String?
     private var pendingPerformanceEffort: VoiceBarPerformanceEffort?
-    private var pendingPerformanceEffortPrevious: VoiceBarPerformanceEffort?
+    private var pendingPerformanceEffortTimeout: Task<Void, Never>?
+    /// A change with no final ack by then falls back to the daemon's effort. Longer than
+    /// VoiceState's 75 s reload budget (two 30 s startup attempts plus probes).
+    var performanceEffortAckTimeout: Duration = .seconds(80)
     private var performanceEffortNotice: String?
     private var performanceEffortNoticeTask: Task<Void, Never>?
     private lazy var cachedRelaySetupStatus = RelaySetupStatus(
@@ -212,7 +214,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
-    private static let performanceEffortKey = "voicebar.performanceEffort"
+    /// Retired local copy of the effort (E2): the daemon's model status is the only source.
+    private static let retiredPerformanceEffortKey = "voicebar.performanceEffort"
 
     override init() {
         super.init()
@@ -220,7 +223,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.handlePerformanceEffortAck(ack)
         }
         voiceState.onConnectionChange = { [weak self] connected in
-            guard connected else { return }
+            guard connected else {
+                // Its ack can no longer arrive; fall back to what the daemon reports.
+                self?.dropPendingPerformanceEffort(notice: nil)
+                return
+            }
             self?.voiceState.refreshModelsSettingsStatus()
         }
     }
@@ -484,7 +491,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         configureGatekeptVoiceStateDependencies()
-        performanceEffort = Self.loadPerformanceEffort(defaults: defaults)
+        defaults.removeObject(forKey: Self.retiredPerformanceEffortKey)
         if VoiceBarDefaults.shouldPromptForPermissions() {
             promptForAccessibilityIfNeeded()
         }
@@ -2068,8 +2075,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshSettingsWindowAnchorState()
     }
 
+    /// The selection in flight, else what the daemon reports. `.accurate` (the daemon default)
+    /// only until the first status arrives; the picker is disabled until then.
     func currentPerformanceEffort() -> VoiceBarPerformanceEffort {
-        performanceEffort
+        pendingPerformanceEffort ?? voiceState.modelsSettingsState.configuredEffort ?? .accurate
     }
 
     func currentPerformanceEffortNotice() -> String? {
@@ -2077,7 +2086,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func selectPerformanceEffort(_ effort: VoiceBarPerformanceEffort) {
-        guard effort != performanceEffort else {
+        guard effort != currentPerformanceEffort() else {
             clearPerformanceEffortNotice()
             refreshSettingsWindowAnchorState()
             return
@@ -2089,12 +2098,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let id = UUID().uuidString
-        let previousEffort = performanceEffort
-        performanceEffort = effort
         pendingPerformanceEffortID = id
         pendingPerformanceEffort = effort
-        pendingPerformanceEffortPrevious = previousEffort
         clearPerformanceEffortNotice()
+        pendingPerformanceEffortTimeout?.cancel()
+        pendingPerformanceEffortTimeout = Task { @MainActor [weak self] in
+            guard let timeout = self?.performanceEffortAckTimeout else { return }
+            try? await Task.sleep(for: timeout)
+            guard let self, !Task.isCancelled, pendingPerformanceEffortID == id else { return }
+            dropPendingPerformanceEffort(
+                notice: "Couldn't confirm the effort change - showing VoiceLayer's current setting"
+            )
+            voiceState.refreshModelsSettingsStatus()
+        }
         sendCommand([
             "cmd": "set_whisper_effort",
             "effort": effort.rawValue,
@@ -2110,23 +2126,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        let effort = pendingPerformanceEffort
-        let previousEffort = pendingPerformanceEffortPrevious
+        // The daemon is relaunching the model with the new effort; keep the selection.
+        if ack.outcome == .loading {
+            refreshSettingsWindowAnchorState()
+            return
+        }
+
         pendingPerformanceEffortID = nil
         pendingPerformanceEffort = nil
-        pendingPerformanceEffortPrevious = nil
+        pendingPerformanceEffortTimeout?.cancel()
+        pendingPerformanceEffortTimeout = nil
 
-        guard ack.outcome == .accept, let effort else {
-            if let previousEffort {
-                performanceEffort = previousEffort
-            }
+        guard ack.outcome == .accept else {
             rejectPendingPerformanceEffort(reason: ack.reason)
             return
         }
 
-        performanceEffort = effort
-        defaults.set(effort.rawValue, forKey: Self.performanceEffortKey)
+        // An accept with a reason is saved-but-not-active (a server VoiceLayer did not
+        // launch, or a failed reload). Say so; never let it pass silently.
+        if let reason = ack.reason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
+            performanceEffortNotice = reason
+            refreshSettingsWindowAnchorState()
+            return
+        }
         clearPerformanceEffortNotice()
+        refreshSettingsWindowAnchorState()
+    }
+
+    /// Forget an unconfirmed selection so the picker shows the daemon's effort again, and a
+    /// re-selection of the same value is sent as a retry (#143 round 2).
+    private func dropPendingPerformanceEffort(notice: String?) {
+        guard pendingPerformanceEffortID != nil else { return }
+        pendingPerformanceEffortID = nil
+        pendingPerformanceEffort = nil
+        pendingPerformanceEffortTimeout?.cancel()
+        pendingPerformanceEffortTimeout = nil
+        performanceEffortNotice = notice
+        if notice != nil {
+            schedulePerformanceEffortNoticeClear(expectedNotice: notice)
+        }
         refreshSettingsWindowAnchorState()
     }
 
@@ -2158,15 +2196,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             performanceEffortNoticeTask = nil
             refreshSettingsWindowAnchorState()
         }
-    }
-
-    private static func loadPerformanceEffort(defaults: UserDefaults) -> VoiceBarPerformanceEffort {
-        guard let rawValue = defaults.string(forKey: performanceEffortKey),
-              let effort = VoiceBarPerformanceEffort(rawValue: rawValue)
-        else {
-            return .accurate
-        }
-        return effort
     }
 
     private func microphonePermissionGranted() -> Bool {

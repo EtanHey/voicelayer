@@ -359,17 +359,53 @@ public final class VoiceState {
     private var pendingResidencyTimeout: Task<Void, Never>?
     private var modelsRecordingBusy = true
     private var modelsRecordingReason: String?
+    /// An effort change the daemon acked `loading`: it is relaunching the model (E2).
+    private var pendingEffortReloadID: String?
+    private var pendingEffortReloadTimeout: Task<Void, Never>?
 
     private func refreshModelsBusy() {
         guard modelsSettingsState.availability == .available else { return }
         let reason = pendingResidencyID != nil
             ? (pendingResidencyTarget == .loaded ? "Loading model…" : "Unloading model…")
+            : pendingEffortReloadID != nil ? "Reloading model…"
             : Self.blocksModelsEffort(mode) ? ModelsSettingsState.busyReason(mode: mode)
             : modelsRecordingReason ?? (queueDepth > 0 ? "Playing back" : nil)
         modelsSettingsState = modelsSettingsState.settingBusy(
-            modelsRecordingBusy || queueDepth > 0 || pendingResidencyID != nil || Self.blocksModelsEffort(mode),
+            modelsRecordingBusy || queueDepth > 0 || pendingResidencyID != nil
+                || pendingEffortReloadID != nil || Self.blocksModelsEffort(mode),
             reason: reason
         )
+    }
+
+    private func handleEffortAck(_ ack: SocketAckEvent, event: [String: Any]) {
+        if ack.outcome == .loading {
+            pendingEffortReloadID = ack.id
+            pendingEffortReloadTimeout?.cancel()
+            // Same budget as a Load: two 30 s startup attempts plus probes.
+            pendingEffortReloadTimeout = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 75_000_000_000)
+                guard !Task.isCancelled, let self, pendingEffortReloadID == ack.id else { return }
+                pendingEffortReloadID = nil
+                refreshModelsBusy()
+                sendCommand?(["cmd": "health"])
+            }
+            refreshModelsBusy()
+            return
+        }
+        if ack.id == pendingEffortReloadID {
+            pendingEffortReloadID = nil
+            pendingEffortReloadTimeout?.cancel()
+            pendingEffortReloadTimeout = nil
+        }
+        if let modelStatus = event["model_status"] as? [String: Any] {
+            let fresh = ModelsSettingsState(healthEvent: [
+                "type": "health", "recording_state": "idle", "model_status": modelStatus,
+            ])
+            modelsSettingsState = fresh.retainingPolishControls(from: modelsSettingsState)
+        } else if ack.outcome == .accept {
+            sendCommand?(["cmd": "health"])
+        }
+        refreshModelsBusy()
     }
 
     public private(set) var transcriptionVocabularyDisplayEntries: [STTDictionaryDisplayEntry]? {
@@ -1576,6 +1612,9 @@ public final class VoiceState {
         pendingResidencyTimeout?.cancel()
         pendingResidencyTimeout = nil
         residencyNotice = nil
+        pendingEffortReloadID = nil
+        pendingEffortReloadTimeout?.cancel()
+        pendingEffortReloadTimeout = nil
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -2815,6 +2854,11 @@ public final class VoiceState {
         }
 
         onAckEvent?(ack)
+
+        if ack.command == .setWhisperEffort {
+            handleEffortAck(ack, event: event)
+            return
+        }
 
         if ack.command == .setWhisperResidency,
            ack.id == pendingResidencyID || ack.id == timedOutResidencyID {

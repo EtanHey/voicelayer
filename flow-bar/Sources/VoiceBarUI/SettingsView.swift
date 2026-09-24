@@ -880,7 +880,14 @@ public struct SettingsView: View {
             degradation: polishDegradation(),
             onDismissDegradation: onDismissPolishDegradation
         )
+        // The picker's local state gives one click instant feedback; it follows the app's value
+        // (the selection in flight, else the daemon's effort) so a reject or a daemon-side change
+        // never leaves it stale. There is no persisted copy (E2).
+        .onChange(of: performanceEffort()) { _, current in
+            selectedPerformanceEffort = current
+        }
         .onAppear {
+            selectedPerformanceEffort = performanceEffort()
             lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(
                 for: lastDictationEntry()?.recordingPath
             )
