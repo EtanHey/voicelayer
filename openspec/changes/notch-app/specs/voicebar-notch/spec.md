@@ -34,7 +34,7 @@ The retained content SHALL survive the idle-collapse timer and transient/generic
 
 ### Requirement: Hold-recording control
 
-The recording surface SHALL offer a VAD-only HOLD-RECORDING control. The control SHALL use `hand.raised` when released and `hand.raised.fill` when selected, with accessibility labels “Hold recording” and “Release recording hold.” Push-to-talk SHALL NOT expose this control because PTT already ignores silence auto-close.
+The recording surface SHALL offer a VAD-only LOCK-RECORDING control. The control SHALL use `lock.fill` when released and selected, with accessibility labels “Lock recording” and “Unlock recording.” Push-to-talk SHALL NOT expose this control because PTT already ignores silence auto-close.
 
 While HOLD is engaged, both the pre-speech no-voice timeout and post-speech silence timeout SHALL be suppressed and their accumulated silence counters SHALL reset. Releasing HOLD SHALL start the applicable silence countdown from a fresh full window. Explicit stop, explicit cancel, and the overall recording safety timeout SHALL remain effective while held.
 
