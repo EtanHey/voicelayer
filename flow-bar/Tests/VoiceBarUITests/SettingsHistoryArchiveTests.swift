@@ -110,11 +110,19 @@ final class SettingsHistoryArchiveTests: XCTestCase {
             .appendingPathComponent("2026-06-25/2026-06-25T21-30-00-000Z-latest/metadata.json")
         var metadata = try XCTUnwrap(JSONSerialization
             .jsonObject(with: Data(contentsOf: metadataURL)) as? [String: Any])
-        metadata["provenance"] = ["whisper_model_path": "/models/ggml-large-v3-turbo.bin"]
+        metadata["provenance"] = [
+            "whisper_model_path": "/models/ggml-large-v3-turbo.bin",
+            "performance_effort": "balanced",
+        ]
         try JSONSerialization.data(withJSONObject: metadata).write(to: metadataURL)
 
         let entry = try XCTUnwrap(SettingsHistoryArchive.loadPage(from: tempRoot).groups.first?.entries.first)
-        XCTAssertEqual(entry.modelLabel, "ggml-large-v3-turbo")
+        XCTAssertEqual(entry.modelLabel, "large-v3-turbo")
+        XCTAssertEqual(entry.performanceEffort, .balanced)
+        XCTAssertEqual(
+            SettingsHistoryArchive.lastDictationProvenanceLabel(for: entry.audioPath.path),
+            "large-v3-turbo · Balanced"
+        )
         XCTAssertNil(entry.inputDeviceLabel)
     }
 

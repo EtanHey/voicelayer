@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class STTPolishDegradationVisualArtifactTests: XCTestCase {
-    func testWritesDegradedAudioSettingsArtifact() throws {
+    func testWritesDegradedModelsSettingsArtifact() throws {
         try VisualArtifactTestPolicy.requireRegeneration()
         let outputDirectory = repoRoot()
             .appendingPathComponent("docs.local")
@@ -35,7 +35,7 @@ final class STTPolishDegradationVisualArtifactTests: XCTestCase {
             modelsStatus: { .loading },
             onRefreshModelsStatus: {},
             vocabularyRevision: { 0 },
-            initialTab: .audio
+            initialTab: .models
         )
         .frame(width: 520, height: 620)
 
@@ -45,13 +45,13 @@ final class STTPolishDegradationVisualArtifactTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
 
         guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
-            return XCTFail("Could not create bitmap for degraded Audio settings")
+            return XCTFail("Could not create bitmap for degraded Models settings")
         }
         host.cacheDisplay(in: host.bounds, to: bitmap)
         guard let png = bitmap.representation(using: .png, properties: [:]) else {
-            return XCTFail("Could not encode degraded Audio settings PNG")
+            return XCTFail("Could not encode degraded Models settings PNG")
         }
-        try png.write(to: outputDirectory.appendingPathComponent("settings-audio-degraded.png"))
+        try png.write(to: outputDirectory.appendingPathComponent("settings-models-degraded.png"))
     }
 
     private func repoRoot() -> URL {

@@ -23,6 +23,70 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertTrue(commands.isEmpty)
     }
 
+    /// Spec §5 busy reasons carry the ellipsis on the runtime path, not only in the health initializer.
+    func testRuntimeBusyReasonsKeepTheEllipsis() {
+        let fromHealth = VoiceState()
+        fromHealth.setConnectionStatus(true)
+        var recordingHealth = Self.availableHealth
+        recordingHealth["recording_state"] = "recording"
+        fromHealth.handleEvent(recordingHealth)
+        XCTAssertEqual(fromHealth.modelsSettingsState.busyReason, "Recording…")
+        var transcribingHealth = Self.availableHealth
+        transcribingHealth["recording_state"] = "transcribing"
+        fromHealth.handleEvent(transcribingHealth)
+        XCTAssertEqual(fromHealth.modelsSettingsState.busyReason, "Transcribing…")
+
+        let fromMode = VoiceState()
+        fromMode.setConnectionStatus(true)
+        fromMode.handleEvent(Self.availableHealth)
+        fromMode.mode = .recording
+        XCTAssertEqual(fromMode.modelsSettingsState.busyReason, "Recording…")
+        fromMode.mode = .transcribing
+        XCTAssertEqual(fromMode.modelsSettingsState.busyReason, "Transcribing…")
+    }
+
+    /// Spec §5 "Busy always shows a reason": a disabled effort picker says why, directly under it.
+    func testDisabledEffortPickerAlwaysNamesItsReason() {
+        let idle = ModelsSettingsState(healthEvent: Self.availableHealth)
+        XCTAssertNil(ModelsSettingsView.effortDisabledReason(for: idle))
+        XCTAssertEqual(ModelsSettingsView.effortDisabledReason(for: .loading), "Checking VoiceLayer…")
+        XCTAssertEqual(
+            ModelsSettingsView.effortDisabledReason(for: .unavailable),
+            "Available when VoiceLayer is running"
+        )
+        XCTAssertEqual(
+            ModelsSettingsView.effortDisabledReason(for: idle.settingBusy(true, reason: "Recording…")),
+            "Recording…"
+        )
+        XCTAssertEqual(
+            ModelsSettingsView.effortDisabledReason(for: ModelsSettingsState.loading.settingBusy(
+                true, reason: "Transcribing…"
+            )),
+            "Transcribing…"
+        )
+    }
+
+    /// Spec §8 "busy/Unavailable → a named reason": Processing never shows a bare "Status unavailable".
+    func testProcessingNamesItsReasonInsteadOfStatusUnavailable() {
+        var withControls = Self.availableHealth
+        withControls["polish_controls"] = [
+            "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
+            "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
+            "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
+            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
+        ]
+        XCTAssertNil(ModelsSettingsView.processingPlaceholder(for: ModelsSettingsState(healthEvent: withControls)))
+        XCTAssertEqual(ModelsSettingsView.processingPlaceholder(for: .loading), "Checking…")
+        XCTAssertEqual(
+            ModelsSettingsView.processingPlaceholder(for: .unavailable),
+            "VoiceLayer isn't connected. These appear when it reconnects."
+        )
+        XCTAssertEqual(
+            ModelsSettingsView.processingPlaceholder(for: ModelsSettingsState(healthEvent: Self.availableHealth)),
+            "Not reported by this VoiceLayer version"
+        )
+    }
+
     func testRecordingIdleEventClearsModelsBusyWithoutPolling() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)
@@ -52,6 +116,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         state.setWhisperResidency(.notLoaded)
         let id = try XCTUnwrap(commands.last?["id"] as? String)
         XCTAssertTrue(state.modelsSettingsState.isBusy)
+        XCTAssertEqual(state.modelsSettingsState.busyReason, "Unloading model…")
         state.handleEvent([
             "type": "ack", "command": "set_whisper_residency", "id": id,
             "outcome": "accept", "model_status": health["model_status"] as Any,
@@ -83,7 +148,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         state.handleEvent(Self.availableHealth)
         state.setWhisperResidency(.loaded)
         let id = try XCTUnwrap(commands.last?["id"] as? String)
-        XCTAssertEqual(state.modelsSettingsState.busyReason, "Changing model residency")
+        XCTAssertEqual(state.modelsSettingsState.busyReason, "Loading model…")
         state.handleEvent([
             "type": "ack", "command": "set_whisper_residency", "id": id, "outcome": "loading",
         ])

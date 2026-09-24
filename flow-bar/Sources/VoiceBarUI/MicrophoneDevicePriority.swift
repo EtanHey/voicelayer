@@ -5,9 +5,26 @@ public struct MicrophonePriorityRow: Equatable {
     public let deviceID: String?
     public let label: String
     public let isConnected: Bool
+    public let isVirtualOrAggregateTransport: Bool?
+
+    public init(uid: String?, deviceID: String?, label: String, isConnected: Bool,
+                isVirtualOrAggregateTransport: Bool? = nil) {
+        self.uid = uid
+        self.deviceID = deviceID
+        self.label = label
+        self.isConnected = isConnected
+        self.isVirtualOrAggregateTransport = isVirtualOrAggregateTransport
+    }
 
     public var canPrioritize: Bool {
         uid != nil
+    }
+
+    public var isVirtualOrAggregate: Bool {
+        if let isVirtualOrAggregateTransport { return isVirtualOrAggregateTransport }
+        let identity = "\(uid ?? "") \(label)".lowercased()
+        return ["cadefaultdeviceaggregate-", "aggregate", "virtual", "blackhole", "loopback"]
+            .contains { identity.contains($0) }
     }
 }
 
@@ -30,6 +47,41 @@ public struct MicrophonePrioritySnapshot: Equatable {
         var uids = rows.compactMap(\.uid)
         uids.swapAt(index, target)
         return uids
+    }
+
+    public var visibleRows: [MicrophonePriorityRow] {
+        rows.filter { !$0.isVirtualOrAggregate }
+    }
+
+    public var nextVisibleDeviceName: String? {
+        guard let nextDeviceName else { return nil }
+        return nextDeviceIsHidden ? "Hidden microphone selected" : nextDeviceName
+    }
+
+    public var nextDeviceIsHidden: Bool {
+        guard let nextDeviceName else { return false }
+        return rows.contains { $0.label == nextDeviceName && $0.isVirtualOrAggregate }
+    }
+
+    /// The saved order with every visible device ahead of the hidden ones (relative order kept), offered
+    /// only while a hidden device would be used next. nil when there is nothing to fix.
+    public var visibleFirstUIDs: [String]? {
+        guard nextDeviceIsHidden, !visibleRows.isEmpty else { return nil }
+        return visibleRows.compactMap(\.uid) + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
+    }
+
+    public func reorderedVisibleUIDs(moving index: Int, by offset: Int) -> [String]? {
+        let visible = visibleRows
+        let target = index + offset
+        guard visible.indices.contains(index), visible.indices.contains(target),
+              let sourceUID = visible[index].uid, let targetUID = visible[target].uid
+        else { return nil }
+        var visibleUIDs = visible.compactMap(\.uid)
+        guard let source = visibleUIDs.firstIndex(of: sourceUID),
+              let destination = visibleUIDs.firstIndex(of: targetUID)
+        else { return nil }
+        visibleUIDs.swapAt(source, destination)
+        return visibleUIDs + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
     }
 }
 
@@ -95,7 +147,8 @@ public final class MicrophoneDevicePriority {
                 uid: uid,
                 deviceID: device?.id,
                 label: device?.name ?? labels[uid] ?? "Unknown Microphone",
-                isConnected: device != nil
+                isConnected: device != nil,
+                isVirtualOrAggregateTransport: device?.isVirtualOrAggregateTransport
             )
         }
         rows.append(contentsOf: devices.compactMap { device in
@@ -104,7 +157,8 @@ public final class MicrophoneDevicePriority {
                 uid: nil,
                 deviceID: device.id,
                 label: device.name,
-                isConnected: true
+                isConnected: true,
+                isVirtualOrAggregateTransport: device.isVirtualOrAggregateTransport
             )
         })
         return rows

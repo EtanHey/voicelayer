@@ -64,10 +64,26 @@ public struct ModelsSettingsState: Equatable, Sendable {
         activeEffort = (status["active_effort"] as? String).flatMap(VoiceBarPerformanceEffort.init)
         isBusy = healthEvent["recording_state"] as? String != "idle"
             || (healthEvent["queue_depth"] as? Int ?? 0) > 0
-        busyReason = (healthEvent["recording_state"] as? String).flatMap {
-            $0 == "recording" ? "Recording" : $0 == "transcribing" ? "Transcribing" : nil
-        } ?? ((healthEvent["queue_depth"] as? Int ?? 0) > 0 ? "Playing back" : nil)
+        busyReason = (healthEvent["recording_state"] as? String).flatMap(Self.busyReason(recordingState:))
+            ?? ((healthEvent["queue_depth"] as? Int ?? 0) > 0 ? "Playing back" : nil)
         polishControls = PolishControlsState(healthEvent: healthEvent)
+    }
+
+    /// Spec §5 busy wording, shared by the health initializer and VoiceState's runtime overrides.
+    static func busyReason(recordingState: String) -> String? {
+        switch recordingState {
+        case "recording": "Recording…"
+        case "transcribing": "Transcribing…"
+        default: nil
+        }
+    }
+
+    static func busyReason(mode: VoiceMode) -> String? {
+        switch mode {
+        case .recording: busyReason(recordingState: "recording")
+        case .transcribing: busyReason(recordingState: "transcribing")
+        default: nil
+        }
     }
 
     public static let unavailable = ModelsSettingsState(availability: .unavailable)

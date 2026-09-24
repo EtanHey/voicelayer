@@ -6,11 +6,13 @@ public struct MicrophoneDevice: Equatable {
     public var id: String
     public var name: String
     public var uid: String?
+    public var isVirtualOrAggregateTransport: Bool?
 
-    public init(id: String, name: String, uid: String? = nil) {
+    public init(id: String, name: String, uid: String? = nil, isVirtualOrAggregateTransport: Bool? = nil) {
         self.id = id
         self.name = name
         self.uid = uid
+        self.isVirtualOrAggregateTransport = isVirtualOrAggregateTransport
     }
 }
 
@@ -410,9 +412,24 @@ public enum MicrophoneDeviceManager {
             return MicrophoneDevice(
                 id: String(deviceID),
                 name: deviceName(for: deviceID) ?? "Unknown Microphone",
-                uid: deviceUID(for: deviceID)
+                uid: deviceUID(for: deviceID),
+                isVirtualOrAggregateTransport: isVirtualOrAggregateTransport(for: deviceID)
             )
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private static func isVirtualOrAggregateTransport(for deviceID: AudioDeviceID) -> Bool? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var transportType: UInt32 = 0
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &transportType) == noErr
+        else { return nil }
+        return transportType == kAudioDeviceTransportTypeAggregate ||
+            transportType == kAudioDeviceTransportTypeVirtual
     }
 
     public static func selectedInputDeviceID() -> String? {

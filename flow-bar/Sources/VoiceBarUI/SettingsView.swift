@@ -2,11 +2,10 @@ import Foundation
 import SwiftUI
 
 public enum SettingsTab: Hashable, CaseIterable, Identifiable {
-    case audio
+    case general
+    case models
     case dictionary
     case history
-    case models
-    case general
 
     public var id: Self {
         self
@@ -14,21 +13,19 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
 
     public var title: String {
         switch self {
-        case .audio: "Audio"
+        case .general: "General"
+        case .models: "Models"
         case .dictionary: "Dictionary"
         case .history: "History"
-        case .models: "Models"
-        case .general: "General"
         }
     }
 
     public var systemImage: String {
         switch self {
-        case .audio: "waveform"
+        case .general: "gearshape"
+        case .models: "cpu"
         case .dictionary: "text.book.closed"
         case .history: "clock.arrow.circlepath"
-        case .models: "cpu"
-        case .general: "gearshape"
         }
     }
 }
@@ -373,7 +370,10 @@ public struct SettingsView: View {
     @State private var relaySetupRunning = false
     @State private var shortcutCheckRunning = false
     @State private var shortcutCheckFeedback: String?
+    @State private var isAdvancedExpanded = false
+    @State private var isPermissionsExpanded = false
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
+    @State private var lastDictationProvenanceLabel: String?
     @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
@@ -443,7 +443,8 @@ public struct SettingsView: View {
         },
         initialTab: SettingsTab = .general,
         initialHistoryScope: SettingsHistoryScope = .recording,
-        initialDictionarySearch: String = ""
+        initialDictionarySearch: String = "",
+        initialAdvancedExpanded: Bool = false
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -507,6 +508,7 @@ public struct SettingsView: View {
         let initialVocabulary = vocabularyPreview()
         _selectedTab = State(initialValue: initialTab)
         _dictionarySearch = State(initialValue: initialDictionarySearch)
+        _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
         _askHistoryDayGroups = State(initialValue: initialAskHistoryPage?.groups ?? [])
         _askHistoryLoadedEntryCount = State(initialValue: initialAskHistoryPage?.loadedEntryCount ?? 0)
@@ -539,8 +541,6 @@ public struct SettingsView: View {
     public var body: some View {
         SettingsNavigationShell(selection: $selectedTab, footer: footerPresentation()) {
             switch selectedTab {
-            case .audio:
-                settingsPage(title: "Audio") { audioTab }
             case .dictionary:
                 settingsPage(
                     title: "Dictionary",
@@ -557,7 +557,7 @@ public struct SettingsView: View {
                 settingsPage(title: "General") { generalTab }
             }
         }
-        .frame(width: 780, height: 620)
+        .frame(minWidth: 780, maxWidth: .infinity, minHeight: 620, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         .modifier(
             SettingsVocabularyRevisionObserver(
@@ -618,7 +618,7 @@ public struct SettingsView: View {
 
     private var generalTab: some View {
         Form {
-            Section("Permissions & Hotkey Setup") {
+            Section("Shortcut") {
                 LabeledContent("Shortcut") {
                     HStack(spacing: 6) {
                         Image(systemName: "keyboard")
@@ -627,11 +627,6 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if isHotkeyRemapActive() {
-                    Text(VoiceBarHotkeyContract.remapExplanation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
                         Circle()
@@ -639,9 +634,7 @@ public struct SettingsView: View {
                             .frame(width: 8, height: 8)
                         Text(hotkeyStatusText)
                     }
-                }
-
-                LabeledContent("Shortcut check") {
+                    Spacer(minLength: 8)
                     Button("Check shortcut") {
                         shortcutCheckRunning = true
                         onCheckShortcut { result in
@@ -651,36 +644,68 @@ public struct SettingsView: View {
                     }
                     .disabled(shortcutCheckRunning)
                 }
-                Text(
-                    "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
-                )
-                .font(.caption).foregroundStyle(.secondary)
+                if !hotkeyEnabled {
+                    Text(
+                        "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
                 if let shortcutCheckFeedback {
                     Text(shortcutCheckFeedback).font(.caption).foregroundStyle(.secondary)
                 }
+            }
 
-                permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
-                permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
-                permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
-
-                LabeledContent("Relay (hidutil LaunchAgent)") {
-                    HStack(spacing: 8) {
-                        statusBadge(isHotkeyRemapActive() ? "Ready" : "Needs setup", isReady: isHotkeyRemapActive())
-                        Button("Set up") {
-                            runRelaySetup()
-                        }
-                        .disabled(relaySetupRunning)
+            Section("Permissions") {
+                if allPermissionsGranted {
+                    DisclosureGroup("All permissions granted", isExpanded: $isPermissionsExpanded) {
+                        permissionRows
                     }
-                }
-
-                if let relaySetupFeedback {
-                    Text(relaySetupFeedback)
-                        .font(.caption)
-                        .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
+                } else {
+                    permissionRows
                 }
             }
 
             visibilitySection
+            microphonePrioritySection
+
+            DisclosureGroup("Advanced", isExpanded: $isAdvancedExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledContent("F5 key helper") {
+                        HStack(spacing: 8) {
+                            if isHotkeyRemapActive() {
+                                statusBadge("Installed", isReady: true)
+                            } else if hotkeyEnabled {
+                                Text("Not installed").foregroundStyle(.secondary)
+                            } else {
+                                statusBadge("Needs setup", isReady: false)
+                            }
+                            Button("Set up") {
+                                runRelaySetup()
+                            }
+                            .disabled(relaySetupRunning)
+                        }
+                    }
+                    Text("Lets F5 start dictation even if your Mac remaps the dictation key.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if isHotkeyRemapActive() {
+                        Text(VoiceBarHotkeyContract.remapExplanation)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let relaySetupFeedback {
+                        Text(relaySetupFeedback)
+                            .font(.caption)
+                            .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
+                    }
+                    Divider()
+                    Text("Gestures").font(.headline)
+                    LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)
+                    LabeledContent("Hold", value: VoiceBarHotkeyContract.holdDescription)
+                    LabeledContent("Double-tap", value: VoiceBarHotkeyContract.doubleTapDescription)
+                    LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel,
+                                   value: VoiceBarHotkeyContract.repasteDescription)
+                }
+                .padding(.top, 6)
+            }
 
             Section("Last dictation") {
                 if let entry = lastDictationEntry() {
@@ -698,27 +723,12 @@ public struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-
-            Section("Gestures") {
-                LabeledContent("Single tap") {
-                    Text(VoiceBarHotkeyContract.singleTapDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent("Hold") {
-                    Text(VoiceBarHotkeyContract.holdDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent("Double-tap") {
-                    Text(VoiceBarHotkeyContract.doubleTapDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel) {
-                    Text(VoiceBarHotkeyContract.repasteDescription)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .formStyle(.grouped)
+        .onAppear(perform: refreshMicrophoneSnapshot)
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+            refreshMicrophoneSnapshot()
+        }
     }
 
     private var visibilitySection: some View {
@@ -754,104 +764,63 @@ public struct SettingsView: View {
         }
     }
 
-    // MARK: - Audio Tab
+    // MARK: - General microphone priority
 
-    private var audioTab: some View {
-        Form {
-            Section("Input priority") {
-                LabeledContent("Next dictation") {
-                    Text(microphoneSnapshot.nextDeviceName ?? "Unavailable")
-                        .foregroundStyle(.secondary)
-                }
-
-                if microphoneSnapshot.rows.isEmpty {
-                    Text("No known input devices")
-                        .foregroundStyle(.secondary)
-                }
-                let prioritizedCount = microphoneSnapshot.rows.filter(\.canPrioritize).count
-                ForEach(Array(microphoneSnapshot.rows.enumerated()), id: \.offset) { index, row in
-                    HStack(spacing: 10) {
-                        Image(systemName: "mic")
-                            .foregroundStyle(.secondary)
-                        Text(row.label)
-                            .lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text(row.isConnected ? "Connected" : "Disconnected")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if row.canPrioritize {
-                            Button {
-                                moveMicrophone(at: index, by: -1)
-                            } label: {
-                                Image(systemName: "chevron.up")
-                            }
-                            .disabled(index == 0)
-                            .accessibilityLabel("Move \(row.label) up")
-                            Button {
-                                moveMicrophone(at: index, by: 1)
-                            } label: {
-                                Image(systemName: "chevron.down")
-                            }
-                            .disabled(index >= prioritizedCount - 1)
-                            .accessibilityLabel("Move \(row.label) down")
-                        } else {
-                            Text("UID unavailable")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                Text("Use the arrows to set priority. Disconnected microphones keep their place.")
-                    .font(.caption)
+    private var microphonePrioritySection: some View {
+        Section("Microphone priority") {
+            LabeledContent("Next dictation") {
+                Text(microphoneSnapshot.nextVisibleDeviceName ?? "Unavailable")
                     .foregroundStyle(.secondary)
             }
+            if let visibleFirst = microphoneSnapshot.visibleFirstUIDs {
+                Button("Use visible microphones first") {
+                    onReorderPriority(visibleFirst)
+                    refreshMicrophoneSnapshot()
+                }
+                .help("A hidden system or virtual device would be used next. This puts your microphones ahead of it.")
+            }
 
-            Section("Performance") {
-                if let degradation = polishDegradation() {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .accessibilityHidden(true)
-                        Text(degradation.hint)
+            if microphoneSnapshot.visibleRows.isEmpty {
+                Text("No known input devices")
+                    .foregroundStyle(.secondary)
+            }
+            let visibleRows = microphoneSnapshot.visibleRows
+            let prioritizedCount = visibleRows.filter(\.canPrioritize).count
+            ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
+                HStack(spacing: 10) {
+                    Image(systemName: "mic")
+                        .foregroundStyle(.secondary)
+                    Text(row.label)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(row.isConnected ? "Connected" : "Disconnected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if row.canPrioritize {
+                        Button {
+                            moveMicrophone(at: index, by: -1)
+                        } label: {
+                            Image(systemName: "chevron.up")
+                        }
+                        .disabled(index == 0)
+                        .accessibilityLabel("Move \(row.label) up")
+                        Button {
+                            moveMicrophone(at: index, by: 1)
+                        } label: {
+                            Image(systemName: "chevron.down")
+                        }
+                        .disabled(index >= prioritizedCount - 1)
+                        .accessibilityLabel("Move \(row.label) down")
+                    } else {
+                        Text("UID unavailable")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                        Button {
-                            onDismissPolishDegradation()
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Dismiss STT polish warning")
-                        .accessibilityLabel("Dismiss STT polish warning")
                     }
-                    .accessibilityElement(children: .combine)
-                }
-                Picker("Effort", selection: Binding(
-                    get: { selectedPerformanceEffort },
-                    set: { effort in
-                        selectedPerformanceEffort = effort
-                        onSelectPerformanceEffort(effort)
-                    }
-                )) {
-                    ForEach(VoiceBarPerformanceEffort.allCases) { effort in
-                        Text(performanceEffortLabel(effort)).tag(effort)
-                    }
-                }
-                .pickerStyle(.segmented)
-                if let notice = performanceEffortNotice() {
-                    Text(notice)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
                 }
             }
-        }
-        .formStyle(.grouped)
-        .onAppear(perform: refreshMicrophoneSnapshot)
-        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
-            refreshMicrophoneSnapshot()
+            Text("Use the arrows to set priority. Disconnected microphones keep their place.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -863,7 +832,7 @@ public struct SettingsView: View {
     }
 
     private func moveMicrophone(at index: Int, by offset: Int) {
-        guard let uids = microphoneSnapshot.reorderedUIDs(moving: index, by: offset) else { return }
+        guard let uids = microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: offset) else { return }
         onReorderPriority(uids)
         refreshMicrophoneSnapshot()
     }
@@ -875,9 +844,20 @@ public struct SettingsView: View {
             notice: performanceEffortNotice(),
             onSelectEffort: onSelectPerformanceEffort,
             residencyNotice: residencyNotice(),
-            onSelectResidency: onSelectResidency
+            onSelectResidency: onSelectResidency,
+            lastDictationLabel: lastDictationProvenanceLabel,
+            degradation: polishDegradation(),
+            onDismissDegradation: onDismissPolishDegradation
         )
-        .onAppear(perform: onRefreshModelsStatus)
+        .onAppear {
+            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(
+                for: lastDictationEntry()?.recordingPath
+            )
+            onRefreshModelsStatus()
+        }
+        .onChange(of: lastDictationEntry()?.recordingPath) { _, path in
+            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(for: path)
+        }
     }
 
     // MARK: - History Tab
@@ -1033,6 +1013,11 @@ public struct SettingsView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            if let effort = entry.performanceEffort {
+                Text(effort.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1054,7 +1039,7 @@ public struct SettingsView: View {
             Label("Saved on this Mac", systemImage: "internaldrive")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            let attribution = [entry.inputDeviceLabel, entry.modelLabel]
+            let attribution = [entry.inputDeviceLabel, entry.modelLabel, entry.performanceEffort?.displayName]
                 .compactMap { $0 }.joined(separator: " · ")
             if !attribution.isEmpty {
                 Text(attribution)
@@ -2016,6 +2001,19 @@ public struct SettingsView: View {
                     openPermissionSettings(permission)
                 }
             }
+        }
+    }
+
+    private var allPermissionsGranted: Bool {
+        isMicrophonePermissionGranted() && !missingPermissions.contains(.accessibility) &&
+            !missingPermissions.contains(.inputMonitoring)
+    }
+
+    private var permissionRows: some View {
+        Group {
+            permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
+            permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
+            permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
         }
     }
 

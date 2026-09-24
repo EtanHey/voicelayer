@@ -355,14 +355,16 @@ public final class VoiceState {
     public private(set) var residencyNotice: String?
     private var pendingResidencyID: String?
     private var timedOutResidencyID: String?
+    private var pendingResidencyTarget: VoiceModelResidency?
     private var pendingResidencyTimeout: Task<Void, Never>?
     private var modelsRecordingBusy = true
     private var modelsRecordingReason: String?
 
     private func refreshModelsBusy() {
         guard modelsSettingsState.availability == .available else { return }
-        let reason = pendingResidencyID != nil ? "Changing model residency"
-            : Self.blocksModelsEffort(mode) ? (mode == .recording ? "Recording" : "Transcribing")
+        let reason = pendingResidencyID != nil
+            ? (pendingResidencyTarget == .loaded ? "Loading model…" : "Unloading model…")
+            : Self.blocksModelsEffort(mode) ? ModelsSettingsState.busyReason(mode: mode)
             : modelsRecordingReason ?? (queueDepth > 0 ? "Playing back" : nil)
         modelsSettingsState = modelsSettingsState.settingBusy(
             modelsRecordingBusy || queueDepth > 0 || pendingResidencyID != nil || Self.blocksModelsEffort(mode),
@@ -699,6 +701,7 @@ public final class VoiceState {
         let id = UUID().uuidString
         timedOutResidencyID = nil
         pendingResidencyID = id
+        pendingResidencyTarget = target
         residencyNotice = nil
         refreshModelsBusy()
         scheduleResidencyTimeout(id: id, after: 8)
@@ -722,6 +725,7 @@ public final class VoiceState {
         guard pendingResidencyID != nil else { return }
         timedOutResidencyID = pendingResidencyID
         pendingResidencyID = nil
+        pendingResidencyTarget = nil
         pendingResidencyTimeout?.cancel()
         pendingResidencyTimeout = nil
         residencyNotice = "Model request timed out. Checking current state."
@@ -1430,9 +1434,8 @@ public final class VoiceState {
         case "health":
             let status = ModelsSettingsState(healthEvent: event)
             modelsRecordingBusy = event["recording_state"] as? String != "idle"
-            modelsRecordingReason = (event["recording_state"] as? String).flatMap {
-                $0 == "recording" ? "Recording" : $0 == "transcribing" ? "Transcribing" : nil
-            }
+            modelsRecordingReason = (event["recording_state"] as? String)
+                .flatMap(ModelsSettingsState.busyReason(recordingState:))
             if let depth = event["queue_depth"] as? Int { queueDepth = max(0, depth) }
             modelsSettingsState = status
             refreshModelsBusy()
@@ -1569,6 +1572,7 @@ public final class VoiceState {
         modelsSettingsState = .unavailable
         pendingResidencyID = nil
         timedOutResidencyID = nil
+        pendingResidencyTarget = nil
         pendingResidencyTimeout?.cancel()
         pendingResidencyTimeout = nil
         residencyNotice = nil
@@ -1606,7 +1610,7 @@ public final class VoiceState {
     private func synchronizeModelsSettingsState(from oldMode: VoiceMode, to newMode: VoiceMode) {
         if Self.blocksModelsEffort(newMode) {
             modelsSettingsState = modelsSettingsState.settingBusy(
-                true, reason: newMode == .recording ? "Recording" : "Transcribing"
+                true, reason: ModelsSettingsState.busyReason(mode: newMode)
             )
         } else if Self.blocksModelsEffort(oldMode) {
             modelsSettingsState = isConnected ? .loading : .unavailable
@@ -2823,6 +2827,7 @@ public final class VoiceState {
             }
             pendingResidencyID = nil
             timedOutResidencyID = nil
+            pendingResidencyTarget = nil
             pendingResidencyTimeout?.cancel()
             pendingResidencyTimeout = nil
             residencyNotice = ack.outcome == .accept ? nil : (ack.reason ?? "Could not change memory state")
