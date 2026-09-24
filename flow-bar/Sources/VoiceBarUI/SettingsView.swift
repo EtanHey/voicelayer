@@ -1558,10 +1558,18 @@ public struct SettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
-            Divider()
-            variantChips(entry, isEditable: isEditable)
+            if Self.showsVariantRow(for: entry, isEditable: isEditable) {
+                Divider()
+                variantChips(entry, isEditable: isEditable)
+            }
         }
         .padding(.vertical, 10)
+    }
+
+    /// Your terms always keep the "misheard as…" row; a read-only built-in term shows it only when it has
+    /// variants, so a bare included term draws no empty band.
+    static func showsVariantRow(for entry: STTDictionaryEntry, isEditable: Bool) -> Bool {
+        isEditable || !entry.variants.isEmpty
     }
 
     @ViewBuilder

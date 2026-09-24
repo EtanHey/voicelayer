@@ -76,6 +76,16 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
+    /// A read-only built-in term with no misheard spellings has nothing to show under its name, so it must not
+    /// draw an empty band and a second divider (seen in the P08 shots between two included terms).
+    func testReadOnlyTermWithoutVariantsHasNoVariantRow() {
+        let bare = STTDictionaryEntry(canonical: "AppKit", variants: [])
+        let withVariant = STTDictionaryEntry(canonical: "SwiftUI", variants: ["swift you eye"])
+        XCTAssertFalse(SettingsView.showsVariantRow(for: bare, isEditable: false))
+        XCTAssertTrue(SettingsView.showsVariantRow(for: withVariant, isEditable: false))
+        XCTAssertTrue(SettingsView.showsVariantRow(for: bare, isEditable: true), "your terms keep the misheard-as add")
+    }
+
     func testBundledDictionaryRowsHaveNoEditAffordance() throws {
         let source = try settingsViewSource()
         XCTAssertTrue(source.contains("isEditable: false"))
