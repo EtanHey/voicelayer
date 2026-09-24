@@ -370,8 +370,15 @@ const MAX_COMPACT_SEAM_RAGGED_WORDS = 2;
 const MIN_COMPACT_SEAM_WORDS = 4;
 const MIN_COMPACT_SEAM_CHARS = 12;
 
-function compactWords(words: string[]): string {
-  return canonicalWitnessText(words.join(" "));
+/**
+ * Per-word seam key: case, edge punctuation, apostrophes and in-word hyphens
+ * fold ("it 's" / "it's", "VoiceLayer" / "voice layer" once joined), but code
+ * operators stay distinct (`C++` is never `C#`).
+ */
+function compactSeamKey(word: string): string {
+  return normalizeChunkWordForOverlap(word.normalize("NFKC"))
+    .replace(/["'’`]/gu, "")
+    .replace(/(?<=\p{L})-(?=\p{L})/gu, "");
 }
 
 /** Earliest word-aligned run of `nextKeys` whose concatenation equals `key`. */
@@ -390,6 +397,32 @@ function findCompactRun(
 }
 
 /**
+ * May the next chunk's words before the anchor be dropped? Only when they are
+ * the overlap re-decode of the merged words IMMEDIATELY before the anchor:
+ * their compact form must end the compact form of those words (so a decode
+ * that starts mid-word still fits). With two or more of them, one inserted
+ * word is tolerated. Occurring *somewhere* in the merged text is not enough:
+ * a phrase said three times straddling the seam occurs earlier too (review
+ * #139, P1), and dropping it would lose a genuine repeat.
+ */
+function skippedPrefixIsOverlap(prefixKeys: string[], beforeKeys: string[]): boolean {
+  if (prefixKeys.length === 0) return true;
+  const before = beforeKeys.slice(-(prefixKeys.length + 3)).join("");
+  const fits = (keys: string[]) => {
+    const key = keys.join("");
+    return key.length > 0 && before.endsWith(key);
+  };
+  if (fits(prefixKeys)) return true;
+  if (prefixKeys.length < 2) return false;
+  for (let inserted = 0; inserted < prefixKeys.length; inserted++) {
+    if (fits([...prefixKeys.slice(0, inserted), ...prefixKeys.slice(inserted + 1)])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Seam match for what an unprompted overlap re-decode really looks like:
  * split tokens ("it 's" / "it's"), compounds ("DarkMode" / "dark mode"),
  * a word the next decode adds inside the overlap, and a word cut off at the
@@ -397,14 +430,20 @@ function findCompactRun(
  *
  * The earlier chunk's END is the anchor: its longest last run of words is
  * looked up in the first words of the next chunk (earliest occurrence, so a
- * later genuine repeat is never chosen). Next-chunk words before that run
- * re-decode audio the earlier chunk already covered; the earlier chunk's
- * version is kept, as in the exact merge.
+ * later genuine repeat is never chosen). Like the exact merge, the earlier
+ * chunk's version of the matched run is kept.
  *
- * AIDEV-NOTE: word safety. At most two words at the earlier chunk's cut edge
- * are dropped, and only when the next chunk decodes past the match, i.e. it
- * carries its own reading of that audio. Two words go only when the next
- * chunk re-says them.
+ * AIDEV-NOTE: word safety (review #139). Next-chunk words before the anchor
+ * are dropped only when they re-decode the merged words right before it
+ * (skippedPrefixIsOverlap); two cut-edge words only when the next chunk
+ * re-says them. Anything else is concatenated rather than guessed.
+ * KNOWN LIMITATION (lead's call, #139 round 2): ONE cut-edge word is replaced
+ * by the next chunk's reading whenever that chunk decodes past the match. That
+ * is right for a word cut mid-audio ("harbor" / "harness"), but a genuine
+ * cut-off fragment ("fu…") the next decode omits is lost. A text heuristic
+ * cost +49 looped words per corpus run; the planned fix is timing-based
+ * (replace only when the next word starts inside the cut word's audio span,
+ * and never drop a word the decoder ended with "…", "-" or "—").
  */
 function findCompactChunkSeam(
   mergedWords: string[],
@@ -412,14 +451,14 @@ function findCompactChunkSeam(
 ): { dropMerged: number; skipNext: number; matchedNext: number } | null {
   const nextKeys = nextWords
     .slice(0, MAX_COMPACT_SEAM_NEXT_WORDS)
-    .map((word) => compactWords([word]));
+    .map(compactSeamKey);
   const tailLength = Math.min(
     mergedWords.length,
     MAX_COMPACT_SEAM_SUFFIX_WORDS + MAX_COMPACT_SEAM_RAGGED_WORDS,
   );
   const tailKeys = mergedWords
     .slice(mergedWords.length - tailLength)
-    .map((word) => compactWords([word]));
+    .map(compactSeamKey);
   let best: { dropMerged: number; skipNext: number; matchedNext: number; suffix: number } | null = null;
   for (let ragged = 0; ragged <= MAX_COMPACT_SEAM_RAGGED_WORDS; ragged++) {
     const end = tailKeys.length - ragged;
@@ -430,13 +469,19 @@ function findCompactChunkSeam(
       if (key.length < MIN_COMPACT_SEAM_CHARS) continue;
       const run = findCompactRun(nextKeys, key);
       if (!run) continue;
+      const beforeKeys = mergedWords
+        .slice(0, mergedWords.length - ragged - suffix)
+        .slice(-(run.start + 3))
+        .map(compactSeamKey);
+      if (!skippedPrefixIsOverlap(nextKeys.slice(0, run.start), beforeKeys)) continue;
       const continuation = nextWords.slice(run.end);
       if (ragged > 0 && continuation.length === 0) continue;
       if (ragged > 1) {
         const fragment = tailKeys.slice(end).join("");
-        const reSaid = compactWords(
-          continuation.slice(0, MAX_COMPACT_SEAM_RAGGED_WORDS + 2),
-        );
+        const reSaid = continuation
+          .slice(0, MAX_COMPACT_SEAM_RAGGED_WORDS + 2)
+          .map(compactSeamKey)
+          .join("");
         if (!reSaid.includes(fragment)) continue;
       }
       best = { dropMerged: ragged, skipNext: run.end, matchedNext: run.end - run.start, suffix };
@@ -454,7 +499,21 @@ type ChunkSeam =
 
 /** The exact anchor merge, unless the compact match covers more of the overlap. */
 function findChunkSeam(mergedWords: string[], nextWords: string[]): ChunkSeam {
-  const exact = findChunkOverlap(mergedWords, nextWords);
+  let exact = findChunkOverlap(mergedWords, nextWords);
+  // The exact merge's prefix shift drops up to three next-chunk words. With the
+  // overlap now really re-decoded, hold it to the same rule (review #139).
+  if (
+    exact.skipPrefix > 0 &&
+    !skippedPrefixIsOverlap(
+      nextWords.slice(0, exact.skipPrefix).map(compactSeamKey),
+      mergedWords
+        .slice(0, mergedWords.length - exact.overlap)
+        .slice(-(exact.skipPrefix + 3))
+        .map(compactSeamKey),
+    )
+  ) {
+    exact = { overlap: 0, skipPrefix: 0 };
+  }
   if (exact.overlap >= MAX_COMPACT_SEAM_SUFFIX_WORDS) {
     return { kind: "exact", ...exact };
   }

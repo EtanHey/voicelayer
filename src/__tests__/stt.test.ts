@@ -1079,9 +1079,11 @@ describe("STT backends", () => {
       it("keeps genuine repeats, retractions and fragments the audio carries", async () => {
         const said = [...speech];
         // A five-word phrase said three times, a retraction, a cut-off word.
-        said.splice(32, 15, ...Array.from({ length: 3 }, () => ["we", "need", "to", "ship", "this"]).flat());
-        said.splice(58, 6, "the", "red", "—", "no,", "the", "blue");
-        said[66] = "fu…";
+        // On the seams (review #139): the phrase spans the 25–30 s overlap, the
+        // retraction the 50–55 s one, and "fu…" sits inside 75–80 s.
+        said.splice(22, 15, ...Array.from({ length: 3 }, () => ["we", "need", "to", "ship", "this"]).flat());
+        said.splice(49, 6, "the", "red", "—", "no,", "the", "blue");
+        said[77] = "fu…";
         const wavPath = "/tmp/voicelayer-s1-word-safety-test.wav";
         await Bun.write(wavPath, markedWav());
         const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
@@ -2367,6 +2369,54 @@ describe("STT backends", () => {
         expect(merged.split(" ")).toEqual(
           expect.arrayContaining(["tonight", "maybe", "now"]),
         );
+      });
+
+      it("keeps a genuine phrase said three times across the seam (review #139 P1)", () => {
+        const merged = mergeChunkTranscripts([
+          "one two three alpha beta we need to ship this we need to ship this",
+          "ship this we need to ship this we need to ship this and then gamma",
+        ]);
+        expect(merged.split("we need to ship this").length - 1).toBe(3);
+        expect(merged.endsWith("and then gamma")).toBe(true);
+      });
+
+      it("keeps a re-said sentence after a garbled overlap (review #139 P2)", () => {
+        const merged = mergeChunkTranscripts([
+          "we talked about the release plan and then I said we need to fix the notch gear",
+          "we need to fits the not gear. Okay so again, we need to fix the notch gear before the release",
+        ]);
+        expect(merged).toContain("Okay so again,");
+        expect(merged.split("fix the notch gear").length - 1).toBe(2);
+      });
+
+      it("keeps both attempts of a retraction restarted at the seam (review #139 P3)", () => {
+        const merged = mergeChunkTranscripts([
+          "right so the thing I want to",
+          "so the thing I want to — so the thing I want to say is ship it",
+        ]);
+        expect(merged.split("the thing I want to").length - 1).toBe(2);
+      });
+
+      // KNOWN LIMITATION (lead's call, #139 round 2): one cut-edge word is replaced
+      // by the next chunk's reading, so a genuine "fu…" the next decode omits is lost.
+      // Needs segment timing; see the AIDEV-NOTE on findCompactChunkSeam.
+      it.todo("keeps a cut-off fragment at the seam when the next decode omits it (review #139 P4)");
+
+      it("keeps next-chunk lead-in words the earlier chunk never had (review #139)", () => {
+        const merged = mergeChunkTranscripts([
+          "we need to test the new build",
+          "the assistant said we need to test the new build now",
+        ]);
+        expect(merged).toContain("the assistant said");
+        expect(merged.endsWith("now")).toBe(true);
+      });
+
+      it("never equates code tokens that differ only by operators (review #139)", () => {
+        const merged = mergeChunkTranscripts([
+          "the service is written in C++ and",
+          "is written in C# and the client too",
+        ]);
+        expect(merged.split(" ")).toContain("C#");
       });
 
       it("keeps a trailing word the next chunk does not re-say", () => {
