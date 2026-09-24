@@ -64,15 +64,16 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Section(\"Prompt Terms\")"))
     }
 
+    /// Approved spec §6: the sticky header shows the search field first, then "Add term".
     func testDictionaryAddAndSearchAppearBeforeCanonicalCards() throws {
         let source = try settingsViewSource()
-        let addRange = try XCTUnwrap(source.range(of: "addTermRow"))
         let searchRange = try XCTUnwrap(source.range(of: "searchRow"))
+        let addRange = try XCTUnwrap(source.range(of: "Label(\"Add term\""))
         let cardRange = try XCTUnwrap(source.range(of: "dictionaryEntryCard"))
         let addVariantRange = try XCTUnwrap(source.range(of: "addVariantInlineEditor"))
 
-        XCTAssertLessThan(addRange.lowerBound, searchRange.lowerBound)
-        XCTAssertLessThan(searchRange.lowerBound, cardRange.lowerBound)
+        XCTAssertLessThan(searchRange.lowerBound, addRange.lowerBound)
+        XCTAssertLessThan(addRange.lowerBound, cardRange.lowerBound)
         XCTAssertLessThan(cardRange.lowerBound, addVariantRange.lowerBound)
     }
 
