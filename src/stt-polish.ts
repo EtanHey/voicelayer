@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { processingEnv } from "./processing-settings";
 import { existsSync } from "fs";
 import { appendFile, mkdir } from "fs/promises";
 import { homedir } from "os";
@@ -1823,7 +1824,7 @@ function writePolishLog(
 export async function polishTranscriptionText(
   input: STTPolishInput,
 ): Promise<STTPolishResult> {
-  const env = input.env ?? process.env;
+  const env = input.env ?? processingEnv();
   const mode = getSTTPolishMode(env);
   const surface = input.surface ?? "dictation";
   const startedAt = performance.now();
