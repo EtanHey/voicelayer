@@ -31,3 +31,25 @@ jobs:
 
       - name: Type check
         run: bun run typecheck
+
+  swift:
+    name: Swift (VoiceBar)
+    # AIDEV-NOTE: main's Swift suite was red from #75 until #124 and nothing
+    # noticed, because no job ran it. VoiceBarUI uses macOS 26 SDK API
+    # (glassEffect), so this needs an Xcode 26+ image. Public repo: macOS
+    # runner minutes are free.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build VoiceBar
+        run: swift build --package-path flow-bar --product VoiceBar
+
+      - name: Swift tests
+        run: swift test --package-path flow-bar
