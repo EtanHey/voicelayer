@@ -11,6 +11,7 @@
  *   QA_VOICE_WISPR_KEY     — Wispr Flow API key (required for wispr backend)
  */
 
+import { processingEnv } from "./processing-settings";
 import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -1956,7 +1957,7 @@ export class WhisperServerBackend implements STTBackend {
         options,
       );
       if (chunkedResult) {
-        const outroGate = outroGateEnabled(process.env);
+        const outroGate = outroGateEnabled(processingEnv());
         const gated = outroGate
           ? stripHallucinatedOutro(chunkedResult.text, wavData, {
               segments: chunkedResult.segments,
@@ -2010,8 +2011,8 @@ export class WhisperServerBackend implements STTBackend {
         };
       }
 
-      const smartBoundaries = smartBoundariesEnabled(process.env);
-      const outroGate = outroGateEnabled(process.env);
+      const smartBoundaries = smartBoundariesEnabled(processingEnv());
+      const outroGate = outroGateEnabled(processingEnv());
       let segments: TranscriptSegment[] | undefined;
       // Either feature needs `verbose_json`. The default-on outro gate makes
       // that normal; explicitly disabling both preserves the old `json` shape.
@@ -2266,7 +2267,7 @@ export class WhisperServerBackend implements STTBackend {
     const transcripts: string[] = [];
     const timedTranscripts: TimedChunkTranscript[] = [];
     const requestSegments =
-      smartBoundariesEnabled(process.env) || outroGateEnabled(process.env);
+      smartBoundariesEnabled(processingEnv()) || outroGateEnabled(processingEnv());
     const transcribeTimed = async (
       audio: Uint8Array,
       requestOptions: WhisperServerTranscribeOptions | undefined,
@@ -2317,7 +2318,7 @@ export class WhisperServerBackend implements STTBackend {
     // failure here is never fatal: an empty map makes chooseChunkEnd return the
     // fixed cut, i.e. today's behaviour.
     let pauseMap: PauseSpan[] = [];
-    if (isSmartWavChunkingEnabled()) {
+    if (isSmartWavChunkingEnabled(processingEnv())) {
       try {
         const candidate = await computePauseMap(wavData);
         const pauseSeconds = candidate.reduce(

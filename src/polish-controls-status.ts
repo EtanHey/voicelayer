@@ -2,9 +2,15 @@ import { getSTTPolishMode } from "./stt-polish";
 import { outroGateEnabled } from "./stt-outro-gate";
 import { isSmartWavChunkingEnabled } from "./stt";
 import { smartBoundariesEnabled } from "./stt-sentence-boundaries";
+import {
+  PROCESSING_ENV_VARS,
+  processingEnv,
+  readProcessingSettings,
+  type ProcessingKey,
+} from "./processing-settings";
 
 type Setting<T> = {
-  source: "default" | "environment";
+  source: "default" | "settings" | "environment";
   raw: string | null;
   effective: T;
 };
@@ -18,25 +24,28 @@ export type PolishControlsStatus = {
 
 function setting<T>(
   env: Record<string, string | undefined>,
-  key: string,
+  inFile: boolean,
+  key: ProcessingKey,
   effective: T,
 ): Setting<T> {
-  const raw = env[key];
+  const raw = env[PROCESSING_ENV_VARS[key]];
   return {
-    source: raw === undefined ? "default" : "environment",
+    source: raw !== undefined ? "environment" : inFile ? "settings" : "default",
     raw: raw ?? null,
     effective,
   };
 }
 
-/** Read only: the STT pipeline still reads process.env during transcription. */
+/** What the pipeline will use: env (when set) > processing-settings.json > default. */
 export function readPolishControlsStatus(
   env: Record<string, string | undefined> = process.env,
 ): PolishControlsStatus {
+  const file = readProcessingSettings(env);
+  const effective = processingEnv(env);
   return {
-    model_polish: setting(env, "QA_VOICE_STT_POLISH", getSTTPolishMode(env)),
-    outro_gate: setting(env, "VOICELAYER_STT_OUTRO_GATE", outroGateEnabled(env)),
-    smart_chunks: setting(env, "VOICELAYER_STT_SMART_CHUNKS", isSmartWavChunkingEnabled(env)),
-    smart_boundaries: setting(env, "VOICELAYER_STT_SMART_BOUNDARIES", smartBoundariesEnabled(env)),
+    model_polish: setting(env, "model_polish" in file, "model_polish", getSTTPolishMode(effective)),
+    outro_gate: setting(env, "outro_gate" in file, "outro_gate", outroGateEnabled(effective)),
+    smart_chunks: setting(env, "smart_chunks" in file, "smart_chunks", isSmartWavChunkingEnabled(effective)),
+    smart_boundaries: setting(env, "smart_boundaries" in file, "smart_boundaries", smartBoundariesEnabled(effective)),
   };
 }

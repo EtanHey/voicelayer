@@ -1,5 +1,6 @@
 import { accessSync, constants } from "fs";
 
+import { processingEnv } from "./processing-settings";
 import { resolveBinary } from "./resolve-binary";
 import { appendControlLayerEvent } from "./control-layer-journal";
 import {
@@ -102,7 +103,7 @@ export function stopSTTPolishServer(): void {
 export async function ensureSTTPolishServer(
   options: EnsureSTTPolishServerOptions = {},
 ): Promise<STTPolishServerStatus> {
-  const env = options.env ?? process.env;
+  const env = options.env ?? processingEnv();
   const endpoint = getSTTPolishEndpoint(env);
   if (getSTTPolishMode(env) === "off") {
     return publishSTTPolishServerStatus({ status: "disabled" });
@@ -126,7 +127,7 @@ export async function ensureSTTPolishServer(
 }
 
 export function recoverDefaultSTTPolishServerAfterFailure(
-  env: STTPolishEnv = process.env,
+  env: STTPolishEnv = processingEnv(),
   options: Omit<EnsureSTTPolishServerOptions, "env" | "forceRestart"> = {},
 ): void {
   if (getSTTPolishMode(env) === "off") return;

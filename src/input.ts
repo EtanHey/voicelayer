@@ -23,6 +23,7 @@
  *   brew install whisper-cpp (or set QA_VOICE_WISPR_KEY for cloud fallback)
  */
 
+import { processingEnv } from "./processing-settings";
 import { createHash, randomBytes } from "crypto";
 import {
   closeSync,
@@ -438,7 +439,7 @@ export function finalizeTranscriptionText(
 export async function finalizeTranscriptionTextForSurface(
   rawText: string,
   surface: STTPolishSurface | null,
-  env: STTFinalizeEnv = process.env,
+  env: STTFinalizeEnv = processingEnv(),
 ): Promise<string> {
   return (await finalizeTranscriptionResultForSurface(rawText, surface, env))
     .text;
@@ -457,7 +458,7 @@ export async function buildBoundaryContext(
   wavPath: string,
   segments: TranscriptSegment[] | undefined,
   segmentsAudioSha256: string | undefined,
-  env: STTFinalizeEnv = process.env,
+  env: STTFinalizeEnv = processingEnv(),
   signal?: AbortSignal,
 ): Promise<STTPolishBoundaryContext | undefined> {
   if (!smartBoundariesEnabled(env)) return undefined;
@@ -507,7 +508,7 @@ export interface FinalizedTranscriptionResult {
 export async function finalizeTranscriptionResultForSurface(
   rawText: string,
   surface: STTPolishSurface | null,
-  env: STTFinalizeEnv = process.env,
+  env: STTFinalizeEnv = processingEnv(),
   boundaryContext?: STTPolishBoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
@@ -579,7 +580,7 @@ export function warmPolishEndpointAtRecordingStart(
     appendEvent?: typeof appendControlLayerEvent;
   } = {},
 ): void {
-  const env = options.env ?? process.env;
+  const env = options.env ?? processingEnv();
   const warm = options.warm ?? warmPolishEndpoint;
   const appendEvent = options.appendEvent ?? appendControlLayerEvent;
 
@@ -3142,14 +3143,14 @@ export async function waitForInput(
         wavPath,
         result.segments,
         result.segmentsAudioSha256,
-        process.env,
+        processingEnv(),
         options.signal,
       );
       throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         polishSurfaceForWaitOptions(options),
-        process.env,
+        processingEnv(),
         boundaryContext,
       );
       if (result.text.trim() && !finalized.text) {
@@ -3966,7 +3967,7 @@ export async function retranscribeRecordingCapture(
       const finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         "dictation",
-        process.env,
+        processingEnv(),
         await buildBoundaryContext(
           sttWavPath,
           result.segments,
@@ -4065,7 +4066,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       const finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         retainedPolishSurfaceForRetranscription(),
-        process.env,
+        processingEnv(),
         await buildBoundaryContext(
           sttWavPath,
           result.segments,
