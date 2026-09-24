@@ -66,6 +66,20 @@ final class DictionaryListOrderAndFocusTests: XCTestCase {
             .clearsSearch)
     }
 
+    /// #148 Macroscope (Medium, 4099482634): the "forced open" checks and the "N of N" titles used the untrimmed
+    /// search, while matching trims it. A lone space forced both sections open with every row shown.
+    func testAWhitespaceOnlySearchIsNotASearch() throws {
+        XCTAssertEqual(SettingsView.dictionaryQuery(" "), "")
+        XCTAssertEqual(SettingsView.dictionaryQuery("  swift "), "swift")
+
+        let source = try settingsViewSource()
+        XCTAssertFalse(source.contains("dictionarySearch.isEmpty"), "every check goes through the one trimmed query")
+        XCTAssertTrue(source.contains("if yourTermsExpanded || isSearching {"))
+        XCTAssertTrue(source.contains("if includedTermsExpanded || isSearching {"))
+        XCTAssertTrue(source.contains("matches: isSearching ? personal.count : nil"))
+        XCTAssertTrue(source.contains("matches: isSearching ? included.count : nil"))
+    }
+
     // MARK: - Layout pins (SwiftUI builds no AX tree offscreen)
 
     func testYourTermsCollapsesLikeIncludedTerms() throws {
@@ -74,7 +88,7 @@ final class DictionaryListOrderAndFocusTests: XCTestCase {
         XCTAssertTrue(source.contains("@State private var yourTermsExpanded"))
         XCTAssertTrue(source.contains("yourTermsExpanded.toggle()"))
         XCTAssertTrue(source.contains(".accessibilityValue(yourTermsExpanded ? \"Expanded\" : \"Collapsed\")"))
-        XCTAssertTrue(source.contains("if yourTermsExpanded || !dictionarySearch.isEmpty {"))
+        XCTAssertTrue(source.contains("if yourTermsExpanded || isSearching {"))
     }
 
     func testTheSavedTermIsScrolledToSelectedAndFlashed() throws {

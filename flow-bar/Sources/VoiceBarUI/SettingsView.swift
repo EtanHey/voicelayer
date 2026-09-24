@@ -346,6 +346,7 @@ public struct SettingsView: View {
     @State private var includedTermsExpanded = false
     /// Etan (M27): "a collapsible Personal section". Expanded by default.
     @State private var yourTermsExpanded = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// UI pass #18: after Add/Edit the saved term is scrolled to, selected and flashed.
     @State private var selectedTermRowID: String?
     @State private var flashingTermRowID: String?
@@ -1519,6 +1520,7 @@ public struct SettingsView: View {
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
+                    let isSearching = !Self.dictionaryQuery(dictionarySearch).isEmpty
                     let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
                     let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -1530,7 +1532,7 @@ public struct SettingsView: View {
                                     .frame(width: 14)
                                 Text(Self.dictionarySectionTitle(
                                     "Your terms", count: dictionaryDisplayIndex.personalCount,
-                                    matches: dictionarySearch.isEmpty ? nil : personal.count,
+                                    matches: isSearching ? personal.count : nil,
                                     loaded: hasLoadedDictionaryOnce
                                 ))
                                 Spacer()
@@ -1542,10 +1544,10 @@ public struct SettingsView: View {
                         .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
                         .accessibilityValue(yourTermsExpanded ? "Expanded" : "Collapsed")
                         .padding(.bottom, 8)
-                        if yourTermsExpanded || !dictionarySearch.isEmpty {
+                        if yourTermsExpanded || isSearching {
                             switch Self.dictionaryPlaceholder(
                                 loaded: hasLoadedDictionaryOnce, personalIsEmpty: personal.isEmpty,
-                                searching: !dictionarySearch.isEmpty
+                                searching: isSearching
                             ) {
                             case .loading:
                                 HStack(spacing: 8) {
@@ -1578,7 +1580,7 @@ public struct SettingsView: View {
                                     .frame(width: 14)
                                 Text(Self.dictionarySectionTitle(
                                     "Included terms", count: dictionaryDisplayIndex.includedCount,
-                                    matches: dictionarySearch.isEmpty ? nil : included.count,
+                                    matches: isSearching ? included.count : nil,
                                     loaded: hasLoadedDictionaryOnce
                                 ))
                                 Spacer()
@@ -1592,7 +1594,7 @@ public struct SettingsView: View {
                         .accessibilityValue(includedTermsExpanded ? "Expanded" : "Collapsed")
                         .accessibilityHint("Built-in terms are read-only")
                         .padding(.top, 18)
-                        if includedTermsExpanded || !dictionarySearch.isEmpty {
+                        if includedTermsExpanded || isSearching {
                             ForEach(included, id: \.rowID) { row in
                                 dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
                                 Divider()
@@ -1605,7 +1607,7 @@ public struct SettingsView: View {
                     guard let rowID else { return }
                     // The saved row lands in the list on the same update; scroll once it has been laid out.
                     DispatchQueue.main.async {
-                        withAnimation(.easeInOut(duration: 0.25)) {
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
                             proxy.scrollTo(rowID, anchor: .center)
                         }
                         pendingScrollRowID = nil
@@ -1670,7 +1672,7 @@ public struct SettingsView: View {
                     flashingTermRowID == rowID ? 0.28 : selectedTermRowID == rowID ? 0.12 : 0
                 ))
         )
-        .animation(.easeOut(duration: 0.6), value: flashingTermRowID)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: flashingTermRowID)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             if isEditable { termSheet = DictionaryTermEdit(original: entry) }
@@ -2048,6 +2050,11 @@ public struct SettingsView: View {
 
     /// Where the list goes after a save (UI pass #18): the saved term's row, and the search cleared if it
     /// would hide that term.
+    /// The one trimmed search every Dictionary check uses; matching already trims (#148 Macroscope).
+    static func dictionaryQuery(_ search: String) -> String {
+        search.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func dictionaryFocus(afterSaving canonical: String, variants: [String] = [],
                                 search: String) -> DictionaryFocus {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
