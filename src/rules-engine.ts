@@ -426,7 +426,7 @@ function runIsSpokenAsNoun(
     MARK_PHRASE_COMMANDS.has(phrase)
   ).length;
   if (markPhraseCount > 0) {
-    return markNounArticleBefore(text, start);
+    return markNounArticleBefore(text, start, end);
   }
   if (!phrases.some((phrase) => AMBIGUOUS_COMMAND_PHRASES.has(phrase))) {
     return false;
@@ -651,6 +651,11 @@ const MARK_PHRASE_COMMANDS = new Set([
 // zero command uses.
 const MARK_NOUN_ARTICLES = new Set(["a", "an", "the"]);
 
+// What may follow a mark whose "A" is an option label: the end of the text, or
+// a closing delimiter, already converted by this stage or still spoken.
+const MARK_LABEL_CLOSER =
+  /^\s*(?:$|["'`\u201D\u2019)\]}]|(?:double quote|single quote|close (?:paren|parenthesis|bracket|brace|quote)|end quote|unquote)\b)/i;
+
 /**
  * A mark name is a noun only when an ARTICLE introduces it.
  *
@@ -669,7 +674,11 @@ const MARK_NOUN_ARTICLES = new Set(["a", "an", "the"]);
  * the article and killed that command (Codex, PR #42). A capitalised article
  * is only an article at a sentence start; mid-sentence it is an option label.
  */
-function markNounArticleBefore(text: string, start: number): boolean {
+function markNounArticleBefore(
+  text: string,
+  start: number,
+  end: number,
+): boolean {
   const match = /([\p{L}\p{N}][\p{L}\p{N}'\u2019]*)\s*[,.]?\s*$/u.exec(
     text.slice(0, start),
   );
@@ -685,9 +694,12 @@ function markNounArticleBefore(text: string, start: number): boolean {
     // Whisper capitalises after an opening quote or paren the same way it
     // does after a newline. "double quote The question mark" is a noun;
     // "option A question mark" still has a letter, not a delimiter, in head.
-    // A lone capital "A" there is the option label itself ("single quote A
-    // question mark" is 'A?), so the label safeguard wins over the delimiter.
-    (raw !== "A" && /["'`\u201C(\[{]\s*$/.test(head))
+    // A lone capital "A" there is ambiguous, and what follows the mark
+    // decides: a closing delimiter or the end means the option label
+    // ("single quote A question mark" is 'A?); real words mean the article
+    // ("double quote A question mark is wrong double quote" stays a noun).
+    (/["'`\u201C(\[{]\s*$/.test(head) &&
+      (raw !== "A" || !MARK_LABEL_CLOSER.test(text.slice(end))))
   );
 }
 
@@ -701,7 +713,7 @@ function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const command = text.slice(start, end).trim().toLowerCase();
 
   if (MARK_PHRASE_COMMANDS.has(command)) {
-    return markNounArticleBefore(text, start);
+    return markNounArticleBefore(text, start, end);
   }
 
   // Operand context first: "a plus b" and "a equals b" are code, and the "a"

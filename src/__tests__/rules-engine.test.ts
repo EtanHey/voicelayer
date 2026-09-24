@@ -148,14 +148,25 @@ describe("rules-engine", () => {
       }
     });
 
-    it("reads a capital A after an opening quote or paren as an option label", () => {
-      // A lone capital "A" after a delimiter is the option label, as in
-      // "option A question mark": the delimiter must not turn it into an
-      // article and swallow the command. "The" after a delimiter stays a noun.
+    it("reads a capital A after an opening quote as a label or an article by what follows", () => {
+      // After an opening delimiter a capital "A" is ambiguous. What follows
+      // "question mark" decides: a closing delimiter or the end of the text
+      // means the option label ('A?); real words mean the article, and the
+      // noun phrase stays (#121). "The" after a delimiter is always a noun.
       const cases: Array<[string, string, number]> = [
         ["single quote A question mark", "'A?", 4],
         ["double quote A question mark double quote", '"A?"', 6],
         ["open paren A question mark close paren", "(A?)", 6],
+        [
+          "double quote A question mark is wrong double quote",
+          '"A question mark is wrong"',
+          4,
+        ],
+        [
+          "double quote The question mark is wrong double quote",
+          '"The question mark is wrong"',
+          4,
+        ],
       ];
 
       for (const [raw, expected, commandWordCount] of cases) {
