@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { processingEnv } from "./processing-settings";
 import { existsSync } from "fs";
 import { appendFile, mkdir } from "fs/promises";
 import { homedir } from "os";
@@ -1665,7 +1666,8 @@ export async function warmPolishEndpoint(
     error,
   });
 
-  if (!isSTTPolishWarmupEnabled(env)) {
+  // Polish off (a Settings toggle since P1) means no health check and no warm-up request.
+  if (getSTTPolishMode(env) === "off" || !isSTTPolishWarmupEnabled(env)) {
     return buildResult("skipped");
   }
 
@@ -1823,7 +1825,7 @@ function writePolishLog(
 export async function polishTranscriptionText(
   input: STTPolishInput,
 ): Promise<STTPolishResult> {
-  const env = input.env ?? process.env;
+  const env = input.env ?? processingEnv();
   const mode = getSTTPolishMode(env);
   const surface = input.surface ?? "dictation";
   const startedAt = performance.now();
