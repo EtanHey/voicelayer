@@ -317,8 +317,8 @@ final class VoiceBarPresentationTests: XCTestCase {
                 isEngaged: false
             ),
             VoiceBarRecordingHoldControl(
-                iconName: "hand.raised",
-                accessibilityLabel: "Hold recording",
+                iconName: "lock.fill",
+                accessibilityLabel: "Lock recording",
                 accessibilityHint: "Keep recording through silence",
                 isSelected: false
             )
@@ -330,8 +330,8 @@ final class VoiceBarPresentationTests: XCTestCase {
                 isEngaged: true
             ),
             VoiceBarRecordingHoldControl(
-                iconName: "hand.raised.fill",
-                accessibilityLabel: "Release recording hold",
+                iconName: "lock.fill",
+                accessibilityLabel: "Unlock recording",
                 accessibilityHint: "Resume automatic silence stop",
                 isSelected: true
             )

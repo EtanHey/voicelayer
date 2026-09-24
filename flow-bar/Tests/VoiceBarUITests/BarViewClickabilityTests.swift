@@ -18,6 +18,22 @@ final class BarViewClickabilityTests: XCTestCase {
 
     private var windows: [NSWindow] = []
 
+    /// XCTest keeps every test-case instance alive until the process ends, so windows this
+    /// suite orders in would otherwise stay on screen (animating) for the whole run. On CI all
+    /// bundles share one xctest process, and leaked recording panels starved later suites'
+    /// main-queue drains.
+    override func tearDown() {
+        MainActor.assumeIsolated {
+            for window in windows {
+                window.isReleasedWhenClosed = false
+                window.orderOut(nil)
+                window.close()
+            }
+            windows.removeAll()
+        }
+        super.tearDown()
+    }
+
     final class SpyCommandRouter: BarCommandRouting {
         var cancelCount = 0
         var stopCount = 0
@@ -56,17 +72,34 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("commandRouter.handleCancel()"))
     }
 
+    func testIdleLauncherUsesHistoryAndSettingsSymbolsAndKeepsRouterActions() throws {
+        let source = try barViewSource()
+        let trailing = try XCTUnwrap(source.range(of: "private var notchTrailingContent"))
+        let compact = try XCTUnwrap(source.range(of: "private var notchCompactStatusContent"))
+        let launcher = source[trailing.lowerBound ..< compact.lowerBound]
+        XCTAssertTrue(launcher.contains("historyButton"))
+        XCTAssertTrue(launcher.contains("settingsButton"))
+        XCTAssertFalse(launcher.contains("vocabularyButton"))
+        XCTAssertTrue(source.contains("notchButton(icon: \"gearshape\", accessibilityLabel: \"Settings\")"))
+        XCTAssertTrue(source.contains("onOpenSettings()"))
+        XCTAssertTrue(source.contains("commandRouter.handlePrimaryTap()"))
+        XCTAssertTrue(source.contains("commandRouter.handleStop()"))
+        XCTAssertTrue(source.contains("commandRouter.handleCancel()"))
+        XCTAssertTrue(source.contains("state.setRecordingHold(!state.isRecordingHoldEngaged)"))
+    }
+
     func testStopControlRestoresTheCircularContainerAndCentersTheSquare() throws {
         let stop = VoiceBarNotchControlOptics.resolve(for: "stop.fill")
         let replay = VoiceBarNotchControlOptics.resolve(for: "arrow.counterclockwise")
         let eye = VoiceBarNotchControlOptics.resolve(for: "eye")
         let eyeSlash = VoiceBarNotchControlOptics.resolve(for: "eye.slash")
 
-        XCTAssertEqual(stop.pointSize, 8)
+        XCTAssertEqual(stop.pointSize, 10)
         XCTAssertEqual(stop.offsetX, 0)
         XCTAssertEqual(stop.offsetY, 0)
         XCTAssertEqual(eye.pointSize, eyeSlash.pointSize)
-        XCTAssertLessThan(eye.pointSize, replay.pointSize)
+        XCTAssertEqual(eye.pointSize, 15)
+        XCTAssertEqual(replay.pointSize, 15)
 
         let source = try barViewSource()
         let buttonStart = try XCTUnwrap(source.range(of: "private func notchButton"))
@@ -76,8 +109,11 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("notchPalette.primary.color"))
         XCTAssertFalse(source.contains("Color(nsColor: .labelColor)"))
         XCTAssertTrue(buttonSource.contains("icon == \"stop.fill\""))
-        XCTAssertTrue(buttonSource.contains("Circle()"))
-        XCTAssertTrue(buttonSource.contains("compactControlSize"))
+        XCTAssertTrue(buttonSource.contains("VoiceBarPillControlButton("))
+        XCTAssertTrue(source.contains(".frame(width: 26, height: 26)"))
+        XCTAssertTrue(source.contains(".contentShape(Circle())"))
+        XCTAssertTrue(source.contains(".padding(-3)"))
+        XCTAssertTrue(source.contains("if isDestructive {"))
     }
 
     func testNativeNotchShellUsesApprovedBoundsForPrimaryStates() {
@@ -291,6 +327,33 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.stopCount, 0)
     }
 
+    /// #137 review MUST-FIX 1: P05's 26 pt system is for the pill controls only. The voice_speak
+    /// surface (teleprompter controls, the speaking wing's eye + Stop, and the non-button status
+    /// glyph) keeps the pre-P05 compact optics, or eye and Stop crowd the waveform.
+    func testVoiceSpeakSurfaceKeepsPreP05CompactOptics() throws {
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "eye").pointSize, 8.5)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "eye.slash").pointSize, 8.5)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "arrow.counterclockwise").pointSize, 9.5)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "stop.fill").pointSize, 8)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "speaker.wave.2.fill").pointSize, 10)
+        XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "bolt.horizontal.circle.fill").pointSize, 10)
+
+        let source = try barViewSource()
+        let compactStart = try XCTUnwrap(source.range(of: "private var notchCompactStatusContent"))
+        let compact = String(source[compactStart.lowerBound...])
+        let speaking = try XCTUnwrap(
+            compact.components(separatedBy: "case .speaking:").dropFirst().first?
+                .components(separatedBy: "case .error:").first
+        )
+        XCTAssertFalse(speaking.contains("notchButton("))
+        XCTAssertTrue(speaking.contains("notchTeleprompterButton(\n                        icon: \"eye\""))
+        XCTAssertTrue(speaking.contains("notchTeleprompterButton(\n                    icon: \"stop.fill\""))
+
+        let teleprompterStart = try XCTUnwrap(source.range(of: "private func notchTeleprompterButton"))
+        XCTAssertTrue(source[teleprompterStart.lowerBound...]
+            .contains("VoiceBarNotchControlOptics.legacyCompact(for: icon)"))
+    }
+
     func testIdleStatusMicReusesLauncherMicOpticsAndPrimaryForeground() throws {
         let source = try barViewSource()
         let statusStart = try XCTUnwrap(source.range(of: "private var statusIcon"))
@@ -300,9 +363,11 @@ final class BarViewClickabilityTests: XCTestCase {
         )
         let statusIconImage = source[imageStart.lowerBound ..< iconNameStart.lowerBound]
 
+        // Only non-idle, non-error modes reach statusIconImage (speaker, bolt, waveform); the mic
+        // is always the notchButton pinned below, so it shares the launcher mic's optics.
         XCTAssertTrue(
-            statusIconImage.contains("VoiceBarNotchControlOptics.resolve(for: iconName)"),
-            "the hotkey-transition mic must use the same optical sizing contract as the launcher mic"
+            statusIconImage.contains("VoiceBarNotchControlOptics.legacyCompact(for: iconName)"),
+            "the non-button status glyph keeps its pre-P05 compact size (#137 review)"
         )
         XCTAssertTrue(
             statusIconImage.contains("state.mode == .idle ? notchPrimaryLabelColor"),
@@ -447,13 +512,21 @@ final class BarViewClickabilityTests: XCTestCase {
         let source = try barViewSource()
 
         XCTAssertTrue(source
-            .contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented || isVocabularyPresented"))
-        XCTAssertTrue(source.contains("vocabularyButton"))
-        XCTAssertTrue(source.contains("accessibilityLabel: \"Dictionary\""))
+            .contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented\n    }"))
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
     }
 
-    func testDictionaryButtonMountsOnlyInHoveredLauncher() throws {
+    /// Spec §4: the Transcription Vocabulary notch panel is removed; the gear opens Settings › Dictionary.
+    func testNotchNoLongerCarriesTheVocabularyPanel() throws {
+        let source = try barViewSource()
+
+        XCTAssertFalse(source.contains("vocabularyButton"))
+        XCTAssertFalse(source.contains("vocabularyPopover"))
+        XCTAssertFalse(source.contains("isVocabularyPresented"))
+        XCTAssertFalse(source.contains("accessibilityLabel: \"Dictionary\""))
+    }
+
+    func testSettingsButtonMountsOnlyInHoveredLauncher() throws {
         let source = try barViewSource()
         let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
         let trailingStart = try XCTUnwrap(source.range(of: "private var notchTrailingContent"))
@@ -475,24 +548,83 @@ final class BarViewClickabilityTests: XCTestCase {
         )
 
         XCTAssertTrue(hover.contains("historyButton"))
-        XCTAssertTrue(hover.contains("vocabularyButton"))
+        XCTAssertTrue(hover.contains("settingsButton"))
+        XCTAssertFalse(hover.contains("vocabularyButton"))
         XCTAssertFalse(active.contains("historyButton"))
-        XCTAssertFalse(active.contains("vocabularyButton"))
+        XCTAssertFalse(active.contains("settingsButton"))
         XCTAssertTrue(teleprompterLeading.contains("EmptyView()"))
-        XCTAssertFalse(teleprompterLeading.contains("vocabularyButton"))
+        XCTAssertFalse(teleprompterLeading.contains("settingsButton"))
         XCTAssertFalse(teleprompterLeading.contains("Dictionary"))
     }
 
-    func testDictionaryPopoverOpensBelowTheTopEdgeNotch() throws {
+    /// #137 review N3: a BarView site that forgets the handler must not compile into a dead gear.
+    func testOpenSettingsHandlerIsRequired() throws {
         let source = try barViewSource()
-        let buttonStart = try XCTUnwrap(source.range(of: "private var vocabularyButton"))
-        let popoverStart = try XCTUnwrap(
-            source.range(of: "var vocabularyPopover", range: buttonStart.upperBound ..< source.endIndex)
-        )
-        let button = source[buttonStart.lowerBound ..< popoverStart.lowerBound]
 
-        XCTAssertTrue(button.contains(".popover(isPresented: $isVocabularyPresented, arrowEdge: .top)"))
-        XCTAssertFalse(button.contains("arrowEdge: .bottom"))
+        XCTAssertTrue(source.contains("onOpenSettings: @escaping () -> Void,\n"))
+        XCTAssertFalse(source.contains("onOpenSettings: @escaping () -> Void = {}"))
+    }
+
+    func testSettingsButtonCallsTheExistingOpenSettingsHandler() {
+        let state = VoiceState()
+        state.mode = .idle
+        state.isConnected = true
+        state.isCollapsed = false
+        state.isHovering = true
+        let router = SpyCommandRouter()
+        var opened = 0
+        let (host, _, _, controlRects) = makeInteractivePanelHost(
+            state: state,
+            router: router,
+            configuration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1, trailingControlCountFromCore: 2
+            ),
+            onOpenSettings: { opened += 1 }
+        )
+        click(host, at: topEdgePoint(of: controlRects[2]))
+        XCTAssertEqual(opened, 1)
+        XCTAssertEqual(router.primaryTapCount, 0)
+    }
+
+    func testPillButtonRingClicksReachHandlersWithoutChangingDragRegion() {
+        let ringOffsets: [(CGFloat, CGFloat)] = [(12, 0), (-12, 0), (0, 12), (0, -12)]
+        for (name, index) in [("Stop", 2), ("Cancel", 1), ("Lock", 0), ("Mic", 0), ("Settings", 2)] {
+            for (dx, dy) in ringOffsets {
+                let state = VoiceState()
+                state.isConnected = true
+                state.isCollapsed = false
+                state.mode = name == "Mic" || name == "Settings" ? .idle : .recording
+                state.isHovering = state.mode == .idle
+                state.recordingMode = state.mode == .recording ? "vad" : nil
+                let router = SpyCommandRouter()
+                var holdCommands = 0
+                state.sendCommand = { command in
+                    if command["cmd"] as? String == "set_recording_hold" { holdCommands += 1 }
+                }
+                var settingsOpens = 0
+                let configuration = state.mode == .recording
+                    ? VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+                    : VoiceBarNotchInteractionConfiguration(
+                        leadingControlCount: 1, trailingControlCountFromCore: 2
+                    )
+                let (host, panel, _, rects) = makeInteractivePanelHost(
+                    state: state, router: router, configuration: configuration,
+                    onOpenSettings: { settingsOpens += 1 }
+                )
+                let rect = rects[index]
+                let point = NSPoint(x: rect.midX + dx, y: rect.midY + dy)
+                XCTAssertFalse(panel.startsDrag(at: point), "\(name) ring must not expand drag interception")
+                click(host, at: point)
+                let fired: Int = switch name {
+                case "Stop": router.stopCount
+                case "Cancel": router.cancelCount
+                case "Lock": holdCommands
+                case "Mic": router.primaryTapCount
+                default: settingsOpens
+                }
+                XCTAssertEqual(fired, 1, "\(name) ring click at \(dx), \(dy)")
+            }
+        }
     }
 
     func testProductNotchShellDoesNotMountAKeyboardFocusHighlightSurface() throws {
@@ -675,6 +807,7 @@ final class BarViewClickabilityTests: XCTestCase {
             rootView: BarView(
                 state: state,
                 commandRouter: router,
+                onOpenSettings: {},
                 presentationModel: presentationModel
             )
         )
@@ -700,7 +833,8 @@ final class BarViewClickabilityTests: XCTestCase {
     private func makeInteractivePanelHost(
         state: VoiceState,
         router: SpyCommandRouter,
-        configuration: VoiceBarNotchInteractionConfiguration
+        configuration: VoiceBarNotchInteractionConfiguration,
+        onOpenSettings: @escaping () -> Void = {}
     ) -> (
         host: PillHostingView<BarView>,
         panel: FloatingPillPanel,
@@ -727,6 +861,7 @@ final class BarViewClickabilityTests: XCTestCase {
             rootView: BarView(
                 state: state,
                 commandRouter: router,
+                onOpenSettings: onOpenSettings,
                 includesPanelOutsets: true
             )
         )

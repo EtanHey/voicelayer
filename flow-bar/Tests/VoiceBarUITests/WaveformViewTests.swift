@@ -637,6 +637,7 @@ final class WaveformViewTests: XCTestCase {
             rootView: BarView(
                 state: state,
                 commandRouter: NoOpCommandRouter(),
+                onOpenSettings: {},
                 presentationModel: model
             )
             .frame(width: size.width, height: size.height)

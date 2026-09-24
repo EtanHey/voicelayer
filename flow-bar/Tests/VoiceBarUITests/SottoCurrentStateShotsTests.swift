@@ -105,7 +105,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             if mode == .recording { state.recordingMode = "vad" }
             if mode == .error { state.errorMessage = "Synthetic error" }
             try shot("pill-\(name).png", "Pill: \(name)", BarView(
-                state: state, commandRouter: router, includesPanelOutsets: true
+                state: state, commandRouter: router, onOpenSettings: {}, includesPanelOutsets: true
             ), size: CGSize(width: 600, height: 180))
         }
 
@@ -114,12 +114,9 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             RecentTranscriptionEntry(text: "A synthetic recent transcription."),
             RecentTranscriptionEntry(text: "Another short sample with no personal content."),
         ]
-        panelState.transcriptionVocabularyTerms = ["SwiftUI", "whisper.cpp"]
-        let panel = BarView(state: panelState, commandRouter: router)
+        let panel = BarView(state: panelState, commandRouter: router, onOpenSettings: {})
         try shot("notch-recent.png", "Notch panel: Recent Transcriptions", panel.historyPopover,
                  size: CGSize(width: 348, height: 274))
-        try shot("notch-vocabulary.png", "Notch panel: Transcription Vocabulary", panel.vocabularyPopover,
-                 size: CGSize(width: 348, height: 314))
 
         let menu = PillContextMenuController()
         menu.transcriptProvider = { "A synthetic recent transcription." }
@@ -232,6 +229,90 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             to: directory.appendingPathComponent("index.md"),
             atomically: true,
             encoding: .utf8
+        )
+    }
+
+    func testWritePillButtonShotsWhenRequested() throws {
+        guard let path = ProcessInfo.processInfo.environment["VOICEBAR_P05_SHOTS_DIR"], !path.isEmpty else {
+            throw XCTSkip("Set VOICEBAR_P05_SHOTS_DIR to write pill button artifacts")
+        }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let router = NoopRouter()
+        var lines = ["# P05 pill buttons", "", "Synthetic, offscreen 2× production-view renders.", ""]
+        for (appearanceName, appearance, scheme, isDark) in [
+            ("dark", NSAppearance.Name.darkAqua, ColorScheme.dark, true),
+            ("light", NSAppearance.Name.aqua, ColorScheme.light, false),
+        ] {
+            for (name, mode, hover) in [
+                // Idle with the notch expanded: the launcher (Mic · History · Settings). A collapsed,
+                // resting idle draws only the hardware notch, so offscreen it renders blank. The
+                // per-button hover circle needs a live pointer and is shot separately below.
+                ("idle", VoiceMode.idle, false),
+                ("recording", .recording, false),
+                ("transcribing", .transcribing, false),
+                ("error", .error, false),
+                // voice_speak with the teleprompter hidden: waveform · eye · Stop on the pre-P05 optics.
+                ("speaking-dismissed", .speaking, false),
+                ("disconnected", .disconnected, false),
+            ] {
+                let state = syntheticState()
+                state.mode = mode
+                state.isHovering = hover
+                if mode == .recording { state.recordingMode = "vad" }
+                if mode == .error { state.errorMessage = "Synthetic error" }
+                if mode == .speaking {
+                    state.statusText = "A synthetic spoken reply."
+                    state.dismissTeleprompter()
+                }
+                if mode == .disconnected { state.isConnected = false }
+                let filename = "pill-\(name)-\(appearanceName).png"
+                try render(
+                    BarView(state: state, commandRouter: router, onOpenSettings: {}, includesPanelOutsets: true)
+                        .environment(\.colorScheme, scheme),
+                    size: CGSize(width: 600, height: 180),
+                    to: directory.appendingPathComponent(filename),
+                    appearance: appearance
+                )
+                lines.append("- [\(filename)](\(filename)): \(name), \(appearanceName)")
+            }
+            for (name, icon, destructive) in [
+                ("mic", "mic.fill", false),
+                ("history", "clock.arrow.circlepath", false),
+                ("settings", "gearshape", false),
+                ("stop", "stop.fill", true),
+                ("cancel", "xmark", false),
+                ("lock", "lock.fill", false),
+            ] {
+                for visualState in ["hover", "pressed"] {
+                    let button = VoiceBarPillControlButton(
+                        icon: icon,
+                        optics: VoiceBarNotchControlOptics.resolve(for: icon),
+                        foreground: isDark ? .white : .black,
+                        halo: .clear,
+                        isSelected: false,
+                        isDestructive: destructive,
+                        accessibilityLabel: name,
+                        accessibilityHint: "",
+                        previewHovered: visualState == "hover",
+                        previewPressed: visualState == "pressed",
+                        action: {}
+                    )
+                    let filename = "control-\(name)-\(visualState)-\(appearanceName).png"
+                    try render(
+                        button.frame(width: 100, height: 88)
+                            .background(isDark ? Color.black : Color.white)
+                            .environment(\.colorScheme, scheme),
+                        size: CGSize(width: 100, height: 88),
+                        to: directory.appendingPathComponent(filename),
+                        appearance: appearance
+                    )
+                    lines.append("- [\(filename)](\(filename)): \(name) \(visualState), \(appearanceName)")
+                }
+            }
+        }
+        try (lines.joined(separator: "\n") + "\n").write(
+            to: directory.appendingPathComponent("index.md"), atomically: true, encoding: .utf8
         )
     }
 

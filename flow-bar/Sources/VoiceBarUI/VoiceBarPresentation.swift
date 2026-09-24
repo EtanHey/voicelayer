@@ -242,8 +242,8 @@ public enum VoiceBarPresentation {
     ) -> VoiceBarRecordingHoldControl? {
         guard mode == .recording, recordingMode == "vad" else { return nil }
         return VoiceBarRecordingHoldControl(
-            iconName: isEngaged ? "hand.raised.fill" : "hand.raised",
-            accessibilityLabel: isEngaged ? "Release recording hold" : "Hold recording",
+            iconName: "lock.fill",
+            accessibilityLabel: isEngaged ? "Unlock recording" : "Lock recording",
             accessibilityHint: isEngaged
                 ? "Resume automatic silence stop"
                 : "Keep recording through silence",
