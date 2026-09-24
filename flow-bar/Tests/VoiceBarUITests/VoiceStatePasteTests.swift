@@ -1118,7 +1118,10 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.mode, .transcribing)
         XCTAssertEqual(pastedTexts, [])
 
-        try? await Task.sleep(for: .milliseconds(180))
+        do {
+            let settled = await settle { !pastedTexts.isEmpty && state.mode == .idle }
+            XCTAssertTrue(settled)
+        }
 
         XCTAssertEqual(pastedTexts, ["fast final transcript"])
         XCTAssertEqual(state.mode, .idle)

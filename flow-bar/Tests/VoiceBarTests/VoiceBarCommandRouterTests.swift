@@ -450,11 +450,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
         gesture.handleKeyDown()
         gesture.handleKeyUp()
-        RunLoop.main.run(
-            until: Date().addingTimeInterval(
-                Double(GestureStateMachine.doubleTapWindowMs + 100) / 1000
-            )
-        )
+        runMainLoop(until: { phases.last == .idle && singleTapCount > 0 })
 
         XCTAssertEqual(gesture.state, .idle)
         XCTAssertEqual(phases, [.pressing, .awaitingSecondTap, .idle])
@@ -675,8 +671,9 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
     /// Pumps the main run loop until `condition` holds. The hold timer is 160 ms;
     /// a fixed 200 ms window lost that race on the macOS CI runner, so wait on
-    /// the transition itself. The deadline is liveness only.
-    private func runMainLoop(until condition: () -> Bool, timeout: TimeInterval = 2) {
+    /// the transition itself. The deadline is liveness only (2 s also ran out
+    /// under a loaded background-QoS run).
+    private func runMainLoop(until condition: () -> Bool, timeout: TimeInterval = 5) {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition(), Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
