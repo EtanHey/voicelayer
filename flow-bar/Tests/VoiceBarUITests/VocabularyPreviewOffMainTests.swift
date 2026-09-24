@@ -4,7 +4,10 @@ import XCTest
 /// D1-c / fold-3 review S1: the Dictionary's detached load read VoiceState through `DispatchQueue.main.sync`,
 /// which deadlocks as soon as main waits synchronously on that load. The off-main read must never need main.
 final class VocabularyPreviewOffMainTests: XCTestCase {
+    @MainActor
     func testOffMainReadCompletesWhileTheMainThreadIsBlocked() {
+        // The regression only means something if main is the thread that blocks (#151 CodeRabbit).
+        XCTAssertTrue(Thread.isMainThread)
         let state = VoiceState()
         state.transcriptionVocabularyTerms = ["VoiceLayer"]
         state.transcriptionVocabularyAliases = [STTVocabularyAliasPreview(from: "voice later", to: "VoiceLayer")]
