@@ -84,7 +84,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         state.handleEvent(Self.availableHealth)
         state.setWhisperResidency(.loaded)
         let id = try XCTUnwrap(commands.last?["id"] as? String)
-        XCTAssertEqual(state.modelsSettingsState.busyReason, "Changing model residency")
+        XCTAssertEqual(state.modelsSettingsState.busyReason, "Loading model…")
         state.handleEvent([
             "type": "ack", "command": "set_whisper_residency", "id": id, "outcome": "loading",
         ])
