@@ -130,6 +130,40 @@ final class PerformanceEffortSelectionTests: XCTestCase {
         XCTAssertNil(sent())
     }
 
+    func testDisconnectDropsTheInFlightSelectionSoTheDaemonValueShows() {
+        var sentCount = 0
+        let app = AppDelegate()
+        app.voiceState.sendCommand = { command in
+            if command["cmd"] as? String == "set_whisper_effort" { sentCount += 1 }
+        }
+        app.voiceState.setConnectionStatus(true)
+        app.voiceState.handleEvent(Self.health(configured: "accurate"))
+
+        app.selectPerformanceEffort(.fast)
+        XCTAssertEqual(app.currentPerformanceEffort(), .fast)
+
+        app.voiceState.setConnectionStatus(false)
+        app.voiceState.setConnectionStatus(true)
+        app.voiceState.handleEvent(Self.health(configured: "accurate"))
+
+        XCTAssertEqual(app.currentPerformanceEffort(), .accurate)
+        app.selectPerformanceEffort(.fast)
+        XCTAssertEqual(sentCount, 2, "re-selecting after a lost change must retry")
+    }
+
+    @MainActor
+    func testUnansweredChangeTimesOutToTheDaemonValue() async throws {
+        let (app, _) = connectedApp(configured: "accurate")
+        app.performanceEffortAckTimeout = .milliseconds(50)
+
+        app.selectPerformanceEffort(.fast)
+        XCTAssertEqual(app.currentPerformanceEffort(), .fast)
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertEqual(app.currentPerformanceEffort(), .accurate)
+        XCTAssertNotNil(app.currentPerformanceEffortNotice())
+    }
+
     func testMissingCommandClientDoesNotChangeEffort() {
         let app = AppDelegate()
 
