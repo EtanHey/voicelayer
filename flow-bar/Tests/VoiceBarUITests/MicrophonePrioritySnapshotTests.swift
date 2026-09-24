@@ -158,6 +158,20 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
         XCTAssertNil(snapshot.movingVisibleUIDs(from: IndexSet(integer: -1), to: 0), "a negative source is refused")
     }
 
+    /// #140 Macroscope (Medium): rows(for:) always puts UID-less devices last, but the public init can be fed
+    /// [A, B, no-UID, C]. A reorder must never drop C from the saved order.
+    func testAUIDRowAfterAUIDlessRowIsKeptWhenReordering() {
+        let snapshot = MicrophonePrioritySnapshot(rows: [
+            .init(uid: "mic-a", deviceID: "1", label: "A", isConnected: true),
+            .init(uid: "mic-b", deviceID: "2", label: "B", isConnected: true),
+            .init(uid: nil, deviceID: "9", label: "No UID", isConnected: true),
+            .init(uid: "mic-c", deviceID: "3", label: "C", isConnected: true),
+            .init(uid: "CADefaultDeviceAggregate-7", deviceID: "8", label: "System Audio", isConnected: true),
+        ], nextDeviceName: "A")
+
+        XCTAssertEqual(snapshot.makingDefaultUIDs(at: 1), ["mic-b", "mic-a", "mic-c", "CADefaultDeviceAggregate-7"])
+    }
+
     func testDragNeverPlacesAMicBelowAUIDlessRow() {
         let snapshot = MicrophonePrioritySnapshot(rows: [
             .init(uid: "mic-a", deviceID: "1", label: "A", isConnected: true),

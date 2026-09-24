@@ -108,7 +108,9 @@ public struct MicrophonePrioritySnapshot: Equatable {
         let stayingAfter = current.indices.filter { $0 >= landing && !source.contains($0) }.map { current[$0] }
         let moved = stayingBefore + picked + stayingAfter
         guard moved != current else { return nil }
-        return moved + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
+        // Any UID rows after the movable prefix (only reachable through the public init) keep their place.
+        let trailingUIDs = visible.dropFirst(movableCount).compactMap(\.uid)
+        return moved + trailingUIDs + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
     }
 
     public func reorderedVisibleUIDs(moving index: Int, by offset: Int) -> [String]? {
