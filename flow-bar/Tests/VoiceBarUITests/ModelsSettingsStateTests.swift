@@ -386,6 +386,30 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertNil(voiceState.modelsSettingsState.polishControls)
     }
 
+    func testEffortNoteNamesTheRunningEffortWhenItDiffersFromTheSetting() throws {
+        var health = Self.availableHealth
+        var status = try XCTUnwrap(health["model_status"] as? [String: Any])
+        status["configured_effort"] = "fast"
+        status["active_effort"] = "accurate"
+        health["model_status"] = status
+        XCTAssertEqual(
+            ModelsSettingsView.effortStatusNote(for: ModelsSettingsState(healthEvent: health)),
+            "Running Accurate until the model server restarts."
+        )
+        XCTAssertNil(ModelsSettingsView.effortStatusNote(for: ModelsSettingsState(healthEvent: Self.availableHealth)))
+        status["residency"] = "not_loaded"
+        status["active_effort"] = NSNull()
+        health["model_status"] = status
+        XCTAssertNil(ModelsSettingsView.effortStatusNote(for: ModelsSettingsState(healthEvent: health)))
+    }
+
+    func testEffortCopySaysWhatChangesAndThatItReloads() {
+        let copy = ModelsSettingsView.effortExplanation
+        XCTAssertTrue(copy.contains("beam search"))
+        XCTAssertTrue(copy.contains("15–35 %"))
+        XCTAssertTrue(copy.contains("reloads the model"))
+    }
+
     private static let availableHealth: [String: Any] = [
         "type": "health",
         "recording_state": "idle",

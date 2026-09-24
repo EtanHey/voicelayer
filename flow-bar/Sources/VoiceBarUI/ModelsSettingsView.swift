@@ -99,10 +99,16 @@ public struct ModelsSettingsView: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("models-busy-reason")
                 }
-                Text("Applies to your next dictation. Each transcript in History shows which one it used.")
+                Text(Self.effortExplanation)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let note = Self.effortStatusNote(for: state) {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("models-effort-status")
+                }
                 if let notice {
                     Text(notice).font(.caption).foregroundStyle(.orange)
                 }
@@ -169,6 +175,28 @@ public struct ModelsSettingsView: View {
 
     /// Why the effort picker is disabled, shown directly under it (spec §5). nil means it is enabled.
     /// The daemon owns effort, so the picker stays disabled until VoiceLayer reports it is available.
+    // AIDEV-NOTE: numbers from r4-e1/findings.md (M4 Max, 3 clips): Fast→Accurate
+    // +15–35 % decode time, identical words on 10 s/33 s clips, 2–4 of 158 on 100 s
+    // (inside Balanced's own run-to-run noise). Final wording/placement waits on
+    // Etan (bundled plan, answer A).
+    static let effortExplanation =
+        "Fast is the quickest. Balanced and Accurate use beam search: about 15–35 % slower, "
+            + "with no measurable word difference in our tests. Changing it reloads the model "
+            + "(about 2 s). History shows which one each transcript used."
+
+    /// Truth when the running server's effort is not the setting (a server VoiceLayer
+    /// did not launch keeps its own flags until it restarts).
+    static func effortStatusNote(for state: ModelsSettingsState) -> String? {
+        guard state.availability == .available,
+              state.residency == .loaded,
+              !state.isBusy,
+              let active = state.activeEffort,
+              let configured = state.configuredEffort,
+              active != configured
+        else { return nil }
+        return "Running \(active.displayName) until the model server restarts."
+    }
+
     static func effortDisabledReason(for state: ModelsSettingsState) -> String? {
         switch state.availability {
         case .unavailable:

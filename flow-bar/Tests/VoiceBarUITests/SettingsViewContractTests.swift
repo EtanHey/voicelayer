@@ -10,6 +10,9 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("ModelsSettingsView("))
         XCTAssertTrue(source.contains("state: modelsStatus()"))
         XCTAssertTrue(source.contains("effort: $selectedPerformanceEffort"))
+        // E2: the local picker state follows the app/daemon value instead of freezing at init.
+        XCTAssertTrue(source.contains(".onChange(of: performanceEffort())"))
+        XCTAssertTrue(source.contains("selectedPerformanceEffort = current"))
         XCTAssertTrue(source.contains("notice: performanceEffortNotice()"))
         XCTAssertTrue(source.contains("onSelectEffort: onSelectPerformanceEffort"))
         XCTAssertTrue(source.contains("onRefreshModelsStatus()"))
