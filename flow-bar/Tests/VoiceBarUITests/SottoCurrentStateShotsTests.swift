@@ -144,6 +144,17 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             lines: &lines
         )
 
+        // #141 round 2: the device in use is a hidden one; the submenu still says so, checked and disabled.
+        menu.selectedDeviceIDProvider = { "fixture-teams" }
+        try menuShots(
+            menu.makeMicrophoneSubmenu(),
+            prefix: "menu-microphone-hidden-in-use",
+            description: "Right-click → Microphone while a hidden device is in use",
+            directory: directory,
+            lines: &lines
+        )
+        menu.selectedDeviceIDProvider = { "fixture-mic" }
+
         let empty = STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         let populated = STTVocabularyPreview(
             updatedAt: "2026-09-23T00:00:00Z",

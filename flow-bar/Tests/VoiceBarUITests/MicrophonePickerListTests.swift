@@ -70,3 +70,71 @@ final class MicrophonePickerListTests: XCTestCase {
         XCTAssertEqual(MicrophoneDevice.pickable([physical]).map(\.name), ["Virtual Studio Mic"])
     }
 }
+
+/// #141 review MUST-FIX 1: when the device actually in use is a hidden one (Teams, Zoom, VoiceBar's own
+/// aggregate), every picker still says so: a checked, disabled, clearly marked row on top, and every real mic
+/// stays selectable. Never a list with nothing checked.
+final class MicrophonePickerHiddenSelectionTests: XCTestCase {
+    private let devices: [MicrophoneDevice] = [
+        MicrophoneDevice(id: "88", name: "AirPods", uid: "airpods-uid", isVirtualOrAggregateTransport: false),
+        MicrophoneDevice(id: "95", name: "Microsoft Teams Audio", uid: "MSTeamsAudioDevice_UID",
+                         isVirtualOrAggregateTransport: true),
+        MicrophoneDevice(id: "97", name: "Wireless Mic Rx", uid: "rx-uid", isVirtualOrAggregateTransport: false),
+    ]
+
+    func testRightClickShowsTheHiddenDeviceInUseCheckedAndDisabledOnTop() {
+        let options = PillContextMenuController.deviceOptions(devices: devices, selectedID: "95")
+
+        XCTAssertEqual(options.map(\.title), [
+            "In use: Microsoft Teams Audio (hidden device)", "AirPods", "Wireless Mic Rx",
+        ])
+        XCTAssertEqual(options.map(\.isSelected), [true, false, false])
+        XCTAssertEqual(options.map(\.isEnabled), [false, true, true])
+    }
+
+    func testRightClickSubmenuSeparatesTheHiddenRowFromTheRealMics() {
+        let controller = PillContextMenuController()
+        controller.availableDevicesProvider = { self.devices }
+        controller.selectedDeviceIDProvider = { "95" }
+        let menu = controller.makeMicrophoneSubmenu()
+
+        XCTAssertEqual(menu.items.first?.title, "In use: Microsoft Teams Audio (hidden device)")
+        XCTAssertEqual(menu.items.first?.state, .on)
+        XCTAssertEqual(menu.items.first?.isEnabled, false)
+        XCTAssertTrue(menu.items.dropFirst().first?.isSeparatorItem == true)
+        XCTAssertEqual(menu.items.dropFirst(2).map(\.title), ["AirPods", "Wireless Mic Rx"])
+    }
+
+    func testPopoverKeepsTheHiddenDeviceInUseAndListsOnlyRealMics() {
+        let popover = MenuBarPopoverView(
+            footer: .resolve(isConnected: true, mode: .idle, captureLive: false, errorMessage: nil,
+                             remoteSTTConfigured: false, hasFreshHealth: true),
+            hotkeyHint: "Hold F5 to dictate",
+            microphoneName: "Microsoft Teams Audio",
+            microphones: devices,
+            selectedMicrophoneID: "95",
+            transcript: ""
+        )
+
+        XCTAssertEqual(popover.hiddenInUseMicrophone?.name, "Microsoft Teams Audio")
+        XCTAssertEqual(popover.microphones.map(\.name), ["AirPods", "Wireless Mic Rx"])
+    }
+
+    func testSettingsNamesTheHiddenDeviceInUse() {
+        let snapshot = MicrophonePrioritySnapshot(rows: [
+            .init(uid: "rx-uid", deviceID: "97", label: "Wireless Mic Rx", isConnected: true,
+                  isVirtualOrAggregateTransport: false),
+            .init(uid: "MSTeamsAudioDevice_UID", deviceID: "95", label: "Microsoft Teams Audio", isConnected: true,
+                  isVirtualOrAggregateTransport: true),
+        ], nextDeviceName: "Microsoft Teams Audio", nextDeviceUID: "MSTeamsAudioDevice_UID", nextDeviceID: "95")
+
+        XCTAssertEqual(snapshot.nextVisibleDeviceName, "Microsoft Teams Audio (hidden device)")
+    }
+
+    func testNoHiddenRowWhenARealMicIsInUse() {
+        let options = PillContextMenuController.deviceOptions(devices: devices, selectedID: "97")
+
+        XCTAssertEqual(options.map(\.title), ["AirPods", "Wireless Mic Rx"])
+        XCTAssertEqual(options.map(\.isSelected), [false, true])
+    }
+}

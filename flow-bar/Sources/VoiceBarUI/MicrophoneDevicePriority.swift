@@ -62,7 +62,7 @@ public struct MicrophonePrioritySnapshot: Equatable {
 
     public var nextVisibleDeviceName: String? {
         guard let nextDeviceName else { return nil }
-        return nextDeviceIsHidden ? "Hidden microphone selected" : nextDeviceName
+        return nextDeviceIsHidden ? MicrophoneDevice.hiddenDeviceLabel(nextDeviceName) : nextDeviceName
     }
 
     /// Matches the next device by identity (UID, then device ID) so a hidden aggregate that shares a physical

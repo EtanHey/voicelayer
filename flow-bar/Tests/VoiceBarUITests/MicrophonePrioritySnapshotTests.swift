@@ -13,7 +13,7 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.nextVisibleDeviceName, "Built-in Microphone")
         XCTAssertEqual(
             MicrophonePrioritySnapshot(rows: snapshot.rows, nextDeviceName: "System Audio").nextVisibleDeviceName,
-            "Hidden microphone selected"
+            "System Audio (hidden device)"
         )
         XCTAssertEqual(snapshot.reorderedVisibleUIDs(moving: 1, by: -1), [
             "physical-b", "physical-a", "CADefaultDeviceAggregate-7",
@@ -35,7 +35,7 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
     }
 
     /// #119 Macroscope follow-up: a hidden aggregate that shares the selected physical mic's name must not make
-    /// General claim "Hidden microphone selected". The snapshot compares device identity, not labels.
+    /// General call it a hidden device. The snapshot compares device identity, not labels.
     func testSameNamedHiddenAggregateDoesNotHideTheSelectedPhysicalMic() {
         let rows: [MicrophonePriorityRow] = [
             .init(uid: "aggregate-uid", deviceID: "9", label: "Studio Mic", isConnected: true,
@@ -54,7 +54,7 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
             rows: rows, nextDeviceName: "Studio Mic", nextDeviceUID: "aggregate-uid", nextDeviceID: "9"
         )
         XCTAssertTrue(aggregateNext.nextDeviceIsHidden)
-        XCTAssertEqual(aggregateNext.nextVisibleDeviceName, "Hidden microphone selected")
+        XCTAssertEqual(aggregateNext.nextVisibleDeviceName, "Studio Mic (hidden device)")
 
         let noUID = MicrophonePrioritySnapshot(
             rows: [.init(uid: nil, deviceID: "4", label: "Studio Mic", isConnected: true,
