@@ -991,13 +991,109 @@ describe("STT backends", () => {
 
       expect(requestSizes).toHaveLength(4);
       expect(requestSizes.every((size) => size < 95 * 16000 * 2)).toBe(true);
-      expect(prompts[0]).toBeUndefined();
-      expect(prompts[1]).toContain("first chunk has setup");
-      expect(prompts[2]).toContain("setup and middle chunk continues");
+      // Chunk decodes carry no transcript prompt: a prompted beam decode runs
+      // away at a chunk that ends mid-phrase (S1, 2.2.24).
+      expect(prompts).toEqual([undefined, undefined, undefined, undefined]);
       expect(result.text).toBe(
         "first chunk has setup and middle chunk continues with final decision",
       );
       expect(result.backend).toBe("whisper-server+chunks");
+    });
+
+    describe("prompted chunk runaway (S1 specimen shapes)", () => {
+      // A synthetic decoder with the specimens' behaviour: one word per second
+      // of audio; an UNPROMPTED decode of a slice returns exactly that slice's
+      // words, a PROMPTED decode skips the words its prompt already holds and,
+      // at the runaway chunk, repeats itself the way beam search did live.
+      const SECONDS = 95;
+      const RUNAWAY_START = 25;
+      const speech = Array.from({ length: SECONDS }, (_, i) => `tok${i}`);
+
+      function markedWav(): Uint8Array {
+        const wav = makePcm16Wav(SECONDS);
+        const view = new DataView(wav.buffer);
+        // Second i's first sample is a zero crossing of the tone; stamp it so
+        // the fake decoder can tell which slice it was sent.
+        for (let i = 0; i < SECONDS; i++) view.setInt16(44 + i * 32_000, 1_000 + i, true);
+        return wav;
+      }
+
+      function sliceOf(wavData: Uint8Array): { start: number; seconds: number } {
+        const view = new DataView(wavData.buffer, wavData.byteOffset, wavData.byteLength);
+        return {
+          start: view.getInt16(44, true) - 1_000,
+          seconds: Math.round(view.getUint32(40, true) / 32_000),
+        };
+      }
+
+      function decoder(
+        words: string[],
+        runaway: (clean: string[]) => string[],
+        requests: Array<{ start: number; seconds: number; prompt?: string }>,
+      ) {
+        return async (wavData: Uint8Array, options?: { prompt?: string }) => {
+          const { start, seconds } = sliceOf(wavData);
+          requests.push({ start, seconds, prompt: options?.prompt });
+          const clean = words.slice(start, start + seconds);
+          if (!options?.prompt) return clean.join(" ");
+          const held = new Set(options.prompt.split(/\s+/));
+          const skipped = clean.filter((word) => !held.has(word));
+          return (start === RUNAWAY_START && seconds === 30 ? runaway(skipped) : skipped).join(" ");
+        };
+      }
+
+      it("keeps one copy when a prompted chunk decode re-transcribes itself (specimen A: rewind)", async () => {
+        const wavPath = "/tmp/voicelayer-s1-rewind-test.wav";
+        await Bun.write(wavPath, markedWav());
+        const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
+        const backend = new WhisperServerBackend({
+          isServerAvailable: () => true,
+          transcribeViaServer: decoder(speech, (clean) => [...clean, ...clean], requests),
+        });
+
+        const result = await backend.transcribe(wavPath);
+
+        expect(result.text).toBe(speech.join(" "));
+        expect(requests.filter((r) => r.seconds === 30 && r.prompt)).toEqual([]);
+      });
+
+      it("keeps one copy when a prompted chunk decode loops a short phrase (specimen B)", async () => {
+        const wavPath = "/tmp/voicelayer-s1-short-loop-test.wav";
+        await Bun.write(wavPath, markedWav());
+        const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
+        const loop = (clean: string[]) => [
+          ...clean.slice(0, 10),
+          ...Array.from({ length: 5 }, () => clean.slice(10, 13)).flat(),
+          ...clean.slice(13),
+        ];
+        const backend = new WhisperServerBackend({
+          isServerAvailable: () => true,
+          transcribeViaServer: decoder(speech, loop, requests),
+        });
+
+        const result = await backend.transcribe(wavPath);
+
+        expect(result.text).toBe(speech.join(" "));
+      });
+
+      it("keeps genuine repeats, retractions and fragments the audio carries", async () => {
+        const said = [...speech];
+        // A five-word phrase said three times, a retraction, a cut-off word.
+        said.splice(32, 15, ...Array.from({ length: 3 }, () => ["we", "need", "to", "ship", "this"]).flat());
+        said.splice(58, 6, "the", "red", "—", "no,", "the", "blue");
+        said[66] = "fu…";
+        const wavPath = "/tmp/voicelayer-s1-word-safety-test.wav";
+        await Bun.write(wavPath, markedWav());
+        const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
+        const backend = new WhisperServerBackend({
+          isServerAvailable: () => true,
+          transcribeViaServer: decoder(said, (clean) => clean, requests),
+        });
+
+        const result = await backend.transcribe(wavPath);
+
+        expect(result.text).toBe(said.join(" "));
+      });
     });
 
     it("re-decodes a prompted internal loop with agreeing extended acoustic witnesses", async () => {
@@ -2217,6 +2313,72 @@ describe("STT backends", () => {
   });
 
   describe("Phase 7 chunk assembly", () => {
+    describe("unprompted overlap re-decodes (S1)", () => {
+      it("drops a word cut off at the seam when the next chunk re-says it", () => {
+        expect(
+          mergeChunkTranscripts([
+            "we moved the cursor to the top and then it",
+            "the cursor to the top and then it's gone from view",
+          ]),
+        ).toBe("we moved the cursor to the top and then it's gone from view");
+      });
+
+      it("matches a split token across the seam", () => {
+        expect(
+          mergeChunkTranscripts([
+            "and the panel whenever it 's dragged out it",
+            "whenever it's dragged out it snaps back",
+          ]),
+        ).toBe("and the panel whenever it 's dragged out it snaps back");
+      });
+
+      it("matches a compound written two ways across the seam", () => {
+        expect(
+          mergeChunkTranscripts([
+            "a quick check like DarkMode has to just",
+            "like dark mode has to just stay on",
+          ]),
+        ).toBe("a quick check like DarkMode has to just stay on");
+      });
+
+      it("drops a word the next chunk adds inside the overlap", () => {
+        expect(
+          mergeChunkTranscripts([
+            "earlier we said the build step became a",
+            "we said like the build step became a separate job now",
+          ]),
+        ).toBe("earlier we said the build step became a separate job now");
+      });
+
+      it("takes the next chunk's reading of one word cut at the seam", () => {
+        expect(
+          mergeChunkTranscripts([
+            "you can ask a helper to check it against the harbor",
+            "a helper to check it against the harness and report back",
+          ]),
+        ).toBe("you can ask a helper to check it against the harness and report back");
+      });
+
+      it("keeps two cut-edge words the next chunk does not re-say", () => {
+        const merged = mergeChunkTranscripts([
+          "we will ship the whole build tonight maybe",
+          "we will ship the whole build now and check it",
+        ]);
+        expect(merged.split(" ")).toEqual(
+          expect.arrayContaining(["tonight", "maybe", "now"]),
+        );
+      });
+
+      it("keeps a trailing word the next chunk does not re-say", () => {
+        const merged = mergeChunkTranscripts([
+          "then we ship the build tomorrow",
+          "ship the build now and check it",
+        ]);
+        expect(merged.split(" ")).toContain("tomorrow");
+        expect(merged).toContain("now and check it");
+      });
+    });
+
     it("buildChunkPrompt carries recent tokens for continuity", () => {
       expect(
         buildChunkPrompt(
