@@ -7,7 +7,7 @@
 
 import { PROCESSING_ENV_VARS, setProcessingSetting } from "./processing-settings";
 import { readPolishControlsStatus } from "./polish-controls-status";
-import { ensureSTTPolishServer, stopSTTPolishServer } from "./stt-polish-server";
+import { ensureSTTPolishServer, stopSTTPolishServerAndWait } from "./stt-polish-server";
 import { existsSync, unlinkSync } from "fs";
 import {
   TTS_DISABLED_FILE,
@@ -496,6 +496,13 @@ async function handleResidencyCommand(
   }
 }
 
+let polishTransitions: Promise<void> = Promise.resolve();
+
+/** Resolves once every queued Polish on/off transition has finished (tests). */
+export function polishTransitionsSettled(): Promise<void> {
+  return polishTransitions;
+}
+
 /**
  * Effort is a whisper-server launch flag, so a change stops the server. If the
  * model was in memory, relaunch it with the new effort before acking, so "In
@@ -599,11 +606,18 @@ function handleProcessingSettingCommand(
     return buildAck(command, "reject", vocabularyErrorReason(error));
   }
   if (command.key === "model_polish") {
-    // Off frees the local polish model; either way the server status is re-published.
-    if (!command.value) stopSTTPolishServer();
-    void ensureSTTPolishServer().catch((error: unknown) => {
-      console.error(`[voicelayer] polish server after toggle: ${vocabularyErrorReason(error)}`);
-    });
+    // Off frees the local polish model (waiting for it to exit); either way the
+    // server status is re-published. Transitions run one at a time, so a rapid
+    // off → on never probes a server that is still shutting down (#146 round 2).
+    const turnOn = command.value;
+    polishTransitions = polishTransitions
+      .then(async () => {
+        if (!turnOn) await stopSTTPolishServerAndWait();
+        await ensureSTTPolishServer();
+      })
+      .catch((error: unknown) => {
+        console.error(`[voicelayer] polish server after toggle: ${vocabularyErrorReason(error)}`);
+      });
   }
   return { ...buildAck(command, "accept"), polish_controls: readPolishControlsStatus() };
 }

@@ -4,6 +4,7 @@ import {
   onSTTPolishServerStatus,
   recoverDefaultSTTPolishServerAfterFailure,
   resetSTTPolishServerManagerForTests,
+  stopSTTPolishServerAndWait,
 } from "../stt-polish-server";
 
 describe("stt-polish-server", () => {
@@ -377,6 +378,107 @@ describe("stt-polish-server", () => {
       pid: 789,
       readiness_checks: expect.any(Number),
       stderr_tail: expect.stringContaining("still warming mlx"),
+    });
+  });
+
+  describe("Polish toggled off while its server is starting (#146 round 2)", () => {
+    function fakeProc(exitOn: (signal: string) => boolean) {
+      const signals: string[] = [];
+      let exit!: () => void;
+      const exited = new Promise<number>((resolve) => { exit = () => resolve(0); });
+      return {
+        signals,
+        proc: {
+          pid: 777,
+          exited,
+          kill: (signal?: NodeJS.Signals) => {
+            signals.push(signal ?? "SIGTERM");
+            if (exitOn(signal ?? "SIGTERM")) exit();
+          },
+        },
+      };
+    }
+
+    it("cancels a launch after spawn and publishes no stale status", async () => {
+      resetSTTPolishServerManagerForTests();
+      const { signals, proc } = fakeProc(() => true);
+      const statuses: string[] = [];
+      const off = onSTTPolishServerStatus((status) => statuses.push(status.status));
+      let spawned = false;
+      const startedAt = Date.now();
+      try {
+        const launch = ensureSTTPolishServer({
+          env: { QA_VOICE_STT_POLISH: "on" },
+          findBinary: () => "/tmp/mlx_lm.server",
+          isEndpointReady: async () => false,
+          spawn: () => { spawned = true; return proc; },
+          appendEvent: () => {},
+          sleep: () => Bun.sleep(5),
+          startupTimeoutMs: 3_000,
+          log: () => {},
+        });
+        for (let i = 0; i < 100 && !spawned; i++) await Bun.sleep(2);
+        await stopSTTPolishServerAndWait();
+        await launch;
+        expect(signals[0]).toBe("SIGTERM");
+        expect(Date.now() - startedAt).toBeLessThan(1_500);
+        expect(statuses).not.toContain("timeout");
+        expect(statuses).not.toContain("ready");
+      } finally {
+        off();
+        resetSTTPolishServerManagerForTests();
+      }
+    });
+
+    it("never spawns when Polish goes off during the pre-spawn reap", async () => {
+      resetSTTPolishServerManagerForTests();
+      let release!: () => void;
+      const reapPause = new Promise<void>((resolve) => { release = resolve; });
+      let spawned = false;
+      try {
+        const launch = ensureSTTPolishServer({
+          env: { QA_VOICE_STT_POLISH: "on" },
+          isResidentStack: () => true,
+          findBinary: () => "/tmp/mlx_lm.server",
+          findStalePortOwnerPids: () => [424_242],
+          killProcess: () => {},
+          isEndpointReady: async () => false,
+          spawn: () => { spawned = true; return fakeProc(() => true).proc; },
+          appendEvent: () => {},
+          sleep: () => reapPause,
+          startupTimeoutMs: 1_000,
+          log: () => {},
+        });
+        await Bun.sleep(10);
+        await stopSTTPolishServerAndWait();
+        release();
+        await launch;
+        expect(spawned).toBe(false);
+      } finally {
+        resetSTTPolishServerManagerForTests();
+      }
+    });
+
+    it("escalates to SIGKILL when our polish server ignores SIGTERM", async () => {
+      resetSTTPolishServerManagerForTests();
+      const { signals, proc } = fakeProc((signal) => signal === "SIGKILL");
+      try {
+        await ensureSTTPolishServer({
+          env: { QA_VOICE_STT_POLISH: "on" },
+          findBinary: () => "/tmp/mlx_lm.server",
+          isEndpointReady: async () => true,
+          forceRestart: true,
+          spawn: () => proc,
+          appendEvent: () => {},
+          sleep: async () => {},
+          startupTimeoutMs: 1_000,
+          log: () => {},
+        });
+        await stopSTTPolishServerAndWait();
+        expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+      } finally {
+        resetSTTPolishServerManagerForTests();
+      }
     });
   });
 });

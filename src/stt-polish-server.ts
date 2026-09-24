@@ -70,6 +70,13 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 
 let polishProcess: ManagedPolishProcess | null = null;
 let polishLaunch: Promise<STTPolishServerStatus> | null = null;
+/**
+ * Bumped by every stop. A launch captures it at start and re-checks it after
+ * each await: a stale launch spawns nothing more, terminates what it spawned,
+ * and its result is never published (P1 #146 round 2, Polish off mid-load).
+ */
+let polishGeneration = 0;
+const POLISH_STOP_EXIT_TIMEOUT_MS = 1_500;
 const polishStatusListeners = new Set<(status: STTPolishServerStatus) => void>();
 
 export function onSTTPolishServerStatus(
@@ -87,6 +94,7 @@ function publishSTTPolishServerStatus(
 }
 
 export function resetSTTPolishServerManagerForTests(): void {
+  polishGeneration++;
   polishLaunch = null;
   if (polishProcess?.kill) {
     try {
@@ -98,6 +106,26 @@ export function resetSTTPolishServerManagerForTests(): void {
 
 export function stopSTTPolishServer(): void {
   resetSTTPolishServerManagerForTests();
+}
+
+/**
+ * Stop the polish server this process launched and WAIT for it to exit
+ * (SIGKILL after a timeout), so a following "on" never finds the dying server
+ * still answering and reports it ready. Cancels any in-flight launch.
+ */
+export async function stopSTTPolishServerAndWait(): Promise<void> {
+  const proc = polishProcess;
+  resetSTTPolishServerManagerForTests();
+  if (!proc?.exited) return;
+  const exited = (ms: number) => Promise.race([
+    proc.exited!.then(() => true, () => true),
+    Bun.sleep(ms).then(() => false),
+  ]);
+  if (await exited(POLISH_STOP_EXIT_TIMEOUT_MS)) return;
+  try {
+    proc.kill?.("SIGKILL");
+  } catch {}
+  await exited(POLISH_STOP_EXIT_TIMEOUT_MS);
 }
 
 export async function ensureSTTPolishServer(
@@ -119,11 +147,15 @@ export async function ensureSTTPolishServer(
     });
   }
 
-  if (polishLaunch) return polishLaunch.then(publishSTTPolishServerStatus);
-  polishLaunch = startAndWaitForPolishServer(endpoint, options).finally(() => {
-    polishLaunch = null;
+  const generation = polishGeneration;
+  const publishIfCurrent = (status: STTPolishServerStatus) =>
+    generation === polishGeneration ? publishSTTPolishServerStatus(status) : status;
+  if (polishLaunch) return polishLaunch.then(publishIfCurrent);
+  const launch = startAndWaitForPolishServer(endpoint, options, generation);
+  polishLaunch = launch.finally(() => {
+    if (polishLaunch === launch) polishLaunch = null;
   });
-  return polishLaunch.then(publishSTTPolishServerStatus);
+  return polishLaunch.then(publishIfCurrent);
 }
 
 export function recoverDefaultSTTPolishServerAfterFailure(
@@ -144,7 +176,9 @@ export function recoverDefaultSTTPolishServerAfterFailure(
 async function startAndWaitForPolishServer(
   endpoint: string,
   options: EnsureSTTPolishServerOptions,
+  generation: number,
 ): Promise<STTPolishServerStatus> {
+  const cancelled = () => generation !== polishGeneration;
   const appendEvent = options.appendEvent ?? appendControlLayerEvent;
   const log = options.log ?? console.error;
   const binary = options.findBinary
@@ -161,6 +195,7 @@ async function startAndWaitForPolishServer(
   }
 
   await reapStaleDefaultPolishPortOwners(options, appendEvent);
+  if (cancelled()) return { status: "disabled" };
 
   const args = [
     binary,
@@ -189,12 +224,18 @@ async function startAndWaitForPolishServer(
 
   const proc = spawnPolishServer(args, options);
   polishProcess = proc;
+  const abandon = (): STTPolishServerStatus => {
+    terminatePolishProcess(proc);
+    if (polishProcess === proc) polishProcess = null;
+    return { status: "disabled" };
+  };
   const stderrTail = drainPolishServerLogs(proc, log);
 
   const timeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   let readinessChecks = 0;
   while (Date.now() < deadline) {
+    if (cancelled()) return abandon();
     readinessChecks++;
     if (
       (await isReady(endpoint, options)) &&
@@ -218,6 +259,7 @@ async function startAndWaitForPolishServer(
     }
     await (options.sleep ?? Bun.sleep)(500);
   }
+  if (cancelled()) return abandon();
 
   appendEvent(
     "transcription.polish_server_timeout",

@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
 import { parseCommand } from "../socket-protocol";
-import { handleSocketCommand } from "../socket-handlers";
+import { handleSocketCommand, polishTransitionsSettled } from "../socket-handlers";
 import * as input from "../input";
 import * as tts from "../tts";
 import * as booking from "../session-booking";
@@ -69,16 +69,39 @@ describe("set_processing_setting (P1)", () => {
   });
 
   test("turning Polish off stops the polish server; on starts it", async () => {
-    const stop = spyOn(polishServer, "stopSTTPolishServer").mockImplementation(() => {});
+    const stop = spyOn(polishServer, "stopSTTPolishServerAndWait").mockResolvedValue(undefined);
     const ensure = spyOn(polishServer, "ensureSTTPolishServer").mockResolvedValue({ status: "disabled" } as never);
     spies.push(stop, ensure);
 
     await handleSocketCommand({ cmd: "set_processing_setting", key: "model_polish", value: false, id: "p-off" });
+    await polishTransitionsSettled();
     expect(stop).toHaveBeenCalledTimes(1);
     expect(ensure).toHaveBeenCalledTimes(1);
 
     await handleSocketCommand({ cmd: "set_processing_setting", key: "model_polish", value: true, id: "p-on" });
+    await polishTransitionsSettled();
     expect(stop).toHaveBeenCalledTimes(1);
     expect(ensure).toHaveBeenCalledTimes(2);
+  });
+
+  test("a rapid off then on starts the server only after the old one has stopped (#146 round 2)", async () => {
+    const order: string[] = [];
+    let finishStop!: () => void;
+    spies.push(spyOn(polishServer, "stopSTTPolishServerAndWait").mockImplementation(() => {
+      order.push("stop");
+      return new Promise<void>((resolve) => { finishStop = () => { order.push("stopped"); resolve(); }; });
+    }));
+    spies.push(spyOn(polishServer, "ensureSTTPolishServer").mockImplementation(async () => {
+      order.push("ensure");
+      return { status: "ready" } as never;
+    }));
+
+    await handleSocketCommand({ cmd: "set_processing_setting", key: "model_polish", value: false, id: "p-rapid-off" });
+    await handleSocketCommand({ cmd: "set_processing_setting", key: "model_polish", value: true, id: "p-rapid-on" });
+    await Bun.sleep(10);
+    expect(order).toEqual(["stop"]);
+    finishStop();
+    await polishTransitionsSettled();
+    expect(order).toEqual(["stop", "stopped", "ensure", "ensure"]);
   });
 });
