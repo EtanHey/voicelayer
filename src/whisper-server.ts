@@ -1179,7 +1179,15 @@ export function stopServer(): void {
 export async function stopServerAndWait(): Promise<void> {
   const proc = serverState && !serverState.adopted ? serverState.proc : null;
   stopServer();
-  if (proc) await waitForWhisperProcessExit(proc);
+  if (!proc || (await waitForWhisperProcessExit(proc))) return;
+  // Our own child ignored SIGTERM. Relaunching now would adopt it with its old
+  // flags (#142 round 2), so escalate; never signal a server we did not launch.
+  console.error(`[voicelayer] whisper-server (PID ${proc.pid}) ignored SIGTERM; sending SIGKILL`);
+  try {
+    proc.kill("SIGKILL");
+  } catch {}
+  if (await waitForWhisperProcessExit(proc)) return;
+  throw new Error(`the old model server (PID ${proc.pid}) did not stop`);
 }
 
 /** Explicit user unload. Only the live child this process launched may be stopped. */

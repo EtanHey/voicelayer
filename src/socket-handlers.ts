@@ -57,6 +57,7 @@ import {
   isRecordingConflictError,
 } from "./recording-state";
 import {
+  getWhisperPerformanceEffort,
   restartWhisperServerForPerformanceChange,
   setWhisperPerformanceEffort,
 } from "./whisper-performance";
@@ -510,12 +511,24 @@ async function handleEffortCommand(
     if (residencyBusy() || whisperLifecycleGate.isInUse) {
       return buildAck(command, "reject", residencyBusyReason());
     }
+    const previousEffort = getWhisperPerformanceEffort();
     try {
       setWhisperPerformanceEffort(command.effort);
     } catch (error) {
       return buildAck(command, "reject", vocabularyErrorReason(error));
     }
-    await restartWhisperServerForPerformanceChange();
+    try {
+      await restartWhisperServerForPerformanceChange();
+    } catch (error) {
+      // The old server is still running its old flags: say so, and keep the
+      // setting truthful rather than report an effort that is not in effect.
+      setWhisperPerformanceEffort(previousEffort);
+      return buildAck(
+        command,
+        "reject",
+        `Effort unchanged: ${vocabularyErrorReason(error)}`,
+      );
+    }
     if (wasLoaded) {
       try {
         await ensureServer();

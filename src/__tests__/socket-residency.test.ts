@@ -388,6 +388,26 @@ describe("socket residency command", () => {
       expect((ack as { reason?: string }).reason).toContain("whisper-server failed to start");
     });
 
+    test("rejects visibly and keeps the old effort when the old server will not stop", async () => {
+      idle();
+      const saved: string[] = [];
+      spies.push(spyOn(performance, "getWhisperPerformanceEffort").mockReturnValue("accurate"));
+      spies.push(spyOn(performance, "setWhisperPerformanceEffort")
+        .mockImplementation((effort) => { saved.push(effort); }));
+      spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange")
+        .mockRejectedValue(new Error("the old model server did not stop")));
+      const ensure = spyOn(server, "ensureServer").mockResolvedValue(8178);
+      spies.push(ensure);
+      spies.push(spyOn(model, "readWhisperModelStatus").mockResolvedValue(loaded("accurate")));
+
+      const ack = await handleSocketCommand({ cmd: "set_whisper_effort", effort: "fast", id: "e2-stuck" });
+
+      expect(ack).toMatchObject({ outcome: "reject" });
+      expect((ack as { reason?: string }).reason).toContain("did not stop");
+      expect(saved).toEqual(["fast", "accurate"]);
+      expect(ensure).not.toHaveBeenCalled();
+    });
+
     test("a Load or another effort change waits while the reload runs", async () => {
       idle();
       spies.push(spyOn(performance, "restartWhisperServerForPerformanceChange").mockImplementation(() => {}));
