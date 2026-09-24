@@ -60,6 +60,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             ("idle", VoiceMode.idle, ""),
             ("recording", .recording, ""),
             ("transcribing", .transcribing, ""),
+            ("agent-speaking", .speaking, ""),
             ("no-transcript-yet", .idle, ""),
             ("remote-stt-configured", .idle, ""),
             ("unknown-locality", .idle, ""),
@@ -158,6 +159,13 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         try shot("settings-resized-light.png", "Settings: General at 960×740 pt, light",
                  settings(tab: .general, vocabulary: empty),
                  size: CGSize(width: 960, height: 740), appearance: .aqua)
+        try shot("settings-general-agent-speaking.png", "Settings General: sidebar footer while an agent speaks",
+                 settings(tab: .general, vocabulary: empty, footerMode: .speaking),
+                 size: CGSize(width: 780, height: 620))
+        try shot("settings-general-agent-speaking-light.png",
+                 "Settings General: sidebar footer while an agent speaks, light",
+                 settings(tab: .general, vocabulary: empty, footerMode: .speaking),
+                 size: CGSize(width: 780, height: 620), appearance: .aqua)
         try shot("settings-general-advanced.png", "Settings General: Advanced F5 helper expanded",
                  settings(tab: .general, vocabulary: empty, advanced: true),
                  size: CGSize(width: 960, height: 740))
@@ -251,7 +259,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         search: String = "",
         advanced: Bool = false,
         historyDetail: Bool = true,
-        modelState: ModelsSettingsState = .loading
+        modelState: ModelsSettingsState = .loading,
+        footerMode: VoiceMode = .idle
     ) -> SettingsView {
         let historyFixture = historyDetail
             ? syntheticHistoryPage ?? SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
@@ -287,7 +296,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                             historyPage: { _ in historyFixture }, initialHistoryPage: historyFixture,
                             askHistoryPage: { _ in emptyAskFixture }, initialAskHistoryPage: emptyAskFixture,
                             footerPresentation: {
-                                .resolve(isConnected: true, mode: .idle, captureLive: false,
+                                .resolve(isConnected: true, mode: footerMode, captureLive: false,
                                          errorMessage: nil, remoteSTTConfigured: false, hasFreshHealth: true)
                             },
                             initialTab: tab, initialDictionarySearch: search,

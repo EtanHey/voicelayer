@@ -24,7 +24,7 @@ public struct VoiceBarFooterPresentation: Equatable {
             case .idle: hasFreshHealth ? "Ready" : "Starting…"
             case .recording: captureLive ? "Recording" : "Starting microphone"
             case .transcribing: "Transcribing"
-            case .speaking: "Speaking"
+            case .speaking: "Agent speaking"
             case .error: "Error"
             case .disconnected: "Disconnected"
             }
