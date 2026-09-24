@@ -57,10 +57,19 @@ public struct STTDictionaryDisplayIndex {
     public init(entries: [STTDictionaryDisplayEntry]) {
         sortedEntries = entries.sorted {
             if $0.source != $1.source { return $0.isPersonal }
-            return $0.entry.canonical.localizedCaseInsensitiveCompare($1.entry.canonical) == .orderedAscending
+            return Self.sortsBefore($0.entry.canonical, $1.entry.canonical)
         }
         personalCount = entries.filter(\.isPersonal).count
         includedCount = entries.count - personalCount
+    }
+
+    /// Real words first (UI pass #17: "-s" and the slash-command entries led the list), then everything that
+    /// starts with punctuation; each group case-insensitively. Nothing is dropped.
+    static func sortsBefore(_ lhs: String, _ rhs: String) -> Bool {
+        let lhsIsWord = lhs.first.map { $0.isLetter || $0.isNumber } ?? false
+        let rhsIsWord = rhs.first.map { $0.isLetter || $0.isNumber } ?? false
+        if lhsIsWord != rhsIsWord { return lhsIsWord }
+        return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
     }
 
     public func entries(source: String, matching query: String) -> [STTDictionaryDisplayEntry] {
