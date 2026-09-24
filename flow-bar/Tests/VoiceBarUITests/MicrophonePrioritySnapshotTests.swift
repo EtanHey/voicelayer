@@ -20,6 +20,20 @@ final class MicrophonePrioritySnapshotTests: XCTestCase {
         ])
     }
 
+    /// Fold 2 review S2: one visible mic behind a saved-first aggregate has nothing to reorder, so General
+    /// offers "Use visible microphones first", which keeps the hidden UIDs but moves them after the visible ones.
+    func testLoneVisibleMicBehindHiddenAggregateCanBeMovedFirst() {
+        let hiddenFirst = MicrophonePrioritySnapshot(rows: [
+            .init(uid: "CADefaultDeviceAggregate-7", deviceID: "2", label: "System Audio", isConnected: true),
+            .init(uid: "built-in", deviceID: "1", label: "MacBook Pro Microphone", isConnected: true),
+        ], nextDeviceName: "System Audio")
+        XCTAssertNil(hiddenFirst.reorderedVisibleUIDs(moving: 0, by: 1), "one visible row has nothing to reorder")
+        XCTAssertEqual(hiddenFirst.visibleFirstUIDs, ["built-in", "CADefaultDeviceAggregate-7"])
+
+        let visibleNext = MicrophonePrioritySnapshot(rows: hiddenFirst.rows, nextDeviceName: "MacBook Pro Microphone")
+        XCTAssertNil(visibleNext.visibleFirstUIDs, "offered only while a hidden device would be used")
+    }
+
     func testTransportTypeOverridesNameAndNameIsOnlyFallback() {
         let namedLikeVirtual = MicrophonePriorityRow(
             uid: "physical", deviceID: "1", label: "Virtual Studio Mic", isConnected: true,

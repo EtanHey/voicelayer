@@ -479,6 +479,13 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(source.contains("Button(\"Check shortcut\")"))
     }
 
+    /// Fold 2 review S2: the visible-first fix goes through the same reorder path as the arrows.
+    func testHiddenNextMicrophoneOffersVisibleFirstThroughTheReorderPath() throws {
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains("if let visibleFirst = microphoneSnapshot.visibleFirstUIDs {"))
+        XCTAssertTrue(source.contains("onReorderPriority(visibleFirst)"))
+    }
+
     /// Fold 2 review S3: dictating while Models is open must refresh "Last dictation used", not only on appear.
     func testModelsLastDictationLabelFollowsTheNextDictation() throws {
         let source = try settingsViewSource()

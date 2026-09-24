@@ -715,6 +715,7 @@ public struct SettingsView: View {
                     LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel,
                                    value: VoiceBarHotkeyContract.repasteDescription)
                 }
+                .padding(.top, 6)
             }
 
             Section("Last dictation") {
@@ -781,6 +782,13 @@ public struct SettingsView: View {
             LabeledContent("Next dictation") {
                 Text(microphoneSnapshot.nextVisibleDeviceName ?? "Unavailable")
                     .foregroundStyle(.secondary)
+            }
+            if let visibleFirst = microphoneSnapshot.visibleFirstUIDs {
+                Button("Use visible microphones first") {
+                    onReorderPriority(visibleFirst)
+                    refreshMicrophoneSnapshot()
+                }
+                .help("A hidden system or virtual device would be used next. This puts your microphones ahead of it.")
             }
 
             if microphoneSnapshot.visibleRows.isEmpty {

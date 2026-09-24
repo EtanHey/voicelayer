@@ -55,8 +55,19 @@ public struct MicrophonePrioritySnapshot: Equatable {
 
     public var nextVisibleDeviceName: String? {
         guard let nextDeviceName else { return nil }
+        return nextDeviceIsHidden ? "Hidden microphone selected" : nextDeviceName
+    }
+
+    public var nextDeviceIsHidden: Bool {
+        guard let nextDeviceName else { return false }
         return rows.contains { $0.label == nextDeviceName && $0.isVirtualOrAggregate }
-            ? "Hidden microphone selected" : nextDeviceName
+    }
+
+    /// The saved order with every visible device ahead of the hidden ones (relative order kept), offered
+    /// only while a hidden device would be used next. nil when there is nothing to fix.
+    public var visibleFirstUIDs: [String]? {
+        guard nextDeviceIsHidden, !visibleRows.isEmpty else { return nil }
+        return visibleRows.compactMap(\.uid) + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
     }
 
     public func reorderedVisibleUIDs(moving index: Int, by offset: Int) -> [String]? {
