@@ -433,6 +433,21 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertNil(addingVariantFor, "no pending edit may be left behind")
     }
 
+    /// Fold 3 review M2: until the first async load lands, the Dictionary must not claim "No terms yet" or "(0)".
+    func testDictionaryShowsLoadingNotEmptyBeforeTheFirstLoad() {
+        XCTAssertEqual(
+            SettingsView.dictionaryPlaceholder(loaded: false, personalIsEmpty: true, searching: false), .loading
+        )
+        XCTAssertEqual(
+            SettingsView.dictionaryPlaceholder(loaded: true, personalIsEmpty: true, searching: false),
+            .empty
+        )
+        XCTAssertNil(SettingsView.dictionaryPlaceholder(loaded: true, personalIsEmpty: false, searching: false))
+        XCTAssertNil(SettingsView.dictionaryPlaceholder(loaded: true, personalIsEmpty: true, searching: true))
+        XCTAssertEqual(SettingsView.dictionarySectionTitle("Your terms", count: 0, loaded: false), "Your terms")
+        XCTAssertEqual(SettingsView.dictionarySectionTitle("Your terms", count: 296, loaded: true), "Your terms (296)")
+    }
+
     func testAddVariantMatchingCanonicalAliasKeyIsNoOp() {
         var localEntries = [
             STTDictionaryEntry(canonical: "La La", variants: ["la law"]),

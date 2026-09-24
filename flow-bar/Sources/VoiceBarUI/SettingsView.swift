@@ -353,6 +353,7 @@ public struct SettingsView: View {
     @State private var dictionarySearch = ""
     @State private var includedTermsExpanded = false
     @State private var dictionaryLoading = false
+    @State private var hasLoadedDictionaryOnce: Bool
     @State private var dictionaryReloadQueued = false
     @State private var localEntries: [STTDictionaryEntry]
     @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
@@ -529,6 +530,7 @@ public struct SettingsView: View {
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialDictionaryPreview?.entries ?? [])
+        _hasLoadedDictionaryOnce = State(initialValue: initialDictionaryPreview != nil)
         _dictionaryDisplayIndex = State(initialValue: STTDictionaryDisplayIndex(entries:
             initialDictionaryPreview?.displayEntries ?? initialDictionaryPreview?.entries.map {
                 STTDictionaryDisplayEntry(source: "personal", entry: $0)
@@ -1474,9 +1476,21 @@ public struct SettingsView: View {
                 let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
                 let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    Text("Your terms (\(dictionaryDisplayIndex.personalCount))")
-                        .font(.headline).padding(.bottom, 8)
-                    if personal.isEmpty, dictionarySearch.isEmpty {
+                    Text(Self.dictionarySectionTitle(
+                        "Your terms", count: dictionaryDisplayIndex.personalCount, loaded: hasLoadedDictionaryOnce
+                    ))
+                    .font(.headline).padding(.bottom, 8)
+                    switch Self.dictionaryPlaceholder(
+                        loaded: hasLoadedDictionaryOnce, personalIsEmpty: personal.isEmpty,
+                        searching: !dictionarySearch.isEmpty
+                    ) {
+                    case .loading:
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Loading…").foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 170)
+                    case .empty:
                         VStack(spacing: 10) {
                             Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
                             Text("No terms yet").font(.headline)
@@ -1484,6 +1498,8 @@ public struct SettingsView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, minHeight: 170)
+                    case nil:
+                        EmptyView()
                     }
                     ForEach(personal, id: \.rowID) { row in
                         dictionaryEntryCard(row.entry, rowID: row.rowID)
@@ -1494,7 +1510,10 @@ public struct SettingsView: View {
                     } label: {
                         HStack {
                             Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
-                            Text("Included terms (\(dictionaryDisplayIndex.includedCount))")
+                            Text(Self.dictionarySectionTitle(
+                                "Included terms", count: dictionaryDisplayIndex.includedCount,
+                                loaded: hasLoadedDictionaryOnce
+                            ))
                             Spacer()
                             Text("built in").font(.caption).foregroundStyle(.secondary)
                         }
@@ -2080,7 +2099,24 @@ public struct SettingsView: View {
             guard !hasPendingDictionaryEdit else { return }
             localEntries = preview.entries
             dictionaryDisplayIndex = index
+            hasLoadedDictionaryOnce = true
         }
+    }
+
+    enum DictionaryPlaceholder: Equatable {
+        case loading
+        case empty
+    }
+
+    /// What stands in for "Your terms" rows: nothing while there are rows or a search, a quiet "Loading…" before
+    /// the first async load lands (never a false "No terms yet"), and the empty state only once it has.
+    static func dictionaryPlaceholder(loaded: Bool, personalIsEmpty: Bool, searching: Bool) -> DictionaryPlaceholder? {
+        guard personalIsEmpty, !searching else { return nil }
+        return loaded ? .empty : .loading
+    }
+
+    static func dictionarySectionTitle(_ title: String, count: Int, loaded: Bool) -> String {
+        loaded ? "\(title) (\(count))" : title
     }
 
     private func beginTermRename(rowID: String, canonical: String) {
