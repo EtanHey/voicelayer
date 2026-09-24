@@ -7,6 +7,7 @@
  * Both the Bun socket client and SwiftUI Voice Bar server must agree on these types.
  */
 
+import { PROCESSING_KEYS } from "./processing-settings";
 import type { WhisperPerformanceEffort } from "./whisper-performance";
 import type { WhisperModelResidency, WhisperModelStatus } from "./model-status";
 import type { DictationReceiptMetadata } from "./dictation-receipt";
@@ -225,7 +226,8 @@ export type AckCommand =
   | "vocab_remove_term"
   | "set_recording_hold"
   | "set_whisper_effort"
-  | "set_whisper_residency";
+  | "set_whisper_residency"
+  | "set_processing_setting";
 
 export interface AckEvent {
   type: "ack";
@@ -235,6 +237,7 @@ export interface AckEvent {
   reason?: string;
   model_status?: WhisperModelStatus;
   residency?: WhisperModelResidency;
+  polish_controls?: import("./polish-controls-status").PolishControlsStatus;
 }
 
 export interface ModelStatusEvent {
@@ -353,6 +356,13 @@ export interface SetWhisperEffortCommand extends SocketCommandBase {
   effort: WhisperPerformanceEffort;
 }
 
+/** Settings → Models → Processing toggle (P1). Persisted by the daemon; env still wins. */
+export interface SetProcessingSettingCommand extends SocketCommandBase {
+  cmd: "set_processing_setting";
+  key: import("./processing-settings").ProcessingKey;
+  value: boolean;
+}
+
 export interface SetWhisperResidencyCommand extends SocketCommandBase {
   cmd: "set_whisper_residency";
   action: "load" | "unload";
@@ -381,6 +391,7 @@ export type SocketCommand =
   | VocabRemoveTermCommand
   | SetRecordingHoldCommand
   | SetWhisperEffortCommand
+  | SetProcessingSettingCommand
   | SetWhisperResidencyCommand;
 
 export interface HealthResponse {
@@ -673,6 +684,22 @@ export function parseCommand(line: string): SocketCommand | null {
           {
             cmd: "set_whisper_effort",
             effort: parsed.effort,
+          },
+          id,
+        );
+      }
+      case "set_processing_setting": {
+        if (
+          typeof parsed.value !== "boolean" ||
+          !(PROCESSING_KEYS as readonly unknown[]).includes(parsed.key)
+        ) {
+          return null;
+        }
+        return withCommandId<SetProcessingSettingCommand>(
+          {
+            cmd: "set_processing_setting",
+            key: parsed.key as SetProcessingSettingCommand["key"],
+            value: parsed.value,
           },
           id,
         );
