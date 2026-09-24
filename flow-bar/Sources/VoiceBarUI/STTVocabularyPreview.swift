@@ -362,3 +362,44 @@ private func aliasKey(_ value: String) -> String {
         .lowercased()
         .filter { ($0.isASCII && $0.isLetter) || $0.isNumber }
 }
+
+/// One Add/Edit sheet for a Dictionary term (Etan's 2.2.24 review #3: no inline box, no "+ misheard as…" row
+/// under every term). `original` is nil when adding.
+public struct DictionaryTermEdit: Equatable, Identifiable {
+    public var original: STTDictionaryEntry?
+    public var correct: String
+    public var wrong: String
+    public var removedVariants: [String]
+
+    public init(original: STTDictionaryEntry? = nil, correct: String = "", wrong: String = "",
+                removedVariants: [String] = []) {
+        self.original = original
+        self.correct = correct.isEmpty ? original?.canonical ?? "" : correct
+        self.wrong = wrong
+        self.removedVariants = removedVariants
+    }
+
+    public var id: String {
+        original.map { "edit:\($0.canonical)" } ?? "add"
+    }
+
+    public var isEditing: Bool {
+        original != nil
+    }
+
+    public var keptVariants: [String] {
+        (original?.variants ?? []).filter { !removedVariants.contains($0) }
+    }
+
+    public var trimmedCorrect: String {
+        correct.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public var trimmedWrong: String {
+        wrong.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public var canSave: Bool {
+        !trimmedCorrect.isEmpty
+    }
+}

@@ -59,7 +59,7 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("dictionaryEntryCard"))
-        XCTAssertTrue(source.contains("variantChips"))
+        XCTAssertTrue(source.contains("variantSummary"))
         XCTAssertFalse(source.contains("Section(\"Find\")"))
         XCTAssertFalse(source.contains("Section(\"Prompt Terms\")"))
     }
@@ -70,11 +70,9 @@ final class SettingsViewContractTests: XCTestCase {
         let searchRange = try XCTUnwrap(source.range(of: "searchRow"))
         let addRange = try XCTUnwrap(source.range(of: "Label(\"Add term\""))
         let cardRange = try XCTUnwrap(source.range(of: "dictionaryEntryCard"))
-        let addVariantRange = try XCTUnwrap(source.range(of: "addVariantInlineEditor"))
 
         XCTAssertLessThan(searchRange.lowerBound, addRange.lowerBound)
         XCTAssertLessThan(addRange.lowerBound, cardRange.lowerBound)
-        XCTAssertLessThan(cardRange.lowerBound, addVariantRange.lowerBound)
     }
 
     func testSettingsDoesNotExposePositionControls() throws {
@@ -520,7 +518,8 @@ final class SettingsViewContractTests: XCTestCase {
     }
 
     func testDictionaryTextFieldsUseVisibleDictionaryFieldTreatment() throws {
-        let source = try settingsViewSource()
+        // Search in the tab, Correct and Misheard as in the one Add/Edit sheet (R4/D1).
+        let source = try settingsViewSource() + uiSource(named: "DictionaryAddSheetView.swift")
         let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1
 
         XCTAssertGreaterThanOrEqual(visibleFieldCount, 3)

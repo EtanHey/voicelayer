@@ -38,7 +38,16 @@ final class P08DictionaryShotsTests: XCTestCase {
                 size: CGSize(width: 420, height: 240),
                 to: directory.appendingPathComponent("dictionary-add-term-\(scheme).png")
             )
-            for state in ["empty", "populated", "searching", "adding-variant", "collapsed"] {
+            // R4/D1: editing opens the same sheet as Add, with the term's misheard spellings removable in it.
+            try render(
+                DictionaryAddSheetView(
+                    edit: DictionaryTermEdit(original: personal[0]), onSave: { _ in }, onCancel: {}
+                ).environment(\.colorScheme, scheme == "light" ? .light : .dark),
+                appearance: NSAppearance(named: appearance),
+                size: CGSize(width: 420, height: 270),
+                to: directory.appendingPathComponent("dictionary-edit-term-\(scheme).png")
+            )
+            for state in ["empty", "populated", "searching", "collapsed"] {
                 let data = state == "empty" ? preview([]) : preview(personal)
                 let view = SettingsView(
                     hotkeyEnabled: true,
@@ -53,7 +62,6 @@ final class P08DictionaryShotsTests: XCTestCase {
                     initialTab: .dictionary,
                     initialDictionarySearch: state == "searching" ? "Swift" : "",
                     initialDictionaryPreview: data,
-                    initialAddingVariantFor: state == "adding-variant" ? "VoiceLayer" : nil,
                     initialIncludedTermsExpanded: state == "populated"
                 )
                 try render(

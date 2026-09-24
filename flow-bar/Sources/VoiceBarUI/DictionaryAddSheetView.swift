@@ -1,12 +1,25 @@
 import SwiftUI
 
+/// The one Add/Edit sheet for a Dictionary term: Correct / Misheard as (+ swap), and in edit mode the term's
+/// existing misheard spellings with a remove button each. Settings opens it from "Add term", the pencil, or a
+/// double-click on a row; the right-click "Add to Dictionary" window uses it for a correct ⇄ misheard pair.
 public struct DictionaryAddSheetView: View {
-    @State private var correct: String
-    @State private var wrong: String
+    @State private var edit: DictionaryTermEdit
 
-    private let onSave: (STTVocabularyDraft) -> Void
+    private let onSaveEdit: (DictionaryTermEdit) -> Void
     private let onCancel: () -> Void
-    private let allowTermOnly: Bool
+    private let requiresMisheard: Bool
+
+    public init(
+        edit: DictionaryTermEdit,
+        onSave: @escaping (DictionaryTermEdit) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        _edit = State(initialValue: edit)
+        requiresMisheard = false
+        onSaveEdit = onSave
+        self.onCancel = onCancel
+    }
 
     public init(
         draft: STTVocabularyDraft,
@@ -14,16 +27,15 @@ public struct DictionaryAddSheetView: View {
         onSave: @escaping (STTVocabularyDraft) -> Void,
         onCancel: @escaping () -> Void
     ) {
-        _correct = State(initialValue: draft.correct)
-        _wrong = State(initialValue: draft.wrong)
-        self.allowTermOnly = allowTermOnly
-        self.onSave = onSave
+        _edit = State(initialValue: DictionaryTermEdit(correct: draft.correct, wrong: draft.wrong))
+        requiresMisheard = !allowTermOnly
+        onSaveEdit = { onSave(STTVocabularyDraft(correct: $0.correct, wrong: $0.wrong)) }
         self.onCancel = onCancel
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add to Dictionary")
+            Text(edit.isEditing ? "Edit Term" : "Add to Dictionary")
                 .font(.headline)
 
             HStack(alignment: .center, spacing: 10) {
@@ -31,26 +43,57 @@ public struct DictionaryAddSheetView: View {
                     GridRow {
                         Text("Correct")
                             .gridColumnAlignment(.trailing)
-                        TextField("Intended text", text: $correct)
+                        TextField("Intended text", text: $edit.correct)
                             .dictionaryTextField()
                             .dictionaryFieldContainer()
                             .accessibilityLabel("Correct spelling")
                     }
                     GridRow {
                         Text("Misheard as")
-                        TextField("Misheard text", text: $wrong)
+                        TextField(edit.isEditing ? "Add a misheard spelling" : "Misheard text", text: $edit.wrong)
                             .dictionaryTextField()
                             .dictionaryFieldContainer()
                             .accessibilityLabel("Misheard as")
                     }
                 }
                 Button {
-                    swap(&correct, &wrong)
+                    (edit.correct, edit.wrong) = (edit.wrong, edit.correct)
                 } label: {
                     Image(systemName: "arrow.up.arrow.down")
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .help("Swap correct and misheard")
                 .accessibilityLabel("Swap correct and misheard text")
+            }
+
+            if edit.isEditing, !edit.keptVariants.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Also heard as")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    FlowLayout(spacing: 6) {
+                        ForEach(edit.keptVariants, id: \.self) { variant in
+                            HStack(spacing: 2) {
+                                Text(variant)
+                                Button {
+                                    edit.removedVariants.append(variant)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 24, height: 24)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Remove misheard spelling \(variant)")
+                                .accessibilityLabel("Remove misheard spelling \(variant)")
+                            }
+                            .padding(.leading, 9)
+                            .background(Color(nsColor: .quaternaryLabelColor).opacity(0.24))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                        }
+                    }
+                }
             }
 
             HStack {
@@ -59,21 +102,14 @@ public struct DictionaryAddSheetView: View {
                     onCancel()
                 }
                 .keyboardShortcut(.cancelAction)
-                Button("Add") {
-                    onSave(currentDraft)
+                Button(edit.isEditing ? "Save" : "Add") {
+                    onSaveEdit(edit)
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(currentDraft.trimmedCorrect.isEmpty || (!allowTermOnly && !currentDraft.canSaveAlias))
+                .disabled(!edit.canSave || (requiresMisheard && edit.trimmedWrong.isEmpty))
             }
         }
         .padding(18)
         .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var currentDraft: STTVocabularyDraft {
-        STTVocabularyDraft(
-            correct: correct,
-            wrong: wrong
-        )
     }
 }
