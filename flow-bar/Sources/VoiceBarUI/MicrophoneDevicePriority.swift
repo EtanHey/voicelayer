@@ -20,11 +20,9 @@ public struct MicrophonePriorityRow: Equatable {
         uid != nil
     }
 
+    /// The same rule every microphone picker uses (`MicrophoneDevice.pickable`).
     public var isVirtualOrAggregate: Bool {
-        if let isVirtualOrAggregateTransport { return isVirtualOrAggregateTransport }
-        let identity = "\(uid ?? "") \(label)".lowercased()
-        return ["cadefaultdeviceaggregate-", "aggregate", "virtual", "blackhole", "loopback"]
-            .contains { identity.contains($0) }
+        MicrophoneDevice.isVirtualOrAggregate(uid: uid, name: label, transport: isVirtualOrAggregateTransport)
     }
 }
 

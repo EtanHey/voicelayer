@@ -16,6 +16,30 @@ public struct MicrophoneDevice: Equatable {
     }
 }
 
+/// AIDEV-NOTE: The ONE rule for which input devices a user may pick. The menu-bar popover, the right-click
+/// Microphone submenu and Settings' priority list all use it (R4 UI pass #2: the menus used to list VoiceBar's
+/// own `CADefaultDeviceAggregate-<pid>-0` and the Teams/Zoom loopbacks while Settings hid them).
+public extension MicrophoneDevice {
+    /// CoreAudio's transport type decides when it is known; the device identity is only the fallback.
+    static func isVirtualOrAggregate(uid: String?, name: String, transport: Bool?) -> Bool {
+        if let transport { return transport }
+        let identity = "\(uid ?? "") \(name)".lowercased()
+        return [
+            "cadefaultdeviceaggregate-", "aggregate", "virtual", "blackhole", "loopback",
+            "microsoft teams audio", "msteamsaudio", "zoomaudiodevice",
+        ].contains { identity.contains($0) }
+    }
+
+    var isVirtualOrAggregate: Bool {
+        Self.isVirtualOrAggregate(uid: uid, name: name, transport: isVirtualOrAggregateTransport)
+    }
+
+    /// The devices every microphone picker offers, in the order given.
+    static func pickable(_ devices: [MicrophoneDevice]) -> [MicrophoneDevice] {
+        devices.filter { !$0.isVirtualOrAggregate }
+    }
+}
+
 public struct MicrophoneDeviceOption: Equatable {
     public var id: String
     public var title: String
@@ -297,7 +321,7 @@ public final class PillContextMenuController: NSObject {
         devices: [MicrophoneDevice],
         selectedID: String?
     ) -> [MicrophoneDeviceOption] {
-        devices.map {
+        MicrophoneDevice.pickable(devices).map {
             MicrophoneDeviceOption(
                 id: $0.id,
                 title: $0.name,

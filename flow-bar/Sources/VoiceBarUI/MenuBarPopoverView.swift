@@ -32,7 +32,7 @@ public struct MenuBarPopoverView: View {
         self.footer = footer
         self.hotkeyHint = hotkeyHint
         self.microphoneName = microphoneName
-        self.microphones = microphones
+        self.microphones = MicrophoneDevice.pickable(microphones)
         self.selectedMicrophoneID = selectedMicrophoneID
         self.transcript = transcript
         self.degradationHint = degradationHint
