@@ -2048,14 +2048,18 @@ public struct SettingsView: View {
 
     /// Where the list goes after a save (UI pass #18): the saved term's row, and the search cleared if it
     /// would hide that term.
-    static func dictionaryFocus(afterSaving canonical: String, search: String) -> DictionaryFocus {
+    static func dictionaryFocus(afterSaving canonical: String, variants: [String] = [],
+                                search: String) -> DictionaryFocus {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return DictionaryFocus(
             rowID: STTDictionaryDisplayEntry(
                 source: "personal",
                 entry: STTDictionaryEntry(canonical: canonical, variants: [])
             ).rowID,
-            clearsSearch: !query.isEmpty && !canonical.localizedCaseInsensitiveContains(query)
+            // The list matches misheard spellings too, so a search that still shows the term through one is kept.
+            clearsSearch: !query.isEmpty && !([canonical] + variants).contains {
+                $0.localizedCaseInsensitiveContains(query)
+            }
         )
     }
 
@@ -2080,7 +2084,8 @@ public struct SettingsView: View {
         )
         termSheet = nil
         guard let saved else { return }
-        let focus = Self.dictionaryFocus(afterSaving: saved, search: dictionarySearch)
+        let savedVariants = localEntries.first { $0.canonical == saved }?.variants ?? []
+        let focus = Self.dictionaryFocus(afterSaving: saved, variants: savedVariants, search: dictionarySearch)
         if focus.clearsSearch { dictionarySearch = "" }
         yourTermsExpanded = true
         selectedTermRowID = focus.rowID

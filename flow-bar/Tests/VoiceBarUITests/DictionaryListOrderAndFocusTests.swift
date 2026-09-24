@@ -56,6 +56,16 @@ final class DictionaryListOrderAndFocusTests: XCTestCase {
         XCTAssertFalse(SettingsView.dictionaryFocus(afterSaving: "VoiceLayer", search: "voice").clearsSearch)
     }
 
+    /// #148 Macroscope (Medium): the list also matches misheard spellings, so a search that still shows the
+    /// saved term through one of them must be kept.
+    func testASearchMatchingASavedMisheardSpellingIsKept() {
+        let focus = SettingsView.dictionaryFocus(afterSaving: "Swift", variants: ["swiftui"], search: "swiftui")
+
+        XCTAssertFalse(focus.clearsSearch)
+        XCTAssertTrue(SettingsView.dictionaryFocus(afterSaving: "Swift", variants: ["swiftui"], search: "kotlin")
+            .clearsSearch)
+    }
+
     // MARK: - Layout pins (SwiftUI builds no AX tree offscreen)
 
     func testYourTermsCollapsesLikeIncludedTerms() throws {
