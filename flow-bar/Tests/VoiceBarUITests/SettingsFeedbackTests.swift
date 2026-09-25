@@ -10,6 +10,13 @@ final class SettingsFeedbackTests: XCTestCase {
         return calendar
     }
 
+    /// en_US writes the month first, which is where the old lowercasing showed ("sep 18").
+    private var usCalendar: Calendar {
+        var calendar = calendar
+        calendar.locale = Locale(identifier: "en_US")
+        return calendar
+    }
+
     private let now = Date(timeIntervalSince1970: 1_790_000_000) // 14:13:20 UTC
 
     func testACheckSaysWhenItRanAndWhetherItPassed() {
@@ -32,6 +39,30 @@ final class SettingsFeedbackTests: XCTestCase {
             SettingsShortcutCheck.feedback(message: failed, checkedAt: now, now: now),
             "Checked just now · Shortcut needs attention: F5 listener unavailable."
         )
+    }
+
+    /// #163 review: "Checked sep 18" lowercased the month. Only the relative words are lowercased.
+    func testOlderChecksKeepTheDateCapitalised() {
+        let ready = SettingsShortcutCheck.message(
+            hotkeyEnabled: true, missingPermissions: [], relayReady: true, relaySummary: ""
+        )
+        XCTAssertEqual(
+            SettingsShortcutCheck.feedback(message: ready, checkedAt: now.addingTimeInterval(-3 * 86400),
+                                           now: now, calendar: usCalendar),
+            "Checked ✓ Sep 18 · Shortcut ready: F5 listener and relay are active.",
+            "the locale's own date, capitalised as the locale writes it (was \"sep 18\")"
+        )
+        XCTAssertEqual(
+            SettingsShortcutCheck.feedback(message: ready, checkedAt: now.addingTimeInterval(-20 * 3600),
+                                           now: now, calendar: calendar),
+            "Checked ✓ yesterday · Shortcut ready: F5 listener and relay are active."
+        )
+    }
+
+    /// #163 review: a VoiceBar hidden by choice isn't broken, so its dot is neutral, not red.
+    func testHiddenByChoiceUsesANeutralDot() {
+        XCTAssertEqual(SettingsVisibility.tone(isHidden: true), .neutral)
+        XCTAssertEqual(SettingsVisibility.tone(isHidden: false), .ready)
     }
 
     func testHiddenSaysUntilWhen() {

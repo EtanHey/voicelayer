@@ -45,6 +45,32 @@ final class ModelsStatusStabilityTests: XCTestCase {
         XCTAssertFalse(state.modelsSettingsState.isBusy)
     }
 
+    /// #162 review nit: an unreadable daemon went "Status unreadable → Starting… → Status unreadable"
+    /// around every dictation; it keeps its last-known status the same way `.available` does.
+    func testAnUnreadableDaemonKeepsItsStatusAcrossADictationAndARefresh() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.minimumTranscribingDisplayDuration = 0
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "health", "recording_state": "idle"])
+        XCTAssertEqual(VoiceBarFooterPresentation.resolve(state: state).status, "Status unreadable")
+
+        var seen: [String] = []
+        for event: [String: Any] in [
+            ["type": "state", "state": "recording"],
+            ["type": "state", "state": "transcribing"],
+            ["type": "state", "state": "idle"],
+        ] {
+            state.handleEvent(event)
+            seen.append(VoiceBarFooterPresentation.resolve(state: state).status)
+        }
+        XCTAssertFalse(seen.contains("Starting…"), "statuses: \(seen)")
+        XCTAssertEqual(seen.last, "Status unreadable")
+
+        state.refreshModelsSettingsStatus()
+        XCTAssertEqual(state.modelsSettingsState.availability, .unreadable)
+    }
+
     func testARefreshKeepsTheLastKnownStatusWhileItIsInFlight() {
         let state = readyState()
         var sent: [[String: Any]] = []
