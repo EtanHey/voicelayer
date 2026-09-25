@@ -153,7 +153,12 @@ public enum SettingsHistoryArchive {
         from root: URL = defaultRoot,
         limit: Int = defaultPageSize
     ) -> SettingsHistoryPage {
-        let scan = SettingsArchiveScanner.scan(root: root, limit: limit, loadEntry: loadEntry)
+        page(from: SettingsArchiveScanner.scan(root: root, limit: limit, loadEntry: loadEntry))
+    }
+
+    /// The one page assembly for a newest-first walk, shared with `SettingsArchiveIndex` so an indexed page
+    /// is identical to a scanned one.
+    static func page(from scan: SettingsArchiveScanResult<SettingsHistoryEntry>) -> SettingsHistoryPage {
         let groups = scan.days.map { day in
             SettingsHistoryDayGroup(
                 dayKey: day.dayKey,
@@ -168,7 +173,7 @@ public enum SettingsHistoryArchive {
         )
     }
 
-    private static func loadEntry(
+    static func loadEntry(
         from recordingURL: URL,
         dayKey: String,
         fallbackDate: Date

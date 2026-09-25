@@ -1,0 +1,202 @@
+import Foundation
+
+/// One in-memory index of the recordings archive for History's two scopes (Dictations and Ask).
+///
+/// AIDEV-NOTE: Etan (2.2.24 review): switching Recording↔Ask is slow, and reopening History is slow "even
+/// though I was just there". `SettingsHistoryArchive.loadPage` re-walks the day directories and re-decodes every
+/// entry up to the limit on every call. This actor walks the tree once, decodes each entry at most once per
+/// scope, and serves later pages from memory. It stays exact:
+/// - the walk order and skip rules mirror `SettingsArchiveScanner.scan`, and a page is assembled by the SAME
+///   `page(from:)` the scanner path uses, so an indexed page equals a scanned one (tested on a mixed archive);
+/// - every call re-checks the day directories' modification dates, so a new recording shows up;
+/// - an entry rewritten in place (a re-transcription) is dropped by `invalidate(entryPath:)`;
+/// - `release()` drops everything when Settings closes (P09b follow-up 3, R1); decoding runs inside an
+///   `autoreleasepool` so a large first page doesn't leave Foundation garbage behind (R2).
+public actor SettingsArchiveIndex {
+    public static let shared = SettingsArchiveIndex()
+
+    private struct Candidate {
+        let url: URL
+        let dayKey: String
+        let dayDate: Date
+
+        /// `day/entry`, unique within one archive root and independent of how the root path was spelled
+        /// (the directory listing resolves `/var` to `/private/var`; a caller's audio path may not).
+        var id: String {
+            SettingsArchiveIndex.key(forEntryDirectory: url)
+        }
+    }
+
+    /// A decoded entry, or `.skipped` when the scope's loader rejected the directory.
+    private enum Decoded<Entry> {
+        case entry(Entry)
+        case skipped
+    }
+
+    private final class RootState {
+        /// Newest-first day directories. A day's entries are listed only when a walk reaches it, so the first page
+        /// never lists the whole archive.
+        var days: [URL] = []
+        var candidatesByDay: [String: [Candidate]] = [:]
+        var dayModifiedAt: [String: Date] = [:]
+        var dictations: [String: Decoded<SettingsHistoryEntry>] = [:]
+        var asks: [String: Decoded<SettingsAskHistoryEntry>] = [:]
+    }
+
+    private var roots: [String: RootState] = [:]
+
+    public init() {}
+
+    public func dictationPage(
+        from root: URL = SettingsHistoryArchive.defaultRoot,
+        limit: Int = SettingsHistoryArchive.defaultPageSize
+    ) -> SettingsHistoryPage {
+        let state = refreshedState(for: root)
+        let scan = walk(state, limit: limit, cache: \.dictations, load: SettingsHistoryArchive.loadEntry)
+        return SettingsHistoryArchive.page(from: scan)
+    }
+
+    public func askPage(
+        from root: URL = SettingsAskHistoryArchive.defaultRoot,
+        limit: Int = SettingsAskHistoryArchive.defaultPageSize
+    ) -> SettingsAskHistoryPage {
+        let state = refreshedState(for: root)
+        let scan = walk(state, limit: limit, cache: \.asks, load: SettingsAskHistoryArchive.loadEntry)
+        return SettingsAskHistoryArchive.page(from: scan)
+    }
+
+    /// Drops one entry (by its audio path or its directory) so the next page decodes it again.
+    public func invalidate(entryPath: String) {
+        let url = URL(fileURLWithPath: entryPath)
+        let id = Self.key(forEntryDirectory: url.pathExtension.isEmpty ? url : url.deletingLastPathComponent())
+        for state in roots.values {
+            state.dictations.removeValue(forKey: id)
+            state.asks.removeValue(forKey: id)
+        }
+    }
+
+    /// Settings closed: drop the whole index.
+    public func release() {
+        roots.removeAll()
+    }
+
+    func cachedRootCount() -> Int {
+        roots.count
+    }
+
+    // MARK: - Walk
+
+    /// The first `limit` entries the scope's loader accepts, in `SettingsArchiveScanner.scan` order, with
+    /// `hasMore` exact (true only when one more entry actually loads).
+    private func walk<Entry>(
+        _ state: RootState,
+        limit: Int,
+        cache: ReferenceWritableKeyPath<RootState, [String: Decoded<Entry>]>,
+        load: (URL, String, Date) -> Entry?
+    ) -> SettingsArchiveScanResult<Entry> {
+        let boundedLimit = max(0, limit)
+        var days: [SettingsArchiveDayScan<Entry>] = []
+        var current: (dayKey: String, date: Date, entries: [Entry])?
+        var loadedEntryCount = 0
+        var hasMore = false
+
+        autoreleasepool {
+            walking: for day in state.days {
+                for candidate in candidates(of: day, in: state) {
+                    let decoded: Decoded<Entry>
+                    if let cached = state[keyPath: cache][candidate.id] {
+                        decoded = cached
+                    } else {
+                        decoded = load(candidate.url, candidate.dayKey, candidate.dayDate)
+                            .map { .entry($0) } ?? .skipped
+                        state[keyPath: cache][candidate.id] = decoded
+                    }
+                    guard case let .entry(entry) = decoded else { continue }
+                    if loadedEntryCount == boundedLimit {
+                        hasMore = true
+                        break walking
+                    }
+                    if current?.dayKey != candidate.dayKey {
+                        if let finished = current {
+                            days.append(SettingsArchiveDayScan(dayKey: finished.dayKey, date: finished.date,
+                                                               entries: finished.entries))
+                        }
+                        current = (candidate.dayKey, candidate.dayDate, [])
+                    }
+                    current?.entries.append(entry)
+                    loadedEntryCount += 1
+                }
+            }
+        }
+        if let finished = current, !finished.entries.isEmpty {
+            days.append(SettingsArchiveDayScan(dayKey: finished.dayKey, date: finished.date, entries: finished.entries))
+        }
+        return SettingsArchiveScanResult(days: days, loadedEntryCount: loadedEntryCount, hasMore: hasMore)
+    }
+
+    // MARK: - Directory state
+
+    private func refreshedState(for root: URL) -> RootState {
+        let key = root.standardizedFileURL.path
+        let state = roots[key] ?? RootState()
+        roots[key] = state
+        state.days = dayURLs(root: root)
+        let currentKeys = Set(state.days.map(\.lastPathComponent))
+        // A listed day whose directory changed (a new entry) or vanished is listed again on the next walk.
+        for (dayKey, listedAt) in state.dayModifiedAt {
+            let day = root.appendingPathComponent(dayKey)
+            if !currentKeys.contains(dayKey) || Self.modificationDate(day) != listedAt {
+                evictDay(dayKey, in: state)
+            }
+        }
+        return state
+    }
+
+    private func candidates(of day: URL, in state: RootState) -> [Candidate] {
+        let dayKey = day.lastPathComponent
+        if let listed = state.candidatesByDay[dayKey] { return listed }
+        let modifiedAt = Self.modificationDate(day)
+        let listed = scanDay(day)
+        state.candidatesByDay[dayKey] = listed
+        state.dayModifiedAt[dayKey] = modifiedAt
+        return listed
+    }
+
+    private func evictDay(_ dayKey: String, in state: RootState) {
+        for candidate in state.candidatesByDay[dayKey] ?? [] {
+            state.dictations.removeValue(forKey: candidate.id)
+            state.asks.removeValue(forKey: candidate.id)
+        }
+        state.candidatesByDay.removeValue(forKey: dayKey)
+        state.dayModifiedAt.removeValue(forKey: dayKey)
+    }
+
+    /// Same selection and order as `SettingsArchiveScanner.scan`: visible directories, newest day first.
+    private func dayURLs(root: URL) -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? [])
+            .filter { $0.isArchiveDirectory && SettingsArchiveScanner.parseDayKey($0.lastPathComponent) != nil }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+    }
+
+    private func scanDay(_ day: URL) -> [Candidate] {
+        let dayKey = day.lastPathComponent
+        guard let date = SettingsArchiveScanner.parseDayKey(dayKey) else { return [] }
+        return ((try? FileManager.default.contentsOfDirectory(
+            at: day, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        )) ?? [])
+            .filter { $0.isArchiveDirectory && !$0.lastPathComponent.hasPrefix(".tmp-") }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            .map { Candidate(url: $0, dayKey: dayKey, dayDate: date) }
+    }
+
+    private static func key(forEntryDirectory directory: URL) -> String {
+        "\(directory.deletingLastPathComponent().lastPathComponent)/\(directory.lastPathComponent)"
+    }
+
+    private static func modificationDate(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+    }
+}
