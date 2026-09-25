@@ -22,6 +22,48 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
         XCTAssertEqual(SettingsPlaybackScrubBar.seekDelta(for: .decrement), -5)
     }
 
+    /// #160 review MUST-FIX: a drag that overshoots the end stopped the clip and unmounted the bar mid-drag.
+    /// While dragging only the knob moves (clamped short of the end); the seek happens once, on release, and the
+    /// clip then ends only by playing to its end.
+    func testADragPastTheEndKeepsTheClipPlayingAndSeeksOnceOnRelease() {
+        let seeks = SeekLog()
+        let playback = recordingPlayback(currentTime: 20, duration: 65, seeks: seeks)
+        playback.toggle(clipURL)
+        var drag = SettingsScrubDrag()
+
+        drag.changed(toFraction: 0.5, duration: 65, playback: playback, url: clipURL)
+        drag.changed(toFraction: 1.4, duration: 65, playback: playback, url: clipURL)
+
+        XCTAssertEqual(seeks.times, [], "dragging moves only the knob")
+        XCTAssertTrue(playback.isPlaying(clipURL), "the bar stays mounted while dragging")
+        let knob = try? XCTUnwrap(drag.fraction)
+        XCTAssertEqual(knob ?? 1, (65 - SettingsScrubDrag.endMargin) / 65, accuracy: 0.0001)
+
+        drag.ended(atFraction: 1.4, duration: 65, playback: playback, url: clipURL)
+
+        XCTAssertEqual(seeks.times, [65 - SettingsScrubDrag.endMargin])
+        XCTAssertTrue(playback.isPlaying(clipURL), "the clip ends only by playing to its end")
+        XCTAssertNil(drag.fraction)
+    }
+
+    func testAKeyboardOrVoiceOverStepPastTheEndKeepsTheClipPlaying() {
+        let seeks = SeekLog()
+        let playback = recordingPlayback(currentTime: 63, duration: 65, seeks: seeks)
+        playback.toggle(clipURL)
+
+        SettingsScrubDrag.step(playback: playback, url: clipURL, by: 5)
+        SettingsScrubDrag.step(playback: playback, url: clipURL, by: -500)
+
+        XCTAssertEqual(seeks.times, [65 - SettingsScrubDrag.endMargin, 0])
+        XCTAssertTrue(playback.isPlaying(clipURL), "VoiceOver focus stays on a mounted bar")
+    }
+
+    func testTheEndMarginNeverGoesBelowZeroOnAShortClip() {
+        XCTAssertEqual(SettingsScrubDrag.clampedTime(5, duration: 0.05), 0)
+        XCTAssertEqual(SettingsScrubDrag.clampedTime(-1, duration: 10), 0)
+        XCTAssertEqual(SettingsScrubDrag.clampedTime(4, duration: 10), 4)
+    }
+
     func testTheFillFollowsTheClipPosition() throws {
         let early = try renderBar(currentTime: 10, duration: 100)
         let late = try renderBar(currentTime: 90, duration: 100)
@@ -91,6 +133,19 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
             stop: {},
             position: { SettingsAudioPlaybackPosition(currentTime: currentTime, duration: duration) },
             seek: { _ in }
+        )
+    }
+
+    private func recordingPlayback(
+        currentTime: TimeInterval,
+        duration: TimeInterval,
+        seeks: SeekLog
+    ) -> SettingsAudioPlayback {
+        SettingsAudioPlayback(
+            start: { _ in true },
+            stop: {},
+            position: { SettingsAudioPlaybackPosition(currentTime: currentTime, duration: duration) },
+            seek: { seeks.times.append($0) }
         )
     }
 
@@ -204,4 +259,8 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
     }
+}
+
+private final class SeekLog {
+    var times: [TimeInterval] = []
 }
