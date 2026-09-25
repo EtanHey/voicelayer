@@ -7,7 +7,8 @@ struct NotchHistoryPanel: View {
     let entries: [RecentTranscriptionEntry]
     let activeRetranscriptionPath: String?
     let palette: VoiceBarNotchContrastPalette
-    let onCopy: (RecentTranscriptionEntry) -> Void
+    /// Returns whether the text reached the pasteboard; "Copied ✓" shows only then (#161 review).
+    let onCopy: (RecentTranscriptionEntry) -> Bool
     let onPaste: (RecentTranscriptionEntry) -> Void
     let onRetranscribe: (String) -> Void
     let onOpenHistory: () -> Void
@@ -15,7 +16,7 @@ struct NotchHistoryPanel: View {
     var forcedHoverIndex: Int?
 
     @State private var hoveredID: String?
-    @State private var copiedID: String?
+    @State private var copyFeedback = NotchHistoryCopyFeedback()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -50,7 +51,7 @@ struct NotchHistoryPanel: View {
     private func row(_ entry: RecentTranscriptionEntry, index: Int) -> some View {
         let isRetranscribing = entry.recordingPath != nil && entry.recordingPath == activeRetranscriptionPath
         let id = entry.rowID
-        let isCopied = copiedID == id
+        let isCopied = copyFeedback.isCopied(row: id)
         let showsActions = forcedHoverIndex == index || hoveredID == id || isCopied
         return VStack(alignment: .leading, spacing: 2) {
             // One fixed-height lane for the header and the 24 pt actions, so they share a center line
@@ -133,12 +134,11 @@ struct NotchHistoryPanel: View {
     private func perform(_ kind: NotchHistoryPresentation.RowAction.Kind, entry: RecentTranscriptionEntry) {
         switch kind {
         case .copy:
-            onCopy(entry)
-            let id = entry.rowID
-            copiedID = id
+            guard onCopy(entry) else { return }
+            let generation = copyFeedback.copied(row: entry.rowID)
             Task { @MainActor in
                 try? await Task.sleep(for: NotchHistoryPresentation.copiedFeedbackDuration)
-                if copiedID == id { copiedID = nil }
+                copyFeedback.expire(generation)
             }
         case .paste:
             onPaste(entry)

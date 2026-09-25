@@ -58,17 +58,18 @@ public enum NotchHistoryPresentation {
 /// can't clear the feedback of a later one (CodeRabbit on #161: copying a row twice within 1.5 s cleared it
 /// early).
 public struct NotchHistoryCopyFeedback: Equatable {
-    private var row: Int?
+    private var row: String?
     private var generation = 0
 
     public init() {}
 
-    public func isCopied(row: Int) -> Bool {
+    /// Rows are keyed by `NotchHistoryPresentation.rowID`, not their offset (#166 Macroscope).
+    public func isCopied(row: String) -> Bool {
         self.row == row
     }
 
     /// Marks `row` copied and returns the generation its expiry must match.
-    public mutating func copied(row: Int) -> Int {
+    public mutating func copied(row: String) -> Int {
         generation &+= 1
         self.row = row
         return generation
