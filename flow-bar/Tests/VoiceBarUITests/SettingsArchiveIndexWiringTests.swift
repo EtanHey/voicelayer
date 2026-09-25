@@ -204,6 +204,36 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         window.contentViewController = nil
     }
 
+    /// #153 Macroscope 4100219909: a rebuilt view that opens on a requested tab (the menu's "Open Dictionary…")
+    /// sets its tab in init, where no onChange fires. It must still report that tab, or a later plain reopen
+    /// restores the tab before it.
+    @MainActor
+    func testARebuiltViewReportsTheTabItOpensOn() async {
+        var reported: [SettingsTab] = []
+        let hosting = NSHostingController(rootView: SettingsView(
+            hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] }, selectedDeviceID: { nil },
+            onSelectDevice: { _ in }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+            vocabularyRevision: { 0 }, historyPage: { _ in SettingsHistoryPage(groups: [], hasMore: false) },
+            askHistoryPage: { _ in SettingsAskHistoryPage(groups: [], hasMore: false) },
+            initialTab: .history,
+            tabRequest: SettingsTabRequest(tab: .dictionary, id: 3),
+            onSelectedTabChange: { reported.append($0) }
+        ))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: true
+        )
+        window.isReleasedWhenClosed = false
+        window.contentViewController = hosting
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let sawDictionary = await settle { reported.last == .dictionary }
+        XCTAssertTrue(sawDictionary, "reported: \(reported)")
+        window.contentViewController = nil
+    }
+
     // MARK: - Wiring pins (the app target is not importable from these tests)
 
     func testHistoryLoadsGoThroughTheSharedIndexByDefault() throws {

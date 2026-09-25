@@ -587,6 +587,8 @@ public struct SettingsView: View {
         .onChange(of: tabRequest) { _, request in
             if let request { selectedTab = request.tab }
         }
+        // A view built on a requested tab sets it in init, where no onChange fires; report it here too.
+        .onAppear { onSelectedTabChange(selectedTab) }
         .task(id: selectedTab) {
             if selectedTab == .dictionary, !hasInitialDictionaryPreview { loadDictionaryPreview() }
         }
