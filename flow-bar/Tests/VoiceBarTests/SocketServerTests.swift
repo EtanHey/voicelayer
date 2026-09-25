@@ -150,7 +150,7 @@ final class SocketServerTests: XCTestCase {
             to: commandClient
         )
 
-        Thread.sleep(forTimeInterval: 0.1)
+        XCTAssertTrue(waitForRegisteredRoles(server, ["mcp-daemon", "mcp-server"]))
         server.sendCommandToOwner(command: ["cmd": "record"])
 
         let commandLine = try readLine(from: commandClient, timeout: 1)
@@ -212,6 +212,9 @@ final class SocketServerTests: XCTestCase {
             to: latestPlaybackClient
         )
         XCTAssertTrue(waitForMode(state, mode: .speaking, timeout: 5))
+        // The stop routes by registered role; both playback clients' hellos must be in first (CI #164:
+        // 5.3 s when the second one hadn't registered yet and never got the stop).
+        XCTAssertTrue(waitForRegisteredRoles(server, ["mcp-daemon", "mcp-server", "mcp-server"]))
 
         server.sendCommandToOwner(command: ["cmd": "stop"])
 
@@ -1032,7 +1035,9 @@ private func makeConnectedServerFixture() throws -> ConnectedServerFixture {
     let commandClient = try connectUnixSocket(path: socketURL.path)
     try writeLine(#"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#, to: legacyClient)
     try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
-    guard waitForConnectionStatus(state, connected: true, timeout: 1) else {
+    guard waitForConnectionStatus(state, connected: true, timeout: 5),
+          waitForRegisteredRoles(server, ["mcp-daemon", "mcp-server"])
+    else {
         throw NSError(domain: "SocketServerTests", code: 4)
     }
     return ConnectedServerFixture(
@@ -1207,6 +1212,21 @@ private func writeLine(_ line: String, to fd: Int32) throws {
         }
         throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
     }
+}
+
+/// Waits until the server has processed a hello from every expected role. Commands route by role and each
+/// client's socket is read independently, so this, not a fixed sleep or the first client's state, is the
+/// transition to wait on before sending a command. The deadline is liveness only.
+private func waitForRegisteredRoles(_ server: SocketServer, _ roles: [String], timeout: TimeInterval = 5) -> Bool {
+    let expected = roles.sorted()
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if server.registeredClientRolesForTesting() == expected {
+            return true
+        }
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    }
+    return server.registeredClientRolesForTesting() == expected
 }
 
 private func waitForConnectionStatus(_ state: VoiceState, connected: Bool, timeout: TimeInterval) -> Bool {
