@@ -170,6 +170,40 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         window.contentViewController = nil
     }
 
+    /// Closing now drops the view, so a reopen builds a fresh one. The app remembers the tab the user was on
+    /// (Etan reopens straight to History) through this callback and seeds the rebuilt view with it.
+    @MainActor
+    func testSettingsReportsTheSelectedTabSoAReopenCanRestoreIt() async {
+        var reported: [SettingsTab] = []
+        func make(_ request: SettingsTabRequest?) -> SettingsView {
+            SettingsView(
+                hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] }, selectedDeviceID: { nil },
+                onSelectDevice: { _ in }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                vocabularyRevision: { 0 }, historyPage: { _ in SettingsHistoryPage(groups: [], hasMore: false) },
+                askHistoryPage: { _ in SettingsAskHistoryPage(groups: [], hasMore: false) },
+                tabRequest: request,
+                onSelectedTabChange: { reported.append($0) }
+            )
+        }
+        let hosting = NSHostingController(rootView: make(nil))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: true
+        )
+        window.isReleasedWhenClosed = false
+        window.contentViewController = hosting
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        hosting.rootView = make(SettingsTabRequest(tab: .history, id: 1))
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let sawHistory = await settle { reported.last == .history }
+        XCTAssertTrue(sawHistory, "reported: \(reported)")
+        window.contentViewController = nil
+    }
+
     // MARK: - Wiring pins (the app target is not importable from these tests)
 
     func testHistoryLoadsGoThroughTheSharedIndexByDefault() throws {
@@ -196,6 +230,11 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         XCTAssertTrue(app.contains("window.delegate = self"))
         XCTAssertTrue(app.contains("SettingsWindowLifecycle.settingsWindowWillClose(window)"))
         XCTAssertTrue(app.contains("SettingsWindowLifecycle.rebuildContentIfNeeded("))
+        XCTAssertTrue(app.contains("initialTab: lastSettingsTab"))
+        XCTAssertTrue(app.contains("onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab }"))
+        // A reopen with no tab asked for must not replay the last menu request over the remembered tab.
+        XCTAssertTrue(app.contains("if tab == nil, settingsWindow.contentViewController == nil {\n"
+                + "                settingsTabRequest = nil"))
     }
 
     private func sourceFile(_ relative: String) throws -> String {

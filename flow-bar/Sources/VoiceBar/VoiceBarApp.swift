@@ -155,6 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     /// The last tab the app asked Settings to show (see `SettingsTabRequest`).
     private var settingsTabRequest: SettingsTabRequest?
+    /// The tab Settings last showed. Closing drops the view (SettingsWindowLifecycle), so a reopen seeds it.
+    private var lastSettingsTab: SettingsTab = .general
     private var isolatedInstanceMarkerPID: pid_t?
     private var terminationSignalSource: DispatchSourceSignal?
 
@@ -2441,13 +2443,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settingsTabRequest = SettingsTabRequest(tab: tab, id: (settingsTabRequest?.id ?? 0) + 1)
         }
         if let settingsWindow {
+            if tab == nil, settingsWindow.contentViewController == nil {
+                settingsTabRequest = nil
+            }
             // AppKit calls this on main; the delegate just isn't annotated @MainActor.
             let rebuilt = MainActor.assumeIsolated {
                 SettingsWindowLifecycle.rebuildContentIfNeeded(settingsWindow) { makeSettingsView() }
             }
             if !rebuilt, tab != nil,
-               let hosting = settingsWindow.contentViewController as? NSHostingController<SettingsView>
-            {
+               let hosting = settingsWindow.contentViewController as? NSHostingController<SettingsView> {
                 hosting.rootView = makeSettingsView()
             }
             SettingsWindowSizing.apply(to: settingsWindow)
@@ -2635,7 +2639,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     remoteSTTConfigured: nil
                 )
             },
-            tabRequest: settingsTabRequest
+            initialTab: lastSettingsTab,
+            tabRequest: settingsTabRequest,
+            onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab }
         )
     }
 

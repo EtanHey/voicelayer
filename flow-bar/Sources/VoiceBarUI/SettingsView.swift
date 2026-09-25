@@ -303,6 +303,8 @@ public struct SettingsView: View {
     public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
     public let modelsStatus: () -> ModelsSettingsState
     public let tabRequest: SettingsTabRequest?
+    /// Tells the app which tab is showing, so a Settings window rebuilt after a close reopens on it.
+    public let onSelectedTabChange: (SettingsTab) -> Void
     public let onRefreshModelsStatus: () -> Void
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
@@ -464,7 +466,8 @@ public struct SettingsView: View {
         initialDictionaryPreview: STTVocabularyPreview? = nil,
         initialIncludedTermsExpanded: Bool = false,
         initialYourTermsExpanded: Bool = true,
-        initialSelectedTermRowID: String? = nil
+        initialSelectedTermRowID: String? = nil,
+        onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in }
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -527,6 +530,7 @@ public struct SettingsView: View {
         self.footerPresentation = footerPresentation
         let initialPerformanceEffort = performanceEffort()
         self.tabRequest = tabRequest
+        self.onSelectedTabChange = onSelectedTabChange
         _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
         _dictionarySearch = State(initialValue: initialDictionarySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
@@ -587,6 +591,7 @@ public struct SettingsView: View {
             if selectedTab == .dictionary, !hasInitialDictionaryPreview { loadDictionaryPreview() }
         }
         .onChange(of: selectedTab) { _, tab in
+            onSelectedTabChange(tab)
             if tab == .history {
                 switch selectedHistoryScope {
                 case .recording:
