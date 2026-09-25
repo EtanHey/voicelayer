@@ -91,8 +91,10 @@ floating over your work:
 
 - **Liquid-Glass wings** flank the camera housing, with a graceful fallback on older macOS.
 - **Teleprompter** with word-by-word karaoke highlighting as your agent speaks.
-- **Idle-hover to summon** — collapsed it draws no pixels; hovering reveals recent transcripts,
-  the dictionary, and replay.
+- **Idle-hover to summon** — collapsed it draws no pixels; hovering reveals the mic, History and
+  Settings.
+- **Settings** — General · Models · Dictionary · History. Open with ⌘, or right-click → Settings…,
+  or from a script: `open voicebar://settings/models`.
 - **Morph animations** between idle ↔ recording ↔ speaking, Reduce-Motion aware.
 
 ## STT backends
