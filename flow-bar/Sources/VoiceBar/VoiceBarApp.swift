@@ -199,6 +199,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var missingHotkeyPermissions: [HotkeyPermission] = []
     /// Whether VoiceBar is snoozed (hidden for a timed period).
     var isSnoozed: Bool = false
+    /// When "Hide for 1 hour" ends; Settings says "Hidden until HH:MM".
+    private(set) var snoozedUntil: Date?
     private var pendingPerformanceEffortID: String?
     private var pendingPerformanceEffort: VoiceBarPerformanceEffort?
     private var pendingPerformanceEffortTimeout: Task<Void, Never>?
@@ -1046,6 +1048,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func snoozeForOneHour() {
         snoozeTask?.cancel()
         isSnoozed = true
+        snoozedUntil = Date().addingTimeInterval(3600)
         voiceState.snooze()
         panel?.orderOut(nil)
 
@@ -1059,6 +1062,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func unsnoozeNow() {
         snoozeTask?.cancel()
         isSnoozed = false
+        snoozedUntil = nil
         voiceState.unsnooze()
         panel?.orderFront(nil)
         reapplyAnchoredPanelPosition()
@@ -2580,6 +2584,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             isVoiceBarHidden: { [weak self] in
                 self?.isSnoozed ?? false
+            },
+            voiceBarHiddenUntil: { [weak self] in
+                self?.snoozedUntil
             },
             onHideVoiceBar: { [weak self] in
                 self?.snoozeForOneHour()

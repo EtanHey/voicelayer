@@ -180,6 +180,13 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                               historyDetail: tab != .history),
                      size: CGSize(width: 780, height: 620), appearance: .aqua)
         }
+        // R4 UI pass #14: Hidden says when VoiceBar comes back.
+        let hiddenUntil = Calendar.current.date(bySettingHour: 22, minute: 5, second: 0, of: Date())
+        for (suffix, appearance) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
+            try shot("settings-general-hidden\(suffix).png", "Settings: General while hidden",
+                     settings(tab: .general, vocabulary: empty, hiddenUntil: hiddenUntil),
+                     size: CGSize(width: 780, height: 900), appearance: appearance)
+        }
         try shot("settings-resized.png", "Settings: General at 960×740 pt",
                  settings(tab: .general, vocabulary: empty),
                  size: CGSize(width: 960, height: 740))
@@ -419,7 +426,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         micRows: [MicrophonePriorityRow]? = nil,
         historyDetail: Bool = true,
         modelState: ModelsSettingsState = .loading,
-        footerMode: VoiceMode = .idle
+        footerMode: VoiceMode = .idle,
+        hiddenUntil: Date? = nil
     ) -> SettingsView {
         let historyFixture = historyDetail
             ? syntheticHistoryPage ?? SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
@@ -455,6 +463,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                             onToggleProcessing: { _, _ in },
                             vocabularyPreview: { vocabulary }, vocabularyRevision: { 0 },
                             isHotkeyRemapActive: { remapActive },
+                            isVoiceBarHidden: { hiddenUntil != nil },
+                            voiceBarHiddenUntil: { hiddenUntil },
                             lastDictationEntry: {
                                 RecentTranscriptionEntry(text: "Synthetic dictation for visual review.",
                                                          recordingPath: recordingPath)
