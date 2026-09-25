@@ -180,7 +180,7 @@ final class SettingsViewContractTests: XCTestCase {
     func testHistoryTabExposesRecordingAndAskScopesWithRecordingFirst() {
         XCTAssertEqual(SettingsHistoryScope.allCases, [.recording, .ask])
         XCTAssertEqual(SettingsHistoryScope.allCases.first, .recording)
-        XCTAssertEqual(SettingsHistoryScope.recording.title, "Recording")
+        XCTAssertEqual(SettingsHistoryScope.recording.title, "Dictations")
         XCTAssertEqual(SettingsHistoryScope.ask.title, "Ask")
     }
 
@@ -364,13 +364,13 @@ final class SettingsViewContractTests: XCTestCase {
 
         XCTAssertTrue(actions.contains(".labelStyle(.iconOnly)"))
         XCTAssertTrue(actions.contains(".frame(minWidth: 28, minHeight: 28)"))
-        XCTAssertTrue(actions.contains(".help(isPlaying ? \"Stop\" : \"Play\")"))
-        XCTAssertTrue(actions.contains(".help(\"Copy\")"))
-        XCTAssertTrue(actions.contains(".help(\"Paste\")"))
-        XCTAssertTrue(
-            actions.contains(".help(enablement.isTranscribing ? \"Transcribing…\" : \"Re-transcribe\")")
-        )
-        XCTAssertTrue(actions.contains(".help(\"Open in Finder\")"))
+        // H1-d (UI pass #10): a blocked action's tooltip is its reason; otherwise the action's name.
+        XCTAssertTrue(actions.contains(".help(reason ?? (isPlaying ? \"Stop\" : \"Play\"))"))
+        XCTAssertTrue(actions.contains(".help(reason ?? \"Copy\")"))
+        XCTAssertTrue(actions.contains(".help(reason ?? \"Paste\")"))
+        XCTAssertTrue(actions.contains(".help(reason ?? \"Re-transcribe\")"))
+        XCTAssertTrue(actions.contains(".help(reason ?? \"Open in Finder\")"))
+        XCTAssertEqual(actions.components(separatedBy: ".accessibilityHint(reason ?? \"\")").count - 1, 5)
 
         for accessibleName in [
             "\\(isPlaying ? \"Stop\" : \"Play\") \\(part.accessibilityNoun)",
