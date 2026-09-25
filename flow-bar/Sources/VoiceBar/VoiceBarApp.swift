@@ -152,7 +152,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
-    private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
     /// The last tab the app asked Settings to show (see `SettingsTabRequest`).
     private var settingsTabRequest: SettingsTabRequest?
@@ -691,7 +690,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.isolatedInstanceMarkerPID = nil
         }
         snoozeTask?.cancel()
-        dictionarySheetWindow?.close()
         settingsWindow?.close()
         hotkeyManager?.stop()
         audioLevelMonitor.shutdown()
@@ -722,8 +720,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.transcriptProvider = { [weak self] in
             self?.voiceState.latestReusableTranscript ?? ""
         }
-        pillContextMenuController.recentTranscriptionsProvider = { [weak self] in
-            self?.voiceState.recentTranscriptions ?? []
+        pillContextMenuController.recentTranscriptionEntriesProvider = { [weak self] in
+            self?.voiceState.recentTranscriptionEntries ?? []
         }
         pillContextMenuController.availableDevicesProvider = {
             MicrophoneDeviceManager.availableInputDevices()
@@ -746,13 +744,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.onSelectDevice = { [weak self] deviceID in
             _ = self?.selectMicrophone(id: deviceID)
         }
-        pillContextMenuController.onTranscribeLatestRecording = { [weak self] in
-            self?.logDiagnostic(event: "context_menu_transcribe_latest_recording_tapped")
-            self?.voiceState.retranscribeLastCapture()
-        }
-        pillContextMenuController.onAddSelectionToDictionary = { [weak self] in
-            self?.presentAddToDictionarySheetFromSelection()
-        }
         pillContextMenuController.onPasteLastTranscript = { [weak self] in
             self?.logDiagnostic(event: "context_menu_paste_last_transcript_tapped")
             self?.voiceState.repasteLastTranscript(source: "context_menu_latest")
@@ -765,8 +756,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.logDiagnostic(event: "context_menu_paste_recent_transcript_tapped")
             self?.voiceState.repasteTranscript(transcript, source: "context_menu_history")
         }
-        pillContextMenuController.onOpenDictionary = { [weak self] in
-            self?.openSettingsWindow(tab: .dictionary)
+        pillContextMenuController.onQuit = { [weak self] in
+            self?.quitFromMenuBar()
         }
     }
 
@@ -2398,75 +2389,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// instead of hopping to main (fold-3 review S1).
     func currentVocabularyPreview() -> STTVocabularyPreview {
         voiceState.vocabularyPreviewOffMain()
-    }
-
-    private func presentAddToDictionarySheetFromSelection() {
-        voiceState.beginModalInteraction()
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let selection = FrontmostSelectionReader.readCurrentSelection()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                logDiagnostic(event: "context_menu_add_to_dictionary_tapped", details: [
-                    "selectionSource": selection?.source.rawValue ?? "none",
-                    "selectionLength": String(selection?.text.count ?? 0),
-                ])
-                presentDictionarySheet(
-                    draft: STTVocabularyDraft(
-                        correct: selection?.text ?? "",
-                        wrong: ""
-                    )
-                )
-            }
-        }
-    }
-
-    private func presentDictionarySheet(draft: STTVocabularyDraft) {
-        closeDictionarySheet()
-        NSApp.activate(ignoringOtherApps: true)
-        let rootView = DictionaryAddSheetView(
-            draft: draft,
-            onSave: { [weak self] draft in
-                self?.voiceState.addVocabularyAlias(
-                    correct: draft.trimmedCorrect,
-                    wrong: draft.trimmedWrong
-                )
-                self?.closeDictionarySheet()
-            },
-            onCancel: { [weak self] in
-                self?.closeDictionarySheet()
-            }
-        )
-        let hosting = NSHostingController(rootView: rootView)
-        let sheet = NSWindow(contentViewController: hosting)
-        sheet.title = "Add to Dictionary"
-        sheet.styleMask = [.titled, .closable]
-        sheet.isReleasedWhenClosed = false
-        sheet.setContentSize(NSSize(width: 380, height: 210))
-        sheet.delegate = self
-        dictionarySheetWindow = sheet
-
-        sheet.center()
-        NSApp.activate(ignoringOtherApps: true)
-        sheet.makeKeyAndOrderFront(nil)
-    }
-
-    private func closeDictionarySheet() {
-        guard let sheet = dictionarySheetWindow else { return }
-        dictionarySheetWindow = nil
-        sheet.delegate = nil
-        if let parent = sheet.sheetParent {
-            parent.endSheet(sheet)
-        }
-        sheet.close()
-        voiceState.endModalInteraction()
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow,
-              window === dictionarySheetWindow
-        else { return }
-        dictionarySheetWindow = nil
-        voiceState.endModalInteraction()
     }
 
     func quickMenuActions() -> [VoiceBarMenuAction] {

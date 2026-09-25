@@ -120,7 +120,15 @@ final class SottoCurrentStateShotsTests: XCTestCase {
 
         let menu = PillContextMenuController()
         menu.transcriptProvider = { "A synthetic recent transcription." }
-        menu.recentTranscriptionsProvider = { ["A synthetic recent transcription.", "Another sample."] }
+        menu.now = { Date(timeIntervalSince1970: 1_790_000_000) }
+        menu.recentTranscriptionEntriesProvider = { [
+            RecentTranscriptionEntry(text: "A synthetic recent transcription.",
+                                     createdAt: Date(timeIntervalSince1970: 1_790_000_000 - 120)),
+            RecentTranscriptionEntry(
+                text: "Another sample.",
+                createdAt: Date(timeIntervalSince1970: 1_790_000_000 - 7200)
+            ),
+        ] }
         // Mixed on purpose: the aggregate and the Teams/Zoom loopbacks must not reach the Microphone submenu.
         menu.availableDevicesProvider = { [
             MicrophoneDevice(id: "fixture-aggregate", name: "CADefaultDeviceAggregate-1234-0",
@@ -470,21 +478,36 @@ final class SottoCurrentStateShotsTests: XCTestCase {
     ) throws {
         let rows = menu.items.filter { !$0.isSeparatorItem }
         let name = "\(prefix).png"
+        // Separators, symbols, ⌘ equivalents and subtitles are drawn too: spec §3 fixes all of them.
         let view = VStack(alignment: .leading, spacing: 5) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, item in
-                HStack {
-                    Text(item.title).foregroundStyle(item.isEnabled ? .primary : .secondary)
-                    Spacer()
-                    if item.submenu != nil { Image(systemName: "chevron.right") }
+            ForEach(Array(menu.items.enumerated()), id: \.offset) { _, item in
+                if item.isSeparatorItem {
+                    Divider().padding(.horizontal, 10).frame(height: 7)
+                } else {
+                    HStack(spacing: 6) {
+                        if let image = item.image { Image(nsImage: image) }
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(item.title).foregroundStyle(item.isEnabled ? .primary : .secondary)
+                            if #available(macOS 14.4, *), let subtitle = item.subtitle {
+                                Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        if !item.keyEquivalent.isEmpty {
+                            Text("⌘\(item.keyEquivalent)").foregroundStyle(.secondary)
+                        }
+                        if item.submenu != nil { Image(systemName: "chevron.right") }
+                    }
+                    .font(.system(size: 13))
+                    .padding(.horizontal, 10)
+                    .frame(height: 25)
                 }
-                .font(.system(size: 13))
-                .padding(.horizontal, 10)
-                .frame(height: 25)
             }
         }
         .padding(8)
         .background(.regularMaterial)
-        let size = CGSize(width: 300, height: CGFloat(rows.count * 30 + 16))
+        let separators = menu.items.count - rows.count
+        let size = CGSize(width: 300, height: CGFloat(rows.count * 30 + separators * 12 + 16))
         try render(view, size: size, to: directory.appendingPathComponent(name))
         try render(view, size: size, to: directory.appendingPathComponent("\(prefix)-light.png"), appearance: .aqua)
         lines.append("| [\(name)](\(name)) · [light](\(prefix)-light.png) | \(description) (production NSMenu model) |")

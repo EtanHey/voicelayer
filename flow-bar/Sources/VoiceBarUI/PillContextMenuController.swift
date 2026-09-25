@@ -69,7 +69,8 @@ public struct MicrophoneDeviceOption: Equatable {
 
 public final class PillContextMenuController: NSObject {
     public var transcriptProvider: () -> String = { "" }
-    public var recentTranscriptionsProvider: () -> [String] = { [] }
+    public var recentTranscriptionEntriesProvider: () -> [RecentTranscriptionEntry] = { [] }
+    public var now: () -> Date = { Date() }
     public var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
     public var selectedDeviceIDProvider: () -> String? = { nil }
 
@@ -78,21 +79,23 @@ public final class PillContextMenuController: NSObject {
     public var onUnsnooze: () -> Void = {}
     public var isSnoozedProvider: () -> Bool = { false }
     public var onSelectDevice: (String) -> Void = { _ in }
-    public var onTranscribeLatestRecording: () -> Void = {}
-    public var onAddSelectionToDictionary: () -> Void = {}
-    public var onOpenDictionary: () -> Void = {}
+    public var onQuit: () -> Void = {}
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
 
+    /// Etan's approved spec §3 (p03-design-spec-approval/spec.md), item for item: Settings… · Hide for 1 hour ·
+    /// — · Recent Transcriptions › · Paste/Copy Last Transcript · — · Microphone › · — · Quit VoiceBar.
     public func makeMenu() -> NSMenu {
         let menu = NSMenu()
 
         let settingsItem = NSMenuItem(
-            title: "Settings",
+            title: "Settings…",
             action: #selector(handleOpenSettings),
-            keyEquivalent: ""
+            keyEquivalent: ","
         )
+        settingsItem.keyEquivalentModifierMask = .command
+        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         settingsItem.target = self
         menu.addItem(settingsItem)
 
@@ -114,90 +117,82 @@ public final class PillContextMenuController: NSObject {
             menu.addItem(snoozeItem)
         }
 
-        let historyItem = NSMenuItem(title: "Recent Transcripts", action: nil, keyEquivalent: "")
+        menu.addItem(.separator())
+
+        let historyItem = NSMenuItem(title: "Recent Transcriptions", action: nil, keyEquivalent: "")
         historyItem.submenu = makeRecentTranscriptsSubmenu()
         menu.addItem(historyItem)
 
+        let hasTranscript = Self.isPasteEnabled(transcript: transcriptProvider())
         let pasteItem = NSMenuItem(
-            title: "Paste last transcript",
+            title: "Paste Last Transcript",
             action: #selector(handlePasteLastTranscript),
             keyEquivalent: ""
         )
         pasteItem.target = self
-        pasteItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
+        pasteItem.isEnabled = hasTranscript
         menu.addItem(pasteItem)
 
         let copyItem = NSMenuItem(
-            title: "Copy last transcript",
+            title: "Copy Last Transcript",
             action: #selector(handleCopyLastTranscript),
             keyEquivalent: ""
         )
         copyItem.target = self
-        copyItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
+        copyItem.isEnabled = hasTranscript
         menu.addItem(copyItem)
 
-        let toolsItem = NSMenuItem(title: "Transcription Tools", action: nil, keyEquivalent: "")
-        toolsItem.submenu = makeTranscriptionToolsSubmenu()
-        menu.addItem(toolsItem)
+        menu.addItem(.separator())
 
-        // Preferences held only this once Anchor and Morph Prototype went (R4 UI pass #4), so it sits at the top.
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
+        if #available(macOS 14.4, *) {
+            microphoneItem.subtitle = currentMicrophoneTitle()
+        }
         menu.addItem(microphoneItem)
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: "Quit VoiceBar", action: #selector(handleQuit), keyEquivalent: "")
+        quitItem.target = self
+        menu.addItem(quitItem)
 
         return menu
     }
 
-    public func makeTranscriptionToolsSubmenu() -> NSMenu {
-        let menu = NSMenu()
-
-        let recoverItem = NSMenuItem(
-            title: "Transcribe latest recording",
-            action: #selector(handleTranscribeLatestRecording),
-            keyEquivalent: ""
-        )
-        recoverItem.target = self
-        menu.addItem(recoverItem)
-
-        let addDictionaryItem = NSMenuItem(
-            title: "Add to Dictionary…",
-            action: #selector(handleAddSelectionToDictionary),
-            keyEquivalent: ""
-        )
-        addDictionaryItem.target = self
-        menu.addItem(addDictionaryItem)
-
-        // One item instead of the old read-only Terms/Corrections wall (R4 UI pass #5).
-        let openDictionaryItem = NSMenuItem(
-            title: "Open Dictionary…",
-            action: #selector(handleOpenDictionary),
-            keyEquivalent: ""
-        )
-        openDictionaryItem.target = self
-        menu.addItem(openDictionaryItem)
-
-        return menu
+    /// The device the Microphone submenu checks, from the same filtered list (#141).
+    private func currentMicrophoneTitle() -> String? {
+        let devices = availableDevicesProvider()
+        let selectedID = selectedDeviceIDProvider()
+        if let hidden = MicrophoneDevice.hiddenInUse(devices, selectedID: selectedID) {
+            return MicrophoneDevice.hiddenDeviceLabel(hidden.name)
+        }
+        return MicrophoneDevice.pickable(devices).first { $0.id == selectedID }?.name
     }
 
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
         let menu = NSMenu()
-        let transcripts = recentTranscriptionsProvider()
+        let entries = recentTranscriptionEntriesProvider()
 
-        guard !transcripts.isEmpty else {
+        guard !entries.isEmpty else {
             let empty = NSMenuItem(title: "No recent transcripts", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
             return menu
         }
 
-        for (index, transcript) in transcripts.enumerated() {
+        let now = now()
+        for entry in entries {
             let item = NSMenuItem(
-                title: Self.recentTranscriptMenuTitle(for: transcript, isLatest: index == 0),
+                title: Self.recentTranscriptMenuTitle(
+                    for: entry.text,
+                    time: VoiceBarRelativeTime.label(entry.createdAt, now: now)
+                ),
                 action: #selector(handlePasteRecentTranscript(_:)),
                 keyEquivalent: ""
             )
             item.target = self
-            item.representedObject = transcript
+            item.representedObject = entry.text
             menu.addItem(item)
         }
 
@@ -263,7 +258,8 @@ public final class PillContextMenuController: NSObject {
         !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    public static func recentTranscriptMenuTitle(for transcript: String, isLatest: Bool) -> String {
+    /// Spec §3: time + the first words; no "Latest —".
+    public static func recentTranscriptMenuTitle(for transcript: String, time: String?) -> String {
         let flattened = transcript
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
@@ -274,7 +270,7 @@ public final class PillContextMenuController: NSObject {
         let preview = trimmed.count > previewLimit
             ? String(trimmed.prefix(previewLimit - 1)) + "…"
             : trimmed
-        return isLatest ? "Latest — \(preview)" : preview
+        return time.map { "\($0) · \(preview)" } ?? preview
     }
 
     @objc private func handleOpenSettings() {
@@ -307,16 +303,8 @@ public final class PillContextMenuController: NSObject {
         onSelectDevice(id)
     }
 
-    @objc private func handleTranscribeLatestRecording() {
-        onTranscribeLatestRecording()
-    }
-
-    @objc private func handleAddSelectionToDictionary() {
-        onAddSelectionToDictionary()
-    }
-
-    @objc private func handleOpenDictionary() {
-        onOpenDictionary()
+    @objc private func handleQuit() {
+        onQuit()
     }
 }
 

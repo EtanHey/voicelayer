@@ -74,21 +74,26 @@ public struct RecentTranscriptionEntry: Codable, Equatable {
     public var text: String
     public var recordingPath: String?
     public var dictationReceipt: DictationReceipt?
+    /// When it was dictated. Nil for entries saved before times were recorded; those show no time.
+    public var createdAt: Date?
 
     public init(
         text: String,
         recordingPath: String? = nil,
-        dictationReceipt: DictationReceipt? = nil
+        dictationReceipt: DictationReceipt? = nil,
+        createdAt: Date? = nil
     ) {
         self.text = text
         self.recordingPath = recordingPath
         self.dictationReceipt = dictationReceipt
+        self.createdAt = createdAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case text
         case recordingPath
         case dictationReceipt
+        case createdAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -96,6 +101,7 @@ public struct RecentTranscriptionEntry: Codable, Equatable {
         text = try container.decode(String.self, forKey: .text)
         recordingPath = try container.decodeIfPresent(String.self, forKey: .recordingPath)
         dictationReceipt = try? container.decode(DictationReceipt.self, forKey: .dictationReceipt)
+        createdAt = try? container.decode(Date.self, forKey: .createdAt)
     }
 }
 
@@ -1887,17 +1893,20 @@ public final class VoiceState {
             let receipt = preservingExistingReceipt
                 ? recentTranscriptionEntries[existingIndex].dictationReceipt
                 : dictationReceipt
+            // A re-transcription keeps the time the row was dictated.
             let entry = RecentTranscriptionEntry(
                 text: trimmed,
                 recordingPath: normalizedPath,
-                dictationReceipt: receipt
+                dictationReceipt: receipt,
+                createdAt: recentTranscriptionEntries[existingIndex].createdAt
             )
             recentTranscriptionEntries[existingIndex] = entry
         } else {
             let entry = RecentTranscriptionEntry(
                 text: trimmed,
                 recordingPath: normalizedPath,
-                dictationReceipt: dictationReceipt
+                dictationReceipt: dictationReceipt,
+                createdAt: Date()
             )
             recentTranscriptionEntries.removeAll { existing in
                 if let normalizedPath {
@@ -1996,7 +2005,8 @@ public final class VoiceState {
             unique.append(RecentTranscriptionEntry(
                 text: text,
                 recordingPath: normalizedPath,
-                dictationReceipt: entry.dictationReceipt
+                dictationReceipt: entry.dictationReceipt,
+                createdAt: entry.createdAt
             ))
             if unique.count == maxRecentTranscriptions {
                 break
