@@ -55,5 +55,12 @@ jobs:
       - name: Build VoiceBar
         run: swift build --package-path flow-bar --product VoiceBar
 
+      # Etan ruling 2: the QA probes are dev/CI-only. The release configuration must compile
+      # them out; this is the same check build-app.sh and release-voicebar.sh run.
+      - name: Release build carries no QA probes
+        run: |
+          swift build -c release --package-path flow-bar --product VoiceBar
+          bash scripts/check-voicebar-qa-free.sh "$(swift build -c release --package-path flow-bar --show-bin-path)/VoiceBar"
+
       - name: Swift tests
         run: swift test --package-path flow-bar

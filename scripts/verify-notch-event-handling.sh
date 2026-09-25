@@ -23,6 +23,16 @@ if [[ ! -x "$app_binary" ]]; then
   exit 2
 fi
 
+# The context-menu and vertical-hit probes are dev/CI-only (Etan ruling 2); a user build
+# compiles them out and would answer every probe with nothing.
+if ! LC_ALL=C grep -aqF qa_context_menu_probe "$app_binary"; then
+  printf 'error: %s was built without the QA probes; rebuild it with
+' "$app_path" >&2
+  printf '  VOICEBAR_QA_BUILD=1 bash flow-bar/build-app.sh --install-path <temp>/VoiceBar.app --no-stop --no-relaunch
+' >&2
+  exit 2
+fi
+
 case "$app_path" in
   /Applications/*)
     printf 'error: event acceptance requires a temporary isolated app bundle\n' >&2

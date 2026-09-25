@@ -990,8 +990,21 @@ else
     echo "[build-app] Skipping VoiceBar stop because --no-stop was provided."
 fi
 
+# AIDEV-NOTE: the QA probes (qa_* socket messages, isolated-capture probes) are dev/CI-only
+# (Etan ruling 2, 2026-09-24). Debug builds define VOICEBAR_QA in Package.swift; a release
+# bundle gets it only by an explicit VOICEBAR_QA_BUILD=1, which a notarized release refuses.
+QA_SWIFT_FLAGS=()
+if [[ "${VOICEBAR_QA_BUILD:-0}" == "1" ]]; then
+    if [ "$VOICEBAR_REQUIRE_NOTARIZATION" = "1" ] || [ -n "$VOICEBAR_RELEASE_ZIP" ]; then
+        echo "[build-app] ERROR: refusing a QA build for a notarized release (unset VOICEBAR_QA_BUILD)."
+        exit 1
+    fi
+    echo "[build-app] VOICEBAR_QA_BUILD=1: compiling the dev/CI-only QA probes into this bundle."
+    QA_SWIFT_FLAGS=(-Xswiftc -DVOICEBAR_QA)
+fi
+
 echo "[build-app] Building VoiceBar (release)..."
-swift build -c release --package-path "$PACKAGE_DIR"
+swift build -c release --package-path "$PACKAGE_DIR" ${QA_SWIFT_FLAGS[@]+"${QA_SWIFT_FLAGS[@]}"}
 
 # Find the built binary (reuses cached build, no rebuild)
 BIN_DIR="$(swift build -c release --package-path "$PACKAGE_DIR" --show-bin-path)"
@@ -999,6 +1012,9 @@ BINARY="$BIN_DIR/VoiceBar"
 if [ ! -f "$BINARY" ]; then
     echo "[build-app] ERROR: Binary not found at $BINARY"
     exit 1
+fi
+if [[ "${VOICEBAR_QA_BUILD:-0}" != "1" ]]; then
+    bash "$REPO_ROOT/scripts/check-voicebar-qa-free.sh" "$BINARY"
 fi
 
 # Clean stale bundle before recreating. The old production bundle is moved to a
