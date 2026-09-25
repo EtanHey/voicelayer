@@ -153,6 +153,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var anchorMode: VoiceBarAnchorMode = .follow
     private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    /// The last tab the app asked Settings to show (see `SettingsTabRequest`).
+    private var settingsTabRequest: SettingsTabRequest?
     private var isolatedInstanceMarkerPID: pid_t?
     private var terminationSignalSource: DispatchSourceSignal?
 
@@ -720,23 +722,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.recentTranscriptionsProvider = { [weak self] in
             self?.voiceState.recentTranscriptions ?? []
         }
-        pillContextMenuController.transcriptionVocabularyTermsProvider = { [weak self] in
-            self?.voiceState.transcriptionVocabularyTerms ?? []
-        }
-        pillContextMenuController.transcriptionVocabularyAliasesProvider = { [weak self] in
-            self?.voiceState.transcriptionVocabularyAliases ?? []
-        }
         pillContextMenuController.availableDevicesProvider = {
             MicrophoneDeviceManager.availableInputDevices()
         }
         pillContextMenuController.selectedDeviceIDProvider = {
             MicrophoneDeviceManager.selectedInputDeviceID()
-        }
-        pillContextMenuController.anchorModeProvider = { [weak self] in
-            self?.currentAnchorMode() ?? .follow
-        }
-        pillContextMenuController.morphPrototypeProvider = { [weak self] in
-            self?.notchMorphSelection.variant ?? .p1Matched
         }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
@@ -772,14 +762,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.logDiagnostic(event: "context_menu_paste_recent_transcript_tapped")
             self?.voiceState.repasteTranscript(transcript, source: "context_menu_history")
         }
-        pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
-            self?.selectAnchorMode(mode)
-        }
-        pillContextMenuController.onSelectMorphPrototype = { [weak self] variant in
-            self?.notchMorphSelection.select(variant)
-            self?.logDiagnostic(event: "notch_morph_prototype_selected", details: [
-                "variant": variant.rawValue,
-            ])
+        pillContextMenuController.onOpenDictionary = { [weak self] in
+            self?.openSettingsWindow(tab: .dictionary)
         }
     }
 
@@ -2065,19 +2049,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         anchorMode
     }
 
-    func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
-        anchorMode = mode
-        anchorPreferences.saveAnchorMode(mode)
-        panel?.isPillDragEnabled = mode.allowsFreeDrag
-        panel?.isMovableByWindowBackground = mode.allowsFreeDrag &&
-            VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
-        if let panel {
-            positionPanel(panel, on: nil)
-            applyPanelLayout(animated: true)
-        }
-        refreshSettingsWindowAnchorState()
-    }
-
     /// The selection in flight, else what the daemon reports. `.accurate` (the daemon default)
     /// only until the first status arrives; the picker is disabled until then.
     func currentPerformanceEffort() -> VoiceBarPerformanceEffort {
@@ -2523,10 +2494,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         requestTermination(.menuBar)
     }
 
-    func openSettingsWindow() {
+    func openSettingsWindow(tab: SettingsTab? = nil) {
         voiceState.captureSettingsHistoryPasteTarget()
         NSApp.activate(ignoringOtherApps: true)
+        if let tab {
+            settingsTabRequest = SettingsTabRequest(tab: tab, id: (settingsTabRequest?.id ?? 0) + 1)
+        }
         if let settingsWindow {
+            if tab != nil, let hosting = settingsWindow.contentViewController as? NSHostingController<SettingsView> {
+                hosting.rootView = makeSettingsView()
+            }
             SettingsWindowSizing.apply(to: settingsWindow)
             settingsWindow.makeKeyAndOrderFront(nil)
             settingsWindow.orderFrontRegardless()
@@ -2579,8 +2556,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onDismissPolishDegradation: { [weak self] in
                 self?.voiceState.dismissPolishDegradation()
             },
-            anchorMode: { [weak self] in self?.currentAnchorMode() ?? .follow },
-            onSelectAnchorMode: { [weak self] in self?.selectAnchorMode($0) },
             performanceEffort: { [weak self] in self?.currentPerformanceEffort() ?? .accurate },
             performanceEffortNotice: { [weak self] in self?.currentPerformanceEffortNotice() },
             onSelectPerformanceEffort: { [weak self] in self?.selectPerformanceEffort($0) },
@@ -2693,7 +2668,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     errorMessage: nil,
                     remoteSTTConfigured: nil
                 )
-            }
+            },
+            tabRequest: settingsTabRequest
         )
     }
 

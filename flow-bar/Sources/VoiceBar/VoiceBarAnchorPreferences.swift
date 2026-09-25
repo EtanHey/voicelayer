@@ -11,19 +11,13 @@ struct VoiceBarAnchorPreferences {
         self.defaults = defaults
     }
 
+    // AIDEV-NOTE: Anchor is removed from every menu (Etan ruling 1, 2026-09-24). A saved anchored mode
+    // would strand the pill where no control can move it, so loading always resolves to `.follow` and
+    // forgets what was stored.
     func loadAnchorMode() -> VoiceBarAnchorMode {
-        let storedValue = defaults.string(forKey: Self.anchorModeKey)
-        let mode = VoiceBarAnchorMode(defaultsValue: storedValue)
+        defaults.removeObject(forKey: Self.anchorModeKey)
         removeLegacyPositionLock()
-        if storedValue != mode.rawValue {
-            defaults.set(mode.rawValue, forKey: Self.anchorModeKey)
-        }
-        return mode
-    }
-
-    func saveAnchorMode(_ mode: VoiceBarAnchorMode) {
-        defaults.set(mode.rawValue, forKey: Self.anchorModeKey)
-        removeLegacyPositionLock()
+        return .follow
     }
 
     private func removeLegacyPositionLock() {

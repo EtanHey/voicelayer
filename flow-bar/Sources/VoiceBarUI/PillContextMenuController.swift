@@ -70,12 +70,8 @@ public struct MicrophoneDeviceOption: Equatable {
 public final class PillContextMenuController: NSObject {
     public var transcriptProvider: () -> String = { "" }
     public var recentTranscriptionsProvider: () -> [String] = { [] }
-    public var transcriptionVocabularyTermsProvider: () -> [String] = { [] }
-    public var transcriptionVocabularyAliasesProvider: () -> [STTVocabularyAliasPreview] = { [] }
     public var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
     public var selectedDeviceIDProvider: () -> String? = { nil }
-    public var anchorModeProvider: () -> VoiceBarAnchorMode = { .follow }
-    public var morphPrototypeProvider: () -> VoiceBarNotchMorphVariant = { .p1Matched }
 
     public var onOpenSettings: () -> Void = {}
     public var onSnooze: () -> Void = {}
@@ -84,11 +80,10 @@ public final class PillContextMenuController: NSObject {
     public var onSelectDevice: (String) -> Void = { _ in }
     public var onTranscribeLatestRecording: () -> Void = {}
     public var onAddSelectionToDictionary: () -> Void = {}
+    public var onOpenDictionary: () -> Void = {}
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
-    public var onSelectAnchorMode: (VoiceBarAnchorMode) -> Void = { _ in }
-    public var onSelectMorphPrototype: (VoiceBarNotchMorphVariant) -> Void = { _ in }
 
     public func makeMenu() -> NSMenu {
         let menu = NSMenu()
@@ -145,9 +140,10 @@ public final class PillContextMenuController: NSObject {
         toolsItem.submenu = makeTranscriptionToolsSubmenu()
         menu.addItem(toolsItem)
 
-        let preferencesItem = NSMenuItem(title: "Preferences", action: nil, keyEquivalent: "")
-        preferencesItem.submenu = makePreferencesSubmenu()
-        menu.addItem(preferencesItem)
+        // Preferences held only this once Anchor and Morph Prototype went (R4 UI pass #4), so it sits at the top.
+        let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
+        microphoneItem.submenu = makeMicrophoneSubmenu()
+        menu.addItem(microphoneItem)
 
         return menu
     }
@@ -171,62 +167,15 @@ public final class PillContextMenuController: NSObject {
         addDictionaryItem.target = self
         menu.addItem(addDictionaryItem)
 
-        let vocabularyItem = NSMenuItem(title: "Transcription Vocabulary", action: nil, keyEquivalent: "")
-        vocabularyItem.submenu = makeTranscriptionVocabularySubmenu()
-        menu.addItem(vocabularyItem)
+        // One item instead of the old read-only Terms/Corrections wall (R4 UI pass #5).
+        let openDictionaryItem = NSMenuItem(
+            title: "Open Dictionary…",
+            action: #selector(handleOpenDictionary),
+            keyEquivalent: ""
+        )
+        openDictionaryItem.target = self
+        menu.addItem(openDictionaryItem)
 
-        return menu
-    }
-
-    public func makePreferencesSubmenu() -> NSMenu {
-        let menu = NSMenu()
-
-        let anchorItem = NSMenuItem(title: "Anchor", action: nil, keyEquivalent: "")
-        anchorItem.submenu = makeAnchorSubmenu()
-        menu.addItem(anchorItem)
-
-        let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
-        microphoneItem.submenu = makeMicrophoneSubmenu()
-        menu.addItem(microphoneItem)
-
-        let morphItem = NSMenuItem(title: "Morph Prototype", action: nil, keyEquivalent: "")
-        morphItem.submenu = makeMorphPrototypeSubmenu()
-        menu.addItem(morphItem)
-
-        return menu
-    }
-
-    public func makeAnchorSubmenu() -> NSMenu {
-        let menu = NSMenu()
-        let selectedMode = anchorModeProvider()
-        for mode in VoiceBarAnchorMode.anchorMenuModes {
-            let item = NSMenuItem(
-                title: mode.anchorMenuTitle,
-                action: #selector(handleSelectAnchorMode(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = mode.rawValue
-            item.state = mode == selectedMode ? .on : .off
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    public func makeMorphPrototypeSubmenu() -> NSMenu {
-        let menu = NSMenu()
-        let selectedVariant = morphPrototypeProvider()
-        for variant in VoiceBarNotchMorphVariant.allCases {
-            let item = NSMenuItem(
-                title: variant.menuTitle,
-                action: #selector(handleSelectMorphPrototype(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = variant.rawValue
-            item.state = variant == selectedVariant ? .on : .off
-            menu.addItem(item)
-        }
         return menu
     }
 
@@ -252,59 +201,6 @@ public final class PillContextMenuController: NSObject {
             menu.addItem(item)
         }
 
-        return menu
-    }
-
-    public func makeTranscriptionVocabularySubmenu() -> NSMenu {
-        let menu = NSMenu()
-        let terms = transcriptionVocabularyTermsProvider()
-        let aliases = transcriptionVocabularyAliasesProvider()
-
-        guard !terms.isEmpty || !aliases.isEmpty else {
-            let empty = NSMenuItem(title: "Vocabulary not loaded yet", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-            return menu
-        }
-
-        if !terms.isEmpty {
-            let termsItem = NSMenuItem(title: "Terms", action: nil, keyEquivalent: "")
-            termsItem.submenu = makeTranscriptionVocabularyTermsSubmenu(terms)
-            menu.addItem(termsItem)
-        }
-
-        if !aliases.isEmpty {
-            let aliasesItem = NSMenuItem(title: "Corrections", action: nil, keyEquivalent: "")
-            aliasesItem.submenu = makeTranscriptionVocabularyAliasesSubmenu(aliases)
-            menu.addItem(aliasesItem)
-        }
-
-        return menu
-    }
-
-    private func makeTranscriptionVocabularyTermsSubmenu(_ terms: [String]) -> NSMenu {
-        let menu = NSMenu()
-        for term in terms {
-            let item = NSMenuItem(title: term, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    private func makeTranscriptionVocabularyAliasesSubmenu(
-        _ aliases: [STTVocabularyAliasPreview]
-    ) -> NSMenu {
-        let menu = NSMenu()
-        for alias in aliases {
-            let item = NSMenuItem(
-                title: "\(alias.from) → \(alias.to)",
-                action: nil,
-                keyEquivalent: ""
-            )
-            item.isEnabled = false
-            menu.addItem(item)
-        }
         return menu
     }
 
@@ -415,22 +311,12 @@ public final class PillContextMenuController: NSObject {
         onTranscribeLatestRecording()
     }
 
-    @objc private func handleSelectAnchorMode(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let mode = VoiceBarAnchorMode(rawValue: rawValue)
-        else { return }
-        onSelectAnchorMode(mode)
-    }
-
-    @objc private func handleSelectMorphPrototype(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let variant = VoiceBarNotchMorphVariant(rawValue: rawValue)
-        else { return }
-        onSelectMorphPrototype(variant)
-    }
-
     @objc private func handleAddSelectionToDictionary() {
         onAddSelectionToDictionary()
+    }
+
+    @objc private func handleOpenDictionary() {
+        onOpenDictionary()
     }
 }
 

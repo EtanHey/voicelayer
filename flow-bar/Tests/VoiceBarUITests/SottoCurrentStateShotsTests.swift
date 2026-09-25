@@ -121,7 +121,6 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         let menu = PillContextMenuController()
         menu.transcriptProvider = { "A synthetic recent transcription." }
         menu.recentTranscriptionsProvider = { ["A synthetic recent transcription.", "Another sample."] }
-        menu.transcriptionVocabularyTermsProvider = { ["SwiftUI", "whisper.cpp"] }
         // Mixed on purpose: the aggregate and the Teams/Zoom loopbacks must not reach the Microphone submenu.
         menu.availableDevicesProvider = { [
             MicrophoneDevice(id: "fixture-aggregate", name: "CADefaultDeviceAggregate-1234-0",
@@ -485,12 +484,10 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         }
         .padding(8)
         .background(.regularMaterial)
-        try render(
-            view,
-            size: CGSize(width: 300, height: CGFloat(rows.count * 30 + 16)),
-            to: directory.appendingPathComponent(name)
-        )
-        lines.append("| [\(name)](\(name)) | \(description) (production NSMenu model) |")
+        let size = CGSize(width: 300, height: CGFloat(rows.count * 30 + 16))
+        try render(view, size: size, to: directory.appendingPathComponent(name))
+        try render(view, size: size, to: directory.appendingPathComponent("\(prefix)-light.png"), appearance: .aqua)
+        lines.append("| [\(name)](\(name)) · [light](\(prefix)-light.png) | \(description) (production NSMenu model) |")
         for (index, item) in rows.enumerated() where item.submenu != nil {
             try menuShots(
                 item.submenu!,

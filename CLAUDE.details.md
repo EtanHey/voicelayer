@@ -28,7 +28,7 @@
 - Performance effort tiers (Settings -> Audio -> Performance, code in `src/whisper-performance.ts`): `fast` (`-bo 1 -bs 1`), `balanced` (`-bo 3 -bs 3`), `accurate` (`-bo 5 -bs 5`, default). Same `large-v3-turbo` model for all three — only whisper.cpp beam-search/best-of changes. Persisted to `~/.local/state/voicelayer/whisper-performance.json`; override per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT`.
 
 ## VoiceBar Settings (SwiftUI, `flow-bar/Sources/VoiceBarUI/SettingsView.swift`)
-- General tab: hotkey shortcut/status; permissions panel (Microphone + Accessibility + Input Monitoring) with "Open" links to the matching System Settings pane; Karabiner "Set up" helper (F5 relay install); gestures + pill position/anchor.
+- General tab: hotkey shortcut/status; permissions panel (Microphone + Accessibility + Input Monitoring) with "Open" links to the matching System Settings pane; Karabiner "Set up" helper (F5 relay install); gestures.
 - Audio tab: microphone input-device picker + Performance effort tier picker (Fast/Balanced/Accurate).
 - Dictionary tab: STT corrections + prompt terms (same store as `voicelayer vocab`).
 
@@ -44,6 +44,7 @@
 - Model location: `models/silero_vad.onnx`.
 - MCP recording modes: VAD (default) or gated `push_to_end=true` for manual stop.
 - VoiceBar's trusted F5/tap socket field remains `press_to_talk=true`; do not rename or MCP-gate it.
+- Mouse buttons are kept (Etan ruling 3, 2026-09-24): side button 5 (CGEvent index 4; index 5 too) acts like F5, and button 4 (index 3) sends Return (`HotkeyManager.defaultTargetMouseButtons` / `defaultEnterMouseButtons`).
 - Stop signals: touch `/tmp/voicelayer-stop-{TOKEN}`, VAD silence (VAD mode), timeout (default 30s).
 - Session booking uses `/tmp/voicelayer-session-{TOKEN}.lock`; stale locks are cleaned.
 

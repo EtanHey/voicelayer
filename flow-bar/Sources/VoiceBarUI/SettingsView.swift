@@ -30,6 +30,19 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
     }
 }
 
+/// Asks an open Settings window to show `tab`. The app swaps the hosting controller's root view and
+/// SwiftUI keeps `@State` across that swap, so `initialTab` cannot switch a live window; a new `id` makes
+/// a repeat request for the same tab fire again, and an unchanged request never overrides the user.
+public struct SettingsTabRequest: Equatable {
+    public let tab: SettingsTab
+    public let id: Int
+
+    public init(tab: SettingsTab, id: Int) {
+        self.tab = tab
+        self.id = id
+    }
+}
+
 /// The two lists inside Settings → History. Order is the on-screen order: recording sits on the
 /// left and is the default; Ask sits on the right.
 public enum SettingsHistoryScope: String, Hashable, CaseIterable, Sendable {
@@ -278,12 +291,11 @@ public struct SettingsView: View {
     public let onReorderPriority: ([String]) -> Void
     public let polishDegradation: () -> STTPolishDegradation?
     public let onDismissPolishDegradation: () -> Void
-    public let anchorMode: () -> VoiceBarAnchorMode
-    public let onSelectAnchorMode: (VoiceBarAnchorMode) -> Void
     public let performanceEffort: () -> VoiceBarPerformanceEffort
     public let performanceEffortNotice: () -> String?
     public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
     public let modelsStatus: () -> ModelsSettingsState
+    public let tabRequest: SettingsTabRequest?
     public let onRefreshModelsStatus: () -> Void
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
@@ -324,8 +336,6 @@ public struct SettingsView: View {
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
 
     @State private var selectedTab: SettingsTab
-    @State private var selectedAnchorMode: VoiceBarAnchorMode
-    @State private var selectedAnchoredMode: VoiceBarAnchorMode
     @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
     @State private var localVoiceBarHidden: Bool
     @State private var historyDayGroups: [SettingsHistoryDayGroup]
@@ -382,8 +392,6 @@ public struct SettingsView: View {
         onReorderPriority: @escaping ([String]) -> Void = { _ in },
         polishDegradation: @escaping () -> STTPolishDegradation? = { nil },
         onDismissPolishDegradation: @escaping () -> Void = {},
-        anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
-        onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in },
         performanceEffort: @escaping () -> VoiceBarPerformanceEffort = { .accurate },
         performanceEffortNotice: @escaping () -> String? = { nil },
         onSelectPerformanceEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
@@ -441,6 +449,7 @@ public struct SettingsView: View {
             )
         },
         initialTab: SettingsTab = .general,
+        tabRequest: SettingsTabRequest? = nil,
         initialHistoryScope: SettingsHistoryScope = .recording,
         initialDictionarySearch: String = "",
         initialAdvancedExpanded: Bool = false,
@@ -458,8 +467,6 @@ public struct SettingsView: View {
         self.onReorderPriority = onReorderPriority
         self.polishDegradation = polishDegradation
         self.onDismissPolishDegradation = onDismissPolishDegradation
-        self.anchorMode = anchorMode
-        self.onSelectAnchorMode = onSelectAnchorMode
         self.performanceEffort = performanceEffort
         self.performanceEffortNotice = performanceEffortNotice
         self.onSelectPerformanceEffort = onSelectPerformanceEffort
@@ -510,9 +517,9 @@ public struct SettingsView: View {
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
         self.footerPresentation = footerPresentation
-        let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
-        _selectedTab = State(initialValue: initialTab)
+        self.tabRequest = tabRequest
+        _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
         _dictionarySearch = State(initialValue: initialDictionarySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
         _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
@@ -525,7 +532,6 @@ public struct SettingsView: View {
             initialValue: max(Self.historyPageSize, initialAskHistoryPage?.loadedEntryCount ?? 0)
         )
         _askHistoryHasMore = State(initialValue: initialAskHistoryPage?.hasMore ?? false)
-        _selectedAnchorMode = State(initialValue: initialAnchorMode)
         _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
         _localVoiceBarHidden = State(initialValue: isVoiceBarHidden())
         let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
@@ -540,11 +546,6 @@ public struct SettingsView: View {
             initialDictionaryPreview?.displayEntries ?? initialDictionaryPreview?.entries.map {
                 STTDictionaryDisplayEntry(source: "personal", entry: $0)
             } ?? []))
-        _selectedAnchoredMode = State(
-            initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
-                ? initialAnchorMode
-                : .topCenter
-        )
     }
 
     public var body: some View {
@@ -571,6 +572,9 @@ public struct SettingsView: View {
                 onRefresh: { loadDictionaryPreview() }
             )
         )
+        .onChange(of: tabRequest) { _, request in
+            if let request { selectedTab = request.tab }
+        }
         .task(id: selectedTab) {
             if selectedTab == .dictionary, !hasInitialDictionaryPreview { loadDictionaryPreview() }
         }
@@ -1991,17 +1995,6 @@ public struct SettingsView: View {
         return "Missing: \(names.joined(separator: ", "))"
     }
 
-    private var positionModeDescription: String {
-        switch selectedAnchorMode {
-        case .follow:
-            "Follows the active screen while you drag freely."
-        case .topCenter:
-            "Anchored to the top center of the active screen."
-        case .bottomCenter:
-            "Anchored to the bottom center of the active screen."
-        }
-    }
-
     private func permissionRow(_ permission: HotkeyPermission, isGranted: Bool) -> some View {
         LabeledContent(permission.label) {
             HStack(spacing: 8) {
@@ -2190,14 +2183,6 @@ public struct SettingsView: View {
         guard loaded else { return title }
         guard let matches else { return "\(title) (\(count))" }
         return "\(title) (\(matches) of \(count))"
-    }
-
-    private func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
-        selectedAnchorMode = mode
-        if mode != .follow {
-            selectedAnchoredMode = mode
-        }
-        onSelectAnchorMode(mode)
     }
 }
 
