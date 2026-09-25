@@ -21,3 +21,29 @@ public enum NotchHistoryPresentation {
         return "\(time) · \(seconds / 60):\(String(format: "%02d", seconds % 60))"
     }
 }
+
+/// Which History row shows "Copied ✓". Each copy gets a generation, so a timer started by an earlier copy
+/// can't clear the feedback of a later one (CodeRabbit on #161: copying a row twice within 1.5 s cleared it
+/// early).
+public struct NotchHistoryCopyFeedback: Equatable {
+    private var row: Int?
+    private var generation = 0
+
+    public init() {}
+
+    public func isCopied(row: Int) -> Bool {
+        self.row == row
+    }
+
+    /// Marks `row` copied and returns the generation its expiry must match.
+    public mutating func copied(row: Int) -> Int {
+        generation &+= 1
+        self.row = row
+        return generation
+    }
+
+    public mutating func expire(_ generation: Int) {
+        guard generation == self.generation else { return }
+        row = nil
+    }
+}

@@ -1443,6 +1443,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
         var copiedTexts: [String] = []
         state.pasteboardWriter = { copiedTexts.append($0) }
+        state.pasteboardStringProvider = { copiedTexts.last }
 
         state.copyTranscript("history item to copy")
 

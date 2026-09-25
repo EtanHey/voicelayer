@@ -47,6 +47,42 @@ final class NotchHistoryPopoverTests: XCTestCase {
         XCTAssertEqual(NotchHistoryPresentation.pasteHint, "Paste types into the app you were using.")
     }
 
+    /// CodeRabbit (#161, 4100349296): copying the same row twice within 1.5 s let the first timer clear
+    /// "Copied ✓" early. Each copy gets a generation; only the latest one's expiry clears it.
+    func testASecondCopyKeepsItsOwnFeedbackWindow() {
+        var feedback = NotchHistoryCopyFeedback()
+        let first = feedback.copied(row: 0)
+        let second = feedback.copied(row: 0)
+        XCTAssertTrue(feedback.isCopied(row: 0))
+
+        feedback.expire(first)
+        XCTAssertTrue(feedback.isCopied(row: 0), "the older timer must not clear the newer copy")
+        feedback.expire(second)
+        XCTAssertFalse(feedback.isCopied(row: 0))
+
+        let other = feedback.copied(row: 1)
+        XCTAssertFalse(feedback.isCopied(row: 0))
+        XCTAssertTrue(feedback.isCopied(row: 1))
+        feedback.expire(other)
+        XCTAssertFalse(feedback.isCopied(row: 1))
+    }
+
+    /// CodeRabbit (#161, 4100349275): "Copied ✓" showed even when nothing reached the pasteboard.
+    func testCopyReportsWhetherThePasteboardTookTheText() {
+        let state = VoiceState()
+        var pasteboard: String?
+        state.pasteboardWriter = { pasteboard = $0 }
+        state.pasteboardStringProvider = { pasteboard }
+
+        XCTAssertTrue(state.copyTranscript("  kept words "))
+        XCTAssertEqual(pasteboard, "kept words")
+        XCTAssertFalse(state.copyTranscript("   "), "nothing to copy")
+
+        state.pasteboardWriter = { _ in }
+        pasteboard = "something else"
+        XCTAssertFalse(state.copyTranscript("new words"), "the write didn't land")
+    }
+
     func testCopiedFeedbackLastsLongEnoughToRead() {
         XCTAssertGreaterThanOrEqual(NotchHistoryPresentation.copiedFeedbackDuration, .milliseconds(1200))
         XCTAssertLessThanOrEqual(NotchHistoryPresentation.copiedFeedbackDuration, .seconds(3))

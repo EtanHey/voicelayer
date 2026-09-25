@@ -228,7 +228,7 @@ public struct BarView: View {
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     @State private var isHistoryPresented = false
-    @State private var copiedHistoryIndex: Int?
+    @State private var copyFeedback = NotchHistoryCopyFeedback()
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -784,11 +784,12 @@ public struct BarView: View {
                                     // the only feedback).
                                     historyActionButton(
                                         title: NotchHistoryPresentation
-                                            .copyTitle(isCopied: copiedHistoryIndex == index),
+                                            .copyTitle(isCopied: copyFeedback.isCopied(row: index)),
                                         isDisabled: isRetranscribing
                                     ) {
-                                        state.copyTranscript(item.text)
-                                        showCopied(index)
+                                        if state.copyTranscript(item.text) {
+                                            showCopied(index)
+                                        }
                                     }
                                     historyActionButton(title: "Paste", isDisabled: isRetranscribing) {
                                         state.repasteTranscript(item.text, source: "bar_history")
@@ -848,10 +849,10 @@ public struct BarView: View {
     }
 
     private func showCopied(_ index: Int) {
-        copiedHistoryIndex = index
+        let generation = copyFeedback.copied(row: index)
         Task { @MainActor in
             try? await Task.sleep(for: NotchHistoryPresentation.copiedFeedbackDuration)
-            if copiedHistoryIndex == index { copiedHistoryIndex = nil }
+            copyFeedback.expire(generation)
         }
     }
 
