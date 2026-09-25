@@ -421,6 +421,8 @@ public struct SettingsView: View {
     @State private var askHistoryLoadFence = SettingsHistoryLoadFence()
     @State private var askHistoryRefreshTask: Task<Void, Never>?
     @State private var hasPrefetchedAskHistory = false
+    /// Set when History is (re)entered, so the next Dictations page selects the newest row (UI pass #9).
+    @State private var selectNewestOnNextHistoryPage = true
     @State private var searchPrewarmTask: Task<Void, Never>?
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
@@ -679,6 +681,7 @@ public struct SettingsView: View {
             if tab == .history {
                 switch selectedHistoryScope {
                 case .recording:
+                    selectNewestOnNextHistoryPage = true
                     if !isHistoryLoading {
                         requestHistoryReload()
                     }
@@ -1119,51 +1122,54 @@ public struct SettingsView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 2) {
-                                Color.clear.frame(height: 1).id(latestHistoryAnchorID)
-                                ForEach(historyDayGroups) { group in
-                                    ForEach(group.entries) { entry in
-                                        Button {
-                                            selectedHistoryEntryID = entry.id
-                                        } label: {
-                                            recordingHistoryListRow(entry)
+                    GeometryReader { geometry in
+                        VStack(alignment: .leading, spacing: 0) {
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 2) {
+                                    Color.clear.frame(height: 1).id(latestHistoryAnchorID)
+                                    ForEach(historyDayGroups) { group in
+                                        ForEach(group.entries) { entry in
+                                            Button {
+                                                selectedHistoryEntryID = entry.id
+                                            } label: {
+                                                recordingHistoryListRow(entry)
+                                            }
+                                            .buttonStyle(.plain)
                                         }
-                                        .buttonStyle(.plain)
                                     }
                                 }
+                                .padding(12)
                             }
-                            .padding(12)
-                        }
-                        .frame(minHeight: 100)
+                            .frame(minHeight: 100, maxHeight: .infinity)
 
-                        if let entry = selectedHistoryEntry {
-                            Divider()
-                            ScrollView {
-                                recordingHistoryDetail(entry)
-                                    .padding(18)
-                            }
-                            .frame(maxHeight: 260)
-                        }
-
-                        Divider()
-                        HStack {
-                            Text(SettingsHistorySearch(historySearch).isActive
-                                ? "\(historyLoadedEntryCount) matches shown"
-                                : "\(historyLoadedEntryCount) saved shown")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            if historyHasMore {
-                                Button(isHistoryLoading ? "Loading…" : "Load more") {
-                                    loadOlderHistory()
+                            if let entry = selectedHistoryEntry {
+                                Divider()
+                                ScrollView {
+                                    recordingHistoryDetail(entry)
+                                        .padding(18)
                                 }
-                                .disabled(isHistoryLoading)
+                                // UI pass #9: the list gets most of the height.
+                                .frame(height: SettingsHistoryLayout.detailHeight(available: geometry.size.height))
                             }
+
+                            Divider()
+                            HStack {
+                                Text(SettingsHistorySearch(historySearch).isActive
+                                    ? "\(historyLoadedEntryCount) matches shown"
+                                    : "\(historyLoadedEntryCount) saved shown")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                if historyHasMore {
+                                    Button(isHistoryLoading ? "Loading…" : "Load more") {
+                                        loadOlderHistory()
+                                    }
+                                    .disabled(isHistoryLoading)
+                                }
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 10)
                         }
-                        .font(.caption)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
                     }
                 }
             }
@@ -1277,10 +1283,6 @@ public struct SettingsView: View {
                             spacing: 18,
                             pinnedViews: [.sectionHeaders]
                         ) {
-                            Color.clear
-                                .frame(height: 1)
-                                .id(latestAskHistoryAnchorID)
-
                             ForEach(askHistoryDayGroups) { group in
                                 historyDaySection(title: group.dayTitle()) {
                                     ForEach(group.entries) { entry in
@@ -1310,7 +1312,14 @@ public struct SettingsView: View {
                                 .accessibilityLabel("Load older ask history")
                             }
                         }
-                        .padding(18)
+                        // UI pass #10: the scroll anchor sits behind the stack, not in it, so no stack spacing
+                        // follows it; with the old in-stack anchor the first date sat ~50 pt down.
+                        .background(alignment: .top) {
+                            Color.clear.frame(height: 0).id(latestAskHistoryAnchorID)
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 18)
+                        .padding(.top, SettingsHistoryLayout.askListTopInset)
                     }
                 }
             }
@@ -2058,10 +2067,12 @@ public struct SettingsView: View {
 
     private func applyHistoryPage(_ page: SettingsHistoryPage) {
         historyDayGroups = Self.newestFirstHistoryGroups(page.groups)
-        let entries = historyDayGroups.flatMap(\.entries)
-        if !entries.contains(where: { $0.id == selectedHistoryEntryID }) {
-            selectedHistoryEntryID = entries.first?.id
-        }
+        selectedHistoryEntryID = SettingsHistoryLayout.selection(
+            current: selectedHistoryEntryID,
+            entries: historyDayGroups.flatMap(\.entries).map(\.id),
+            preferNewest: selectNewestOnNextHistoryPage
+        )
+        selectNewestOnNextHistoryPage = false
         historyLoadedEntryCount = page.loadedEntryCount
         historyHasMore = page.hasMore
     }
