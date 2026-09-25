@@ -579,6 +579,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             state: voiceState,
             commandRouter: commandRouter,
             onOpenSettings: { [weak self] in self?.openSettingsWindow() },
+            onOpenHistory: { [weak self] in self?.openSettingsWindow(tab: .history) },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
             includesPanelOutsets: true

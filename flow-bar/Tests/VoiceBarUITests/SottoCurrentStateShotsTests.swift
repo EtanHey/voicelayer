@@ -111,12 +111,20 @@ final class SottoCurrentStateShotsTests: XCTestCase {
 
         let panelState = syntheticState()
         panelState.recentTranscriptionEntries = [
-            RecentTranscriptionEntry(text: "A synthetic recent transcription."),
-            RecentTranscriptionEntry(text: "Another short sample with no personal content."),
+            RecentTranscriptionEntry(text: "A synthetic recent transcription.",
+                                     dictationReceipt: DictationReceipt(audioDurationMilliseconds: 13400,
+                                                                        processingDurationMilliseconds: 900),
+                                     createdAt: Date().addingTimeInterval(-120)),
+            RecentTranscriptionEntry(text: "Another short sample with no personal content.",
+                                     createdAt: Date().addingTimeInterval(-7200)),
         ]
         let panel = BarView(state: panelState, commandRouter: router, onOpenSettings: {})
-        try shot("notch-recent.png", "Notch panel: Recent Transcriptions", panel.historyPopover,
-                 size: CGSize(width: 348, height: 274))
+        // A real NSPopover draws its own background; the borderless render window stays white.
+        let popover = panel.historyPopover.background(Color(nsColor: .windowBackgroundColor))
+        try shot("notch-recent.png", "Notch panel: Recent Transcriptions", popover,
+                 size: CGSize(width: 348, height: 320))
+        try shot("notch-recent-light.png", "Notch panel: Recent Transcriptions, light", popover,
+                 size: CGSize(width: 348, height: 320), appearance: .aqua)
 
         let menu = PillContextMenuController()
         menu.transcriptProvider = { "A synthetic recent transcription." }

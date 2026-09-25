@@ -1173,14 +1173,24 @@ public final class VoiceState {
         copyTranscript(latestReusableTranscript)
     }
 
-    public func copyTranscript(_ text: String) {
+    /// True only when the text reached the pasteboard, so no surface claims "Copied" for a copy that
+    /// didn't land (CodeRabbit on #161).
+    @discardableResult
+    public func copyTranscript(_ text: String) -> Bool {
         let reusableText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !reusableText.isEmpty else { return }
+        guard !reusableText.isEmpty else { return false }
         pasteboardWriter(reusableText)
+        guard pasteboardStringProvider() == reusableText else {
+            logDiagnostic("copy_transcript_not_confirmed", details: [
+                "transcriptLength": String(reusableText.count),
+            ])
+            return false
+        }
         logDiagnostic("copy_transcript", details: [
             "transcriptLength": String(reusableText.count),
         ])
         showConfirmation("Copied")
+        return true
     }
 
     public func addVocabularyAlias(
