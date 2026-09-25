@@ -271,6 +271,8 @@ struct SettingsHistoryLoadFence {
 }
 
 public enum SettingsShortcutCheck {
+    static let readyMessage = "Shortcut ready: F5 listener and relay are active."
+
     public static func message(
         hotkeyEnabled: Bool,
         missingPermissions: [HotkeyPermission],
@@ -278,13 +280,34 @@ public enum SettingsShortcutCheck {
         relaySummary: String
     ) -> String {
         if hotkeyEnabled, missingPermissions.isEmpty, relayReady {
-            return "Shortcut ready: F5 listener and relay are active."
+            return readyMessage
         }
         var problems: [String] = []
         if !hotkeyEnabled { problems.append("F5 listener unavailable") }
         if !missingPermissions.isEmpty { problems.append("Required permissions missing") }
         if !relayReady { problems.append(relaySummary) }
         return "Shortcut needs attention: \(problems.joined(separator: "; "))."
+    }
+
+    /// R4 UI pass #15: pressing Check changed nothing on screen. The line now says when the check ran and
+    /// marks a pass, e.g. "Checked ✓ just now · Shortcut ready: …".
+    public static func feedback(message: String, checkedAt: Date, now: Date = Date()) -> String {
+        let when = VoiceBarRelativeTime.label(checkedAt, now: now) ?? "Just now"
+        let lowered = when.prefix(1).lowercased() + when.dropFirst()
+        return "\(message == readyMessage ? "Checked ✓" : "Checked") \(lowered) · \(message)"
+    }
+}
+
+/// R4 UI pass #14: "Hidden" didn't say when VoiceBar comes back.
+public enum SettingsVisibility {
+    public static func hiddenStatus(until: Date?, calendar: Calendar = .current) -> String {
+        guard let until else { return "Hidden" }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = calendar.locale ?? .current
+        formatter.setLocalizedDateFormatFromTemplate("jmm")
+        return "Hidden until \(formatter.string(from: until))"
     }
 }
 
@@ -320,6 +343,7 @@ public struct SettingsView: View {
     public let onCheckShortcut: (@escaping (String) -> Void) -> Void
     public let isMicrophonePermissionGranted: () -> Bool
     public let isVoiceBarHidden: () -> Bool
+    public let voiceBarHiddenUntil: () -> Date?
     public let onHideVoiceBar: () -> Void
     public let onShowVoiceBar: () -> Void
     public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
@@ -383,7 +407,7 @@ public struct SettingsView: View {
     @State private var relaySetupFeedback: String?
     @State private var relaySetupRunning = false
     @State private var shortcutCheckRunning = false
-    @State private var shortcutCheckFeedback: String?
+    @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
     @State private var isAdvancedExpanded = false
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @State private var lastDictationProvenanceLabel: String?
@@ -421,6 +445,7 @@ public struct SettingsView: View {
         onCheckShortcut: @escaping (@escaping (String) -> Void) -> Void = { $0("Shortcut check unavailable.") },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
         isVoiceBarHidden: @escaping () -> Bool = { false },
+        voiceBarHiddenUntil: @escaping () -> Date? = { nil },
         onHideVoiceBar: @escaping () -> Void = {},
         onShowVoiceBar: @escaping () -> Void = {},
         onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
@@ -495,6 +520,7 @@ public struct SettingsView: View {
         self.onCheckShortcut = onCheckShortcut
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
         self.isVoiceBarHidden = isVoiceBarHidden
+        self.voiceBarHiddenUntil = voiceBarHiddenUntil
         self.onHideVoiceBar = onHideVoiceBar
         self.onShowVoiceBar = onShowVoiceBar
         self.onRunRelaySetup = onRunRelaySetup
@@ -658,7 +684,7 @@ public struct SettingsView: View {
                     Button("Check shortcut") {
                         shortcutCheckRunning = true
                         onCheckShortcut { result in
-                            shortcutCheckFeedback = result
+                            shortcutCheckFeedback = (result, Date())
                             shortcutCheckRunning = false
                         }
                     }
@@ -671,7 +697,14 @@ public struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 }
                 if let shortcutCheckFeedback {
-                    Text(shortcutCheckFeedback).font(.caption).foregroundStyle(.secondary)
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text(SettingsShortcutCheck.feedback(
+                            message: shortcutCheckFeedback.message,
+                            checkedAt: shortcutCheckFeedback.checkedAt,
+                            now: context.date
+                        ))
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -750,7 +783,10 @@ public struct SettingsView: View {
     private var visibilitySection: some View {
         Section("Visibility") {
             LabeledContent("VoiceBar") {
-                statusBadge(localVoiceBarHidden ? "Hidden" : "Visible", isReady: !localVoiceBarHidden)
+                statusBadge(
+                    localVoiceBarHidden ? SettingsVisibility.hiddenStatus(until: voiceBarHiddenUntil()) : "Visible",
+                    isReady: !localVoiceBarHidden
+                )
             }
 
             if localVoiceBarHidden {
