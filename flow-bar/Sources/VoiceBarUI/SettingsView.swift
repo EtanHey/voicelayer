@@ -330,6 +330,9 @@ public struct SettingsView: View {
     public let onCopyLastDictation: (String) -> Void
     public let historyPage: @Sendable (Int) async -> SettingsHistoryPage
     public let askHistoryPage: @Sendable (Int) async -> SettingsAskHistoryPage
+    /// H1-c: a page of matches for a non-blank query, paged and cached by the index like the unfiltered pages.
+    public let historySearchPage: @Sendable (Int, String) async -> SettingsHistoryPage
+    public let askHistorySearchPage: @Sendable (Int, String) async -> SettingsAskHistoryPage
     public let onCopyHistoryTranscript: (String) -> Void
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
@@ -366,6 +369,8 @@ public struct SettingsView: View {
     @State private var hasPrefetchedAskHistory = false
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
+    @State private var historySearch = ""
+    @State private var askHistorySearch = ""
     @State private var includedTermsExpanded = false
     /// Etan (M27): "a collapsible Personal section". Expanded by default.
     @State private var yourTermsExpanded = true
@@ -440,6 +445,12 @@ public struct SettingsView: View {
         askHistoryPage: @escaping @Sendable (Int) async -> SettingsAskHistoryPage = { limit in
             await SettingsArchiveIndex.shared.askPage(limit: limit)
         },
+        historySearchPage: @escaping @Sendable (Int, String) async -> SettingsHistoryPage = { limit, query in
+            await SettingsArchiveIndex.shared.dictationPage(limit: limit, matching: query)
+        },
+        askHistorySearchPage: @escaping @Sendable (Int, String) async -> SettingsAskHistoryPage = { limit, query in
+            await SettingsArchiveIndex.shared.askPage(limit: limit, matching: query)
+        },
         initialAskHistoryPage: SettingsAskHistoryPage? = nil,
         onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
         onPasteHistoryTranscript: @escaping (String) -> Void = { _ in },
@@ -462,6 +473,8 @@ public struct SettingsView: View {
         tabRequest: SettingsTabRequest? = nil,
         initialHistoryScope: SettingsHistoryScope = .recording,
         initialDictionarySearch: String = "",
+        initialHistorySearch: String = "",
+        initialAskHistorySearch: String = "",
         initialAdvancedExpanded: Bool = false,
         initialDictionaryPreview: STTVocabularyPreview? = nil,
         initialIncludedTermsExpanded: Bool = false,
@@ -519,6 +532,8 @@ public struct SettingsView: View {
             self.historyPage = historyPage
         }
         self.askHistoryPage = askHistoryPage
+        self.historySearchPage = historySearchPage
+        self.askHistorySearchPage = askHistorySearchPage
         self.onCopyHistoryTranscript = onCopyHistoryTranscript
         self.onPasteHistoryTranscript = onPasteHistoryTranscript
         self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
@@ -533,6 +548,8 @@ public struct SettingsView: View {
         self.onSelectedTabChange = onSelectedTabChange
         _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
         _dictionarySearch = State(initialValue: initialDictionarySearch)
+        _historySearch = State(initialValue: initialHistorySearch)
+        _askHistorySearch = State(initialValue: initialAskHistorySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
         _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
         _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
@@ -957,6 +974,15 @@ public struct SettingsView: View {
         // AIDEV-NOTE: Always reload the scope being switched to. An inactive scope is out of the
         // view hierarchy, so its `.onReceive(voiceBarHistoryArchiveDidChange)` never fires — without
         // this, switching back shows a list frozen at whenever that scope was last on screen.
+        // H1-c: a new query starts from the first page again; typing is debounced by the load itself.
+        .onChange(of: SettingsHistorySearch(historySearch)) { _, _ in
+            historyLoadedEntryLimit = Self.historyPageSize
+            requestHistoryReload(debounce: true, scrollToLatest: false)
+        }
+        .onChange(of: SettingsHistorySearch(askHistorySearch)) { _, _ in
+            askHistoryLoadedEntryLimit = Self.historyPageSize
+            requestAskHistoryReload(debounce: true, scrollToLatest: false)
+        }
         .onChange(of: selectedHistoryScope) { _, scope in
             historyPlayback.stop()
             switch scope {
@@ -998,11 +1024,13 @@ public struct SettingsView: View {
                     VStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Loading history...")
+                        Text(SettingsHistorySearch(historySearch).isActive ? "Searching…" : "Loading history...")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if historyDayGroups.isEmpty, SettingsHistorySearch(historySearch).isActive {
+                    historyNoMatches(SettingsHistorySearch(historySearch).query)
                 } else if historyDayGroups.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "clock.arrow.circlepath")
@@ -1046,7 +1074,9 @@ public struct SettingsView: View {
 
                         Divider()
                         HStack {
-                            Text("\(historyLoadedEntryCount) saved shown")
+                            Text(SettingsHistorySearch(historySearch).isActive
+                                ? "\(historyLoadedEntryCount) matches shown"
+                                : "\(historyLoadedEntryCount) saved shown")
                                 .foregroundStyle(.secondary)
                             Spacer()
                             if historyHasMore {
@@ -1143,11 +1173,13 @@ public struct SettingsView: View {
                     VStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Loading ask history...")
+                        Text(SettingsHistorySearch(askHistorySearch).isActive ? "Searching…" : "Loading ask history...")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if askHistoryDayGroups.isEmpty, SettingsHistorySearch(askHistorySearch).isActive {
+                    historyNoMatches(SettingsHistorySearch(askHistorySearch).query)
                 } else if askHistoryDayGroups.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "bubble.left.and.bubble.right")
@@ -1221,11 +1253,18 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Ask")
                     .font(.title3.weight(.semibold))
-                Text("\(askHistoryLoadedEntryCount) exchanges")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(Self.historyCountLabel(
+                    askHistoryLoadedEntryCount,
+                    hasMore: askHistoryHasMore,
+                    noun: "exchanges",
+                    searching: SettingsHistorySearch(askHistorySearch).isActive,
+                    loading: isAskHistoryLoading
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
+            historySearchField("Search questions and answers", text: $askHistorySearch)
             if isAskHistoryLoading {
                 ProgressView()
                     .controlSize(.small)
@@ -1248,11 +1287,18 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("History")
                     .font(.title3.weight(.semibold))
-                Text("\(historyLoadedEntryCount) transcripts")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(Self.historyCountLabel(
+                    historyLoadedEntryCount,
+                    hasMore: historyHasMore,
+                    noun: "transcripts",
+                    searching: SettingsHistorySearch(historySearch).isActive,
+                    loading: isHistoryLoading
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
+            historySearchField("Search transcripts", text: $historySearch)
             if isHistoryLoading {
                 ProgressView()
                     .controlSize(.small)
@@ -1278,6 +1324,63 @@ public struct SettingsView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
+    }
+
+    private func historySearchField(_ prompt: String, text: Binding<String>) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+            if !text.wrappedValue.isEmpty {
+                Button {
+                    text.wrappedValue = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Clear search")
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+        .frame(maxWidth: 240)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(prompt)
+    }
+
+    private func historyNoMatches(_ query: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("No matches for \u{201C}\(query)\u{201D}")
+                .font(.headline)
+            Text("Search looks through the whole archive, not just the loaded page.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// "12 transcripts", or while searching "3 matches" / "100+ matches" (more load with Load more), and
+    /// "Searching…" while a search is still loading.
+    static func historyCountLabel(
+        _ count: Int,
+        hasMore: Bool,
+        noun: String,
+        searching: Bool,
+        loading: Bool = false
+    ) -> String {
+        guard searching else { return "\(count) \(noun)" }
+        guard !loading else { return "Searching…" }
+        let shown = hasMore ? "\(count)+" : "\(count)"
+        return "\(shown) \(count == 1 && !hasMore ? "match" : "matches")"
     }
 
     private func historyDaySection(
@@ -1826,7 +1929,16 @@ public struct SettingsView: View {
         animated: Bool = true
     ) {
         let generation = historyLoadFence.begin()
-        let loader = historyPage
+        let search = SettingsHistorySearch(historySearch)
+        let pageLoader = historyPage
+        let searchLoader = historySearchPage
+        let loader: @Sendable (Int) async -> SettingsHistoryPage
+        if search.isActive {
+            let query = search.query
+            loader = { limit in await searchLoader(limit, query) }
+        } else {
+            loader = pageLoader
+        }
         isHistoryLoading = true
         historyRefreshTask?.cancel()
         historyRefreshTask = Task.detached(priority: .utility) {
@@ -1916,7 +2028,16 @@ public struct SettingsView: View {
         animated: Bool = true
     ) {
         let generation = askHistoryLoadFence.begin()
-        let loader = askHistoryPage
+        let search = SettingsHistorySearch(askHistorySearch)
+        let pageLoader = askHistoryPage
+        let searchLoader = askHistorySearchPage
+        let loader: @Sendable (Int) async -> SettingsAskHistoryPage
+        if search.isActive {
+            let query = search.query
+            loader = { limit in await searchLoader(limit, query) }
+        } else {
+            loader = pageLoader
+        }
         isAskHistoryLoading = true
         askHistoryRefreshTask?.cancel()
         askHistoryRefreshTask = Task.detached(priority: .utility) {
