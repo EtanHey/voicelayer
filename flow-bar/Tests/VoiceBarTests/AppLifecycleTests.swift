@@ -958,15 +958,46 @@ final class AppLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenSettingsFromTheMenuBarNeverClosesTheSettingsWindowItself() throws {
-        let app = AppDelegate()
-        app.openSettingsWindow()
-        let settings = try XCTUnwrap(app.settingsWindowForTesting)
-        defer { settings.close() }
+    /// Counts `orderOut` calls, so the identity guard is observed directly (#157 review, mutation M2: the
+    /// old visibility check passed without the guard because Settings is re-fronted right after).
+    private final class OrderOutCountingWindow: NSWindow {
+        private(set) var orderOutCount = 0
+        override func orderOut(_ sender: Any?) {
+            orderOutCount += 1
+            super.orderOut(sender)
+        }
+    }
 
-        app.openSettingsFromMenuBar(popover: settings)
+    @MainActor
+    func testMenuBarDismissalOrdersOutOnlyAWindowThatIsNotSettings() {
+        func window() -> OrderOutCountingWindow {
+            OrderOutCountingWindow(contentRect: NSRect(x: -20000, y: -20000, width: 10, height: 10),
+                                   styleMask: [.borderless], backing: .buffered, defer: true)
+        }
+        let settings = window()
+        let popover = window()
 
-        XCTAssertTrue(settings.isVisible)
+        AppDelegate.dismissMenuBarPopover(settings, keeping: settings)
+        XCTAssertEqual(settings.orderOutCount, 0, "the Settings window itself is never ordered out")
+
+        AppDelegate.dismissMenuBarPopover(popover, keeping: settings)
+        XCTAssertEqual(popover.orderOutCount, 1, "any other window (the popover) is")
+
+        AppDelegate.dismissMenuBarPopover(nil, keeping: settings)
+        XCTAssertEqual(settings.orderOutCount + popover.orderOutCount, 1)
+    }
+
+    /// #157 review, mutation M4: reverting "Open Settings…" to plain `openSettingsWindow()` (the reported
+    /// bug) failed no test. This pins the menu-bar popover's Settings button to the dismissing path.
+    func testMenuBarPopoverOpenSettingsGoesThroughTheDismissingPath() throws {
+        let source = try voiceBarAppSource()
+        let popover = try XCTUnwrap(source.range(of: "MenuBarPopoverView("))
+        let end = try XCTUnwrap(source.range(of: "onQuit:", range: popover.upperBound ..< source.endIndex))
+        let arguments = source[popover.upperBound ..< end.lowerBound]
+        XCTAssertTrue(
+            arguments.contains("onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) }"),
+            "Open Settings… must close the popover it was clicked in"
+        )
     }
 
     func testSettingsWindowAppliesSizingContractOnInitialOpenAndReopen() throws {

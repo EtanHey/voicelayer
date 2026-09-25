@@ -2465,10 +2465,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// "Open Settings…" in the menu-bar popover (R4 UI pass #12): the popover used to stay open over
     /// Settings. Close it first, then open Settings, which activates VoiceBar and makes the window key.
     func openSettingsFromMenuBar(popover: NSWindow?, tab: SettingsTab? = nil) {
-        if let popover, popover !== settingsWindow {
-            popover.orderOut(nil)
-        }
+        Self.dismissMenuBarPopover(popover, keeping: settingsWindow)
         openSettingsWindow(tab: tab)
+    }
+
+    /// Orders out the menu-bar popover, but never the Settings window itself.
+    static func dismissMenuBarPopover(_ popover: NSWindow?, keeping settings: NSWindow?) {
+        guard let popover, popover !== settings else { return }
+        popover.orderOut(nil)
     }
 
     /// The MenuBarExtra's window while it is open; `keyWindow` as the fallback.
