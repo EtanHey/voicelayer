@@ -5,19 +5,48 @@ import SwiftUI
 import XCTest
 
 final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
+    /// Set by the provider thread, read on the main thread.
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var raised = false
+        func raise() {
+            lock.lock()
+            raised = true
+            lock.unlock()
+        }
+
+        var isRaised: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return raised
+        }
+    }
+
+    private static var timingBudgetsEnabled: Bool {
+        ProcessInfo.processInfo.environment["VOICELAYER_SETTINGS_PERF_BENCHMARK"] == "1"
+    }
+
+    // AIDEV-NOTE: the property is "the Dictionary mounts without WAITING for the
+    // vocabulary provider", proven deterministically: the provider blocks until the
+    // mount has returned, so a mount that waited on it could never return first. The
+    // 150 ms wall-clock budget failed on loaded CI runners; it now runs only as
+    // opt-in timing evidence (VOICELAYER_SETTINGS_PERF_BENCHMARK=1).
     @MainActor
     func testDictionaryHostMountDoesNotWaitForVocabularyProvider() {
         let warmHost = NSHostingView(rootView: Text("Warm AppKit host"))
         warmHost.frame = NSRect(x: 0, y: 0, width: 780, height: 620)
         warmHost.layoutSubtreeIfNeeded()
         let loaded = expectation(description: "background vocabulary snapshot")
+        let release = DispatchSemaphore(value: 0)
+        let providerReturned = Flag()
         let view = SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
             availableDevices: { [] }, selectedDeviceID: { nil }, onSelectDevice: { _ in },
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: {
                 XCTAssertFalse(Thread.isMainThread, "Vocabulary processing must leave the main thread")
-                Thread.sleep(forTimeInterval: 0.8)
+                _ = release.wait(timeout: .now() + 5)
+                providerReturned.raise()
                 loaded.fulfill()
                 return STTVocabularyPreview(updatedAt: nil, entries: [])
             },
@@ -28,9 +57,11 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
         let start = DispatchTime.now().uptimeNanoseconds
         host.layoutSubtreeIfNeeded()
         let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        XCTAssertFalse(providerReturned.isRaised, "The Dictionary mount must not wait for the vocabulary provider")
+        release.signal()
         print(String(format: "P08_DICTIONARY host_mount_ms=%.3f", elapsed))
-        XCTAssertLessThan(elapsed, 150)
-        wait(for: [loaded], timeout: 2)
+        if Self.timingBudgetsEnabled { XCTAssertLessThan(elapsed, 150) }
+        wait(for: [loaded], timeout: 5)
     }
 
     @MainActor
@@ -44,6 +75,8 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
                 )
             }
         let preview = STTVocabularyPreview(updatedAt: nil, entries: entries, displayEntries: display)
+        let release = DispatchSemaphore(value: 0)
+        let providerReturned = Flag()
         let start = DispatchTime.now().uptimeNanoseconds
         let view = SettingsView(
             hotkeyEnabled: true,
@@ -54,7 +87,8 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
             modelsStatus: { .loading },
             onRefreshModelsStatus: {},
             vocabularyPreview: {
-                Thread.sleep(forTimeInterval: 0.2)
+                _ = release.wait(timeout: .now() + 5)
+                providerReturned.raise()
                 return preview
             },
             vocabularyRevision: { 0 },
@@ -62,8 +96,15 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
         )
         _ = view.body
         let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        XCTAssertFalse(
+            providerReturned.isRaised,
+            "Dictionary construction and first body must not wait for the snapshot"
+        )
+        release.signal()
         print(String(format: "P08_DICTIONARY first_body_ms=%.3f personal=300 bundled=120", elapsed))
-        XCTAssertLessThan(elapsed, 150, "Dictionary construction and first body must stay interactive")
+        if Self.timingBudgetsEnabled {
+            XCTAssertLessThan(elapsed, 150, "Dictionary construction and first body must stay interactive")
+        }
     }
 
     @MainActor
