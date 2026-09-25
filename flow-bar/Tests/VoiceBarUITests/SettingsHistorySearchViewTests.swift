@@ -52,6 +52,41 @@ final class SettingsHistorySearchViewTests: XCTestCase {
         host.contentViewController = nil
     }
 
+    /// #165 Macroscope 4100365833: an initial query with a preloaded, unfiltered page must still search, or the
+    /// unfiltered rows show as "matches".
+    func testAnInitialQueryAlwaysSearchesEvenWithAPreloadedPage() async {
+        for scope in [SettingsHistoryScope.recording, .ask] {
+            let log = QueryLog()
+            let preloaded = SettingsHistoryPage(groups: [
+                SettingsHistoryDayGroup(dayKey: "2026-09-25", date: Date(timeIntervalSince1970: 0), entries: [
+                    SettingsHistoryEntry(
+                        id: "/tmp/pre/audio.wav", dayKey: "2026-09-25", recordingID: "pre",
+                        createdAt: Date(timeIntervalSince1970: 0), transcript: "unfiltered",
+                        audioPath: URL(fileURLWithPath: "/tmp/pre/audio.wav")
+                    ),
+                ]),
+            ], hasMore: false)
+            let askPreloaded = SettingsAskHistoryPage(groups: [
+                SettingsAskHistoryDayGroup(dayKey: "2026-09-25", date: Date(timeIntervalSince1970: 0), entries: [
+                    SettingsAskHistoryEntry(
+                        id: "/tmp/pre-ask", dayKey: "2026-09-25", askID: "pre",
+                        createdAt: Date(timeIntervalSince1970: 0), questionText: "unfiltered?",
+                        questionAudioPath: nil, responseTranscript: "yes",
+                        responseAudioPath: URL(fileURLWithPath: "/tmp/pre-ask/audio.wav")
+                    ),
+                ]),
+            ], hasMore: false)
+            let host = hostSettings(makeView(
+                log: log, scope: scope, historySearch: "notch", askSearch: "notch",
+                initialPage: preloaded, initialAskPage: askPreloaded
+            ))
+            let expected = scope == .recording ? "dictations-search:notch" : "ask-search:notch"
+            let searched = await settle { log.events.contains(expected) }
+            XCTAssertTrue(searched, "\(scope): \(log.events)")
+            host.contentViewController = nil
+        }
+    }
+
     func testABlankQueryLoadsTheUnfilteredPage() async {
         let log = QueryLog()
         let host = hostSettings(makeView(log: log, scope: .recording, historySearch: "   "))
@@ -169,7 +204,9 @@ final class SettingsHistorySearchViewTests: XCTestCase {
         log: QueryLog,
         scope: SettingsHistoryScope,
         historySearch: String = "",
-        askSearch: String = ""
+        askSearch: String = "",
+        initialPage: SettingsHistoryPage? = nil,
+        initialAskPage: SettingsAskHistoryPage? = nil
     ) -> SettingsView {
         SettingsView(
             hotkeyEnabled: true,
@@ -184,6 +221,7 @@ final class SettingsHistorySearchViewTests: XCTestCase {
                 log.append("dictations-page")
                 return SettingsHistoryPage(groups: [], hasMore: false)
             },
+            initialHistoryPage: initialPage,
             askHistoryPage: { _ in
                 log.append("ask-page")
                 return SettingsAskHistoryPage(groups: [], hasMore: false)
@@ -196,6 +234,7 @@ final class SettingsHistorySearchViewTests: XCTestCase {
                 log.append("ask-search:\(query)")
                 return SettingsAskHistoryPage(groups: [], hasMore: false)
             },
+            initialAskHistoryPage: initialAskPage,
             initialTab: .history,
             initialHistoryScope: scope,
             initialHistorySearch: historySearch,

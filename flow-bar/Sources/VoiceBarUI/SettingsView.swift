@@ -1093,7 +1093,8 @@ public struct SettingsView: View {
                 }
             }
             .onAppear {
-                if historyDayGroups.isEmpty, !isHistoryLoading {
+                // A preloaded page is unfiltered, so an active query must still search (#165 Macroscope).
+                if historyDayGroups.isEmpty || SettingsHistorySearch(historySearch).isActive, !isHistoryLoading {
                     requestHistoryReload(scrollProxy: proxy, animated: false)
                 }
             }
@@ -1238,7 +1239,8 @@ public struct SettingsView: View {
                 }
             }
             .onAppear {
-                if askHistoryDayGroups.isEmpty, !isAskHistoryLoading {
+                if askHistoryDayGroups.isEmpty || SettingsHistorySearch(askHistorySearch).isActive,
+                   !isAskHistoryLoading {
                     requestAskHistoryReload(scrollProxy: proxy, animated: false)
                 }
             }
