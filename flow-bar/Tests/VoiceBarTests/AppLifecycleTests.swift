@@ -916,6 +916,52 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(restored.contentLayoutRect.height, 760)
     }
 
+    /// R4 UI pass #20: VoiceOver announced the status item as the SF Symbol ("Waveform In A Filled Circle").
+    /// Checked on an isolated instance through System Events: the menu bar item now reads "VoiceBar".
+    func testStatusItemAnnouncesVoiceBarNotTheSymbolName() throws {
+        let source = try voiceBarAppSource()
+        let label = try XCTUnwrap(source.range(of: "} label: {"))
+        let end = try XCTUnwrap(source.range(
+            of: ".menuBarExtraStyle(.window)",
+            range: label.upperBound ..< source.endIndex
+        ))
+        let body = source[label.upperBound ..< end.lowerBound]
+        XCTAssertTrue(body.contains(".accessibilityLabel(\"VoiceBar\")"))
+        XCTAssertFalse(body.contains(" Label("), "a Label's title never reached the status item's AX title")
+    }
+
+    /// R4 UI pass #12: "Open Settings…" left the menu-bar popover open over Settings.
+    @MainActor
+    func testOpenSettingsFromTheMenuBarClosesThePopoverAndKeysSettings() throws {
+        let app = AppDelegate()
+        let popover = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 200, height: 100),
+                               styleMask: [.borderless], backing: .buffered, defer: false)
+        popover.isReleasedWhenClosed = false
+        popover.orderFront(nil)
+        XCTAssertTrue(popover.isVisible)
+
+        app.openSettingsFromMenuBar(popover: popover)
+        defer { app.settingsWindowForTesting?.close() }
+
+        XCTAssertFalse(popover.isVisible, "the popover must close when Settings opens")
+        let settings = try XCTUnwrap(app.settingsWindowForTesting)
+        XCTAssertTrue(settings.isVisible)
+        XCTAssertTrue(settings.canBecomeKey)
+        XCTAssertTrue(settings.collectionBehavior.contains(.moveToActiveSpace))
+    }
+
+    @MainActor
+    func testOpenSettingsFromTheMenuBarNeverClosesTheSettingsWindowItself() throws {
+        let app = AppDelegate()
+        app.openSettingsWindow()
+        let settings = try XCTUnwrap(app.settingsWindowForTesting)
+        defer { settings.close() }
+
+        app.openSettingsFromMenuBar(popover: settings)
+
+        XCTAssertTrue(settings.isVisible)
+    }
+
     func testSettingsWindowAppliesSizingContractOnInitialOpenAndReopen() throws {
         let source = try voiceBarAppSource()
         let openStart = try XCTUnwrap(source.range(of: "func openSettingsWindow("))

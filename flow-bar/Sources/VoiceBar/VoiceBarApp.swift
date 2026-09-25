@@ -103,7 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     lazy var commandRouter = VoiceBarCommandRouter(
         voiceState: voiceState,
         resetHotkeyState: { [weak self] in self?.resetHotkeyTracking() },
-        showVoiceBar: { [weak self] in self?.unsnoozeNow() }
+        showVoiceBar: { [weak self] in self?.unsnoozeNow() },
+        openSettings: { [weak self] in self?.openSettingsWindow(tab: $0) }
     )
     private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
         self?.voiceState.setLocalRecordingLevel(level)
@@ -2539,6 +2540,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshRelaySetupStatusAsync()
     }
 
+    /// "Open Settings…" in the menu-bar popover (R4 UI pass #12): the popover used to stay open over
+    /// Settings. Close it first, then open Settings, which activates VoiceBar and makes the window key.
+    func openSettingsFromMenuBar(popover: NSWindow?, tab: SettingsTab? = nil) {
+        if let popover, popover !== settingsWindow {
+            popover.orderOut(nil)
+        }
+        openSettingsWindow(tab: tab)
+    }
+
+    /// The MenuBarExtra's window while it is open; `keyWindow` as the fallback.
+    static func menuBarPopoverWindow() -> NSWindow? {
+        NSApp.windows.first { $0.isVisible && String(describing: type(of: $0)).contains("MenuBarExtra") }
+            ?? NSApp.keyWindow
+    }
+
+    var settingsWindowForTesting: NSWindow? {
+        settingsWindow
+    }
+
     static func historyFileRevealSelection(for audioPath: URL) -> [URL] {
         [audioPath]
     }
@@ -2862,7 +2882,7 @@ struct VoiceBarApp: App {
                 transcript: appDelegate.voiceState.latestReusableTranscript,
                 degradationHint: appDelegate.voiceState.polishDegradation?.hint,
                 onCopy: { appDelegate.voiceState.copyLastTranscript() },
-                onSettings: { appDelegate.openSettingsWindow() },
+                onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
                 onQuit: { appDelegate.quitFromMenuBar() },
                 onSelectMicrophone: { id in
                     if appDelegate.selectMicrophone(id: id) {
@@ -2878,12 +2898,13 @@ struct VoiceBarApp: App {
                 menuMicrophoneRefresh &+= 1
             }
         } label: {
-            Label(
-                "VoiceBar",
-                systemImage: appDelegate.voiceState.polishMenuSignalPending
+            // R4 UI pass #20: VoiceOver read the SF Symbol's name ("Waveform In A Filled Circle").
+            Image(
+                systemName: appDelegate.voiceState.polishMenuSignalPending
                     ? "exclamationmark.triangle.fill"
                     : "waveform.circle.fill"
             )
+            .accessibilityLabel("VoiceBar")
         }
         .menuBarExtraStyle(.window)
         .commands {

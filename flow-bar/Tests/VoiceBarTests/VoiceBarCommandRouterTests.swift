@@ -45,6 +45,25 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertNotNil(commands.first?["id"] as? String)
     }
 
+    func testSettingsURLOpensSettingsOnTheNamedTab() throws {
+        var opened: [SettingsTab?] = []
+        let router = VoiceBarCommandRouter(voiceState: VoiceState(), openSettings: { opened.append($0) })
+
+        for (url, tab) in [
+            ("voicebar://settings", nil),
+            ("voicebar://settings/", nil),
+            ("voicebar://settings/general", SettingsTab.general),
+            ("voicebar://settings/models", .models),
+            ("voicebar://settings/dictionary", .dictionary),
+            ("voicebar://settings/History", .history),
+            ("voicebar://settings/unknown-tab", nil),
+        ] as [(String, SettingsTab?)] {
+            opened.removeAll()
+            try router.handle(url: XCTUnwrap(URL(string: url)))
+            XCTAssertEqual(opened, [tab], url)
+        }
+    }
+
     func testShowURLRunsShowVoiceBarHandler() throws {
         let state = VoiceState()
         var showCount = 0
