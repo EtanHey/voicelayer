@@ -221,12 +221,14 @@ public struct BarView: View {
     public var state: VoiceState
     public var commandRouter: BarCommandRouting
     public var onOpenSettings: () -> Void
+    public var onOpenHistory: () -> Void
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     @State private var isHistoryPresented = false
+    @State private var copiedHistoryIndex: Int?
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -250,6 +252,7 @@ public struct BarView: View {
         state: VoiceState,
         commandRouter: BarCommandRouting,
         onOpenSettings: @escaping () -> Void,
+        onOpenHistory: @escaping () -> Void = {},
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false
@@ -262,6 +265,7 @@ public struct BarView: View {
         self.state = state
         self.commandRouter = commandRouter
         self.onOpenSettings = onOpenSettings
+        self.onOpenHistory = onOpenHistory
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
@@ -769,16 +773,22 @@ public struct BarView: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(alignment: .top, spacing: 8) {
-                                if index == 0 {
-                                    Text("Latest")
+                                if let header = NotchHistoryPresentation.rowHeader(for: item) {
+                                    Text(header)
                                         .font(.system(size: 10, weight: .bold, design: .rounded))
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 0)
                                 HStack(spacing: 6) {
-                                    historyActionButton(title: "Copy", isDisabled: isRetranscribing) {
+                                    // Copy stays open and says so (R4 UI pass #13: the pressed state was
+                                    // the only feedback).
+                                    historyActionButton(
+                                        title: NotchHistoryPresentation
+                                            .copyTitle(isCopied: copiedHistoryIndex == index),
+                                        isDisabled: isRetranscribing
+                                    ) {
                                         state.copyTranscript(item.text)
-                                        isHistoryPresented = false
+                                        showCopied(index)
                                     }
                                     historyActionButton(title: "Paste", isDisabled: isRetranscribing) {
                                         state.repasteTranscript(item.text, source: "bar_history")
@@ -818,8 +828,31 @@ public struct BarView: View {
                 }
             }
             .frame(width: 320, height: 220)
+
+            Divider()
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(NotchHistoryPresentation.pasteHint)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Button(NotchHistoryPresentation.openHistoryTitle) {
+                    isHistoryPresented = false
+                    onOpenHistory()
+                }
+                .buttonStyle(.link)
+                .font(.system(size: 11, weight: .semibold))
+            }
         }
         .padding(14)
+    }
+
+    private func showCopied(_ index: Int) {
+        copiedHistoryIndex = index
+        Task { @MainActor in
+            try? await Task.sleep(for: NotchHistoryPresentation.copiedFeedbackDuration)
+            if copiedHistoryIndex == index { copiedHistoryIndex = nil }
+        }
     }
 
     private func historyActionButton(
