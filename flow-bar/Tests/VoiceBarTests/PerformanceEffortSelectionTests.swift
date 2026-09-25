@@ -158,7 +158,11 @@ final class PerformanceEffortSelectionTests: XCTestCase {
 
         app.selectPerformanceEffort(.fast)
         XCTAssertEqual(app.currentPerformanceEffort(), .fast)
-        try await Task.sleep(for: .milliseconds(300))
+        // Wait for the 50 ms ack timeout to roll back, not a fixed 300 ms.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while app.currentPerformanceEffort() != .accurate, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         XCTAssertEqual(app.currentPerformanceEffort(), .accurate)
         XCTAssertNotNil(app.currentPerformanceEffortNotice())

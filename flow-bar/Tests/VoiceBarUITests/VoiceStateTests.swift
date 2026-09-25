@@ -1349,11 +1349,17 @@ final class VoiceStateTests: XCTestCase {
         }
 
         state.dismissTeleprompter()
-        try? await Task.sleep(for: .milliseconds(30))
+        do {
+            let settled = await settle { relayoutCount >= 1 }
+            XCTAssertTrue(settled)
+        }
         XCTAssertEqual(relayoutCount, 1)
 
         state.showTeleprompter()
-        try? await Task.sleep(for: .milliseconds(30))
+        do {
+            let settled = await settle { relayoutCount >= 2 }
+            XCTAssertTrue(settled)
+        }
         XCTAssertEqual(relayoutCount, 2)
     }
 

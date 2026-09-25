@@ -49,7 +49,7 @@ final class AppLifecycleTests: XCTestCase {
 
         /// The deadline is liveness only: every caller waits on an outcome.
         private func settle(until done: () -> Bool) async {
-            let deadline = Date().addingTimeInterval(2)
+            let deadline = Date().addingTimeInterval(5)
             while parked.isEmpty, !done(), Date() < deadline {
                 try? await Task.sleep(for: .milliseconds(1))
             }
