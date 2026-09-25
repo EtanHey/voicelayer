@@ -505,7 +505,8 @@ public struct SettingsView: View {
         initialIncludedTermsExpanded: Bool = false,
         initialYourTermsExpanded: Bool = true,
         initialSelectedTermRowID: String? = nil,
-        onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in }
+        onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in },
+        historyPlayback: SettingsAudioPlayback? = nil
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -581,6 +582,9 @@ public struct SettingsView: View {
         _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
         _selectedTermRowID = State(initialValue: initialSelectedTermRowID)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
+        if let historyPlayback {
+            _historyPlayback = State(initialValue: historyPlayback)
+        }
         _askHistoryDayGroups = State(initialValue: initialAskHistoryPage?.groups ?? [])
         _askHistoryLoadedEntryCount = State(initialValue: initialAskHistoryPage?.loadedEntryCount ?? 0)
         _askHistoryLoadedEntryLimit = State(
@@ -1517,6 +1521,14 @@ public struct SettingsView: View {
                 isRetranscribing: isRetranscribing,
                 enablement: enablement
             )
+
+            if let audioPath = part.audioPath, historyPlayback.isPlaying(audioPath) {
+                SettingsPlaybackScrubBar(
+                    playback: historyPlayback,
+                    url: audioPath,
+                    accessibilityNoun: part.accessibilityNoun
+                )
+            }
         }
     }
 
