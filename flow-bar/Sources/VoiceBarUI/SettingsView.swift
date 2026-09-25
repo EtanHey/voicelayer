@@ -58,7 +58,7 @@ public enum SettingsHistoryScope: String, Hashable, CaseIterable, Sendable {
 
     public var title: String {
         switch self {
-        case .recording: "Recording"
+        case .recording: "Dictations"
         case .ask: "Ask"
         }
     }
@@ -136,6 +136,16 @@ struct SettingsHistoryMediaPart: Equatable {
     }
 }
 
+/// Whether a History action shows, and if it is blocked for now, why (UI pass #10: a disabled button with no
+/// reason looks broken).
+enum SettingsHistoryActionAvailability: Equatable {
+    case available
+    /// Can never apply to this part (no transcript to copy, no audio to play): not shown at all.
+    case hidden
+    /// Blocked for now; the reason is the tooltip and the VoiceOver hint.
+    case unavailable(String)
+}
+
 struct SettingsHistoryActionEnablement: Equatable {
     let isRetranscribing: Bool
     let isRecording: Bool
@@ -157,6 +167,24 @@ struct SettingsHistoryActionEnablement: Equatable {
             return false
         }
         return true
+    }
+
+    func availability(
+        _ action: SettingsHistoryAction,
+        for part: SettingsHistoryMediaPart
+    ) -> SettingsHistoryActionAvailability {
+        guard part.isEnabled(action) else { return .hidden }
+        guard !isEnabled(action, for: part) else { return .available }
+        switch action {
+        case .play, .retranscribe:
+            if isRecording { return .unavailable("Unavailable while recording") }
+            if isTranscribing { return .unavailable("Unavailable while transcribing") }
+            return .unavailable("Another re-transcription is running")
+        case .copy, .paste:
+            return .unavailable("Wait for the re-transcription to finish")
+        case .finder:
+            return .unavailable("Unavailable right now")
+        }
     }
 }
 
@@ -1146,9 +1174,10 @@ public struct SettingsView: View {
                 : Color.clear
         )
         .clipShape(RoundedRectangle(cornerRadius: 7))
-        .accessibilityLabel(
-            "\(entry.displayTranscript), \(entry.createdAt.formatted()), \(entry.durationLabel ?? "duration unavailable")"
-        )
+        // UI pass #7: one element, one concise label; the children each repeated the transcript.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(SettingsHistoryAccessibility.rowLabel(entry))
+        .accessibilityAddTraits(entry.id == selectedHistoryEntryID ? .isSelected : [])
     }
 
     private func recordingHistoryDetail(_ entry: SettingsHistoryEntry) -> some View {
@@ -1294,7 +1323,7 @@ public struct SettingsView: View {
     private func historyToolbar(proxy: ScrollViewProxy) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("History")
+                Text("Dictations")
                     .font(.title3.weight(.semibold))
                 Text(Self.historyCountLabel(
                     historyLoadedEntryCount,
@@ -1525,7 +1554,7 @@ public struct SettingsView: View {
         enablement: SettingsHistoryActionEnablement
     ) -> some View {
         HStack(spacing: 8) {
-            ForEach(part.actions, id: \.self) { action in
+            ForEach(part.actions.filter { enablement.availability($0, for: part) != .hidden }, id: \.self) { action in
                 historyActionButton(
                     action,
                     for: part,
@@ -1568,6 +1597,11 @@ public struct SettingsView: View {
         enablement: SettingsHistoryActionEnablement
     ) -> some View {
         let disabled = !enablement.isEnabled(action, for: part)
+        let reason: String? = if case let .unavailable(why) = enablement.availability(action, for: part) {
+            why
+        } else {
+            nil
+        }
         let isPlaying = part.audioPath.map(historyPlayback.isPlaying) ?? false
 
         switch action {
@@ -1586,7 +1620,8 @@ public struct SettingsView: View {
                 )
             }
             .disabled(disabled)
-            .help(isPlaying ? "Stop" : "Play")
+            .help(reason ?? (isPlaying ? "Stop" : "Play"))
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel("\(isPlaying ? "Stop" : "Play") \(part.accessibilityNoun)")
 
         case .copy:
@@ -1597,7 +1632,8 @@ public struct SettingsView: View {
                 historyActionLabel("Copy", systemImage: "doc.on.doc")
             }
             .disabled(disabled)
-            .help("Copy")
+            .help(reason ?? "Copy")
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel("Copy transcript")
 
         case .paste:
@@ -1608,7 +1644,8 @@ public struct SettingsView: View {
                 historyActionLabel("Paste", systemImage: "doc.on.clipboard")
             }
             .disabled(disabled)
-            .help("Paste")
+            .help(reason ?? "Paste")
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel("Paste transcript")
 
         case .retranscribe:
@@ -1623,7 +1660,8 @@ public struct SettingsView: View {
                 )
             }
             .disabled(disabled)
-            .help(enablement.isTranscribing ? "Transcribing…" : "Re-transcribe")
+            .help(reason ?? "Re-transcribe")
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel(
                 isRetranscribing ? "Re-transcribing stored audio" : "Re-transcribe stored audio"
             )
@@ -1636,7 +1674,8 @@ public struct SettingsView: View {
                 historyActionLabel("Open in Finder", systemImage: "folder")
             }
             .disabled(disabled)
-            .help("Open in Finder")
+            .help(reason ?? "Open in Finder")
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel("Open stored audio in Finder")
         }
     }
