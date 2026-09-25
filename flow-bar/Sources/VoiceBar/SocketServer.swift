@@ -341,6 +341,14 @@ final class SocketServer {
     /// Send normal commands to the command-owning daemon. Stop/cancel also go
     /// to legacy direct MCP clients because a long-lived session may own the
     /// active playback process.
+    /// Tests: the roles of clients whose hello the server has processed, read on the server queue. Commands
+    /// route by these roles, and each client's socket is read independently, so a test must wait for every
+    /// hello before it sends one (the stop-interrupt flake: a stop sent before the second playback client
+    /// registered never reached it).
+    func registeredClientRolesForTesting() -> [String] {
+        queue.sync { clients.values.compactMap(\.role).sorted() }
+    }
+
     func sendCommandToOwner(command: [String: Any]) {
         queue.async { [weak self] in
             self?.sendCommandToOwnerOnQueue(command: command)

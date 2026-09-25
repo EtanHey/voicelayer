@@ -482,7 +482,7 @@ describe("input recording durability", () => {
         expect(consumedAtTick - 5).toBeLessThanOrEqual(20);
         const captured = await Promise.race([
           recording,
-          Bun.sleep(5_000).then(() => "timed-out" as const),
+          Bun.sleep(10_000).then(() => "timed-out" as const),
         ]);
         expect(captured).not.toBe("timed-out");
         expect(captured).toBeInstanceOf(Uint8Array);
@@ -524,7 +524,7 @@ describe("input recording durability", () => {
             existsSync(retainedPath) &&
             readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * 25,
           "real child recorder to enter its post-PCM stall",
-          5_000,
+          15_000,
         );
         interval = setInterval(() => {
           intervalTicks += 1;
@@ -538,6 +538,7 @@ describe("input recording durability", () => {
         await waitUntil(
           () => consumedAtTick > 0,
           "event-loop stop poll during real child-pipe stall",
+          5_000,
         );
 
         expect(intervalTicks).toBeGreaterThanOrEqual(5);
@@ -547,7 +548,7 @@ describe("input recording durability", () => {
         expect(consumedAtTick - 5).toBeLessThanOrEqual(20);
         const captured = await Promise.race([
           recording,
-          Bun.sleep(5_000).then(() => "timed-out" as const),
+          Bun.sleep(10_000).then(() => "timed-out" as const),
         ]);
         expect(captured).not.toBe("timed-out");
         expect(captured).toBeInstanceOf(Uint8Array);
@@ -565,7 +566,10 @@ describe("input recording durability", () => {
         await recording.catch(() => null);
         clearStopSignal();
       }
-    });
+      // AIDEV-NOTE: the waits above are transition waits; their deadlines and this timeout are liveness
+      // only. Spawning the real child recorder overran 5 s under load (2 of 5 background-QoS runs with a
+      // concurrent Swift build). The behaviour bound is the loop-turn count above.
+    }, 30_000);
   }
 
   it("keeps the absent push-to-end default on VAD and auto-closes after silence", async () => {
@@ -1248,6 +1252,21 @@ describe("input recording durability", () => {
     expect(backendTranscribeCalls).toBe(0);
   });
 
+  /**
+   * Push-to-end captures run "until stop signal or timeout", and a fake recorder's EOF doesn't end one.
+   * Without a stop these tests waited out the full 2 s timer per capture, which ran past bun's 5 s test
+   * timeout / the 4 s STT wait under CI load (#162). Stop on the transition instead: once the retained WAV
+   * holds every fake PCM byte.
+   */
+  async function stopPushToEndOnceCaptured(expectedBytes: number): Promise<void> {
+    await waitUntil(
+      () => existsSync(retainedPath) && readWavDataSize(retainedPath) === expectedBytes,
+      "push-to-end capture to hold all fake PCM",
+      10_000,
+    );
+    writeFileSync(STOP_FILE, "stop");
+  }
+
   function capturedVoiceBarAudio(): string[] {
     const root = process.env.QA_VOICE_RECORDINGS_DIR!;
     if (!existsSync(root)) return [];
@@ -1269,9 +1288,9 @@ describe("input recording durability", () => {
     backendMode = "throw-on-get";
     const { waitForInput, recordToBuffer } = await import("../input");
 
-    await expect(waitForInput(2_000, "standard", true, {
-      archiveSource: "voicebar",
-    })).rejects.toThrow("whisper backend is still warming");
+    const failed = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+    await expect(failed).rejects.toThrow("whisper backend is still warming");
     const archives = capturedVoiceBarAudio();
     expect(archives).toHaveLength(1);
     const preserved = readFileSync(archives[0]);
@@ -1281,7 +1300,9 @@ describe("input recording durability", () => {
       .toMatchObject({ source: "voicebar", transcription_status: "captured" });
 
     installFakeRecorder([makePcmChunk(2500)], false);
-    await recordToBuffer(2_000, "standard", true);
+    const next = recordToBuffer(2_000, "standard", true);
+    await stopPushToEndOnceCaptured(VAD_CHUNK_BYTES);
+    await next;
     expect(readFileSync(retainedPath)).not.toEqual(preserved);
     expect(readFileSync(archives[0])).toEqual(preserved);
   });
@@ -1298,6 +1319,7 @@ describe("input recording durability", () => {
       });
       const settled = pending.then(value => value, error => error);
       try {
+        await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
         await waitUntil(() => backendTranscribeCalls === 1, "hung VoiceBar STT", 4_000);
         const archives = capturedVoiceBarAudio();
         expect(archives).toHaveLength(1);
