@@ -1644,6 +1644,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return VoiceBarNotchInteractionConfiguration(
                 lowerControlCount: lowerControlCount
             )
+        case .history:
+            return .historyPanel
         }
     }
 

@@ -44,7 +44,7 @@ public struct VoiceBarNotchMaterialDescriptor: Equatable {
             continuous(surfaceCount: 0)
         case .hoverLauncher, .recording, .compactStatus:
             continuous(surfaceCount: 1)
-        case .teleprompter:
+        case .teleprompter, .history:
             continuous(surfaceCount: VoiceBarNotchContract.material.lowerSurfaceLayerCount)
         }
     }

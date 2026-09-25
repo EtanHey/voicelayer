@@ -11,6 +11,7 @@ public final class VoiceBarNotchPresentationModel {
     public private(set) var motionCoordinator: VoiceBarNotchMotionCoordinator
     public private(set) var isHovered = false
     public private(set) var isKeyboardFocused = false
+    public private(set) var isHistoryPanelOpen = false
     public private(set) var isReducedMotionEnabled = false
 
     private var hasTeleprompter = false
@@ -86,6 +87,12 @@ public final class VoiceBarNotchPresentationModel {
         resolvePresentation()
     }
 
+    public func setHistoryPanelOpen(_ isOpen: Bool) {
+        guard isHistoryPanelOpen != isOpen else { return }
+        isHistoryPanelOpen = isOpen
+        resolvePresentation()
+    }
+
     public func setReducedMotion(_ isEnabled: Bool) {
         isReducedMotionEnabled = isEnabled
     }
@@ -95,6 +102,7 @@ public final class VoiceBarNotchPresentationModel {
             hasTeleprompter: hasTeleprompter,
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
+            hasHistoryPanel: isHistoryPanelOpen,
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth,
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth,
             recordingLeadingWingWidth: recordingLeadingWingWidth,

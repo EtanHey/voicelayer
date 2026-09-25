@@ -279,7 +279,12 @@ final class SocketServerTests: XCTestCase {
         XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
 
         let router = VoiceBarCommandRouter(voiceState: fixture.state)
-        let host = NSHostingView(rootView: BarView(state: fixture.state, commandRouter: router, onOpenSettings: {}))
+        let host = NSHostingView(rootView: BarView(
+            state: fixture.state,
+            commandRouter: router,
+            onOpenSettings: {},
+            onOpenHistory: {}
+        ))
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host
@@ -318,7 +323,12 @@ final class SocketServerTests: XCTestCase {
         XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
 
         let router = VoiceBarCommandRouter(voiceState: fixture.state)
-        let host = NSHostingView(rootView: BarView(state: fixture.state, commandRouter: router, onOpenSettings: {}))
+        let host = NSHostingView(rootView: BarView(
+            state: fixture.state,
+            commandRouter: router,
+            onOpenSettings: {},
+            onOpenHistory: {}
+        ))
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(
             contentRect: host.frame,
@@ -652,7 +662,12 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         dispatchRuntimeKey(virtualKey: 79, router: router)
         XCTAssertTrue(waitForCondition(timeout: 15) { recordingTransitions >= 2 })
 
-        let host = NSHostingView(rootView: BarView(state: state, commandRouter: router, onOpenSettings: {}))
+        let host = NSHostingView(rootView: BarView(
+            state: state,
+            commandRouter: router,
+            onOpenSettings: {},
+            onOpenHistory: {}
+        ))
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(
             contentRect: host.frame,
@@ -861,7 +876,12 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         })
         let originalAskEpoch = state.playbackEpoch
 
-        let askHost = NSHostingView(rootView: BarView(state: state, commandRouter: router, onOpenSettings: {}))
+        let askHost = NSHostingView(rootView: BarView(
+            state: state,
+            commandRouter: router,
+            onOpenSettings: {},
+            onOpenHistory: {}
+        ))
         askHost.frame = NSRect(origin: .zero, size: askHost.fittingSize)
         let askWindow = NSWindow(
             contentRect: askHost.frame,

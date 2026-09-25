@@ -225,10 +225,12 @@ public struct BarView: View {
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
+    /// Visual shots only: render one History row as hovered without a pointer.
+    private var historyForcedHoverIndex: Int?
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
+    @State private var isMorphHistoryContentPresented = false
     @State private var isHistoryPresented = false
-    @State private var copyFeedback = NotchHistoryCopyFeedback()
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -252,7 +254,7 @@ public struct BarView: View {
         state: VoiceState,
         commandRouter: BarCommandRouting,
         onOpenSettings: @escaping () -> Void,
-        onOpenHistory: @escaping () -> Void = {},
+        onOpenHistory: @escaping () -> Void,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false
@@ -311,8 +313,9 @@ public struct BarView: View {
         .onChange(of: notchPresentation.visualState) { _, visualState in
             scheduleMorphTeleprompterContent(for: visualState)
         }
-        .onChange(of: isHistoryPresented) { _, _ in
+        .onChange(of: isHistoryPresented) { _, isOpen in
             synchronizeLauncherRetention()
+            presentationModel?.setHistoryPanelOpen(isOpen)
         }
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             presentationModel?.setReducedMotion(isEnabled)
@@ -322,6 +325,7 @@ public struct BarView: View {
             synchronizeLauncherRetention()
             presentationModel?.setReducedMotion(accessibilityReduceMotion)
             isMorphTeleprompterContentPresented = notchPresentation.visualState == .teleprompter
+            isMorphHistoryContentPresented = notchPresentation.visualState == .history
         }
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
@@ -335,26 +339,26 @@ public struct BarView: View {
             return presentationModel.presentation
         }
 
-        return VoiceBarPresentation.notchPresentation(
-            from: VoiceBarNotchOperationalInput(
-                mode: state.mode,
-                showsRecordingHold: recordingHoldControl != nil,
-                hasTeleprompterText: state.teleprompterText != nil,
-                isTeleprompterDismissed: state.isTeleprompterDismissed,
-                isTeleprompterReadback: state.isTeleprompterReadback,
-                confirmationText: state.confirmationText,
-                commandModeState: state.commandModeState,
-                activeClipMarker: state.activeClipMarker,
-                queueDepth: state.queueDepth,
-                keepsPasteFlowEnvelope: state.keepsPasteFlowEnvelope,
-                hotkeyPhase: state.hotkeyPhase,
-                statusText: statusText,
-                isHovered: state.isHovering,
-                isKeyboardFocused: keepsLauncherMounted,
-                isCollapsed: state.isCollapsed,
-                visibleCoreOcclusionInset: 0
-            )
+        var input = VoiceBarNotchOperationalInput(
+            mode: state.mode,
+            showsRecordingHold: recordingHoldControl != nil,
+            hasTeleprompterText: state.teleprompterText != nil,
+            isTeleprompterDismissed: state.isTeleprompterDismissed,
+            isTeleprompterReadback: state.isTeleprompterReadback,
+            confirmationText: state.confirmationText,
+            commandModeState: state.commandModeState,
+            activeClipMarker: state.activeClipMarker,
+            queueDepth: state.queueDepth,
+            keepsPasteFlowEnvelope: state.keepsPasteFlowEnvelope,
+            hotkeyPhase: state.hotkeyPhase,
+            statusText: statusText,
+            isHovered: state.isHovering,
+            isKeyboardFocused: keepsLauncherMounted,
+            isCollapsed: state.isCollapsed,
+            visibleCoreOcclusionInset: 0
         )
+        input.isHistoryPanelOpen = isHistoryPresented
+        return VoiceBarPresentation.notchPresentation(from: input)
     }
 
     private var keepsLauncherMounted: Bool {
@@ -370,7 +374,7 @@ public struct BarView: View {
         switch notchPresentation.visualState {
         case .idle:
             EmptyView()
-        case .hoverLauncher:
+        case .hoverLauncher, .history:
             notchButton(
                 icon: "mic.fill",
                 accessibilityLabel: "Start voice recording"
@@ -417,7 +421,7 @@ public struct BarView: View {
         switch notchPresentation.visualState {
         case .idle:
             EmptyView()
-        case .hoverLauncher:
+        case .hoverLauncher, .history:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
                 historyButton
                 settingsButton
@@ -495,7 +499,16 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchLowerContent: some View {
-        if isMorphTeleprompterContentPresented {
+        if isMorphHistoryContentPresented {
+            historyPanelContent()
+                .padding(
+                    .horizontal,
+                    VoiceBarNotchContract.material.teleprompterBodyHorizontalInset
+                )
+                .padding(.top, 12)
+                .padding(.bottom, 12)
+                .transition(.opacity)
+        } else if isMorphTeleprompterContentPresented {
             VStack(spacing: 12) {
                 notchTeleprompterTimeline
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -605,6 +618,13 @@ public struct BarView: View {
     private func scheduleMorphTeleprompterContent(
         for visualState: VoiceBarNotchVisualState
     ) {
+        // The History panel's rows fade in after the shell has dropped, exactly like the teleprompter's.
+        withAnimation(
+            .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration)
+                .delay(visualState == .history ? VoiceBarNotchContract.motion.panelDelay : 0)
+        ) {
+            isMorphHistoryContentPresented = visualState == .history
+        }
         guard visualState == .teleprompter else {
             withAnimation(
                 .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration)
@@ -744,11 +764,12 @@ public struct BarView: View {
     }
 
     private var historyButton: some View {
-        notchButton(icon: "clock.arrow.circlepath", accessibilityLabel: "History") {
+        notchButton(
+            icon: "clock.arrow.circlepath",
+            isSelected: isHistoryPresented,
+            accessibilityLabel: isHistoryPresented ? "Close history" : "History"
+        ) {
             isHistoryPresented.toggle()
-        }
-        .popover(isPresented: $isHistoryPresented, arrowEdge: .bottom) {
-            historyPopover
         }
     }
 
@@ -758,120 +779,31 @@ public struct BarView: View {
         }
     }
 
-    var historyPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Transcriptions")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(state.recentTranscriptionEntries.enumerated()), id: \.offset) { index, item in
-                        let activeRetranscriptionPath = state.activeHistoryRetranscriptionPath
-                        let isRetranscribing = item.recordingPath != nil &&
-                            item.recordingPath == activeRetranscriptionPath
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(alignment: .top, spacing: 8) {
-                                if let header = NotchHistoryPresentation.rowHeader(for: item) {
-                                    Text(header)
-                                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 0)
-                                HStack(spacing: 6) {
-                                    // Copy stays open and says so (R4 UI pass #13: the pressed state was
-                                    // the only feedback).
-                                    historyActionButton(
-                                        title: NotchHistoryPresentation
-                                            .copyTitle(isCopied: copyFeedback.isCopied(row: index)),
-                                        isDisabled: isRetranscribing
-                                    ) {
-                                        if state.copyTranscript(item.text) {
-                                            showCopied(index)
-                                        }
-                                    }
-                                    historyActionButton(title: "Paste", isDisabled: isRetranscribing) {
-                                        state.repasteTranscript(item.text, source: "bar_history")
-                                        isHistoryPresented = false
-                                    }
-                                    if let recordingPath = item.recordingPath {
-                                        historyActionButton(title: "Re-transcribe", isDisabled: isRetranscribing) {
-                                            commandRouter.handleRetranscribeHistoryEntry(recordingPath: recordingPath)
-                                        }
-                                    }
-                                }
-                            }
-                            Text(item.text)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            if isRetranscribing {
-                                HStack(spacing: 6) {
-                                    ProcessingSpinner()
-                                    Text("Re-transcribing...")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 8)
-                        .opacity(isRetranscribing ? 0.62 : 1)
-                        .disabled(isRetranscribing)
-
-                        if index < state.recentTranscriptionEntries.count - 1 {
-                            Divider()
-                        }
-                    }
-                }
-            }
-            .frame(width: 320, height: 220)
-
-            Divider()
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(NotchHistoryPresentation.pasteHint)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 4)
-                Button(NotchHistoryPresentation.openHistoryTitle) {
-                    isHistoryPresented = false
-                    onOpenHistory()
-                }
-                .buttonStyle(.link)
-                .font(.system(size: 11, weight: .semibold))
-            }
-        }
-        .padding(14)
+    /// Visual shots only.
+    func forcingHistoryHover(_ index: Int?) -> BarView {
+        var copy = self
+        copy.historyForcedHoverIndex = index
+        return copy
     }
 
-    private func showCopied(_ index: Int) {
-        let generation = copyFeedback.copied(row: index)
-        Task { @MainActor in
-            try? await Task.sleep(for: NotchHistoryPresentation.copiedFeedbackDuration)
-            copyFeedback.expire(generation)
-        }
-    }
-
-    private func historyActionButton(
-        title: String,
-        isDisabled: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.08))
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
+    /// Spec §4: the History panel inside the notch's lower surface.
+    private func historyPanelContent() -> some View {
+        NotchHistoryPanel(
+            entries: state.recentTranscriptionEntries,
+            activeRetranscriptionPath: state.activeHistoryRetranscriptionPath,
+            palette: notchPalette,
+            onCopy: { state.copyTranscript($0.text) },
+            onPaste: { entry in
+                isHistoryPresented = false
+                state.repasteTranscript(entry.text, source: "bar_history")
+            },
+            onRetranscribe: { commandRouter.handleRetranscribeHistoryEntry(recordingPath: $0) },
+            onOpenHistory: {
+                isHistoryPresented = false
+                onOpenHistory()
+            },
+            forcedHoverIndex: historyForcedHoverIndex
+        )
     }
 
     private func notchButton(

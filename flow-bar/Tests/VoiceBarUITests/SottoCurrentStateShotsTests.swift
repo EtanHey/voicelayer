@@ -105,26 +105,53 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             if mode == .recording { state.recordingMode = "vad" }
             if mode == .error { state.errorMessage = "Synthetic error" }
             try shot("pill-\(name).png", "Pill: \(name)", BarView(
-                state: state, commandRouter: router, onOpenSettings: {}, includesPanelOutsets: true
+                state: state, commandRouter: router, onOpenSettings: {}, onOpenHistory: {}, includesPanelOutsets: true
             ), size: CGSize(width: 600, height: 180))
         }
 
         let panelState = syntheticState()
         panelState.recentTranscriptionEntries = [
             RecentTranscriptionEntry(text: "A synthetic recent transcription.",
+                                     recordingPath: "/tmp/voicebar-shots/synthetic/audio.wav",
                                      dictationReceipt: DictationReceipt(audioDurationMilliseconds: 13400,
                                                                         processingDurationMilliseconds: 900),
                                      createdAt: Date().addingTimeInterval(-120)),
             RecentTranscriptionEntry(text: "Another short sample with no personal content.",
                                      createdAt: Date().addingTimeInterval(-7200)),
         ]
-        let panel = BarView(state: panelState, commandRouter: router, onOpenSettings: {})
-        // A real NSPopover draws its own background; the borderless render window stays white.
-        let popover = panel.historyPopover.background(Color(nsColor: .windowBackgroundColor))
-        try shot("notch-recent.png", "Notch panel: Recent Transcriptions", popover,
-                 size: CGSize(width: 348, height: 320))
-        try shot("notch-recent-light.png", "Notch panel: Recent Transcriptions, light", popover,
-                 size: CGSize(width: 348, height: 320), appearance: .aqua)
+        // Spec §4: the History panel drops out of the notch in the teleprompter's shell. Rendered the way the
+        // app does it, through the presentation model, with and without a hovered row.
+        let historyModel = VoiceBarNotchPresentationModel()
+        historyModel.updateOperationalEnvelope(hasTeleprompter: false, isRecording: false, hasCompactStatus: false)
+        historyModel.setHovered(true)
+        historyModel.setHistoryPanelOpen(true)
+        let historyCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: historyModel.presentation).canvasGeometry
+        let historySize = CGSize(width: historyCanvas.totalWidth + 24, height: historyCanvas.totalHeight + 17)
+        for (suffix, appearance, hover) in [
+            ("", NSAppearance.Name.darkAqua, nil), ("-light", .aqua, nil),
+            ("-hover", .darkAqua, 0), ("-hover-light", .aqua, 0),
+        ] as [(String, NSAppearance.Name, Int?)] {
+            try shot("notch-history\(suffix).png", "Notch History panel\(suffix)",
+                     BarView(state: panelState, commandRouter: router, onOpenSettings: {}, onOpenHistory: {},
+                             presentationModel: historyModel, includesPanelOutsets: true)
+                         .forcingHistoryHover(hover),
+                     size: historySize, appearance: appearance)
+        }
+
+        // The teleprompter, rendered the same way, for the side-by-side style check.
+        let teleprompterState = syntheticState()
+        teleprompterState.handleEvent([
+            "type": "state", "state": "speaking",
+            "text": "A synthetic agent reply shown in the teleprompter for the side-by-side style check.",
+        ])
+        let teleprompterModel = VoiceBarNotchPresentationModel()
+        teleprompterModel.updateOperationalEnvelope(hasTeleprompter: true, isRecording: false, hasCompactStatus: false)
+        let teleprompterCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: teleprompterModel.presentation)
+            .canvasGeometry
+        try shot("notch-teleprompter-compare.png", "Notch teleprompter, for comparison",
+                 BarView(state: teleprompterState, commandRouter: router, onOpenSettings: {}, onOpenHistory: {},
+                         presentationModel: teleprompterModel, includesPanelOutsets: true),
+                 size: CGSize(width: teleprompterCanvas.totalWidth + 24, height: teleprompterCanvas.totalHeight + 17))
 
         let menu = PillContextMenuController()
         menu.transcriptProvider = { "A synthetic recent transcription." }
@@ -339,8 +366,14 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                 if mode == .disconnected { state.isConnected = false }
                 let filename = "pill-\(name)-\(appearanceName).png"
                 try render(
-                    BarView(state: state, commandRouter: router, onOpenSettings: {}, includesPanelOutsets: true)
-                        .environment(\.colorScheme, scheme),
+                    BarView(
+                        state: state,
+                        commandRouter: router,
+                        onOpenSettings: {},
+                        onOpenHistory: {},
+                        includesPanelOutsets: true
+                    )
+                    .environment(\.colorScheme, scheme),
                     size: CGSize(width: 600, height: 180),
                     to: directory.appendingPathComponent(filename),
                     appearance: appearance

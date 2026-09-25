@@ -1396,6 +1396,20 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("playbackEdgeLayoutTask?.cancel()"))
     }
 
+    /// #161 review: `onOpenHistory` defaulted to a no-op, so a caller could silently drop "Open History…".
+    func testNotchOpenHistoryIsRequiredAndOpensSettingsOnHistory() throws {
+        let barView = try String(
+            contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+                .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI/BarView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(barView.contains("onOpenHistory: @escaping () -> Void,"))
+        XCTAssertFalse(barView.contains("onOpenHistory: @escaping () -> Void = {}"))
+        XCTAssertTrue(try voiceBarAppSource().contains(
+            "onOpenHistory: { [weak self] in self?.openSettingsWindow(tab: .history) }"
+        ))
+    }
+
     private func voiceBarAppSource() throws -> String {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
