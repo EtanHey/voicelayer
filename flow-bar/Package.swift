@@ -10,7 +10,10 @@ let package = Package(
         .executableTarget(
             name: "VoiceBar",
             dependencies: ["VoiceBarUI"],
-            path: "Sources/VoiceBar"
+            path: "Sources/VoiceBar",
+            // Dev/CI-only QA probes (Etan ruling 2). A release build gets them only through
+            // `VOICEBAR_QA_BUILD=1 bash flow-bar/build-app.sh` (-Xswiftc -DVOICEBAR_QA).
+            swiftSettings: [.define("VOICEBAR_QA", .when(configuration: .debug))]
         ),
         .target(
             name: "VoiceBarUI",

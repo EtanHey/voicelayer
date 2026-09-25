@@ -56,8 +56,10 @@ final class SocketServer {
     private let state: VoiceState
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
-    var onQAContextMenuProbe: (() -> Void)?
-    var onQAVerticalHitProbe: (() -> Void)?
+    #if VOICEBAR_QA
+        var onQAContextMenuProbe: (() -> Void)?
+        var onQAVerticalHitProbe: (() -> Void)?
+    #endif
 
     /// Listening socket file descriptor.
     private var listenFD: Int32 = -1
@@ -254,21 +256,13 @@ final class SocketServer {
             return
         }
 
-        if dict["type"] as? String == "qa_context_menu_probe" {
-            if onQAContextMenuProbe != nil {
-                DispatchQueue.main.async { [weak self] in
-                    self?.onQAContextMenuProbe?()
-                }
-            }
-            return
-        }
-
-        if dict["type"] as? String == "qa_vertical_hit_probe" {
-            if onQAVerticalHitProbe != nil {
-                DispatchQueue.main.async { [weak self] in
-                    self?.onQAVerticalHitProbe?()
-                }
-            }
+        // AIDEV-NOTE: QA probes are dev/CI-only (Etan ruling 2). A build without VOICEBAR_QA
+        // still swallows every qa_* message here, so it answers them with nothing instead of
+        // letting them reach the generic handlers below.
+        if let type = dict["type"] as? String, type.hasPrefix("qa_") {
+            #if VOICEBAR_QA
+                routeQAProbe(type)
+            #endif
             return
         }
 
@@ -300,6 +294,18 @@ final class SocketServer {
             self?.state.handleEvent(dict, playbackAmplitude: playbackAmplitude)
         }
     }
+
+    #if VOICEBAR_QA
+        private func routeQAProbe(_ type: String) {
+            let probe: (() -> Void)? = switch type {
+            case "qa_context_menu_probe": onQAContextMenuProbe
+            case "qa_vertical_hit_probe": onQAVerticalHitProbe
+            default: nil
+            }
+            guard let probe else { return }
+            DispatchQueue.main.async { probe() }
+        }
+    #endif
 
     private func handleClientHello(_ payload: [String: Any], from fd: Int32?) {
         guard let fd, clients[fd] != nil else {
