@@ -118,7 +118,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("title: \"History\""))
         XCTAssertTrue(source.contains("historyTab"))
         XCTAssertTrue(source.contains("historyGroups"))
-        XCTAssertTrue(source.contains("SettingsHistoryArchive.load"))
+        XCTAssertTrue(source.contains("SettingsArchiveIndex.shared.dictationPage"))
         XCTAssertTrue(source.contains("onCopyHistoryTranscript"))
         XCTAssertTrue(source.contains("onPasteHistoryTranscript"))
         XCTAssertTrue(source.contains("onRetranscribeHistoryEntry"))
@@ -132,7 +132,7 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("historyPage"))
-        XCTAssertTrue(source.contains("SettingsHistoryArchive.loadPage"))
+        XCTAssertTrue(source.contains("SettingsArchiveIndex.shared.dictationPage"))
         XCTAssertTrue(source.contains("isHistoryLoading"))
         XCTAssertTrue(source.contains("historyLoadedEntryLimit"))
         XCTAssertTrue(source.contains("loadOlderHistory"))
@@ -431,7 +431,8 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("askHistoryPage"))
-        XCTAssertTrue(source.contains("SettingsAskHistoryArchive.loadPage"))
+        // R4/H1-a: through the shared History index (identical pages, decoded once).
+        XCTAssertTrue(source.contains("SettingsArchiveIndex.shared.askPage"))
         XCTAssertTrue(source.contains("isAskHistoryLoading"))
         XCTAssertTrue(source.contains("askHistoryLoadedEntryLimit"))
         XCTAssertTrue(source.contains("loadOlderAskHistory"))
@@ -439,7 +440,7 @@ final class SettingsViewContractTests: XCTestCase {
 
     func testRecordingScopeStillReadsOnlyTheRecordingArchive() throws {
         let source = try settingsViewSource()
-        let recordingLoad = try XCTUnwrap(source.range(of: "SettingsHistoryArchive.loadPage"))
+        let recordingLoad = try XCTUnwrap(source.range(of: "SettingsArchiveIndex.shared.dictationPage"))
 
         XCTAssertNotNil(recordingLoad)
         XCTAssertFalse(source.contains("SettingsHistoryArchive.loadAskPage"))

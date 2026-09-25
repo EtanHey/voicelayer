@@ -717,7 +717,9 @@ public final class VoiceState {
     /// Callback when voice mode changes — used to lock/unlock pill dragging.
     public var onModeChange: ((VoiceMode) -> Void)?
     public var onPanelLayoutChange: (() -> Void)?
-    public var onHistoryArchiveChange: (() -> Void)?
+    /// Called with the archived recording's audio path when a transcription lands in the archive (a new
+    /// dictation or a re-transcription of an old one).
+    public var onHistoryArchiveChange: ((String?) -> Void)?
     public var onAckEvent: ((SocketAckEvent) -> Void)?
     public var onPolishStatusChange: (() -> Void)?
     public var diagnosticLogger: ((String, [String: String]) -> Void)?
@@ -2265,7 +2267,7 @@ public final class VoiceState {
             preservingExistingReceipt: wasHistoryRetranscription
         )
         if recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            onHistoryArchiveChange?()
+            onHistoryArchiveChange?(recordingPath)
         }
         refreshTranscriptionVocabulary()
         logDiagnostic("transcription_final", details: [

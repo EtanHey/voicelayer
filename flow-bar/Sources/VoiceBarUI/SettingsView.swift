@@ -326,8 +326,8 @@ public struct SettingsView: View {
     public let lastDictationEntry: () -> RecentTranscriptionEntry?
     public let lastDictationInsertionStatus: () -> DictationInsertionStatus
     public let onCopyLastDictation: (String) -> Void
-    public let historyPage: @Sendable (Int) -> SettingsHistoryPage
-    public let askHistoryPage: @Sendable (Int) -> SettingsAskHistoryPage
+    public let historyPage: @Sendable (Int) async -> SettingsHistoryPage
+    public let askHistoryPage: @Sendable (Int) async -> SettingsAskHistoryPage
     public let onCopyHistoryTranscript: (String) -> Void
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
@@ -429,13 +429,13 @@ public struct SettingsView: View {
         lastDictationEntry: @escaping () -> RecentTranscriptionEntry? = { nil },
         lastDictationInsertionStatus: @escaping () -> DictationInsertionStatus = { .unverified },
         onCopyLastDictation: @escaping (String) -> Void = { _ in },
-        historyPage: @escaping @Sendable (Int) -> SettingsHistoryPage = { limit in
-            SettingsHistoryArchive.loadPage(limit: limit)
+        historyPage: @escaping @Sendable (Int) async -> SettingsHistoryPage = { limit in
+            await SettingsArchiveIndex.shared.dictationPage(limit: limit)
         },
         historyGroups: (@Sendable () -> [SettingsHistoryDayGroup])? = nil,
         initialHistoryPage: SettingsHistoryPage? = nil,
-        askHistoryPage: @escaping @Sendable (Int) -> SettingsAskHistoryPage = { limit in
-            SettingsAskHistoryArchive.loadPage(limit: limit)
+        askHistoryPage: @escaping @Sendable (Int) async -> SettingsAskHistoryPage = { limit in
+            await SettingsArchiveIndex.shared.askPage(limit: limit)
         },
         initialAskHistoryPage: SettingsAskHistoryPage? = nil,
         onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
@@ -1826,7 +1826,7 @@ public struct SettingsView: View {
                 try? await Task.sleep(for: .milliseconds(300))
             }
             guard !Task.isCancelled else { return }
-            let page = loader(limit)
+            let page = await loader(limit)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard historyLoadFence.accepts(generation), !Task.isCancelled else { return }
@@ -1902,7 +1902,7 @@ public struct SettingsView: View {
                 try? await Task.sleep(for: .milliseconds(300))
             }
             guard !Task.isCancelled else { return }
-            let page = loader(limit)
+            let page = await loader(limit)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard askHistoryLoadFence.accepts(generation), !Task.isCancelled else { return }

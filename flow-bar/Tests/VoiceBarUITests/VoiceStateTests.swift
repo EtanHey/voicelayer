@@ -760,9 +760,9 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] },
             recentTranscriptionEntriesSaver: { _ in }
         )
-        var historyArchiveChangeCount = 0
-        state.onHistoryArchiveChange = {
-            historyArchiveChangeCount += 1
+        var changedPaths: [String?] = []
+        state.onHistoryArchiveChange = { path in
+            changedPaths.append(path)
         }
 
         state.handleEvent([
@@ -771,7 +771,9 @@ final class VoiceStateTests: XCTestCase {
             "recording_path": audioPath,
         ])
 
-        XCTAssertEqual(historyArchiveChangeCount, 1)
+        // R4/H1-a: the path lets the app drop exactly that entry from the History index (a re-transcription
+        // rewrites an old entry in place).
+        XCTAssertEqual(changedPaths, [audioPath])
     }
 
     func testHistoryRetranscribeUpdatesOlderEntryInPlaceWithoutReordering() {
