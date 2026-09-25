@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
@@ -36,6 +38,94 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         XCTAssertEqual(cached, 0)
     }
 
+    /// #153 review MUST-FIX 1 (P09b follow-up 3, R1): the Settings window is reused, so closing it hides the
+    /// view without tearing it down. A hidden History view still hears `.voiceBarHistoryArchiveDidChange` and
+    /// reloads through the index, refilling it after every dictation. Closing must drop the view, then release.
+    @MainActor
+    func testClosingSettingsDropsTheViewSoAnArchiveChangeCannotRefillTheIndex() async throws {
+        try writeDictation(day: "2026-09-20", id: "a", createdAt: "2026-09-20T08:00:00.000Z", transcript: "one")
+        let index = SettingsArchiveIndex()
+        let root = try XCTUnwrap(root)
+        let loads = LoadCounter()
+        let view = SettingsView(
+            hotkeyEnabled: true,
+            missingPermissions: [],
+            availableDevices: { [] },
+            selectedDeviceID: { nil },
+            onSelectDevice: { _ in },
+            modelsStatus: { .loading },
+            onRefreshModelsStatus: {},
+            vocabularyRevision: { 0 },
+            historyPage: { limit in
+                loads.increment()
+                return await index.dictationPage(from: root, limit: limit)
+            },
+            askHistoryPage: { limit in await index.askPage(from: root, limit: limit) },
+            initialTab: .history
+        )
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: true
+        )
+        window.isReleasedWhenClosed = false
+        window.contentViewController = NSHostingController(rootView: view)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let firstLoad = await settle { loads.value >= 1 }
+        XCTAssertTrue(firstLoad, "History loads when it appears")
+        // Control: while hosted, an archive change reloads through the index (the mechanism of the bug).
+        let beforeChange = loads.value
+        NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+        let reloaded = await settle { loads.value > beforeChange }
+        XCTAssertTrue(reloaded, "the control failed: a hosted History view must reload on an archive change")
+
+        await SettingsWindowLifecycle.settingsWindowWillClose(window, index: index)
+        XCTAssertNil(window.contentViewController, "closing drops the hosting controller; reopen rebuilds it")
+        let afterClose = loads.value
+
+        // Dictating with Settings closed: the change must not reach a hidden view.
+        NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+        let reloadedWhileClosed = await settle(timeout: .milliseconds(900)) { loads.value > afterClose }
+        XCTAssertFalse(reloadedWhileClosed, "a closed Settings window must not reload History")
+        let cached = await index.cachedRootCount()
+        XCTAssertEqual(cached, 0, "the index stays empty while Settings is closed")
+    }
+
+    @MainActor
+    func testReopeningRebuildsTheViewOnceAtTheSizeTheUserLeft() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 560),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: true
+        )
+        window.isReleasedWhenClosed = false
+        var built = 0
+        let make = {
+            built += 1
+            return SettingsView(
+                hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] }, selectedDeviceID: { nil },
+                onSelectDevice: { _ in }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                vocabularyRevision: { 0 }, historyPage: { _ in SettingsHistoryPage(groups: [], hasMore: false) },
+                askHistoryPage: { _ in SettingsAskHistoryPage(groups: [], hasMore: false) }
+            )
+        }
+        SettingsWindowLifecycle.rebuildContentIfNeeded(window, makeSettingsView: make)
+        let userFrame = NSRect(x: 40, y: 60, width: 910, height: 640)
+        window.setFrame(userFrame, display: false)
+
+        SettingsWindowLifecycle.rebuildContentIfNeeded(window, makeSettingsView: make)
+        XCTAssertEqual(built, 1, "an open window keeps its view")
+
+        await SettingsWindowLifecycle.settingsWindowWillClose(window, index: SettingsArchiveIndex())
+        SettingsWindowLifecycle.rebuildContentIfNeeded(window, makeSettingsView: make)
+        XCTAssertEqual(built, 2)
+        XCTAssertNotNil(window.contentViewController as? NSHostingController<SettingsView>)
+        XCTAssertEqual(window.frame, userFrame)
+    }
+
     // MARK: - Wiring pins (the app target is not importable from these tests)
 
     func testHistoryLoadsGoThroughTheSharedIndexByDefault() throws {
@@ -60,7 +150,8 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
             .range(of: "NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange"))
         XCTAssertLessThan(invalidate.lowerBound, post.lowerBound, "the reload must not read the stale entry")
         XCTAssertTrue(app.contains("window.delegate = self"))
-        XCTAssertTrue(app.contains("await SettingsArchiveIndex.shared.release()"))
+        XCTAssertTrue(app.contains("SettingsWindowLifecycle.settingsWindowWillClose(window)"))
+        XCTAssertTrue(app.contains("SettingsWindowLifecycle.rebuildContentIfNeeded("))
     }
 
     private func sourceFile(_ relative: String) throws -> String {
@@ -172,5 +263,19 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
             }
         }
         return result == KERN_SUCCESS ? info.resident_size : 0
+    }
+}
+
+/// Counts loader calls from the detached History load task.
+private final class LoadCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.withLock { count }
+    }
+
+    func increment() {
+        lock.withLock { count += 1 }
     }
 }

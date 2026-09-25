@@ -2400,8 +2400,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
-        // P09b follow-up 3 (R1): Settings closed, so the History index lets go of every decoded entry.
-        Task { await SettingsArchiveIndex.shared.release() }
+        // P09b follow-up 3 (R1): drop the hidden view, then let the History index go of every entry.
+        Task { await SettingsWindowLifecycle.settingsWindowWillClose(window) }
     }
 
     func quickMenuActions() -> [VoiceBarMenuAction] {
@@ -2441,7 +2441,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settingsTabRequest = SettingsTabRequest(tab: tab, id: (settingsTabRequest?.id ?? 0) + 1)
         }
         if let settingsWindow {
-            if tab != nil, let hosting = settingsWindow.contentViewController as? NSHostingController<SettingsView> {
+            // AppKit calls this on main; the delegate just isn't annotated @MainActor.
+            let rebuilt = MainActor.assumeIsolated {
+                SettingsWindowLifecycle.rebuildContentIfNeeded(settingsWindow) { makeSettingsView() }
+            }
+            if !rebuilt, tab != nil,
+               let hosting = settingsWindow.contentViewController as? NSHostingController<SettingsView>
+            {
                 hosting.rootView = makeSettingsView()
             }
             SettingsWindowSizing.apply(to: settingsWindow)
