@@ -50,8 +50,11 @@ public struct SettingsAudioPlaybackPosition: Equatable, Sendable {
         "\(value) \(name)\(value == 1 ? "" : "s")"
     }
 
+    /// Labels stop here (2777:46:39). A corrupt, huge-but-finite duration would otherwise trap converting to Int.
+    static let largestLabelledSeconds: TimeInterval = 9_999_999
+
     private static func components(_ time: TimeInterval) -> (Int, Int, Int) {
-        let total = time.isFinite ? max(Int(time.rounded(.down)), 0) : 0
+        let total = time.isFinite ? Int(min(max(time, 0), largestLabelledSeconds).rounded(.down)) : 0
         return (total / 3600, total % 3600 / 60, total % 60)
     }
 }

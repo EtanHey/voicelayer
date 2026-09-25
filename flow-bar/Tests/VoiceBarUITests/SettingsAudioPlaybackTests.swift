@@ -234,6 +234,16 @@ final class SettingsAudioPlaybackTests: XCTestCase {
         )
     }
 
+    /// #159 Macroscope 4100260791: a finite but huge time (a corrupt duration) must not trap converting to Int.
+    func testHugeFiniteTimesClampInsteadOfTrapping() {
+        let huge = Double.greatestFiniteMagnitude
+        XCTAssertEqual(SettingsAudioPlaybackPosition.clockLabel(huge), "2777:46:39")
+        XCTAssertEqual(
+            SettingsAudioPlaybackPosition(currentTime: huge, duration: huge).spokenValue,
+            "2777 hours 46 minutes 39 seconds of 2777 hours 46 minutes 39 seconds"
+        )
+    }
+
     func testTimeForAFractionOfTheTrack() {
         let position = SettingsAudioPlaybackPosition(currentTime: 0, duration: 80)
         XCTAssertEqual(position.time(atFraction: 0.25), 20)
