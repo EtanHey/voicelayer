@@ -232,6 +232,7 @@ public struct BarView: View {
     @State private var isMorphHistoryContentPresented = false
     @State private var isHistoryPresented = false
     @State private var historyDismissal: NotchHistoryDismissal?
+    @State private var hostWindow = HostWindowBox()
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -322,6 +323,7 @@ public struct BarView: View {
         .onDisappear {
             historyDismissal?.stop()
         }
+        .background(HostWindowReader { window in hostWindow.window = window })
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             presentationModel?.setReducedMotion(isEnabled)
         }
@@ -379,6 +381,7 @@ public struct BarView: View {
         if historyDismissal == nil {
             historyDismissal = NotchHistoryDismissal { isHistoryPresented = false }
         }
+        historyDismissal?.panelWindow = hostWindow.window
         historyDismissal?.start()
     }
 

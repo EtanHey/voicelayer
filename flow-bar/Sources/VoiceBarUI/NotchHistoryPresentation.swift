@@ -27,10 +27,20 @@ public enum NotchHistoryPresentation {
         RowAction(kind: .retranscribe, symbol: "arrow.clockwise", label: "Re-transcribe"),
     ]
 
-    /// A row's identity across list changes: its audio when it has one (a re-transcription keeps its row),
-    /// else its text (#166 Macroscope: an offset moved "Copied ✓" when an entry was inserted at 0).
-    public static func rowID(for entry: RecentTranscriptionEntry) -> String {
-        entry.recordingPath ?? entry.text
+    /// Each row's identity across list changes: its audio when it has one (a re-transcription keeps its row),
+    /// else its text plus when it was dictated (#166 Macroscope: an offset moved "Copied ✓" when an entry was
+    /// inserted at 0). Ids are unique within the list: a repeat of the same base gets `#n`, so two identical
+    /// audio-less entries never share "Copied ✓" or hover (Macroscope 4100526855).
+    public static func rowIDs(for entries: [RecentTranscriptionEntry]) -> [String] {
+        var occurrences: [String: Int] = [:]
+        return entries.map { entry in
+            let base = entry.recordingPath
+                ?? entry.createdAt.map { "\(entry.text)@\($0.timeIntervalSince1970)" }
+                ?? entry.text
+            let seen = occurrences[base, default: 0]
+            occurrences[base] = seen + 1
+            return seen == 0 ? base : "\(base)#\(seen)"
+        }
     }
 
     /// The row's first words on one line: whitespace and line breaks collapse, and long text ends in "…".
@@ -63,7 +73,7 @@ public struct NotchHistoryCopyFeedback: Equatable {
 
     public init() {}
 
-    /// Rows are keyed by `NotchHistoryPresentation.rowID`, not their offset (#166 Macroscope).
+    /// Rows are keyed by `NotchHistoryPresentation.rowIDs`, not their offset (#166 Macroscope).
     public func isCopied(row: String) -> Bool {
         self.row == row
     }

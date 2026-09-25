@@ -57,28 +57,60 @@ final class NotchHistoryPanelTests: XCTestCase {
                           VoiceBarNotchContract.geometry(for: .teleprompter).bodyWidth, "still narrower")
     }
 
+    private func key(_ code: UInt16, _ characters: String, in window: NSWindow?) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window?.windowNumber ?? 0, context: nil,
+            characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code
+        ))
+    }
+
     /// #166 review MUST-FIX 2: the popover closed on any outside click; the panel must too, and on Esc.
     @MainActor
-    func testTheOpenPanelClosesOnAnOutsideClickAndOnEscapeOnly() throws {
+    func testTheOpenPanelClosesOnAnOutsideClickAndOnEscapeAimedAtIt() throws {
         var closes = 0
         let dismissal = NotchHistoryDismissal { closes += 1 }
+        let panel = NSPanel(contentRect: NSRect(x: -20000, y: -20000, width: 10, height: 10),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.orderFront(nil)
+        defer { panel.orderOut(nil) }
+        dismissal.panelWindow = panel
 
         dismissal.handleOutsideMouseDown()
         XCTAssertEqual(closes, 1, "a click in another app closes it")
 
-        let escape = try XCTUnwrap(NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
-            characters: "\u{1B}", charactersIgnoringModifiers: "\u{1B}", isARepeat: false, keyCode: 53
-        ))
-        XCTAssertTrue(dismissal.handleKeyDown(escape), "Esc closes it and is consumed")
-        XCTAssertEqual(closes, 2)
+        try dismissal.handleGlobalKeyDown(key(53, "\u{1B}", in: nil))
+        XCTAssertEqual(closes, 2, "Esc going to another app closes it")
 
-        let letter = try XCTUnwrap(NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
-            characters: "a", charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0
-        ))
-        XCTAssertFalse(dismissal.handleKeyDown(letter), "other keys pass through")
-        XCTAssertEqual(closes, 2)
+        XCTAssertTrue(try dismissal.handleLocalKeyDown(key(53, "\u{1B}", in: panel)), "Esc in the panel is consumed")
+        XCTAssertEqual(closes, 3)
+
+        XCTAssertFalse(try dismissal.handleLocalKeyDown(key(0, "a", in: panel)), "other keys pass through")
+        try dismissal.handleGlobalKeyDown(key(0, "a", in: nil))
+        XCTAssertEqual(closes, 3)
+    }
+
+    /// CodeRabbit (#166, 4100680970): the local monitor swallowed Esc in EVERY VoiceBar window while the panel
+    /// was open, so Esc could not close a Settings sheet. Only Esc aimed at the panel is the panel's.
+    @MainActor
+    func testEscapeInAnotherVoiceBarWindowIsNotConsumed() throws {
+        var closes = 0
+        let dismissal = NotchHistoryDismissal { closes += 1 }
+        let panel = NSPanel(contentRect: NSRect(x: -20000, y: -20000, width: 10, height: 10),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let settings = NSWindow(contentRect: NSRect(x: -20000, y: -19000, width: 10, height: 10),
+                                styleMask: [.titled], backing: .buffered, defer: false)
+        panel.orderFront(nil)
+        settings.orderFront(nil)
+        defer {
+            panel.orderOut(nil)
+            settings.orderOut(nil)
+        }
+        dismissal.panelWindow = panel
+
+        XCTAssertFalse(try dismissal.handleLocalKeyDown(key(53, "\u{1B}", in: settings)),
+                       "Esc belongs to the Settings window")
+        XCTAssertEqual(closes, 0)
     }
 
     @MainActor
@@ -97,9 +129,30 @@ final class NotchHistoryPanelTests: XCTestCase {
     func testRowsAreKeyedByAStableIdentity() {
         let audio = RecentTranscriptionEntry(text: "same words", recordingPath: "/tmp/a/audio.wav")
         let edited = RecentTranscriptionEntry(text: "re-transcribed words", recordingPath: "/tmp/a/audio.wav")
-        XCTAssertEqual(NotchHistoryPresentation.rowID(for: audio), NotchHistoryPresentation.rowID(for: edited),
-                       "a re-transcription keeps its row")
-        XCTAssertEqual(NotchHistoryPresentation.rowID(for: RecentTranscriptionEntry(text: "no audio")), "no audio")
+        let ids = NotchHistoryPresentation.rowIDs(for: [audio])
+        XCTAssertEqual(ids, NotchHistoryPresentation.rowIDs(for: [edited]), "a re-transcription keeps its row")
+    }
+
+    /// Macroscope (#166, 4100526855): two audio-less entries with the same text shared one id, so copying one
+    /// marked both and they shared hover.
+    func testIdenticalTextEntriesWithoutAudioGetDistinctRows() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        for entries in [
+            [RecentTranscriptionEntry(text: "okay"), RecentTranscriptionEntry(text: "okay")],
+            [RecentTranscriptionEntry(text: "okay", createdAt: now),
+             RecentTranscriptionEntry(text: "okay", createdAt: now.addingTimeInterval(-60))],
+            [
+                RecentTranscriptionEntry(text: "okay", createdAt: now),
+                RecentTranscriptionEntry(text: "okay", createdAt: now),
+            ],
+        ] {
+            let ids = NotchHistoryPresentation.rowIDs(for: entries)
+            XCTAssertEqual(Set(ids).count, 2, "\(ids)")
+            var feedback = NotchHistoryCopyFeedback()
+            _ = feedback.copied(row: ids[0])
+            XCTAssertTrue(feedback.isCopied(row: ids[0]))
+            XCTAssertFalse(feedback.isCopied(row: ids[1]), "copying one marks only that row")
+        }
     }
 
     func testHistoryYieldsToTheTeleprompterAndRecordingButBeatsStatusAndHover() {

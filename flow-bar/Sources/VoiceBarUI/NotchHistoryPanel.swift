@@ -22,8 +22,9 @@ struct NotchHistoryPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(entries.enumerated()), id: \.element.rowID) { index, entry in
-                        row(entry, index: index)
+                    let ids = NotchHistoryPresentation.rowIDs(for: entries)
+                    ForEach(Array(zip(entries.indices, ids)), id: \.1) { index, id in
+                        row(entries[index], index: index, id: id)
                     }
                 }
             }
@@ -48,9 +49,8 @@ struct NotchHistoryPanel: View {
         }
     }
 
-    private func row(_ entry: RecentTranscriptionEntry, index: Int) -> some View {
+    private func row(_ entry: RecentTranscriptionEntry, index: Int, id: String) -> some View {
         let isRetranscribing = entry.recordingPath != nil && entry.recordingPath == activeRetranscriptionPath
-        let id = entry.rowID
         let isCopied = copyFeedback.isCopied(row: id)
         let showsActions = forcedHoverIndex == index || hoveredID == id || isCopied
         return VStack(alignment: .leading, spacing: 2) {
@@ -72,7 +72,7 @@ struct NotchHistoryPanel: View {
                             .font(.system(size: 10, weight: .semibold, design: .rounded))
                             .foregroundStyle(palette.secondary.color)
                     }
-                    actionButtons(entry, isCopied: isCopied)
+                    actionButtons(entry, id: id, isCopied: isCopied)
                         .opacity(showsActions ? 1 : 0)
                 }
             }
@@ -107,12 +107,12 @@ struct NotchHistoryPanel: View {
         )
     }
 
-    private func actionButtons(_ entry: RecentTranscriptionEntry, isCopied: Bool) -> some View {
+    private func actionButtons(_ entry: RecentTranscriptionEntry, id: String, isCopied: Bool) -> some View {
         HStack(spacing: 2) {
             ForEach(NotchHistoryPresentation.rowActions, id: \.symbol) { action in
                 if action.kind != .retranscribe || entry.recordingPath != nil {
                     Button {
-                        perform(action.kind, entry: entry)
+                        perform(action.kind, entry: entry, id: id)
                     } label: {
                         Image(systemName: action.kind == .copy && isCopied ? "checkmark" : action.symbol)
                             .font(.system(size: 12, weight: .semibold))
@@ -131,11 +131,11 @@ struct NotchHistoryPanel: View {
         }
     }
 
-    private func perform(_ kind: NotchHistoryPresentation.RowAction.Kind, entry: RecentTranscriptionEntry) {
+    private func perform(_ kind: NotchHistoryPresentation.RowAction.Kind, entry: RecentTranscriptionEntry, id: String) {
         switch kind {
         case .copy:
             guard onCopy(entry) else { return }
-            let generation = copyFeedback.copied(row: entry.rowID)
+            let generation = copyFeedback.copied(row: id)
             Task { @MainActor in
                 try? await Task.sleep(for: NotchHistoryPresentation.copiedFeedbackDuration)
                 copyFeedback.expire(generation)
@@ -145,11 +145,5 @@ struct NotchHistoryPanel: View {
         case .retranscribe:
             if let path = entry.recordingPath { onRetranscribe(path) }
         }
-    }
-}
-
-private extension RecentTranscriptionEntry {
-    var rowID: String {
-        NotchHistoryPresentation.rowID(for: self)
     }
 }
