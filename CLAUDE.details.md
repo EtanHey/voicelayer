@@ -44,6 +44,7 @@
 - Model location: `models/silero_vad.onnx`.
 - MCP recording modes: VAD (default) or gated `push_to_end=true` for manual stop.
 - VoiceBar's trusted F5/tap socket field remains `press_to_talk=true`; do not rename or MCP-gate it.
+- Mouse buttons are kept (Etan ruling 3, 2026-09-24): side button 5 (CGEvent index 4; index 5 too) acts like F5, and button 4 (index 3) sends Return (`HotkeyManager.defaultTargetMouseButtons` / `defaultEnterMouseButtons`).
 - Stop signals: touch `/tmp/voicelayer-stop-{TOKEN}`, VAD silence (VAD mode), timeout (default 30s).
 - Session booking uses `/tmp/voicelayer-session-{TOKEN}.lock`; stale locks are cleaned.
 

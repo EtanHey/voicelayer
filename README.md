@@ -10,6 +10,8 @@
 **Voice I/O for AI coding assistants.** Press F5, speak to Claude Code, get on-device
 transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
 
+On a mouse with side buttons, button 5 (forward) works like F5 and button 4 (back) presses Return.
+
 ```
   You ──🎤──> whisper.cpp ──> Claude Code ──> edge-tts ──🔊──> You
          STT (local)           MCP tools         TTS (free)

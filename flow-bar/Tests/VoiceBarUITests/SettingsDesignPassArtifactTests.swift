@@ -57,8 +57,6 @@ final class SettingsDesignPassArtifactTests: XCTestCase {
             availableDevices: { [MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone")] },
             selectedDeviceID: { "built-in" },
             onSelectDevice: { _ in },
-            anchorMode: { .follow },
-            onSelectAnchorMode: { _ in },
             modelsStatus: { .loading },
             onRefreshModelsStatus: {},
             vocabularyPreview: { preview },

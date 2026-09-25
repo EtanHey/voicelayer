@@ -3,47 +3,30 @@
 import XCTest
 
 final class VoiceBarAnchorModeTests: XCTestCase {
-    func testAnchorPreferencesPersistDefaultModeWhenMissing() throws {
+    // AIDEV-NOTE: Anchor was removed from every menu (Etan ruling 1, 2026-09-24). A saved anchored
+    // mode would strand the user in a placement no control can change, so loading always resolves to
+    // `.follow` and deletes the stored keys.
+    func testAnchorPreferencesResolveToFollowWhenMissing() throws {
         let suiteName = "VoiceBarAnchorModeTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        let preferences = VoiceBarAnchorPreferences(defaults: defaults)
-
-        XCTAssertEqual(preferences.loadAnchorMode(), .follow)
-        XCTAssertEqual(
-            defaults.string(forKey: VoiceBarAnchorPreferences.anchorModeKey),
-            VoiceBarAnchorMode.follow.rawValue
-        )
+        XCTAssertEqual(VoiceBarAnchorPreferences(defaults: defaults).loadAnchorMode(), .follow)
+        XCTAssertNil(defaults.object(forKey: VoiceBarAnchorPreferences.anchorModeKey))
     }
 
-    func testAnchorPreferencesPersistSelectedModeAndRemoveLegacyLockState() throws {
-        let suiteName = "VoiceBarAnchorModeTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        let preferences = VoiceBarAnchorPreferences(defaults: defaults)
+    func testAStoredAnchoredModeMigratesToFollowAndIsForgotten() throws {
+        for stored in VoiceBarAnchorMode.anchoredPositionModes {
+            let suiteName = "VoiceBarAnchorModeTests.\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            defaults.set(stored.rawValue, forKey: VoiceBarAnchorPreferences.anchorModeKey)
+            defaults.set(true, forKey: VoiceBarAnchorPreferences.positionLockedKey)
 
-        defaults.set(true, forKey: VoiceBarAnchorPreferences.positionLockedKey)
-        preferences.saveAnchorMode(.bottomCenter)
-
-        XCTAssertEqual(preferences.loadAnchorMode(), .bottomCenter)
-        XCTAssertEqual(
-            defaults.string(forKey: VoiceBarAnchorPreferences.anchorModeKey),
-            VoiceBarAnchorMode.bottomCenter.rawValue
-        )
-        XCTAssertNil(defaults.object(forKey: VoiceBarAnchorPreferences.positionLockedKey))
-    }
-
-    func testAnchorPreferencesMigratesExistingLockKeyOutOfDefaults() throws {
-        let suiteName = "VoiceBarAnchorModeTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        defaults.set(VoiceBarAnchorMode.topCenter.rawValue, forKey: VoiceBarAnchorPreferences.anchorModeKey)
-        defaults.set(true, forKey: VoiceBarAnchorPreferences.positionLockedKey)
-        let preferences = VoiceBarAnchorPreferences(defaults: defaults)
-
-        XCTAssertEqual(preferences.loadAnchorMode(), .topCenter)
-        XCTAssertNil(defaults.object(forKey: VoiceBarAnchorPreferences.positionLockedKey))
+            XCTAssertEqual(VoiceBarAnchorPreferences(defaults: defaults).loadAnchorMode(), .follow)
+            XCTAssertNil(defaults.object(forKey: VoiceBarAnchorPreferences.anchorModeKey))
+            XCTAssertNil(defaults.object(forKey: VoiceBarAnchorPreferences.positionLockedKey))
+        }
     }
 
     func testVoiceBarDefaultsSupportsIsolatedQASuiteAndParallelOverride() {

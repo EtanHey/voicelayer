@@ -918,7 +918,7 @@ final class AppLifecycleTests: XCTestCase {
 
     func testSettingsWindowAppliesSizingContractOnInitialOpenAndReopen() throws {
         let source = try voiceBarAppSource()
-        let openStart = try XCTUnwrap(source.range(of: "func openSettingsWindow()"))
+        let openStart = try XCTUnwrap(source.range(of: "func openSettingsWindow("))
         let nextFunction = try XCTUnwrap(
             source.range(
                 of: "static func historyFileRevealSelection",
