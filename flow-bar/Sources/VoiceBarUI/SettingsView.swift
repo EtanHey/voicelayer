@@ -357,6 +357,8 @@ public struct SettingsView: View {
     /// H1-c: a page of matches for a non-blank query, paged and cached by the index like the unfiltered pages.
     public let historySearchPage: @Sendable (Int, String) async -> SettingsHistoryPage
     public let askHistorySearchPage: @Sendable (Int, String) async -> SettingsAskHistoryPage
+    /// Warms the search text in the background once History has its pages (lead add-on).
+    public let searchPrewarm: @Sendable () async -> Void
     public let onCopyHistoryTranscript: (String) -> Void
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
@@ -391,6 +393,7 @@ public struct SettingsView: View {
     @State private var askHistoryLoadFence = SettingsHistoryLoadFence()
     @State private var askHistoryRefreshTask: Task<Void, Never>?
     @State private var hasPrefetchedAskHistory = false
+    @State private var searchPrewarmTask: Task<Void, Never>?
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
     @State private var historySearch = ""
@@ -475,6 +478,9 @@ public struct SettingsView: View {
         },
         askHistorySearchPage: @escaping @Sendable (Int, String) async -> SettingsAskHistoryPage = { limit, query in
             await SettingsArchiveIndex.shared.askPage(limit: limit, matching: query)
+        },
+        searchPrewarm: @escaping @Sendable () async -> Void = {
+            await SettingsArchiveIndex.shared.prewarmSearchText()
         },
         initialAskHistoryPage: SettingsAskHistoryPage? = nil,
         onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
@@ -561,6 +567,7 @@ public struct SettingsView: View {
         self.askHistoryPage = askHistoryPage
         self.historySearchPage = historySearchPage
         self.askHistorySearchPage = askHistorySearchPage
+        self.searchPrewarm = searchPrewarm
         self.onCopyHistoryTranscript = onCopyHistoryTranscript
         self.onPasteHistoryTranscript = onPasteHistoryTranscript
         self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
@@ -2034,6 +2041,8 @@ public struct SettingsView: View {
         askHistoryRefreshTask = nil
         askHistoryLoadFence.cancel()
         isAskHistoryLoading = false
+        searchPrewarmTask?.cancel()
+        searchPrewarmTask = nil
     }
 
     /// #153 review MUST-FIX 2: the first switch to Ask walked that scope cold (~2.5x the Dictations page,
@@ -2047,6 +2056,21 @@ public struct SettingsView: View {
         guard !hasPrefetchedAskHistory, askHistoryDayGroups.isEmpty, !isAskHistoryLoading else { return }
         hasPrefetchedAskHistory = true
         requestAskHistoryReload(scrollToLatest: false)
+    }
+
+    /// Lead add-on: the first search of a Settings session read ~11k text files (2.3–3.2 s). Once the Ask page
+    /// has landed (after the Dictations page and its prefetch), warm the search text in the background so a search
+    /// typed a couple of seconds later is served from memory.
+    ///
+    /// AIDEV-NOTE: Background priority, and the index yields between chunks, so it never delays a page the user
+    /// asked for. `cancelHistoryLoads()` cancels it when History goes away; closing Settings drops this view and
+    /// releases the index, which also stops a prewarm mid-walk.
+    private func startSearchPrewarmIfNeeded() {
+        guard searchPrewarmTask == nil else { return }
+        let prewarm = searchPrewarm
+        searchPrewarmTask = Task.detached(priority: .background) {
+            await prewarm()
+        }
     }
 
     private func requestAskHistoryReload(
@@ -2101,6 +2125,7 @@ public struct SettingsView: View {
                 guard askHistoryLoadFence.accepts(generation), !Task.isCancelled else { return }
                 applyAskHistoryPage(page)
                 isAskHistoryLoading = false
+                startSearchPrewarmIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {
                     scrollToLatestAsk(scrollProxy, animated: animated)
                 }

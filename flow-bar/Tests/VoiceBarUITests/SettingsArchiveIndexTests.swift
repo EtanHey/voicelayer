@@ -228,6 +228,74 @@ final class SettingsArchiveIndexTests: XCTestCase {
         XCTAssertEqual(answer.loadedEntryCount, 1)
     }
 
+    // MARK: - Search prewarm (lead add-on)
+
+    func testPrewarmFillsEverySearchTextAndSearchesMatchAColdIndex() async throws {
+        for index in 0 ..< 30 {
+            try writeDictation(day: "2026-09-\(10 + index % 5)", id: "p\(index)",
+                               createdAt: "2026-09-\(10 + index % 5)T0\(index % 10):00:00.000Z",
+                               transcript: index % 4 == 0 ? "Release the Café build \(index)" : "other \(index)")
+        }
+        try writeAsk(day: "2026-09-12", id: "q", createdAt: "2026-09-12T09:30:00.000Z",
+                     question: "Raise the timeout?", response: "Yes, café-side")
+        let warm = SettingsArchiveIndex()
+        let root = try XCTUnwrap(root)
+
+        await warm.prewarmSearchText(from: root, chunkSize: 4)
+        let cached = await warm.cachedSearchTextCount()
+        XCTAssertEqual(cached, 31)
+
+        for query in ["cafe", "release", "timeout", "zzz"] {
+            let cold = SettingsArchiveIndex()
+            let warmDictations = await warm.dictationPage(from: root, limit: 100, matching: query)
+            let coldDictations = await cold.dictationPage(from: root, limit: 100, matching: query)
+            let warmAsks = await warm.askPage(from: root, limit: 100, matching: query)
+            let coldAsks = await cold.askPage(from: root, limit: 100, matching: query)
+            XCTAssertEqual(warmDictations, coldDictations, query)
+            XCTAssertEqual(warmAsks, coldAsks, query)
+        }
+    }
+
+    func testACancelledPrewarmStops() async throws {
+        try writeMixedArchive()
+        let index = SettingsArchiveIndex()
+        let root = try XCTUnwrap(root)
+
+        await Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await index.prewarmSearchText(from: root)
+        }.value
+
+        let cached = await index.cachedSearchTextCount()
+        XCTAssertEqual(cached, 0)
+    }
+
+    /// Settings closed mid-prewarm: the prewarm must stop, not refill the released index.
+    func testReleaseDuringAPrewarmLeavesNothingBehind() async throws {
+        for index in 0 ..< 400 {
+            try writeDictation(day: "2026-09-\(10 + index % 8)", id: "r\(index)",
+                               createdAt: "2026-09-\(10 + index % 8)T00:00:00.000Z", transcript: "entry \(index)")
+        }
+        let index = SettingsArchiveIndex()
+        let root = try XCTUnwrap(root)
+        let prewarm = Task { await index.prewarmSearchText(from: root, chunkSize: 1) }
+
+        var started = false
+        for _ in 0 ..< 500 where !started {
+            started = await index.cachedSearchTextCount() > 0
+            if !started { try await Task.sleep(for: .milliseconds(2)) }
+        }
+        XCTAssertTrue(started, "the prewarm began")
+        await index.release()
+        let visited = await prewarm.value
+
+        XCTAssertLessThan(visited, 400, "the prewarm stopped at the release instead of walking on")
+        let roots = await index.cachedRootCount()
+        let cached = await index.cachedSearchTextCount()
+        XCTAssertEqual(roots, 0)
+        XCTAssertEqual(cached, 0)
+    }
+
     func testASearchDoesNotChangeTheUnfilteredPage() async throws {
         try writeMixedArchive()
         let index = SettingsArchiveIndex()
