@@ -51,7 +51,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertNil(ModelsSettingsView.effortDisabledReason(for: idle))
         XCTAssertEqual(ModelsSettingsView.effortDisabledReason(for: .loading), "Checking VoiceLayer…")
         XCTAssertEqual(
-            ModelsSettingsView.effortDisabledReason(for: .unavailable),
+            ModelsSettingsView.effortDisabledReason(for: .disconnected),
             "Available when VoiceLayer is running"
         )
         XCTAssertEqual(
@@ -78,7 +78,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertNil(ModelsSettingsView.processingPlaceholder(for: ModelsSettingsState(healthEvent: withControls)))
         XCTAssertEqual(ModelsSettingsView.processingPlaceholder(for: .loading), "Checking…")
         XCTAssertEqual(
-            ModelsSettingsView.processingPlaceholder(for: .unavailable),
+            ModelsSettingsView.processingPlaceholder(for: .disconnected),
             "VoiceLayer isn't connected. These appear when it reconnects."
         )
         XCTAssertEqual(
@@ -218,7 +218,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertEqual(state.modelsSettingsState.residency, .loaded)
         XCTAssertEqual(state.residencyNotice, "not owned")
         state.setConnectionStatus(false)
-        XCTAssertEqual(state.modelsSettingsState.availability, .unavailable)
+        XCTAssertEqual(state.modelsSettingsState.availability, .disconnected)
         XCTAssertNil(state.residencyNotice)
     }
 
@@ -270,14 +270,17 @@ final class ModelsSettingsStateTests: XCTestCase {
         voiceState.sendCommand = { commands.append($0) }
 
         voiceState.refreshModelsSettingsStatus()
-        XCTAssertEqual(voiceState.modelsSettingsState.availability, .unavailable)
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .disconnected)
         XCTAssertTrue(commands.isEmpty)
 
         voiceState.setConnectionStatus(true)
         voiceState.handleEvent(Self.availableHealth)
         voiceState.refreshModelsSettingsStatus()
 
-        XCTAssertEqual(voiceState.modelsSettingsState.availability, .loading)
+        // The last-known status stays while the refresh is in flight (no "Starting…" flash); the effort
+        // controls wait for the reply.
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .available)
+        XCTAssertEqual(voiceState.modelsSettingsState.busyReason, "Checking VoiceLayer…")
         XCTAssertEqual(commands.count, 1)
         XCTAssertEqual(commands[0]["cmd"] as? String, "health")
         XCTAssertEqual(commands[0].count, 1)
@@ -303,7 +306,7 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertFalse(voiceState.modelsSettingsState.isBusy)
 
         voiceState.setConnectionStatus(false)
-        XCTAssertEqual(voiceState.modelsSettingsState.availability, .unavailable)
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .disconnected)
         XCTAssertTrue(voiceState.modelsSettingsState.isBusy)
 
         voiceState.setConnectionStatus(true)
@@ -356,9 +359,9 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertFalse(state.isBusy)
     }
 
-    func testMissingStatusFailsClosedAsUnavailableAndUnknown() {
+    func testMissingStatusFailsClosedAsUnreadableAndUnknown() {
         let state = ModelsSettingsState(healthEvent: ["type": "health", "recording_state": "idle"])
-        XCTAssertEqual(state.availability, .unavailable)
+        XCTAssertEqual(state.availability, .unreadable)
         XCTAssertEqual(state.residency, .unknown)
         XCTAssertTrue(state.isBusy)
     }

@@ -115,7 +115,7 @@ final class ProcessingTogglesTests: XCTestCase {
         XCTAssertEqual(ModelsSettingsView.processingBusyReason(for: state), reason)
         XCTAssertNil(ModelsSettingsView
             .processingBusyReason(for: ModelsSettingsState(healthEvent: Self.health(Self.controls()))))
-        XCTAssertNil(ModelsSettingsView.processingBusyReason(for: .unavailable),
+        XCTAssertNil(ModelsSettingsView.processingBusyReason(for: .disconnected),
                      "unavailable already shows its own Processing placeholder")
     }
 

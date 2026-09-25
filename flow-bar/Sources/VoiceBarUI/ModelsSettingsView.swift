@@ -169,7 +169,11 @@ public struct ModelsSettingsView: View {
     }
 
     private var availabilityLabel: String {
-        state.availability == .loading ? "Checking…" : "Not connected"
+        switch state.availability {
+        case .loading: "Checking…"
+        case .unreadable: "Status unreadable"
+        case .disconnected, .available: "Not connected"
+        }
     }
 
     /// Why the effort picker is disabled, shown directly under it (spec §5). nil means it is enabled.
@@ -198,8 +202,10 @@ public struct ModelsSettingsView: View {
 
     static func effortDisabledReason(for state: ModelsSettingsState) -> String? {
         switch state.availability {
-        case .unavailable:
+        case .disconnected:
             "Available when VoiceLayer is running"
+        case .unreadable:
+            "VoiceLayer is connected, but its status couldn't be read"
         case .loading:
             state.busyReason ?? "Checking VoiceLayer…"
         case .available:
@@ -213,8 +219,10 @@ public struct ModelsSettingsView: View {
         switch state.availability {
         case .loading:
             "Checking…"
-        case .unavailable:
+        case .disconnected:
             "VoiceLayer isn't connected. These appear when it reconnects."
+        case .unreadable:
+            "VoiceLayer is connected, but its status couldn't be read. These appear when it answers."
         case .available:
             state.polishControls == nil ? "Not reported by this VoiceLayer version" : nil
         }

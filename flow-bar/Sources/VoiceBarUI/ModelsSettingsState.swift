@@ -3,7 +3,11 @@ import Foundation
 public enum ModelsStatusAvailability: Equatable, Sendable {
     case loading
     case available
-    case unavailable
+    /// VoiceLayer isn't connected.
+    case disconnected
+    /// VoiceLayer is connected, but its health reply couldn't be read. Not the same as disconnected
+    /// (B1 reviewer: the old single `.unavailable` said "Not connected" for both).
+    case unreadable
 }
 
 public enum VoiceModelResidency: String, Equatable, Sendable {
@@ -51,7 +55,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
               let effortValue = status["configured_effort"] as? String,
               let configuredEffort = VoiceBarPerformanceEffort(rawValue: effortValue)
         else {
-            self = Self.unavailable
+            self = Self.unreadable
             return
         }
         availability = .available
@@ -78,6 +82,10 @@ public struct ModelsSettingsState: Equatable, Sendable {
         }
     }
 
+    /// While a health refresh is in flight after a session: the last-known status stays on screen, but
+    /// the effort controls wait for the fresh reply.
+    static let refreshingReason = "Checking VoiceLayer…"
+
     static func busyReason(mode: VoiceMode) -> String? {
         switch mode {
         case .recording: busyReason(recordingState: "recording")
@@ -86,7 +94,8 @@ public struct ModelsSettingsState: Equatable, Sendable {
         }
     }
 
-    public static let unavailable = ModelsSettingsState(availability: .unavailable)
+    public static let disconnected = ModelsSettingsState(availability: .disconnected)
+    public static let unreadable = ModelsSettingsState(availability: .unreadable)
 
     func settingBusy(_ isBusy: Bool, reason: String? = nil) -> ModelsSettingsState {
         ModelsSettingsState(

@@ -778,10 +778,15 @@ public final class VoiceState {
 
     public func refreshModelsSettingsStatus() {
         guard isConnected else {
-            modelsSettingsState = .unavailable
+            modelsSettingsState = .disconnected
             return
         }
-        modelsSettingsState = .loading
+        // AIDEV-NOTE: keep the last-known health while the refresh is in flight. Dropping to `.loading`
+        // here made the footer and popover flash "Starting…" (B1 reviewer); "Starting…" is only for a
+        // real (re)connect, which `setConnectionStatus(true)` marks.
+        modelsSettingsState = modelsSettingsState.availability == .available
+            ? modelsSettingsState.settingBusy(true, reason: ModelsSettingsState.refreshingReason)
+            : .loading
         sendCommand?(["cmd": "health"])
     }
 
@@ -1717,7 +1722,7 @@ public final class VoiceState {
             return
         }
 
-        modelsSettingsState = .unavailable
+        modelsSettingsState = .disconnected
         pendingResidencyID = nil
         timedOutResidencyID = nil
         pendingResidencyTarget = nil
@@ -1769,7 +1774,15 @@ public final class VoiceState {
                 true, reason: ModelsSettingsState.busyReason(mode: newMode)
             )
         } else if Self.blocksModelsEffort(oldMode) {
-            modelsSettingsState = isConnected ? .loading : .unavailable
+            // Session over: keep the last-known health so a dictation never flashes "Starting…"; the
+            // effort controls stay locked, with a reason, until the post-dictation refresh answers.
+            modelsSettingsState = if !isConnected {
+                .disconnected
+            } else if modelsSettingsState.availability == .available {
+                modelsSettingsState.settingBusy(true, reason: ModelsSettingsState.refreshingReason)
+            } else {
+                .loading
+            }
         }
     }
 
