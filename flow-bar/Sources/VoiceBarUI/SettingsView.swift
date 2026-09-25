@@ -20,6 +20,13 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
         }
     }
 
+    /// The `voicebar://settings/<tab>` path component, matched case-insensitively against the title.
+    public init?(urlComponent: String) {
+        guard let tab = Self.allCases.first(where: { $0.title.lowercased() == urlComponent.lowercased() })
+        else { return nil }
+        self = tab
+    }
+
     public var systemImage: String {
         switch self {
         case .general: "gearshape"
