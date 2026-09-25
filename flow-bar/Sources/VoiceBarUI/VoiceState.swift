@@ -784,9 +784,7 @@ public final class VoiceState {
         // AIDEV-NOTE: keep the last-known health while the refresh is in flight. Dropping to `.loading`
         // here made the footer and popover flash "Starting…" (B1 reviewer); "Starting…" is only for a
         // real (re)connect, which `setConnectionStatus(true)` marks.
-        modelsSettingsState = modelsSettingsState.availability == .available
-            ? modelsSettingsState.settingBusy(true, reason: ModelsSettingsState.refreshingReason)
-            : .loading
+        modelsSettingsState = lastKnownModelsStateWhileRefreshing()
         sendCommand?(["cmd": "health"])
     }
 
@@ -1786,13 +1784,21 @@ public final class VoiceState {
         } else if Self.blocksModelsEffort(oldMode) {
             // Session over: keep the last-known health so a dictation never flashes "Starting…"; the
             // effort controls stay locked, with a reason, until the post-dictation refresh answers.
-            modelsSettingsState = if !isConnected {
-                .disconnected
-            } else if modelsSettingsState.availability == .available {
-                modelsSettingsState.settingBusy(true, reason: ModelsSettingsState.refreshingReason)
-            } else {
-                .loading
-            }
+            modelsSettingsState = isConnected ? lastKnownModelsStateWhileRefreshing() : .disconnected
+        }
+    }
+
+    /// What Models shows while a health refresh is in flight: the last-known status, never a "Starting…"
+    /// flash. An available state keeps its values with effort locked until the reply; an unreadable one stays
+    /// "Status unreadable" (#162 review nit). Only an unknown state waits as `.loading`.
+    private func lastKnownModelsStateWhileRefreshing() -> ModelsSettingsState {
+        switch modelsSettingsState.availability {
+        case .available:
+            modelsSettingsState.settingBusy(true, reason: ModelsSettingsState.refreshingReason)
+        case .unreadable:
+            .unreadable
+        case .loading, .disconnected:
+            .loading
         }
     }
 

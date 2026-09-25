@@ -319,15 +319,34 @@ public enum SettingsShortcutCheck {
 
     /// R4 UI pass #15: pressing Check changed nothing on screen. The line now says when the check ran and
     /// marks a pass, e.g. "Checked ✓ just now · Shortcut ready: …".
-    public static func feedback(message: String, checkedAt: Date, now: Date = Date()) -> String {
-        let when = VoiceBarRelativeTime.label(checkedAt, now: now) ?? "Just now"
-        let lowered = when.prefix(1).lowercased() + when.dropFirst()
-        return "\(message == readyMessage ? "Checked ✓" : "Checked") \(lowered) · \(message)"
+    public static func feedback(
+        message: String,
+        checkedAt: Date,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        let when = VoiceBarRelativeTime.label(checkedAt, now: now, calendar: calendar) ?? "Just now"
+        // Only the relative words read mid-sentence in lower case; a date keeps its capitalisation
+        // (#163 review: "Checked sep 18").
+        let phrase = ["Just now", "Yesterday"].contains(when) ? when.lowercased() : when
+        return "\(message == readyMessage ? "Checked ✓" : "Checked") \(phrase) · \(message)"
     }
 }
 
 /// R4 UI pass #14: "Hidden" didn't say when VoiceBar comes back.
+/// The dot beside a Settings status: green when ready, red when something is wrong, gray when it is a choice.
+public enum SettingsStatusTone: Equatable {
+    case ready
+    case attention
+    case neutral
+}
+
 public enum SettingsVisibility {
+    /// Hidden by choice isn't broken (#163 review), so it gets the neutral dot, not red.
+    public static func tone(isHidden: Bool) -> SettingsStatusTone {
+        isHidden ? .neutral : .ready
+    }
+
     public static func hiddenStatus(until: Date?, calendar: Calendar = .current) -> String {
         guard let until else { return "Hidden" }
         let formatter = DateFormatter()
@@ -764,14 +783,10 @@ public struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 }
                 if let shortcutCheckFeedback {
-                    TimelineView(.periodic(from: .now, by: 30)) { context in
-                        Text(SettingsShortcutCheck.feedback(
-                            message: shortcutCheckFeedback.message,
-                            checkedAt: shortcutCheckFeedback.checkedAt,
-                            now: context.date
-                        ))
-                        .font(.caption).foregroundStyle(.secondary)
-                    }
+                    SettingsShortcutCheckLine(
+                        message: shortcutCheckFeedback.message,
+                        checkedAt: shortcutCheckFeedback.checkedAt
+                    )
                 }
             }
 
@@ -852,7 +867,7 @@ public struct SettingsView: View {
             LabeledContent("VoiceBar") {
                 statusBadge(
                     localVoiceBarHidden ? SettingsVisibility.hiddenStatus(until: voiceBarHiddenUntil()) : "Visible",
-                    isReady: !localVoiceBarHidden
+                    tone: SettingsVisibility.tone(isHidden: localVoiceBarHidden)
                 )
             }
 
@@ -2292,9 +2307,13 @@ public struct SettingsView: View {
     }
 
     private func statusBadge(_ text: String, isReady: Bool) -> some View {
+        statusBadge(text, tone: isReady ? .ready : .attention)
+    }
+
+    private func statusBadge(_ text: String, tone: SettingsStatusTone) -> some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(isReady ? .green : .red)
+                .fill(tone == .ready ? Color.green : tone == .attention ? Color.red : Color.gray)
                 .frame(width: 8, height: 8)
             Text(text)
                 .foregroundStyle(.secondary)
