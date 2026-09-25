@@ -361,6 +361,7 @@ public struct SettingsView: View {
     @State private var isAskHistoryLoading = false
     @State private var askHistoryLoadFence = SettingsHistoryLoadFence()
     @State private var askHistoryRefreshTask: Task<Void, Never>?
+    @State private var hasPrefetchedAskHistory = false
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
     @State private var includedTermsExpanded = false
@@ -1832,6 +1833,7 @@ public struct SettingsView: View {
                 guard historyLoadFence.accepts(generation), !Task.isCancelled else { return }
                 applyHistoryPage(page)
                 isHistoryLoading = false
+                prefetchAskHistoryIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {
                     scrollToLatest(scrollProxy, animated: animated)
                 }
@@ -1863,6 +1865,19 @@ public struct SettingsView: View {
         askHistoryRefreshTask = nil
         askHistoryLoadFence.cancel()
         isAskHistoryLoading = false
+    }
+
+    /// #153 review MUST-FIX 2: the first switch to Ask walked that scope cold (~2.5x the Dictations page,
+    /// 304.7 ms on an 11k archive). Once the Dictations page has landed, load the Ask page in the background so
+    /// the switch finds the index warm.
+    ///
+    /// AIDEV-NOTE: This runs from the Dictations load's completion on purpose. Started alongside it, the two
+    /// detached loads race for the index actor and the prefetch can delay the page the user is looking at.
+    /// A switch while it is in flight cancels it, and the walk keeps what it already decoded.
+    private func prefetchAskHistoryIfNeeded() {
+        guard !hasPrefetchedAskHistory, askHistoryDayGroups.isEmpty, !isAskHistoryLoading else { return }
+        hasPrefetchedAskHistory = true
+        requestAskHistoryReload(scrollToLatest: false)
     }
 
     private func requestAskHistoryReload(

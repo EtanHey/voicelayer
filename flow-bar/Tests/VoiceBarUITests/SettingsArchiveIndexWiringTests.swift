@@ -126,6 +126,50 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         XCTAssertEqual(window.frame, userFrame)
     }
 
+    /// #153 review MUST-FIX 2: the first Dictations→Ask switch walked the Ask scope cold (304.7 ms on the real
+    /// archive). Once the Dictations page lands, the Ask page is prefetched in the background: after it, never
+    /// racing it, so it cannot slow the page the user is looking at.
+    @MainActor
+    func testTheAskPageIsPrefetchedAfterTheDictationsPageLands() async {
+        let log = EventLog()
+        let view = SettingsView(
+            hotkeyEnabled: true,
+            missingPermissions: [],
+            availableDevices: { [] },
+            selectedDeviceID: { nil },
+            onSelectDevice: { _ in },
+            modelsStatus: { .loading },
+            onRefreshModelsStatus: {},
+            vocabularyRevision: { 0 },
+            historyPage: { _ in
+                log.append("dictations-start")
+                try? await Task.sleep(for: .milliseconds(50))
+                log.append("dictations-end")
+                return SettingsHistoryPage(groups: [], hasMore: false)
+            },
+            askHistoryPage: { _ in
+                log.append("ask")
+                return SettingsAskHistoryPage(groups: [], hasMore: false)
+            },
+            initialTab: .history
+        )
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 520),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: true
+        )
+        window.isReleasedWhenClosed = false
+        window.contentViewController = NSHostingController(rootView: view)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let prefetched = await settle { log.events.contains("ask") }
+        XCTAssertTrue(prefetched, "the Ask page is loaded before the user switches to it")
+        let events = log.events
+        XCTAssertEqual(Array(events.prefix(3)), ["dictations-start", "dictations-end", "ask"])
+        window.contentViewController = nil
+    }
+
     // MARK: - Wiring pins (the app target is not importable from these tests)
 
     func testHistoryLoadsGoThroughTheSharedIndexByDefault() throws {
@@ -191,38 +235,50 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         }
     }
 
+    /// Models what the app does: open History (cold Dictations page), prefetch Ask behind it, switch, switch back;
+    /// then close (`release()`) and reopen cold, twice. `cold_ask_page_ms` is the Ask walk with no prefetch.
     private func report(root: URL, label: String) async throws {
         func ms(_ start: UInt64) -> Double {
             Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
         }
+        func timed<T>(_ body: () async -> T) async -> (T, Double) {
+            let start = DispatchTime.now().uptimeNanoseconds
+            let value = await body()
+            return (value, ms(start))
+        }
         let index = SettingsArchiveIndex()
-        var start = DispatchTime.now().uptimeNanoseconds
-        let first = await index.dictationPage(from: root, limit: 100)
-        let coldDictations = ms(start)
-        start = DispatchTime.now().uptimeNanoseconds
-        let asks = await index.askPage(from: root, limit: 100)
-        let firstAskSwitch = ms(start)
-        start = DispatchTime.now().uptimeNanoseconds
-        _ = await index.dictationPage(from: root, limit: 100)
-        let switchBack = ms(start)
-        start = DispatchTime.now().uptimeNanoseconds
-        _ = await index.askPage(from: root, limit: 100)
-        let warmAskSwitch = ms(start)
-        start = DispatchTime.now().uptimeNanoseconds
-        _ = await index.dictationPage(from: root, limit: 100)
-        let reopen = ms(start)
-        start = DispatchTime.now().uptimeNanoseconds
-        _ = SettingsAskHistoryArchive.loadPage(from: root, limit: 100)
-        let scannerAsk = ms(start)
-        print(String(
-            format: "H1A_INDEX %@ dictations=%d asks=%d cold_first_page_ms=%.1f first_ask_switch_ms=%.1f "
-                + "switch_back_ms=%.1f warm_ask_switch_ms=%.1f reopen_ms=%.1f scanner_ask_page_ms=%.1f",
-            label, first.loadedEntryCount, asks.loadedEntryCount, coldDictations, firstAskSwitch,
-            switchBack, warmAskSwitch, reopen, scannerAsk
-        ))
-        XCTAssertLessThan(switchBack, 300)
-        XCTAssertLessThan(warmAskSwitch, 300)
-        XCTAssertLessThan(reopen, 300)
+        let (_, coldAskPage) = await timed { await index.askPage(from: root, limit: 100) }
+        await index.release()
+
+        var line = "H1A_INDEX \(label)"
+        var worstOpen = 0.0
+        var worstFirstAskSwitch = 0.0
+        for cycle in 0 ..< 3 {
+            let (first, open) = await timed { await index.dictationPage(from: root, limit: 100) }
+            let (asks, prefetch) = await timed { await index.askPage(from: root, limit: 100) }
+            let (_, firstAskSwitch) = await timed { await index.askPage(from: root, limit: 100) }
+            let (_, switchBack) = await timed { await index.dictationPage(from: root, limit: 100) }
+            await index.release()
+            let cached = await index.cachedRootCount()
+            XCTAssertEqual(cached, 0, "close releases the index")
+            if cycle == 0 {
+                line += " dictations=\(first.loadedEntryCount) asks=\(asks.loadedEntryCount)"
+                    + String(format: " cold_ask_page_ms=%.1f", coldAskPage)
+            }
+            line += String(
+                format: " | open%d_ms=%.1f ask_prefetch_ms=%.1f first_ask_switch_ms=%.1f switch_back_ms=%.1f",
+                cycle, open, prefetch, firstAskSwitch, switchBack
+            )
+            worstOpen = max(worstOpen, open)
+            worstFirstAskSwitch = max(worstFirstAskSwitch, firstAskSwitch)
+            XCTAssertLessThan(switchBack, 300)
+        }
+        print(line)
+        XCTAssertLessThan(worstOpen, 300, "a (re)open after release is cold and must still be < 300 ms")
+        XCTAssertLessThan(worstFirstAskSwitch, 300, "the first Ask switch after the prefetch")
+        if label == "synthetic" {
+            XCTAssertLessThan(coldAskPage, 300, "even unprefetched, the synthetic Ask walk stays < 300 ms")
+        }
     }
 
     // MARK: - Fixtures
@@ -277,5 +333,18 @@ private final class LoadCounter: @unchecked Sendable {
 
     func increment() {
         lock.withLock { count += 1 }
+    }
+}
+
+private final class EventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    var events: [String] {
+        lock.withLock { storage }
+    }
+
+    func append(_ event: String) {
+        lock.withLock { storage.append(event) }
     }
 }
