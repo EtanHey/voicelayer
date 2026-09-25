@@ -231,6 +231,7 @@ public struct BarView: View {
     @State private var isMorphTeleprompterContentPresented = false
     @State private var isMorphHistoryContentPresented = false
     @State private var isHistoryPresented = false
+    @State private var historyDismissal: NotchHistoryDismissal?
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -316,6 +317,10 @@ public struct BarView: View {
         .onChange(of: isHistoryPresented) { _, isOpen in
             synchronizeLauncherRetention()
             presentationModel?.setHistoryPanelOpen(isOpen)
+            synchronizeHistoryDismissal(isOpen: isOpen)
+        }
+        .onDisappear {
+            historyDismissal?.stop()
         }
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             presentationModel?.setReducedMotion(isEnabled)
@@ -363,6 +368,18 @@ public struct BarView: View {
 
     private var keepsLauncherMounted: Bool {
         isHistoryPresented
+    }
+
+    /// Click-away and Esc close the History panel, as the transient popover did (#166 review).
+    private func synchronizeHistoryDismissal(isOpen: Bool) {
+        guard isOpen else {
+            historyDismissal?.stop()
+            return
+        }
+        if historyDismissal == nil {
+            historyDismissal = NotchHistoryDismissal { isHistoryPresented = false }
+        }
+        historyDismissal?.start()
     }
 
     private func synchronizeLauncherRetention() {

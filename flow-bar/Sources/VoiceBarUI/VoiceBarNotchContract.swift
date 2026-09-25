@@ -479,11 +479,26 @@ public enum VoiceBarNotchContract {
                 topHeight: resolvedTopHeight,
                 leadingWingWidth: compactIndicatorLaneWidth,
                 trailingWingWidth: hoverLauncherTrailingWingWidth,
-                bodyLeadingExtent: max(0, (historyBodyWidth - coreWidth) / 2),
-                bodyTrailingExtent: max(0, (historyBodyWidth - coreWidth) / 2),
+                bodyLeadingExtent: historyBodyExtent(coreWidth: coreWidth),
+                bodyTrailingExtent: historyBodyExtent(coreWidth: coreWidth),
                 lowerSurfaceHeight: historyLowerSurfaceHeight
             )
         }
+    }
+
+    /// The History body encloses both launcher wings like the teleprompter's does (#166 review: a symmetric
+    /// 320 pt body let the History + Settings wing overhang it by 6–23.5 pt), and stays symmetric about the core.
+    /// It clears the widest wing by the two corner radii: a body edge flush with a wing edge draws the wing's
+    /// corner and the body's shoulder at the same x, an S-shaped hook (seen in the round-2 shots).
+    static func historyBodyExtent(coreWidth: CGFloat) -> CGFloat {
+        max(
+            (historyBodyWidth - coreWidth) / 2,
+            max(compactIndicatorLaneWidth, hoverLauncherTrailingWingWidth) + historyShoulderClearance
+        )
+    }
+
+    static var historyShoulderClearance: CGFloat {
+        material.compactOuterCornerRadius(for: .history) + material.inverseJoinRadius
     }
 
     private static func geometry(

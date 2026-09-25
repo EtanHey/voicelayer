@@ -27,6 +27,12 @@ public enum NotchHistoryPresentation {
         RowAction(kind: .retranscribe, symbol: "arrow.clockwise", label: "Re-transcribe"),
     ]
 
+    /// A row's identity across list changes: its audio when it has one (a re-transcription keeps its row),
+    /// else its text (#166 Macroscope: an offset moved "Copied ✓" when an entry was inserted at 0).
+    public static func rowID(for entry: RecentTranscriptionEntry) -> String {
+        entry.recordingPath ?? entry.text
+    }
+
     /// The row's first words on one line: whitespace and line breaks collapse, and long text ends in "…".
     public static func firstWords(_ text: String) -> String {
         let flattened = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")

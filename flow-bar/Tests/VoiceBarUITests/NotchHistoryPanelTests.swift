@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 @testable import VoiceBarUI
 import XCTest
@@ -25,6 +26,80 @@ final class NotchHistoryPanelTests: XCTestCase {
         XCTAssertEqual(history.leadingWingWidth, launcher.leadingWingWidth)
         XCTAssertEqual(history.trailingWingWidth, launcher.trailingWingWidth)
         XCTAssertEqual(history.topHeight, teleprompter.topHeight)
+    }
+
+    /// #166 review MUST-FIX 1: the History body was 320 pt symmetric, so on a 185–220 pt notch the
+    /// History + Settings wing overhung the body by 6–23.5 pt. The teleprompter's body encloses its wings;
+    /// every state with a lower surface must.
+    func testEveryLowerSurfaceEnclosesItsWingsOnEveryNotchWidth() {
+        for state in VoiceBarNotchVisualState.allCases {
+            for core in [CGFloat(185), 200, 220] {
+                let geometry = VoiceBarNotchContract.geometry(for: state, coreWidth: core)
+                guard geometry.lowerSurfaceHeight > 0 else { continue }
+                XCTAssertGreaterThanOrEqual(geometry.bodyLeadingExtent, geometry.leadingWingWidth, "\(state) @\(core)")
+                XCTAssertGreaterThanOrEqual(
+                    geometry.bodyTrailingExtent,
+                    geometry.trailingWingWidth,
+                    "\(state) @\(core)"
+                )
+                XCTAssertEqual(geometry.bodyLeadingExtent, geometry.bodyTrailingExtent, "symmetric about the core")
+            }
+        }
+        for core in [CGFloat(185), 200, 220] {
+            let history = VoiceBarNotchContract.geometry(for: .history, coreWidth: core)
+            XCTAssertGreaterThanOrEqual(
+                history.bodyTrailingExtent,
+                history.trailingWingWidth + VoiceBarNotchContract.historyShoulderClearance,
+                "a flush wing and body edge draws an S-hook; the body clears the wing like the teleprompter's"
+            )
+        }
+        XCTAssertLessThan(VoiceBarNotchContract.geometry(for: .history).bodyWidth,
+                          VoiceBarNotchContract.geometry(for: .teleprompter).bodyWidth, "still narrower")
+    }
+
+    /// #166 review MUST-FIX 2: the popover closed on any outside click; the panel must too, and on Esc.
+    @MainActor
+    func testTheOpenPanelClosesOnAnOutsideClickAndOnEscapeOnly() throws {
+        var closes = 0
+        let dismissal = NotchHistoryDismissal { closes += 1 }
+
+        dismissal.handleOutsideMouseDown()
+        XCTAssertEqual(closes, 1, "a click in another app closes it")
+
+        let escape = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+            characters: "\u{1B}", charactersIgnoringModifiers: "\u{1B}", isARepeat: false, keyCode: 53
+        ))
+        XCTAssertTrue(dismissal.handleKeyDown(escape), "Esc closes it and is consumed")
+        XCTAssertEqual(closes, 2)
+
+        let letter = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+            characters: "a", charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0
+        ))
+        XCTAssertFalse(dismissal.handleKeyDown(letter), "other keys pass through")
+        XCTAssertEqual(closes, 2)
+    }
+
+    @MainActor
+    func testDismissalMonitorsAreInstalledOnlyWhileOpen() {
+        let dismissal = NotchHistoryDismissal {}
+        XCTAssertFalse(dismissal.isMonitoring)
+        dismissal.start()
+        XCTAssertTrue(dismissal.isMonitoring)
+        dismissal.start()
+        XCTAssertTrue(dismissal.isMonitoring, "starting twice keeps one set of monitors")
+        dismissal.stop()
+        XCTAssertFalse(dismissal.isMonitoring)
+    }
+
+    /// Macroscope (#166): "Copied ✓" was keyed by row offset, so an entry inserted at 0 moved it.
+    func testRowsAreKeyedByAStableIdentity() {
+        let audio = RecentTranscriptionEntry(text: "same words", recordingPath: "/tmp/a/audio.wav")
+        let edited = RecentTranscriptionEntry(text: "re-transcribed words", recordingPath: "/tmp/a/audio.wav")
+        XCTAssertEqual(NotchHistoryPresentation.rowID(for: audio), NotchHistoryPresentation.rowID(for: edited),
+                       "a re-transcription keeps its row")
+        XCTAssertEqual(NotchHistoryPresentation.rowID(for: RecentTranscriptionEntry(text: "no audio")), "no audio")
     }
 
     func testHistoryYieldsToTheTeleprompterAndRecordingButBeatsStatusAndHover() {
