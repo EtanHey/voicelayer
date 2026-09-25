@@ -538,7 +538,7 @@ final class BarViewClickabilityTests: XCTestCase {
         )
         let trailing = String(source[trailingStart.lowerBound ..< compactStart.lowerBound])
         let hover = try XCTUnwrap(
-            trailing.components(separatedBy: "case .hoverLauncher:").dropFirst().first?
+            trailing.components(separatedBy: "case .hoverLauncher, .history:").dropFirst().first?
                 .components(separatedBy: "case .recording:").first
         )
         let active = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
@@ -807,7 +807,7 @@ final class BarViewClickabilityTests: XCTestCase {
             rootView: BarView(
                 state: state,
                 commandRouter: router,
-                onOpenSettings: {},
+                onOpenSettings: {}, onOpenHistory: {},
                 presentationModel: presentationModel
             )
         )
@@ -862,6 +862,7 @@ final class BarViewClickabilityTests: XCTestCase {
                 state: state,
                 commandRouter: router,
                 onOpenSettings: onOpenSettings,
+                onOpenHistory: {},
                 includesPanelOutsets: true
             )
         )

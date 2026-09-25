@@ -7,6 +7,8 @@ public enum VoiceBarNotchVisualState: CaseIterable, Equatable, Sendable {
     case recording
     case compactStatus
     case teleprompter
+    /// Spec §4: the History panel drops out of the notch in the teleprompter's shell, narrower and taller.
+    case history
 }
 
 public struct VoiceBarNotchGeometry: Equatable, Sendable {
@@ -156,7 +158,7 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         switch visualState {
         case .hoverLauncher, .recording, .compactStatus:
             15
-        case .idle, .teleprompter:
+        case .idle, .teleprompter, .history:
             11
         }
     }
@@ -194,6 +196,7 @@ public enum VoiceBarNotchContentRole: Equatable {
     case compactStatus
     case teleprompterControls
     case teleprompterBody
+    case historyPanel
 }
 
 public struct VoiceBarNotchPresentation: Equatable {
@@ -208,6 +211,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         hasTeleprompter: Bool,
         isRecording: Bool,
         hasCompactStatus: Bool,
+        hasHistoryPanel: Bool = false,
         compactStatusLeadingWingWidth: CGFloat? = nil,
         compactStatusTrailingWingWidth: CGFloat? = nil,
         recordingLeadingWingWidth: CGFloat? = nil,
@@ -222,6 +226,8 @@ public struct VoiceBarNotchPresentation: Equatable {
             .teleprompter
         } else if isRecording {
             .recording
+        } else if hasHistoryPanel {
+            .history
         } else if hasCompactStatus {
             .compactStatus
         } else if isHovered || isKeyboardFocused {
@@ -291,6 +297,8 @@ public struct VoiceBarNotchPresentation: Equatable {
             [.compactStatus]
         case .teleprompter:
             [.teleprompterControls, .waveform, .teleprompterBody]
+        case .history:
+            [.microphone, .history, .dictionary, .historyPanel]
         }
     }
 
@@ -308,6 +316,8 @@ public struct VoiceBarNotchPresentation: Equatable {
             "VoiceBar status"
         case .teleprompter:
             "VoiceBar teleprompter"
+        case .history:
+            "VoiceBar history"
         }
     }
 }
@@ -355,6 +365,10 @@ public enum VoiceBarNotchContract {
     }
 
     public static let topHeight: CGFloat = 32
+    /// Spec §4 / Etan: the History panel is the teleprompter's shell, "narrower and taller" (the teleprompter
+    /// body is 465 × 196 pt).
+    public static let historyBodyWidth: CGFloat = 320
+    public static let historyLowerSurfaceHeight: CGFloat = 360
     public static let teleprompterLeadingContentWidth: CGFloat = 50
     public static let teleprompterTrailingContentWidth = WaveformLayout.viewportWidth
 
@@ -459,7 +473,32 @@ public enum VoiceBarNotchContract {
                 bodyTrailingExtent: 140,
                 lowerSurfaceHeight: 196
             )
+        case .history:
+            geometry(
+                coreWidth: coreWidth,
+                topHeight: resolvedTopHeight,
+                leadingWingWidth: compactIndicatorLaneWidth,
+                trailingWingWidth: hoverLauncherTrailingWingWidth,
+                bodyLeadingExtent: historyBodyExtent(coreWidth: coreWidth),
+                bodyTrailingExtent: historyBodyExtent(coreWidth: coreWidth),
+                lowerSurfaceHeight: historyLowerSurfaceHeight
+            )
         }
+    }
+
+    /// The History body encloses both launcher wings like the teleprompter's does (#166 review: a symmetric
+    /// 320 pt body let the History + Settings wing overhang it by 6–23.5 pt), and stays symmetric about the core.
+    /// It clears the widest wing by the two corner radii: a body edge flush with a wing edge draws the wing's
+    /// corner and the body's shoulder at the same x, an S-shaped hook (seen in the round-2 shots).
+    static func historyBodyExtent(coreWidth: CGFloat) -> CGFloat {
+        max(
+            (historyBodyWidth - coreWidth) / 2,
+            max(compactIndicatorLaneWidth, hoverLauncherTrailingWingWidth) + historyShoulderClearance
+        )
+    }
+
+    static var historyShoulderClearance: CGFloat {
+        material.compactOuterCornerRadius(for: .history) + material.inverseJoinRadius
     }
 
     private static func geometry(

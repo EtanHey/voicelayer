@@ -170,7 +170,13 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(settingsSource.contains(".repeatForever(autoreverses: false)"))
         XCTAssertTrue(settingsSource.contains("isRetranscribing ? \"Re-transcribing stored audio\""))
         XCTAssertTrue(barSource.contains("activeHistoryRetranscriptionPath"))
-        XCTAssertTrue(barSource.contains("Re-transcribing..."))
+        // Spec §4: the notch History panel (its own file) says so while a row re-transcribes.
+        let panelSource = try String(
+            contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+                .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI/NotchHistoryPanel.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(panelSource.contains("Re-transcribing…"))
         XCTAssertTrue(appSource.contains("voiceState.activeHistoryRetranscriptionPath == recordingPath"))
         XCTAssertTrue(settingsSource.contains("isTranscribingActive: () -> Bool"))
         XCTAssertTrue(appSource.contains("isTranscribingActive: { [weak self] in"))

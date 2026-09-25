@@ -74,7 +74,7 @@ final class CaptureBootingArtifactTests: XCTestCase {
             rootView: BarView(
                 state: state,
                 commandRouter: NoOpCommandRouter(),
-                onOpenSettings: {},
+                onOpenSettings: {}, onOpenHistory: {},
                 includesPanelOutsets: true
             )
         )

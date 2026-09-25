@@ -51,20 +51,20 @@ final class NotchHistoryPopoverTests: XCTestCase {
     /// "Copied ✓" early. Each copy gets a generation; only the latest one's expiry clears it.
     func testASecondCopyKeepsItsOwnFeedbackWindow() {
         var feedback = NotchHistoryCopyFeedback()
-        let first = feedback.copied(row: 0)
-        let second = feedback.copied(row: 0)
-        XCTAssertTrue(feedback.isCopied(row: 0))
+        let first = feedback.copied(row: "a")
+        let second = feedback.copied(row: "a")
+        XCTAssertTrue(feedback.isCopied(row: "a"))
 
         feedback.expire(first)
-        XCTAssertTrue(feedback.isCopied(row: 0), "the older timer must not clear the newer copy")
+        XCTAssertTrue(feedback.isCopied(row: "a"), "the older timer must not clear the newer copy")
         feedback.expire(second)
-        XCTAssertFalse(feedback.isCopied(row: 0))
+        XCTAssertFalse(feedback.isCopied(row: "a"))
 
-        let other = feedback.copied(row: 1)
-        XCTAssertFalse(feedback.isCopied(row: 0))
-        XCTAssertTrue(feedback.isCopied(row: 1))
+        let other = feedback.copied(row: "b")
+        XCTAssertFalse(feedback.isCopied(row: "a"))
+        XCTAssertTrue(feedback.isCopied(row: "b"))
         feedback.expire(other)
-        XCTAssertFalse(feedback.isCopied(row: 1))
+        XCTAssertFalse(feedback.isCopied(row: "b"))
     }
 
     /// CodeRabbit (#161, 4100349275): "Copied ✓" showed even when nothing reached the pasteboard.
