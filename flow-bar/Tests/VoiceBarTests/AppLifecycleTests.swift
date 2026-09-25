@@ -294,14 +294,21 @@ final class AppLifecycleTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let uiSourceDirectory = repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBarUI")
-        // AIDEV-NOTE: The menu-bar popover is also a legitimate home for the Quit control.
+        // AIDEV-NOTE: The menu-bar popover is also a legitimate home for the Quit control, and so is the
+        // right-click menu (Etan's approved spec §3 ends it with "Quit VoiceBar"); both hand off to the app's
+        // authorized `requestTermination(.menuBar)` and never terminate themselves.
+        let quitHomes = ["VoiceBarMenu.swift", "MenuBarPopoverView.swift", "PillContextMenuController.swift"]
         let uiSources = try FileManager.default.contentsOfDirectory(
             at: uiSourceDirectory,
             includingPropertiesForKeys: nil
         ).filter {
-            $0.pathExtension == "swift" &&
-                !["VoiceBarMenu.swift", "MenuBarPopoverView.swift"].contains($0.lastPathComponent)
+            $0.pathExtension == "swift" && !quitHomes.contains($0.lastPathComponent)
         }
+        let contextMenuSource = try String(
+            contentsOf: uiSourceDirectory.appendingPathComponent("PillContextMenuController.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(contextMenuSource.contains("terminate"), "the right-click Quit calls back into the app")
         let surfaceSources = uiSources + [
             repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift"),
         ]
@@ -961,17 +968,6 @@ final class AppLifecycleTests: XCTestCase {
         let audioURL = URL(fileURLWithPath: "/tmp/VoiceLayer Ask/retained response/audio.wav")
 
         XCTAssertEqual(AppDelegate.historyFileRevealSelection(for: audioURL), [audioURL])
-    }
-
-    func testDictionaryAddWindowIsStandaloneAndClosable() throws {
-        let source = try voiceBarAppSource()
-
-        XCTAssertFalse(
-            source.contains("panel.beginSheet(sheet)"),
-            "Add-to-Dictionary must not attach a large sheet to the tiny nonactivating pill panel"
-        )
-        XCTAssertTrue(source.contains("sheet.styleMask = [.titled, .closable]"))
-        XCTAssertTrue(source.contains("sheet.makeKeyAndOrderFront(nil)"))
     }
 
     // AIDEV-NOTE: these drive the watchdog's polling clock by hand. They used
