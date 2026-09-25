@@ -847,7 +847,8 @@ final class AppLifecycleTests: XCTestCase {
     func testSettingsWindowWiresHistoryAndVisibilityActions() throws {
         let source = try voiceBarAppSource()
 
-        XCTAssertTrue(source.contains("historyPage: { limit in SettingsHistoryArchive.loadPage(limit: limit) }"))
+        XCTAssertTrue(source
+            .contains("historyPage: { limit in await SettingsArchiveIndex.shared.dictationPage(limit: limit) }"))
         XCTAssertFalse(source.contains("historyGroups: { SettingsHistoryArchive.load() }"))
         XCTAssertTrue(source.contains("voiceState.copyTranscript(text)"))
         XCTAssertTrue(source.contains("voiceState.repasteTranscript(text, source: \"settings_history\")"))

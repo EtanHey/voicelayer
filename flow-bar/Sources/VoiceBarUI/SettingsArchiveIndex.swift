@@ -101,8 +101,12 @@ public actor SettingsArchiveIndex {
         var hasMore = false
 
         autoreleasepool {
+            // A load cancelled by a scope switch stops here: the actor is held until the walk ends, and the next
+            // scope's page waits behind it. The caller discards the partial page; decoded entries stay valid.
             walking: for day in state.days {
+                guard !Task.isCancelled else { break walking }
                 for candidate in candidates(of: day, in: state) {
+                    guard !Task.isCancelled else { break walking }
                     let decoded: Decoded<Entry>
                     if let cached = state[keyPath: cache][candidate.id] {
                         decoded = cached

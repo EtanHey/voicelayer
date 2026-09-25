@@ -155,6 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     /// The last tab the app asked Settings to show (see `SettingsTabRequest`).
     private var settingsTabRequest: SettingsTabRequest?
+    /// The tab Settings last showed. Closing drops the view (SettingsWindowLifecycle), so a reopen seeds it.
+    private var lastSettingsTab: SettingsTab = .general
     private var isolatedInstanceMarkerPID: pid_t?
     private var terminationSignalSource: DispatchSourceSignal?
 
@@ -541,8 +543,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.onPanelLayoutChange = { [weak self] in
             self?.refreshNotchPresentationAndPanelLayout(animated: true)
         }
-        voiceState.onHistoryArchiveChange = {
-            NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+        voiceState.onHistoryArchiveChange = { path in
+            // Drop that entry from the History index first, so the reload the notification triggers can't serve a
+            // stale transcript (a re-transcription rewrites an old entry in place).
+            Task {
+                if let path { await SettingsArchiveIndex.shared.invalidate(entryPath: path) }
+                await MainActor.run {
+                    NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+                }
+            }
         }
         voiceState.onPolishStatusChange = { [weak self] in
             self?.refreshSettingsWindowAnchorState()
@@ -2391,6 +2400,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.vocabularyPreviewOffMain()
     }
 
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
+        // P09b follow-up 3 (R1): drop the hidden view, then let the History index go of every entry.
+        Task { await SettingsWindowLifecycle.settingsWindowWillClose(window) }
+    }
+
     func quickMenuActions() -> [VoiceBarMenuAction] {
         VoiceBarMenu.quickActions(
             isSnoozed: isSnoozed,
@@ -2428,7 +2443,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settingsTabRequest = SettingsTabRequest(tab: tab, id: (settingsTabRequest?.id ?? 0) + 1)
         }
         if let settingsWindow {
-            if tab != nil, let hosting = settingsWindow.contentViewController as? NSHostingController<SettingsView> {
+            if tab == nil, settingsWindow.contentViewController == nil {
+                settingsTabRequest = nil
+            }
+            // AppKit calls this on main; the delegate just isn't annotated @MainActor.
+            let rebuilt = MainActor.assumeIsolated {
+                SettingsWindowLifecycle.rebuildContentIfNeeded(settingsWindow) { makeSettingsView() }
+            }
+            if !rebuilt, tab != nil,
+               let hosting = settingsWindow.contentViewController as? NSHostingController<SettingsView> {
                 hosting.rootView = makeSettingsView()
             }
             SettingsWindowSizing.apply(to: settingsWindow)
@@ -2447,6 +2470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         window.title = "VoiceBar Settings"
         window.contentViewController = hosting
+        window.delegate = self
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.collectionBehavior = [.moveToActiveSpace]
@@ -2576,7 +2600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onCopyLastDictation: { [weak self] text in
                 self?.voiceState.copyTranscript(text)
             },
-            historyPage: { limit in SettingsHistoryArchive.loadPage(limit: limit) },
+            historyPage: { limit in await SettingsArchiveIndex.shared.dictationPage(limit: limit) },
             onCopyHistoryTranscript: { [weak self] text in
                 self?.voiceState.copyTranscript(text)
             },
@@ -2615,7 +2639,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     remoteSTTConfigured: nil
                 )
             },
-            tabRequest: settingsTabRequest
+            initialTab: lastSettingsTab,
+            tabRequest: settingsTabRequest,
+            onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab }
         )
     }
 

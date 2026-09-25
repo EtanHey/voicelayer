@@ -85,6 +85,29 @@ final class SettingsArchiveIndexTests: XCTestCase {
 
     // MARK: - Fixtures
 
+    /// #152 CodeRabbit 4100045560: a load cancelled by a scope switch must stop walking, because the actor is
+    /// held until the walk ends and the next scope's page waits behind it. A partial walk must not poison the
+    /// next full one.
+    func testACancelledWalkStopsAndTheNextPageIsComplete() async throws {
+        for index in 0 ..< 30 {
+            try writeDictation(day: "2026-09-\(10 + index % 5)", id: "c\(index)",
+                               createdAt: "2026-09-\(10 + index % 5)T0\(index % 10):00:00.000Z",
+                               transcript: "entry \(index)")
+        }
+        let index = SettingsArchiveIndex()
+        let root = try XCTUnwrap(root)
+
+        let cancelled = await Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await index.dictationPage(from: root, limit: 100)
+        }.value
+        XCTAssertEqual(cancelled.loadedEntryCount, 0, "a cancelled load walks nothing")
+
+        let full = await index.dictationPage(from: root, limit: 100)
+        XCTAssertEqual(full.loadedEntryCount, 30)
+        XCTAssertFalse(full.hasMore)
+    }
+
     private func writeMixedArchive() throws {
         try writeDictation(
             day: "2026-09-22",

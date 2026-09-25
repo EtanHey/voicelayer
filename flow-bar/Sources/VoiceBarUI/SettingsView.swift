@@ -303,6 +303,8 @@ public struct SettingsView: View {
     public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
     public let modelsStatus: () -> ModelsSettingsState
     public let tabRequest: SettingsTabRequest?
+    /// Tells the app which tab is showing, so a Settings window rebuilt after a close reopens on it.
+    public let onSelectedTabChange: (SettingsTab) -> Void
     public let onRefreshModelsStatus: () -> Void
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
@@ -326,8 +328,8 @@ public struct SettingsView: View {
     public let lastDictationEntry: () -> RecentTranscriptionEntry?
     public let lastDictationInsertionStatus: () -> DictationInsertionStatus
     public let onCopyLastDictation: (String) -> Void
-    public let historyPage: @Sendable (Int) -> SettingsHistoryPage
-    public let askHistoryPage: @Sendable (Int) -> SettingsAskHistoryPage
+    public let historyPage: @Sendable (Int) async -> SettingsHistoryPage
+    public let askHistoryPage: @Sendable (Int) async -> SettingsAskHistoryPage
     public let onCopyHistoryTranscript: (String) -> Void
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
@@ -361,6 +363,7 @@ public struct SettingsView: View {
     @State private var isAskHistoryLoading = false
     @State private var askHistoryLoadFence = SettingsHistoryLoadFence()
     @State private var askHistoryRefreshTask: Task<Void, Never>?
+    @State private var hasPrefetchedAskHistory = false
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
     @State private var includedTermsExpanded = false
@@ -429,13 +432,13 @@ public struct SettingsView: View {
         lastDictationEntry: @escaping () -> RecentTranscriptionEntry? = { nil },
         lastDictationInsertionStatus: @escaping () -> DictationInsertionStatus = { .unverified },
         onCopyLastDictation: @escaping (String) -> Void = { _ in },
-        historyPage: @escaping @Sendable (Int) -> SettingsHistoryPage = { limit in
-            SettingsHistoryArchive.loadPage(limit: limit)
+        historyPage: @escaping @Sendable (Int) async -> SettingsHistoryPage = { limit in
+            await SettingsArchiveIndex.shared.dictationPage(limit: limit)
         },
         historyGroups: (@Sendable () -> [SettingsHistoryDayGroup])? = nil,
         initialHistoryPage: SettingsHistoryPage? = nil,
-        askHistoryPage: @escaping @Sendable (Int) -> SettingsAskHistoryPage = { limit in
-            SettingsAskHistoryArchive.loadPage(limit: limit)
+        askHistoryPage: @escaping @Sendable (Int) async -> SettingsAskHistoryPage = { limit in
+            await SettingsArchiveIndex.shared.askPage(limit: limit)
         },
         initialAskHistoryPage: SettingsAskHistoryPage? = nil,
         onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
@@ -463,7 +466,8 @@ public struct SettingsView: View {
         initialDictionaryPreview: STTVocabularyPreview? = nil,
         initialIncludedTermsExpanded: Bool = false,
         initialYourTermsExpanded: Bool = true,
-        initialSelectedTermRowID: String? = nil
+        initialSelectedTermRowID: String? = nil,
+        onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in }
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -526,6 +530,7 @@ public struct SettingsView: View {
         self.footerPresentation = footerPresentation
         let initialPerformanceEffort = performanceEffort()
         self.tabRequest = tabRequest
+        self.onSelectedTabChange = onSelectedTabChange
         _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
         _dictionarySearch = State(initialValue: initialDictionarySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
@@ -582,10 +587,13 @@ public struct SettingsView: View {
         .onChange(of: tabRequest) { _, request in
             if let request { selectedTab = request.tab }
         }
+        // A view built on a requested tab sets it in init, where no onChange fires; report it here too.
+        .onAppear { onSelectedTabChange(selectedTab) }
         .task(id: selectedTab) {
             if selectedTab == .dictionary, !hasInitialDictionaryPreview { loadDictionaryPreview() }
         }
         .onChange(of: selectedTab) { _, tab in
+            onSelectedTabChange(tab)
             if tab == .history {
                 switch selectedHistoryScope {
                 case .recording:
@@ -1826,12 +1834,13 @@ public struct SettingsView: View {
                 try? await Task.sleep(for: .milliseconds(300))
             }
             guard !Task.isCancelled else { return }
-            let page = loader(limit)
+            let page = await loader(limit)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard historyLoadFence.accepts(generation), !Task.isCancelled else { return }
                 applyHistoryPage(page)
                 isHistoryLoading = false
+                prefetchAskHistoryIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {
                     scrollToLatest(scrollProxy, animated: animated)
                 }
@@ -1863,6 +1872,19 @@ public struct SettingsView: View {
         askHistoryRefreshTask = nil
         askHistoryLoadFence.cancel()
         isAskHistoryLoading = false
+    }
+
+    /// #153 review MUST-FIX 2: the first switch to Ask walked that scope cold (~2.5x the Dictations page,
+    /// 304.7 ms on an 11k archive). Once the Dictations page has landed, load the Ask page in the background so
+    /// the switch finds the index warm.
+    ///
+    /// AIDEV-NOTE: This runs from the Dictations load's completion on purpose. Started alongside it, the two
+    /// detached loads race for the index actor and the prefetch can delay the page the user is looking at.
+    /// A switch while it is in flight cancels it, and the walk keeps what it already decoded.
+    private func prefetchAskHistoryIfNeeded() {
+        guard !hasPrefetchedAskHistory, askHistoryDayGroups.isEmpty, !isAskHistoryLoading else { return }
+        hasPrefetchedAskHistory = true
+        requestAskHistoryReload(scrollToLatest: false)
     }
 
     private func requestAskHistoryReload(
@@ -1902,7 +1924,7 @@ public struct SettingsView: View {
                 try? await Task.sleep(for: .milliseconds(300))
             }
             guard !Task.isCancelled else { return }
-            let page = loader(limit)
+            let page = await loader(limit)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard askHistoryLoadFence.accepts(generation), !Task.isCancelled else { return }
