@@ -2505,7 +2505,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             performanceEffort: { [weak self] in self?.currentPerformanceEffort() ?? .accurate },
             performanceEffortNotice: { [weak self] in self?.currentPerformanceEffortNotice() },
             onSelectPerformanceEffort: { [weak self] in self?.selectPerformanceEffort($0) },
-            modelsStatus: { [weak self] in self?.voiceState.modelsSettingsState ?? .unavailable },
+            modelsStatus: { [weak self] in self?.voiceState.modelsSettingsState ?? .disconnected },
             onRefreshModelsStatus: { [weak self] in
                 self?.voiceState.refreshModelsSettingsStatus()
             },

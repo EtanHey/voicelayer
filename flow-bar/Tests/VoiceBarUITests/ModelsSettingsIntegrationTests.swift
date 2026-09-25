@@ -23,7 +23,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
 
         voiceState.setConnectionStatus(false)
         settle(host)
-        XCTAssertEqual(voiceState.modelsSettingsState.availability, .unavailable)
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .disconnected)
         XCTAssertNotEqual(try renderedPixels(host), availablePixels)
     }
 
@@ -88,8 +88,9 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
 
         voiceState.mode = .idle
         settle(host)
-        XCTAssertEqual(voiceState.modelsSettingsState.availability, .loading)
-        XCTAssertNil(voiceState.modelsSettingsState.configuredModelName)
+        // Last-known status stays (no "Starting…" flash); the picker waits for fresh health, with a reason.
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .available)
+        XCTAssertEqual(voiceState.modelsSettingsState.busyReason, "Checking VoiceLayer…")
         XCTAssertFalse(picker.isEnabled)
         let loadingPixels = try renderedPixels(host)
         XCTAssertNotEqual(loadingPixels, availablePixels)
@@ -107,7 +108,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
 
         voiceState.setConnectionStatus(false)
         settle(host)
-        XCTAssertEqual(voiceState.modelsSettingsState.availability, .unavailable)
+        XCTAssertEqual(voiceState.modelsSettingsState.availability, .disconnected)
         XCTAssertNil(voiceState.modelsSettingsState.configuredModelName)
         XCTAssertFalse(picker.isEnabled)
         XCTAssertNotEqual(try renderedPixels(host), refreshedPixels)

@@ -13,7 +13,8 @@ public struct VoiceBarFooterPresentation: Equatable {
         captureLive: Bool,
         errorMessage: String?,
         remoteSTTConfigured: Bool?,
-        hasFreshHealth: Bool = false
+        hasFreshHealth: Bool = false,
+        healthUnreadable: Bool = false
     ) -> Self {
         let status: String = if !isConnected || mode == .disconnected {
             "Disconnected"
@@ -21,7 +22,7 @@ public struct VoiceBarFooterPresentation: Equatable {
             "Error"
         } else {
             switch mode {
-            case .idle: hasFreshHealth ? "Ready" : "Starting…"
+            case .idle: hasFreshHealth ? "Ready" : healthUnreadable ? "Status unreadable" : "Starting…"
             case .recording: captureLive ? "Recording" : "Starting microphone"
             case .transcribing: "Transcribing"
             case .speaking: "Agent speaking"
@@ -56,7 +57,8 @@ public struct VoiceBarFooterPresentation: Equatable {
             captureLive: state.captureLive,
             errorMessage: state.errorMessage,
             remoteSTTConfigured: state.remoteSTTConfigured,
-            hasFreshHealth: state.modelsSettingsState.availability == .available
+            hasFreshHealth: state.modelsSettingsState.availability == .available,
+            healthUnreadable: state.modelsSettingsState.availability == .unreadable
         )
     }
 }

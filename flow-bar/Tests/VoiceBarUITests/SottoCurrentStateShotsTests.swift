@@ -238,7 +238,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         )
         for (suffix, appearance) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
             try shot("settings-models-unavailable\(suffix).png", "Settings Models: VoiceLayer not connected",
-                     settings(tab: .models, vocabulary: empty, modelState: .unavailable),
+                     settings(tab: .models, vocabulary: empty, modelState: .disconnected),
                      size: CGSize(width: 780, height: 620), appearance: appearance)
         }
         for (name, residency, recordingState, queueDepth) in [
