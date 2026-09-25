@@ -48,6 +48,8 @@ public actor SettingsArchiveIndex {
     }
 
     private var roots: [String: RootState] = [:]
+    /// Bumped by `release()`, so a prewarm that was mid-walk when Settings closed stops instead of refilling.
+    private var releaseEpoch = 0
 
     public init() {}
 
@@ -62,9 +64,12 @@ public actor SettingsArchiveIndex {
         let scan = walk(
             state, limit: limit, cache: \.dictations, load: SettingsHistoryArchive.loadEntry,
             prefilter: search.isActive ? { candidate in
-                self.searchText(for: candidate, in: state, cache: \.dictationSearchText) {
-                    [SettingsArchiveScanner.readTrimmedText(at: $0.appendingPathComponent("voicelayer-transcript.txt"))]
-                }
+                self.searchText(
+                    for: candidate,
+                    in: state,
+                    cache: \.dictationSearchText,
+                    read: Self.dictationSearchFields
+                )
                 .contains(where: search.matches(folded:))
             } : nil
         )
@@ -83,14 +88,8 @@ public actor SettingsArchiveIndex {
         let scan = walk(
             state, limit: limit, cache: \.asks, load: SettingsAskHistoryArchive.loadEntry,
             prefilter: search.isActive ? { candidate in
-                self.searchText(for: candidate, in: state, cache: \.askSearchText) {
-                    [
-                        SettingsArchiveScanner.readTrimmedText(at: $0.appendingPathComponent("agent-transcript.txt")),
-                        SettingsArchiveScanner
-                            .readTrimmedText(at: $0.appendingPathComponent("voicelayer-transcript.txt")),
-                    ]
-                }
-                .contains(where: search.matches(folded:))
+                self.searchText(for: candidate, in: state, cache: \.askSearchText, read: Self.askSearchFields)
+                    .contains(where: search.matches(folded:))
             } : nil
         )
         return SettingsAskHistoryArchive.page(from: scan)
@@ -111,10 +110,76 @@ public actor SettingsArchiveIndex {
     /// Settings closed: drop the whole index.
     public func release() {
         roots.removeAll()
+        releaseEpoch &+= 1
     }
 
     func cachedRootCount() -> Int {
         roots.count
+    }
+
+    func cachedSearchTextCount() -> Int {
+        roots.values.reduce(0) { $0 + $1.dictationSearchText.count }
+    }
+
+    // MARK: - Search prewarm
+
+    /// Reads and folds every entry's search text so the first search of a Settings session is warm (lead add-on:
+    /// it was 2.3–3.2 s cold on the real archive).
+    ///
+    /// AIDEV-NOTE: This runs in the background and must never delay a page the user asked for. The actor is
+    /// reentrant at `await`, so yielding every `chunkSize` entries lets a queued page load or search run in
+    /// between. It stops when its task is cancelled (History went away) or when `release()` ran (Settings closed),
+    /// so it can't refill a released index.
+    /// Returns how many entries it visited.
+    @discardableResult
+    public func prewarmSearchText(
+        from root: URL = SettingsHistoryArchive.defaultRoot,
+        chunkSize: Int = 128
+    ) async -> Int {
+        let epoch = releaseEpoch
+        let state = refreshedState(for: root)
+        var sinceYield = 0
+        var visited = 0
+        for day in state.days {
+            for candidate in candidates(of: day, in: state) {
+                guard !Task.isCancelled, epoch == releaseEpoch else { return visited }
+                visited += 1
+                let needsDictation = state.dictationSearchText[candidate.id] == nil
+                let needsAsk = state.askSearchText[candidate.id] == nil
+                if needsDictation || needsAsk {
+                    // One read of the shared transcript fills both scopes; folded exactly as the page path does.
+                    let transcript = Self.folded(candidate.url, "voicelayer-transcript.txt")
+                    if needsDictation { state.dictationSearchText[candidate.id] = [transcript] }
+                    if needsAsk {
+                        state.askSearchText[candidate.id] = [
+                            Self.folded(candidate.url, "agent-transcript.txt"),
+                            transcript,
+                        ]
+                    }
+                }
+                sinceYield += 1
+                if sinceYield >= max(chunkSize, 1) {
+                    sinceYield = 0
+                    await Task.yield()
+                }
+            }
+        }
+        return visited
+    }
+
+    private static func dictationSearchFields(_ entry: URL) -> [String] {
+        [SettingsArchiveScanner.readTrimmedText(at: entry.appendingPathComponent("voicelayer-transcript.txt"))]
+    }
+
+    private static func askSearchFields(_ entry: URL) -> [String] {
+        [
+            SettingsArchiveScanner.readTrimmedText(at: entry.appendingPathComponent("agent-transcript.txt")),
+            SettingsArchiveScanner.readTrimmedText(at: entry.appendingPathComponent("voicelayer-transcript.txt")),
+        ]
+    }
+
+    private static func folded(_ entry: URL, _ file: String) -> String {
+        SettingsHistorySearch.fold(SettingsArchiveScanner.readTrimmedText(at: entry.appendingPathComponent(file)))
     }
 
     // MARK: - Walk
