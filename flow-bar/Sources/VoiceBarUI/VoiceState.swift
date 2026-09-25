@@ -417,11 +417,50 @@ public final class VoiceState {
         refreshModelsBusy()
     }
 
+    /// A lock-protected copy of the three vocabulary fields, written on main by their `didSet` (and at the end of
+    /// init, where `didSet` does not run), so the Dictionary's detached load reads it without hopping to main.
+    @ObservationIgnored let vocabularyMirror = STTVocabularySnapshotMirror()
+
+    /// While > 0, field setters don't publish; the batch publishes once at the end (#151 CodeRabbit: one event
+    /// sets three fields, and a detached read must never see new terms with old aliases).
+    @ObservationIgnored private var vocabularyMirrorBatchDepth = 0
+
+    private func withVocabularyMirrorBatch(_ update: () -> Void) {
+        vocabularyMirrorBatchDepth += 1
+        defer {
+            vocabularyMirrorBatchDepth -= 1
+            if vocabularyMirrorBatchDepth == 0 { syncVocabularyMirror() }
+        }
+        update()
+    }
+
+    private func syncVocabularyMirror() {
+        guard vocabularyMirrorBatchDepth == 0 else { return }
+        vocabularyMirror.store(
+            terms: transcriptionVocabularyTerms,
+            aliases: transcriptionVocabularyAliases,
+            displayEntries: transcriptionVocabularyDisplayEntries
+        )
+    }
+
+    /// The Dictionary tab's off-main vocabulary read (D1-c / fold-3 review S1). It used to hop to main with
+    /// `DispatchQueue.main.sync`, which deadlocks as soon as main waits synchronously on the load.
+    public nonisolated func vocabularyPreviewOffMain() -> STTVocabularyPreview {
+        let snapshot = vocabularyMirror.load()
+        return STTVocabularyPreview(
+            updatedAt: nil,
+            entries: STTVocabularyPreview(updatedAt: nil, promptTerms: snapshot.terms, aliases: snapshot.aliases)
+                .entries,
+            displayEntries: snapshot.displayEntries
+        )
+    }
+
     public private(set) var transcriptionVocabularyDisplayEntries: [STTDictionaryDisplayEntry]? {
         didSet {
             if oldValue != transcriptionVocabularyDisplayEntries {
                 transcriptionVocabularyRevision &+= 1
             }
+            syncVocabularyMirror()
         }
     }
 
@@ -432,6 +471,7 @@ public final class VoiceState {
             if oldValue != transcriptionVocabularyTerms {
                 transcriptionVocabularyRevision &+= 1
             }
+            syncVocabularyMirror()
             notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty)
         }
     }
@@ -441,6 +481,7 @@ public final class VoiceState {
             if oldValue != transcriptionVocabularyAliases {
                 transcriptionVocabularyRevision &+= 1
             }
+            syncVocabularyMirror()
             notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyAliases.isEmpty)
         }
     }
@@ -722,6 +763,7 @@ public final class VoiceState {
         transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
             transcriptionVocabularyAliasLoader()
         )
+        syncVocabularyMirror()
     }
 
     // MARK: - Commands
@@ -1599,6 +1641,10 @@ public final class VoiceState {
     }
 
     private func applyVocabularyEvent(_ event: [String: Any]) {
+        withVocabularyMirrorBatch { applyVocabularyEventFields(event) }
+    }
+
+    private func applyVocabularyEventFields(_ event: [String: Any]) {
         var appliedSnapshot = false
 
         if let rows = event["display_entries"] as? [[String: Any]] {
@@ -1870,11 +1916,13 @@ public final class VoiceState {
     }
 
     private func refreshTranscriptionVocabulary() {
-        transcriptionVocabularyDisplayEntries = nil
-        transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
-        transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
-            transcriptionVocabularyAliasLoader()
-        )
+        withVocabularyMirrorBatch {
+            transcriptionVocabularyDisplayEntries = nil
+            transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
+            transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
+                transcriptionVocabularyAliasLoader()
+            )
+        }
     }
 
     private func refreshAudioLevel() {

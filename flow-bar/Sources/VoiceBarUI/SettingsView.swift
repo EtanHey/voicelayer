@@ -357,6 +357,7 @@ public struct SettingsView: View {
     @State private var dictionaryLoading = false
     @State private var hasLoadedDictionaryOnce: Bool
     @State private var dictionaryReloadQueued = false
+    @State private var dictionaryReloadGate = DictionaryReloadGate()
     @State private var localEntries: [STTDictionaryEntry]
     @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
     /// The one Add/Edit sheet (nil = closed). Etan's 2.2.24 review #3: no inline box, no per-term misheard row.
@@ -1636,6 +1637,9 @@ public struct SettingsView: View {
         .onAppear {
             resetDictionaryEditors()
         }
+        .onChange(of: hasPendingDictionaryEdit) { _, pending in
+            if !pending, dictionaryReloadGate.editEnded() { loadDictionaryPreview() }
+        }
         .onChange(of: localEntries) { _, entries in
             let bundled = dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }
             dictionaryDisplayIndex = STTDictionaryDisplayIndex(entries: bundled + entries.map {
@@ -1747,6 +1751,7 @@ public struct SettingsView: View {
                     localEntries: &localEntries,
                     onRemovePromptTerm: onRemovePromptTerm
                 )
+                dictionaryReloadGate.mutationSent()
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
@@ -2082,6 +2087,30 @@ public struct SettingsView: View {
         )
     }
 
+    /// Fold-3 review S2: a load that finishes while an edit is open must not overwrite the list, and must not be
+    /// lost either. It is remembered and re-run when the edit ends.
+    struct DictionaryReloadGate: Equatable {
+        private(set) var reloadWhenEditEnds = false
+
+        /// True when the finished load may be applied now.
+        mutating func loadFinished(duringEdit: Bool) -> Bool {
+            reloadWhenEditEnds = duringEdit
+            return !duringEdit
+        }
+
+        /// A save or delete went to the daemon as the edit ended: its revision bump reloads with fresh data, so a
+        /// deferred load must not run first and briefly undo the edit (#151 CodeRabbit).
+        mutating func mutationSent() {
+            reloadWhenEditEnds = false
+        }
+
+        /// True (once) when a deferred reload must run now that the edit ended.
+        mutating func editEnded() -> Bool {
+            defer { reloadWhenEditEnds = false }
+            return reloadWhenEditEnds
+        }
+    }
+
     private var hasPendingDictionaryEdit: Bool {
         termSheet != nil || pendingDeleteCanonical != nil
     }
@@ -2093,6 +2122,7 @@ public struct SettingsView: View {
     }
 
     private func saveTermSheet(_ edit: DictionaryTermEdit) {
+        let entriesBefore = localEntries
         let saved = SettingsDictionaryMutations.apply(
             edit,
             localEntries: &localEntries,
@@ -2101,6 +2131,7 @@ public struct SettingsView: View {
             onAddVocabularyAlias: onAddVocabularyAlias,
             onRemoveVocabularyAlias: onRemoveVocabularyAlias
         )
+        if localEntries != entriesBefore { dictionaryReloadGate.mutationSent() }
         termSheet = nil
         guard let saved else { return }
         let savedVariants = localEntries.first { $0.canonical == saved }?.variants ?? []
@@ -2136,7 +2167,7 @@ public struct SettingsView: View {
                 loadDictionaryPreview()
                 return
             }
-            guard !hasPendingDictionaryEdit else { return }
+            guard dictionaryReloadGate.loadFinished(duringEdit: hasPendingDictionaryEdit) else { return }
             localEntries = preview.entries
             dictionaryDisplayIndex = index
             hasLoadedDictionaryOnce = true

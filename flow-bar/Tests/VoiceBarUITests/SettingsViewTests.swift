@@ -288,8 +288,11 @@ final class SettingsViewTests: XCTestCase {
             "A revision change should project the new snapshot into local dictionary cards"
         )
         XCTAssertTrue(
-            source.contains("guard !hasPendingDictionaryEdit else { return }"),
-            "Snapshot reconciliation must not clobber an active inline edit"
+            source
+                .contains(
+                    "guard dictionaryReloadGate.loadFinished(duringEdit: hasPendingDictionaryEdit) else { return }"
+                ),
+            "Snapshot reconciliation must not clobber an open edit (it is deferred until the edit ends)"
         )
     }
 
