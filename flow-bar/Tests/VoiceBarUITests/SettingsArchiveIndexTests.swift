@@ -211,6 +211,23 @@ final class SettingsArchiveIndexTests: XCTestCase {
         XCTAssertEqual(fresh.groups.flatMap(\.entries).map(\.transcript), ["beta"])
     }
 
+    /// #164 Macroscope 4100365507: the question and the answer are separate fields; a query must not match
+    /// across the seam between them.
+    func testAskSearchNeverMatchesAcrossTheQuestionAnswerSeam() async throws {
+        try writeAsk(day: "2026-09-20", id: "q1", createdAt: "2026-09-20T08:00:00.000Z",
+                     question: "alpha", response: "beta")
+        let index = SettingsArchiveIndex()
+        let root = try XCTUnwrap(root)
+
+        let across = await index.askPage(from: root, limit: 10, matching: "alpha\nbeta")
+        let question = await index.askPage(from: root, limit: 10, matching: "alpha")
+        let answer = await index.askPage(from: root, limit: 10, matching: "beta")
+
+        XCTAssertEqual(across.loadedEntryCount, 0)
+        XCTAssertEqual(question.loadedEntryCount, 1)
+        XCTAssertEqual(answer.loadedEntryCount, 1)
+    }
+
     func testASearchDoesNotChangeTheUnfilteredPage() async throws {
         try writeMixedArchive()
         let index = SettingsArchiveIndex()

@@ -41,9 +41,10 @@ public actor SettingsArchiveIndex {
         var dayModifiedAt: [String: Date] = [:]
         var dictations: [String: Decoded<SettingsHistoryEntry>] = [:]
         var asks: [String: Decoded<SettingsAskHistoryEntry>] = [:]
-        /// Folded searchable text per entry, read without decoding the entry (H1-c).
-        var dictationSearchText: [String: String] = [:]
-        var askSearchText: [String: String] = [:]
+        /// Folded searchable fields per entry, read without decoding the entry (H1-c). Ask keeps the question and
+        /// the answer apart so a query never matches across them.
+        var dictationSearchText: [String: [String]] = [:]
+        var askSearchText: [String: [String]] = [:]
     }
 
     private var roots: [String: RootState] = [:]
@@ -61,9 +62,10 @@ public actor SettingsArchiveIndex {
         let scan = walk(
             state, limit: limit, cache: \.dictations, load: SettingsHistoryArchive.loadEntry,
             prefilter: search.isActive ? { candidate in
-                search.matches(folded: self.searchText(for: candidate, in: state, cache: \.dictationSearchText) {
-                    SettingsArchiveScanner.readTrimmedText(at: $0.appendingPathComponent("voicelayer-transcript.txt"))
-                })
+                self.searchText(for: candidate, in: state, cache: \.dictationSearchText) {
+                    [SettingsArchiveScanner.readTrimmedText(at: $0.appendingPathComponent("voicelayer-transcript.txt"))]
+                }
+                .contains(where: search.matches(folded:))
             } : nil
         )
         return SettingsHistoryArchive.page(from: scan)
@@ -81,12 +83,14 @@ public actor SettingsArchiveIndex {
         let scan = walk(
             state, limit: limit, cache: \.asks, load: SettingsAskHistoryArchive.loadEntry,
             prefilter: search.isActive ? { candidate in
-                search.matches(folded: self.searchText(for: candidate, in: state, cache: \.askSearchText) {
-                    SettingsArchiveScanner.readTrimmedText(at: $0.appendingPathComponent("agent-transcript.txt"))
-                        + "\n"
-                        + SettingsArchiveScanner
-                        .readTrimmedText(at: $0.appendingPathComponent("voicelayer-transcript.txt"))
-                })
+                self.searchText(for: candidate, in: state, cache: \.askSearchText) {
+                    [
+                        SettingsArchiveScanner.readTrimmedText(at: $0.appendingPathComponent("agent-transcript.txt")),
+                        SettingsArchiveScanner
+                            .readTrimmedText(at: $0.appendingPathComponent("voicelayer-transcript.txt")),
+                    ]
+                }
+                .contains(where: search.matches(folded:))
             } : nil
         )
         return SettingsAskHistoryArchive.page(from: scan)
@@ -193,11 +197,11 @@ public actor SettingsArchiveIndex {
     private func searchText(
         for candidate: Candidate,
         in state: RootState,
-        cache: ReferenceWritableKeyPath<RootState, [String: String]>,
-        read: (URL) -> String
-    ) -> String {
+        cache: ReferenceWritableKeyPath<RootState, [String: [String]]>,
+        read: (URL) -> [String]
+    ) -> [String] {
         if let cached = state[keyPath: cache][candidate.id] { return cached }
-        let folded = SettingsHistorySearch.fold(read(candidate.url))
+        let folded = read(candidate.url).map(SettingsHistorySearch.fold)
         state[keyPath: cache][candidate.id] = folded
         return folded
     }
