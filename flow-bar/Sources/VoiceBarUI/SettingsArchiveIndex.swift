@@ -41,27 +41,54 @@ public actor SettingsArchiveIndex {
         var dayModifiedAt: [String: Date] = [:]
         var dictations: [String: Decoded<SettingsHistoryEntry>] = [:]
         var asks: [String: Decoded<SettingsAskHistoryEntry>] = [:]
+        /// Folded searchable text per entry, read without decoding the entry (H1-c).
+        var dictationSearchText: [String: String] = [:]
+        var askSearchText: [String: String] = [:]
     }
 
     private var roots: [String: RootState] = [:]
 
     public init() {}
 
+    /// The first `limit` Dictations, or with a non-blank `query` the first `limit` whose transcript matches it.
     public func dictationPage(
         from root: URL = SettingsHistoryArchive.defaultRoot,
-        limit: Int = SettingsHistoryArchive.defaultPageSize
+        limit: Int = SettingsHistoryArchive.defaultPageSize,
+        matching query: String = ""
     ) -> SettingsHistoryPage {
         let state = refreshedState(for: root)
-        let scan = walk(state, limit: limit, cache: \.dictations, load: SettingsHistoryArchive.loadEntry)
+        let search = SettingsHistorySearch(query)
+        let scan = walk(
+            state, limit: limit, cache: \.dictations, load: SettingsHistoryArchive.loadEntry,
+            prefilter: search.isActive ? { candidate in
+                search.matches(folded: self.searchText(for: candidate, in: state, cache: \.dictationSearchText) {
+                    SettingsArchiveScanner.readTrimmedText(at: $0.appendingPathComponent("voicelayer-transcript.txt"))
+                })
+            } : nil
+        )
         return SettingsHistoryArchive.page(from: scan)
     }
 
+    /// The first `limit` Ask exchanges, or with a non-blank `query` the first `limit` whose question or response
+    /// matches it.
     public func askPage(
         from root: URL = SettingsAskHistoryArchive.defaultRoot,
-        limit: Int = SettingsAskHistoryArchive.defaultPageSize
+        limit: Int = SettingsAskHistoryArchive.defaultPageSize,
+        matching query: String = ""
     ) -> SettingsAskHistoryPage {
         let state = refreshedState(for: root)
-        let scan = walk(state, limit: limit, cache: \.asks, load: SettingsAskHistoryArchive.loadEntry)
+        let search = SettingsHistorySearch(query)
+        let scan = walk(
+            state, limit: limit, cache: \.asks, load: SettingsAskHistoryArchive.loadEntry,
+            prefilter: search.isActive ? { candidate in
+                search.matches(folded: self.searchText(for: candidate, in: state, cache: \.askSearchText) {
+                    SettingsArchiveScanner.readTrimmedText(at: $0.appendingPathComponent("agent-transcript.txt"))
+                        + "\n"
+                        + SettingsArchiveScanner
+                        .readTrimmedText(at: $0.appendingPathComponent("voicelayer-transcript.txt"))
+                })
+            } : nil
+        )
         return SettingsAskHistoryArchive.page(from: scan)
     }
 
@@ -72,6 +99,8 @@ public actor SettingsArchiveIndex {
         for state in roots.values {
             state.dictations.removeValue(forKey: id)
             state.asks.removeValue(forKey: id)
+            state.dictationSearchText.removeValue(forKey: id)
+            state.askSearchText.removeValue(forKey: id)
         }
     }
 
@@ -86,13 +115,14 @@ public actor SettingsArchiveIndex {
 
     // MARK: - Walk
 
-    /// The first `limit` entries the scope's loader accepts, in `SettingsArchiveScanner.scan` order, with
-    /// `hasMore` exact (true only when one more entry actually loads).
+    /// The first `limit` entries that pass `prefilter` (when searching) and the scope's loader accepts, in
+    /// `SettingsArchiveScanner.scan` order, with `hasMore` exact (true only when one more such entry loads).
     private func walk<Entry>(
         _ state: RootState,
         limit: Int,
         cache: ReferenceWritableKeyPath<RootState, [String: Decoded<Entry>]>,
-        load: (URL, String, Date) -> Entry?
+        load: (URL, String, Date) -> Entry?,
+        prefilter: ((Candidate) -> Bool)?
     ) -> SettingsArchiveScanResult<Entry> {
         let boundedLimit = max(0, limit)
         var days: [SettingsArchiveDayScan<Entry>] = []
@@ -107,6 +137,8 @@ public actor SettingsArchiveIndex {
                 guard !Task.isCancelled else { break walking }
                 for candidate in candidates(of: day, in: state) {
                     guard !Task.isCancelled else { break walking }
+                    // A search reads only the entry's text first; the full entry is decoded for a hit alone.
+                    if let prefilter, !prefilter(candidate) { continue }
                     let decoded: Decoded<Entry>
                     if let cached = state[keyPath: cache][candidate.id] {
                         decoded = cached
@@ -156,6 +188,20 @@ public actor SettingsArchiveIndex {
         return state
     }
 
+    /// AIDEV-NOTE: on the real 11k archive a search that decoded every entry took 9 s cold and 1 s warm; reading
+    /// only the text and folding it once is what makes a whole-archive search affordable.
+    private func searchText(
+        for candidate: Candidate,
+        in state: RootState,
+        cache: ReferenceWritableKeyPath<RootState, [String: String]>,
+        read: (URL) -> String
+    ) -> String {
+        if let cached = state[keyPath: cache][candidate.id] { return cached }
+        let folded = SettingsHistorySearch.fold(read(candidate.url))
+        state[keyPath: cache][candidate.id] = folded
+        return folded
+    }
+
     private func candidates(of day: URL, in state: RootState) -> [Candidate] {
         let dayKey = day.lastPathComponent
         if let listed = state.candidatesByDay[dayKey] { return listed }
@@ -170,6 +216,8 @@ public actor SettingsArchiveIndex {
         for candidate in state.candidatesByDay[dayKey] ?? [] {
             state.dictations.removeValue(forKey: candidate.id)
             state.asks.removeValue(forKey: candidate.id)
+            state.dictationSearchText.removeValue(forKey: candidate.id)
+            state.askSearchText.removeValue(forKey: candidate.id)
         }
         state.candidatesByDay.removeValue(forKey: dayKey)
         state.dayModifiedAt.removeValue(forKey: dayKey)
