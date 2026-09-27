@@ -56,7 +56,6 @@ final class P08DictionaryShotsTests: XCTestCase {
                     missingPermissions: [],
                     availableDevices: { [] },
                     selectedDeviceID: { nil },
-                    onSelectDevice: { _ in },
                     modelsStatus: { .loading },
                     onRefreshModelsStatus: {},
                     vocabularyPreview: { data },

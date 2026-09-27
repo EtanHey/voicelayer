@@ -36,7 +36,8 @@
 - History: Recording | Ask, with per-row Play / Copy / Paste / Re-transcribe / Finder.
 
 ## VoiceBar right-click menu (Etan's approved spec §3)
-Settings… (⌘,) · Hide for 1 hour · — · Recent Transcriptions › ("2 min ago · first words") · Paste Last Transcript · Copy Last Transcript · — · Microphone › (current device as subtitle, the one filtered list) · — · Quit VoiceBar. There is no Transcription Tools, Anchor or Morph Prototype menu; a saved anchor or morph prototype resolves to the default.
+Settings… (⌘,) · Hide for 1 hour · — · Recent Transcriptions › ("2 min ago · first words") · Paste Last Transcript · Copy Last Transcript · — · Microphone › (the priority default as subtitle; inside, a read-only "Default: <mic>" row and "Change…") · — · Quit VoiceBar. There is no Transcription Tools, Anchor or Morph Prototype menu; a saved anchor or morph prototype resolves to the default.
+- Microphone (Etan's D2, 2026-09-25): picking a mic never silently changes anything. The right-click submenu and the menu-bar popover show the microphone-priority default read-only; "Change…" opens Settings › General scrolled to Microphone priority (`SettingsTabRequest(focus: .microphonePriority)`), where Make default / drag choose it. The only writer of the macOS default input is `MicrophonePriorityApplyCoordinator` (pinned by `MicrophoneWritePathTests`).
 
 ## Voice Modes
 - `announce`, `brief`, `consult`: non-blocking TTS only.

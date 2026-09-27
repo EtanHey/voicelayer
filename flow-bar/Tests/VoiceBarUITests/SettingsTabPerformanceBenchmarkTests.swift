@@ -41,7 +41,7 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
         let providerReturned = Flag()
         let view = SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
-            availableDevices: { [] }, selectedDeviceID: { nil }, onSelectDevice: { _ in },
+            availableDevices: { [] }, selectedDeviceID: { nil },
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: {
                 XCTAssertFalse(Thread.isMainThread, "Vocabulary processing must leave the main thread")
@@ -83,7 +83,6 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
             missingPermissions: [],
             availableDevices: { [] },
             selectedDeviceID: { nil },
-            onSelectDevice: { _ in },
             modelsStatus: { .loading },
             onRefreshModelsStatus: {},
             vocabularyPreview: {
@@ -169,7 +168,6 @@ final class SettingsTabPerformanceBenchmarkTests: XCTestCase {
             missingPermissions: [],
             availableDevices: { [] },
             selectedDeviceID: { nil },
-            onSelectDevice: { _ in },
             modelsStatus: { .loading },
             onRefreshModelsStatus: {},
             vocabularyPreview: { snapshotCalls += 1

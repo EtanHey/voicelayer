@@ -151,7 +151,6 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
             missingPermissions: [],
             availableDevices: { [] },
             selectedDeviceID: { nil },
-            onSelectDevice: { _ in },
             performanceEffort: { .accurate },
             performanceEffortNotice: { nil },
             onSelectPerformanceEffort: onSelectEffort,

@@ -24,7 +24,6 @@ final class STTPolishDegradationVisualArtifactTests: XCTestCase {
                 [MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone")]
             },
             selectedDeviceID: { "built-in" },
-            onSelectDevice: { _ in },
             polishDegradation: {
                 STTPolishDegradation(
                     reason: "missing-binary",

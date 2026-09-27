@@ -736,11 +736,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.recentTranscriptionEntriesProvider = { [weak self] in
             self?.voiceState.recentTranscriptionEntries ?? []
         }
-        pillContextMenuController.availableDevicesProvider = {
-            MicrophoneDeviceManager.availableInputDevices()
-        }
-        pillContextMenuController.selectedDeviceIDProvider = {
-            MicrophoneDeviceManager.selectedInputDeviceID()
+        pillContextMenuController.defaultMicrophoneNameProvider = { [weak self] in
+            self?.defaultMicrophoneName()
         }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
@@ -754,8 +751,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.onUnsnooze = { [weak self] in
             self?.unsnoozeNow()
         }
-        pillContextMenuController.onSelectDevice = { [weak self] deviceID in
-            _ = self?.selectMicrophone(id: deviceID)
+        pillContextMenuController.onChangeMicrophone = { [weak self] in
+            self?.openMicrophonePrioritySettings()
         }
         pillContextMenuController.onPasteLastTranscript = { [weak self] in
             self?.logDiagnostic(event: "context_menu_paste_last_transcript_tapped")
@@ -2444,11 +2441,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         requestTermination(.menuBar)
     }
 
-    func openSettingsWindow(tab: SettingsTab? = nil) {
+    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil) {
         voiceState.captureSettingsHistoryPasteTarget()
         NSApp.activate(ignoringOtherApps: true)
         if let tab {
-            settingsTabRequest = SettingsTabRequest(tab: tab, id: (settingsTabRequest?.id ?? 0) + 1)
+            settingsTabRequest = SettingsTabRequest(tab: tab, focus: focus, id: (settingsTabRequest?.id ?? 0) + 1)
         }
         if let settingsWindow {
             if tab == nil, settingsWindow.contentViewController == nil {
@@ -2496,9 +2493,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// "Open Settings…" in the menu-bar popover (R4 UI pass #12): the popover used to stay open over
     /// Settings. Close it first, then open Settings, which activates VoiceBar and makes the window key.
-    func openSettingsFromMenuBar(popover: NSWindow?, tab: SettingsTab? = nil) {
+    func openSettingsFromMenuBar(popover: NSWindow?, tab: SettingsTab? = nil, focus: SettingsFocus? = nil) {
         Self.dismissMenuBarPopover(popover, keeping: settingsWindow)
-        openSettingsWindow(tab: tab)
+        openSettingsWindow(tab: tab, focus: focus)
     }
 
     /// Orders out the menu-bar popover, but never the Settings window itself.
@@ -2517,6 +2514,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settingsWindow
     }
 
+    var settingsTabRequestForTesting: SettingsTabRequest? {
+        settingsTabRequest
+    }
+
+    var pillContextMenuControllerForTesting: PillContextMenuController {
+        pillContextMenuController
+    }
+
+    func configurePillContextMenuForTesting() {
+        configurePillContextMenu()
+    }
+
+    /// "Change…" on the menu and popover microphone row (D2): Settings › General, scrolled to Microphone priority.
+    func openMicrophonePrioritySettings() {
+        openSettingsWindow(tab: .general, focus: .microphonePriority)
+    }
+
+    /// The name every read-only microphone row shows: what the priority list resolves to, the same as Settings'
+    /// "Next dictation". Side-effect free (it never observes devices or triggers an apply).
+    func defaultMicrophoneName() -> String? {
+        microphonePrioritySnapshot(devices: MicrophoneDeviceManager.availableInputDevices()).nextVisibleDeviceName
+    }
+
     static func historyFileRevealSelection(for audioPath: URL) -> [URL] {
         [audioPath]
     }
@@ -2527,7 +2547,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             missingPermissions: missingHotkeyPermissions,
             availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
             selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
-            onSelectDevice: { [weak self] in _ = self?.selectMicrophone(id: $0) },
             prioritySnapshot: { [weak self] in
                 self?.currentMicrophonePrioritySnapshot() ?? .unavailable
             },
@@ -2663,6 +2682,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func currentMicrophonePrioritySnapshot() -> MicrophonePrioritySnapshot {
         let devices = MicrophoneDeviceManager.availableInputDevices()
         refreshAvailableMicrophones(devices)
+        return microphonePrioritySnapshot(devices: devices)
+    }
+
+    private func microphonePrioritySnapshot(devices: [MicrophoneDevice]) -> MicrophonePrioritySnapshot {
         let selectedID = microphonePriority.resolveDeviceID(
             in: devices,
             fallbackDeviceID: MicrophoneDeviceManager.selectedInputDeviceID()
@@ -2688,15 +2711,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             mode: voiceState.mode,
             captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
         )
-    }
-
-    @discardableResult
-    func selectMicrophone(id: String) -> Bool {
-        guard MicrophoneDeviceManager.selectInputDevice(id: id) else { return false }
-        if voiceState.mode == .recording {
-            audioLevelMonitor.restart()
-        }
-        return true
     }
 
     private func reorderMicrophonePriority(_ uids: [String]) {
@@ -2829,7 +2843,6 @@ struct VoiceBarApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            let microphone = menuMicrophoneSnapshot
             MenuBarPopoverView(
                 footer: .resolve(state: appDelegate.voiceState),
                 hotkeyHint: appDelegate.hotkeyEnabled
@@ -2838,19 +2851,18 @@ struct VoiceBarApp: App {
                         hotkeyEnabled: appDelegate.hotkeyEnabled,
                         missingPermissions: appDelegate.missingHotkeyPermissions
                     ),
-                microphoneName: microphone.devices.first(where: { $0.id == microphone.selectedID })?.name
-                    ?? "Input unavailable",
-                microphones: microphone.devices,
-                selectedMicrophoneID: microphone.selectedID,
+                defaultMicrophoneName: menuDefaultMicrophoneName,
                 transcript: appDelegate.voiceState.latestReusableTranscript,
                 degradationHint: appDelegate.voiceState.polishDegradation?.hint,
                 onCopy: { appDelegate.voiceState.copyLastTranscript() },
                 onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
                 onQuit: { appDelegate.quitFromMenuBar() },
-                onSelectMicrophone: { id in
-                    if appDelegate.selectMicrophone(id: id) {
-                        menuMicrophoneRefresh &+= 1
-                    }
+                onChangeMicrophone: {
+                    appDelegate.openSettingsFromMenuBar(
+                        popover: AppDelegate.menuBarPopoverWindow(),
+                        tab: .general,
+                        focus: .microphonePriority
+                    )
                 }
             )
             .onAppear {
@@ -2880,8 +2892,9 @@ struct VoiceBarApp: App {
         }
     }
 
-    private var menuMicrophoneSnapshot: (devices: [MicrophoneDevice], selectedID: String?) {
+    /// Re-read on the popover's 1 s refresh, so a priority change or a plugged-in mic shows up while it is open.
+    private var menuDefaultMicrophoneName: String? {
         _ = menuMicrophoneRefresh
-        return (MicrophoneDeviceManager.availableInputDevices(), MicrophoneDeviceManager.selectedInputDeviceID())
+        return appDelegate.defaultMicrophoneName()
     }
 }

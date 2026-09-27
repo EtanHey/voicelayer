@@ -109,33 +109,15 @@ final class PillContextMenuControllerTests: XCTestCase {
         XCTAssertEqual(quits, 1)
     }
 
-    func testMicrophoneItemShowsTheCurrentDevice() throws {
+    func testMicrophoneItemShowsThePriorityDefault() throws {
         let controller = PillContextMenuController()
-        controller.availableDevicesProvider = {
-            [MicrophoneDevice(id: "a", name: "MacBook Pro Microphone"), MicrophoneDevice(id: "b", name: "USB Mic")]
-        }
-        controller.selectedDeviceIDProvider = { "b" }
+        controller.defaultMicrophoneNameProvider = { "USB Mic" }
         let microphone = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Microphone" })
         if #available(macOS 14.4, *) {
             XCTAssertEqual(microphone.subtitle, "USB Mic")
         }
-        XCTAssertEqual(microphone.submenu?.items.filter { $0.state == .on }.map(\.title), ["USB Mic"])
-    }
-
-    func testDeviceOptionsMarkSelectedMicrophone() {
-        let options = PillContextMenuController.deviceOptions(
-            devices: [
-                MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone"),
-                MicrophoneDevice(id: "usb", name: "USB Mic"),
-            ],
-            selectedID: "usb"
-        )
-
-        XCTAssertEqual(options.map(\.title), [
-            "MacBook Pro Microphone",
-            "USB Mic",
-        ])
-        XCTAssertEqual(options.map(\.isSelected), [false, true])
+        XCTAssertEqual(microphone.submenu?.items.first?.title, "Default: USB Mic")
+        XCTAssertTrue(microphone.submenu?.items.allSatisfy { $0.state == .off } == true, "nothing to pick or check")
     }
 
     func testPasteActionEnabledOnlyWhenTranscriptExists() {

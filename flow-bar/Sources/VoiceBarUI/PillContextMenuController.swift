@@ -60,25 +60,19 @@ public extension MicrophoneDevice {
     }
 }
 
-public struct MicrophoneDeviceOption: Equatable {
-    public var id: String
-    public var title: String
-    public var isSelected: Bool
-    public var isEnabled: Bool = true
-}
-
 public final class PillContextMenuController: NSObject {
     public var transcriptProvider: () -> String = { "" }
     public var recentTranscriptionEntriesProvider: () -> [RecentTranscriptionEntry] = { [] }
     public var now: () -> Date = { Date() }
-    public var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
-    public var selectedDeviceIDProvider: () -> String? = { nil }
+    /// The microphone-priority default (the name Settings shows as "Next dictation").
+    public var defaultMicrophoneNameProvider: () -> String? = { nil }
 
     public var onOpenSettings: () -> Void = {}
     public var onSnooze: () -> Void = {}
     public var onUnsnooze: () -> Void = {}
     public var isSnoozedProvider: () -> Bool = { false }
-    public var onSelectDevice: (String) -> Void = { _ in }
+    /// Opens Settings › General › Microphone priority. There is no direct device pick here (D2).
+    public var onChangeMicrophone: () -> Void = {}
     public var onQuit: () -> Void = {}
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
@@ -147,7 +141,7 @@ public final class PillContextMenuController: NSObject {
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
         if #available(macOS 14.4, *) {
-            microphoneItem.subtitle = currentMicrophoneTitle()
+            microphoneItem.subtitle = defaultMicrophoneNameProvider()
         }
         menu.addItem(microphoneItem)
 
@@ -158,16 +152,6 @@ public final class PillContextMenuController: NSObject {
         menu.addItem(quitItem)
 
         return menu
-    }
-
-    /// The device the Microphone submenu checks, from the same filtered list (#141).
-    private func currentMicrophoneTitle() -> String? {
-        let devices = availableDevicesProvider()
-        let selectedID = selectedDeviceIDProvider()
-        if let hidden = MicrophoneDevice.hiddenInUse(devices, selectedID: selectedID) {
-            return MicrophoneDevice.hiddenDeviceLabel(hidden.name)
-        }
-        return MicrophoneDevice.pickable(devices).first { $0.id == selectedID }?.name
     }
 
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
@@ -199,59 +183,27 @@ public final class PillContextMenuController: NSObject {
         return menu
     }
 
+    /// Read-only (D2): the priority default, then "Change…". Picking a device here used to write the macOS default
+    /// directly, and the priority list then put its own top device back.
     public func makeMicrophoneSubmenu() -> NSMenu {
         let menu = NSMenu()
-        let selectedID = selectedDeviceIDProvider()
-        let options = Self.deviceOptions(
-            devices: availableDevicesProvider(),
-            selectedID: selectedID
+        let current = NSMenuItem(
+            title: MicrophoneDefaultPresentation.title(defaultMicrophoneNameProvider()),
+            action: nil,
+            keyEquivalent: ""
         )
-
-        if options.isEmpty {
-            let empty = NSMenuItem(title: "No input devices found", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-            return menu
-        }
-
-        for option in options {
-            let item = NSMenuItem(
-                title: option.title,
-                action: option.isEnabled ? #selector(handleSelectDevice(_:)) : nil,
-                keyEquivalent: ""
-            )
-            item.target = option.isEnabled ? self : nil
-            item.isEnabled = option.isEnabled
-            item.state = option.isSelected ? .on : .off
-            item.representedObject = option.id
-            menu.addItem(item)
-            if !option.isEnabled {
-                menu.addItem(.separator())
-            }
-        }
-
+        current.isEnabled = false
+        menu.addItem(current)
+        menu.addItem(.separator())
+        let change = NSMenuItem(
+            title: MicrophoneDefaultPresentation.changeTitle,
+            action: #selector(handleChangeMicrophone),
+            keyEquivalent: ""
+        )
+        change.target = self
+        change.toolTip = MicrophoneDefaultPresentation.changeAccessibilityLabel
+        menu.addItem(change)
         return menu
-    }
-
-    public static func deviceOptions(
-        devices: [MicrophoneDevice],
-        selectedID: String?
-    ) -> [MicrophoneDeviceOption] {
-        let inUse = MicrophoneDevice.hiddenInUse(devices, selectedID: selectedID).map {
-            MicrophoneDeviceOption(
-                id: $0.id,
-                title: MicrophoneDevice.hiddenInUseTitle($0.name),
-                isSelected: true,
-                isEnabled: false
-            )
-        }
-        return (inUse.map { [$0] } ?? []) + MicrophoneDevice.pickable(devices).map {
-            MicrophoneDeviceOption(
-                id: $0.id,
-                title: $0.name,
-                isSelected: $0.id == selectedID
-            )
-        }
     }
 
     public static func isPasteEnabled(transcript: String) -> Bool {
@@ -298,9 +250,8 @@ public final class PillContextMenuController: NSObject {
         onPasteTranscript(transcript)
     }
 
-    @objc private func handleSelectDevice(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        onSelectDevice(id)
+    @objc private func handleChangeMicrophone() {
+        onChangeMicrophone()
     }
 
     @objc private func handleQuit() {
@@ -438,4 +389,19 @@ public enum MicrophoneDeviceManager {
         guard status == noErr, let name else { return nil }
         return name.takeUnretainedValue() as String
     }
+}
+
+/// Etan's D2 (2026-09-25): every surface shows the microphone-priority default read-only; "Change…" leads to
+/// Settings › Microphone priority, the one place the default is chosen.
+public enum MicrophoneDefaultPresentation {
+    public static func title(_ name: String?) -> String {
+        "Default: \(name ?? "Unavailable")"
+    }
+
+    public static func accessibilityLabel(_ name: String?) -> String {
+        "Default microphone: \(name ?? "unavailable")"
+    }
+
+    public static let changeTitle = "Change…"
+    public static let changeAccessibilityLabel = "Change default microphone in Settings"
 }
