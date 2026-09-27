@@ -656,7 +656,8 @@ SH
 # Every executable reached after the swap is a fixture; no live app or brew calls.
 # Sourced functions consume these variables and invoke the overridden helpers.
 # shellcheck disable=SC2030,SC2034,SC2329
-test_formula_upgrade_refreshes_deleted_keg_path() (
+test_formula_upgrade_refreshes_keg_path() (
+    export FIXTURE_KEEP_OLD_KEG="${1:-0}"
     local fixture old_root new_root helper
     fixture="$(mktemp -d)"
     trap 'rm -rf "${fixture:?}"' EXIT
@@ -674,7 +675,11 @@ test_formula_upgrade_refreshes_deleted_keg_path() (
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
-    upgrade) rm -rf "${FIXTURE_OLD_KEG:?}" ;;
+    upgrade)
+        if [[ "$FIXTURE_KEEP_OLD_KEG" != 1 ]]; then
+            rm -rf "${FIXTURE_OLD_KEG:?}"
+        fi
+        ;;
     --prefix) printf '%s\n' "$FIXTURE_NEW_KEG" ;;
     *) printf 'Unexpected fake brew invocation: %s\n' "$*" >&2; exit 1 ;;
 esac
@@ -699,7 +704,11 @@ HELPER
     bcs_tap_update() { :; }
     voicebar_app_update_mode() { printf 'build\n'; }
     update_package
-    [[ ! -d "$FIXTURE_OLD_KEG" ]] || fail "fake upgrade did not delete old keg"
+    if [[ "$FIXTURE_KEEP_OLD_KEG" == 1 ]]; then
+        [[ -d "$FIXTURE_OLD_KEG" ]] || fail "fake upgrade must retain old keg"
+    else
+        [[ ! -d "$FIXTURE_OLD_KEG" ]] || fail "fake upgrade did not delete old keg"
+    fi
     update_voicebar_app
     repair_and_verify_voicebar_hotkey_path
     assert_eq "$new_root" "$PACKAGE_ROOT" "package root follows the upgraded keg"
@@ -813,7 +822,8 @@ test_resident_app_install_rejects_apple_development_without_dangerous_override
 test_resident_app_install_allows_apple_development_with_dangerous_override
 test_build_strips_security_xattrs_before_signing
 
-test_formula_upgrade_refreshes_deleted_keg_path
+test_formula_upgrade_refreshes_keg_path 0
+test_formula_upgrade_refreshes_keg_path 1
 test_formula_update_keeps_existing_keg_when_prefix_fails
 test_git_checkout_update_keeps_its_package_root
 

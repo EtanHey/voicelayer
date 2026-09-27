@@ -513,19 +513,22 @@ update_package() {
 # brew upgrade may remove the keg this process started from. Resolve the current
 # keg before any subsequent build, repair, or health-check script is opened.
 refresh_formula_package_root() {
-    [[ -f "$PACKAGE_ROOT/scripts/voicelayer-update.sh" ]] && return 0
     if bcs_commands_are_simulated; then
         return 0
     fi
-    local formula_prefix new_package_root
-    formula_prefix="$(bcs_brew --prefix "$VOICEBAR_FORMULA_NAME")" || return 1
-    new_package_root="$formula_prefix/libexec/lib/node_modules/voicelayer-mcp"
-    if [[ ! -f "$new_package_root/scripts/voicelayer-update.sh" ]]; then
-        err "Updated VoiceLayer package not found at $new_package_root."
-        return 1
+    local formula_prefix="" new_package_root=""
+    if formula_prefix="$(bcs_brew --prefix "$VOICEBAR_FORMULA_NAME")"; then
+        new_package_root="$formula_prefix/libexec/lib/node_modules/voicelayer-mcp"
+        if [[ -f "$new_package_root/scripts/voicelayer-update.sh" ]]; then
+            PACKAGE_ROOT="$(cd "$new_package_root" && pwd -P)"
+            SCRIPT_DIR="$PACKAGE_ROOT/scripts"
+            return 0
+        fi
     fi
-    PACKAGE_ROOT="$(cd "$new_package_root" && pwd -P)"
-    SCRIPT_DIR="$PACKAGE_ROOT/scripts"
+    # Homebrew could not name a usable keg; keep the one we started from if it still exists.
+    [[ -f "$PACKAGE_ROOT/scripts/voicelayer-update.sh" ]] && return 0
+    err "Updated VoiceLayer package not found${new_package_root:+ at $new_package_root}."
+    return 1
 }
 
 formula_offered_version() {
