@@ -429,6 +429,7 @@ final class AppLifecycleTests: XCTestCase {
 
     func testUnsnoozeRestoresIdleMode() {
         let state = VoiceState()
+        state.setConnectionStatus(true)
         state.snooze()
         XCTAssertEqual(state.mode, .disconnected)
 
@@ -958,9 +959,9 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(settings.collectionBehavior.contains(.moveToActiveSpace))
     }
 
-    @MainActor
     /// Counts `orderOut` calls, so the identity guard is observed directly (#157 review, mutation M2: the
     /// old visibility check passed without the guard because Settings is re-fronted right after).
+    @MainActor
     private final class OrderOutCountingWindow: NSWindow {
         private(set) var orderOutCount = 0
         override func orderOut(_ sender: Any?) {
@@ -996,7 +997,10 @@ final class AppLifecycleTests: XCTestCase {
         let end = try XCTUnwrap(source.range(of: "onQuit:", range: popover.upperBound ..< source.endIndex))
         let arguments = source[popover.upperBound ..< end.lowerBound]
         XCTAssertTrue(
-            arguments.contains("onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) }"),
+            arguments
+                .contains(
+                    "onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) }"
+                ),
             "Open Settings… must close the popover it was clicked in"
         )
     }
