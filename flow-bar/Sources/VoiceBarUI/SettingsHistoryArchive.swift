@@ -16,6 +16,10 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     /// The slice of that audio handed to speech-to-text. Shorter than `durationMs`
     /// when the trailing-silence trim fired.
     public let transcribedDurationMs: Int?
+    /// ≈ speech time with the pauses left out (F1). Nil on entries archived before it was measured.
+    public let spokenDurationMs: Int?
+    /// Post-capture processing time of the dictation (F1). Nil on older entries.
+    public let processingDurationMs: Int?
     public let modelLabel: String?
     public let performanceEffort: VoiceBarPerformanceEffort?
     public let inputDeviceLabel: String?
@@ -29,6 +33,8 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         audioPath: URL,
         durationMs: Int? = nil,
         transcribedDurationMs: Int? = nil,
+        spokenDurationMs: Int? = nil,
+        processingDurationMs: Int? = nil,
         modelLabel: String? = nil,
         performanceEffort: VoiceBarPerformanceEffort? = nil,
         inputDeviceLabel: String? = nil
@@ -41,6 +47,8 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         self.audioPath = audioPath
         self.durationMs = durationMs
         self.transcribedDurationMs = transcribedDurationMs
+        self.spokenDurationMs = spokenDurationMs
+        self.processingDurationMs = processingDurationMs
         self.modelLabel = modelLabel
         self.performanceEffort = performanceEffort
         self.inputDeviceLabel = inputDeviceLabel
@@ -208,6 +216,8 @@ public enum SettingsHistoryArchive {
             audioPath: audioURL,
             durationMs: metadata?.durationMs,
             transcribedDurationMs: metadata?.transcribedDurationMs,
+            spokenDurationMs: metadata?.spokenDurationMs,
+            processingDurationMs: metadata?.processingDurationMs,
             modelLabel: VoiceModelDisplayName.normalize(metadata?.provenance?.whisperModelPath),
             performanceEffort: metadata?.provenance?.performanceEffort.flatMap(VoiceBarPerformanceEffort.init),
             inputDeviceLabel: metadata?.inputDeviceName?
