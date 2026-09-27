@@ -497,6 +497,7 @@ update_package() {
         brew-formula)
             bcs_tap_update "$(bcs_cask_tap "$VOICEBAR_CASK_NAME")" "$VOICEBAR_CASK_TAP_BRANCH"
             update_formula
+            refresh_formula_package_root
             ;;
         *)
             if command -v bun >/dev/null 2>&1; then
@@ -507,6 +508,27 @@ update_package() {
             fi
             ;;
     esac
+}
+
+# brew upgrade may remove the keg this process started from. Resolve the current
+# keg before any subsequent build, repair, or health-check script is opened.
+refresh_formula_package_root() {
+    if bcs_commands_are_simulated; then
+        return 0
+    fi
+    local formula_prefix="" new_package_root=""
+    if formula_prefix="$(bcs_brew --prefix "$VOICEBAR_FORMULA_NAME")"; then
+        new_package_root="$formula_prefix/libexec/lib/node_modules/voicelayer-mcp"
+        if [[ -f "$new_package_root/scripts/voicelayer-update.sh" ]]; then
+            PACKAGE_ROOT="$(cd "$new_package_root" && pwd -P)"
+            SCRIPT_DIR="$PACKAGE_ROOT/scripts"
+            return 0
+        fi
+    fi
+    # Homebrew could not name a usable keg; keep the one we started from if it still exists.
+    [[ -f "$PACKAGE_ROOT/scripts/voicelayer-update.sh" ]] && return 0
+    err "Updated VoiceLayer package not found${new_package_root:+ at $new_package_root}."
+    return 1
 }
 
 formula_offered_version() {
