@@ -1542,9 +1542,18 @@ describe("input recording durability", () => {
     expect(atReturn.processing_duration_ms).toBe(1234);
     // Measured off the paste hot path: not yet written when the transcript is delivered.
     expect("spoken_duration_ms" in atReturn).toBe(false);
+    const completedEvents = () =>
+      broadcasts.filter((event) => event.type === "archive_metadata_updated");
+    expect(completedEvents()).toEqual([]);
 
     await new Promise((resolve) => setImmediate(resolve));
     const later = readMetadata();
+    // F1 round 2: once the write is durable, History is told to drop its cached copy of this entry.
+    expect(completedEvents()).toEqual([
+      { type: "archive_metadata_updated", recording_path: capturedVoiceBarAudio()[0] },
+    ]);
+    expect(broadcasts.findIndex((event) => event.type === "archive_metadata_updated"))
+      .toBeGreaterThan(broadcasts.findIndex((event) => event.type === "transcription"));
     // The pause is visible: spoken time excludes it, at the 250 ms window grain.
     expect(later.spoken_duration_ms).toBeGreaterThanOrEqual(1024);
     expect(later.spoken_duration_ms).toBeLessThanOrEqual(2048 - 500);

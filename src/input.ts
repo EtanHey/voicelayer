@@ -1688,9 +1688,14 @@ export function recordArchivedSpokenDuration(
   pcmData: Uint8Array,
 ): void {
   const spokenDurationMs = measureSpokenDurationMs(pcmData);
-  updateArchivedRecordingMetadata(audioPath, (metadata) => {
-    metadata.spoken_duration_ms = spokenDurationMs;
-  });
+  // Required: a missing entry throws, so the caller never announces a write that did not happen.
+  updateArchivedRecordingMetadata(
+    audioPath,
+    (metadata) => {
+      metadata.spoken_duration_ms = spokenDurationMs;
+    },
+    true,
+  );
 }
 
 export function classifyCaptureFailure(
@@ -3324,6 +3329,8 @@ export async function waitForInput(
       setImmediate(() => {
         try {
           recordArchivedSpokenDuration(spokenAudioPath, pcmData);
+          // History may have cached this entry between delivery and now; the write is durable, so say so.
+          broadcast({ type: "archive_metadata_updated", recording_path: spokenAudioPath });
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
           console.error(`[voicelayer] Failed to record spoken length: ${detail}`);

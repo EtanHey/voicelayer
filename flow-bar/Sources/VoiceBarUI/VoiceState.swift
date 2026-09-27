@@ -1610,6 +1610,14 @@ public final class VoiceState {
         case "command_mode":
             handleCommandModeEvent(event)
 
+        case "archive_metadata_updated":
+            // F1: metadata written after the transcript was delivered (the ≈ spoken length). Refresh History's copy
+            // of that entry only; this is not a transcript, so nothing is remembered, pasted or sent.
+            guard let path = (event["recording_path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !path.isEmpty
+            else { return }
+            onHistoryArchiveChange?(path)
+
         case "vocabulary", "vocab_list", "stt_vocabulary":
             applyVocabularyEvent(event)
 

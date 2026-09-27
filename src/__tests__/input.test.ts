@@ -1683,6 +1683,14 @@ describe("archived transcript metadata after retranscription", () => {
     expect(metadata.transcribed_duration_ms).toBe(9000);
   });
 
+  it("refuses to record a spoken length for a missing entry, so no completion is announced (F1 r2)", () => {
+    const missing = join(tmpdir(), `voicelayer-missing-${Date.now()}`, "audio.wav");
+
+    expect(() => recordArchivedSpokenDuration(missing, new Uint8Array(3200))).toThrow(
+      "Missing archive metadata",
+    );
+  });
+
   it("does not invent a duration when the caller supplies none", () => {
     const audioPath = writeArchive({
       id: "2026-08-18T12-14-56-912Z-ece16541",
