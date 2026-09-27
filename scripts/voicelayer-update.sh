@@ -513,6 +513,7 @@ update_package() {
 # brew upgrade may remove the keg this process started from. Resolve the current
 # keg before any subsequent build, repair, or health-check script is opened.
 refresh_formula_package_root() {
+    [[ -f "$PACKAGE_ROOT/scripts/voicelayer-update.sh" ]] && return 0
     if bcs_commands_are_simulated; then
         return 0
     fi

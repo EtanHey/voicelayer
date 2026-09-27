@@ -661,11 +661,11 @@ test_formula_upgrade_refreshes_deleted_keg_path() (
     fixture="$(mktemp -d)"
     trap 'rm -rf "${fixture:?}"' EXIT
     fixture="$(cd "$fixture" && pwd -P)"
-    export X1_OLD_KEG="$fixture/Cellar/voicelayer/old"
-    export X1_NEW_KEG="$fixture/Cellar/voicelayer/new"
-    export X1_HELPER_LOG="$fixture/helpers.log"
-    old_root="$X1_OLD_KEG/libexec/lib/node_modules/voicelayer-mcp"
-    new_root="$X1_NEW_KEG/libexec/lib/node_modules/voicelayer-mcp"
+    export FIXTURE_OLD_KEG="$fixture/Cellar/voicelayer/old"
+    export FIXTURE_NEW_KEG="$fixture/Cellar/voicelayer/new"
+    export FIXTURE_HELPER_LOG="$fixture/helpers.log"
+    old_root="$FIXTURE_OLD_KEG/libexec/lib/node_modules/voicelayer-mcp"
+    new_root="$FIXTURE_NEW_KEG/libexec/lib/node_modules/voicelayer-mcp"
     mkdir -p "$old_root/scripts/lib" "$old_root/flow-bar" "$new_root/scripts" "$new_root/flow-bar"
     cp "$UPDATE_SCRIPT" "$old_root/scripts/voicelayer-update.sh"
     cp "$UPDATE_SCRIPT" "$new_root/scripts/voicelayer-update.sh"
@@ -674,8 +674,8 @@ test_formula_upgrade_refreshes_deleted_keg_path() (
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
-    upgrade) rm -rf "${X1_OLD_KEG:?}" ;;
-    --prefix) printf '%s\n' "$X1_NEW_KEG" ;;
+    upgrade) rm -rf "${FIXTURE_OLD_KEG:?}" ;;
+    --prefix) printf '%s\n' "$FIXTURE_NEW_KEG" ;;
     *) printf 'Unexpected fake brew invocation: %s\n' "$*" >&2; exit 1 ;;
 esac
 BREW
@@ -684,7 +684,7 @@ BREW
         scripts/install-voicebar-autostart.sh scripts/verify-voicebar-hotkey-health.sh flow-bar/build-app.sh; do
         cat > "$new_root/$helper" <<'HELPER'
 #!/usr/bin/env bash
-printf '%s\n' "$0" >> "$X1_HELPER_LOG"
+printf '%s\n' "$0" >> "$FIXTURE_HELPER_LOG"
 HELPER
         cp "$new_root/$helper" "$old_root/$helper"
     done
@@ -699,14 +699,67 @@ HELPER
     bcs_tap_update() { :; }
     voicebar_app_update_mode() { printf 'build\n'; }
     update_package
-    [[ ! -d "$X1_OLD_KEG" ]] || fail "fake upgrade did not delete old keg"
+    [[ ! -d "$FIXTURE_OLD_KEG" ]] || fail "fake upgrade did not delete old keg"
     update_voicebar_app
     repair_and_verify_voicebar_hotkey_path
     assert_eq "$new_root" "$PACKAGE_ROOT" "package root follows the upgraded keg"
-    assert_eq "5" "$(wc -l < "$X1_HELPER_LOG" | tr -d ' ')" "all post-upgrade helpers ran"
+    assert_eq "5" "$(wc -l < "$FIXTURE_HELPER_LOG" | tr -d ' ')" "all post-upgrade helpers ran"
     while IFS= read -r helper; do
         [[ "$helper" == "$new_root/"* ]] || fail "helper came from stale keg: $helper"
-    done < "$X1_HELPER_LOG"
+    done < "$FIXTURE_HELPER_LOG"
+)
+
+# Keep using an intact keg when Homebrew cannot resolve the formula prefix.
+# Every helper is a fixture; no live app or brew calls.
+# Sourced functions consume these variables and invoke the overridden helpers.
+# shellcheck disable=SC2030,SC2031,SC2034,SC2329
+test_formula_update_keeps_existing_keg_when_prefix_fails() (
+    local fixture old_root helper
+    fixture="$(mktemp -d)"
+    trap 'rm -rf "${fixture:?}"' EXIT
+    fixture="$(cd "$fixture" && pwd -P)"
+    export FIXTURE_OLD_KEG="$fixture/Cellar/voicelayer/old"
+    export FIXTURE_HELPER_LOG="$fixture/helpers.log"
+    old_root="$FIXTURE_OLD_KEG/libexec/lib/node_modules/voicelayer-mcp"
+    mkdir -p "$old_root/scripts/lib" "$old_root/flow-bar"
+    cp "$UPDATE_SCRIPT" "$old_root/scripts/voicelayer-update.sh"
+    cp "$ROOT_DIR/scripts/lib/brew-cask-sync.sh" "$old_root/scripts/lib/"
+    cat > "$fixture/brew" <<'BREW'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+    upgrade) exit 1 ;;
+    --prefix) exit 1 ;;
+    *) printf 'Unexpected fake brew invocation: %s\n' "$*" >&2; exit 1 ;;
+esac
+BREW
+    chmod +x "$fixture/brew"
+    for helper in scripts/voicelayer-dedupe-voicebar.sh scripts/install-voicebar-f5-hidutil.sh \
+        scripts/install-voicebar-autostart.sh scripts/verify-voicebar-hotkey-health.sh flow-bar/build-app.sh; do
+        cat > "$old_root/$helper" <<'HELPER'
+#!/usr/bin/env bash
+printf '%s\n' "$0" >> "$FIXTURE_HELPER_LOG"
+HELPER
+    done
+    export BREW_CASK_SYNC_BREW_BIN="$fixture/brew"
+    export BREW_CASK_SYNC_TEST_FORMULA_VERSION=1.0.0
+    export VOICELAYER_UPDATE_TEST_FORMULA_OFFERED_VERSION=1.0.0
+    export VOICELAYER_UPDATE_TEST_INSTALL_TYPE=brew-formula
+    # shellcheck source=/dev/null
+    source "$old_root/scripts/voicelayer-update.sh"
+    DRY_RUN=0
+    DRY_RUN_COMMANDS=0
+    bcs_tap_update() { :; }
+    voicebar_app_update_mode() { printf 'build\n'; }
+    update_package
+    [[ -d "$FIXTURE_OLD_KEG" ]] || fail "existing keg must remain available"
+    update_voicebar_app
+    repair_and_verify_voicebar_hotkey_path
+    assert_eq "$old_root" "$PACKAGE_ROOT" "package root remains at the existing keg"
+    assert_eq "5" "$(wc -l < "$FIXTURE_HELPER_LOG" | tr -d ' ')" "all post-upgrade helpers ran"
+    while IFS= read -r helper; do
+        [[ "$helper" == "$old_root/"* ]] || fail "helper did not come from existing keg: $helper"
+    done < "$FIXTURE_HELPER_LOG"
 )
 
 # Each fixture deliberately isolates install-mode overrides in its own subshell.
@@ -761,6 +814,7 @@ test_resident_app_install_allows_apple_development_with_dangerous_override
 test_build_strips_security_xattrs_before_signing
 
 test_formula_upgrade_refreshes_deleted_keg_path
+test_formula_update_keeps_existing_keg_when_prefix_fails
 test_git_checkout_update_keeps_its_package_root
 
 printf 'PASS: VoiceBar build/update flow shell tests\n'
