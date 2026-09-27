@@ -33,6 +33,7 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Recent Transcriptions",
             "Paste Last Transcript",
             "Copy Last Transcript",
+            "Re-transcribe latest",
             "—",
             "Microphone",
             "—",
@@ -44,6 +45,51 @@ final class PillContextMenuControllerTests: XCTestCase {
         XCTAssertNotNil(settings.image, "Settings… carries the gearshape symbol")
         XCTAssertNotNil(menu.items.first { $0.title == "Recent Transcriptions" }?.submenu)
         XCTAssertNotNil(menu.items.first { $0.title == "Microphone" }?.submenu)
+    }
+
+    func testRetranscribeLatestInvokesCallbackOnceWithoutShortcut() throws {
+        let controller = PillContextMenuController()
+        controller.canRetranscribeLatestProvider = { true }
+        var calls = 0
+        controller.onRetranscribeLatest = { calls += 1 }
+        let item = try XCTUnwrap(controller.makeMenu().item(withTitle: "Re-transcribe latest"))
+        XCTAssertTrue(item.isEnabled)
+        XCTAssertEqual(item.keyEquivalent, "")
+        _ = item.target?.perform(item.action, with: item)
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testRetranscribeLatestDisabledForEveryBusyStateAndMissingCapture() throws {
+        let state = VoiceState()
+        let controller = PillContextMenuController()
+        var hasCapture = false
+        controller.canRetranscribeLatestProvider = {
+            state.canRetranscribeLatestCapture(hasLatestCapture: hasCapture)
+        }
+        func assertEnabled(_ expected: Bool, file: StaticString = #filePath, line: UInt = #line) throws {
+            let menu = controller.makeMenu()
+            menu.update()
+            let item = try XCTUnwrap(menu.item(withTitle: "Re-transcribe latest"))
+            XCTAssertEqual(item.isEnabled, expected, file: file, line: line)
+        }
+        state.mode = .idle
+        try assertEnabled(false)
+        hasCapture = true
+        try assertEnabled(true)
+        state.mode = .recording
+        try assertEnabled(false)
+        state.mode = .transcribing
+        try assertEnabled(false)
+        state.mode = .idle
+        state.retranscribeHistoryEntry(recordingPath: "/test/capture.wav")
+        try assertEnabled(false)
+
+        let latestState = VoiceState()
+        controller.canRetranscribeLatestProvider = {
+            latestState.canRetranscribeLatestCapture(hasLatestCapture: true)
+        }
+        latestState.retranscribeLastCapture()
+        try assertEnabled(false)
     }
 
     func testSnoozedMenuSwapsOnlyTheHideItem() {
