@@ -238,6 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
             self?.voiceState.refreshModelsSettingsStatus()
+            self?.voiceState.requestVocabularySnapshot()
         }
     }
 
