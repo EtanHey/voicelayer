@@ -52,7 +52,6 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
             missingPermissions: [],
             availableDevices: { [] },
             selectedDeviceID: { nil },
-            onSelectDevice: { _ in },
             modelsStatus: { .loading },
             onRefreshModelsStatus: {},
             vocabularyRevision: { 0 },
@@ -107,7 +106,7 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
             built += 1
             return SettingsView(
                 hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] }, selectedDeviceID: { nil },
-                onSelectDevice: { _ in }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                modelsStatus: { .loading }, onRefreshModelsStatus: {},
                 vocabularyRevision: { 0 }, historyPage: { _ in SettingsHistoryPage(groups: [], hasMore: false) },
                 askHistoryPage: { _ in SettingsAskHistoryPage(groups: [], hasMore: false) }
             )
@@ -137,7 +136,6 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
             missingPermissions: [],
             availableDevices: { [] },
             selectedDeviceID: { nil },
-            onSelectDevice: { _ in },
             modelsStatus: { .loading },
             onRefreshModelsStatus: {},
             vocabularyRevision: { 0 },
@@ -178,7 +176,7 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         func make(_ request: SettingsTabRequest?) -> SettingsView {
             SettingsView(
                 hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] }, selectedDeviceID: { nil },
-                onSelectDevice: { _ in }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+                modelsStatus: { .loading }, onRefreshModelsStatus: {},
                 vocabularyRevision: { 0 }, historyPage: { _ in SettingsHistoryPage(groups: [], hasMore: false) },
                 askHistoryPage: { _ in SettingsAskHistoryPage(groups: [], hasMore: false) },
                 tabRequest: request,
@@ -212,7 +210,7 @@ final class SettingsArchiveIndexWiringTests: XCTestCase {
         var reported: [SettingsTab] = []
         let hosting = NSHostingController(rootView: SettingsView(
             hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] }, selectedDeviceID: { nil },
-            onSelectDevice: { _ in }, modelsStatus: { .loading }, onRefreshModelsStatus: {},
+            modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyRevision: { 0 }, historyPage: { _ in SettingsHistoryPage(groups: [], hasMore: false) },
             askHistoryPage: { _ in SettingsAskHistoryPage(groups: [], hasMore: false) },
             initialTab: .history,

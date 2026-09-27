@@ -42,12 +42,20 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
 /// a repeat request for the same tab fire again, and an unchanged request never overrides the user.
 public struct SettingsTabRequest: Equatable {
     public let tab: SettingsTab
+    public let focus: SettingsFocus?
     public let id: Int
 
-    public init(tab: SettingsTab, id: Int) {
+    public init(tab: SettingsTab, focus: SettingsFocus? = nil, id: Int) {
         self.tab = tab
+        self.focus = focus
         self.id = id
     }
+}
+
+/// A section a Settings request scrolls to after switching tab.
+public enum SettingsFocus: String, Equatable, Hashable {
+    /// General › Microphone priority, where the default microphone is chosen (D2 "Change…").
+    case microphonePriority = "settings-general-microphone-priority"
 }
 
 /// The two lists inside Settings → History. Order is the on-screen order: recording sits on the
@@ -378,7 +386,6 @@ public struct SettingsView: View {
     public let missingPermissions: [HotkeyPermission]
     public let availableDevices: () -> [MicrophoneDevice]
     public let selectedDeviceID: () -> String?
-    public let onSelectDevice: (String) -> Void
     public let prioritySnapshot: () -> MicrophonePrioritySnapshot
     public let onReorderPriority: ([String]) -> Void
     public let polishDegradation: () -> STTPolishDegradation?
@@ -493,7 +500,6 @@ public struct SettingsView: View {
         missingPermissions: [HotkeyPermission],
         availableDevices: @escaping () -> [MicrophoneDevice],
         selectedDeviceID: @escaping () -> String?,
-        onSelectDevice: @escaping (String) -> Void,
         prioritySnapshot: @escaping () -> MicrophonePrioritySnapshot = { .unavailable },
         onReorderPriority: @escaping ([String]) -> Void = { _ in },
         polishDegradation: @escaping () -> STTPolishDegradation? = { nil },
@@ -582,7 +588,6 @@ public struct SettingsView: View {
         self.missingPermissions = missingPermissions
         self.availableDevices = availableDevices
         self.selectedDeviceID = selectedDeviceID
-        self.onSelectDevice = onSelectDevice
         self.prioritySnapshot = prioritySnapshot
         self.onReorderPriority = onReorderPriority
         self.polishDegradation = polishDegradation
@@ -764,6 +769,26 @@ public struct SettingsView: View {
     // MARK: - General Tab
 
     private var generalTab: some View {
+        ScrollViewReader { proxy in
+            generalForm
+                .onAppear { scrollToRequestedFocus(proxy, animated: false) }
+                .onChange(of: tabRequest) { _, _ in scrollToRequestedFocus(proxy, animated: true) }
+        }
+    }
+
+    /// "Change…" from the menu or popover lands here with the Microphone priority list in view (D2).
+    private func scrollToRequestedFocus(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard let focus = tabRequest?.focus, tabRequest?.tab == .general else { return }
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation { proxy.scrollTo(focus, anchor: .top) }
+            } else {
+                proxy.scrollTo(focus, anchor: .top)
+            }
+        }
+    }
+
+    private var generalForm: some View {
         Form {
             Section("Shortcut") {
                 LabeledContent("Shortcut") {
@@ -916,7 +941,7 @@ public struct SettingsView: View {
     // MARK: - General microphone priority
 
     private var microphonePrioritySection: some View {
-        Section("Microphone priority") {
+        Section {
             LabeledContent("Next dictation") {
                 Text(microphoneSnapshot.nextVisibleDeviceName ?? "Unavailable")
                     .foregroundStyle(.secondary)
@@ -940,6 +965,9 @@ public struct SettingsView: View {
             Text("Make a microphone the default, or drag to reorder. Disconnected microphones keep their place.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        } header: {
+            Text("Microphone priority")
+                .id(SettingsFocus.microphonePriority)
         }
     }
 

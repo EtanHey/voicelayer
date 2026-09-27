@@ -89,7 +89,7 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         let view = MenuBarPopoverView(
             footer: .resolve(isConnected: true, mode: mode, captureLive: false,
                              errorMessage: nil, remoteSTTConfigured: remoteSTTConfigured, hasFreshHealth: true),
-            hotkeyHint: "Hold F5 to dictate", microphoneName: "Fixture Microphone",
+            hotkeyHint: "Hold F5 to dictate", defaultMicrophoneName: "Fixture Microphone",
             transcript: transcript, onLayout: onLayout
         )
         let host = NSHostingView(rootView: view)
