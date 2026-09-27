@@ -16,9 +16,10 @@ public struct MicrophoneDevice: Equatable {
     }
 }
 
-/// AIDEV-NOTE: The ONE rule for which input devices a user may pick. The menu-bar popover, the right-click
-/// Microphone submenu and Settings' priority list all use it (R4 UI pass #2: the menus used to list VoiceBar's
-/// own `CADefaultDeviceAggregate-<pid>-0` and the Teams/Zoom loopbacks while Settings hid them).
+/// AIDEV-NOTE: The ONE rule for which input devices a user may pick (R4 UI pass #2: the menus used to list
+/// VoiceBar's own `CADefaultDeviceAggregate-<pid>-0` and the Teams/Zoom loopbacks while Settings hid them).
+/// Since D2 (2026-09-25) Settings' priority list is the only picker; the menu and popover show its default
+/// read-only, with `hiddenDeviceLabel` when that default is a hidden device.
 public extension MicrophoneDevice {
     /// CoreAudio's transport type decides when it is known; the device identity is only the fallback. (That
     /// fallback's "aggregate" substring would also hide a user-built aggregate, but only when the transport
@@ -36,27 +37,9 @@ public extension MicrophoneDevice {
         Self.isVirtualOrAggregate(uid: uid, name: name, transport: isVirtualOrAggregateTransport)
     }
 
-    /// The devices every microphone picker offers, in the order given.
-    static func pickable(_ devices: [MicrophoneDevice]) -> [MicrophoneDevice] {
-        devices.filter { !$0.isVirtualOrAggregate }
-    }
-
-    /// The selected device when it is one the pickers hide (#141 review): every picker still shows it, checked
-    /// and not selectable, so the user sees what is actually recording and can switch away.
-    static func hiddenInUse(_ devices: [MicrophoneDevice], selectedID: String?) -> MicrophoneDevice? {
-        guard let selectedID, let selected = devices.first(where: { $0.id == selectedID }),
-              selected.isVirtualOrAggregate
-        else { return nil }
-        return selected
-    }
-
     /// The one label for a hidden device in use, shared by the popover, the right-click menu and Settings.
     static func hiddenDeviceLabel(_ name: String) -> String {
         "\(name) (hidden device)"
-    }
-
-    static func hiddenInUseTitle(_ name: String) -> String {
-        "In use: \(hiddenDeviceLabel(name))"
     }
 }
 
@@ -202,6 +185,7 @@ public final class PillContextMenuController: NSObject {
         )
         change.target = self
         change.toolTip = MicrophoneDefaultPresentation.changeAccessibilityLabel
+        change.setAccessibilityLabel(MicrophoneDefaultPresentation.changeAccessibilityLabel)
         menu.addItem(change)
         return menu
     }

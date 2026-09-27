@@ -31,7 +31,7 @@ final class MicrophonePickerListTests: XCTestCase {
         let settings = MicrophonePrioritySnapshot(rows: priority.rows(for: liveShaped), nextDeviceName: nil)
 
         XCTAssertEqual(Set(settings.visibleRows.map(\.label)), Set(realMics))
-        XCTAssertEqual(Set(MicrophoneDevice.pickable(liveShaped).map(\.name)), Set(realMics))
+        XCTAssertEqual(Set(liveShaped.filter { !$0.isVirtualOrAggregate }.map(\.name)), Set(realMics))
     }
 
     /// Without a transport type (the CoreAudio read failed), identity is the fallback, so the aggregate and the
@@ -41,14 +41,14 @@ final class MicrophonePickerListTests: XCTestCase {
             MicrophoneDevice(id: $0.id, name: $0.name, uid: $0.uid, isVirtualOrAggregateTransport: nil)
         }
 
-        XCTAssertEqual(MicrophoneDevice.pickable(unknownTransport).map(\.name), realMics)
+        XCTAssertEqual(unknownTransport.filter { !$0.isVirtualOrAggregate }.map(\.name), realMics)
     }
 
     func testTransportTypeStillWinsOverAVirtualSoundingName() {
         let physical = MicrophoneDevice(id: "5", name: "Virtual Studio Mic", uid: "studio",
                                         isVirtualOrAggregateTransport: false)
 
-        XCTAssertEqual(MicrophoneDevice.pickable([physical]).map(\.name), ["Virtual Studio Mic"])
+        XCTAssertEqual([physical].filter { !$0.isVirtualOrAggregate }.map(\.name), ["Virtual Studio Mic"])
     }
 }
 

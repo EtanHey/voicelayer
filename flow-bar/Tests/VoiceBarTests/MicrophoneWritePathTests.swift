@@ -6,6 +6,13 @@ import XCTest
 /// action may call `selectInputDevice`.
 @MainActor
 final class MicrophoneWritePathTests: XCTestCase {
+    /// Opening Settings calls `NSApp.activate`; a filtered run has no application yet unless the fixture makes
+    /// one (A4 review r1: the tests trapped when run on their own).
+    override func setUp() async throws {
+        try await super.setUp()
+        _ = NSApplication.shared
+    }
+
     private func sources() throws -> [(name: String, text: String)] {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

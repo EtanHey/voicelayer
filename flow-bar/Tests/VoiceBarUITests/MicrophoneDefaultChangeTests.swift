@@ -23,6 +23,8 @@ final class MicrophoneDefaultChangeTests: XCTestCase {
 
         let change = items[2]
         XCTAssertTrue(change.isEnabled)
+        XCTAssertEqual(change.accessibilityLabel(), "Change default microphone in Settings",
+                       "VoiceOver hears what Change… does, not just its title")
         _ = change.target?.perform(change.action, with: change)
         XCTAssertEqual(changes, 1)
     }

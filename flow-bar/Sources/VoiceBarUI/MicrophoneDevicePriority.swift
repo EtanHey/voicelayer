@@ -20,7 +20,7 @@ public struct MicrophonePriorityRow: Equatable {
         uid != nil
     }
 
-    /// The same rule every microphone picker uses (`MicrophoneDevice.pickable`).
+    /// The same rule as `MicrophoneDevice.isVirtualOrAggregate` (the one pickable-device rule).
     public var isVirtualOrAggregate: Bool {
         MicrophoneDevice.isVirtualOrAggregate(uid: uid, name: label, transport: isVirtualOrAggregateTransport)
     }
