@@ -92,7 +92,7 @@ public final class PillContextMenuController: NSObject {
         let settingsItem = NSMenuItem(
             title: "Settings…",
             action: #selector(handleOpenSettings),
-            keyEquivalent: ","
+            keyEquivalent: ""
         )
         settingsItem.keyEquivalentModifierMask = .command
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)

@@ -39,7 +39,7 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Quit VoiceBar",
         ])
         let settings = try XCTUnwrap(menu.items.first)
-        XCTAssertEqual(settings.keyEquivalent, ",")
+        XCTAssertEqual(settings.keyEquivalent, "")
         XCTAssertEqual(settings.keyEquivalentModifierMask, .command)
         XCTAssertNotNil(settings.image, "Settings… carries the gearshape symbol")
         XCTAssertNotNil(menu.items.first { $0.title == "Recent Transcriptions" }?.submenu)
