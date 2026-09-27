@@ -462,6 +462,8 @@ public struct SettingsView: View {
     @State private var askHistoryLoadFence = SettingsHistoryLoadFence()
     @State private var askHistoryRefreshTask: Task<Void, Never>?
     @State private var hasPrefetchedAskHistory = false
+    /// History scopes shown at least once in this Settings session; they stay mounted (lane E).
+    @State private var mountedHistoryScopes: Set<SettingsHistoryScope> = []
     /// Set when History is (re)entered, so the next Dictations page selects the newest row (UI pass #9).
     @State private var selectNewestOnNextHistoryPage = true
     @State private var searchPrewarmTask: Task<Void, Never>?
@@ -1100,16 +1102,25 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             historyScopePicker
 
-            switch selectedHistoryScope {
-            case .recording:
-                recordingHistoryScope
-            case .ask:
-                askHistoryScope
+            // AIDEV-NOTE: lane E (QA 2.2.25 C10). A `switch` here tore down and rebuilt the whole list on every
+            // Dictations ↔ Ask click; on the 11k archive that rebuild was most of the switch's main-thread time.
+            // Each scope mounts the first time it is shown and then stays; the hidden one is fully inert (not
+            // drawn, not hit-testable, not focusable, hidden from VoiceOver).
+            ZStack(alignment: .topLeading) {
+                if mountedHistoryScopes.contains(.recording) || selectedHistoryScope == .recording {
+                    recordingHistoryScope
+                        .historyScopeVisibility(selectedHistoryScope == .recording)
+                }
+                if mountedHistoryScopes.contains(.ask) || selectedHistoryScope == .ask {
+                    askHistoryScope
+                        .historyScopeVisibility(selectedHistoryScope == .ask)
+                }
             }
         }
-        // AIDEV-NOTE: Always reload the scope being switched to. An inactive scope is out of the
-        // view hierarchy, so its `.onReceive(voiceBarHistoryArchiveDidChange)` never fires — without
-        // this, switching back shows a list frozen at whenever that scope was last on screen.
+        // AIDEV-NOTE: A scope not yet mounted in this History visit is out of the view hierarchy, so its
+        // `.onReceive(voiceBarHistoryArchiveDidChange)` never fired — it reloads when first shown. Once mounted it
+        // stays mounted (hidden) and keeps itself current, so switching back to it does not reload (lane E).
+        // Leaving the History tab unmounts both, so the set resets in `.onDisappear`.
         // H1-c: a new query starts from the first page again; typing is debounced by the load itself.
         .onChange(of: SettingsHistorySearch(historySearch)) { _, _ in
             historyLoadedEntryLimit = Self.historyPageSize
@@ -1119,8 +1130,13 @@ public struct SettingsView: View {
             askHistoryLoadedEntryLimit = Self.historyPageSize
             requestAskHistoryReload(debounce: true, scrollToLatest: false)
         }
+        .onAppear { mountedHistoryScopes.insert(selectedHistoryScope) }
         .onChange(of: selectedHistoryScope) { _, scope in
             historyPlayback.stop()
+            // A scope that stayed mounted kept its own `.onReceive(voiceBarHistoryArchiveDidChange)` and search
+            // reloads while hidden, so its list is current: showing it again needs no reload (lane E). A scope
+            // shown for the first time since History appeared loads as before.
+            guard mountedHistoryScopes.insert(scope).inserted else { return }
             switch scope {
             case .recording:
                 requestHistoryReload()
@@ -1131,6 +1147,7 @@ public struct SettingsView: View {
         .onDisappear {
             cancelHistoryLoads()
             historyPlayback.stop()
+            mountedHistoryScopes = []
         }
     }
 
@@ -2726,5 +2743,17 @@ private extension HotkeyPermission {
         case .microphone:
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
         }
+    }
+}
+
+private extension View {
+    /// The scope not on screen stays mounted but inert: not drawn, not hit-testable, not focusable, not read by
+    /// VoiceOver.
+    func historyScopeVisibility(_ visible: Bool) -> some View {
+        opacity(visible ? 1 : 0)
+            .allowsHitTesting(visible)
+            .disabled(!visible)
+            .accessibilityHidden(!visible)
+            .zIndex(visible ? 1 : 0)
     }
 }
