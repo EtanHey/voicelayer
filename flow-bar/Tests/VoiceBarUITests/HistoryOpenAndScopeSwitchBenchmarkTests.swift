@@ -69,7 +69,7 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
         let archiveRoot = try XCTUnwrap(root)
         let view = SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
-            availableDevices: { [] }, selectedDeviceID: { nil }, onSelectDevice: { _ in },
+            availableDevices: { [] }, selectedDeviceID: { nil },
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: { STTVocabularyPreview(updatedAt: nil, entries: []) }, vocabularyRevision: { 0 },
             historyPage: { limit in
@@ -129,7 +129,7 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
         let archiveRoot = try XCTUnwrap(root)
         let view = SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
-            availableDevices: { [] }, selectedDeviceID: { nil }, onSelectDevice: { _ in },
+            availableDevices: { [] }, selectedDeviceID: { nil },
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: { STTVocabularyPreview(updatedAt: nil, entries: []) }, vocabularyRevision: { 0 },
             historyPage: { limit in

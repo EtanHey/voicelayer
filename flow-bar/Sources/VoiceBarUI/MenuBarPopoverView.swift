@@ -4,46 +4,47 @@ import SwiftUI
 public struct MenuBarPopoverView: View {
     public let footer: VoiceBarFooterPresentation
     public let hotkeyHint: String
-    public let microphoneName: String
-    public let microphones: [MicrophoneDevice]
-    /// The selected device when the pickers hide it (#141 review): shown checked and disabled on top.
-    public let hiddenInUseMicrophone: MicrophoneDevice?
-    public let selectedMicrophoneID: String?
+    /// The microphone-priority default, read-only (D2); nil when none resolves.
+    public let defaultMicrophoneName: String?
     public let transcript: String
     public let degradationHint: String?
     public let onCopy: () -> Void
     public let onSettings: () -> Void
     public let onQuit: () -> Void
-    public let onSelectMicrophone: (String) -> Void
+    /// Opens Settings › General › Microphone priority. There is no direct device pick here (D2).
+    public let onChangeMicrophone: () -> Void
     public let onLayout: ([String: CGRect]) -> Void
 
     public init(
         footer: VoiceBarFooterPresentation,
         hotkeyHint: String,
-        microphoneName: String,
-        microphones: [MicrophoneDevice] = [],
-        selectedMicrophoneID: String? = nil,
+        defaultMicrophoneName: String?,
         transcript: String,
         degradationHint: String? = nil,
         onCopy: @escaping () -> Void = {},
         onSettings: @escaping () -> Void = {},
         onQuit: @escaping () -> Void = {},
-        onSelectMicrophone: @escaping (String) -> Void = { _ in },
+        onChangeMicrophone: @escaping () -> Void = {},
         onLayout: @escaping ([String: CGRect]) -> Void = { _ in }
     ) {
         self.footer = footer
         self.hotkeyHint = hotkeyHint
-        self.microphoneName = microphoneName
-        self.microphones = MicrophoneDevice.pickable(microphones)
-        hiddenInUseMicrophone = MicrophoneDevice.hiddenInUse(microphones, selectedID: selectedMicrophoneID)
-        self.selectedMicrophoneID = selectedMicrophoneID
+        self.defaultMicrophoneName = defaultMicrophoneName
         self.transcript = transcript
         self.degradationHint = degradationHint
         self.onCopy = onCopy
         self.onSettings = onSettings
         self.onQuit = onQuit
-        self.onSelectMicrophone = onSelectMicrophone
+        self.onChangeMicrophone = onChangeMicrophone
         self.onLayout = onLayout
+    }
+
+    public var defaultMicrophoneTitle: String {
+        MicrophoneDefaultPresentation.title(defaultMicrophoneName)
+    }
+
+    public var defaultMicrophoneAccessibilityLabel: String {
+        MicrophoneDefaultPresentation.accessibilityLabel(defaultMicrophoneName)
     }
 
     public var body: some View {
@@ -82,48 +83,33 @@ public struct MenuBarPopoverView: View {
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .popoverFrame("locality")
-            Menu {
-                if let hiddenInUseMicrophone {
-                    Button {} label: {
-                        Label(MicrophoneDevice.hiddenInUseTitle(hiddenInUseMicrophone.name), systemImage: "checkmark")
-                    }
-                    .disabled(true)
-                    Divider()
-                }
-                if microphones.isEmpty {
-                    Text("No input devices found")
-                } else {
-                    ForEach(microphones, id: \.id) { device in
-                        Button {
-                            onSelectMicrophone(device.id)
-                        } label: {
-                            if device.id == selectedMicrophoneID {
-                                Label(device.name, systemImage: "checkmark")
-                            } else {
-                                Text(device.name)
-                            }
-                        }
-                    }
-                }
-            } label: {
+            HStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "mic")
-                    Text(microphoneName)
-                        .lineLimit(1)
-                        .help(microphoneName)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                    // A long device name wraps to a second line rather than losing its middle.
+                    Text(defaultMicrophoneTitle)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(defaultMicrophoneTitle)
                 }
-                .font(.system(size: 12))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.quaternary))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(defaultMicrophoneAccessibilityLabel)
+                Spacer(minLength: 0)
+                Button(MicrophoneDefaultPresentation.changeTitle, action: onChangeMicrophone)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .contentShape(Rectangle())
+                    .fixedSize()
+                    .help("Choose the default in Settings › Microphone priority")
+                    .accessibilityLabel(MicrophoneDefaultPresentation.changeAccessibilityLabel)
+                    .accessibilityIdentifier("popover-microphone-change")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Microphone: \(microphoneName)")
+            .font(.system(size: 12))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.quaternary))
             .accessibilityIdentifier("popover-microphone")
             .popoverFrame("mic")
             if !transcript.isEmpty {

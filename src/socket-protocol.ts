@@ -82,6 +82,15 @@ export interface TranscriptionEvent {
   polish_reason?: string;
 }
 
+/**
+ * An archived recording's metadata changed after its transcript was delivered (F1: the spoken length is measured
+ * after paste). VoiceBar drops its cached History copy of that entry; it is not a transcript and pastes nothing.
+ */
+export interface ArchiveMetadataUpdatedEvent {
+  type: "archive_metadata_updated";
+  recording_path: string;
+}
+
 export interface TranscriptionStatusEvent {
   type: "transcription_status";
   status: "warming" | "transcribing";
@@ -249,6 +258,7 @@ export type SocketEvent =
   | StateEvent
   | SpeechEvent
   | TranscriptionEvent
+  | ArchiveMetadataUpdatedEvent
   | TranscriptionStatusEvent
   | PolishDegradedEvent
   | PolishReadyEvent

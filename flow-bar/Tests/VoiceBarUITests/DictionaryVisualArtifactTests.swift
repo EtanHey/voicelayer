@@ -32,7 +32,6 @@ final class DictionaryVisualArtifactTests: XCTestCase {
                     missingPermissions: [],
                     availableDevices: { [MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone")] },
                     selectedDeviceID: { "built-in" },
-                    onSelectDevice: { _ in },
                     modelsStatus: { .loading },
                     onRefreshModelsStatus: {},
                     vocabularyPreview: { preview },

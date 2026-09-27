@@ -25,7 +25,6 @@ final class SettingsHistoryLayoutArtifactTests: XCTestCase {
                     missingPermissions: [],
                     availableDevices: { [] },
                     selectedDeviceID: { nil },
-                    onSelectDevice: { _ in },
                     modelsStatus: { .loading },
                     onRefreshModelsStatus: {},
                     vocabularyRevision: { 0 },

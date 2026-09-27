@@ -1508,6 +1508,58 @@ describe("input recording durability", () => {
     expect(clockReads).toBe(2);
   });
 
+  it("persists processing time and spoken length into the VoiceBar archive metadata (F1)", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    // 512 ms speech · 1024 ms pause · 512 ms speech = 2048 ms of mic-on time.
+    installFakeRecorder(
+      [
+        ...Array.from({ length: 16 }, () => makePcmChunk(1800)),
+        ...Array.from({ length: 32 }, () => makePcmChunk(0)),
+        ...Array.from({ length: 16 }, () => makePcmChunk(1800)),
+      ],
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    const clockValues = [1_000, 2_234.4];
+    let clockReads = 0;
+
+    await expect(
+      waitForInput(2_500, "standard", true, {
+        archiveSource: "voicebar",
+        monotonicNow: () => clockValues[clockReads++]!,
+      }),
+    ).resolves.toBe("Retained transcript.");
+
+    const readMetadata = () =>
+      JSON.parse(
+        readFileSync(
+          capturedVoiceBarAudio()[0].replace("audio.wav", "metadata.json"),
+          "utf8",
+        ),
+      );
+    const atReturn = readMetadata();
+    expect(atReturn.duration_ms).toBe(2048);
+    expect(atReturn.processing_duration_ms).toBe(1234);
+    // Measured off the paste hot path: not yet written when the transcript is delivered.
+    expect("spoken_duration_ms" in atReturn).toBe(false);
+    const completedEvents = () =>
+      broadcasts.filter((event) => event.type === "archive_metadata_updated");
+    expect(completedEvents()).toEqual([]);
+
+    await new Promise((resolve) => setImmediate(resolve));
+    const later = readMetadata();
+    // F1 round 2: once the write is durable, History is told to drop its cached copy of this entry.
+    expect(completedEvents()).toEqual([
+      { type: "archive_metadata_updated", recording_path: capturedVoiceBarAudio()[0] },
+    ]);
+    expect(broadcasts.findIndex((event) => event.type === "archive_metadata_updated"))
+      .toBeGreaterThan(broadcasts.findIndex((event) => event.type === "transcription"));
+    // The pause is visible: spoken time excludes it, at the 250 ms window grain.
+    expect(later.spoken_duration_ms).toBeGreaterThanOrEqual(1024);
+    expect(later.spoken_duration_ms).toBeLessThanOrEqual(2048 - 500);
+    expect(later.processing_duration_ms).toBe(1234);
+  });
+
   for (const throwOnRead of [1, 2]) {
     it(`preserves the completed VoiceBar transcript when receipt clock read ${throwOnRead} throws`, async () => {
       vadProcessSpy!.mockResolvedValue(0.95);

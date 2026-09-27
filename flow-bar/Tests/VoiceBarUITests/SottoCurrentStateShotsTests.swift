@@ -86,7 +86,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                 try shot("popover-\(name)\(suffix).png", "Menu bar popover: \(name), \(appearance)",
                          MenuBarPopoverView(
                              footer: footer, hotkeyHint: "Hold F5 to dictate",
-                             microphoneName: "Built-in Microphone", transcript: transcript
+                             defaultMicrophoneName: "MacBook Pro Microphone", transcript: transcript
                          ).environment(\.colorScheme, scheme),
                          size: CGSize(width: 300, height: transcript.isEmpty ? 240 : 320))
             }
@@ -164,20 +164,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                 createdAt: Date(timeIntervalSince1970: 1_790_000_000 - 7200)
             ),
         ] }
-        // Mixed on purpose: the aggregate and the Teams/Zoom loopbacks must not reach the Microphone submenu.
-        menu.availableDevicesProvider = { [
-            MicrophoneDevice(id: "fixture-aggregate", name: "CADefaultDeviceAggregate-1234-0",
-                             uid: "CADefaultDeviceAggregate-1234-0", isVirtualOrAggregateTransport: true),
-            MicrophoneDevice(id: "fixture-mic", name: "Fixture Microphone", uid: "fixture-mic",
-                             isVirtualOrAggregateTransport: false),
-            MicrophoneDevice(id: "fixture-teams", name: "Microsoft Teams Audio", uid: "fixture-teams",
-                             isVirtualOrAggregateTransport: true),
-            MicrophoneDevice(id: "fixture-usb", name: "Fixture USB Microphone", uid: "fixture-usb",
-                             isVirtualOrAggregateTransport: false),
-            MicrophoneDevice(id: "fixture-zoom", name: "ZoomAudioDevice", uid: "fixture-zoom",
-                             isVirtualOrAggregateTransport: true),
-        ] }
-        menu.selectedDeviceIDProvider = { "fixture-mic" }
+        // D2 (2026-09-25): the Microphone submenu is read-only — the priority default, then "Change…".
+        menu.defaultMicrophoneNameProvider = { "Fixture Microphone" }
         try menuShots(
             menu.makeMenu(),
             prefix: "menu",
@@ -185,17 +173,24 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             directory: directory,
             lines: &lines
         )
-
-        // #141 round 2: the device in use is a hidden one; the submenu still says so, checked and disabled.
-        menu.selectedDeviceIDProvider = { "fixture-teams" }
         try menuShots(
             menu.makeMicrophoneSubmenu(),
-            prefix: "menu-microphone-hidden-in-use",
-            description: "Right-click → Microphone while a hidden device is in use",
+            prefix: "menu-microphone",
+            description: "Right-click → Microphone: read-only default + Change…",
             directory: directory,
             lines: &lines
         )
-        menu.selectedDeviceIDProvider = { "fixture-mic" }
+
+        // #141: a hidden device as the default still says so, through the same label Settings uses.
+        menu.defaultMicrophoneNameProvider = { MicrophoneDevice.hiddenDeviceLabel("Microsoft Teams Audio") }
+        try menuShots(
+            menu.makeMicrophoneSubmenu(),
+            prefix: "menu-microphone-hidden-in-use",
+            description: "Right-click → Microphone while a hidden device is the default",
+            directory: directory,
+            lines: &lines
+        )
+        menu.defaultMicrophoneNameProvider = { "Fixture Microphone" }
 
         let empty = STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         let populated = STTVocabularyPreview(
@@ -477,7 +472,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         let recordingPath = syntheticRecordingPath
         return SettingsView(hotkeyEnabled: true, missingPermissions: missingPermissions,
                             availableDevices: { [MicrophoneDevice(id: "fixture-mic", name: "Fixture Microphone")] },
-                            selectedDeviceID: { "fixture-mic" }, onSelectDevice: { _ in },
+                            selectedDeviceID: { "fixture-mic" },
                             prioritySnapshot: {
                                 if let micRows {
                                     return MicrophonePrioritySnapshot(
