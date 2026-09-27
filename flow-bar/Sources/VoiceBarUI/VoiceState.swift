@@ -1216,6 +1216,13 @@ public final class VoiceState {
         sendCommand?(STTVocabularyCommandPayload.list())
     }
 
+    /// Asks the daemon for its Dictionary snapshot. Its `vocab_list` reply is the only message that carries the
+    /// bundled rows ("Included terms"), so a (re)connect asks for one (QA 2.2.25 C11).
+    public func requestVocabularySnapshot() {
+        guard isConnected else { return }
+        sendCommand?(STTVocabularyCommandPayload.list())
+    }
+
     public func removeVocabularyPromptTerm(_ term: String) {
         let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -1667,12 +1674,8 @@ public final class VoiceState {
 
     private func applyVocabularyEventFields(_ event: [String: Any]) {
         var appliedSnapshot = false
-
-        if let rows = event["display_entries"] as? [[String: Any]] {
-            transcriptionVocabularyDisplayEntries = rows.compactMap(STTDictionaryDisplayEntry.init(eventRow:))
-        } else {
-            transcriptionVocabularyDisplayEntries = nil
-        }
+        let displayRows = (event["display_entries"] as? [[String: Any]])?
+            .compactMap(STTDictionaryDisplayEntry.init(eventRow:))
 
         if let entries = event["entries"] as? [[String: Any]] {
             let preview = STTVocabularyPreview(
@@ -1707,7 +1710,12 @@ public final class VoiceState {
             appliedSnapshot = true
         }
 
-        if !appliedSnapshot {
+        if appliedSnapshot {
+            transcriptionVocabularyDisplayEntries = displayRows
+        } else {
+            // No snapshot: reload from the file, keeping the newest bundled rows this event or an earlier reply
+            // carried (a row-less event must not wipe them).
+            if let displayRows { transcriptionVocabularyDisplayEntries = displayRows }
             refreshTranscriptionVocabulary()
         }
     }
@@ -1957,11 +1965,21 @@ public final class VoiceState {
 
     private func refreshTranscriptionVocabulary() {
         withVocabularyMirrorBatch {
-            transcriptionVocabularyDisplayEntries = nil
+            // AIDEV-NOTE: the file holds personal entries only; the bundled rows arrive solely in the daemon's
+            // vocab_list reply. Keep the last ones it sent and rebuild the personal rows from the file, or every
+            // final transcription reset Settings to "Included terms (0)" (QA 2.2.25 C11).
+            let bundledRows = transcriptionVocabularyDisplayEntries?.filter { !$0.isPersonal }
             transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
             transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
                 transcriptionVocabularyAliasLoader()
             )
+            transcriptionVocabularyDisplayEntries = bundledRows.map { bundled in
+                bundled + STTVocabularyPreview(
+                    updatedAt: nil,
+                    promptTerms: transcriptionVocabularyTerms,
+                    aliases: transcriptionVocabularyAliases
+                ).entries.map { STTDictionaryDisplayEntry(source: "personal", entry: $0) }
+            }
         }
     }
 

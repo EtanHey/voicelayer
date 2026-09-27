@@ -2443,9 +2443,7 @@ public struct SettingsView: View {
         Task {
             let (preview, index) = await Task.detached(priority: .userInitiated) {
                 let preview = provider()
-                let index = STTDictionaryDisplayIndex(entries: preview.displayEntries ?? preview.entries.map {
-                    STTDictionaryDisplayEntry(source: "personal", entry: $0)
-                })
+                let index = STTDictionaryDisplayIndex(preview: preview)
                 return (preview, index)
             }.value
             dictionaryLoading = false

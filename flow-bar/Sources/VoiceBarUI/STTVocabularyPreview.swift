@@ -63,6 +63,14 @@ public struct STTDictionaryDisplayIndex {
         includedCount = entries.count - personalCount
     }
 
+    /// The Dictionary tab's index for one provider load. Without daemon display rows every entry is the user's
+    /// own: the file-backed store holds personal entries only, and the bundled list lives in TS.
+    public init(preview: STTVocabularyPreview) {
+        self.init(entries: preview.displayEntries ?? preview.entries.map {
+            STTDictionaryDisplayEntry(source: "personal", entry: $0)
+        })
+    }
+
     /// Real words first (UI pass #17: "-s" and the slash-command entries led the list), then everything that
     /// starts with punctuation; each group case-insensitively. Nothing is dropped.
     static func sortsBefore(_ lhs: String, _ rhs: String) -> Bool {

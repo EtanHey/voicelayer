@@ -10,6 +10,7 @@ import * as tts from "../tts";
 import {
   addAlias,
   addPromptTerm,
+  BUILTIN_STT_DICTIONARY_ENTRIES,
   listVocabulary,
 } from "../stt-vocabulary-store";
 
@@ -122,6 +123,21 @@ describe("socket vocabulary commands", () => {
       canonical: "Domica",
       variants: ["domekin"],
     });
+  });
+
+  it("carries every bundled entry as an included row (QA 2.2.25 C11)", () => {
+    addPromptTerm("Domica", { path: vocabPath });
+
+    const listed = handleSocketCommand({ cmd: "vocab_list" }) as VocabListResponse;
+    const bundled = listed.display_entries.filter((row) => row.source === "bundled");
+
+    expect(bundled.map(({ canonical, variants }) => ({ canonical, variants }))).toEqual(
+      BUILTIN_STT_DICTIONARY_ENTRIES.map(({ canonical, variants }) => ({
+        canonical,
+        variants: [...variants],
+      })),
+    );
+    expect(listed.display_entries.filter((row) => row.source === "personal")).toHaveLength(1);
   });
 
   it("keeps same-name bundled and personal rows distinct across personal removal", () => {
