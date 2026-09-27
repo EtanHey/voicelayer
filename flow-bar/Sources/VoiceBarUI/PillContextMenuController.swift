@@ -82,12 +82,16 @@ public final class PillContextMenuController: NSObject {
     public var onQuit: () -> Void = {}
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
+    public var canRetranscribeLatestProvider: () -> Bool = { false }
+    public var onRetranscribeLatest: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
 
     /// Etan's approved spec §3 (p03-design-spec-approval/spec.md), item for item: Settings… · Hide for 1 hour ·
-    /// — · Recent Transcriptions › · Paste/Copy Last Transcript · — · Microphone › · — · Quit VoiceBar.
+    /// — · Recent Transcriptions › · Paste/Copy Last Transcript · Re-transcribe latest · — · Microphone › · — · Quit
+    /// VoiceBar.
     public func makeMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.autoenablesItems = false
 
         let settingsItem = NSMenuItem(
             title: "Settings…",
@@ -141,6 +145,15 @@ public final class PillContextMenuController: NSObject {
         copyItem.target = self
         copyItem.isEnabled = hasTranscript
         menu.addItem(copyItem)
+
+        let retranscribeItem = NSMenuItem(
+            title: "Re-transcribe latest",
+            action: #selector(handleRetranscribeLatest),
+            keyEquivalent: ""
+        )
+        retranscribeItem.target = self
+        retranscribeItem.isEnabled = canRetranscribeLatestProvider()
+        menu.addItem(retranscribeItem)
 
         menu.addItem(.separator())
 
@@ -287,6 +300,11 @@ public final class PillContextMenuController: NSObject {
 
     @objc private func handlePasteLastTranscript() {
         onPasteLastTranscript()
+    }
+
+    @objc private func handleRetranscribeLatest() {
+        guard canRetranscribeLatestProvider() else { return }
+        onRetranscribeLatest()
     }
 
     @objc private func handleCopyLastTranscript() {

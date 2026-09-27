@@ -996,6 +996,11 @@ public final class VoiceState {
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
 
+    public func canRetranscribeLatestCapture(hasLatestCapture: Bool) -> Bool {
+        hasLatestCapture && mode != .recording && mode != .transcribing &&
+            !pendingRecoveredTranscriptionPaste && !isHistoryRetranscriptionPending
+    }
+
     public func retranscribeLastCapture() {
         guard !pendingRecoveredTranscriptionPaste else { return }
         pendingRecoveredTranscriptionPaste = true

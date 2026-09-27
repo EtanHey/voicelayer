@@ -765,6 +765,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.logDiagnostic(event: "context_menu_copy_last_transcript_tapped")
             self?.voiceState.copyLastTranscript()
         }
+        pillContextMenuController.canRetranscribeLatestProvider = { [weak self] in
+            self?.voiceState.canRetranscribeLatestCapture(
+                hasLatestCapture: FileManager.default.fileExists(atPath: VoiceLayerPaths.retainedRecordingPath)
+            ) ?? false
+        }
+        pillContextMenuController.onRetranscribeLatest = { [weak self] in
+            self?.logDiagnostic(event: "context_menu_retranscribe_latest_tapped")
+            self?.voiceState.retranscribeLastCapture()
+        }
         pillContextMenuController.onPasteTranscript = { [weak self] transcript in
             self?.logDiagnostic(event: "context_menu_paste_recent_transcript_tapped")
             self?.voiceState.repasteTranscript(transcript, source: "context_menu_history")
