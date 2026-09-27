@@ -65,7 +65,7 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
     /// switched-to list is rendered, as the user sees them in a hosted Settings window.
     func testHostedHistoryOpenAndScopeSwitches() throws {
         let index = SettingsArchiveIndex()
-        let probe = LoadProbe()
+        let probe = HistoryBenchProbe()
         let archiveRoot = try XCTUnwrap(root)
         let view = SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
@@ -73,13 +73,15 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: { STTVocabularyPreview(updatedAt: nil, entries: []) }, vocabularyRevision: { 0 },
             historyPage: { limit in
+                probe.start("dictations")
                 let page = await index.dictationPage(from: archiveRoot, limit: limit)
-                probe.mark("dictations")
+                probe.finish("dictations")
                 return page
             },
             askHistoryPage: { limit in
+                probe.start("ask")
                 let page = await index.askPage(from: archiveRoot, limit: limit)
-                probe.mark("ask")
+                probe.finish("ask")
                 return page
             },
             searchPrewarm: {},
@@ -97,11 +99,14 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
             window.orderOut(nil)
             window.contentView = nil
         }
-        let open = settle(after: start, waitingFor: "dictations", probe: probe)
-        print(String(format: "HISTORY_BENCH open first_rows_ms=%.1f loader_done_ms=%.1f longest_main_stall_ms=%.1f",
-                     open.quietAtMs, open.loaderDoneMs, open.longestStallMs))
-        // Let the Ask prefetch the Dictations load starts finish, as it would while the user reads the list.
-        _ = settle(after: CFAbsoluteTimeGetCurrent(), waitingFor: "ask", probe: probe)
+        let open = HistoryBenchSettle.settle(after: start, expecting: .load("dictations"), probe: probe)
+        report("open", open)
+        // Let the Ask prefetch the Dictations load starts finish, as it would while the user reads the list. A wait,
+        // not a measurement (it may already be done), so it is not printed; it must still complete.
+        let prefetch = HistoryBenchSettle.settle(
+            after: CFAbsoluteTimeGetCurrent(), expecting: .load("ask"), probe: probe
+        )
+        XCTAssertFalse(prefetch.timedOut, "the Ask prefetch never completed")
 
         let segmented = try XCTUnwrap(firstSegmentedControl(in: host))
         for (label, segment, key) in [("to_ask", 1, "ask"), ("to_dictations", 0, "dictations"),
@@ -110,13 +115,9 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
             let clickedAt = CFAbsoluteTimeGetCurrent()
             segmented.selectedSegment = segment
             _ = segmented.sendAction(segmented.action, to: segmented.target)
-            let result = settle(after: clickedAt, waitingFor: key, probe: probe)
-            print(String(
-                format: "HISTORY_BENCH switch %@ settled_ms=%.1f loader_done_ms=%.1f longest_main_stall_ms=%.1f",
-                label,
-                result.quietAtMs,
-                result.loaderDoneMs,
-                result.longestStallMs
+            // A switch loads only if the scope has to; whether it did is part of the measurement.
+            report("switch_\(label)", HistoryBenchSettle.settle(
+                after: clickedAt, expecting: .loadIfStarted(key), probe: probe
             ))
         }
     }
@@ -124,7 +125,7 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
     /// Etan's path: Settings already open on General, then History clicked in the sidebar (cold index).
     func testHostedClickHistoryFromGeneral() throws {
         let index = SettingsArchiveIndex()
-        let probe = LoadProbe()
+        let probe = HistoryBenchProbe()
         let archiveRoot = try XCTUnwrap(root)
         let view = SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
@@ -132,13 +133,15 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
             modelsStatus: { .loading }, onRefreshModelsStatus: {},
             vocabularyPreview: { STTVocabularyPreview(updatedAt: nil, entries: []) }, vocabularyRevision: { 0 },
             historyPage: { limit in
+                probe.start("dictations")
                 let page = await index.dictationPage(from: archiveRoot, limit: limit)
-                probe.mark("dictations")
+                probe.finish("dictations")
                 return page
             },
             askHistoryPage: { limit in
+                probe.start("ask")
                 let page = await index.askPage(from: archiveRoot, limit: limit)
-                probe.mark("ask")
+                probe.finish("ask")
                 return page
             },
             searchPrewarm: {},
@@ -154,35 +157,36 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
             window.orderOut(nil)
             window.contentView = nil
         }
-        probe.mark("mounted")
-        _ = settle(after: CFAbsoluteTimeGetCurrent(), waitingFor: "mounted", probe: probe)
+        _ = HistoryBenchSettle.settle(after: CFAbsoluteTimeGetCurrent(), expecting: .none, probe: probe)
         let table = try XCTUnwrap(firstTable(in: host))
         let history = try XCTUnwrap(SettingsTab.allCases.firstIndex(of: .history))
 
         let clickedAt = CFAbsoluteTimeGetCurrent()
         table.selectRowIndexes([history], byExtendingSelection: false)
-        let result = settle(after: clickedAt, waitingFor: "dictations", probe: probe)
-        print(String(
-            format: "HISTORY_BENCH click_history first_rows_ms=%.1f loader_done_ms=%.1f longest_main_stall_ms=%.1f",
-            result.quietAtMs,
-            result.loaderDoneMs,
-            result.longestStallMs
+        report("click_history", HistoryBenchSettle.settle(
+            after: clickedAt, expecting: .load("dictations"), probe: probe
         ))
 
-        // Away and back, warm (the "reopening History is slow even though I was just there" case).
+        // Away and back, warm (the "reopening History is slow even though I was just there" case). Returning to
+        // History reloads the shown scope, so a completed load is required.
         let general = try XCTUnwrap(SettingsTab.allCases.firstIndex(of: .general))
         table.selectRowIndexes([general], byExtendingSelection: false)
-        _ = settle(after: CFAbsoluteTimeGetCurrent(), waitingFor: "mounted", probe: probe)
+        _ = HistoryBenchSettle.settle(after: CFAbsoluteTimeGetCurrent(), expecting: .none, probe: probe)
         probe.reset("dictations")
         let againAt = CFAbsoluteTimeGetCurrent()
         table.selectRowIndexes([history], byExtendingSelection: false)
-        let again = settle(after: againAt, waitingFor: "dictations", probe: probe)
-        print(String(
-            format: "HISTORY_BENCH click_history_again first_rows_ms=%.1f loader_done_ms=%.1f longest_main_stall_ms=%.1f",
-            again.quietAtMs,
-            again.loaderDoneMs,
-            again.longestStallMs
+        report("click_history_again", HistoryBenchSettle.settle(
+            after: againAt, expecting: .load("dictations"), probe: probe
         ))
+    }
+
+    /// One line per measurement. A timed-out required load fails the test instead of printing a fast number.
+    private func report(_ label: String, _ result: HistoryBenchSettled) {
+        print("HISTORY_BENCH \(label) settled_ms=\(HistoryBenchSettle.format(result.quietAtMs)) "
+            + "loader_done_ms=\(HistoryBenchSettle.format(result.loaderDoneMs)) "
+            + String(format: "longest_main_stall_ms=%.1f", result.longestStallMs)
+            + (result.timedOut ? " TIMED_OUT" : ""))
+        XCTAssertFalse(result.timedOut, "\(label): the awaited load never completed")
     }
 
     private func firstTable(in view: NSView) -> NSTableView? {
@@ -194,63 +198,6 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
     }
 
     // MARK: - Measurement helpers
-
-    private final class LoadProbe: @unchecked Sendable {
-        private let lock = NSLock()
-        private var marks: [String: CFAbsoluteTime] = [:]
-        func mark(_ key: String) {
-            lock.lock()
-            marks[key] = CFAbsoluteTimeGetCurrent()
-            lock.unlock()
-        }
-
-        func reset(_ key: String) {
-            lock.lock()
-            marks[key] = nil
-            lock.unlock()
-        }
-
-        func time(_ key: String) -> CFAbsoluteTime? {
-            lock.lock()
-            defer { lock.unlock() }
-            return marks[key]
-        }
-    }
-
-    private struct Settled {
-        let quietAtMs: Double
-        let loaderDoneMs: Double
-        let longestStallMs: Double
-    }
-
-    /// Spins the main run loop in 2 ms slices. A slice that takes far longer is main-thread work (state apply,
-    /// body, layout, render). "Settled" = the loader has returned and 150 ms have passed with no slice over 8 ms.
-    private func settle(after start: CFAbsoluteTime, waitingFor key: String, probe: LoadProbe,
-                        timeout: TimeInterval = 10) -> Settled {
-        var longest = 0.0
-        var lastBusyEnd = start
-        let deadline = start + timeout
-        while CFAbsoluteTimeGetCurrent() < deadline {
-            let sliceStart = CFAbsoluteTimeGetCurrent()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.002))
-            let sliceEnd = CFAbsoluteTimeGetCurrent()
-            let sliceMs = (sliceEnd - sliceStart) * 1000
-            if sliceMs > 8 {
-                longest = max(longest, sliceMs)
-                lastBusyEnd = sliceEnd
-            }
-            // A switch that needs no load (the scope stayed mounted) settles once the main thread is quiet.
-            let done = probe.time(key)
-            if sliceEnd - max(lastBusyEnd, done ?? start) > 0.15, done != nil || sliceEnd - start > 0.4 {
-                return Settled(
-                    quietAtMs: (max(lastBusyEnd, done ?? start) - start) * 1000,
-                    loaderDoneMs: done.map { ($0 - start) * 1000 } ?? -1,
-                    longestStallMs: longest
-                )
-            }
-        }
-        return Settled(quietAtMs: timeout * 1000, loaderDoneMs: -1, longestStallMs: longest)
-    }
 
     private func timed<T>(_ work: () async -> T) async -> (value: T, ms: Double) {
         let start = CFAbsoluteTimeGetCurrent()
@@ -268,40 +215,88 @@ final class HistoryOpenAndScopeSwitchBenchmarkTests: XCTestCase {
 
     // MARK: - Synthetic archive
 
+    enum ManifestError: Error, CustomStringConvertible {
+        case unsafeComponent(line: Int, field: String, value: String)
+        case escapesRoot(line: Int, path: String)
+
+        var description: String {
+            switch self {
+            case let .unsafeComponent(line, field, value): "manifest line \(line): unsafe \(field) \"\(value)\""
+            case let .escapesRoot(line, path): "manifest line \(line): \(path) is outside the synthetic root"
+            }
+        }
+    }
+
+    /// `YYYY-MM-DD`, digits and dashes only.
+    private static func isDay(_ value: String) -> Bool {
+        let chars = Array(value)
+        return chars.count == 10 && chars.enumerated().allSatisfy { index, char in
+            [4, 7].contains(index) ? char == "-" : char.isASCII && char.isNumber
+        }
+    }
+
+    /// One plain path component: ASCII letters, digits, `.`, `_`, `-`, starting with a letter or digit (so never
+    /// `.`, `..` or hidden), and never a separator.
+    private static func isEntry(_ value: String) -> Bool {
+        guard let first = value.first, first.isASCII, first.isLetter || first.isNumber else { return false }
+        return value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) }
+    }
+
+    /// Builds a synthetic archive under `root` from a shape manifest. E review r1, M2: every row is validated
+    /// before anything is written — the day must be `YYYY-MM-DD`, the entry one plain path component (no
+    /// separators, `.`/`..`, or leading dot), and the joined directory must stay inside `root`. Transcripts are
+    /// filler of exactly the declared length (CodeRabbit 4115144414); agent transcripts are a fixed 240
+    /// characters, because the manifest records only whether one exists.
     static func buildSyntheticArchive(shape: String, root: URL) throws -> Int {
         let rows = try String(contentsOfFile: shape, encoding: .utf8).split(separator: "\n")
-        let fm = FileManager.default
-        let wav = Data(count: 44)
-        let filler = String(repeating: "synthetic words for a benchmark row ", count: 400)
-        var count = 0
-        for row in rows {
+        let rootPath = root.standardizedFileURL.path + "/"
+        var planned: [(dir: URL, source: String, chars: Int, duration: Int, transcript: Bool, agent: Bool)] = []
+        for (offset, row) in rows.enumerated() {
             let fields = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard fields.count >= 7 else { continue }
-            let (day, entry, source) = (fields[0], fields[1], fields[2])
-            let chars = min(Int(fields[3]) ?? 0, filler.count)
-            let duration = Int(fields[4]) ?? 0
-            let dir = root.appendingPathComponent(day).appendingPathComponent(entry)
-            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            try wav.write(to: dir.appendingPathComponent("audio.wav"))
-            let metadata: [String: Any] = [
-                "id": entry, "source": source, "duration_ms": duration, "transcribed_duration_ms": duration,
-                "transcription_status": "transcribed",
-            ]
-            try JSONSerialization.data(withJSONObject: metadata).write(to: dir.appendingPathComponent("metadata.json"))
-            if fields[5] == "1" {
-                try String(filler.prefix(max(chars, 1)))
-                    .write(
-                        to: dir.appendingPathComponent("voicelayer-transcript.txt"),
-                        atomically: false,
-                        encoding: .utf8
-                    )
+            let (day, entry) = (fields[0], fields[1])
+            guard isDay(day) else {
+                throw ManifestError.unsafeComponent(line: offset + 1, field: "day", value: day)
             }
-            if fields[6] == "1" {
-                try String(filler.prefix(240))
-                    .write(to: dir.appendingPathComponent("agent-transcript.txt"), atomically: false, encoding: .utf8)
+            guard isEntry(entry) else {
+                throw ManifestError.unsafeComponent(line: offset + 1, field: "entry", value: entry)
             }
-            count += 1
+            let dir = root.appendingPathComponent(day, isDirectory: true)
+                .appendingPathComponent(entry, isDirectory: true)
+            guard dir.standardizedFileURL.path.hasPrefix(rootPath) else {
+                throw ManifestError.escapesRoot(line: offset + 1, path: dir.path)
+            }
+            planned.append((dir, fields[2], max(Int(fields[3]) ?? 0, 0), Int(fields[4]) ?? 0,
+                            fields[5] == "1", fields[6] == "1"))
         }
-        return count
+
+        let fm = FileManager.default
+        let wav = Data(count: 44)
+        let unit = "synthetic words for a benchmark row "
+        for row in planned {
+            try fm.createDirectory(at: row.dir, withIntermediateDirectories: true)
+            try wav.write(to: row.dir.appendingPathComponent("audio.wav"))
+            let metadata: [String: Any] = [
+                "id": row.dir.lastPathComponent, "source": row.source, "duration_ms": row.duration,
+                "transcribed_duration_ms": row.duration, "transcription_status": "transcribed",
+            ]
+            try JSONSerialization.data(withJSONObject: metadata)
+                .write(to: row.dir.appendingPathComponent("metadata.json"))
+            if row.transcript {
+                try filler(unit, count: max(row.chars, 1))
+                    .write(to: row.dir.appendingPathComponent("voicelayer-transcript.txt"),
+                           atomically: false, encoding: .utf8)
+            }
+            if row.agent {
+                try filler(unit, count: 240)
+                    .write(to: row.dir.appendingPathComponent("agent-transcript.txt"),
+                           atomically: false, encoding: .utf8)
+            }
+        }
+        return planned.count
+    }
+
+    private static func filler(_ unit: String, count: Int) -> String {
+        String(String(repeating: unit, count: count / unit.count + 1).prefix(count))
     }
 }
