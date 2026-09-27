@@ -731,6 +731,8 @@ describe("voicelayer-update.sh", () => {
     const result = run(["bash", "-c", [
       'source "$1"',
       'PACKAGE_ROOT=/opt/homebrew/Cellar/voicelayer/2.2.20/libexec/lib/node_modules/voicelayer-mcp',
+      'DRY_RUN_COMMANDS=1',
+      'bcs_brew() { printf "unexpected live brew query\\n" >&2; return 1; }',
       'bcs_brew_bin() { printf "/opt/homebrew/bin/brew\\n"; }',
       'bcs_formula_version() { printf "2.2.20\\n"; }',
       'bcs_tap_offered_version() { printf "2.2.21\\n"; }',
