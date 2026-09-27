@@ -145,6 +145,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
     func testUnsnoozeReturnsVoiceStateToIdle() {
         let state = VoiceState()
+        state.setConnectionStatus(true)
         state.snooze()
 
         state.unsnooze()

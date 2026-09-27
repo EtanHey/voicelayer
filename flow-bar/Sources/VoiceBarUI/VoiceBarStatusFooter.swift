@@ -6,6 +6,8 @@ public struct VoiceBarFooterPresentation: Equatable {
     public let isReady: Bool
     public let isLocalOnly: Bool
     public let privacySymbol: String
+    /// Hidden by choice ("Hide for 1 hour") with the daemon still connected: not broken, so no "Disconnected".
+    public var isHidden: Bool = false
 
     public static func resolve(
         isConnected: Bool,
@@ -14,9 +16,15 @@ public struct VoiceBarFooterPresentation: Equatable {
         errorMessage: String?,
         remoteSTTConfigured: Bool?,
         hasFreshHealth: Bool = false,
-        healthUnreadable: Bool = false
+        healthUnreadable: Bool = false,
+        isHidden: Bool = false,
+        hiddenUntil: Date? = nil
     ) -> Self {
-        let status: String = if !isConnected || mode == .disconnected {
+        // An agent can still speak or record while the bar is hidden; that activity reads as itself.
+        let showsHidden = isHidden && isConnected && (mode == .idle || mode == .disconnected)
+        let status: String = if showsHidden {
+            SettingsVisibility.hiddenStatus(until: hiddenUntil)
+        } else if !isConnected || mode == .disconnected {
             "Disconnected"
         } else if mode == .error || errorMessage != nil {
             "Error"
@@ -46,7 +54,8 @@ public struct VoiceBarFooterPresentation: Equatable {
             privacy: privacy,
             isReady: status == "Ready",
             isLocalOnly: remoteSTTConfigured == false,
-            privacySymbol: privacySymbol
+            privacySymbol: privacySymbol,
+            isHidden: showsHidden
         )
     }
 
@@ -58,7 +67,9 @@ public struct VoiceBarFooterPresentation: Equatable {
             errorMessage: state.errorMessage,
             remoteSTTConfigured: state.remoteSTTConfigured,
             hasFreshHealth: state.modelsSettingsState.availability == .available,
-            healthUnreadable: state.modelsSettingsState.availability == .unreadable
+            healthUnreadable: state.modelsSettingsState.availability == .unreadable,
+            isHidden: state.isHidden,
+            hiddenUntil: state.hiddenUntil
         )
     }
 }
@@ -73,7 +84,7 @@ public struct VoiceBarStatusIndicator: View {
     public var body: some View {
         HStack(spacing: 7) {
             Circle()
-                .fill(presentation.isReady ? .green : .orange)
+                .fill(presentation.isReady ? .green : presentation.isHidden ? .secondary : .orange)
                 .frame(width: 7, height: 7)
             Text(presentation.status)
                 .font(.system(size: 12, weight: .medium))

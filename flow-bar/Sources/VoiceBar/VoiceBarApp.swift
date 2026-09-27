@@ -1060,7 +1060,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         snoozeTask?.cancel()
         isSnoozed = true
         snoozedUntil = Date().addingTimeInterval(3600)
-        voiceState.snooze()
+        voiceState.snooze(until: snoozedUntil)
         panel?.orderOut(nil)
 
         snoozeTask = Task { @MainActor [weak self] in

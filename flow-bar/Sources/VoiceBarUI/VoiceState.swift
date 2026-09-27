@@ -1022,7 +1022,15 @@ public final class VoiceState {
         ])
     }
 
-    public func snooze() {
+    /// "Hide for 1 hour" is on. Etan's D1 (2026-09-25): while hidden, F5 does not dictate. `record()` checks this
+    /// flag itself, because `mode` does not stay `.disconnected`: a reconnect or an agent's speak ending moves it.
+    public private(set) var isHidden = false
+    /// When the hide ends ("Hidden until HH:MM"); nil while shown, or when the caller gave no end time.
+    public private(set) var hiddenUntil: Date?
+
+    public func snooze(until: Date? = nil) {
+        isHidden = true
+        hiddenUntil = until
         switch mode {
         case .recording, .transcribing:
             sendIntent(command: .cancel, payload: ["cmd": "cancel"], trackPending: false)
@@ -1059,9 +1067,14 @@ public final class VoiceState {
     }
 
     public func unsnooze() {
-        guard mode == .disconnected else { return }
+        // An agent's speech can move `mode` off `.disconnected` while hidden, so the flag says whether we were.
+        guard isHidden || mode == .disconnected else { return }
+        isHidden = false
+        hiddenUntil = nil
         keepsPasteFlowEnvelope = false
         isCollapsed = false
+        // A socket that really dropped while hidden still reads as disconnected once shown.
+        guard mode == .disconnected, isConnected else { return }
         mode = .idle
         onModeChange?(.idle)
         startCollapseTimer()
@@ -1237,6 +1250,7 @@ public final class VoiceState {
 
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     public func record(pressToTalk: Bool = false) {
+        guard !isHidden else { return }
         guard mode == .idle || mode == .error else { return }
         guard pendingIntent?.command != .record else { return }
         clearRetainedTeleprompter()
@@ -1735,7 +1749,7 @@ public final class VoiceState {
 
         if connected {
             modelsSettingsState = .loading
-            if mode == .disconnected {
+            if mode == .disconnected, !isHidden {
                 mode = .idle
                 onModeChange?(.idle)
                 startCollapseTimer()
