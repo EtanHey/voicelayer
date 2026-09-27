@@ -1646,6 +1646,53 @@ export function trimTrailingSilenceForSTT(
   };
 }
 
+// AIDEV-NOTE: F1 "recorded vs actually spoken" (Etan, 2.2.26). An estimate at the 250 ms
+// trim-window grain, using the same speech classifier as the trailing-silence trim: a
+// quiet speech-like window counts only beside an active one. Pauses shorter than a window
+// are not resolved, so the History calls it "≈ spoken".
+export function measureSpokenDurationMs(
+  pcmData: Uint8Array,
+  sampleRate = SAMPLE_RATE,
+): number {
+  const windowBytes = Math.max(
+    BYTES_PER_SAMPLE,
+    Math.floor((sampleRate * TRAILING_SILENCE_TRIM_WINDOW_MS) / 1000) *
+      BYTES_PER_SAMPLE,
+  );
+  const kinds: TrimWindowKind[] = [];
+  const sizes: number[] = [];
+  for (let offset = 0; offset < pcmData.byteLength; offset += windowBytes) {
+    const window = pcmData.subarray(
+      offset,
+      Math.min(offset + windowBytes, pcmData.byteLength),
+    );
+    kinds.push(classifyTrimWindow(window));
+    sizes.push(window.byteLength);
+  }
+  let spokenBytes = 0;
+  for (let index = 0; index < kinds.length; index++) {
+    const kind = kinds[index];
+    const counts =
+      kind === "speech" ||
+      (kind === "quiet-speechlike" &&
+        ((index > 0 && kinds[index - 1] !== "inactive") ||
+          (index + 1 < kinds.length && kinds[index + 1] !== "inactive")));
+    if (counts) spokenBytes += sizes[index];
+  }
+  return pcmDurationMs(pcmData.subarray(0, spokenBytes), sampleRate);
+}
+
+/** Writes `spoken_duration_ms` into an archive entry. Callers run it after the transcript is delivered. */
+export function recordArchivedSpokenDuration(
+  audioPath: string,
+  pcmData: Uint8Array,
+): void {
+  const spokenDurationMs = measureSpokenDurationMs(pcmData);
+  updateArchivedRecordingMetadata(audioPath, (metadata) => {
+    metadata.spoken_duration_ms = spokenDurationMs;
+  });
+}
+
 export function classifyCaptureFailure(
   gate: NoSpeechGateResult,
 ): CaptureFailure | null {
@@ -3206,6 +3253,7 @@ export async function waitForInput(
             backend: sttBackendLabel,
             languageMode: getLanguageModeFromEnv(),
             transcribedDurationMs: sttTrim.transcribedDurationMs,
+            processingDurationMs: dictationReceipt?.processing_duration_ms,
             polishStatus: finalized.polishStatus,
             requireMetadataUpdate: true,
           });
@@ -3268,6 +3316,20 @@ export async function waitForInput(
     }
     setRecordingState("idle");
     broadcast({ type: "state", state: "idle", source: "recording" });
+
+    // F1: the spoken-length measure walks the whole capture, so it runs after the transcript
+    // has been delivered and pasted, never in front of it.
+    if (text && voiceBarArchivePath && archivedRecordingPath === voiceBarArchivePath) {
+      const spokenAudioPath = join(voiceBarArchivePath, "audio.wav");
+      setImmediate(() => {
+        try {
+          recordArchivedSpokenDuration(spokenAudioPath, pcmData);
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          console.error(`[voicelayer] Failed to record spoken length: ${detail}`);
+        }
+      });
+    }
 
     return text || null;
   } catch (err) {
@@ -3367,6 +3429,7 @@ export function updateArchivedTranscript(
     backend: string;
     languageMode: string;
     transcribedDurationMs?: number;
+    processingDurationMs?: number;
     polishStatus?: STTPolishStatus | null;
     provenanceProbe?: RecordingProvenanceProbe;
     requireMetadataUpdate?: boolean;
@@ -3381,6 +3444,11 @@ export function updateArchivedTranscript(
     metadata.transcription_status = "transcribed";
     if (transcription.transcribedDurationMs !== undefined) {
       metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
+    }
+    // F1: the dictation's post-capture processing time (DictationReceipt). A re-transcription has no
+    // receipt and keeps the original dictation's value.
+    if (transcription.processingDurationMs !== undefined) {
+      metadata.processing_duration_ms = transcription.processingDurationMs;
     }
     metadata.voicelayer_transcript_chars = text.length;
     if (metadata.source === "voice_ask") {

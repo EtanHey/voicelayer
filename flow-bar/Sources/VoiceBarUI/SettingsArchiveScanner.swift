@@ -151,6 +151,10 @@ struct SettingsArchiveMetadata: Decodable {
     let durationMs: Int?
     /// The slice of that audio handed to speech-to-text.
     let transcribedDurationMs: Int?
+    /// ≈ speech time with pauses left out, measured after the paste (F1).
+    let spokenDurationMs: Int?
+    /// The dictation's post-capture processing time (F1).
+    let processingDurationMs: Int?
     let inputDeviceName: String?
     let provenance: RecordingModelProvenance?
 
@@ -170,6 +174,8 @@ struct SettingsArchiveMetadata: Decodable {
         case source
         case durationMs = "duration_ms"
         case transcribedDurationMs = "transcribed_duration_ms"
+        case spokenDurationMs = "spoken_duration_ms"
+        case processingDurationMs = "processing_duration_ms"
         case inputDeviceName = "input_device_name"
         case provenance
     }

@@ -88,6 +88,11 @@ struct SettingsHistoryMediaPart: Equatable {
     let audioPath: URL?
     let durationLabel: String?
     let transcribedDurationLabel: String?
+    /// ≈ speech time with pauses left out; when present it replaces `transcribedDurationLabel` (F1: no third
+    /// number).
+    var spokenDurationLabel: String?
+    /// "1.2 s processing", the same figure as the last-dictation card.
+    var processingLabel: String?
 
     var label: String? {
         switch role {
@@ -193,9 +198,12 @@ struct SettingsHistoryRowModel: Equatable {
     let parts: [SettingsHistoryMediaPart]
 
     static func recording(_ entry: SettingsHistoryEntry) -> SettingsHistoryRowModel {
+        // F1: spoken length (≤ the trimmed length) replaces the trimmed one; entries archived before it was
+        // measured keep the trimmed label.
+        let hasSpokenLength = entry.spokenDurationMs != nil
         let durationLabels = durationLabels(
             durationMs: entry.durationMs,
-            transcribedDurationMs: entry.transcribedDurationMs
+            transcribedDurationMs: hasSpokenLength ? entry.spokenDurationMs : entry.transcribedDurationMs
         )
         return SettingsHistoryRowModel(
             timestamp: entry.timestamp(),
@@ -207,10 +215,17 @@ struct SettingsHistoryRowModel: Equatable {
                     actionableText: entry.hasTranscript ? entry.transcript : nil,
                     audioPath: entry.audioPath,
                     durationLabel: durationLabels.audio,
-                    transcribedDurationLabel: durationLabels.transcribed
+                    transcribedDurationLabel: hasSpokenLength ? nil : durationLabels.transcribed,
+                    spokenDurationLabel: hasSpokenLength ? durationLabels.transcribed : nil,
+                    processingLabel: processingLabel(entry.processingDurationMs)
                 ),
             ]
         )
+    }
+
+    static func processingLabel(_ milliseconds: Int?) -> String? {
+        guard let milliseconds, milliseconds > 0 else { return nil }
+        return String(format: "%.1f s processing", Double(milliseconds) / 1000)
     }
 
     static func ask(_ entry: SettingsAskHistoryEntry) -> SettingsHistoryRowModel {
@@ -1598,8 +1613,10 @@ public struct SettingsView: View {
     private func historyMediaPartStats(_ part: SettingsHistoryMediaPart) -> some View {
         let audioLabel = part.durationLabel
         let heardLabel = part.transcribedDurationLabel
+        let spokenLabel = part.spokenDurationLabel
+        let processingLabel = part.processingLabel
 
-        if audioLabel != nil || heardLabel != nil {
+        if audioLabel != nil || heardLabel != nil || spokenLabel != nil || processingLabel != nil {
             HStack(spacing: 12) {
                 if let audioLabel {
                     Label(audioLabel, systemImage: "waveform")
@@ -1612,6 +1629,16 @@ public struct SettingsView: View {
                             "Transcribed — the audio actually sent to speech-to-text after trailing silence was trimmed"
                         )
                         .accessibilityLabel("Transcribed length \(heardLabel)")
+                }
+                if let spokenLabel {
+                    Label(spokenLabel, systemImage: "waveform.path")
+                        .help("≈ Spoken — speech time with the pauses left out, estimated in quarter-second steps")
+                        .accessibilityLabel("Spoken length about \(spokenLabel)")
+                }
+                if let processingLabel {
+                    Label(processingLabel, systemImage: "timer")
+                        .help("Processing — from the end of recording to the finished transcript")
+                        .accessibilityLabel("Processing time \(processingLabel)")
                 }
             }
             .font(.caption.monospacedDigit())
