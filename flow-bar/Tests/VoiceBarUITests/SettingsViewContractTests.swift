@@ -488,10 +488,12 @@ final class SettingsViewContractTests: XCTestCase {
     func testSwitchingScopeReloadsTheScopeBeingShown() throws {
         let source = try settingsViewSource()
         let onChange = try XCTUnwrap(source.range(of: "onChange(of: selectedHistoryScope)"))
-        let handler = source[onChange.upperBound...].prefix(400)
+        let handler = source[onChange.upperBound...].prefix(900)
 
-        // An inactive scope misses voiceBarHistoryArchiveDidChange, so both sides must reload
-        // on switch rather than only when empty.
+        // An unmounted scope misses voiceBarHistoryArchiveDidChange, so the first time it is shown in a History
+        // visit it reloads (not only when empty). Lane E: once mounted it stays mounted and current, so only that
+        // first showing reloads — HistoryScopeKeepAliveTests pins the behaviour.
+        XCTAssertTrue(handler.contains("guard mountedHistoryScopes.insert(scope).inserted else { return }"))
         XCTAssertTrue(handler.contains("requestHistoryReload()"))
         XCTAssertTrue(handler.contains("requestAskHistoryReload()"))
         XCTAssertFalse(handler.contains("askHistoryDayGroups.isEmpty"))
