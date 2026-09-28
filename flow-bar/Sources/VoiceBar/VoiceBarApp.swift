@@ -2588,30 +2588,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         openSetupWizard()
     }
 
-    /// First launch: once the F5 listener has started and the helper probe answers, decide whether the wizard
-    /// opens by itself (SetupWizardLaunchPolicy). QA and test instances that skip permission prompts never show it.
+    /// First launch: once the F5 listener has started, decide whether the wizard opens by itself
+    /// (SetupWizardLaunchPolicy). A Mac that has dictated before is already set up and never sees it (#211 r1).
+    /// QA and test instances that skip permission prompts never show it.
     private func scheduleFirstRunSetupIfNeeded() {
         guard VoiceBarDefaults.shouldPromptForPermissions() else { return }
         let store = SetupWizardCompletionStore(defaults: defaults)
         guard !store.isCompleted else { return }
+        let recentTranscriptionCount = voiceState.recentTranscriptionEntries.count
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self else { return }
-            let relay = currentRelaySetupStatus()
+            // A directory listing of the recordings archive; kept off the main thread.
+            let hasPriorUse = SetupPriorUse.detect(
+                archiveRoot: SettingsHistoryArchive.defaultRoot,
+                recentTranscriptionCount: recentTranscriptionCount
+            )
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 let readiness = SetupLaunchReadiness(
                     permissionsGranted: SetupPermissionsStep(snapshot: currentSetupPermissionSnapshot()).allGranted,
-                    listenerActive: hotkeyEnabled,
-                    helperInstalled: relay.isReady
+                    listenerActive: hotkeyEnabled
                 )
-                switch SetupWizardLaunchPolicy.decide(
-                    isCompleted: store.isCompleted,
-                    hasResumeStep: store.resumeStep != nil,
-                    readiness: readiness
-                ) {
-                case .show: openSetupWizard()
-                case .markCompleted: store.markCompleted()
-                case .none: break
+                if SetupWizardLaunchPolicy.resolve(store: store, hasPriorUse: hasPriorUse, readiness: readiness) {
+                    openSetupWizard()
                 }
             }
         }
