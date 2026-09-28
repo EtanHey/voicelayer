@@ -1919,6 +1919,7 @@ public struct SettingsView: View {
                 } label: {
                     Label("Add term", systemImage: "plus")
                 }
+                .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))
                 .help("Add a term to your dictionary")
             }
             .padding(.horizontal, 22)
@@ -2612,6 +2613,12 @@ public struct SettingsView: View {
         }
     }
 
+    /// #201 r1: Add term waits for the first dictionary load. Until then the sheet would get no entries, and a load
+    /// that lands while it is open is deferred, so it could not recognise a term that is already there.
+    static func addTermEnabled(loaded: Bool) -> Bool {
+        loaded
+    }
+
     enum DictionaryPlaceholder: Equatable {
         case loading
         case empty
@@ -2788,7 +2795,7 @@ enum SettingsDictionaryMutations {
     }
 
     private static func sameCanonical(_ lhs: String, _ rhs: String) -> Bool {
-        lhs.localizedCaseInsensitiveCompare(rhs) == .orderedSame
+        DictionaryTermEdit.sameTerm(lhs, rhs)
     }
 
     private static func aliasKey(_ value: String) -> String {

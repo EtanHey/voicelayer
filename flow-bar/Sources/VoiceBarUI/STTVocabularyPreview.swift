@@ -401,10 +401,8 @@ public struct DictionaryTermEdit: Equatable, Identifiable {
     /// F2: the term an Add names when it is already in `entries`, ignoring case and extra whitespace. Nil when
     /// editing: renaming a term onto another is the edit flow's business.
     public func existingTerm(in entries: [STTDictionaryEntry]) -> STTDictionaryEntry? {
-        guard !isEditing else { return nil }
-        let key = Self.matchKey(correct)
-        guard !key.isEmpty else { return nil }
-        return entries.first { Self.matchKey($0.canonical) == key }
+        guard !isEditing, !trimmedCorrect.isEmpty else { return nil }
+        return entries.first { Self.sameTerm($0.canonical, correct) }
     }
 
     /// F2: this Add, reopened as an edit of `entry`. The term keeps its stored spelling, so saving never renames
@@ -415,8 +413,14 @@ public struct DictionaryTermEdit: Equatable, Identifiable {
         return opened
     }
 
-    private static func matchKey(_ value: String) -> String {
-        value.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+    /// The one rule for "the same term", shared by the Add sheet's match and the save path
+    /// (`SettingsDictionaryMutations`): case-insensitive, with leading, trailing and repeated whitespace ignored.
+    public static func sameTerm(_ lhs: String, _ rhs: String) -> Bool {
+        collapsedWhitespace(lhs).localizedCaseInsensitiveCompare(collapsedWhitespace(rhs)) == .orderedSame
+    }
+
+    private static func collapsedWhitespace(_ value: String) -> String {
+        value.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     public var id: String {

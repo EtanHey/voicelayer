@@ -5,15 +5,20 @@ import SwiftUI
 /// double-click on a row; the right-click "Add to Dictionary" window uses it for a correct ⇄ misheard pair.
 ///
 /// F2: an Add that names a term already in "Your terms" opens that term instead, with Misheard as focused, when
-/// focus leaves Correct or Add is pressed with no misheard spelling. With one typed, Add saves it onto the
-/// existing term in one step (the mutations never duplicate a term).
+/// focus moves from Correct into Misheard as, or Add is pressed with no misheard spelling. With one typed, Add
+/// saves it as an edit of the existing term in one step.
+///
+/// AIDEV-NOTE: #201 r1 High: one Add click must open OR save, never both. A click on Add can take focus from
+/// Correct before the button action runs; if that focus change opened the term, the action then saved the
+/// now-open edit and closed the sheet. So only a move INTO Misheard as redirects, and the button goes through
+/// `submitAction` alone. Both are pure statics so tests replay either event order without focus or clicks.
 public struct DictionaryAddSheetView: View {
     enum SubmitAction: Equatable {
-        case save
+        case save(DictionaryTermEdit)
         case open(DictionaryTermEdit)
     }
 
-    private enum Field: Hashable {
+    enum Field: Hashable {
         case correct
         case misheard
     }
@@ -140,16 +145,16 @@ public struct DictionaryAddSheetView: View {
         }
         .padding(18)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: focusedField) { previous, _ in
-            if previous == .correct, let entry = edit.existingTerm(in: existingEntries) {
-                open(edit.openingExisting(entry))
+        .onChange(of: focusedField) { previous, next in
+            if let opened = Self.focusRedirect(edit, from: previous, to: next, existingEntries: existingEntries) {
+                open(opened)
             }
         }
     }
 
     private func submit() {
         switch Self.submitAction(for: edit, existingEntries: existingEntries) {
-        case .save: onSaveEdit(edit)
+        case let .save(saved): onSaveEdit(saved)
         case let .open(opened): open(opened)
         }
     }
@@ -159,9 +164,25 @@ public struct DictionaryAddSheetView: View {
         focusedField = .misheard
     }
 
+    /// Add/Save. A draft naming an existing term never saves as a new one: with no misheard spelling the press only
+    /// opens the term; with one, it saves as an edit of that term (stored spelling kept, variant added).
     static func submitAction(for edit: DictionaryTermEdit, existingEntries: [STTDictionaryEntry]) -> SubmitAction {
-        guard edit.trimmedWrong.isEmpty, let entry = edit.existingTerm(in: existingEntries) else { return .save }
-        return .open(edit.openingExisting(entry))
+        guard let entry = edit.existingTerm(in: existingEntries) else { return .save(edit) }
+        let opened = edit.openingExisting(entry)
+        return opened.trimmedWrong.isEmpty ? .open(opened) : .save(opened)
+    }
+
+    /// The edit a focus change opens, if any: only Correct → Misheard as (Tab, or a click into that field).
+    static func focusRedirect(
+        _ edit: DictionaryTermEdit,
+        from previous: Field?,
+        to next: Field?,
+        existingEntries: [STTDictionaryEntry]
+    ) -> DictionaryTermEdit? {
+        guard previous == .correct, next == .misheard, let entry = edit.existingTerm(in: existingEntries) else {
+            return nil
+        }
+        return edit.openingExisting(entry)
     }
 
     static func showsExistingTermHint(for edit: DictionaryTermEdit, existingEntries: [STTDictionaryEntry]) -> Bool {

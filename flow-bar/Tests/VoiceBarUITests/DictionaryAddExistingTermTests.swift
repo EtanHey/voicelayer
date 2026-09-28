@@ -44,21 +44,139 @@ final class DictionaryAddExistingTermTests: XCTestCase {
             DictionaryAddSheetView.submitAction(for: add, existingEntries: existing),
             .open(add.openingExisting(existing[0]))
         )
-
-        let withVariant = DictionaryTermEdit(correct: "zephyr board", wrong: "zeffer bored")
+        let new = DictionaryTermEdit(correct: "Nimbus")
         XCTAssertEqual(
-            DictionaryAddSheetView.submitAction(for: withVariant, existingEntries: existing), .save,
-            "with a misheard spelling already typed, Add saves it onto the existing term in one step"
-        )
-        XCTAssertEqual(
-            DictionaryAddSheetView.submitAction(for: DictionaryTermEdit(correct: "Nimbus"), existingEntries: existing),
-            .save, "a new term is added as before"
+            DictionaryAddSheetView.submitAction(for: new, existingEntries: existing), .save(new),
+            "a new term is added as before"
         )
         let opened = add.openingExisting(existing[0])
         XCTAssertEqual(
-            DictionaryAddSheetView.submitAction(for: opened, existingEntries: existing), .save,
+            DictionaryAddSheetView.submitAction(for: opened, existingEntries: existing), .save(opened),
             "once open, Save saves"
         )
+    }
+
+    // MARK: - #201 r1 High: one Add click opens OR saves, never both
+
+    /// The view's two handlers, replayed in both orders a single Add click can produce: focus may leave Correct
+    /// before the button action runs, or after it. Either way the click opens the term and saves nothing.
+    func testOneAddClickWithCorrectFocusedOpensTheTermAndSavesNothingInEitherEventOrder() {
+        let typed = DictionaryTermEdit(correct: "zephyr board")
+
+        // Order A: the click takes focus from Correct, then the button action runs.
+        var edit = typed
+        if let redirected = DictionaryAddSheetView.focusRedirect(
+            edit, from: .correct, to: nil, existingEntries: existing
+        ) { edit = redirected }
+        let clickA = DictionaryAddSheetView.submitAction(for: edit, existingEntries: existing)
+        XCTAssertEqual(clickA, .open(typed.openingExisting(existing[0])), "order A: the click opens the term")
+
+        // Order B: the button action runs, then focus leaves Correct.
+        let clickB = DictionaryAddSheetView.submitAction(for: typed, existingEntries: existing)
+        guard case let .open(openedB) = clickB else { return XCTFail("order B must open, got \(clickB)") }
+        XCTAssertNil(
+            DictionaryAddSheetView.focusRedirect(openedB, from: .correct, to: nil, existingEntries: existing),
+            "order B: an already-open term is not redirected again"
+        )
+
+        // The NEXT press saves the edit of that term.
+        let opened = typed.openingExisting(existing[0])
+        XCTAssertEqual(DictionaryAddSheetView.submitAction(for: opened, existingEntries: existing), .save(opened))
+    }
+
+    func testTabbingIntoMisheardOpensTheTerm() {
+        let typed = DictionaryTermEdit(correct: "quillo", wrong: "")
+        XCTAssertEqual(
+            DictionaryAddSheetView.focusRedirect(typed, from: .correct, to: .misheard, existingEntries: existing),
+            typed.openingExisting(existing[1])
+        )
+        XCTAssertNil(
+            DictionaryAddSheetView.focusRedirect(
+                DictionaryTermEdit(correct: "Nimbus"), from: .correct, to: .misheard, existingEntries: existing
+            ),
+            "a new term is not redirected"
+        )
+        XCTAssertNil(
+            DictionaryAddSheetView.focusRedirect(typed, from: .misheard, to: .correct, existingEntries: existing),
+            "only leaving Correct for Misheard as redirects"
+        )
+    }
+
+    // MARK: - #201 r1 Medium: a typed variant on a differently spaced existing term
+
+    func testAddWithAVariantOnAnExistingTermSavesAsAnEditOfIt() {
+        let draft = DictionaryTermEdit(correct: "zephyr   board", wrong: "zeffer bored")
+
+        XCTAssertEqual(
+            DictionaryAddSheetView.submitAction(for: draft, existingEntries: existing),
+            .save(draft.openingExisting(existing[0])),
+            "a matching draft is converted to an edit before the one-step save"
+        )
+    }
+
+    func testMatchingAndSavingShareOneNormalisationSoSpacingNeverDuplicates() {
+        XCTAssertTrue(DictionaryTermEdit.sameTerm("  zephyr   BOARD ", "Zephyr Board"))
+        XCTAssertFalse(DictionaryTermEdit.sameTerm("Zephyr Boards", "Zephyr Board"))
+
+        // Even a raw add (no redirect, e.g. a caller with no entries) lands on the stored term.
+        var entries = existing
+        var addedTerms: [String] = []
+        var addedAliases: [String] = []
+        let saved = SettingsDictionaryMutations.apply(
+            DictionaryTermEdit(correct: "zephyr   board", wrong: "zeffer bored"),
+            localEntries: &entries,
+            onAddPromptTerm: { addedTerms.append($0) },
+            onRemovePromptTerm: { _ in },
+            onAddVocabularyAlias: { addedAliases.append("\($1)→\($0)") },
+            onRemoveVocabularyAlias: { _ in }
+        )
+
+        XCTAssertEqual(saved, "Zephyr Board")
+        XCTAssertEqual(entries.map(\.canonical), ["Zephyr Board", "Quillo"], "no second term")
+        XCTAssertEqual(addedTerms, [])
+        XCTAssertEqual(addedAliases, ["zeffer bored→Zephyr Board"])
+    }
+
+    // MARK: - #201 r1 Medium: Add before the dictionary has loaded
+
+    func testAddTermWaitsForTheFirstDictionaryLoad() throws {
+        XCTAssertFalse(SettingsView.addTermEnabled(loaded: false), "the sheet would not know your terms yet")
+        XCTAssertTrue(SettingsView.addTermEnabled(loaded: true))
+
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(source.contains(
+            "Label(\"Add term\", systemImage: \"plus\")\n                }\n"
+                + "                .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))"
+        ))
+    }
+
+    /// The view calls exactly these handlers: the focus change goes through `focusRedirect`, the button through
+    /// `submit()` → `submitAction`.
+    func testTheSheetRoutesFocusAndTheButtonThroughTheTestedHandlers() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(source.contains("""
+                .onChange(of: focusedField) { previous, next in
+                    if let opened = Self.focusRedirect(edit, from: previous, to: next, existingEntries: existingEntries) {
+                        open(opened)
+                    }
+                }
+        """))
+        XCTAssertTrue(source.contains("""
+                switch Self.submitAction(for: edit, existingEntries: existingEntries) {
+                case let .save(saved): onSaveEdit(saved)
+                case let .open(opened): open(opened)
+                }
+        """))
     }
 
     func testTheHintShowsForAMatchOrAnOpenedTermOnly() {
