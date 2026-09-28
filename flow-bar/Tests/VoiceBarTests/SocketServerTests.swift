@@ -150,7 +150,7 @@ final class SocketServerTests: XCTestCase {
             to: commandClient
         )
 
-        Thread.sleep(forTimeInterval: 0.1)
+        XCTAssertTrue(waitForRegisteredRoles(server, ["mcp-daemon", "mcp-server"]))
         server.sendCommandToOwner(command: ["cmd": "record"])
 
         let commandLine = try readLine(from: commandClient, timeout: 1)
@@ -165,8 +165,8 @@ final class SocketServerTests: XCTestCase {
 
         fixture.server.sendCommandToOwner(command: ["cmd": "stop"])
 
-        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1)).contains(#""cmd":"stop""#))
-        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"stop""#))
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 5)).contains(#""cmd":"stop""#))
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 5)).contains(#""cmd":"stop""#))
     }
 
     func testStopInterruptReachesEveryPlaybackClientWhenLatestSpeakingOwnerOverlapsAnEarlierOwner() throws {
@@ -211,17 +211,20 @@ final class SocketServerTests: XCTestCase {
             #"{"type":"state","state":"speaking","text":"Latest visible playback"}"#,
             to: latestPlaybackClient
         )
-        XCTAssertTrue(waitForMode(state, mode: .speaking, timeout: 1))
+        XCTAssertTrue(waitForMode(state, mode: .speaking, timeout: 5))
+        // The stop routes by registered role; both playback clients' hellos must be in first (CI #164:
+        // 5.3 s when the second one hadn't registered yet and never got the stop).
+        XCTAssertTrue(waitForRegisteredRoles(server, ["mcp-daemon", "mcp-server", "mcp-server"]))
 
         server.sendCommandToOwner(command: ["cmd": "stop"])
 
         XCTAssertTrue(
-            try XCTUnwrap(readLine(from: earlierPlaybackClient, timeout: 1)).contains(#""cmd":"stop""#)
+            try XCTUnwrap(readLine(from: earlierPlaybackClient, timeout: 5)).contains(#""cmd":"stop""#)
         )
         XCTAssertTrue(
-            try XCTUnwrap(readLine(from: latestPlaybackClient, timeout: 1)).contains(#""cmd":"stop""#)
+            try XCTUnwrap(readLine(from: latestPlaybackClient, timeout: 5)).contains(#""cmd":"stop""#)
         )
-        XCTAssertTrue(try XCTUnwrap(readLine(from: commandClient, timeout: 1)).contains(#""cmd":"stop""#))
+        XCTAssertTrue(try XCTUnwrap(readLine(from: commandClient, timeout: 5)).contains(#""cmd":"stop""#))
     }
 
     @MainActor
@@ -279,7 +282,12 @@ final class SocketServerTests: XCTestCase {
         XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
 
         let router = VoiceBarCommandRouter(voiceState: fixture.state)
-        let host = NSHostingView(rootView: BarView(state: fixture.state, commandRouter: router))
+        let host = NSHostingView(rootView: BarView(
+            state: fixture.state,
+            commandRouter: router,
+            onOpenSettings: {},
+            onOpenHistory: {}
+        ))
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host
@@ -318,7 +326,12 @@ final class SocketServerTests: XCTestCase {
         XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
 
         let router = VoiceBarCommandRouter(voiceState: fixture.state)
-        let host = NSHostingView(rootView: BarView(state: fixture.state, commandRouter: router))
+        let host = NSHostingView(rootView: BarView(
+            state: fixture.state,
+            commandRouter: router,
+            onOpenSettings: {},
+            onOpenHistory: {}
+        ))
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(
             contentRect: host.frame,
@@ -358,8 +371,11 @@ final class SocketServerTests: XCTestCase {
         router.handleReplay()
         router.handleReplay()
 
-        let replays = try readLines(from: fixture.legacyClient, count: 3, timeout: 0.2)
+        // Wait for the two replays themselves (a loaded runner can take far longer than
+        // 200 ms); only the "no third line" check is a short negative window.
+        let replays = try readLines(from: fixture.legacyClient, count: 2, timeout: 5)
         XCTAssertEqual(replays.count, 2)
+        XCTAssertEqual(try readLines(from: fixture.legacyClient, count: 1, timeout: 0.2), [])
         XCTAssertTrue(replays.allSatisfy { $0.contains(#""cmd":"replay""#) })
         XCTAssertTrue(replays.allSatisfy { !$0.contains(#""cmd":"stop""#) })
         XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
@@ -649,7 +665,12 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         dispatchRuntimeKey(virtualKey: 79, router: router)
         XCTAssertTrue(waitForCondition(timeout: 15) { recordingTransitions >= 2 })
 
-        let host = NSHostingView(rootView: BarView(state: state, commandRouter: router))
+        let host = NSHostingView(rootView: BarView(
+            state: state,
+            commandRouter: router,
+            onOpenSettings: {},
+            onOpenHistory: {}
+        ))
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(
             contentRect: host.frame,
@@ -657,6 +678,9 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             backing: .buffered,
             defer: false
         )
+        // XCTest retains this offscreen window through its autorelease pool.
+        // Disable AppKit's release-on-close so ARC owns the final release.
+        window.isReleasedWhenClosed = false
         window.contentView = host
         presentOffscreenForInteraction(window)
         defer {
@@ -855,7 +879,12 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         })
         let originalAskEpoch = state.playbackEpoch
 
-        let askHost = NSHostingView(rootView: BarView(state: state, commandRouter: router))
+        let askHost = NSHostingView(rootView: BarView(
+            state: state,
+            commandRouter: router,
+            onOpenSettings: {},
+            onOpenHistory: {}
+        ))
         askHost.frame = NSRect(origin: .zero, size: askHost.fittingSize)
         let askWindow = NSWindow(
             contentRect: askHost.frame,
@@ -863,6 +892,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             backing: .buffered,
             defer: false
         )
+        askWindow.isReleasedWhenClosed = false
         askWindow.contentView = askHost
         presentOffscreenForInteraction(askWindow)
         defer {
@@ -1025,7 +1055,9 @@ private func makeConnectedServerFixture() throws -> ConnectedServerFixture {
     let commandClient = try connectUnixSocket(path: socketURL.path)
     try writeLine(#"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#, to: legacyClient)
     try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
-    guard waitForConnectionStatus(state, connected: true, timeout: 1) else {
+    guard waitForConnectionStatus(state, connected: true, timeout: 5),
+          waitForRegisteredRoles(server, ["mcp-daemon", "mcp-server"])
+    else {
         throw NSError(domain: "SocketServerTests", code: 4)
     }
     return ConnectedServerFixture(
@@ -1119,7 +1151,7 @@ private func clickRecordingStop(
     throw NSError(domain: "SocketServerTests", code: 5)
 }
 
-private func waitForSocket(at path: String, timeout: TimeInterval = 1) -> Bool {
+private func waitForSocket(at path: String, timeout: TimeInterval = 5) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
         if FileManager.default.fileExists(atPath: path) {
@@ -1200,6 +1232,21 @@ private func writeLine(_ line: String, to fd: Int32) throws {
         }
         throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
     }
+}
+
+/// Waits until the server has processed a hello from every expected role. Commands route by role and each
+/// client's socket is read independently, so this, not a fixed sleep or the first client's state, is the
+/// transition to wait on before sending a command. The deadline is liveness only.
+private func waitForRegisteredRoles(_ server: SocketServer, _ roles: [String], timeout: TimeInterval = 5) -> Bool {
+    let expected = roles.sorted()
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if server.registeredClientRolesForTesting() == expected {
+            return true
+        }
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    }
+    return server.registeredClientRolesForTesting() == expected
 }
 
 private func waitForConnectionStatus(_ state: VoiceState, connected: Bool, timeout: TimeInterval) -> Bool {

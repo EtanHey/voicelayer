@@ -450,11 +450,14 @@ describe("input recording durability", () => {
       const { recordToBuffer } = await import("../input");
       let intervalTicks = 0;
       let stopWrittenAt = 0;
+      let consumedAtTick = 0;
       const interval = setInterval(() => {
         intervalTicks += 1;
         if (intervalTicks === 5) {
           stopWrittenAt = Date.now();
           writeFileSync(STOP_FILE, "stop");
+        } else if (stopWrittenAt > 0 && consumedAtTick === 0 && !existsSync(STOP_FILE)) {
+          consumedAtTick = intervalTicks;
         }
       }, 10);
       const recording = recordToBuffer(2_000, "thoughtful", pushToEnd);
@@ -468,15 +471,18 @@ describe("input recording durability", () => {
           "stalled recorder PCM persistence",
         );
         await waitUntil(
-          () => stopWrittenAt > 0 && !existsSync(STOP_FILE),
+          () => consumedAtTick > 0,
           "event-loop stop poll during recorder stall",
         );
 
         expect(intervalTicks).toBeGreaterThanOrEqual(5);
-        expect(Date.now() - stopWrittenAt).toBeLessThan(200);
+        // Stop latency in event-loop turns, not wall-clock ms: the recorder's stop
+        // poll must run within ~20 loop turns (~200 ms unloaded) of the stop, and
+        // the bound scales with load instead of failing on a busy CI runner.
+        expect(consumedAtTick - 5).toBeLessThanOrEqual(20);
         const captured = await Promise.race([
           recording,
-          Bun.sleep(700).then(() => "timed-out" as const),
+          Bun.sleep(10_000).then(() => "timed-out" as const),
         ]);
         expect(captured).not.toBe("timed-out");
         expect(captured).toBeInstanceOf(Uint8Array);
@@ -509,6 +515,7 @@ describe("input recording durability", () => {
       const recording = recordToBuffer(4_000, "thoughtful", pushToEnd);
       let intervalTicks = 0;
       let stopWrittenAt = 0;
+      let consumedAtTick = 0;
       let interval: ReturnType<typeof setInterval> | undefined;
 
       try {
@@ -517,25 +524,31 @@ describe("input recording durability", () => {
             existsSync(retainedPath) &&
             readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * 25,
           "real child recorder to enter its post-PCM stall",
-          5_000,
+          15_000,
         );
         interval = setInterval(() => {
           intervalTicks += 1;
           if (intervalTicks === 5) {
             stopWrittenAt = Date.now();
             writeFileSync(STOP_FILE, "stop");
+          } else if (stopWrittenAt > 0 && consumedAtTick === 0 && !existsSync(STOP_FILE)) {
+            consumedAtTick = intervalTicks;
           }
         }, 10);
         await waitUntil(
-          () => stopWrittenAt > 0 && !existsSync(STOP_FILE),
+          () => consumedAtTick > 0,
           "event-loop stop poll during real child-pipe stall",
+          5_000,
         );
 
         expect(intervalTicks).toBeGreaterThanOrEqual(5);
-        expect(Date.now() - stopWrittenAt).toBeLessThan(200);
+        // Stop latency in event-loop turns, not wall-clock ms: the recorder's stop
+        // poll must run within ~20 loop turns (~200 ms unloaded) of the stop, and
+        // the bound scales with load instead of failing on a busy CI runner.
+        expect(consumedAtTick - 5).toBeLessThanOrEqual(20);
         const captured = await Promise.race([
           recording,
-          Bun.sleep(700).then(() => "timed-out" as const),
+          Bun.sleep(10_000).then(() => "timed-out" as const),
         ]);
         expect(captured).not.toBe("timed-out");
         expect(captured).toBeInstanceOf(Uint8Array);
@@ -553,7 +566,10 @@ describe("input recording durability", () => {
         await recording.catch(() => null);
         clearStopSignal();
       }
-    });
+      // AIDEV-NOTE: the waits above are transition waits; their deadlines and this timeout are liveness
+      // only. Spawning the real child recorder overran 5 s under load (2 of 5 background-QoS runs with a
+      // concurrent Swift build). The behaviour bound is the loop-turn count above.
+    }, 30_000);
   }
 
   it("keeps the absent push-to-end default on VAD and auto-closes after silence", async () => {
@@ -1236,6 +1252,21 @@ describe("input recording durability", () => {
     expect(backendTranscribeCalls).toBe(0);
   });
 
+  /**
+   * Push-to-end captures run "until stop signal or timeout", and a fake recorder's EOF doesn't end one.
+   * Without a stop these tests waited out the full 2 s timer per capture, which ran past bun's 5 s test
+   * timeout / the 4 s STT wait under CI load (#162). Stop on the transition instead: once the retained WAV
+   * holds every fake PCM byte.
+   */
+  async function stopPushToEndOnceCaptured(expectedBytes: number): Promise<void> {
+    await waitUntil(
+      () => existsSync(retainedPath) && readWavDataSize(retainedPath) === expectedBytes,
+      "push-to-end capture to hold all fake PCM",
+      10_000,
+    );
+    writeFileSync(STOP_FILE, "stop");
+  }
+
   function capturedVoiceBarAudio(): string[] {
     const root = process.env.QA_VOICE_RECORDINGS_DIR!;
     if (!existsSync(root)) return [];
@@ -1257,9 +1288,9 @@ describe("input recording durability", () => {
     backendMode = "throw-on-get";
     const { waitForInput, recordToBuffer } = await import("../input");
 
-    await expect(waitForInput(2_000, "standard", true, {
-      archiveSource: "voicebar",
-    })).rejects.toThrow("whisper backend is still warming");
+    const failed = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+    await expect(failed).rejects.toThrow("whisper backend is still warming");
     const archives = capturedVoiceBarAudio();
     expect(archives).toHaveLength(1);
     const preserved = readFileSync(archives[0]);
@@ -1269,7 +1300,9 @@ describe("input recording durability", () => {
       .toMatchObject({ source: "voicebar", transcription_status: "captured" });
 
     installFakeRecorder([makePcmChunk(2500)], false);
-    await recordToBuffer(2_000, "standard", true);
+    const next = recordToBuffer(2_000, "standard", true);
+    await stopPushToEndOnceCaptured(VAD_CHUNK_BYTES);
+    await next;
     expect(readFileSync(retainedPath)).not.toEqual(preserved);
     expect(readFileSync(archives[0])).toEqual(preserved);
   });
@@ -1286,6 +1319,7 @@ describe("input recording durability", () => {
       });
       const settled = pending.then(value => value, error => error);
       try {
+        await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
         await waitUntil(() => backendTranscribeCalls === 1, "hung VoiceBar STT", 4_000);
         const archives = capturedVoiceBarAudio();
         expect(archives).toHaveLength(1);
@@ -1296,6 +1330,7 @@ describe("input recording durability", () => {
         const result = await settled;
         if (termination === "abort") expect(result).toBeInstanceOf(Error);
         else expect(result).toBeNull();
+        expect(broadcasts.some((event) => event.dictation_receipt)).toBe(false);
         expect(capturedVoiceBarAudio()).toEqual(archives);
         expectCaptureLinked(archives[0]);
         expectValidRetainedWav(archives[0], 24 * VAD_CHUNK_BYTES);
@@ -1366,6 +1401,7 @@ describe("input recording durability", () => {
       expect(archives).toHaveLength(1);
       expectCaptureLinked(archives[0]);
       expect(backendTranscribeCalls).toBe(0);
+      expect(broadcasts.some((event) => event.dictation_receipt)).toBe(false);
     });
   }
 
@@ -1388,6 +1424,9 @@ describe("input recording durability", () => {
     expect(broadcasts).toContainEqual(expect.objectContaining({
       type: "transcription", text: "Retained transcript.",
     }));
+    expect(
+      broadcasts.find((event) => event.type === "transcription")?.dictation_receipt,
+    ).toBeUndefined();
     expectValidRetainedWav(retainedPath, 24 * VAD_CHUNK_BYTES);
   });
 
@@ -1429,8 +1468,123 @@ describe("input recording durability", () => {
     const event = broadcasts.find((event) => event.type === "transcription");
     expect(event?.text).toBe("Retained transcript.");
     expect(event?.recording_path).toBeUndefined();
+    expect(event?.dictation_receipt).toBeUndefined();
     expectValidRetainedWav(capturedVoiceBarAudio()[0], 24 * VAD_CHUNK_BYTES);
   });
+
+  it("adds measured receipt metadata to the actual completed VoiceBar event", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    const clockValues = [1_000, 1_123.6];
+    let clockReads = 0;
+
+    await expect(
+      waitForInput(2_000, "standard", true, {
+        archiveSource: "voicebar",
+        monotonicNow: () => clockValues[clockReads++]!,
+      }),
+    ).resolves.toBe("Retained transcript.");
+
+    const event = broadcasts.find(
+      (candidate) => candidate.type === "transcription",
+    );
+    expect(event).toEqual(
+      expect.objectContaining({
+        type: "transcription",
+        text: "Retained transcript.",
+        recording_path: capturedVoiceBarAudio()[0],
+        dictation_receipt: {
+          audio_duration_ms: 768,
+          processing_duration_ms: 124,
+        },
+      }),
+    );
+    expect(event?.partial).toBeUndefined();
+    expect(backendTranscribeCalls).toBe(1);
+    expect(clockReads).toBe(2);
+  });
+
+  it("persists processing time and spoken length into the VoiceBar archive metadata (F1)", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    // 512 ms speech · 1024 ms pause · 512 ms speech = 2048 ms of mic-on time.
+    installFakeRecorder(
+      [
+        ...Array.from({ length: 16 }, () => makePcmChunk(1800)),
+        ...Array.from({ length: 32 }, () => makePcmChunk(0)),
+        ...Array.from({ length: 16 }, () => makePcmChunk(1800)),
+      ],
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    const clockValues = [1_000, 2_234.4];
+    let clockReads = 0;
+
+    await expect(
+      waitForInput(2_500, "standard", true, {
+        archiveSource: "voicebar",
+        monotonicNow: () => clockValues[clockReads++]!,
+      }),
+    ).resolves.toBe("Retained transcript.");
+
+    const readMetadata = () =>
+      JSON.parse(
+        readFileSync(
+          capturedVoiceBarAudio()[0].replace("audio.wav", "metadata.json"),
+          "utf8",
+        ),
+      );
+    const atReturn = readMetadata();
+    expect(atReturn.duration_ms).toBe(2048);
+    expect(atReturn.processing_duration_ms).toBe(1234);
+    // Measured off the paste hot path: not yet written when the transcript is delivered.
+    expect("spoken_duration_ms" in atReturn).toBe(false);
+    const completedEvents = () =>
+      broadcasts.filter((event) => event.type === "archive_metadata_updated");
+    expect(completedEvents()).toEqual([]);
+
+    await new Promise((resolve) => setImmediate(resolve));
+    const later = readMetadata();
+    // F1 round 2: once the write is durable, History is told to drop its cached copy of this entry.
+    expect(completedEvents()).toEqual([
+      { type: "archive_metadata_updated", recording_path: capturedVoiceBarAudio()[0] },
+    ]);
+    expect(broadcasts.findIndex((event) => event.type === "archive_metadata_updated"))
+      .toBeGreaterThan(broadcasts.findIndex((event) => event.type === "transcription"));
+    // The pause is visible: spoken time excludes it, at the 250 ms window grain.
+    expect(later.spoken_duration_ms).toBeGreaterThanOrEqual(1024);
+    expect(later.spoken_duration_ms).toBeLessThanOrEqual(2048 - 500);
+    expect(later.processing_duration_ms).toBe(1234);
+  });
+
+  for (const throwOnRead of [1, 2]) {
+    it(`preserves the completed VoiceBar transcript when receipt clock read ${throwOnRead} throws`, async () => {
+      vadProcessSpy!.mockResolvedValue(0.95);
+      installFakeRecorder(
+        Array.from({ length: 24 }, () => makePcmChunk(1800)),
+        false,
+      );
+      const { waitForInput } = await import("../input");
+      let clockReads = 0;
+
+      await expect(waitForInput(2_000, "standard", true, {
+        archiveSource: "voicebar",
+        monotonicNow: () => {
+          if (++clockReads === throwOnRead) throw new Error("receipt clock failed");
+          return 1_000 + clockReads;
+        },
+      })).resolves.toBe("Retained transcript.");
+
+      const event = broadcasts.find((candidate) => candidate.type === "transcription");
+      expect(event?.text).toBe("Retained transcript.");
+      expect(event?.recording_path).toBe(capturedVoiceBarAudio()[0]);
+      expect(event?.dictation_receipt).toBeUndefined();
+      expect(backendTranscribeCalls).toBe(1);
+    });
+  }
 
   it("runs production waitForInput through STT into an indefinite paired voice_ask archive", async () => {
     vadProcessSpy.mockResolvedValue(0.95);
@@ -1494,6 +1648,10 @@ describe("input recording durability", () => {
           event.recording_path === join(archiveDir, "audio.wav"),
       ),
     ).toBe(true);
+    expect(
+      broadcasts.find((event) => event.type === "transcription")
+        ?.dictation_receipt,
+    ).toBeUndefined();
   });
 
   it("reports an archived exact-silence voice_ask capture as no speech", async () => {
@@ -1980,6 +2138,10 @@ describe("input recording durability", () => {
           event.recording_path === archivedAudioPath,
       ),
     ).toBe(true);
+    expect(
+      broadcasts.find((event) => event.type === "transcription")
+        ?.dictation_receipt,
+    ).toBeUndefined();
   });
 
   it("retranscribeLastCapture ignores a non-string archive_audio_path instead of throwing", async () => {

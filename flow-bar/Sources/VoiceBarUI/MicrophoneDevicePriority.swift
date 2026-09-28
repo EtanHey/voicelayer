@@ -1,0 +1,308 @@
+import Foundation
+
+public struct MicrophonePriorityRow: Equatable {
+    public let uid: String?
+    public let deviceID: String?
+    public let label: String
+    public let isConnected: Bool
+    public let isVirtualOrAggregateTransport: Bool?
+
+    public init(uid: String?, deviceID: String?, label: String, isConnected: Bool,
+                isVirtualOrAggregateTransport: Bool? = nil) {
+        self.uid = uid
+        self.deviceID = deviceID
+        self.label = label
+        self.isConnected = isConnected
+        self.isVirtualOrAggregateTransport = isVirtualOrAggregateTransport
+    }
+
+    public var canPrioritize: Bool {
+        uid != nil
+    }
+
+    /// The same rule as `MicrophoneDevice.isVirtualOrAggregate` (the one pickable-device rule).
+    public var isVirtualOrAggregate: Bool {
+        MicrophoneDevice.isVirtualOrAggregate(uid: uid, name: label, transport: isVirtualOrAggregateTransport)
+    }
+}
+
+public struct MicrophonePrioritySnapshot: Equatable {
+    public let rows: [MicrophonePriorityRow]
+    public let nextDeviceName: String?
+    public let nextDeviceUID: String?
+    public let nextDeviceID: String?
+
+    public init(
+        rows: [MicrophonePriorityRow],
+        nextDeviceName: String?,
+        nextDeviceUID: String? = nil,
+        nextDeviceID: String? = nil
+    ) {
+        self.rows = rows
+        self.nextDeviceName = nextDeviceName
+        self.nextDeviceUID = nextDeviceUID
+        self.nextDeviceID = nextDeviceID
+    }
+
+    public static let unavailable = Self(rows: [], nextDeviceName: nil)
+
+    public func reorderedUIDs(moving index: Int, by offset: Int) -> [String]? {
+        let target = index + offset
+        guard rows.indices.contains(index), rows.indices.contains(target),
+              rows[index].canPrioritize, rows[target].canPrioritize
+        else { return nil }
+        var uids = rows.compactMap(\.uid)
+        uids.swapAt(index, target)
+        return uids
+    }
+
+    public var visibleRows: [MicrophonePriorityRow] {
+        rows.filter { !$0.isVirtualOrAggregate }
+    }
+
+    public var nextVisibleDeviceName: String? {
+        guard let nextDeviceName else { return nil }
+        return nextDeviceIsHidden ? MicrophoneDevice.hiddenDeviceLabel(nextDeviceName) : nextDeviceName
+    }
+
+    /// Matches the next device by identity (UID, then device ID) so a hidden aggregate that shares a physical
+    /// mic's name never hides it; the label is only a fallback for callers that know no identity.
+    public var nextDeviceIsHidden: Bool {
+        if nextDeviceUID != nil || nextDeviceID != nil {
+            return rows.contains { row in
+                row.isVirtualOrAggregate
+                    && ((nextDeviceUID != nil && row.uid == nextDeviceUID)
+                        || (nextDeviceID != nil && row.deviceID == nextDeviceID))
+            }
+        }
+        guard let nextDeviceName else { return false }
+        return rows.contains { $0.label == nextDeviceName && $0.isVirtualOrAggregate }
+    }
+
+    /// The saved order with every visible device ahead of the hidden ones (relative order kept), offered
+    /// only while a hidden device would be used next. nil when there is nothing to fix.
+    public var visibleFirstUIDs: [String]? {
+        guard nextDeviceIsHidden, !visibleRows.isEmpty else { return nil }
+        return visibleRows.compactMap(\.uid) + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
+    }
+
+    /// "Make default" (Etan's 2.2.24 review #5): the visible row at `index` goes to the top in one step, the
+    /// other visible rows keep their order, and hidden devices are written after them. nil when the row is
+    /// already first, out of range, or has no UID to persist.
+    public func makingDefaultUIDs(at index: Int) -> [String]? {
+        movingVisibleUIDs(from: IndexSet(integer: index), to: 0)
+    }
+
+    /// Drag to reorder, with SwiftUI `onMove` semantics: `destination` is the pre-move index the rows land
+    /// before. Only rows with a UID move, and never below a UID-less row. nil when nothing would change.
+    public func movingVisibleUIDs(from source: IndexSet, to destination: Int) -> [String]? {
+        let visible = visibleRows
+        let movableCount = visible.prefix { $0.canPrioritize }.count
+        guard !source.isEmpty, source.allSatisfy({ (0 ..< movableCount).contains($0) }) else { return nil }
+        let current = visible.prefix(movableCount).compactMap(\.uid)
+        let landing = min(max(destination, 0), movableCount)
+        let picked = source.map { current[$0] }
+        let stayingBefore = current.indices.filter { $0 < landing && !source.contains($0) }.map { current[$0] }
+        let stayingAfter = current.indices.filter { $0 >= landing && !source.contains($0) }.map { current[$0] }
+        let moved = stayingBefore + picked + stayingAfter
+        guard moved != current else { return nil }
+        // Any UID rows after the movable prefix (only reachable through the public init) keep their place.
+        let trailingUIDs = visible.dropFirst(movableCount).compactMap(\.uid)
+        return moved + trailingUIDs + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
+    }
+
+    /// Dropping `uid` onto the visible row at `index` lands it in that row's place: below the row when dragged
+    /// down, above it when dragged up (SwiftUI onMove indices). nil when the drop would change nothing, or when
+    /// `uid` is not a visible row (text dragged in from elsewhere, a hidden device).
+    public func droppingVisibleUIDs(_ uid: String, onto index: Int) -> [String]? {
+        guard visibleRows.indices.contains(index),
+              let source = visibleRows.firstIndex(where: { $0.uid == uid })
+        else { return nil }
+        return movingVisibleUIDs(from: IndexSet(integer: source), to: index > source ? index + 1 : index)
+    }
+
+    /// C12: which edge of the hovered row the insertion line goes on, so the line is exactly where the drop
+    /// lands. nil when there is no line to draw: the drop would change nothing, or the drag is not a visible mic.
+    public func dropEdge(dragging uid: String?, onto index: Int) -> MicrophoneDropEdge? {
+        guard let uid, let source = visibleRows.firstIndex(where: { $0.uid == uid }),
+              droppingVisibleUIDs(uid, onto: index) != nil
+        else { return nil }
+        return index > source ? .bottom : .top
+    }
+
+    public func reorderedVisibleUIDs(moving index: Int, by offset: Int) -> [String]? {
+        let visible = visibleRows
+        let target = index + offset
+        guard visible.indices.contains(index), visible.indices.contains(target),
+              let sourceUID = visible[index].uid, let targetUID = visible[target].uid
+        else { return nil }
+        var visibleUIDs = visible.compactMap(\.uid)
+        guard let source = visibleUIDs.firstIndex(of: sourceUID),
+              let destination = visibleUIDs.firstIndex(of: targetUID)
+        else { return nil }
+        visibleUIDs.swapAt(source, destination)
+        return visibleUIDs + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
+    }
+}
+
+public enum MicrophoneDropEdge: Equatable, Sendable {
+    case top
+    case bottom
+}
+
+/// C12: the drag in progress in the Microphone priority list. `sourceUID` is set when a row starts dragging;
+/// `targetIndex` follows the row the drag is over, nil between rows or outside the list.
+public struct MicrophoneDragState: Equatable, Sendable {
+    public var sourceUID: String?
+    public var targetIndex: Int?
+    /// When the mouse press that started this drag happened (system uptime), stamped at the start. SwiftUI reports
+    /// no drag end, so a drag dropped or cancelled outside the list leaves `sourceUID` behind; every later drag
+    /// needs a new press, so a hover that sees a later press forgets the stale source (Bugbot + D195-r1 on #195).
+    /// nil when the system can't say; then the source is kept rather than guessed away.
+    public var pressedAt: TimeInterval?
+
+    /// Two readings of the same press differ only by clock rounding.
+    static let samePressTolerance: TimeInterval = 0.05
+
+    public init(sourceUID: String? = nil, targetIndex: Int? = nil, pressedAt: TimeInterval? = nil) {
+        self.sourceUID = sourceUID
+        self.targetIndex = targetIndex
+        self.pressedAt = pressedAt
+    }
+
+    public static func started(dragging uid: String, pressedAt: TimeInterval?) -> Self {
+        Self(sourceUID: uid, pressedAt: pressedAt)
+    }
+
+    public mutating func hover(_ index: Int, pressedAt latest: TimeInterval?) {
+        if let pressedAt, let latest, abs(latest - pressedAt) > Self.samePressTolerance {
+            self = Self()
+        }
+        targetIndex = index
+    }
+
+    public mutating func leave(_ index: Int) {
+        if targetIndex == index { targetIndex = nil }
+    }
+}
+
+public final class MicrophoneDevicePriority {
+    private let defaults: UserDefaults
+    private let orderKey: String
+    private let labelsKey: String
+
+    public init(
+        defaults: UserDefaults,
+        storageNamespace: String = "com.voicelayer.microphone-priority"
+    ) {
+        self.defaults = defaults
+        orderKey = "\(storageNamespace).ordered-uids"
+        labelsKey = "\(storageNamespace).known-labels"
+    }
+
+    public var preferredUIDs: [String] {
+        Self.deduplicatedUIDs(defaults.stringArray(forKey: orderKey) ?? [])
+    }
+
+    public func observe(_ devices: [MicrophoneDevice]) {
+        var labels = knownLabels
+        for device in devices {
+            guard let uid = Self.normalizedUID(device.uid) else { continue }
+            labels[uid] = device.name
+        }
+        defaults.set(labels, forKey: labelsKey)
+    }
+
+    public func replacePreferredUIDs(
+        _ uids: [String],
+        observing devices: [MicrophoneDevice]
+    ) {
+        observe(devices)
+        if uids.isEmpty {
+            defaults.set([], forKey: orderKey)
+            return
+        }
+        let knownUIDs = Set(knownLabels.keys)
+        let validUIDs = Self.deduplicatedUIDs(uids).filter(knownUIDs.contains)
+        guard !validUIDs.isEmpty else { return }
+        defaults.set(validUIDs, forKey: orderKey)
+    }
+
+    public func rows(for devices: [MicrophoneDevice]) -> [MicrophonePriorityRow] {
+        let connected = Self.connectedByUID(devices)
+        let preferred = preferredUIDs
+        let labels = knownLabels
+        var rowUIDs = preferred
+        var seenUIDs = Set(preferred)
+        for device in devices {
+            guard let uid = Self.normalizedUID(device.uid), seenUIDs.insert(uid).inserted else { continue }
+            rowUIDs.append(uid)
+        }
+        rowUIDs.append(contentsOf: labels.keys
+            .filter { !rowUIDs.contains($0) }
+            .sorted { labels[$0, default: $0] < labels[$1, default: $1] })
+
+        var rows = rowUIDs.map { uid in
+            let device = connected[uid]
+            return MicrophonePriorityRow(
+                uid: uid,
+                deviceID: device?.id,
+                label: device?.name ?? labels[uid] ?? "Unknown Microphone",
+                isConnected: device != nil,
+                isVirtualOrAggregateTransport: device?.isVirtualOrAggregateTransport
+            )
+        }
+        rows.append(contentsOf: devices.compactMap { device in
+            guard Self.normalizedUID(device.uid) == nil else { return nil }
+            return MicrophonePriorityRow(
+                uid: nil,
+                deviceID: device.id,
+                label: device.name,
+                isConnected: true,
+                isVirtualOrAggregateTransport: device.isVirtualOrAggregateTransport
+            )
+        })
+        return rows
+    }
+
+    public func resolveDeviceID(
+        in devices: [MicrophoneDevice],
+        fallbackDeviceID: String?
+    ) -> String? {
+        let connected = Self.connectedByUID(devices)
+        for uid in preferredUIDs {
+            if let deviceID = connected[uid]?.id {
+                return deviceID
+            }
+        }
+        return fallbackDeviceID
+    }
+
+    private var knownLabels: [String: String] {
+        defaults.dictionary(forKey: labelsKey) as? [String: String] ?? [:]
+    }
+
+    private static func connectedByUID(_ devices: [MicrophoneDevice]) -> [String: MicrophoneDevice] {
+        var connected: [String: MicrophoneDevice] = [:]
+        for device in devices {
+            guard let uid = normalizedUID(device.uid), connected[uid] == nil else { continue }
+            connected[uid] = device
+        }
+        return connected
+    }
+
+    private static func deduplicatedUIDs(_ uids: [String]) -> [String] {
+        var seen = Set<String>()
+        return uids.compactMap { value in
+            guard let uid = normalizedUID(value), seen.insert(uid).inserted else { return nil }
+            return uid
+        }
+    }
+
+    private static func normalizedUID(_ uid: String?) -> String? {
+        guard let value = uid?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+}

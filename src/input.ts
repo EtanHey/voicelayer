@@ -23,6 +23,7 @@
  *   brew install whisper-cpp (or set QA_VOICE_WISPR_KEY for cloud fallback)
  */
 
+import { processingEnv } from "./processing-settings";
 import { createHash, randomBytes } from "crypto";
 import {
   closeSync,
@@ -123,6 +124,7 @@ import {
   clearRecordingHold,
   isRecordingHoldEngaged,
 } from "./recording-hold";
+import { buildDictationReceipt } from "./dictation-receipt";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -437,7 +439,7 @@ export function finalizeTranscriptionText(
 export async function finalizeTranscriptionTextForSurface(
   rawText: string,
   surface: STTPolishSurface | null,
-  env: STTFinalizeEnv = process.env,
+  env: STTFinalizeEnv = processingEnv(),
 ): Promise<string> {
   return (await finalizeTranscriptionResultForSurface(rawText, surface, env))
     .text;
@@ -456,7 +458,7 @@ export async function buildBoundaryContext(
   wavPath: string,
   segments: TranscriptSegment[] | undefined,
   segmentsAudioSha256: string | undefined,
-  env: STTFinalizeEnv = process.env,
+  env: STTFinalizeEnv = processingEnv(),
   signal?: AbortSignal,
 ): Promise<STTPolishBoundaryContext | undefined> {
   if (!smartBoundariesEnabled(env)) return undefined;
@@ -506,7 +508,7 @@ export interface FinalizedTranscriptionResult {
 export async function finalizeTranscriptionResultForSurface(
   rawText: string,
   surface: STTPolishSurface | null,
-  env: STTFinalizeEnv = process.env,
+  env: STTFinalizeEnv = processingEnv(),
   boundaryContext?: STTPolishBoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
@@ -578,7 +580,7 @@ export function warmPolishEndpointAtRecordingStart(
     appendEvent?: typeof appendControlLayerEvent;
   } = {},
 ): void {
-  const env = options.env ?? process.env;
+  const env = options.env ?? processingEnv();
   const warm = options.warm ?? warmPolishEndpoint;
   const appendEvent = options.appendEvent ?? appendControlLayerEvent;
 
@@ -673,6 +675,17 @@ export interface WaitForInputOptions {
   onPhaseChange?: (phase: "transcribing") => void;
   onNoSpeech?: () => void;
   signal?: AbortSignal;
+  /** Monotonic clock seam for receipt tests; production uses performance.now(). */
+  monotonicNow?: () => number;
+}
+
+function readReceiptMonotonicNow(clock?: () => number): number | undefined {
+  try {
+    const value = clock ? clock() : performance.now();
+    return Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function invokeCaptureObserver(
@@ -1631,6 +1644,58 @@ export function trimTrailingSilenceForSTT(
     rawDurationMs,
     transcribedDurationMs: pcmDurationMs(trimmedPcm, sampleRate),
   };
+}
+
+// AIDEV-NOTE: F1 "recorded vs actually spoken" (Etan, 2.2.26). An estimate at the 250 ms
+// trim-window grain, using the same speech classifier as the trailing-silence trim: a
+// quiet speech-like window counts only beside an active one. Pauses shorter than a window
+// are not resolved, so the History calls it "≈ spoken".
+export function measureSpokenDurationMs(
+  pcmData: Uint8Array,
+  sampleRate = SAMPLE_RATE,
+): number {
+  const windowBytes = Math.max(
+    BYTES_PER_SAMPLE,
+    Math.floor((sampleRate * TRAILING_SILENCE_TRIM_WINDOW_MS) / 1000) *
+      BYTES_PER_SAMPLE,
+  );
+  const kinds: TrimWindowKind[] = [];
+  const sizes: number[] = [];
+  for (let offset = 0; offset < pcmData.byteLength; offset += windowBytes) {
+    const window = pcmData.subarray(
+      offset,
+      Math.min(offset + windowBytes, pcmData.byteLength),
+    );
+    kinds.push(classifyTrimWindow(window));
+    sizes.push(window.byteLength);
+  }
+  let spokenBytes = 0;
+  for (let index = 0; index < kinds.length; index++) {
+    const kind = kinds[index];
+    const counts =
+      kind === "speech" ||
+      (kind === "quiet-speechlike" &&
+        ((index > 0 && kinds[index - 1] !== "inactive") ||
+          (index + 1 < kinds.length && kinds[index + 1] !== "inactive")));
+    if (counts) spokenBytes += sizes[index];
+  }
+  return pcmDurationMs(pcmData.subarray(0, spokenBytes), sampleRate);
+}
+
+/** Writes `spoken_duration_ms` into an archive entry. Callers run it after the transcript is delivered. */
+export function recordArchivedSpokenDuration(
+  audioPath: string,
+  pcmData: Uint8Array,
+): void {
+  const spokenDurationMs = measureSpokenDurationMs(pcmData);
+  // Required: a missing entry throws, so the caller never announces a write that did not happen.
+  updateArchivedRecordingMetadata(
+    audioPath,
+    (metadata) => {
+      metadata.spoken_duration_ms = spokenDurationMs;
+    },
+    true,
+  );
 }
 
 export function classifyCaptureFailure(
@@ -2821,6 +2886,11 @@ export async function waitForInput(
     return null;
   }
 
+  const postCaptureProcessingStartedAtMs =
+    options.archiveSource === "voicebar"
+      ? readReceiptMonotonicNow(options.monotonicNow)
+      : undefined;
+
   const retainedWavData = createWavBuffer(pcmData);
   const sttTrim = trimTrailingSilenceForSTT(pcmData, pushToEnd);
   let voiceAskArchivePath: string | null = null;
@@ -3125,14 +3195,14 @@ export async function waitForInput(
         wavPath,
         result.segments,
         result.segmentsAudioSha256,
-        process.env,
+        processingEnv(),
         options.signal,
       );
       throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         polishSurfaceForWaitOptions(options),
-        process.env,
+        processingEnv(),
         boundaryContext,
       );
       if (result.text.trim() && !finalized.text) {
@@ -3143,6 +3213,15 @@ export async function waitForInput(
     }
     throwIfWaitForInputAborted(options.signal);
     const text = finalized.text;
+    const finalTranscriptReadyAtMs =
+      options.archiveSource === "voicebar" && text
+        ? readReceiptMonotonicNow(options.monotonicNow)
+        : undefined;
+    const dictationReceipt = buildDictationReceipt({
+      audioDurationMs: sttTrim.rawDurationMs,
+      processingStartedAtMs: postCaptureProcessingStartedAtMs,
+      finalTranscriptReadyAtMs,
+    });
     console.error(`[voicelayer] Transcription: ${text}`);
 
     retainLastCaptureForRecovery(
@@ -3179,6 +3258,7 @@ export async function waitForInput(
             backend: sttBackendLabel,
             languageMode: getLanguageModeFromEnv(),
             transcribedDurationMs: sttTrim.transcribedDurationMs,
+            processingDurationMs: dictationReceipt?.processing_duration_ms,
             polishStatus: finalized.polishStatus,
             requireMetadataUpdate: true,
           });
@@ -3232,10 +3312,31 @@ export async function waitForInput(
         ...(archivedRecordingPath
           ? { recording_path: join(archivedRecordingPath, "audio.wav") }
           : {}),
+        ...(options.archiveSource === "voicebar" &&
+        archivedRecordingPath &&
+        dictationReceipt
+          ? { dictation_receipt: dictationReceipt }
+          : {}),
       });
     }
     setRecordingState("idle");
     broadcast({ type: "state", state: "idle", source: "recording" });
+
+    // F1: the spoken-length measure walks the whole capture, so it runs after the transcript
+    // has been delivered and pasted, never in front of it.
+    if (text && voiceBarArchivePath && archivedRecordingPath === voiceBarArchivePath) {
+      const spokenAudioPath = join(voiceBarArchivePath, "audio.wav");
+      setImmediate(() => {
+        try {
+          recordArchivedSpokenDuration(spokenAudioPath, pcmData);
+          // History may have cached this entry between delivery and now; the write is durable, so say so.
+          broadcast({ type: "archive_metadata_updated", recording_path: spokenAudioPath });
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          console.error(`[voicelayer] Failed to record spoken length: ${detail}`);
+        }
+      });
+    }
 
     return text || null;
   } catch (err) {
@@ -3335,6 +3436,7 @@ export function updateArchivedTranscript(
     backend: string;
     languageMode: string;
     transcribedDurationMs?: number;
+    processingDurationMs?: number;
     polishStatus?: STTPolishStatus | null;
     provenanceProbe?: RecordingProvenanceProbe;
     requireMetadataUpdate?: boolean;
@@ -3349,6 +3451,11 @@ export function updateArchivedTranscript(
     metadata.transcription_status = "transcribed";
     if (transcription.transcribedDurationMs !== undefined) {
       metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
+    }
+    // F1: the dictation's post-capture processing time (DictationReceipt). A re-transcription has no
+    // receipt and keeps the original dictation's value.
+    if (transcription.processingDurationMs !== undefined) {
+      metadata.processing_duration_ms = transcription.processingDurationMs;
     }
     metadata.voicelayer_transcript_chars = text.length;
     if (metadata.source === "voice_ask") {
@@ -3935,7 +4042,7 @@ export async function retranscribeRecordingCapture(
       const finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         "dictation",
-        process.env,
+        processingEnv(),
         await buildBoundaryContext(
           sttWavPath,
           result.segments,
@@ -4034,7 +4141,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       const finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         retainedPolishSurfaceForRetranscription(),
-        process.env,
+        processingEnv(),
         await buildBoundaryContext(
           sttWavPath,
           result.segments,

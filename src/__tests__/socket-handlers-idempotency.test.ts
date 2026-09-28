@@ -12,6 +12,7 @@ import { handleSocketCommand } from "../socket-handlers";
 import * as recordingHold from "../recording-hold";
 import * as tts from "../tts";
 import * as whisperPerformance from "../whisper-performance";
+import * as modelStatus from "../model-status";
 
 const REPLAY_FILE = `${TEST_TMP}/voicelayer-socket-replay-${process.pid}.mp3`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
@@ -221,21 +222,30 @@ describe("socket handler idempotency matrix", () => {
     expect(calls).toEqual(["stopPlayback", "waitForInput"]);
   });
 
-  it("persists whisper effort changes and restarts the whisper sidecar", () => {
-    const response = handleSocketCommand({
+  it("persists whisper effort changes and restarts the whisper sidecar", async () => {
+    const statusSpy = spyOn(modelStatus, "readWhisperModelStatus").mockResolvedValue({
+      configured_model: { name: "large-v3-turbo", size_bytes: 10, installed: true },
+      residency: "not_loaded",
+      active_model: null,
+      configured_effort: "fast",
+      active_effort: null,
+    });
+    const response = await handleSocketCommand({
       cmd: "set_whisper_effort",
       id: "effort-fast",
       effort: "fast",
     });
 
-    expect(response).toEqual({
+    expect(response).toMatchObject({
       type: "ack",
       command: "set_whisper_effort",
       outcome: "accept",
       id: "effort-fast",
+      model_status: { residency: "not_loaded", configured_effort: "fast" },
     });
     expect(setWhisperEffortSpy).toHaveBeenCalledWith("fast");
     expect(restartWhisperServerSpy).toHaveBeenCalled();
+    statusSpy.mockRestore();
   });
 
   it("rejects whisper effort changes while recording without restarting the sidecar", () => {
@@ -258,12 +268,19 @@ describe("socket handler idempotency matrix", () => {
     expect(restartWhisperServerSpy).not.toHaveBeenCalled();
   });
 
-  it("returns a reject ack when whisper effort persistence fails", () => {
+  it("returns a reject ack when whisper effort persistence fails", async () => {
     setWhisperEffortSpy.mockImplementation(() => {
       throw new Error("config write failed");
     });
+    const statusSpy = spyOn(modelStatus, "readWhisperModelStatus").mockResolvedValue({
+      configured_model: { name: "large-v3-turbo", size_bytes: 10, installed: true },
+      residency: "not_loaded",
+      active_model: null,
+      configured_effort: "accurate",
+      active_effort: null,
+    });
 
-    const response = handleSocketCommand({
+    const response = await handleSocketCommand({
       cmd: "set_whisper_effort",
       id: "effort-error",
       effort: "balanced",
@@ -277,6 +294,7 @@ describe("socket handler idempotency matrix", () => {
       reason: "config write failed",
     });
     expect(restartWhisperServerSpy).not.toHaveBeenCalled();
+    statusSpy.mockRestore();
   });
 
   it("does not broadcast idle when an accepted record hits a recording conflict", async () => {

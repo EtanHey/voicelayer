@@ -12,9 +12,11 @@ import {
   inferenceTimeoutMsForWav,
   isServerAvailable,
   isServerHealthy,
+  probeWhisperServerHealth,
   readWhisperServerHelpText,
   resolveWhisperAccelerationPlan,
   stopServer,
+  stopServerAndWait,
   transcribeViaServer,
   whisperServerLaunchRecord,
 } from "../whisper-server";
@@ -89,9 +91,18 @@ describe("whisper-server", () => {
       expect(healthy).toBe(false);
     });
 
-    it("returns false on unreachable port", async () => {
-      const healthy = await isServerHealthy(1);
-      expect(healthy).toBe(false);
+    it("keeps an unavailable probe distinct from not loaded", async () => {
+      const healthy = await probeWhisperServerHealth(1);
+      expect(healthy).toBeNull();
+    });
+
+    it("keeps a malformed successful health body unavailable", async () => {
+      const server = Bun.serve({ port: 0, fetch: () => Response.json({ ready: true }) });
+      try {
+        expect(await probeWhisperServerHealth(server.port)).toBeNull();
+      } finally {
+        server.stop(true);
+      }
     });
   });
 
@@ -279,6 +290,47 @@ usage: whisper-server [options]
       expect(result.helpText).toBe("");
       expect(result.warning).toContain("failed");
       expect(result.warning).toContain("falling back");
+    });
+  });
+
+  describe("stopServerAndWait (effort reload, #142 round 2)", () => {
+    function ownedChild(exitOn: (signal: string) => boolean) {
+      const signals: string[] = [];
+      let exit!: () => void;
+      const exited = new Promise<number>((resolve) => { exit = () => resolve(0); });
+      const proc = {
+        pid: 424242,
+        stderr: null,
+        exitCode: null,
+        exited,
+        kill: (signal?: string) => {
+          const name = signal ?? "SIGTERM";
+          signals.push(name);
+          if (exitOn(name)) exit();
+        },
+      };
+      __resetWhisperServerStateForTests({ proc: proc as any, port: 18993, pid: 424242, adopted: false } as any);
+      return signals;
+    }
+
+    it("escalates to SIGKILL when the old server ignores SIGTERM", async () => {
+      const signals = ownedChild((signal) => signal === "SIGKILL");
+      try {
+        await stopServerAndWait();
+        expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+      } finally {
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("fails loudly instead of letting a relaunch adopt a server that will not stop", async () => {
+      const signals = ownedChild(() => false);
+      try {
+        await expect(stopServerAndWait()).rejects.toThrow(/did not stop/);
+        expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+      } finally {
+        __resetWhisperServerStateForTests(null);
+      }
     });
   });
 
@@ -834,6 +886,34 @@ usage: whisper-server [options]
       }
     });
 
+    it("preserves adopted model provenance without inventing missing effort", async () => {
+      const fake = startFakeHealthyServer();
+      writeWhisperServerOwnership(fake.port, {
+        pid: process.pid,
+        owner_pid: process.pid,
+        started_at: "2026-09-05T18:40:00.000Z",
+        binary: "/opt/homebrew/bin/whisper-server",
+        args: ["/opt/homebrew/bin/whisper-server", "-m", FAKE_MODEL],
+        model_path: FAKE_MODEL,
+        performance_effort: "invalid",
+        acceleration_mode: "metal",
+      });
+      __setWhisperServerTestHooksForTests({
+        findModel: () => FAKE_MODEL,
+        findPortListenerPids: () => [process.pid],
+      });
+
+      try {
+        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        expect(whisperServerLaunchRecord()?.modelPath).toBe(FAKE_MODEL);
+        expect(whisperServerLaunchRecord()?.performanceEffort).toBeNull();
+      } finally {
+        resetWhisperServerModule();
+        clearWhisperServerOwnership(fake.port);
+        fake.stop();
+      }
+    });
+
     it("adopts a healthy server with no ownership record rather than killing it", async () => {
       const fake = startFakeHealthyServer();
       const killed: Array<{ pid: number; signal: string }> = [];
@@ -1382,6 +1462,167 @@ usage: whisper-server [options]
         expect(attempts).toBe(2);
         expect(kills).toBe(1);
         expect(launches).toBe(1);
+      } finally {
+        globalThis.fetch = originalFetch;
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("does not retry a timed-out adopted server that is still healthy", async () => {
+      // An adopted occupant keeps running the aborted decode: we never kill
+      // it, so a retry re-adopts the same busy process and only burns a
+      // second full timeout before the whisper-cli fallback.
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let launches = 0;
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (
+        _url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        attempts++;
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        });
+      };
+
+      try {
+        __setWhisperServerTestHooksForTests({
+          inferenceTimeoutMs: () => 10,
+          findServerBinary: () => "/tmp/whisper-server",
+          findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+          spawn: () => {
+            launches++;
+            return { pid: 124, stderr: null, kill: () => {} };
+          },
+          isServerHealthy: async () => true,
+          sleep: async () => {},
+          startupTimeoutMs: 25,
+        });
+        __resetWhisperServerStateForTests({
+          proc: null,
+          port: 5555,
+          pid: 123,
+          adopted: true,
+        });
+
+        await expect(
+          transcribeViaServer(new Uint8Array([1, 2]), 5555),
+        ).rejects.toThrow("inference timeout");
+        expect(attempts).toBe(1);
+        expect(launches).toBe(0);
+      } finally {
+        globalThis.fetch = originalFetch;
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("does not retry a timed-out adopted server reached through the default port", async () => {
+      // No explicit port: ensureServer resolves the default, finds the adopted
+      // server on it, and that is the port that timed out — no retry.
+      const originalFetch = globalThis.fetch;
+      const defaultPort =
+        parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT || "", 10) || 8178;
+      const attemptedUrls: string[] = [];
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (
+        url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        attemptedUrls.push(String(url));
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        });
+      };
+
+      try {
+        __setWhisperServerTestHooksForTests({
+          inferenceTimeoutMs: () => 10,
+          findServerBinary: () => "/tmp/whisper-server",
+          findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+          spawn: () => ({ pid: 124, stderr: null, kill: () => {} }),
+          isServerHealthy: async () => true,
+          sleep: async () => {},
+          startupTimeoutMs: 25,
+        });
+        __resetWhisperServerStateForTests({
+          proc: null,
+          port: defaultPort,
+          pid: 123,
+          adopted: true,
+        });
+
+        await expect(
+          transcribeViaServer(new Uint8Array([1, 2])),
+        ).rejects.toThrow("inference timeout");
+        expect(attemptedUrls).toEqual([
+          `http://127.0.0.1:${defaultPort}/inference`,
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("still retries a timeout on an explicit port that is not the adopted server", async () => {
+      // The adopted-server skip is about that one busy process. An explicit
+      // port (isolated and corpus runs pass one) is a different server, and a
+      // timeout there keeps the ordinary retry even while another is adopted.
+      const originalFetch = globalThis.fetch;
+      const attemptedUrls: string[] = [];
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (
+        url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        attemptedUrls.push(String(url));
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        });
+      };
+
+      try {
+        __setWhisperServerTestHooksForTests({
+          inferenceTimeoutMs: () => 10,
+          findServerBinary: () => "/tmp/whisper-server",
+          findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+          spawn: () => ({ pid: 124, stderr: null, kill: () => {} }),
+          isServerHealthy: async () => true,
+          sleep: async () => {},
+          startupTimeoutMs: 25,
+        });
+        __resetWhisperServerStateForTests({
+          proc: null,
+          port: 5555,
+          pid: 123,
+          adopted: true,
+        });
+
+        await expect(
+          transcribeViaServer(new Uint8Array([1, 2]), 6666),
+        ).rejects.toThrow("inference timeout");
+        expect(attemptedUrls).toEqual([
+          "http://127.0.0.1:6666/inference",
+          "http://127.0.0.1:6666/inference",
+        ]);
       } finally {
         globalThis.fetch = originalFetch;
         __setWhisperServerTestHooksForTests({});

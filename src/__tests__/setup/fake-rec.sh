@@ -43,6 +43,14 @@ CHUNK=$(( RATE * CHANNELS / 10 ))
 STALL_AFTER_CHUNKS=${VOICELAYER_TEST_FAKE_REC_STALL_AFTER_CHUNKS:-0}
 CHUNKS_WRITTEN=0
 
+if [ "$STALL_AFTER_CHUNKS" -gt 0 ]; then
+  # The stall fixture tests what happens AFTER the PCM, not real-time streaming, so it writes its chunks in
+  # one go: one dd per 50 ms chunk plus a sleep each took >15 s to reach the stall under background QoS and
+  # a concurrent build. `exec` keeps this process (and its stdout pipe) alive without an orphan child.
+  dd if=/dev/zero bs="$CHUNK" count="$STALL_AFTER_CHUNKS" 2>/dev/null || exit 0
+  exec sleep 86400
+fi
+
 while :; do
   dd if=/dev/zero bs="$CHUNK" count=1 2>/dev/null || exit 0
   CHUNKS_WRITTEN=$(( CHUNKS_WRITTEN + 1 ))

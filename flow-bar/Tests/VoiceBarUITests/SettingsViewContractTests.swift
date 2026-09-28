@@ -2,6 +2,54 @@
 import XCTest
 
 final class SettingsViewContractTests: XCTestCase {
+    func testModelsStatusIsRequiredAndUsesTheProductionModelsView() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("modelsStatus: @escaping () -> ModelsSettingsState,"))
+        XCTAssertFalse(source.contains("modelsStatus: @escaping () -> ModelsSettingsState ="))
+        XCTAssertTrue(source.contains("ModelsSettingsView("))
+        XCTAssertTrue(source.contains("state: modelsStatus()"))
+        XCTAssertTrue(source.contains("effort: $selectedPerformanceEffort"))
+        // E2: the local picker state follows the app/daemon value instead of freezing at init.
+        XCTAssertTrue(source.contains(".onChange(of: performanceEffort())"))
+        XCTAssertTrue(source.contains("selectedPerformanceEffort = current"))
+        XCTAssertTrue(source.contains("notice: performanceEffortNotice()"))
+        XCTAssertTrue(source.contains("onSelectEffort: onSelectPerformanceEffort"))
+        XCTAssertTrue(source.contains("onRefreshModelsStatus()"))
+        XCTAssertFalse(source.contains("Model information unavailable"))
+    }
+
+    func testVocabularyRevisionIsAnExplicitInitializerContract() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("vocabularyRevision: @escaping () -> UInt64,"))
+        XCTAssertFalse(source.contains("vocabularyRevision: @escaping () -> UInt64 = { 0 }"))
+    }
+
+    @MainActor
+    func testReturningToRecordingSupersedesADeferredOlderLoad() async {
+        var fence = SettingsHistoryLoadFence()
+        let recordingA = fence.begin()
+        let deferredA = Task {
+            try? await Task.sleep(for: .milliseconds(40))
+            return "recording A"
+        }
+
+        // Recording A -> Ask -> archive changes -> Recording B.
+        let recordingB = fence.begin()
+        var applied: [String] = []
+        if fence.accepts(recordingB) {
+            applied.append("recording B")
+        }
+
+        let oldPage = await deferredA.value
+        if fence.accepts(recordingA) {
+            applied.append(oldPage)
+        }
+
+        XCTAssertEqual(applied, ["recording B"])
+    }
+
     func testSettingsSourceDoesNotExposeStandalonePositionLock() throws {
         let source = try settingsViewSource()
 
@@ -14,51 +62,63 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("dictionaryEntryCard"))
-        XCTAssertTrue(source.contains("variantChips"))
+        XCTAssertTrue(source.contains("variantSummary"))
         XCTAssertFalse(source.contains("Section(\"Find\")"))
         XCTAssertFalse(source.contains("Section(\"Prompt Terms\")"))
-        XCTAssertFalse(source.contains("DisclosureGroup"))
     }
 
+    /// Approved spec §6: the sticky header shows the search field first, then "Add term".
     func testDictionaryAddAndSearchAppearBeforeCanonicalCards() throws {
         let source = try settingsViewSource()
-        let addRange = try XCTUnwrap(source.range(of: "addTermRow"))
         let searchRange = try XCTUnwrap(source.range(of: "searchRow"))
+        let addRange = try XCTUnwrap(source.range(of: "Label(\"Add term\""))
         let cardRange = try XCTUnwrap(source.range(of: "dictionaryEntryCard"))
-        let addVariantRange = try XCTUnwrap(source.range(of: "addVariantInlineEditor"))
 
-        XCTAssertLessThan(addRange.lowerBound, searchRange.lowerBound)
-        XCTAssertLessThan(searchRange.lowerBound, cardRange.lowerBound)
-        XCTAssertLessThan(cardRange.lowerBound, addVariantRange.lowerBound)
+        XCTAssertLessThan(searchRange.lowerBound, addRange.lowerBound)
+        XCTAssertLessThan(addRange.lowerBound, cardRange.lowerBound)
     }
 
-    func testSettingsAnchorUsesOneToggleAndTopBottomPicker() throws {
+    func testSettingsDoesNotExposePositionControls() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("Toggle(\"Anchor\""))
-        XCTAssertTrue(source.contains("Picker(\"Position\""))
+        XCTAssertFalse(source.contains("Toggle(\"Anchor\""))
+        XCTAssertFalse(source.contains("Picker(\"Position\""))
         XCTAssertFalse(source.contains("Picker(\"Anchor\""))
     }
 
-    func testAudioTabIncludesPerformanceEffortPicker() throws {
+    func testSettingsUsesApprovedFourDestinationOrder() {
+        XCTAssertEqual(
+            SettingsTab.allCases,
+            [.general, .models, .dictionary, .history]
+        )
+        XCTAssertEqual(SettingsTab.allCases.map(\.title), [
+            "General", "Models", "Dictionary", "History",
+        ])
+    }
+
+    func testDictionarySourceLabelsStayTypedAndPlainLanguage() {
+        XCTAssertEqual(SettingsDictionarySource.user.title, "Your terms")
+        XCTAssertEqual(SettingsDictionarySource.included.title, "Included terms")
+        XCTAssertEqual(SettingsDictionarySource.unknown.title, "Terms")
+    }
+
+    func testOnlyModelsOwnsPerformanceEffortPicker() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("Section(\"Performance\")"))
-        XCTAssertTrue(source.contains("Picker(\"Effort\""))
-        XCTAssertTrue(source.contains("Fast"))
-        XCTAssertTrue(source.contains("Balanced"))
-        XCTAssertTrue(source.contains("Accurate"))
-        XCTAssertTrue(source.contains("onSelectPerformanceEffort"))
+        XCTAssertFalse(source.contains("case .audio:"))
+        XCTAssertFalse(source.contains("private var audioTab"))
+        XCTAssertTrue(source.contains("microphonePrioritySection"))
+        XCTAssertTrue(source.contains("ModelsSettingsView("))
     }
 
     func testSettingsIncludesFullHistoryTabWithEntryActions() throws {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("case history"))
-        XCTAssertTrue(source.contains("Label(\"History\""))
+        XCTAssertTrue(source.contains("title: \"History\""))
         XCTAssertTrue(source.contains("historyTab"))
         XCTAssertTrue(source.contains("historyGroups"))
-        XCTAssertTrue(source.contains("SettingsHistoryArchive.load"))
+        XCTAssertTrue(source.contains("SettingsArchiveIndex.shared.dictationPage"))
         XCTAssertTrue(source.contains("onCopyHistoryTranscript"))
         XCTAssertTrue(source.contains("onPasteHistoryTranscript"))
         XCTAssertTrue(source.contains("onRetranscribeHistoryEntry"))
@@ -72,7 +132,7 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("historyPage"))
-        XCTAssertTrue(source.contains("SettingsHistoryArchive.loadPage"))
+        XCTAssertTrue(source.contains("SettingsArchiveIndex.shared.dictationPage"))
         XCTAssertTrue(source.contains("isHistoryLoading"))
         XCTAssertTrue(source.contains("historyLoadedEntryLimit"))
         XCTAssertTrue(source.contains("loadOlderHistory"))
@@ -106,11 +166,20 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(settingsSource.contains(".opacity(isRetranscribing ?"))
         XCTAssertTrue(settingsSource.contains("isRetranscribing: isRetranscribing,"))
         XCTAssertTrue(settingsSource.contains("isSpinning: isRetranscribing"))
-        XCTAssertTrue(settingsSource.contains(".rotationEffect(.degrees(isSpinning ? 360 : 0))"))
-        XCTAssertTrue(settingsSource.contains(".repeatForever(autoreverses: false)"))
+        // QA 2.2.25 C7/C8/C9: the icon turns off the clock; an implicit repeatForever animation only started on a
+        // state flip and then animated every later layout move.
+        XCTAssertTrue(settingsSource.contains("HistorySpinningSymbol(systemName: systemImage)"))
+        XCTAssertFalse(settingsSource.contains(".repeatForever("))
         XCTAssertTrue(settingsSource.contains("isRetranscribing ? \"Re-transcribing stored audio\""))
         XCTAssertTrue(barSource.contains("activeHistoryRetranscriptionPath"))
-        XCTAssertTrue(barSource.contains("Re-transcribing..."))
+        // Spec §4: the notch History panel (its own file) says so while a row re-transcribes.
+        let panelSource = try String(
+            contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+                .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI/NotchHistoryPanel.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(panelSource.contains("HistoryRetranscribingBadge("))
+        XCTAssertEqual(HistoryRetranscribingBadge<ProcessingSpinner>.title, "Re-transcribing…")
         XCTAssertTrue(appSource.contains("voiceState.activeHistoryRetranscriptionPath == recordingPath"))
         XCTAssertTrue(settingsSource.contains("isTranscribingActive: () -> Bool"))
         XCTAssertTrue(appSource.contains("isTranscribingActive: { [weak self] in"))
@@ -120,7 +189,7 @@ final class SettingsViewContractTests: XCTestCase {
     func testHistoryTabExposesRecordingAndAskScopesWithRecordingFirst() {
         XCTAssertEqual(SettingsHistoryScope.allCases, [.recording, .ask])
         XCTAssertEqual(SettingsHistoryScope.allCases.first, .recording)
-        XCTAssertEqual(SettingsHistoryScope.recording.title, "Recording")
+        XCTAssertEqual(SettingsHistoryScope.recording.title, "Dictations")
         XCTAssertEqual(SettingsHistoryScope.ask.title, "Ask")
     }
 
@@ -146,13 +215,15 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("onRevealHistoryFile(audioPath)"))
     }
 
-    func testBothHistoryScopesUseTheSharedPinnedDayAndCardSeam() throws {
+    func testAskKeepsPinnedDayCardsWhileRecordingUsesListAndDetail() throws {
         let source = try settingsViewSource()
 
         XCTAssertEqual(
             source.components(separatedBy: "pinnedViews: [.sectionHeaders]").count - 1,
-            2
+            1
         )
+        XCTAssertTrue(source.contains("recordingHistoryListRow(entry)"))
+        XCTAssertTrue(source.contains("recordingHistoryDetail(entry)"))
         XCTAssertTrue(source.contains("private func historyDaySection"))
         XCTAssertTrue(source.contains("private func historyDayHeader"))
         XCTAssertTrue(source.contains("private func historyEntryRow"))
@@ -245,9 +316,9 @@ final class SettingsViewContractTests: XCTestCase {
         )] = [
             (false, false, false, [.play, .copy, .paste, .retranscribe, .finder]),
             (true, false, false, [.play, .finder]),
-            (false, true, false, [.play, .copy, .paste, .finder]),
-            (false, false, true, [.play, .copy, .paste, .finder]),
-            (true, true, true, [.play, .finder]),
+            (false, true, false, [.copy, .paste, .finder]),
+            (false, false, true, [.copy, .paste, .finder]),
+            (true, true, true, [.finder]),
         ]
 
         for testCase in cases {
@@ -301,14 +372,14 @@ final class SettingsViewContractTests: XCTestCase {
         let actions = source[actionsStart.lowerBound ..< actionsEnd.lowerBound]
 
         XCTAssertTrue(actions.contains(".labelStyle(.iconOnly)"))
-        XCTAssertTrue(actions.contains(".frame(minWidth: 28, minHeight: 28)"))
-        XCTAssertTrue(actions.contains(".help(isPlaying ? \"Stop\" : \"Play\")"))
-        XCTAssertTrue(actions.contains(".help(\"Copy\")"))
-        XCTAssertTrue(actions.contains(".help(\"Paste\")"))
-        XCTAssertTrue(
-            actions.contains(".help(enablement.isTranscribing ? \"Transcribing…\" : \"Re-transcribe\")")
-        )
-        XCTAssertTrue(actions.contains(".help(\"Open in Finder\")"))
+        XCTAssertTrue(actions.contains(".frame(width: 28, height: 28)"))
+        // H1-d (UI pass #10): a blocked action's tooltip is its reason; otherwise the action's name.
+        XCTAssertTrue(actions.contains(".help(reason ?? (isPlaying ? \"Stop\" : \"Play\"))"))
+        XCTAssertTrue(actions.contains(".help(reason ?? \"Copy\")"))
+        XCTAssertTrue(actions.contains(".help(reason ?? \"Paste\")"))
+        XCTAssertTrue(actions.contains(".help(reason ?? \"Re-transcribe\")"))
+        XCTAssertTrue(actions.contains(".help(reason ?? \"Open in Finder\")"))
+        XCTAssertEqual(actions.components(separatedBy: ".accessibilityHint(reason ?? \"\")").count - 1, 5)
 
         for accessibleName in [
             "\\(isPlaying ? \"Stop\" : \"Play\") \\(part.accessibilityNoun)",
@@ -369,7 +440,8 @@ final class SettingsViewContractTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("askHistoryPage"))
-        XCTAssertTrue(source.contains("SettingsAskHistoryArchive.loadPage"))
+        // R4/H1-a: through the shared History index (identical pages, decoded once).
+        XCTAssertTrue(source.contains("SettingsArchiveIndex.shared.askPage"))
         XCTAssertTrue(source.contains("isAskHistoryLoading"))
         XCTAssertTrue(source.contains("askHistoryLoadedEntryLimit"))
         XCTAssertTrue(source.contains("loadOlderAskHistory"))
@@ -377,7 +449,7 @@ final class SettingsViewContractTests: XCTestCase {
 
     func testRecordingScopeStillReadsOnlyTheRecordingArchive() throws {
         let source = try settingsViewSource()
-        let recordingLoad = try XCTUnwrap(source.range(of: "SettingsHistoryArchive.loadPage"))
+        let recordingLoad = try XCTUnwrap(source.range(of: "SettingsArchiveIndex.shared.dictationPage"))
 
         XCTAssertNotNil(recordingLoad)
         XCTAssertFalse(source.contains("SettingsHistoryArchive.loadAskPage"))
@@ -419,13 +491,17 @@ final class SettingsViewContractTests: XCTestCase {
     func testSwitchingScopeReloadsTheScopeBeingShown() throws {
         let source = try settingsViewSource()
         let onChange = try XCTUnwrap(source.range(of: "onChange(of: selectedHistoryScope)"))
-        let handler = source[onChange.upperBound...].prefix(400)
+        let handler = source[onChange.upperBound...].prefix(900)
 
-        // An inactive scope misses voiceBarHistoryArchiveDidChange, so both sides must reload
-        // on switch rather than only when empty.
+        // An unmounted scope misses voiceBarHistoryArchiveDidChange, so the first time it is shown in a History
+        // visit it reloads (not only when empty). Lane E: once mounted it stays mounted and current, so only that
+        // first showing reloads — HistoryScopeKeepAliveTests pins the behaviour.
+        XCTAssertTrue(handler.contains("guard mountedHistoryScopes.insert(scope).inserted else { return }"))
         XCTAssertTrue(handler.contains("requestHistoryReload()"))
         XCTAssertTrue(handler.contains("requestAskHistoryReload()"))
         XCTAssertFalse(handler.contains("askHistoryDayGroups.isEmpty"))
+        XCTAssertFalse(handler.contains("if !isHistoryLoading"))
+        XCTAssertFalse(handler.contains("if !isAskHistoryLoading"))
     }
 
     func testGeneralTabProvidesVoiceBarHideAndUnhideAffordance() throws {
@@ -439,21 +515,26 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("Hide for 1 hour"))
     }
 
-    func testGeneralTabShowsGranularPermissionAndRelayRows() throws {
+    func testGeneralTabShowsPermissionsAndAdvancedF5Helper() throws {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("permissionRow"))
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
-        XCTAssertTrue(source.contains("Section(\"Permissions & Hotkey Setup\")"))
-        XCTAssertTrue(source.contains("Relay (hidutil LaunchAgent)"))
+        XCTAssertTrue(source.contains("Section(\"Shortcut\")"))
+        XCTAssertTrue(source.contains("Section(\"Permissions\")"))
+        XCTAssertFalse(source.contains("All permissions granted"))
+        XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Advanced\", isExpanded:"))
+        XCTAssertTrue(source.contains("F5 key helper"))
+        XCTAssertFalse(source.contains("Relay (hidutil LaunchAgent)"))
         XCTAssertTrue(source.contains("runRelaySetup"))
         XCTAssertTrue(source.contains(".disabled(relaySetupRunning)"))
         XCTAssertFalse(source.contains("Section(\"Karabiner\")"))
     }
 
     func testDictionaryTextFieldsUseVisibleDictionaryFieldTreatment() throws {
-        let source = try settingsViewSource()
+        // Search in the tab, Correct and Misheard as in the one Add/Edit sheet (R4/D1).
+        let source = try settingsViewSource() + uiSource(named: "DictionaryAddSheetView.swift")
         let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1
 
         XCTAssertGreaterThanOrEqual(visibleFieldCount, 3)

@@ -1,5 +1,6 @@
 import { accessSync, constants } from "fs";
 
+import { processingEnv } from "./processing-settings";
 import { resolveBinary } from "./resolve-binary";
 import { appendControlLayerEvent } from "./control-layer-journal";
 import {
@@ -69,6 +70,13 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 
 let polishProcess: ManagedPolishProcess | null = null;
 let polishLaunch: Promise<STTPolishServerStatus> | null = null;
+/**
+ * Bumped by every stop. A launch captures it at start and re-checks it after
+ * each await: a stale launch spawns nothing more, terminates what it spawned,
+ * and its result is never published (P1 #146 round 2, Polish off mid-load).
+ */
+let polishGeneration = 0;
+const POLISH_STOP_EXIT_TIMEOUT_MS = 1_500;
 const polishStatusListeners = new Set<(status: STTPolishServerStatus) => void>();
 
 export function onSTTPolishServerStatus(
@@ -86,6 +94,7 @@ function publishSTTPolishServerStatus(
 }
 
 export function resetSTTPolishServerManagerForTests(): void {
+  polishGeneration++;
   polishLaunch = null;
   if (polishProcess?.kill) {
     try {
@@ -99,10 +108,30 @@ export function stopSTTPolishServer(): void {
   resetSTTPolishServerManagerForTests();
 }
 
+/**
+ * Stop the polish server this process launched and WAIT for it to exit
+ * (SIGKILL after a timeout), so a following "on" never finds the dying server
+ * still answering and reports it ready. Cancels any in-flight launch.
+ */
+export async function stopSTTPolishServerAndWait(): Promise<void> {
+  const proc = polishProcess;
+  resetSTTPolishServerManagerForTests();
+  if (!proc?.exited) return;
+  const exited = (ms: number) => Promise.race([
+    proc.exited!.then(() => true, () => true),
+    Bun.sleep(ms).then(() => false),
+  ]);
+  if (await exited(POLISH_STOP_EXIT_TIMEOUT_MS)) return;
+  try {
+    proc.kill?.("SIGKILL");
+  } catch {}
+  await exited(POLISH_STOP_EXIT_TIMEOUT_MS);
+}
+
 export async function ensureSTTPolishServer(
   options: EnsureSTTPolishServerOptions = {},
 ): Promise<STTPolishServerStatus> {
-  const env = options.env ?? process.env;
+  const env = options.env ?? processingEnv();
   const endpoint = getSTTPolishEndpoint(env);
   if (getSTTPolishMode(env) === "off") {
     return publishSTTPolishServerStatus({ status: "disabled" });
@@ -118,15 +147,26 @@ export async function ensureSTTPolishServer(
     });
   }
 
-  if (polishLaunch) return polishLaunch.then(publishSTTPolishServerStatus);
-  polishLaunch = startAndWaitForPolishServer(endpoint, options).finally(() => {
-    polishLaunch = null;
+  const generation = polishGeneration;
+  const publishIfCurrent = (status: STTPolishServerStatus) =>
+    generation === polishGeneration ? publishSTTPolishServerStatus(status) : status;
+  if (polishLaunch) return polishLaunch.then(publishIfCurrent);
+  // Compare against the TRACKED promise: a settled launch must be cleared, or a
+  // later forceRestart (failure recovery) would reuse its stale result and never
+  // relaunch (#146 round 3).
+  const tracked: Promise<STTPolishServerStatus> = startAndWaitForPolishServer(
+    endpoint,
+    options,
+    generation,
+  ).finally(() => {
+    if (polishLaunch === tracked) polishLaunch = null;
   });
-  return polishLaunch.then(publishSTTPolishServerStatus);
+  polishLaunch = tracked;
+  return tracked.then(publishIfCurrent);
 }
 
 export function recoverDefaultSTTPolishServerAfterFailure(
-  env: STTPolishEnv = process.env,
+  env: STTPolishEnv = processingEnv(),
   options: Omit<EnsureSTTPolishServerOptions, "env" | "forceRestart"> = {},
 ): void {
   if (getSTTPolishMode(env) === "off") return;
@@ -143,7 +183,9 @@ export function recoverDefaultSTTPolishServerAfterFailure(
 async function startAndWaitForPolishServer(
   endpoint: string,
   options: EnsureSTTPolishServerOptions,
+  generation: number,
 ): Promise<STTPolishServerStatus> {
+  const cancelled = () => generation !== polishGeneration;
   const appendEvent = options.appendEvent ?? appendControlLayerEvent;
   const log = options.log ?? console.error;
   const binary = options.findBinary
@@ -160,6 +202,7 @@ async function startAndWaitForPolishServer(
   }
 
   await reapStaleDefaultPolishPortOwners(options, appendEvent);
+  if (cancelled()) return { status: "disabled" };
 
   const args = [
     binary,
@@ -188,12 +231,18 @@ async function startAndWaitForPolishServer(
 
   const proc = spawnPolishServer(args, options);
   polishProcess = proc;
+  const abandon = (): STTPolishServerStatus => {
+    terminatePolishProcess(proc);
+    if (polishProcess === proc) polishProcess = null;
+    return { status: "disabled" };
+  };
   const stderrTail = drainPolishServerLogs(proc, log);
 
   const timeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   let readinessChecks = 0;
   while (Date.now() < deadline) {
+    if (cancelled()) return abandon();
     readinessChecks++;
     if (
       (await isReady(endpoint, options)) &&
@@ -217,6 +266,7 @@ async function startAndWaitForPolishServer(
     }
     await (options.sleep ?? Bun.sleep)(500);
   }
+  if (cancelled()) return abandon();
 
   appendEvent(
     "transcription.polish_server_timeout",

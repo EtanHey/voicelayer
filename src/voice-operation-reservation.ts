@@ -3,6 +3,11 @@ export type VoiceOperationReservation = { release: () => void };
 let activeStandardVoiceOperations = 0;
 let archiveRetranscriptionReserved = false;
 
+/** Session bookings outlive requests; this tracks actual in-flight work. */
+export function hasActiveVoiceOperation(): boolean {
+  return activeStandardVoiceOperations > 0 || archiveRetranscriptionReserved;
+}
+
 function reservationFor(
   kind: "standard" | "archive-retranscription",
 ): VoiceOperationReservation {

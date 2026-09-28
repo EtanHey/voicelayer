@@ -927,7 +927,12 @@ final class HotkeyManagerTests: XCTestCase {
         gesture.onPreviewPhaseChange = { phases.append($0) }
 
         gesture.handleMouseButtonDown()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        // The hold timer is `GestureStateMachine.holdThresholdMs` ms; wait for it to fire rather than a
+        // fixed 200 ms, which lost the race under a loaded background-QoS run.
+        let holdDeadline = Date().addingTimeInterval(5)
+        while holdStartCount == 0, Date() < holdDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
         gesture.handleMouseButtonUp()
 
         XCTAssertEqual(gesture.state, .idle)
@@ -969,7 +974,12 @@ final class HotkeyManagerTests: XCTestCase {
         gesture.onPreviewPhaseChange = { phases.append($0) }
 
         gesture.handleKeyDown()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        // The hold timer is `GestureStateMachine.holdThresholdMs` ms; wait for it to fire rather than a
+        // fixed 200 ms, which lost the race under a loaded background-QoS run.
+        let holdDeadline = Date().addingTimeInterval(5)
+        while holdStartCount == 0, Date() < holdDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
         gesture.handleKeyUp()
 
         XCTAssertEqual(gesture.state, .idle)

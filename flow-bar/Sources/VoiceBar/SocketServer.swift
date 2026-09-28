@@ -56,8 +56,10 @@ final class SocketServer {
     private let state: VoiceState
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
-    var onQAContextMenuProbe: (() -> Void)?
-    var onQAVerticalHitProbe: (() -> Void)?
+    #if VOICEBAR_QA
+        var onQAContextMenuProbe: (() -> Void)?
+        var onQAVerticalHitProbe: (() -> Void)?
+    #endif
 
     /// Listening socket file descriptor.
     private var listenFD: Int32 = -1
@@ -254,21 +256,13 @@ final class SocketServer {
             return
         }
 
-        if dict["type"] as? String == "qa_context_menu_probe" {
-            if onQAContextMenuProbe != nil {
-                DispatchQueue.main.async { [weak self] in
-                    self?.onQAContextMenuProbe?()
-                }
-            }
-            return
-        }
-
-        if dict["type"] as? String == "qa_vertical_hit_probe" {
-            if onQAVerticalHitProbe != nil {
-                DispatchQueue.main.async { [weak self] in
-                    self?.onQAVerticalHitProbe?()
-                }
-            }
+        // AIDEV-NOTE: QA probes are dev/CI-only (Etan ruling 2). A build without VOICEBAR_QA
+        // still swallows every qa_* message here, so it answers them with nothing instead of
+        // letting them reach the generic handlers below.
+        if let type = dict["type"] as? String, type.hasPrefix("qa_") {
+            #if VOICEBAR_QA
+                routeQAProbe(type)
+            #endif
             return
         }
 
@@ -300,6 +294,18 @@ final class SocketServer {
             self?.state.handleEvent(dict, playbackAmplitude: playbackAmplitude)
         }
     }
+
+    #if VOICEBAR_QA
+        private func routeQAProbe(_ type: String) {
+            let probe: (() -> Void)? = switch type {
+            case "qa_context_menu_probe": onQAContextMenuProbe
+            case "qa_vertical_hit_probe": onQAVerticalHitProbe
+            default: nil
+            }
+            guard let probe else { return }
+            DispatchQueue.main.async { probe() }
+        }
+    #endif
 
     private func handleClientHello(_ payload: [String: Any], from fd: Int32?) {
         guard let fd, clients[fd] != nil else {
@@ -335,6 +341,14 @@ final class SocketServer {
     /// Send normal commands to the command-owning daemon. Stop/cancel also go
     /// to legacy direct MCP clients because a long-lived session may own the
     /// active playback process.
+    /// Tests: the roles of clients whose hello the server has processed, read on the server queue. Commands
+    /// route by these roles, and each client's socket is read independently, so a test must wait for every
+    /// hello before it sends one (the stop-interrupt flake: a stop sent before the second playback client
+    /// registered never reached it).
+    func registeredClientRolesForTesting() -> [String] {
+        queue.sync { clients.values.compactMap(\.role).sorted() }
+    }
+
     func sendCommandToOwner(command: [String: Any]) {
         queue.async { [weak self] in
             self?.sendCommandToOwnerOnQueue(command: command)

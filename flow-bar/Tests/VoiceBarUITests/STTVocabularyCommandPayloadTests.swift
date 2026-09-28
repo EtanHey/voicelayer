@@ -2,6 +2,26 @@
 import XCTest
 
 final class STTVocabularyCommandPayloadTests: XCTestCase {
+    func testVoiceStateVocabularyRevisionChangesOnlyWhenVocabularyDataChanges() {
+        let state = VoiceState()
+        let initialRevision = state.transcriptionVocabularyRevision
+
+        state.transcriptionVocabularyTerms = ["VoiceLayer"]
+        let termsRevision = state.transcriptionVocabularyRevision
+        state.transcriptionVocabularyTerms = ["VoiceLayer"]
+        state.transcriptionVocabularyAliases = [
+            STTVocabularyAliasPreview(from: "voice lair", to: "VoiceLayer"),
+        ]
+        let aliasesRevision = state.transcriptionVocabularyRevision
+        state.transcriptionVocabularyAliases = [
+            STTVocabularyAliasPreview(from: "voice lair", to: "VoiceLayer"),
+        ]
+
+        XCTAssertEqual(termsRevision, initialRevision &+ 1)
+        XCTAssertEqual(aliasesRevision, termsRevision &+ 1)
+        XCTAssertEqual(state.transcriptionVocabularyRevision, aliasesRevision)
+    }
+
     private let pr245VocabAddFixture = #"{"cmd":"vocab_add","id":"vocab-1","from":"domekin","to":"Domica"}"#
     private let pr245VocabListFixture = #"{"cmd":"vocab_list","id":"vocab-list"}"#
     private let pr245VocabRemoveFixture = #"{"cmd":"vocab_remove","id":"vocab-remove","from":"domekin"}"#

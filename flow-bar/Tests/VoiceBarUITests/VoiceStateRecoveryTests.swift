@@ -29,7 +29,9 @@ final class VoiceStateRecoveryTests: XCTestCase {
             "state": "transcribing",
         ])
 
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         XCTAssertEqual(state.mode, .error)
         XCTAssertEqual(state.errorMessage, "Transcription failed")
@@ -139,7 +141,9 @@ final class VoiceStateRecoveryTests: XCTestCase {
 
         state.record(pressToTalk: true)
 
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         XCTAssertNil(state.pendingIntent)
         XCTAssertEqual(state.mode, .error)
@@ -157,7 +161,9 @@ final class VoiceStateRecoveryTests: XCTestCase {
         state.record(pressToTalk: true)
         state.stop()
 
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         XCTAssertNil(state.pendingIntent)
         XCTAssertEqual(state.mode, .error)
@@ -196,7 +202,9 @@ final class VoiceStateRecoveryTests: XCTestCase {
             "recoverable": true,
         ])
 
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         XCTAssertNil(state.pendingIntent)
         XCTAssertEqual(state.mode, .error)

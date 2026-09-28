@@ -26,6 +26,15 @@ function setIfUnset(name: string, value: string): void {
 
 mkdirSync(RUN_ROOT, { recursive: true, mode: 0o700 });
 
+// Git's repository selectors (GIT_DIR, GIT_COMMON_DIR, GIT_CONFIG, GIT_WORK_TREE,
+// GIT_INDEX_FILE, ...) are exported by git hooks and `rebase --exec`. A test
+// inheriting them runs its fake-repo `git config` / `git commit` against another
+// repository: that is how a "Test User" identity reached the real .git/config
+// (2026-09-24). No test needs them, so none inherits them.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("GIT_")) delete process.env[key];
+}
+
 // Short basenames: the run root is already deep, and sun_path is 104 bytes.
 const voiceBarSocket = join(RUN_ROOT, "v.sock");
 const mcpSocket = join(RUN_ROOT, "m.sock");

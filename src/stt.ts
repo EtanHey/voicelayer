@@ -11,6 +11,7 @@
  *   QA_VOICE_WISPR_KEY     — Wispr Flow API key (required for wispr backend)
  */
 
+import { processingEnv } from "./processing-settings";
 import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -364,6 +365,159 @@ function findChunkOverlap(
   return { overlap: 0, skipPrefix: 0 };
 }
 
+const MAX_COMPACT_SEAM_SUFFIX_WORDS = 16;
+const MAX_COMPACT_SEAM_NEXT_WORDS = 24;
+const MAX_COMPACT_SEAM_RAGGED_WORDS = 2;
+const MIN_COMPACT_SEAM_WORDS = 4;
+const MIN_COMPACT_SEAM_CHARS = 12;
+
+/**
+ * Per-word seam key: case, edge punctuation, apostrophes and in-word hyphens
+ * fold ("it 's" / "it's", "VoiceLayer" / "voice layer" once joined), but code
+ * operators stay distinct (`C++` is never `C#`).
+ */
+function compactSeamKey(word: string): string {
+  return normalizeChunkWordForOverlap(word.normalize("NFKC"))
+    .replace(/["'’`]/gu, "")
+    .replace(/(?<=\p{L})-(?=\p{L})/gu, "");
+}
+
+/** Earliest word-aligned run of `nextKeys` whose concatenation equals `key`. */
+function findCompactRun(
+  nextKeys: string[],
+  key: string,
+): { start: number; end: number } | null {
+  for (let start = 0; start < nextKeys.length; start++) {
+    let run = "";
+    for (let end = start + 1; end <= nextKeys.length && run.length < key.length; end++) {
+      run += nextKeys[end - 1];
+      if (run === key) return { start, end };
+    }
+  }
+  return null;
+}
+
+/**
+ * May the next chunk's words before the anchor be dropped? Only when they are
+ * the overlap re-decode of the merged words IMMEDIATELY before the anchor:
+ * their compact form must end the compact form of those words (so a decode
+ * that starts mid-word still fits). With two or more of them, one inserted
+ * word is tolerated. Occurring *somewhere* in the merged text is not enough:
+ * a phrase said three times straddling the seam occurs earlier too (review
+ * #139, P1), and dropping it would lose a genuine repeat.
+ */
+function skippedPrefixIsOverlap(prefixKeys: string[], beforeKeys: string[]): boolean {
+  if (prefixKeys.length === 0) return true;
+  const before = beforeKeys.slice(-(prefixKeys.length + 3)).join("");
+  const fits = (keys: string[]) => {
+    const key = keys.join("");
+    return key.length > 0 && before.endsWith(key);
+  };
+  if (fits(prefixKeys)) return true;
+  if (prefixKeys.length < 2) return false;
+  for (let inserted = 0; inserted < prefixKeys.length; inserted++) {
+    if (fits([...prefixKeys.slice(0, inserted), ...prefixKeys.slice(inserted + 1)])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Seam match for what an unprompted overlap re-decode really looks like:
+ * split tokens ("it 's" / "it's"), compounds ("DarkMode" / "dark mode"),
+ * a word the next decode adds inside the overlap, and a word cut off at the
+ * end of the earlier chunk ("it" / "it's", "harbor" / "harness").
+ *
+ * The earlier chunk's END is the anchor: its longest last run of words is
+ * looked up in the first words of the next chunk (earliest occurrence, so a
+ * later genuine repeat is never chosen). Like the exact merge, the earlier
+ * chunk's version of the matched run is kept.
+ *
+ * AIDEV-NOTE: word safety (review #139). Next-chunk words before the anchor
+ * are dropped only when they re-decode the merged words right before it
+ * (skippedPrefixIsOverlap); two cut-edge words only when the next chunk
+ * re-says them. Anything else is concatenated rather than guessed.
+ * KNOWN LIMITATION (lead's call, #139 round 2): ONE cut-edge word is replaced
+ * by the next chunk's reading whenever that chunk decodes past the match. That
+ * is right for a word cut mid-audio ("harbor" / "harness"), but a genuine
+ * cut-off fragment ("fu…") the next decode omits is lost. A text heuristic
+ * cost +49 looped words per corpus run; the planned fix is timing-based
+ * (replace only when the next word starts inside the cut word's audio span,
+ * and never drop a word the decoder ended with "…", "-" or "—").
+ */
+function findCompactChunkSeam(
+  mergedWords: string[],
+  nextWords: string[],
+): { dropMerged: number; skipNext: number; matchedNext: number } | null {
+  const nextKeys = nextWords
+    .slice(0, MAX_COMPACT_SEAM_NEXT_WORDS)
+    .map(compactSeamKey);
+  const tailLength = Math.min(
+    mergedWords.length,
+    MAX_COMPACT_SEAM_SUFFIX_WORDS + MAX_COMPACT_SEAM_RAGGED_WORDS,
+  );
+  const tailKeys = mergedWords
+    .slice(mergedWords.length - tailLength)
+    .map(compactSeamKey);
+  let best: { dropMerged: number; skipNext: number; matchedNext: number; suffix: number } | null = null;
+  for (let ragged = 0; ragged <= MAX_COMPACT_SEAM_RAGGED_WORDS; ragged++) {
+    const end = tailKeys.length - ragged;
+    const maxSuffix = Math.min(end, MAX_COMPACT_SEAM_SUFFIX_WORDS);
+    for (let suffix = maxSuffix; suffix >= MIN_COMPACT_SEAM_WORDS; suffix--) {
+      if (best && suffix <= best.suffix) break;
+      const key = tailKeys.slice(end - suffix, end).join("");
+      if (key.length < MIN_COMPACT_SEAM_CHARS) continue;
+      const run = findCompactRun(nextKeys, key);
+      if (!run) continue;
+      const beforeKeys = mergedWords
+        .slice(0, mergedWords.length - ragged - suffix)
+        .slice(-(run.start + 3))
+        .map(compactSeamKey);
+      if (!skippedPrefixIsOverlap(nextKeys.slice(0, run.start), beforeKeys)) continue;
+      const continuation = nextWords.slice(run.end);
+      if (ragged > 0 && continuation.length === 0) continue;
+      if (ragged > 1) {
+        const fragment = tailKeys.slice(end).join("");
+        const reSaid = continuation
+          .slice(0, MAX_COMPACT_SEAM_RAGGED_WORDS + 2)
+          .map(compactSeamKey)
+          .join("");
+        if (!reSaid.includes(fragment)) continue;
+      }
+      best = { dropMerged: ragged, skipNext: run.end, matchedNext: run.end - run.start, suffix };
+      break;
+    }
+  }
+  return best
+    ? { dropMerged: best.dropMerged, skipNext: best.skipNext, matchedNext: best.matchedNext }
+    : null;
+}
+
+type ChunkSeam =
+  | { kind: "exact"; overlap: number; skipPrefix: number }
+  | { kind: "compact"; dropMerged: number; skipNext: number };
+
+/** The exact anchor merge, unless the compact match covers more of the overlap. */
+function findChunkSeam(mergedWords: string[], nextWords: string[]): ChunkSeam {
+  // AIDEV-NOTE: the exact merge's own prefix shift (≤ 3 next-chunk words,
+  // MAX_PREFIX_SHIFTED_SKIP_WORDS) is main's behaviour and is NOT held to the
+  // immediately-before rule: gating it made ordinary re-decode differences
+  // ("be sender" / "be a sender") duplicate whole overlaps (#139 round 2
+  // ablation: +13 and +7 duplicated words on two long recordings). A genuine
+  // ≤3-word lead-in the earlier chunk missed can still be dropped there, as on
+  // main (Macroscope #139, stt.ts:433 example).
+  const exact = findChunkOverlap(mergedWords, nextWords);
+  if (exact.overlap >= MAX_COMPACT_SEAM_SUFFIX_WORDS) {
+    return { kind: "exact", ...exact };
+  }
+  const compact = findCompactChunkSeam(mergedWords, nextWords);
+  if (compact && compact.matchedNext > exact.overlap) {
+    return { kind: "compact", dropMerged: compact.dropMerged, skipNext: compact.skipNext };
+  }
+  return { kind: "exact", ...exact };
+}
+
 function containsEarlierWordSequence(
   words: string[],
   sequence: string[],
@@ -675,7 +829,9 @@ export function isSmartWavChunkingEnabled(
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
-const MIN_SUSPECT_LOOP_WORDS = 6;
+// Five-word clauses can survive a first compound-loop collapse as a shorter
+// residual repeat. Acoustic witnesses still decide whether copies are spoken.
+const MIN_SUSPECT_LOOP_WORDS = 5;
 const MAX_SUSPECT_LOOP_WORDS = 16;
 const MIN_SUSPECT_LOOP_OCCURRENCES = 3;
 const MAX_SUSPECT_LOOP_CANDIDATES = 2_048;
@@ -707,7 +863,20 @@ function findSuspectChunkLoops(text: string): SuspectChunkLoop[] {
   ) {
     const occurrences = new Map<string, number[]>();
     for (let index = 0; index + loopWords <= words.length; index++) {
-      const key = overlapKey(words.slice(index, index + loopWords));
+      const phraseWords = words.slice(index, index + loopWords);
+      // A drawn-out "no no no" is speech, not a repeated clause. Shorter
+      // overlapping windows can otherwise make fifteen spoken tokens look
+      // like three copies of a five-word hallucination.
+      if (
+        phraseWords.every(
+          (word) =>
+            normalizeChunkWordForOverlap(word) ===
+            normalizeChunkWordForOverlap(phraseWords[0]),
+        )
+      ) {
+        continue;
+      }
+      const key = overlapKey(phraseWords);
       const indexes = occurrences.get(key) ?? [];
       if (
         indexes.length === 0 ||
@@ -806,6 +975,65 @@ function collapseAcousticallyRejectedLoop(
     suspect,
     supportedOccurrences,
   ).join(" ");
+}
+
+function preservesWitnessedOccurrenceContexts(
+  originalText: string,
+  suspect: SuspectChunkLoop,
+  collapsedText: string,
+  witnessTexts: string[],
+): boolean {
+  const originalWords = normalizeChunkWords(originalText);
+  const collapsedKey = canonicalWitnessText(collapsedText);
+  const suffixWords = originalWords.slice(
+    suspect.lastOccurrenceEnd,
+    suspect.lastOccurrenceEnd + SUSPECT_CONTEXT_WORDS,
+  );
+  const witnessKeys = witnessTexts.map((witnessText) => {
+    const witnessWords = normalizeChunkWords(witnessText);
+    if (!hasDistinctSuspectSuffix(originalText, suspect)) {
+      return canonicalWitnessText(witnessText);
+    }
+    const phraseWords = originalWords.slice(
+      suspect.firstOccurrence,
+      suspect.firstOccurrence + suspect.loopWordCount,
+    );
+    const firstPhrase = findChunkWordSequence(witnessWords, phraseWords, 0);
+    const boundary = findChunkWordSequence(
+      witnessWords,
+      suffixWords,
+      firstPhrase?.end ?? 0,
+    );
+    // A phrase repeated after the original suffix belongs to the acoustic
+    // extension, so it cannot protect a copy inside the original chunk.
+    return canonicalWitnessText(
+      witnessWords.slice(0, boundary?.end).join(" "),
+    );
+  });
+  for (const start of suspect.occurrenceStarts) {
+    // A repeated prefix can belong to a different sentence on its last
+    // occurrence. Keep that occurrence when both witnesses hear its distinct
+    // continuation; blindly keeping the first N copies would erase it.
+    for (let extra = 1; extra <= SUSPECT_CONTEXT_WORDS; extra++) {
+      for (const [from, to] of [
+        [start - extra, start + suspect.loopWordCount],
+        [start, start + suspect.loopWordCount + extra],
+      ]) {
+        if (from < 0 || to > originalWords.length) continue;
+        const contextKey = canonicalWitnessText(
+          originalWords.slice(from, to).join(" "),
+        );
+        if (
+          contextKey &&
+          witnessKeys.every((witness) => witness.includes(contextKey)) &&
+          !collapsedKey.includes(contextKey)
+        ) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
 }
 
 function hasDistinctSuspectSuffix(
@@ -927,9 +1155,24 @@ function countSuspectPhraseOccurrences(
         )
       : null;
   const boundaryRange = suffixRange ?? extensionRange;
-  if (!boundaryRange) return null;
+  // A loop at the tail can consume the original suffix, while the isolated
+  // extension may be worded differently in the longer acoustic witnesses.
+  // Only consider a witness-end count when the extension has a distinct start
+  // and contains no copy of the suspect phrase. The caller also requires two
+  // independent witnesses to agree before removing any copies.
+  if (
+    !boundaryRange &&
+    !(
+      !suffixBoundaryIsDistinct &&
+      extensionBoundaryWords.length >= EXTENSION_BOUNDARY_ANCHOR_WORDS &&
+      !ambiguousExtensionBoundary &&
+      !canonicalWitnessText(extensionBoundaryText ?? "").includes(phraseKey)
+    )
+  ) {
+    return null;
+  }
   const originalRegionKey = canonicalWitnessText(
-    witnessWords.slice(searchFrom, boundaryRange.start).join(" "),
+    witnessWords.slice(searchFrom, boundaryRange?.start).join(" "),
   );
   let count = 0;
   let searchOffset = 0;
@@ -938,6 +1181,12 @@ function countSuspectPhraseOccurrences(
     if (matchOffset < 0) break;
     count++;
     searchOffset = matchOffset + phraseKey.length;
+  }
+  // An unlocated boundary can make a genuine triple look like a double.
+  // Require a large gap before trusting the witness-end count in this case.
+  const chunkCopies = suspect.occurrenceStarts.length;
+  if (!boundaryRange && (chunkCopies < 2 * count || chunkCopies - count < 2)) {
+    return null;
   }
   return count;
 }
@@ -1212,7 +1461,19 @@ export function mergeChunkTranscripts(
       continue;
     }
 
-    const { overlap, skipPrefix } = findChunkOverlap(merged, nextWords);
+    const seam = findChunkSeam(merged, nextWords);
+    if (seam.kind === "compact") {
+      merged.splice(merged.length - seam.dropMerged);
+      // Carry the seam-end punctuation the way the exact merge does.
+      merged[merged.length - 1] = preferOverlapWord(
+        merged[merged.length - 1],
+        nextWords[seam.skipNext - 1],
+        seam.skipNext < nextWords.length,
+      );
+      merged.push(...nextWords.slice(seam.skipNext));
+      continue;
+    }
+    const { overlap, skipPrefix } = seam;
 
     if (overlap > 0) {
       for (let index = 0; index < overlap; index++) {
@@ -1341,10 +1602,22 @@ export function mergeChunkTranscriptsWithSegments(
       continue;
     }
 
-    const { overlap, skipPrefix } = findChunkOverlap(
+    const seam = findChunkSeam(
       merged.map((word) => word.text),
       nextWords.map((word) => word.text),
     );
+    if (seam.kind === "compact") {
+      merged.splice(merged.length - seam.dropMerged);
+      const last = merged[merged.length - 1]!;
+      last.text = preferOverlapWord(
+        last.text,
+        nextWords[seam.skipNext - 1]!.text,
+        seam.skipNext < nextWords.length,
+      );
+      merged.push(...nextWords.slice(seam.skipNext));
+      continue;
+    }
+    const { overlap, skipPrefix } = seam;
     if (overlap > 0) {
       for (let index = 0; index < overlap; index++) {
         const mergedIndex = merged.length - overlap + index;
@@ -1425,7 +1698,8 @@ function hasChunkBoundaryOverlap(
   const currentWords = normalizeChunkWords(currentText);
   const nextWords = normalizeChunkWords(nextText);
   if (currentWords.length === 0 || nextWords.length === 0) return false;
-  return findChunkOverlap(currentWords, nextWords).overlap > 0;
+  const seam = findChunkSeam(currentWords, nextWords);
+  return seam.kind === "compact" || seam.overlap > 0;
 }
 
 function shortFinalChunkAgrees(
@@ -1657,6 +1931,10 @@ function findModel(): string | null {
   return null;
 }
 
+export function resolveWhisperCliModelPath(): string | null {
+  return findModel();
+}
+
 /** Get homebrew prefix for Metal shader resources (cached) */
 let cachedBrewPrefix: string | null | undefined = undefined;
 function getBrewPrefix(): string | null {
@@ -1857,7 +2135,7 @@ export class WhisperServerBackend implements STTBackend {
         options,
       );
       if (chunkedResult) {
-        const outroGate = outroGateEnabled(process.env);
+        const outroGate = outroGateEnabled(processingEnv());
         const gated = outroGate
           ? stripHallucinatedOutro(chunkedResult.text, wavData, {
               segments: chunkedResult.segments,
@@ -1911,8 +2189,8 @@ export class WhisperServerBackend implements STTBackend {
         };
       }
 
-      const smartBoundaries = smartBoundariesEnabled(process.env);
-      const outroGate = outroGateEnabled(process.env);
+      const smartBoundaries = smartBoundariesEnabled(processingEnv());
+      const outroGate = outroGateEnabled(processingEnv());
       let segments: TranscriptSegment[] | undefined;
       // Either feature needs `verbose_json`. The default-on outro gate makes
       // that normal; explicitly disabling both preserves the old `json` shape.
@@ -2167,7 +2445,7 @@ export class WhisperServerBackend implements STTBackend {
     const transcripts: string[] = [];
     const timedTranscripts: TimedChunkTranscript[] = [];
     const requestSegments =
-      smartBoundariesEnabled(process.env) || outroGateEnabled(process.env);
+      smartBoundariesEnabled(processingEnv()) || outroGateEnabled(processingEnv());
     const transcribeTimed = async (
       audio: Uint8Array,
       requestOptions: WhisperServerTranscribeOptions | undefined,
@@ -2218,7 +2496,7 @@ export class WhisperServerBackend implements STTBackend {
     // failure here is never fatal: an empty map makes chooseChunkEnd return the
     // fixed cut, i.e. today's behaviour.
     let pauseMap: PauseSpan[] = [];
-    if (isSmartWavChunkingEnabled()) {
+    if (isSmartWavChunkingEnabled(processingEnv())) {
       try {
         const candidate = await computePauseMap(wavData);
         const pauseSeconds = candidate.reduce(
@@ -2335,13 +2613,16 @@ export class WhisperServerBackend implements STTBackend {
       }
 
       const mergedSoFar = mergeChunkTranscripts(transcripts, seamKinds);
+      // AIDEV-NOTE: chunk decodes are NOT prompted with the transcript so far.
+      // With the previous words as a prompt, beam search (Balanced/Accurate)
+      // runs away at a chunk that ends mid-phrase: it re-transcribes the whole
+      // chunk a second time or loops a short phrase (2.2.24 specimens: 2/5 and
+      // 4/5 repeated decodes of the same audio; the unprompted decode 0/5). The
+      // prompted decode also skips the overlap words the prompt already holds,
+      // which starves the anchor merge. The 5 s overlap carries continuity.
       const decoded = await transcribeTimed(
         segment,
-        buildWhisperServerOptions({
-          promptOverride: mergedSoFar
-            ? combinePromptOverride(options?.promptOverride, mergedSoFar)
-            : options?.promptOverride,
-        }),
+        buildWhisperServerOptions({ promptOverride: options?.promptOverride }),
       );
       let { text, segments: textSegments } = decoded;
       if (!text.trim()) return null;
@@ -2558,23 +2839,41 @@ export class WhisperServerBackend implements STTBackend {
                   const rightUnsupported =
                     right.candidate.occurrenceStarts.length -
                     Math.max(1, right.acousticOccurrences);
-                  // Prefer the candidate that explains the most unsupported
-                  // copies without leaving a repeated fragment below the
-                  // detector floor, then one ending at a distinct suffix.
+                  // Remove the repeated core first when several overlapping
+                  // candidate phrases describe the same hallucinated run.
+                  // A longer compound can otherwise leave a short clause
+                  // repeated after its surrounding words have been removed.
                   return (
+                    right.acousticOccurrences - left.acousticOccurrences ||
+                    rightUnsupported - leftUnsupported ||
                     Number(right.detectableResidualLoop) -
                       Number(left.detectableResidualLoop) ||
-                    rightUnsupported - leftUnsupported ||
                     Number(right.distinctSuffixBoundary) -
                       Number(left.distinctSuffixBoundary) ||
-                    right.acousticOccurrences - left.acousticOccurrences ||
                     right.candidate.loopWordCount -
                       left.candidate.loopWordCount
                   );
                 },
               );
-              const supported = supportedCandidates[0];
-              if (!supported) break;
+              const supported = supportedCandidates.find(({ candidate, acousticOccurrences }) =>
+                Math.max(1, acousticOccurrences) <
+                  candidate.occurrenceStarts.length &&
+                preservesWitnessedOccurrenceContexts(
+                  text,
+                  candidate,
+                  collapseAcousticallyRejectedLoop(
+                    text,
+                    candidate,
+                    Math.max(1, acousticOccurrences),
+                  ),
+                  supportingWitnesses,
+                ),
+              );
+              if (!supported) {
+                genuineRepeatedSpeech ||= !acousticallyRejectedLoop &&
+                  supportedCandidates.length > 0;
+                break;
+              }
               const supportedOccurrences = Math.max(
                 1,
                 supported.acousticOccurrences,

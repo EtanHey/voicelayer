@@ -11,25 +11,11 @@ public enum VoiceBarNotchMorphVariant: String, CaseIterable, Equatable, Sendable
     public static let sharedShellID = "VoiceBarNotchMorphShell"
     public static let sharedGlassID = "VoiceBarNotchMorphGlass"
 
-    public var menuTitle: String {
-        switch self {
-        case .p1Matched:
-            "P1 — Matched Shell"
-        case .p2NativeGlass:
-            "P2 — Native Glass"
-        case .p3SpringDelight:
-            "P3 — Spring Delight"
-        }
-    }
-
+    /// Dev/capture only: the environment variable picks a prototype; users always get P1.
     public static func resolve(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        persistedRawValue: String?
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Self {
-        if let explicit = environment[environmentVariable] {
-            return Self(rawValue: explicit) ?? .p1Matched
-        }
-        return persistedRawValue.flatMap(Self.init(rawValue:)) ?? .p1Matched
+        environment[environmentVariable].flatMap(Self.init(rawValue:)) ?? .p1Matched
     }
 
     public func descriptor(
@@ -103,15 +89,21 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
             visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
         )
         let maximumCompactWingWidth = VoiceBarNotchContract.morphCanvasWingCapacity
+        // The canvas's wings reach as far as its body does. `coreOriginX` reads the wings when there is no
+        // lower surface and the body when there is one, so wings narrower than the body put the core 10 pt
+        // further right once History or the teleprompter opened; the window moved back 10 pt in a separate
+        // AppKit commit and every control jumped for a frame (lane C3).
         let canvasGeometry = VoiceBarNotchGeometry(
             coreWidth: teleprompterGeometry.coreWidth,
             topHeight: teleprompterGeometry.topHeight,
             leadingWingWidth: max(
                 teleprompterGeometry.leadingWingWidth,
+                teleprompterGeometry.bodyLeadingExtent,
                 maximumCompactWingWidth
             ),
             trailingWingWidth: max(
                 teleprompterGeometry.trailingWingWidth,
+                teleprompterGeometry.bodyTrailingExtent,
                 maximumCompactWingWidth
             ),
             bodyLeadingExtent: max(
@@ -133,25 +125,16 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
 
 @Observable
 public final class VoiceBarNotchMorphSelection {
+    /// The key the removed Morph Prototype menu saved to; read only to forget it.
     public static let defaultsKey = "voicebar.notchMorphPrototype"
 
     public private(set) var variant: VoiceBarNotchMorphVariant
-    @ObservationIgnored private let defaults: UserDefaults
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaults: UserDefaults = .standard
     ) {
-        self.defaults = defaults
-        variant = VoiceBarNotchMorphVariant.resolve(
-            environment: environment,
-            persistedRawValue: defaults.string(forKey: Self.defaultsKey)
-        )
-    }
-
-    public func select(_ variant: VoiceBarNotchMorphVariant) {
-        guard self.variant != variant else { return }
-        self.variant = variant
-        defaults.set(variant.rawValue, forKey: Self.defaultsKey)
+        variant = VoiceBarNotchMorphVariant.resolve(environment: environment)
+        defaults.removeObject(forKey: Self.defaultsKey)
     }
 }

@@ -72,12 +72,45 @@ public struct PulsingStatusLabel: View {
 }
 
 public struct ProcessingSpinner: View {
-    private let size: CGFloat = 14
+    public static let defaultDiameter: CGFloat = 14
+
+    private let size: CGFloat
+    private let showsTrack: Bool
+
+    public init() {
+        self.init(diameter: Self.defaultDiameter, showsTrack: false)
+    }
+
+    init(diameter: CGFloat, showsTrack: Bool) {
+        size = diameter
+        self.showsTrack = showsTrack
+    }
 
     public var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let angle = timeline.date.timeIntervalSinceReferenceDate * 360
+            ProcessingSpinnerFrame(
+                angle: timeline.date.timeIntervalSinceReferenceDate * 360,
+                diameter: size,
+                showsTrack: showsTrack
+            )
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
 
+/// One frame of `ProcessingSpinner` at a fixed angle, so a test can render any point of the turn.
+struct ProcessingSpinnerFrame: View {
+    let angle: Double
+    let diameter: CGFloat
+    var showsTrack = false
+
+    var body: some View {
+        ZStack {
+            if showsTrack {
+                Circle()
+                    .stroke(Theme.speakingColor.opacity(0.28), lineWidth: 2.2)
+            }
             Circle()
                 .trim(from: 0.08, to: 0.74)
                 .stroke(
@@ -85,10 +118,8 @@ public struct ProcessingSpinner: View {
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
-                .frame(width: size, height: size)
         }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        .frame(width: diameter, height: diameter)
     }
 }
 
@@ -97,7 +128,16 @@ public struct VoiceBarNotchControlOptics: Equatable {
     public let offsetX: CGFloat
     public let offsetY: CGFloat
 
+    /// Sized for the plate, which fills the 20 pt layout slot (C1: the 26 pt plate and 15 pt glyphs
+    /// made Stop and X touch). Scaled from P05's 10/15 on 26 by 20/26.
     public static func resolve(for systemName: String) -> Self {
+        VoiceBarNotchControlOptics(pointSize: systemName == "stop.fill" ? 8 : 12, offsetX: 0, offsetY: 0)
+    }
+
+    /// The pre-P05 compact optics. P05's 26 pt system (`resolve`) is for the pill controls only;
+    /// the agent-speech surface (teleprompter controls, the speaking wing's eye and Stop, and the
+    /// non-button status glyph) keeps these, or eye and Stop crowd the waveform (#137 review).
+    public static func legacyCompact(for systemName: String) -> Self {
         switch systemName {
         case "eye", "eye.slash":
             VoiceBarNotchControlOptics(pointSize: 8.5, offsetX: 0, offsetY: 0)
@@ -120,18 +160,124 @@ private extension View {
     }
 }
 
+private struct VoiceBarPillPressStyle: ButtonStyle {
+    var previewPressed = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed || previewPressed
+        return configuration.label
+            .scaleEffect(pressed ? 0.88 : 1)
+            .opacity(pressed ? 0.78 : 1)
+            .animation(.easeOut(duration: 0.12), value: pressed)
+    }
+}
+
+struct VoiceBarPillControlButton: View {
+    let icon: String
+    let optics: VoiceBarNotchControlOptics
+    let foreground: Color
+    let halo: Color
+    let isSelected: Bool
+    let isDestructive: Bool
+    let accessibilityLabel: String
+    let accessibilityHint: String
+    let action: () -> Void
+    let previewHovered: Bool
+    let previewPressed: Bool
+    @State private var isHovered = false
+
+    /// The drawn plate fills the layout slot; the invisible hit circle overhangs it by `hitOverhang` per side.
+    static let plateDiameter = VoiceBarNotchContract.material.compactControlSize
+    static let hitDiameter: CGFloat = 26
+    static var hitOverhang: CGFloat {
+        (hitDiameter - plateDiameter) / 2
+    }
+
+    init(
+        icon: String,
+        optics: VoiceBarNotchControlOptics,
+        foreground: Color,
+        halo: Color,
+        isSelected: Bool,
+        isDestructive: Bool,
+        accessibilityLabel: String,
+        accessibilityHint: String,
+        previewHovered: Bool = false,
+        previewPressed: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.optics = optics
+        self.foreground = foreground
+        self.halo = halo
+        self.isSelected = isSelected
+        self.isDestructive = isDestructive
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityHint = accessibilityHint
+        self.previewHovered = previewHovered
+        self.previewPressed = previewPressed
+        self.action = action
+    }
+
+    var body: some View {
+        Button {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            action()
+        } label: {
+            // The plate is drawn at the layout slot, so neighbours keep the slot spacing between them;
+            // only the invisible hit circle stays 26 pt (it overhangs the slot by the -3 padding).
+            glyph
+                .offset(x: optics.offsetX, y: optics.offsetY)
+                .frame(width: Self.plateDiameter, height: Self.plateDiameter)
+                .background {
+                    Circle()
+                        .fill(isDestructive ? Theme.recordingColor
+                            : isSelected ? Theme.recordingColor.opacity(0.30)
+                            : isHovered || previewHovered || previewPressed ? foreground.opacity(0.12) : .clear)
+                }
+                // C3: History's selected plate and red glyph ease in and out instead of snapping.
+                .animation(.easeOut(duration: 0.2), value: isSelected)
+                .frame(width: Self.hitDiameter, height: Self.hitDiameter)
+                .contentShape(Circle())
+        }
+        .buttonStyle(VoiceBarPillPressStyle(previewPressed: previewPressed))
+        .onHover { isHovered = $0 }
+        .padding(-Self.hitOverhang)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint)
+        .help(accessibilityLabel)
+    }
+
+    @ViewBuilder private var glyph: some View {
+        let image = Image(systemName: icon)
+            .font(.system(size: optics.pointSize, weight: .medium))
+            .foregroundStyle(isDestructive ? Color.white : foreground)
+        if isDestructive {
+            image
+        } else {
+            image.notchAdaptiveGlyphEdge(halo)
+        }
+    }
+}
+
 // MARK: - Bar View
 
 public struct BarView: View {
     public var state: VoiceState
     public var commandRouter: BarCommandRouting
+    public var onOpenSettings: () -> Void
+    public var onOpenHistory: () -> Void
     private let presentationModel: VoiceBarNotchPresentationModel?
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
+    /// Visual shots only: render one History row as hovered without a pointer.
+    private var historyForcedHoverIndex: Int?
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
+    @State private var isMorphHistoryContentPresented = false
     @State private var isHistoryPresented = false
-    @State private var isVocabularyPresented = false
+    @State private var historyDismissal: NotchHistoryDismissal?
+    @State private var hostWindow = HostWindowBox()
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -154,6 +300,8 @@ public struct BarView: View {
     public init(
         state: VoiceState,
         commandRouter: BarCommandRouting,
+        onOpenSettings: @escaping () -> Void,
+        onOpenHistory: @escaping () -> Void,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false
@@ -165,6 +313,8 @@ public struct BarView: View {
         )
         self.state = state
         self.commandRouter = commandRouter
+        self.onOpenSettings = onOpenSettings
+        self.onOpenHistory = onOpenHistory
         self.presentationModel = presentationModel
         self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
@@ -210,12 +360,15 @@ public struct BarView: View {
         .onChange(of: notchPresentation.visualState) { _, visualState in
             scheduleMorphTeleprompterContent(for: visualState)
         }
-        .onChange(of: isHistoryPresented) { _, _ in
+        .onChange(of: isHistoryPresented) { _, isOpen in
             synchronizeLauncherRetention()
+            presentationModel?.setHistoryPanelOpen(isOpen)
+            synchronizeHistoryDismissal(isOpen: isOpen)
         }
-        .onChange(of: isVocabularyPresented) { _, _ in
-            synchronizeLauncherRetention()
+        .onDisappear {
+            historyDismissal?.stop()
         }
+        .background(HostWindowReader { window in hostWindow.window = window })
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             presentationModel?.setReducedMotion(isEnabled)
         }
@@ -224,20 +377,11 @@ public struct BarView: View {
             synchronizeLauncherRetention()
             presentationModel?.setReducedMotion(accessibilityReduceMotion)
             isMorphTeleprompterContentPresented = notchPresentation.visualState == .teleprompter
+            isMorphHistoryContentPresented = notchPresentation.visualState == .history
         }
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
                 isHistoryPresented = false
-            }
-        }
-        .onChange(of: state.transcriptionVocabularyTerms.count) { _, count in
-            if count == 0, state.transcriptionVocabularyAliases.isEmpty {
-                isVocabularyPresented = false
-            }
-        }
-        .onChange(of: state.transcriptionVocabularyAliases.count) { _, count in
-            if count == 0, state.transcriptionVocabularyTerms.isEmpty {
-                isVocabularyPresented = false
             }
         }
     }
@@ -247,30 +391,43 @@ public struct BarView: View {
             return presentationModel.presentation
         }
 
-        return VoiceBarPresentation.notchPresentation(
-            from: VoiceBarNotchOperationalInput(
-                mode: state.mode,
-                showsRecordingHold: recordingHoldControl != nil,
-                hasTeleprompterText: state.teleprompterText != nil,
-                isTeleprompterDismissed: state.isTeleprompterDismissed,
-                isTeleprompterReadback: state.isTeleprompterReadback,
-                confirmationText: state.confirmationText,
-                commandModeState: state.commandModeState,
-                activeClipMarker: state.activeClipMarker,
-                queueDepth: state.queueDepth,
-                keepsPasteFlowEnvelope: state.keepsPasteFlowEnvelope,
-                hotkeyPhase: state.hotkeyPhase,
-                statusText: statusText,
-                isHovered: state.isHovering,
-                isKeyboardFocused: keepsLauncherMounted,
-                isCollapsed: state.isCollapsed,
-                visibleCoreOcclusionInset: 0
-            )
+        var input = VoiceBarNotchOperationalInput(
+            mode: state.mode,
+            showsRecordingHold: recordingHoldControl != nil,
+            hasTeleprompterText: state.teleprompterText != nil,
+            isTeleprompterDismissed: state.isTeleprompterDismissed,
+            isTeleprompterReadback: state.isTeleprompterReadback,
+            confirmationText: state.confirmationText,
+            commandModeState: state.commandModeState,
+            activeClipMarker: state.activeClipMarker,
+            queueDepth: state.queueDepth,
+            keepsPasteFlowEnvelope: state.keepsPasteFlowEnvelope,
+            hotkeyPhase: state.hotkeyPhase,
+            statusText: statusText,
+            isHovered: state.isHovering,
+            isKeyboardFocused: keepsLauncherMounted,
+            isCollapsed: state.isCollapsed,
+            visibleCoreOcclusionInset: 0
         )
+        input.isHistoryPanelOpen = isHistoryPresented
+        return VoiceBarPresentation.notchPresentation(from: input)
     }
 
     private var keepsLauncherMounted: Bool {
-        isHistoryPresented || isVocabularyPresented
+        isHistoryPresented
+    }
+
+    /// Click-away and Esc close the History panel, as the transient popover did (#166 review).
+    private func synchronizeHistoryDismissal(isOpen: Bool) {
+        guard isOpen else {
+            historyDismissal?.stop()
+            return
+        }
+        if historyDismissal == nil {
+            historyDismissal = NotchHistoryDismissal { isHistoryPresented = false }
+        }
+        historyDismissal?.panelWindow = hostWindow.window
+        historyDismissal?.start()
     }
 
     private func synchronizeLauncherRetention() {
@@ -282,7 +439,7 @@ public struct BarView: View {
         switch notchPresentation.visualState {
         case .idle:
             EmptyView()
-        case .hoverLauncher:
+        case .hoverLauncher, .history:
             notchButton(
                 icon: "mic.fill",
                 accessibilityLabel: "Start voice recording"
@@ -329,10 +486,10 @@ public struct BarView: View {
         switch notchPresentation.visualState {
         case .idle:
             EmptyView()
-        case .hoverLauncher:
+        case .hoverLauncher, .history:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
                 historyButton
-                vocabularyButton
+                settingsButton
             }
         case .recording:
             notchWaveform
@@ -359,14 +516,14 @@ public struct BarView: View {
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
                 notchWaveform
                 if state.isTeleprompterDismissed {
-                    notchButton(
+                    notchTeleprompterButton(
                         icon: "eye",
                         accessibilityLabel: "Show teleprompter"
                     ) {
                         state.showTeleprompter()
                     }
                 }
-                notchButton(
+                notchTeleprompterButton(
                     icon: "stop.fill",
                     isDestructive: true,
                     accessibilityLabel: "Stop speaking"
@@ -407,16 +564,19 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchLowerContent: some View {
-        if isMorphTeleprompterContentPresented {
+        if isMorphHistoryContentPresented {
+            historyPanelContent()
+                .padding(
+                    .horizontal,
+                    VoiceBarNotchContract.material.teleprompterBodyHorizontalInset
+                )
+                .padding(.top, 12)
+                .padding(.bottom, 12)
+                .transition(.opacity)
+        } else if isMorphTeleprompterContentPresented {
             VStack(spacing: 12) {
-                Group {
-                    if state.queueItems.count > 1 {
-                        queueVisualization
-                    } else {
-                        notchTeleprompterTimeline
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                notchTeleprompterTimeline
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 notchTeleprompterControls
             }
             .padding(
@@ -467,15 +627,21 @@ public struct BarView: View {
 
     private var notchTeleprompterControls: some View {
         HStack(spacing: 10) {
+            if state.queuedSpeakCount > 0 {
+                Text("+\(state.queuedSpeakCount) queued")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(notchPalette.secondary.color)
+                    .accessibilityLabel("\(state.queuedSpeakCount) queued speeches")
+            }
             if state.canReplay {
-                notchButton(
+                notchTeleprompterButton(
                     icon: "arrow.counterclockwise",
                     accessibilityLabel: "Replay"
                 ) {
                     commandRouter.handleReplay()
                 }
             }
-            notchButton(
+            notchTeleprompterButton(
                 icon: state.isTeleprompterDismissed ? "eye" : "eye.slash",
                 accessibilityLabel: state.isTeleprompterDismissed
                     ? "Show teleprompter"
@@ -488,7 +654,7 @@ public struct BarView: View {
                 }
             }
             if state.mode == .speaking {
-                notchButton(
+                notchTeleprompterButton(
                     icon: "stop.fill",
                     isDestructive: true,
                     accessibilityLabel: "Stop speaking"
@@ -497,7 +663,7 @@ public struct BarView: View {
                 }
             }
             if state.isTeleprompterReadback {
-                notchButton(icon: "xmark", accessibilityLabel: "Dismiss teleprompter") {
+                notchTeleprompterButton(icon: "xmark", accessibilityLabel: "Dismiss teleprompter") {
                     state.dismissRetainedTeleprompter()
                 }
             }
@@ -511,13 +677,19 @@ public struct BarView: View {
         if newMode != .idle,
            !(newMode == .transcribing && state.isHistoryRetranscriptionPending) {
             isHistoryPresented = false
-            isVocabularyPresented = false
         }
     }
 
     private func scheduleMorphTeleprompterContent(
         for visualState: VoiceBarNotchVisualState
     ) {
+        // The History panel's rows fade in after the shell has dropped, exactly like the teleprompter's.
+        withAnimation(
+            .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration)
+                .delay(visualState == .history ? VoiceBarNotchContract.motion.panelDelay : 0)
+        ) {
+            isMorphHistoryContentPresented = visualState == .history
+        }
         guard visualState == .teleprompter else {
             withAnimation(
                 .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration)
@@ -546,55 +718,6 @@ public struct BarView: View {
             .contentTransition(.numericText())
     }
 
-    private var queueVisualization: some View {
-        let preview = VoiceBarPresentation.queuePreview(from: state.queueItems)
-
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Text("Queue")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(notchPalette.secondary.color)
-                if preview.overflowCount > 0 {
-                    Text("+\(preview.overflowCount) more")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(notchPalette.tertiary.color)
-                }
-            }
-
-            Text(preview.currentText)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(notchPalette.primary.color)
-                .lineLimit(1)
-                .truncationMode(.tail)
-
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(notchPalette.subtleTrack.color)
-                    Capsule()
-                        .fill(Theme.speakingColor.opacity(0.95))
-                        .frame(width: max(10, geometry.size.width * preview.progress))
-                }
-                .animation(Theme.queueProgressTransition, value: preview.progress)
-            }
-            .frame(height: 4)
-
-            if let nextText = preview.nextText {
-                HStack(spacing: 6) {
-                    Text("Up next")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(notchPalette.tertiary.color)
-                    Text(nextText)
-                        .font(.system(size: 11))
-                        .foregroundStyle(notchPalette.secondary.color)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     // MARK: - Status icon
 
     @ViewBuilder
@@ -614,7 +737,7 @@ public struct BarView: View {
     }
 
     private var statusIconImage: some View {
-        let optics = VoiceBarNotchControlOptics.resolve(for: iconName)
+        let optics = VoiceBarNotchControlOptics.legacyCompact(for: iconName)
         return Image(systemName: iconName)
             .font(.system(size: optics.pointSize, weight: .semibold))
             .foregroundStyle(
@@ -706,182 +829,46 @@ public struct BarView: View {
     }
 
     private var historyButton: some View {
-        notchButton(icon: "clock.arrow.circlepath", accessibilityLabel: "History") {
+        notchButton(
+            icon: "clock.arrow.circlepath",
+            isSelected: isHistoryPresented,
+            accessibilityLabel: isHistoryPresented ? "Close history" : "History"
+        ) {
             isHistoryPresented.toggle()
         }
-        .popover(isPresented: $isHistoryPresented, arrowEdge: .bottom) {
-            historyPopover
+    }
+
+    private var settingsButton: some View {
+        notchButton(icon: "gearshape", accessibilityLabel: "Settings") {
+            onOpenSettings()
         }
     }
 
-    private var historyPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Transcriptions")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(state.recentTranscriptionEntries.enumerated()), id: \.offset) { index, item in
-                        let activeRetranscriptionPath = state.activeHistoryRetranscriptionPath
-                        let isRetranscribing = item.recordingPath != nil &&
-                            item.recordingPath == activeRetranscriptionPath
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(alignment: .top, spacing: 8) {
-                                if index == 0 {
-                                    Text("Latest")
-                                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 0)
-                                HStack(spacing: 6) {
-                                    historyActionButton(title: "Copy", isDisabled: isRetranscribing) {
-                                        state.copyTranscript(item.text)
-                                        isHistoryPresented = false
-                                    }
-                                    historyActionButton(title: "Paste", isDisabled: isRetranscribing) {
-                                        state.repasteTranscript(item.text, source: "bar_history")
-                                        isHistoryPresented = false
-                                    }
-                                    if let recordingPath = item.recordingPath {
-                                        historyActionButton(title: "Re-transcribe", isDisabled: isRetranscribing) {
-                                            commandRouter.handleRetranscribeHistoryEntry(recordingPath: recordingPath)
-                                        }
-                                    }
-                                }
-                            }
-                            Text(item.text)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            if isRetranscribing {
-                                HStack(spacing: 6) {
-                                    ProcessingSpinner()
-                                    Text("Re-transcribing...")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 8)
-                        .opacity(isRetranscribing ? 0.62 : 1)
-                        .disabled(isRetranscribing)
-
-                        if index < state.recentTranscriptionEntries.count - 1 {
-                            Divider()
-                        }
-                    }
-                }
-            }
-            .frame(width: 320, height: 220)
-        }
-        .padding(14)
+    /// Visual shots only.
+    func forcingHistoryHover(_ index: Int?) -> BarView {
+        var copy = self
+        copy.historyForcedHoverIndex = index
+        return copy
     }
 
-    private var vocabularyButton: some View {
-        notchButton(icon: "text.book.closed", accessibilityLabel: "Dictionary") {
-            isVocabularyPresented.toggle()
-        }
-        .popover(isPresented: $isVocabularyPresented, arrowEdge: .top) {
-            vocabularyPopover
-        }
-    }
-
-    private var vocabularyPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Transcription Vocabulary")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-
-            Text("Built-ins plus Wispr-derived hints used by local STT cleanup.")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if !state.transcriptionVocabularyTerms.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Preserved Terms (\(state.transcriptionVocabularyTerms.count))")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
-                                    id: \.offset) { index, item in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    if index == 0 {
-                                        Text("Highest priority")
-                                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Text(item)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.primary)
-                                        .textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 6)
-
-                                if index < state.transcriptionVocabularyTerms.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        }
-                    }
-
-                    if !state.transcriptionVocabularyAliases.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Learned Corrections (\(state.transcriptionVocabularyAliases.count))")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
-                                    id: \.offset) { index, alias in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(alias.to)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.primary)
-                                    Text(alias.from)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                        .textSelection(.enabled)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 6)
-
-                                if index < state.transcriptionVocabularyAliases.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(width: 320, height: 260)
-        }
-        .padding(14)
-    }
-
-    private func historyActionButton(
-        title: String,
-        isDisabled: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.08))
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
+    /// Spec §4: the History panel inside the notch's lower surface.
+    private func historyPanelContent() -> some View {
+        NotchHistoryPanel(
+            entries: state.recentTranscriptionEntries,
+            activeRetranscriptionPath: state.activeHistoryRetranscriptionPath,
+            palette: notchPalette,
+            onCopy: { state.copyTranscript($0.text) },
+            onPaste: { entry in
+                isHistoryPresented = false
+                state.repasteTranscript(entry.text, source: "bar_history")
+            },
+            onRetranscribe: { commandRouter.handleRetranscribeHistoryEntry(recordingPath: $0) },
+            onOpenHistory: {
+                isHistoryPresented = false
+                onOpenHistory()
+            },
+            forcedHoverIndex: historyForcedHoverIndex
+        )
     }
 
     private func notchButton(
@@ -893,44 +880,52 @@ public struct BarView: View {
         action: @escaping () -> Void
     ) -> some View {
         let optics = VoiceBarNotchControlOptics.resolve(for: icon)
-        let hasStopContainer = isDestructive && icon == "stop.fill"
         let foregroundRole = VoiceBarNotchGlyphForegroundRole.resolve(
             isDestructive: isDestructive,
             isSelected: isSelected
         )
+        return VoiceBarPillControlButton(
+            icon: icon,
+            optics: optics,
+            foreground: foregroundRole == .stateAccent ? Theme.recordingColor : notchPrimaryLabelColor,
+            halo: notchGlyphContrastHaloColor,
+            isSelected: isSelected,
+            isDestructive: isDestructive && icon == "stop.fill",
+            accessibilityLabel: accessibilityLabel ?? icon,
+            accessibilityHint: accessibilityHint ?? "",
+            action: action
+        )
+    }
+
+    private func notchTeleprompterButton(
+        icon: String,
+        isDestructive: Bool = false,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        let pointSize = VoiceBarNotchControlOptics.legacyCompact(for: icon).pointSize
+        let hasStopContainer = isDestructive && icon == "stop.fill"
         return Button {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
             action()
         } label: {
             Image(systemName: icon)
-                .font(.system(size: optics.pointSize, weight: .semibold))
-                .foregroundStyle(
-                    hasStopContainer
-                        ? Color.white
-                        : foregroundRole == .stateAccent
-                        ? Theme.recordingColor
-                        : notchPrimaryLabelColor
-                )
+                .font(.system(size: pointSize, weight: .semibold))
+                .foregroundStyle(hasStopContainer ? Color.white : notchPrimaryLabelColor)
                 .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
-                .offset(x: optics.offsetX, y: optics.offsetY)
                 .frame(
                     width: VoiceBarNotchContract.material.compactControlSize,
                     height: VoiceBarNotchContract.material.compactControlSize
                 )
                 .background {
                     if hasStopContainer {
-                        Circle()
-                            .fill(Theme.recordingColor)
-                    } else if isSelected {
-                        Circle()
-                            .fill(Theme.recordingColor.opacity(0.30))
+                        Circle().fill(Theme.recordingColor)
                     }
                 }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(accessibilityLabel ?? icon)
-        .accessibilityHint(accessibilityHint ?? "")
-        .help(accessibilityLabel ?? icon)
+        .accessibilityLabel(accessibilityLabel)
+        .help(accessibilityLabel)
     }
 }

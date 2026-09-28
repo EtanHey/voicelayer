@@ -41,9 +41,11 @@ import {
   finalizeTranscriptionTextForSurface,
   finalizeTranscriptionText,
   finalizeVoiceAskArchive,
+  measureSpokenDurationMs,
   trimTrailingSilenceForSTT,
   createRecorderStderrWatcher,
   terminateRecorderProcess,
+  recordArchivedSpokenDuration,
   updateArchivedTranscript,
   buildBoundaryContext,
 } from "../input";
@@ -943,6 +945,19 @@ describe("input module", () => {
       return buffer;
     }
 
+    it("measures spoken time with the pauses left out (F1)", () => {
+      const pcm = concatPcm([
+        pcmWithConstantSample(2000, 2000),
+        pcmWithConstantSample(0, 5000),
+        pcmWithConstantSample(2000, 2000),
+      ]);
+
+      expect(measureSpokenDurationMs(pcm)).toBe(4000);
+      expect(measureSpokenDurationMs(pcmWithConstantSample(0, 3000))).toBe(0);
+      expect(measureSpokenDurationMs(pcmWithVaryingSpeech(3000))).toBe(3000);
+      expect(measureSpokenDurationMs(new Uint8Array())).toBe(0);
+    });
+
     it("trims a long quiet push-to-end tail before STT while preserving a short pad", () => {
       const speech = pcmWithConstantSample(2000, 2000);
       const quietTail = pcmWithConstantSample(0, 9000);
@@ -1616,6 +1631,64 @@ describe("archived transcript metadata after retranscription", () => {
     });
 
     expect(readMetadata().transcribed_duration_ms).toBe(4200);
+  });
+
+  it("persists processing time when the dictation measured it, and nothing otherwise (F1)", () => {
+    const audioPath = writeArchive({
+      id: "2026-08-18T12-14-56-912Z-ece16541",
+      source: "voicebar",
+      mode: "ptt",
+      duration_ms: 9000,
+      raw_duration_ms: 9000,
+      transcribed_duration_ms: 9000,
+      transcription_status: "captured",
+    });
+
+    updateArchivedTranscript(audioPath, "Timed.", {
+      backend: "whisper-server",
+      languageMode: "auto",
+      processingDurationMs: 1234,
+    });
+    expect(readMetadata().processing_duration_ms).toBe(1234);
+
+    updateArchivedTranscript(audioPath, "Re-transcribed without a receipt.", {
+      backend: "whisper-server",
+      languageMode: "auto",
+    });
+    expect(readMetadata().processing_duration_ms).toBe(1234);
+  });
+
+  it("records the spoken length measured from the archived audio (F1)", () => {
+    const audioPath = writeArchive({
+      id: "2026-08-18T12-14-56-912Z-ece16541",
+      source: "voicebar",
+      mode: "ptt",
+      duration_ms: 9000,
+      raw_duration_ms: 9000,
+      transcribed_duration_ms: 9000,
+      transcription_status: "transcribed",
+    });
+    const tone = new Uint8Array(16000 * 2 * 2);
+    const view = new DataView(tone.buffer);
+    for (let i = 0; i < tone.byteLength / 2; i++) view.setInt16(i * 2, 2000, true);
+    const pcm = new Uint8Array(tone.byteLength * 2 + 16000 * 2 * 5);
+    pcm.set(tone, 0);
+    pcm.set(tone, tone.byteLength + 16000 * 2 * 5);
+
+    recordArchivedSpokenDuration(audioPath, pcm);
+
+    const metadata = readMetadata();
+    expect(metadata.spoken_duration_ms).toBe(4000);
+    expect(metadata.duration_ms).toBe(9000);
+    expect(metadata.transcribed_duration_ms).toBe(9000);
+  });
+
+  it("refuses to record a spoken length for a missing entry, so no completion is announced (F1 r2)", () => {
+    const missing = join(tmpdir(), `voicelayer-missing-${Date.now()}`, "audio.wav");
+
+    expect(() => recordArchivedSpokenDuration(missing, new Uint8Array(3200))).toThrow(
+      "Missing archive metadata",
+    );
   });
 
   it("does not invent a duration when the caller supplies none", () => {

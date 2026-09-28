@@ -1,6 +1,6 @@
 import Foundation
 
-public struct STTVocabularyAliasPreview: Codable, Equatable, Hashable {
+public struct STTVocabularyAliasPreview: Codable, Equatable, Hashable, Sendable {
     public var from: String
     public var to: String
 
@@ -10,7 +10,7 @@ public struct STTVocabularyAliasPreview: Codable, Equatable, Hashable {
     }
 }
 
-public struct STTDictionaryEntry: Codable, Equatable, Hashable {
+public struct STTDictionaryEntry: Codable, Equatable, Hashable, Sendable {
     public var canonical: String
     public var variants: [String]
 
@@ -20,25 +20,107 @@ public struct STTDictionaryEntry: Codable, Equatable, Hashable {
     }
 }
 
-public struct STTVocabularyPreview: Codable, Equatable {
+public struct STTDictionaryDisplayEntry: Equatable, Sendable {
+    public let rowID: String
+    public let source: String
+    public let entry: STTDictionaryEntry
+
+    public var isPersonal: Bool {
+        source == "personal"
+    }
+
+    public init?(eventRow: [String: Any]) {
+        guard let rowID = eventRow["row_id"] as? String,
+              let source = eventRow["source"] as? String,
+              source == "personal" || source == "bundled",
+              let canonical = eventRow["canonical"] as? String,
+              !canonical.isEmpty,
+              rowID == "\(source):\(canonical)"
+        else { return nil }
+        self.rowID = rowID
+        self.source = source
+        entry = STTDictionaryEntry(canonical: canonical, variants: eventRow["variants"] as? [String] ?? [])
+    }
+
+    public init(source: String, entry: STTDictionaryEntry) {
+        self.source = source
+        rowID = "\(source):\(entry.canonical)"
+        self.entry = entry
+    }
+}
+
+public struct STTDictionaryDisplayIndex {
+    public let sortedEntries: [STTDictionaryDisplayEntry]
+    public let personalCount: Int
+    public let includedCount: Int
+
+    public init(entries: [STTDictionaryDisplayEntry]) {
+        sortedEntries = entries.sorted {
+            if $0.source != $1.source { return $0.isPersonal }
+            return Self.sortsBefore($0.entry.canonical, $1.entry.canonical)
+        }
+        personalCount = entries.filter(\.isPersonal).count
+        includedCount = entries.count - personalCount
+    }
+
+    /// The Dictionary tab's index for one provider load. Without daemon display rows every entry is the user's
+    /// own: the file-backed store holds personal entries only, and the bundled list lives in TS.
+    public init(preview: STTVocabularyPreview) {
+        self.init(entries: preview.displayEntries ?? preview.entries.map {
+            STTDictionaryDisplayEntry(source: "personal", entry: $0)
+        })
+    }
+
+    /// Real words first (UI pass #17: "-s" and the slash-command entries led the list), then everything that
+    /// starts with punctuation; each group case-insensitively. Nothing is dropped.
+    static func sortsBefore(_ lhs: String, _ rhs: String) -> Bool {
+        let lhsIsWord = lhs.first.map { $0.isLetter || $0.isNumber } ?? false
+        let rhsIsWord = rhs.first.map { $0.isLetter || $0.isNumber } ?? false
+        if lhsIsWord != rhsIsWord { return lhsIsWord }
+        return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+    }
+
+    public func entries(source: String, matching query: String) -> [STTDictionaryDisplayEntry] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sortedEntries.filter {
+            $0.source == source && (term.isEmpty ||
+                $0.entry.canonical.localizedCaseInsensitiveContains(term) ||
+                $0.entry.variants.contains { $0.localizedCaseInsensitiveContains(term) })
+        }
+    }
+
+    public func page(matching query: String, limit: Int) -> (entries: [STTDictionaryDisplayEntry], total: Int) {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matches = term.isEmpty ? sortedEntries : sortedEntries.filter {
+            $0.entry.canonical.localizedCaseInsensitiveContains(term) ||
+                $0.entry.variants.contains { $0.localizedCaseInsensitiveContains(term) }
+        }
+        return (Array(matches.prefix(max(0, limit))), matches.count)
+    }
+}
+
+public struct STTVocabularyPreview: Codable, Equatable, Sendable {
     public var updatedAt: String?
     public var entries: [STTDictionaryEntry]
+    public var displayEntries: [STTDictionaryDisplayEntry]?
 
-    public init(updatedAt: String?, entries: [STTDictionaryEntry]) {
+    public init(updatedAt: String?, entries: [STTDictionaryEntry], displayEntries: [STTDictionaryDisplayEntry]? = nil) {
         self.updatedAt = updatedAt
         self.entries = entries
+        self.displayEntries = displayEntries
     }
 
     public init(updatedAt: String?, promptTerms: [String], aliases: [STTVocabularyAliasPreview]) {
         self.updatedAt = updatedAt
-        var entries: [STTDictionaryEntry] = []
+        displayEntries = nil
+        var accumulator = EntryAccumulator()
         for term in promptTerms {
-            Self.upsertEntry(canonical: term, in: &entries)
+            accumulator.upsertEntry(canonical: term)
         }
         for alias in aliases {
-            Self.upsertVariant(alias.from, canonical: alias.to, in: &entries)
+            accumulator.upsertVariant(alias.from, canonical: alias.to)
         }
-        self.entries = entries
+        entries = accumulator.entries
     }
 
     public enum CodingKeys: String, CodingKey {
@@ -51,20 +133,21 @@ public struct STTVocabularyPreview: Codable, Equatable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        displayEntries = nil
         if let decodedEntries = try container.decodeIfPresent([STTDictionaryEntry].self, forKey: .entries) {
             entries = Self.normalizedEntries(decodedEntries)
             return
         }
         let promptTerms = try container.decodeIfPresent([String].self, forKey: .promptTerms) ?? []
         let aliases = try container.decodeIfPresent([STTVocabularyAliasPreview].self, forKey: .aliases) ?? []
-        var migrated: [STTDictionaryEntry] = []
+        var accumulator = EntryAccumulator()
         for term in promptTerms {
-            Self.upsertEntry(canonical: term, in: &migrated)
+            accumulator.upsertEntry(canonical: term)
         }
         for alias in aliases {
-            Self.upsertVariant(alias.from, canonical: alias.to, in: &migrated)
+            accumulator.upsertVariant(alias.from, canonical: alias.to)
         }
-        entries = migrated
+        entries = accumulator.entries
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -84,39 +167,86 @@ public struct STTVocabularyPreview: Codable, Equatable {
     }
 
     private static func normalizedEntries(_ input: [STTDictionaryEntry]) -> [STTDictionaryEntry] {
-        var entries: [STTDictionaryEntry] = []
+        var accumulator = EntryAccumulator()
         for entry in input {
-            upsertEntry(canonical: entry.canonical, in: &entries)
+            accumulator.upsertEntry(canonical: entry.canonical)
             for variant in entry.variants {
-                upsertVariant(variant, canonical: entry.canonical, in: &entries)
+                accumulator.upsertVariant(variant, canonical: entry.canonical)
             }
         }
-        return entries
+        return accumulator.entries
     }
 
-    private static func upsertEntry(canonical: String, in entries: inout [STTDictionaryEntry]) {
-        let trimmed = canonical.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard !entries.contains(where: { $0.canonical.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
-            return
+    private struct EntryAccumulator {
+        private(set) var entries: [STTDictionaryEntry] = []
+        private var canonicalIndexes: [String: Int] = [:]
+        private var variantKeys: [Set<String>] = []
+
+        mutating func upsertEntry(canonical: String) {
+            _ = index(for: canonical)
         }
-        entries.append(STTDictionaryEntry(canonical: trimmed, variants: []))
+
+        mutating func upsertVariant(_ variant: String, canonical: String) {
+            let trimmedVariant = variant.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedVariant.isEmpty, let entryIndex = index(for: canonical) else { return }
+            let key = aliasKey(trimmedVariant)
+            guard key != aliasKey(entries[entryIndex].canonical) else { return }
+            guard variantKeys[entryIndex].insert(key).inserted else { return }
+            entries[entryIndex].variants.append(trimmedVariant)
+        }
+
+        private mutating func index(for canonical: String) -> Int? {
+            let trimmed = canonical.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let key = canonicalKey(trimmed)
+            if let existing = canonicalIndexes[key] {
+                return existing
+            }
+            let index = entries.count
+            entries.append(STTDictionaryEntry(canonical: trimmed, variants: []))
+            canonicalIndexes[key] = index
+            variantKeys.append([])
+            return index
+        }
+
+        private func canonicalKey(_ value: String) -> String {
+            value.folding(options: [.caseInsensitive, .widthInsensitive], locale: .current)
+        }
+    }
+}
+
+public struct STTDictionaryPage: Equatable, Sendable {
+    public let entries: [STTDictionaryEntry]
+    public let totalMatchCount: Int
+
+    public var hasMore: Bool {
+        entries.count < totalMatchCount
+    }
+}
+
+public struct STTDictionaryIndex: Equatable, Sendable {
+    public let sortedEntries: [STTDictionaryEntry]
+
+    public init(entries: [STTDictionaryEntry]) {
+        sortedEntries = entries.sorted {
+            $0.canonical.localizedCaseInsensitiveCompare($1.canonical) == .orderedAscending
+        }
     }
 
-    private static func upsertVariant(_ variant: String, canonical: String, in entries: inout [STTDictionaryEntry]) {
-        let trimmedVariant = variant.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedCanonical = canonical.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedVariant.isEmpty, !trimmedCanonical.isEmpty else { return }
-        upsertEntry(canonical: trimmedCanonical, in: &entries)
-        guard let index = entries
-            .firstIndex(where: { $0.canonical.localizedCaseInsensitiveCompare(trimmedCanonical) == .orderedSame })
-        else {
-            return
+    public func page(matching query: String, limit: Int) -> STTDictionaryPage {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matches: [STTDictionaryEntry] = if trimmed.isEmpty {
+            sortedEntries
+        } else {
+            sortedEntries.filter { entry in
+                entry.canonical.localizedCaseInsensitiveContains(trimmed) ||
+                    entry.variants.contains { $0.localizedCaseInsensitiveContains(trimmed) }
+            }
         }
-        let variantKey = aliasKey(trimmedVariant)
-        guard variantKey != aliasKey(entries[index].canonical) else { return }
-        guard !entries[index].variants.contains(where: { aliasKey($0) == variantKey }) else { return }
-        entries[index].variants.append(trimmedVariant)
+        return STTDictionaryPage(
+            entries: Array(matches.prefix(max(0, limit))),
+            totalMatchCount: matches.count
+        )
     }
 }
 
@@ -248,4 +378,99 @@ private func aliasKey(_ value: String) -> String {
     value
         .lowercased()
         .filter { ($0.isASCII && $0.isLetter) || $0.isNumber }
+}
+
+/// One Add/Edit sheet for a Dictionary term (Etan's 2.2.24 review #3: no inline box, no "+ misheard as…" row
+/// under every term). `original` is nil when adding.
+public struct DictionaryTermEdit: Equatable, Identifiable {
+    public var original: STTDictionaryEntry?
+    public var correct: String
+    public var wrong: String
+    public var removedVariants: [String]
+    /// F2: this edit began as an Add of a term that was already there (the sheet shows why it changed).
+    public private(set) var openedExisting = false
+
+    public init(original: STTDictionaryEntry? = nil, correct: String = "", wrong: String = "",
+                removedVariants: [String] = []) {
+        self.original = original
+        self.correct = correct.isEmpty ? original?.canonical ?? "" : correct
+        self.wrong = wrong
+        self.removedVariants = removedVariants
+    }
+
+    /// F2: the term an Add names when it is already in `entries`, ignoring case and extra whitespace. Nil when
+    /// editing: renaming a term onto another is the edit flow's business.
+    public func existingTerm(in entries: [STTDictionaryEntry]) -> STTDictionaryEntry? {
+        guard !isEditing, !trimmedCorrect.isEmpty else { return nil }
+        return entries.first { Self.sameTerm($0.canonical, correct) }
+    }
+
+    /// F2: this Add, reopened as an edit of `entry`. The term keeps its stored spelling, so saving never renames
+    /// it; a misheard spelling already typed is kept.
+    public func openingExisting(_ entry: STTDictionaryEntry) -> DictionaryTermEdit {
+        var opened = DictionaryTermEdit(original: entry, wrong: wrong)
+        opened.openedExisting = true
+        return opened
+    }
+
+    /// The one rule for "the same term", shared by the Add sheet's match and the save path
+    /// (`SettingsDictionaryMutations`): case-insensitive, with leading, trailing and repeated whitespace ignored.
+    public static func sameTerm(_ lhs: String, _ rhs: String) -> Bool {
+        collapsedWhitespace(lhs).localizedCaseInsensitiveCompare(collapsedWhitespace(rhs)) == .orderedSame
+    }
+
+    private static func collapsedWhitespace(_ value: String) -> String {
+        value.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    public var id: String {
+        original.map { "edit:\($0.canonical)" } ?? "add"
+    }
+
+    public var isEditing: Bool {
+        original != nil
+    }
+
+    public var keptVariants: [String] {
+        (original?.variants ?? []).filter { !removedVariants.contains($0) }
+    }
+
+    public var trimmedCorrect: String {
+        correct.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public var trimmedWrong: String {
+        wrong.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public var canSave: Bool {
+        !trimmedCorrect.isEmpty
+    }
+}
+
+/// A thread-safe copy of VoiceState's vocabulary fields for the Dictionary's off-main load (D1-c / S1).
+final class STTVocabularySnapshotMirror: @unchecked Sendable {
+    struct Snapshot {
+        var terms: [String] = []
+        var aliases: [STTVocabularyAliasPreview] = []
+        var displayEntries: [STTDictionaryDisplayEntry]?
+    }
+
+    private let lock = NSLock()
+    private var snapshot = Snapshot()
+    /// Publishes so far (tests: one vocabulary event must publish exactly one consistent snapshot).
+    private(set) var storeCount = 0
+
+    func store(terms: [String], aliases: [STTVocabularyAliasPreview], displayEntries: [STTDictionaryDisplayEntry]?) {
+        lock.lock()
+        snapshot = Snapshot(terms: terms, aliases: aliases, displayEntries: displayEntries)
+        storeCount += 1
+        lock.unlock()
+    }
+
+    func load() -> Snapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return snapshot
+    }
 }

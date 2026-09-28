@@ -1,3 +1,6 @@
+import AppKit
+import Observation
+import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
@@ -5,16 +8,48 @@ import XCTest
 /// (Etan QA: invisible-until-hover inputs, missing term add/delete,
 /// search reads as a label, stale gesture copy).
 final class SettingsViewTests: XCTestCase {
+    @MainActor
+    func testVocabularyRevisionObserverRefreshesOnlyWhenRevisionChanges() {
+        let model = VocabularyRevisionModel()
+        var refreshCount = 0
+        let host = NSHostingView(
+            rootView: VocabularyRevisionHarness(model: model) {
+                refreshCount += 1
+            }
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 40, height: 40)
+        host.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(refreshCount, 0)
+
+        model.revision = 1
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(refreshCount, 1)
+
+        model.revision = 1
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(refreshCount, 1)
+
+        model.revision = 2
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        XCTAssertEqual(refreshCount, 2)
+    }
+
     // MARK: - Field visibility (the invisible-until-hover class dies)
 
     func testDictionaryInputsUseVisibleFieldTreatmentAtRest() throws {
         let source = try settingsViewSource()
         let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1
 
-        XCTAssertGreaterThanOrEqual(
-            visibleFieldCount, 4,
-            "search + correct + transcribed + add-term fields must all be visible at rest"
-        )
+        XCTAssertEqual(visibleFieldCount, 1, "the tab keeps only search; rename and variants live in the sheet (R4/D1)")
+        let sheetURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift")
+        let sheetSource = try String(contentsOf: sheetURL)
+        XCTAssertEqual(sheetSource.components(separatedBy: ".dictionaryTextField()").count - 1, 2)
     }
 
     func testSearchFieldReadsAsSearchInput() throws {
@@ -41,41 +76,45 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
-    func testDictionaryCardsHaveVariantAddAffordance() throws {
+    /// R4/D1: a term's misheard spellings are one quiet line under it, only when it has some. There is no
+    /// "+ misheard as…" row under every term any more (Etan's 2.2.24 review #3).
+    func testVariantSummaryIsOneQuietLineOnlyWhenThereAreVariants() throws {
         let source = try settingsViewSource()
+        let card = try XCTUnwrap(source.functionBody(named: "dictionaryEntryCard"))
 
-        XCTAssertTrue(source.contains("addVariantButton"))
-        XCTAssertTrue(source.contains("add misheard variant"))
+        XCTAssertTrue(card.contains("if !entry.variants.isEmpty"))
+        XCTAssertTrue(card.contains(".lineLimit(1)"))
+        XCTAssertEqual(
+            SettingsView.variantSummary(["voice lair", "voice layer"]),
+            "misheard as voice lair, voice layer"
+        )
     }
 
-    func testVariantAddAffordanceUsesChipMatchingVerticalPadding() throws {
+    func testBundledDictionaryRowsHaveNoEditAffordance() throws {
         let source = try settingsViewSource()
-        let functionSource = try XCTUnwrap(source.functionBody(named: "addVariantButton"))
+        XCTAssertTrue(source.contains("isEditable: false"))
+        XCTAssertTrue(source.contains("ForEach(included, id: \\.rowID)"))
+    }
 
-        XCTAssertTrue(functionSource.contains(".padding(.vertical, 5)"))
+    /// A built-in row can't open the editor, by pencil or by double-click, even when a personal term shares
+    /// its name: the sheet is opened from the row's own entry, and only on editable rows.
+    func testOnlyYourTermsOpenTheEditSheet() throws {
+        let source = try settingsViewSource()
+        let card = try XCTUnwrap(source.functionBody(named: "dictionaryEntryCard"))
+        let header = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
+
+        XCTAssertTrue(card.contains("if isEditable { termSheet = DictionaryTermEdit(original: entry) }"))
+        let editable = try XCTUnwrap(header.range(of: "if isEditable {"))
+        let pencil = try XCTUnwrap(header.range(of: "termSheet = DictionaryTermEdit(original: entry)"))
+        XCTAssertLessThan(editable.lowerBound, pencil.lowerBound)
     }
 
     func testDictionaryTextActionsUseStyledButtons() throws {
         let source = try settingsViewSource()
-        let addVariantSource = try XCTUnwrap(source.functionBody(named: "addVariantInlineEditor"))
         let deleteButtonSource = try XCTUnwrap(source.functionBody(named: "deleteDictionaryEntryButton"))
-        let borderedCount = source.components(separatedBy: ".buttonStyle(.bordered)").count - 1
-        let prominentCount = source.components(separatedBy: ".buttonStyle(.borderedProminent)").count - 1
 
-        XCTAssertGreaterThanOrEqual(borderedCount, 3)
-        XCTAssertGreaterThanOrEqual(prominentCount, 3)
-        XCTAssertTrue(source
-            .contains(
-                "Button(\"Cancel\") {\n                    cancelTermRename()\n                }\n                .buttonStyle(.bordered)"
-            ))
-        XCTAssertTrue(source
-            .contains(
-                "Button(\"Save\") {\n                    saveTermRename(entry.canonical)\n                }\n                .buttonStyle(.borderedProminent)"
-            ))
-        XCTAssertTrue(addVariantSource.contains("Button(\"Cancel\") {"))
-        XCTAssertTrue(addVariantSource.contains(".buttonStyle(.bordered)"))
-        XCTAssertTrue(addVariantSource.contains("Button(\"Add\") {"))
-        XCTAssertTrue(addVariantSource.contains(".buttonStyle(.borderedProminent)"))
+        XCTAssertTrue(deleteButtonSource.contains("Button(\"Cancel\") {"))
+        XCTAssertTrue(deleteButtonSource.contains(".buttonStyle(.bordered)"))
         XCTAssertTrue(deleteButtonSource
             .contains(
                 "Button(\"Delete?\", role: .destructive) {\n                SettingsDictionaryMutations.confirmDeleteTerm("
@@ -88,7 +127,7 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
         let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
         let deleteConfirmBranch = try XCTUnwrap(headerSource.range(of: "if pendingDeleteCanonical == entry.canonical"))
-        let editButton = headerSource.range(of: "beginTermRename(entry.canonical)")
+        let editButton = headerSource.range(of: "termSheet = DictionaryTermEdit(original: entry)")
 
         XCTAssertNotNil(editButton)
         XCTAssertTrue(
@@ -97,63 +136,12 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
-    func testAddVariantInlineInputUsesOptionDAccentStyleAtRest() throws {
-        let source = try settingsViewSource()
-        let functionSource = try XCTUnwrap(source.functionBody(named: "addVariantInlineEditor"))
-
-        XCTAssertTrue(functionSource.contains(".padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)"))
-        XCTAssertTrue(functionSource.contains(".padding(.horizontal, 12)"))
-        XCTAssertTrue(functionSource.contains(".fill(addVariantInputFill)"))
-        XCTAssertTrue(functionSource.contains(".stroke(Color.accentColor, lineWidth: 1.5)"))
-        XCTAssertTrue(functionSource.contains("RoundedRectangle(cornerRadius: 8)"))
-    }
-
-    func testDictionaryHeaderModesShareStableControlHeight() throws {
-        let source = try settingsViewSource()
-        let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
-        let deleteButtonSource = try XCTUnwrap(source.functionBody(named: "deleteDictionaryEntryButton"))
-
-        XCTAssertTrue(source.contains("static let headerHeight"))
-        XCTAssertGreaterThanOrEqual(
-            headerSource.components(separatedBy: ".frame(minHeight: DictionaryCardLayout.headerHeight)").count - 1,
-            2,
-            "idle and edit header states must reserve the same row height"
-        )
-        XCTAssertGreaterThanOrEqual(
-            (headerSource + deleteButtonSource)
-                .components(separatedBy: ".frame(height: DictionaryCardLayout.headerHeight)").count - 1,
-            4,
-            "edit and delete-confirm text buttons must not be taller than the idle icon row"
-        )
-        XCTAssertGreaterThanOrEqual(
-            (headerSource + deleteButtonSource).components(separatedBy: ".controlSize(.small)").count - 1,
-            4,
-            "dictionary header text buttons need compact macOS control sizing"
-        )
-    }
-
-    func testAddVariantInlineInputAndButtonsShareHeight() throws {
-        let source = try settingsViewSource()
-        let functionSource = try XCTUnwrap(source.functionBody(named: "addVariantInlineEditor"))
-
-        XCTAssertTrue(source.contains("static let inlineControlHeight"))
-        XCTAssertTrue(functionSource.contains(".padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)"))
-        XCTAssertGreaterThanOrEqual(
-            functionSource.components(separatedBy: ".frame(height: DictionaryCardLayout.inlineControlHeight)")
-                .count - 1,
-            3,
-            "add-variant input, Add button, and Cancel button must be the same height"
-        )
-        XCTAssertGreaterThanOrEqual(
-            functionSource.components(separatedBy: ".controlSize(.small)").count - 1,
-            2,
-            "add-variant action buttons need compact macOS control sizing"
-        )
-    }
-
     func testDictionaryDoesNotRenderOldSplitSections() throws {
         let source = try settingsViewSource()
 
+        // AIDEV-NOTE: Settings has no stock DisclosureGroup at all: General's Advanced uses the
+        // full-row SettingsDisclosureRow, and the Dictionary must not bring back the old
+        // collapsible split sections.
         XCTAssertFalse(source.contains("DisclosureGroup"))
         XCTAssertFalse(source.contains("Prompt Terms"))
         XCTAssertFalse(source.contains("Corrections"))
@@ -292,12 +280,19 @@ final class SettingsViewTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(
-            source.contains(".onChange(of: vocabularyPreview())"),
-            "Dictionary cards should reconcile with later daemon vocabulary snapshots"
+            source.contains("SettingsVocabularyRevisionObserver("),
+            "Dictionary cards should observe later daemon vocabulary revisions"
         )
         XCTAssertTrue(
-            source.contains("guard !hasPendingDictionaryEdit else { return }"),
-            "Snapshot reconciliation must not clobber an active inline edit"
+            source.contains("onRefresh: { loadDictionaryPreview() }"),
+            "A revision change should project the new snapshot into local dictionary cards"
+        )
+        XCTAssertTrue(
+            source
+                .contains(
+                    "guard dictionaryReloadGate.loadFinished(duringEdit: hasPendingDictionaryEdit) else { return }"
+                ),
+            "Snapshot reconciliation must not clobber an open edit (it is deferred until the edit ends)"
         )
     }
 
@@ -353,6 +348,87 @@ final class SettingsViewTests: XCTestCase {
         )
         XCTAssertEqual(variantText, "")
         XCTAssertNil(addingVariantFor)
+    }
+
+    /// Fold 3 review M1: "swiftui" + "swift you eye" against an existing "SwiftUI" used to add nothing, leave
+    /// addingVariantFor set to a canonical no row has, and jam every later dictionary reload.
+    func testAddVariantWithCaseDifferentCanonicalLandsOnTheExistingTerm() {
+        var localEntries = [STTDictionaryEntry(canonical: "SwiftUI", variants: [])]
+        var variantText = "swift you eye"
+        var addingVariantFor: String? = "swiftui"
+        var addedAliases: [(correct: String, wrong: String)] = []
+
+        SettingsDictionaryMutations.addVariant(
+            canonical: "swiftui",
+            variantText: &variantText,
+            addingVariantFor: &addingVariantFor,
+            localEntries: &localEntries,
+            onAddVocabularyAlias: { correct, wrong in addedAliases.append((correct, wrong)) }
+        )
+
+        XCTAssertEqual(addedAliases.map(\.correct), ["SwiftUI"], "the alias goes to the existing spelling")
+        XCTAssertEqual(addedAliases.map(\.wrong), ["swift you eye"])
+        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "SwiftUI", variants: ["swift you eye"])])
+        XCTAssertEqual(variantText, "")
+        XCTAssertNil(addingVariantFor, "no pending edit may be left behind")
+    }
+
+    /// Fold 3 review M2: until the first async load lands, the Dictionary must not claim "No terms yet" or "(0)".
+    func testDictionaryShowsLoadingNotEmptyBeforeTheFirstLoad() {
+        XCTAssertEqual(
+            SettingsView.dictionaryPlaceholder(loaded: false, personalIsEmpty: true, searching: false), .loading
+        )
+        XCTAssertEqual(
+            SettingsView.dictionaryPlaceholder(loaded: true, personalIsEmpty: true, searching: false),
+            .empty
+        )
+        XCTAssertNil(SettingsView.dictionaryPlaceholder(loaded: true, personalIsEmpty: false, searching: false))
+        XCTAssertNil(SettingsView.dictionaryPlaceholder(loaded: true, personalIsEmpty: true, searching: true))
+        XCTAssertEqual(SettingsView.dictionarySectionTitle("Your terms", count: 0, loaded: false), "Your terms")
+        XCTAssertEqual(SettingsView.dictionarySectionTitle("Your terms", count: 296, loaded: true), "Your terms (296)")
+    }
+
+    /// Fold 3 review N1: while a search is active the header counts matches, so "1 of 3", never a bare "(3)".
+    func testDictionarySectionTitleCountsMatchesWhileSearching() {
+        XCTAssertEqual(
+            SettingsView.dictionarySectionTitle("Your terms", count: 3, matches: 1, loaded: true), "Your terms (1 of 3)"
+        )
+        XCTAssertEqual(
+            SettingsView.dictionarySectionTitle("Your terms", count: 3, matches: nil, loaded: true), "Your terms (3)"
+        )
+    }
+
+    /// Fold 3 review A2/A3/N2/N4: the Included toggle announces its state, Esc cancels the inline editor, the
+    /// chevron has a fixed width so the row does not shift, and the header rhythm matches the other tabs.
+    func testDictionaryAccessibilityAndRhythmPins() throws {
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains(".accessibilityValue(includedTermsExpanded ? \"Expanded\" : \"Collapsed\")"))
+        // Esc closes the Add/Edit sheet (its Cancel is the cancel action); there is no inline editor any more.
+        let sheet = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift"))
+        XCTAssertTrue(sheet.contains(".keyboardShortcut(.cancelAction)"))
+        // The chevron keeps its 14 pt column (independent of how deep the header is indented).
+        let chevron = try XCTUnwrap(
+            source.range(of: "Image(systemName: includedTermsExpanded ? \"chevron.down\" : \"chevron.right\")")
+        )
+        XCTAssertTrue(source[chevron.upperBound...].drop { $0.isWhitespace }.hasPrefix(".frame(width: 14)"))
+        XCTAssertTrue(source
+            .contains("VStack(alignment: .leading, spacing: 3) {\n                    Text(\"Dictionary\")"))
+    }
+
+    /// Fold 3 review M3 + A1: the Add-term sheet reads as an editor (chrome on both fields) and names its
+    /// fields for VoiceOver instead of reading placeholders.
+    func testAddTermSheetFieldsHaveChromeAndAccessibilityLabels() throws {
+        let sheetURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift")
+        let sheet = try String(contentsOf: sheetURL)
+        XCTAssertEqual(sheet.components(separatedBy: ".dictionaryFieldContainer()").count - 1, 2)
+        XCTAssertTrue(sheet.contains(".accessibilityLabel(\"Correct spelling\")"))
+        XCTAssertTrue(sheet.contains(".accessibilityLabel(\"Misheard as\")"))
+        XCTAssertTrue(sheet.contains(".help(\"Swap correct and misheard\")"))
+        XCTAssertFalse(sheet.contains("transcribed text"))
     }
 
     func testAddVariantMatchingCanonicalAliasKeyIsNoOp() {
@@ -420,15 +496,50 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
-    func testPerformanceEffortPickerUpdatesLocalStateBeforeNotifyingApp() throws {
+    func testShortcutCheckReportsObservedStatusWithoutChangingSettings() throws {
+        XCTAssertEqual(
+            SettingsShortcutCheck.message(
+                hotkeyEnabled: true, missingPermissions: [], relayReady: true,
+                relaySummary: "Relay ready"
+            ),
+            "Shortcut ready: F5 listener and relay are active."
+        )
+        XCTAssertTrue(SettingsShortcutCheck.message(
+            hotkeyEnabled: false, missingPermissions: [.inputMonitoring], relayReady: false,
+            relaySummary: "Relay needs attention"
+        ).contains("Relay needs attention"))
         let source = try settingsViewSource()
+        XCTAssertTrue(source.contains("Button(\"Check shortcut\")"))
+    }
+
+    /// Fold 2 review S2: the visible-first fix goes through the same reorder path as the arrows.
+    func testHiddenNextMicrophoneOffersVisibleFirstThroughTheReorderPath() throws {
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains("if let visibleFirst = microphoneSnapshot.visibleFirstUIDs {"))
+        XCTAssertTrue(source.contains("onReorderPriority(visibleFirst)"))
+    }
+
+    /// Fold 2 review S3: dictating while Models is open must refresh "Last dictation used", not only on appear.
+    func testModelsLastDictationLabelFollowsTheNextDictation() throws {
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains(".onChange(of: lastDictationEntry()?.recordingPath) { _, path in"))
+    }
+
+    func testPerformanceEffortPickerUpdatesLocalStateBeforeNotifyingApp() throws {
+        // The one effort control lives in Models (spec §5); it writes SettingsView's state through a binding.
+        let source = try settingsViewSource()
+        XCTAssertTrue(source.contains("effort: $selectedPerformanceEffort"))
+        let modelsURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift")
+        let modelsSource = try String(contentsOf: modelsURL)
 
         XCTAssertTrue(
-            source.contains(
+            modelsSource.contains(
                 """
-                set: { effort in
-                                        selectedPerformanceEffort = effort
-                                        onSelectPerformanceEffort(effort)
+                set: { selected in
+                                        effort = selected
+                                        onSelectEffort(selected)
                                     }
                 """
             ),
@@ -462,6 +573,27 @@ final class SettingsViewTests: XCTestCase {
             .appendingPathComponent("VoiceBarUI")
             .appendingPathComponent("SettingsView.swift")
         return try String(contentsOf: settingsURL)
+    }
+}
+
+@MainActor
+@Observable
+private final class VocabularyRevisionModel {
+    var revision: UInt64 = 0
+}
+
+@MainActor
+private struct VocabularyRevisionHarness: View {
+    let model: VocabularyRevisionModel
+    let onRefresh: () -> Void
+
+    var body: some View {
+        Color.clear.modifier(
+            SettingsVocabularyRevisionObserver(
+                revision: model.revision,
+                onRefresh: onRefresh
+            )
+        )
     }
 }
 

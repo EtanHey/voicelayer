@@ -145,6 +145,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
     func testUnsnoozeReturnsVoiceStateToIdle() {
         let state = VoiceState()
+        state.setConnectionStatus(true)
         state.snooze()
 
         state.unsnooze()
@@ -414,7 +415,9 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record(pressToTalk: true)
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         XCTAssertEqual(state.mode, .error)
         XCTAssertNil(state.pendingIntent)
@@ -452,7 +455,9 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record(pressToTalk: true)
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         state.handleEvent([
             "type": "state",
@@ -497,7 +502,9 @@ final class VoiceStatePasteTests: XCTestCase {
 
         // Arm the late-recovery window exactly as a dropped F5 ack would.
         state.record(pressToTalk: true)
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         // A voice_ask capture now starts INSIDE that window.
         state.handleEvent([
@@ -541,7 +548,9 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record(pressToTalk: true)
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         state.handleEvent([
             "type": "state",
@@ -582,7 +591,9 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record(pressToTalk: true)
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         // The current daemon explicitly marks genuine bar captures.
         state.handleEvent([
@@ -837,7 +848,9 @@ final class VoiceStatePasteTests: XCTestCase {
         state.record(pressToTalk: true)
         state.remoteOwnedRecordingForTesting = true
         XCTAssertTrue(state.remoteOwnedRecordingForTesting)
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { !state.remoteOwnedRecordingForTesting }
+            XCTAssertTrue(settled)
+        }
 
         XCTAssertFalse(
             state.remoteOwnedRecordingForTesting,
@@ -879,7 +892,9 @@ final class VoiceStatePasteTests: XCTestCase {
         state.transcriptionTimeout = .milliseconds(20)
 
         state.handleEvent(["type": "state", "state": "transcribing"])
-        try? await Task.sleep(for: .milliseconds(100))
+        do { let settled = await settle { state.mode == .error }
+            XCTAssertTrue(settled)
+        }
 
         XCTAssertEqual(state.mode, .error)
         XCTAssertFalse(
@@ -1104,7 +1119,10 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.mode, .transcribing)
         XCTAssertEqual(pastedTexts, [])
 
-        try? await Task.sleep(for: .milliseconds(180))
+        do {
+            let settled = await settle { !pastedTexts.isEmpty && state.mode == .idle }
+            XCTAssertTrue(settled)
+        }
 
         XCTAssertEqual(pastedTexts, ["fast final transcript"])
         XCTAssertEqual(state.mode, .idle)
@@ -1426,6 +1444,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
         var copiedTexts: [String] = []
         state.pasteboardWriter = { copiedTexts.append($0) }
+        state.pasteboardStringProvider = { copiedTexts.last }
 
         state.copyTranscript("history item to copy")
 

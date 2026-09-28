@@ -37,13 +37,17 @@ private struct RelaySetupStatus {
         launchAgentInstalled && launchAgentLoaded && dictationMappingActive && f5MappingActive
     }
 
-    var summary: String {
-        if isReady { return "Relay ready: LaunchAgent loaded, F5 + Dictation map to F18." }
+    var missing: [String] {
         var missing: [String] = []
         if !launchAgentInstalled { missing.append("LaunchAgent plist missing") }
         if !launchAgentLoaded { missing.append("LaunchAgent not loaded") }
         if !dictationMappingActive { missing.append("Dictation to F18 mapping missing") }
         if !f5MappingActive { missing.append("F5 to F18 mapping missing") }
+        return missing
+    }
+
+    var summary: String {
+        if isReady { return "Relay ready: LaunchAgent loaded, F5 + Dictation map to F18." }
         return "Relay needs attention: \(missing.joined(separator: ", "))."
     }
 }
@@ -57,6 +61,31 @@ private struct VoiceBarFirstRenderScaleReceipt: Codable {
     let windowScale: Double
     let contentScale: Double?
     let layerScales: [Double]
+}
+
+enum SettingsWindowSizing {
+    static let minimumContentSize = NSSize(width: 780, height: 620)
+    static let autosaveName = "VoiceBar.SettingsWindow"
+
+    static var initialContentRect: NSRect {
+        NSRect(origin: .zero, size: minimumContentSize)
+    }
+
+    static func correctedContentSize(for currentSize: NSSize) -> NSSize {
+        NSSize(
+            width: max(currentSize.width, minimumContentSize.width),
+            height: max(currentSize.height, minimumContentSize.height)
+        )
+    }
+
+    static func apply(to window: NSWindow) {
+        window.contentMinSize = minimumContentSize
+        let currentSize = window.contentLayoutRect.size
+        let correctedSize = correctedContentSize(for: currentSize)
+        if correctedSize != currentSize {
+            window.setContentSize(correctedSize)
+        }
+    }
 }
 
 // MARK: - App Delegate
@@ -78,7 +107,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     lazy var commandRouter = VoiceBarCommandRouter(
         voiceState: voiceState,
         resetHotkeyState: { [weak self] in self?.resetHotkeyTracking() },
-        showVoiceBar: { [weak self] in self?.unsnoozeNow() }
+        showVoiceBar: { [weak self] in self?.unsnoozeNow() },
+        openSettings: { [weak self] in self?.openSettingsWindow(tab: $0) }
     )
     private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
         self?.voiceState.setLocalRecordingLevel(level)
@@ -87,6 +117,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let commandModeAXHelper = CommandModeAXHelper()
 
     private let defaults = VoiceBarDefaults.make()
+    private lazy var microphonePriority = MicrophoneDevicePriority(defaults: defaults)
+    private lazy var microphonePriorityApply = MicrophonePriorityApplyCoordinator(
+        resolveDeviceID: { [weak self] in
+            guard let self else { return nil }
+            return microphonePriority.resolveDeviceID(
+                in: MicrophoneDeviceManager.availableInputDevices(),
+                fallbackDeviceID: MicrophoneDeviceManager.selectedInputDeviceID()
+            )
+        },
+        applyDeviceID: { deviceID in
+            MicrophoneDeviceManager.selectedInputDeviceID() == deviceID ||
+                MicrophoneDeviceManager.selectInputDevice(id: deviceID)
+        }
+    )
+    private var microphonePriorityTimer: Timer?
     private let pillContextMenuController = PillContextMenuController()
     private lazy var notchMorphSelection = VoiceBarNotchMorphSelection(
         environment: ProcessInfo.processInfo.environment,
@@ -111,8 +156,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
-    private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    private lazy var setupWizard = SetupWizardWindowController(defaults: defaults) { [weak self] in
+        self?.makeSetupWizardDependencies() ?? SetupWizardDependencies()
+    }
+
+    /// The last tab the app asked Settings to show (see `SettingsTabRequest`).
+    private var settingsTabRequest: SettingsTabRequest?
+    /// The tab Settings last showed. Closing drops the view (SettingsWindowLifecycle), so a reopen seeds it.
+    private var lastSettingsTab: SettingsTab = .general
     private var isolatedInstanceMarkerPID: pid_t?
     private var terminationSignalSource: DispatchSourceSignal?
 
@@ -155,10 +207,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var missingHotkeyPermissions: [HotkeyPermission] = []
     /// Whether VoiceBar is snoozed (hidden for a timed period).
     var isSnoozed: Bool = false
-    private var performanceEffort: VoiceBarPerformanceEffort = .accurate
+    /// When "Hide for 1 hour" ends; Settings says "Hidden until HH:MM".
+    private(set) var snoozedUntil: Date?
     private var pendingPerformanceEffortID: String?
     private var pendingPerformanceEffort: VoiceBarPerformanceEffort?
-    private var pendingPerformanceEffortPrevious: VoiceBarPerformanceEffort?
+    private var pendingPerformanceEffortTimeout: Task<Void, Never>?
+    /// A change with no final ack by then falls back to the daemon's effort. Longer than
+    /// VoiceState's 75 s reload budget (two 30 s startup attempts plus probes).
+    var performanceEffortAckTimeout: Duration = .seconds(80)
     private var performanceEffortNotice: String?
     private var performanceEffortNoticeTask: Task<Void, Never>?
     private lazy var cachedRelaySetupStatus = RelaySetupStatus(
@@ -168,16 +224,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         f5MappingActive: false
     )
     private var relaySetupStatusRefreshInFlight = false
+    private var relayStatusWriteGate = RelayStatusWriteGate()
     private var relaySetupInFlight = false
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
-    private static let performanceEffortKey = "voicebar.performanceEffort"
+    /// Retired local copy of the effort (E2): the daemon's model status is the only source.
+    private static let retiredPerformanceEffortKey = "voicebar.performanceEffort"
 
     override init() {
         super.init()
         voiceState.onAckEvent = { [weak self] ack in
             self?.handlePerformanceEffortAck(ack)
+        }
+        voiceState.onProcessingSettled = { [weak self] in
+            self?.refreshSettingsWindowAnchorState()
+        }
+        voiceState.onConnectionChange = { [weak self] connected in
+            guard connected else {
+                // Its ack can no longer arrive; fall back to what the daemon reports.
+                self?.dropPendingPerformanceEffort(notice: nil)
+                return
+            }
+            self?.voiceState.refreshModelsSettingsStatus()
+            self?.voiceState.requestVocabularySnapshot()
         }
     }
 
@@ -440,7 +510,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         configureGatekeptVoiceStateDependencies()
-        performanceEffort = Self.loadPerformanceEffort(defaults: defaults)
+        defaults.removeObject(forKey: Self.retiredPerformanceEffortKey)
         if VoiceBarDefaults.shouldPromptForPermissions() {
             promptForAccessibilityIfNeeded()
         }
@@ -454,24 +524,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         server.onCaptureFailure = { [weak self] failureType in
             self?.daemonController.handleCaptureFailure(type: failureType)
         }
-        let contextMenuReceiptPath = ProcessInfo.processInfo.environment[
-            "QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH"
-        ]
-        let verticalHitReceiptPath = ProcessInfo.processInfo.environment[
-            "QA_VOICEBAR_VERTICAL_HIT_RECEIPT_PATH"
-        ]
-        if contextMenuReceiptPath?.isEmpty == false {
-            server.onQAContextMenuProbe = { [weak self] in
-                guard let self, let contextMenuReceiptPath else { return }
-                runIsolatedContextMenuProbe(receiptPath: contextMenuReceiptPath)
+        #if VOICEBAR_QA
+            let contextMenuReceiptPath = ProcessInfo.processInfo.environment[
+                "QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH"
+            ]
+            let verticalHitReceiptPath = ProcessInfo.processInfo.environment[
+                "QA_VOICEBAR_VERTICAL_HIT_RECEIPT_PATH"
+            ]
+            if contextMenuReceiptPath?.isEmpty == false {
+                server.onQAContextMenuProbe = { [weak self] in
+                    guard let self, let contextMenuReceiptPath else { return }
+                    runIsolatedContextMenuProbe(receiptPath: contextMenuReceiptPath)
+                }
             }
-        }
-        if verticalHitReceiptPath?.isEmpty == false {
-            server.onQAVerticalHitProbe = { [weak self] in
-                guard let self, let verticalHitReceiptPath else { return }
-                runIsolatedVerticalHitProbe(receiptPath: verticalHitReceiptPath)
+            if verticalHitReceiptPath?.isEmpty == false {
+                server.onQAVerticalHitProbe = { [weak self] in
+                    guard let self, let verticalHitReceiptPath else { return }
+                    runIsolatedVerticalHitProbe(receiptPath: verticalHitReceiptPath)
+                }
             }
-        }
+        #endif
 
         // Wire the send-command closure so BarView buttons -> socket -> MCP clients
         voiceState.sendCommand = { [weak server] cmd in
@@ -483,8 +555,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.onPanelLayoutChange = { [weak self] in
             self?.refreshNotchPresentationAndPanelLayout(animated: true)
         }
-        voiceState.onHistoryArchiveChange = {
-            NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+        voiceState.onHistoryArchiveChange = { path in
+            // Drop that entry from the History index first, so the reload the notification triggers can't serve a
+            // stale transcript (a re-transcription rewrites an old entry in place).
+            Task {
+                if let path { await SettingsArchiveIndex.shared.invalidate(entryPath: path) }
+                await MainActor.run {
+                    NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+                }
+            }
         }
         voiceState.onPolishStatusChange = { [weak self] in
             self?.refreshSettingsWindowAnchorState()
@@ -502,6 +581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setupHotkey()
         }
         configureWakeRecovery()
+        scheduleFirstRunSetupIfNeeded()
 
         // Floating pill
         refreshNotchPresentationModel()
@@ -509,6 +589,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let barView = BarView(
             state: voiceState,
             commandRouter: commandRouter,
+            onOpenSettings: { [weak self] in self?.openSettingsWindow() },
+            onOpenHistory: { [weak self] in self?.openSettingsWindow(tab: .history) },
             presentationModel: notchPresentationModel,
             morphSelection: notchMorphSelection,
             includesPanelOutsets: true
@@ -611,6 +693,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ) { [weak self] _ in
             self?.reapplyAnchoredPanelPosition()
         }
+        if VoiceLayerPaths.enforcesSingletonInstance {
+            refreshAvailableMicrophones()
+            microphonePriorityTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+                self?.refreshAvailableMicrophones()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -618,12 +706,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func performTerminationCleanup() {
+        microphonePriorityTimer?.invalidate()
+        microphonePriorityTimer = nil
         if let isolatedInstanceMarkerPID {
             VoiceBarInstanceIsolationRegistry.unregister(pid: isolatedInstanceMarkerPID)
             self.isolatedInstanceMarkerPID = nil
         }
         snoozeTask?.cancel()
-        dictionarySheetWindow?.close()
         settingsWindow?.close()
         hotkeyManager?.stop()
         audioLevelMonitor.shutdown()
@@ -654,26 +743,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.transcriptProvider = { [weak self] in
             self?.voiceState.latestReusableTranscript ?? ""
         }
-        pillContextMenuController.recentTranscriptionsProvider = { [weak self] in
-            self?.voiceState.recentTranscriptions ?? []
+        pillContextMenuController.recentTranscriptionEntriesProvider = { [weak self] in
+            self?.voiceState.recentTranscriptionEntries ?? []
         }
-        pillContextMenuController.transcriptionVocabularyTermsProvider = { [weak self] in
-            self?.voiceState.transcriptionVocabularyTerms ?? []
-        }
-        pillContextMenuController.transcriptionVocabularyAliasesProvider = { [weak self] in
-            self?.voiceState.transcriptionVocabularyAliases ?? []
-        }
-        pillContextMenuController.availableDevicesProvider = {
-            MicrophoneDeviceManager.availableInputDevices()
-        }
-        pillContextMenuController.selectedDeviceIDProvider = {
-            MicrophoneDeviceManager.selectedInputDeviceID()
-        }
-        pillContextMenuController.anchorModeProvider = { [weak self] in
-            self?.currentAnchorMode() ?? .follow
-        }
-        pillContextMenuController.morphPrototypeProvider = { [weak self] in
-            self?.notchMorphSelection.variant ?? .p1Matched
+        pillContextMenuController.defaultMicrophoneNameProvider = { [weak self] in
+            self?.defaultMicrophoneName()
         }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
@@ -687,18 +761,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.onUnsnooze = { [weak self] in
             self?.unsnoozeNow()
         }
-        pillContextMenuController.onSelectDevice = { [weak self] deviceID in
-            guard MicrophoneDeviceManager.selectInputDevice(id: deviceID) else { return }
-            if self?.voiceState.mode == .recording {
-                self?.audioLevelMonitor.restart()
-            }
-        }
-        pillContextMenuController.onTranscribeLatestRecording = { [weak self] in
-            self?.logDiagnostic(event: "context_menu_transcribe_latest_recording_tapped")
-            self?.voiceState.retranscribeLastCapture()
-        }
-        pillContextMenuController.onAddSelectionToDictionary = { [weak self] in
-            self?.presentAddToDictionarySheetFromSelection()
+        pillContextMenuController.onChangeMicrophone = { [weak self] in
+            self?.openMicrophonePrioritySettings()
         }
         pillContextMenuController.onPasteLastTranscript = { [weak self] in
             self?.logDiagnostic(event: "context_menu_paste_last_transcript_tapped")
@@ -708,296 +772,302 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.logDiagnostic(event: "context_menu_copy_last_transcript_tapped")
             self?.voiceState.copyLastTranscript()
         }
+        pillContextMenuController.canRetranscribeLatestProvider = { [weak self] in
+            self?.voiceState.canRetranscribeLatestCapture(
+                hasLatestCapture: FileManager.default.fileExists(atPath: VoiceLayerPaths.retainedRecordingPath)
+            ) ?? false
+        }
+        pillContextMenuController.onRetranscribeLatest = { [weak self] in
+            self?.logDiagnostic(event: "context_menu_retranscribe_latest_tapped")
+            self?.voiceState.retranscribeLastCapture()
+        }
         pillContextMenuController.onPasteTranscript = { [weak self] transcript in
             self?.logDiagnostic(event: "context_menu_paste_recent_transcript_tapped")
             self?.voiceState.repasteTranscript(transcript, source: "context_menu_history")
         }
-        pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
-            self?.selectAnchorMode(mode)
-        }
-        pillContextMenuController.onSelectMorphPrototype = { [weak self] variant in
-            self?.notchMorphSelection.select(variant)
-            self?.logDiagnostic(event: "notch_morph_prototype_selected", details: [
-                "variant": variant.rawValue,
-            ])
+        pillContextMenuController.onQuit = { [weak self] in
+            self?.quitFromMenuBar()
         }
     }
 
-    private func runIsolatedContextMenuProbe(receiptPath: String) {
-        guard VoiceBarIsolatedCapturePlacement.isEnabled(),
-              !VoiceLayerPaths.enforcesSingletonInstance,
-              let panel,
-              let contentView = panel.contentView
-        else {
-            NSLog("[VoiceBar] Refusing context-menu probe outside isolated offscreen QA")
-            return
+    #if VOICEBAR_QA
+        private func runIsolatedContextMenuProbe(receiptPath: String) {
+            guard VoiceBarIsolatedCapturePlacement.isEnabled(),
+                  !VoiceLayerPaths.enforcesSingletonInstance,
+                  let panel,
+                  let contentView = panel.contentView
+            else {
+                NSLog("[VoiceBar] Refusing context-menu probe outside isolated offscreen QA")
+                return
+            }
+
+            let layout = currentPanelLayout()
+            let renderedCore = NSPoint(
+                x: layout.visibleContentRect.minX + layout.presentation.geometry.coreMidX,
+                y: layout.visibleContentRect.minY + layout.presentation.geometry.lowerSurfaceHeight
+                    + (layout.presentation.geometry.topHeight / 2)
+            )
+            guard layout.containsVisibleSurface(renderedCore),
+                  !layout.containsInteractiveContent(renderedCore)
+            else {
+                NSLog("[VoiceBar] Context-menu probe could not resolve a rendered glass point")
+                return
+            }
+
+            let transparentMargin = NSPoint(x: 1, y: 1)
+            Self.applyPanelMouseEventPassthrough(
+                panel,
+                layout: layout,
+                pointer: transparentMargin,
+                isIsolatedCapture: false
+            )
+            guard panel.ignoresMouseEvents,
+                  contentView.hitTest(transparentMargin) == nil
+            else {
+                NSLog("[VoiceBar] Context-menu probe found an admitted transparent margin")
+                return
+            }
+            Self.applyPanelMouseEventPassthrough(
+                panel,
+                layout: layout,
+                pointer: renderedCore,
+                isIsolatedCapture: false
+            )
+            guard !panel.ignoresMouseEvents,
+                  contentView.hitTest(renderedCore) != nil,
+                  panel.shouldHandleContextMenu(at: renderedCore)
+            else {
+                NSLog("[VoiceBar] Context-menu probe failed a rendered-surface event gate")
+                return
+            }
+
+            let menu = NSMenu(title: "VoiceBar context-menu acceptance")
+            menu.addItem(withTitle: "Context menu opened", action: nil, keyEquivalent: "")
+            let originalProvider = panel.contextMenuProvider
+            panel.contextMenuProvider = { menu }
+            let observer = NotificationCenter.default.addObserver(
+                forName: NSMenu.didBeginTrackingNotification,
+                object: menu,
+                queue: .main
+            ) { _ in
+                do {
+                    try "window_event_gate=passed\nright_click_context_menu=passed\n".write(
+                        toFile: receiptPath,
+                        atomically: true,
+                        encoding: .utf8
+                    )
+                } catch {
+                    NSLog(
+                        "[VoiceBar] Could not write context-menu receipt at %@: %@",
+                        receiptPath,
+                        String(describing: error)
+                    )
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    menu.cancelTracking()
+                }
+            }
+            defer {
+                NotificationCenter.default.removeObserver(observer)
+                panel.contextMenuProvider = originalProvider
+            }
+
+            guard let event = NSEvent.mouseEvent(
+                with: .rightMouseDown,
+                location: renderedCore,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1
+            ) else {
+                NSLog("[VoiceBar] Context-menu probe could not synthesize rightMouseDown")
+                return
+            }
+
+            panel.sendEvent(event)
         }
 
-        let layout = currentPanelLayout()
-        let renderedCore = NSPoint(
-            x: layout.visibleContentRect.minX + layout.presentation.geometry.coreMidX,
-            y: layout.visibleContentRect.minY + layout.presentation.geometry.lowerSurfaceHeight
-                + (layout.presentation.geometry.topHeight / 2)
-        )
-        guard layout.containsVisibleSurface(renderedCore),
-              !layout.containsInteractiveContent(renderedCore)
-        else {
-            NSLog("[VoiceBar] Context-menu probe could not resolve a rendered glass point")
-            return
-        }
+        private func runIsolatedVerticalHitProbe(receiptPath: String) {
+            guard VoiceBarIsolatedCapturePlacement.isEnabled(),
+                  !VoiceLayerPaths.enforcesSingletonInstance,
+                  let panel,
+                  let hosting = panel.contentView as? PillHostingView<BarView>
+            else {
+                NSLog("[VoiceBar] Refusing vertical-hit probe outside isolated offscreen QA")
+                return
+            }
 
-        let transparentMargin = NSPoint(x: 1, y: 1)
-        Self.applyPanelMouseEventPassthrough(
-            panel,
-            layout: layout,
-            pointer: transparentMargin,
-            isIsolatedCapture: false
-        )
-        guard panel.ignoresMouseEvents,
-              contentView.hitTest(transparentMargin) == nil
-        else {
-            NSLog("[VoiceBar] Context-menu probe found an admitted transparent margin")
-            return
-        }
-        Self.applyPanelMouseEventPassthrough(
-            panel,
-            layout: layout,
-            pointer: renderedCore,
-            isIsolatedCapture: false
-        )
-        guard !panel.ignoresMouseEvents,
-              contentView.hitTest(renderedCore) != nil,
-              panel.shouldHandleContextMenu(at: renderedCore)
-        else {
-            NSLog("[VoiceBar] Context-menu probe failed a rendered-surface event gate")
-            return
-        }
+            let originalPointerHandler = hosting.onPointerMoved
+            let originalCommandWriter = voiceState.sendCommand
+            var commands: [String] = []
+            hosting.onPointerMoved = { [weak self] point in
+                self?.synchronizePanelMouseEventPassthrough(
+                    localPoint: point,
+                    isIsolatedCapture: false
+                )
+            }
+            voiceState.sendCommand = { command in
+                if let name = command["cmd"] as? String {
+                    commands.append(name)
+                }
+            }
+            defer {
+                hosting.onPointerMoved = originalPointerHandler
+                voiceState.sendCommand = originalCommandWriter
+                panel.ignoresMouseEvents = false
+            }
 
-        let menu = NSMenu(title: "VoiceBar context-menu acceptance")
-        menu.addItem(withTitle: "Context menu opened", action: nil, keyEquivalent: "")
-        let originalProvider = panel.contextMenuProvider
-        panel.contextMenuProvider = { menu }
-        let observer = NotificationCenter.default.addObserver(
-            forName: NSMenu.didBeginTrackingNotification,
-            object: menu,
-            queue: .main
-        ) { _ in
+            let expectedClicks: [(rectIndex: Int, command: String)] = [
+                (2, "stop"),
+                (1, "cancel"),
+                (0, "set_recording_hold"),
+            ]
+            for expected in expectedClicks {
+                voiceState.mode = .recording
+                voiceState.recordingMode = "vad"
+                voiceState.isConnected = true
+                voiceState.isCollapsed = false
+                refreshNotchPresentationAndPanelLayout(animated: false)
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+
+                let layout = currentPanelLayout()
+                let region = VoiceBarNotchHitRegion(
+                    geometry: layout.presentation.geometry,
+                    configuration: Self.notchInteractionConfiguration(
+                        for: voiceState,
+                        visualState: layout.presentation.visualState
+                    )
+                )
+                guard region.rects.indices.contains(expected.rectIndex) else {
+                    NSLog("[VoiceBar] Vertical-hit probe could not resolve recording control %d", expected.rectIndex)
+                    return
+                }
+                let controlRect = region.rects[expected.rectIndex].offsetBy(
+                    dx: layout.visibleContentRect.minX,
+                    dy: layout.visibleContentRect.minY
+                )
+                let topGlyphPoint = NSPoint(x: controlRect.midX, y: controlRect.maxY - 1)
+                guard let movedEvent = NSEvent.mouseEvent(
+                    with: .mouseMoved,
+                    location: topGlyphPoint,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: panel.windowNumber,
+                    context: nil,
+                    eventNumber: expected.rectIndex + 1,
+                    clickCount: 0,
+                    pressure: 0
+                ) else {
+                    NSLog("[VoiceBar] Vertical-hit probe could not synthesize mouseMoved")
+                    return
+                }
+                hosting.mouseMoved(with: movedEvent)
+                guard !panel.ignoresMouseEvents,
+                      layout.containsInteractiveContent(topGlyphPoint),
+                      hosting.hitTest(topGlyphPoint) != nil
+                else {
+                    NSLog(
+                        "[VoiceBar] Vertical-hit probe rejected visible control top at %@",
+                        NSStringFromPoint(topGlyphPoint)
+                    )
+                    return
+                }
+
+                let commandCount = commands.count
+                guard let downEvent = NSEvent.mouseEvent(
+                    with: .leftMouseDown,
+                    location: topGlyphPoint,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: panel.windowNumber,
+                    context: nil,
+                    eventNumber: (expected.rectIndex * 2) + 10,
+                    clickCount: 1,
+                    pressure: 1
+                ), let upEvent = NSEvent.mouseEvent(
+                    with: .leftMouseUp,
+                    location: topGlyphPoint,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime + 0.01,
+                    windowNumber: panel.windowNumber,
+                    context: nil,
+                    eventNumber: (expected.rectIndex * 2) + 11,
+                    clickCount: 1,
+                    pressure: 0
+                ) else {
+                    NSLog("[VoiceBar] Vertical-hit probe could not synthesize control click")
+                    return
+                }
+                panel.sendEvent(downEvent)
+                panel.sendEvent(upEvent)
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+                guard commands.count == commandCount + 1,
+                      commands.last == expected.command
+                else {
+                    let details = "expected=\(expected.command) commands=\(commands.joined(separator: ",")) "
+                        + "mode=\(voiceState.mode) recordingMode=\(voiceState.recordingMode ?? "nil") "
+                        + "hold=\(voiceState.isRecordingHoldEngaged)"
+                    NSLog("[VoiceBar] Vertical-hit probe did not route: %@", details)
+                    return
+                }
+            }
+
+            voiceState.mode = .recording
+            voiceState.recordingMode = "vad"
+            voiceState.isConnected = true
+            voiceState.isCollapsed = false
+            refreshNotchPresentationAndPanelLayout(animated: false)
+            let finalLayout = currentPanelLayout()
+            let bottomShadowPoint = NSPoint(
+                x: finalLayout.interactiveHitRect.midX,
+                y: finalLayout.visibleContentRect.minY - 1
+            )
+            guard let movedEvent = NSEvent.mouseEvent(
+                with: .mouseMoved,
+                location: bottomShadowPoint,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 20,
+                clickCount: 0,
+                pressure: 0
+            ) else {
+                NSLog("[VoiceBar] Vertical-hit probe could not synthesize boundary mouseMoved")
+                return
+            }
+            hosting.mouseMoved(with: movedEvent)
+            guard panel.ignoresMouseEvents,
+                  !finalLayout.containsVisibleSurface(bottomShadowPoint)
+            else {
+                NSLog("[VoiceBar] Vertical-hit probe captured the bottom-only shadow lane")
+                return
+            }
+
             do {
-                try "window_event_gate=passed\nright_click_context_menu=passed\n".write(
+                try "surface_vertical_boundary=passed\nrecording_control_top_clicks=3\n".write(
                     toFile: receiptPath,
                     atomically: true,
                     encoding: .utf8
                 )
             } catch {
                 NSLog(
-                    "[VoiceBar] Could not write context-menu receipt at %@: %@",
+                    "[VoiceBar] Could not write vertical-hit receipt at %@: %@",
                     receiptPath,
                     String(describing: error)
                 )
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                menu.cancelTracking()
-            }
         }
-        defer {
-            NotificationCenter.default.removeObserver(observer)
-            panel.contextMenuProvider = originalProvider
-        }
-
-        guard let event = NSEvent.mouseEvent(
-            with: .rightMouseDown,
-            location: renderedCore,
-            modifierFlags: [],
-            timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: panel.windowNumber,
-            context: nil,
-            eventNumber: 1,
-            clickCount: 1,
-            pressure: 1
-        ) else {
-            NSLog("[VoiceBar] Context-menu probe could not synthesize rightMouseDown")
-            return
-        }
-
-        panel.sendEvent(event)
-    }
-
-    private func runIsolatedVerticalHitProbe(receiptPath: String) {
-        guard VoiceBarIsolatedCapturePlacement.isEnabled(),
-              !VoiceLayerPaths.enforcesSingletonInstance,
-              let panel,
-              let hosting = panel.contentView as? PillHostingView<BarView>
-        else {
-            NSLog("[VoiceBar] Refusing vertical-hit probe outside isolated offscreen QA")
-            return
-        }
-
-        let originalPointerHandler = hosting.onPointerMoved
-        let originalCommandWriter = voiceState.sendCommand
-        var commands: [String] = []
-        hosting.onPointerMoved = { [weak self] point in
-            self?.synchronizePanelMouseEventPassthrough(
-                localPoint: point,
-                isIsolatedCapture: false
-            )
-        }
-        voiceState.sendCommand = { command in
-            if let name = command["cmd"] as? String {
-                commands.append(name)
-            }
-        }
-        defer {
-            hosting.onPointerMoved = originalPointerHandler
-            voiceState.sendCommand = originalCommandWriter
-            panel.ignoresMouseEvents = false
-        }
-
-        let expectedClicks: [(rectIndex: Int, command: String)] = [
-            (2, "stop"),
-            (1, "cancel"),
-            (0, "set_recording_hold"),
-        ]
-        for expected in expectedClicks {
-            voiceState.mode = .recording
-            voiceState.recordingMode = "vad"
-            voiceState.isConnected = true
-            voiceState.isCollapsed = false
-            refreshNotchPresentationAndPanelLayout(animated: false)
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
-
-            let layout = currentPanelLayout()
-            let region = VoiceBarNotchHitRegion(
-                geometry: layout.presentation.geometry,
-                configuration: Self.notchInteractionConfiguration(
-                    for: voiceState,
-                    visualState: layout.presentation.visualState
-                )
-            )
-            guard region.rects.indices.contains(expected.rectIndex) else {
-                NSLog("[VoiceBar] Vertical-hit probe could not resolve recording control %d", expected.rectIndex)
-                return
-            }
-            let controlRect = region.rects[expected.rectIndex].offsetBy(
-                dx: layout.visibleContentRect.minX,
-                dy: layout.visibleContentRect.minY
-            )
-            let topGlyphPoint = NSPoint(x: controlRect.midX, y: controlRect.maxY - 1)
-            guard let movedEvent = NSEvent.mouseEvent(
-                with: .mouseMoved,
-                location: topGlyphPoint,
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: panel.windowNumber,
-                context: nil,
-                eventNumber: expected.rectIndex + 1,
-                clickCount: 0,
-                pressure: 0
-            ) else {
-                NSLog("[VoiceBar] Vertical-hit probe could not synthesize mouseMoved")
-                return
-            }
-            hosting.mouseMoved(with: movedEvent)
-            guard !panel.ignoresMouseEvents,
-                  layout.containsInteractiveContent(topGlyphPoint),
-                  hosting.hitTest(topGlyphPoint) != nil
-            else {
-                NSLog(
-                    "[VoiceBar] Vertical-hit probe rejected visible control top at %@",
-                    NSStringFromPoint(topGlyphPoint)
-                )
-                return
-            }
-
-            let commandCount = commands.count
-            guard let downEvent = NSEvent.mouseEvent(
-                with: .leftMouseDown,
-                location: topGlyphPoint,
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: panel.windowNumber,
-                context: nil,
-                eventNumber: (expected.rectIndex * 2) + 10,
-                clickCount: 1,
-                pressure: 1
-            ), let upEvent = NSEvent.mouseEvent(
-                with: .leftMouseUp,
-                location: topGlyphPoint,
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime + 0.01,
-                windowNumber: panel.windowNumber,
-                context: nil,
-                eventNumber: (expected.rectIndex * 2) + 11,
-                clickCount: 1,
-                pressure: 0
-            ) else {
-                NSLog("[VoiceBar] Vertical-hit probe could not synthesize control click")
-                return
-            }
-            panel.sendEvent(downEvent)
-            panel.sendEvent(upEvent)
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
-            guard commands.count == commandCount + 1,
-                  commands.last == expected.command
-            else {
-                let details = "expected=\(expected.command) commands=\(commands.joined(separator: ",")) "
-                    + "mode=\(voiceState.mode) recordingMode=\(voiceState.recordingMode ?? "nil") "
-                    + "hold=\(voiceState.isRecordingHoldEngaged)"
-                NSLog("[VoiceBar] Vertical-hit probe did not route: %@", details)
-                return
-            }
-        }
-
-        voiceState.mode = .recording
-        voiceState.recordingMode = "vad"
-        voiceState.isConnected = true
-        voiceState.isCollapsed = false
-        refreshNotchPresentationAndPanelLayout(animated: false)
-        let finalLayout = currentPanelLayout()
-        let bottomShadowPoint = NSPoint(
-            x: finalLayout.interactiveHitRect.midX,
-            y: finalLayout.visibleContentRect.minY - 1
-        )
-        guard let movedEvent = NSEvent.mouseEvent(
-            with: .mouseMoved,
-            location: bottomShadowPoint,
-            modifierFlags: [],
-            timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: panel.windowNumber,
-            context: nil,
-            eventNumber: 20,
-            clickCount: 0,
-            pressure: 0
-        ) else {
-            NSLog("[VoiceBar] Vertical-hit probe could not synthesize boundary mouseMoved")
-            return
-        }
-        hosting.mouseMoved(with: movedEvent)
-        guard panel.ignoresMouseEvents,
-              !finalLayout.containsVisibleSurface(bottomShadowPoint)
-        else {
-            NSLog("[VoiceBar] Vertical-hit probe captured the bottom-only shadow lane")
-            return
-        }
-
-        do {
-            try "surface_vertical_boundary=passed\nrecording_control_top_clicks=3\n".write(
-                toFile: receiptPath,
-                atomically: true,
-                encoding: .utf8
-            )
-        } catch {
-            NSLog(
-                "[VoiceBar] Could not write vertical-hit receipt at %@: %@",
-                receiptPath,
-                String(describing: error)
-            )
-        }
-    }
+    #endif
 
     private func snoozeForOneHour() {
         snoozeTask?.cancel()
         isSnoozed = true
-        voiceState.snooze()
+        snoozedUntil = Date().addingTimeInterval(3600)
+        voiceState.snooze(until: snoozedUntil)
         panel?.orderOut(nil)
 
         snoozeTask = Task { @MainActor [weak self] in
@@ -1010,6 +1080,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func unsnoozeNow() {
         snoozeTask?.cancel()
         isSnoozed = false
+        snoozedUntil = nil
         voiceState.unsnooze()
         panel?.orderFront(nil)
         reapplyAnchoredPanelPosition()
@@ -1111,7 +1182,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Type text into the focused app with synthesized keyboard events. Never
     /// touches the pasteboard — see the AIDEV-NOTE at VoiceState's paste call site.
     /// What goes into each event, and why no control character may, is
-    /// `SynthesizedTyping`. Requires Accessibility.
+    /// `SynthesizedTyping`; the events themselves are `SynthesizedKeyEvents`.
+    /// Requires Accessibility.
     @discardableResult
     private static func typeText(_ text: String) -> Bool {
         guard isAccessibilityTrusted(prompt: false) else {
@@ -1122,7 +1194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("[VoiceBar] typeText: failed to create CGEventSource")
             return false
         }
-        guard let events = SynthesizedTyping.events(
+        guard let events = SynthesizedKeyEvents.events(
             for: SynthesizedTyping.keystrokes(for: text),
             source: source
         ) else {
@@ -1244,6 +1316,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
+        microphonePriorityApply.modeDidChange(
+            mode,
+            captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
+        )
+        if previousVoiceMode == .recording || previousVoiceMode == .transcribing,
+           mode != .recording,
+           mode != .transcribing {
+            voiceState.refreshModelsSettingsStatus()
+        }
         let collapsesConverseHandoff = VoiceBarNotchPlaybackEdgeCommitPolicy
             .stagesContentBeforeGlass(from: previousVoiceMode, to: mode) &&
             voiceState.isCollapsed
@@ -1598,6 +1679,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return VoiceBarNotchInteractionConfiguration(
                 lowerControlCount: lowerControlCount
             )
+        case .history:
+            return .historyPanel
         }
     }
 
@@ -1995,21 +2078,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         anchorMode
     }
 
-    func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
-        anchorMode = mode
-        anchorPreferences.saveAnchorMode(mode)
-        panel?.isPillDragEnabled = mode.allowsFreeDrag
-        panel?.isMovableByWindowBackground = mode.allowsFreeDrag &&
-            VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
-        if let panel {
-            positionPanel(panel, on: nil)
-            applyPanelLayout(animated: true)
-        }
-        refreshSettingsWindowAnchorState()
-    }
-
+    /// The selection in flight, else what the daemon reports. `.accurate` (the daemon default)
+    /// only until the first status arrives; the picker is disabled until then.
     func currentPerformanceEffort() -> VoiceBarPerformanceEffort {
-        performanceEffort
+        pendingPerformanceEffort ?? voiceState.modelsSettingsState.configuredEffort ?? .accurate
     }
 
     func currentPerformanceEffortNotice() -> String? {
@@ -2017,7 +2089,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func selectPerformanceEffort(_ effort: VoiceBarPerformanceEffort) {
-        guard effort != performanceEffort else {
+        guard effort != currentPerformanceEffort() else {
             clearPerformanceEffortNotice()
             refreshSettingsWindowAnchorState()
             return
@@ -2029,12 +2101,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let id = UUID().uuidString
-        let previousEffort = performanceEffort
-        performanceEffort = effort
         pendingPerformanceEffortID = id
         pendingPerformanceEffort = effort
-        pendingPerformanceEffortPrevious = previousEffort
         clearPerformanceEffortNotice()
+        pendingPerformanceEffortTimeout?.cancel()
+        pendingPerformanceEffortTimeout = Task { @MainActor [weak self] in
+            guard let timeout = self?.performanceEffortAckTimeout else { return }
+            try? await Task.sleep(for: timeout)
+            guard let self, !Task.isCancelled, pendingPerformanceEffortID == id else { return }
+            dropPendingPerformanceEffort(
+                notice: "Couldn't confirm the effort change - showing VoiceLayer's current setting"
+            )
+            voiceState.refreshModelsSettingsStatus()
+        }
         sendCommand([
             "cmd": "set_whisper_effort",
             "effort": effort.rawValue,
@@ -2050,23 +2129,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        let effort = pendingPerformanceEffort
-        let previousEffort = pendingPerformanceEffortPrevious
+        // The daemon is relaunching the model with the new effort; keep the selection.
+        if ack.outcome == .loading {
+            refreshSettingsWindowAnchorState()
+            return
+        }
+
         pendingPerformanceEffortID = nil
         pendingPerformanceEffort = nil
-        pendingPerformanceEffortPrevious = nil
+        pendingPerformanceEffortTimeout?.cancel()
+        pendingPerformanceEffortTimeout = nil
 
-        guard ack.outcome == .accept, let effort else {
-            if let previousEffort {
-                performanceEffort = previousEffort
-            }
+        guard ack.outcome == .accept else {
             rejectPendingPerformanceEffort(reason: ack.reason)
             return
         }
 
-        performanceEffort = effort
-        defaults.set(effort.rawValue, forKey: Self.performanceEffortKey)
+        // An accept with a reason is saved-but-not-active (a server VoiceLayer did not
+        // launch, or a failed reload). Say so; never let it pass silently.
+        if let reason = ack.reason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
+            performanceEffortNotice = reason
+            refreshSettingsWindowAnchorState()
+            return
+        }
         clearPerformanceEffortNotice()
+        refreshSettingsWindowAnchorState()
+    }
+
+    /// Forget an unconfirmed selection so the picker shows the daemon's effort again, and a
+    /// re-selection of the same value is sent as a retry (#143 round 2).
+    private func dropPendingPerformanceEffort(notice: String?) {
+        guard pendingPerformanceEffortID != nil else { return }
+        pendingPerformanceEffortID = nil
+        pendingPerformanceEffort = nil
+        pendingPerformanceEffortTimeout?.cancel()
+        pendingPerformanceEffortTimeout = nil
+        performanceEffortNotice = notice
+        if notice != nil {
+            schedulePerformanceEffortNoticeClear(expectedNotice: notice)
+        }
         refreshSettingsWindowAnchorState()
     }
 
@@ -2100,27 +2201,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private static func loadPerformanceEffort(defaults: UserDefaults) -> VoiceBarPerformanceEffort {
-        guard let rawValue = defaults.string(forKey: performanceEffortKey),
-              let effort = VoiceBarPerformanceEffort(rawValue: rawValue)
-        else {
-            return .accurate
-        }
-        return effort
-    }
-
     private func microphonePermissionGranted() -> Bool {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    private func runRelaySetup() -> (message: String, status: RelaySetupStatus) {
+    private func runRelaySetup() -> (result: SettingsRelaySetupResult, status: RelaySetupStatus) {
         guard let scriptURL = Bundle.main.resourceURL?
             .appendingPathComponent("scripts")
             .appendingPathComponent("install-voicebar-f5-hidutil.sh")
         else {
             NSLog("[VoiceBar] Relay setup script not bundled")
             return (
-                "Relay setup failed: bundled installer script not found.",
+                SettingsRelaySetupResult(outcome: .failed(reason: "bundled installer script not found"),
+                                         finishedAt: Date()),
                 currentRelaySetupStatus()
             )
         }
@@ -2136,7 +2229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } catch {
             NSLog("[VoiceBar] Failed to run relay setup: %@", String(describing: error))
             return (
-                "Relay setup failed: \(error.localizedDescription)",
+                SettingsRelaySetupResult(outcome: .failed(reason: error.localizedDescription), finishedAt: Date()),
                 currentRelaySetupStatus()
             )
         }
@@ -2149,37 +2242,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.summary,
             output
         )
-        guard process.terminationStatus == 0 else {
-            return (
-                "Relay setup failed (exit \(process.terminationStatus)): \(output.trimmingCharacters(in: .whitespacesAndNewlines))",
-                status
-            )
-        }
-        return (status.summary, status)
+        return (
+            SettingsRelaySetupResult.installerRun(
+                exitCode: process.terminationStatus, output: output, missingAfter: status.missing,
+                finishedAt: Date()
+            ),
+            status
+        )
     }
 
-    private func runRelaySetupAsync(completion: @escaping (String) -> Void) {
+    private func runRelaySetupAsync(completion: @escaping (SettingsRelaySetupResult) -> Void) {
         guard !relaySetupInFlight else {
-            completion("Relay setup is already running.")
+            completion(SettingsRelaySetupResult(outcome: .failed(reason: "another setup is already running"),
+                                                finishedAt: Date()))
             return
         }
         relaySetupInFlight = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else {
                 DispatchQueue.main.async {
-                    completion("Relay setup failed: VoiceBar is not available.")
+                    completion(SettingsRelaySetupResult(outcome: .failed(reason: "VoiceBar is not available"),
+                                                        finishedAt: Date()))
                 }
                 return
             }
             let result = runRelaySetup()
             DispatchQueue.main.async { [weak self] in
                 guard let self else {
-                    completion(result.message)
+                    completion(result.result)
                     return
                 }
                 cachedRelaySetupStatus = result.status
+                relayStatusWriteGate.setupFinished()
                 relaySetupInFlight = false
-                completion(result.message)
+                completion(result.result)
             }
         }
     }
@@ -2187,16 +2283,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func refreshRelaySetupStatusAsync() {
         guard !relaySetupStatusRefreshInFlight else { return }
         relaySetupStatusRefreshInFlight = true
+        let ticket = relayStatusWriteGate.ticket()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let status = currentRelaySetupStatus()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                cachedRelaySetupStatus = status
+                if relayStatusWriteGate.mayWrite(ticket, setupInFlight: relaySetupInFlight) {
+                    cachedRelaySetupStatus = status
+                }
                 relaySetupStatusRefreshInFlight = false
                 if !relaySetupInFlight {
                     refreshSettingsWindowAnchorState()
                 }
+            }
+        }
+    }
+
+    /// C12: when the latest left-mouse press happened, on the system-uptime clock. Every drag starts with one, so
+    /// Settings uses it to tell one microphone drag session from the next. nil when no usable time is reported.
+    static func lastMousePressUptime() -> TimeInterval? {
+        let since = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .leftMouseDown)
+        guard since.isFinite, since >= 0 else { return nil }
+        return ProcessInfo.processInfo.systemUptime - since
+    }
+
+    private func checkShortcutAsync(completion: @escaping (String) -> Void) {
+        let listenerEnabled = hotkeyEnabled
+        let permissions = missingHotkeyPermissions
+        let ticket = relayStatusWriteGate.ticket()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            // Same read-only launchctl and hidutil probes as `voicelayer hotkey status`.
+            let status = currentRelaySetupStatus()
+            DispatchQueue.main.async { [weak self] in
+                if let self, relayStatusWriteGate.mayWrite(ticket, setupInFlight: relaySetupInFlight) {
+                    cachedRelaySetupStatus = status
+                }
+                completion(SettingsShortcutCheck.message(
+                    hotkeyEnabled: listenerEnabled,
+                    missingPermissions: permissions,
+                    relayReady: status.isReady,
+                    relaySummary: status.summary
+                ))
             }
         }
     }
@@ -2307,81 +2436,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// Called off-main by the Settings Dictionary's detached load; reads VoiceState's lock-protected mirror
+    /// instead of hopping to main (fold-3 review S1).
     func currentVocabularyPreview() -> STTVocabularyPreview {
-        STTVocabularyPreview(
-            updatedAt: nil,
-            promptTerms: voiceState.transcriptionVocabularyTerms,
-            aliases: voiceState.transcriptionVocabularyAliases
-        )
-    }
-
-    private func presentAddToDictionarySheetFromSelection() {
-        voiceState.beginModalInteraction()
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let selection = FrontmostSelectionReader.readCurrentSelection()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                logDiagnostic(event: "context_menu_add_to_dictionary_tapped", details: [
-                    "selectionSource": selection?.source.rawValue ?? "none",
-                    "selectionLength": String(selection?.text.count ?? 0),
-                ])
-                presentDictionarySheet(
-                    draft: STTVocabularyDraft(
-                        correct: selection?.text ?? "",
-                        wrong: ""
-                    )
-                )
-            }
-        }
-    }
-
-    private func presentDictionarySheet(draft: STTVocabularyDraft) {
-        closeDictionarySheet()
-        NSApp.activate(ignoringOtherApps: true)
-        let rootView = DictionaryAddSheetView(
-            draft: draft,
-            onSave: { [weak self] draft in
-                self?.voiceState.addVocabularyAlias(
-                    correct: draft.trimmedCorrect,
-                    wrong: draft.trimmedWrong
-                )
-                self?.closeDictionarySheet()
-            },
-            onCancel: { [weak self] in
-                self?.closeDictionarySheet()
-            }
-        )
-        let hosting = NSHostingController(rootView: rootView)
-        let sheet = NSWindow(contentViewController: hosting)
-        sheet.title = "Add to Dictionary"
-        sheet.styleMask = [.titled, .closable]
-        sheet.isReleasedWhenClosed = false
-        sheet.setContentSize(NSSize(width: 380, height: 210))
-        sheet.delegate = self
-        dictionarySheetWindow = sheet
-
-        sheet.center()
-        NSApp.activate(ignoringOtherApps: true)
-        sheet.makeKeyAndOrderFront(nil)
-    }
-
-    private func closeDictionarySheet() {
-        guard let sheet = dictionarySheetWindow else { return }
-        dictionarySheetWindow = nil
-        sheet.delegate = nil
-        if let parent = sheet.sheetParent {
-            parent.endSheet(sheet)
-        }
-        sheet.close()
-        voiceState.endModalInteraction()
+        voiceState.vocabularyPreviewOffMain()
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow,
-              window === dictionarySheetWindow
-        else { return }
-        dictionarySheetWindow = nil
-        voiceState.endModalInteraction()
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
+        // P09b follow-up 3 (R1): drop the hidden view, then let the History index go of every entry.
+        Task { await SettingsWindowLifecycle.settingsWindowWillClose(window) }
     }
 
     func quickMenuActions() -> [VoiceBarMenuAction] {
@@ -2410,10 +2474,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApplication.shared.terminate(nil)
     }
 
-    func openSettingsWindow() {
+    func quitFromMenuBar() {
+        requestTermination(.menuBar)
+    }
+
+    func openSettingsWindow(tab: SettingsTab? = nil, focus: SettingsFocus? = nil) {
         voiceState.captureSettingsHistoryPasteTarget()
         NSApp.activate(ignoringOtherApps: true)
+        if let tab {
+            settingsTabRequest = SettingsTabRequest(tab: tab, focus: focus, id: (settingsTabRequest?.id ?? 0) + 1)
+        }
         if let settingsWindow {
+            if tab == nil, settingsWindow.contentViewController == nil {
+                settingsTabRequest = nil
+            }
+            // AppKit calls this on main; the delegate just isn't annotated @MainActor.
+            let rebuilt = MainActor.assumeIsolated {
+                SettingsWindowLifecycle.rebuildContentIfNeeded(settingsWindow) { makeSettingsView() }
+            }
+            if !rebuilt, tab != nil,
+               let hosting = settingsWindow.contentViewController as? NSHostingController<SettingsView> {
+                hosting.rootView = makeSettingsView()
+            }
+            SettingsWindowSizing.apply(to: settingsWindow)
             settingsWindow.makeKeyAndOrderFront(nil)
             settingsWindow.orderFrontRegardless()
             refreshRelaySetupStatusAsync()
@@ -2422,23 +2505,171 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let hosting = NSHostingController(rootView: makeSettingsView())
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
+            contentRect: SettingsWindowSizing.initialContentRect,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "VoiceBar Settings"
         window.contentViewController = hosting
+        window.delegate = self
         window.isReleasedWhenClosed = false
         window.isRestorable = false
         window.collectionBehavior = [.moveToActiveSpace]
         window.level = .floating
+        SettingsWindowSizing.apply(to: window)
         window.center()
+        window.setFrameAutosaveName(SettingsWindowSizing.autosaveName)
+        SettingsWindowSizing.apply(to: window)
         settingsWindow = window
 
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         refreshRelaySetupStatusAsync()
+    }
+
+    /// "Open Settings…" in the menu-bar popover (R4 UI pass #12): the popover used to stay open over
+    /// Settings. Close it first, then open Settings, which activates VoiceBar and makes the window key.
+    func openSettingsFromMenuBar(popover: NSWindow?, tab: SettingsTab? = nil, focus: SettingsFocus? = nil) {
+        Self.dismissMenuBarPopover(popover, keeping: settingsWindow)
+        openSettingsWindow(tab: tab, focus: focus)
+    }
+
+    /// Orders out the menu-bar popover, but never the Settings window itself.
+    static func dismissMenuBarPopover(_ popover: NSWindow?, keeping settings: NSWindow?) {
+        guard let popover, popover !== settings else { return }
+        popover.orderOut(nil)
+    }
+
+    /// The MenuBarExtra's window while it is open; `keyWindow` as the fallback.
+    static func menuBarPopoverWindow() -> NSWindow? {
+        NSApp.windows.first { $0.isVisible && String(describing: type(of: $0)).contains("MenuBarExtra") }
+            ?? NSApp.keyWindow
+    }
+
+    var settingsWindowForTesting: NSWindow? {
+        settingsWindow
+    }
+
+    var settingsTabRequestForTesting: SettingsTabRequest? {
+        settingsTabRequest
+    }
+
+    var pillContextMenuControllerForTesting: PillContextMenuController {
+        pillContextMenuController
+    }
+
+    func configurePillContextMenuForTesting() {
+        configurePillContextMenu()
+    }
+
+    /// "Change…" on the menu and popover microphone row (D2): Settings › General, scrolled to Microphone priority.
+    func openMicrophonePrioritySettings() {
+        openSettingsWindow(tab: .general, focus: .microphonePriority)
+    }
+
+    /// The name every read-only microphone row shows: what the priority list resolves to, the same as Settings'
+    /// "Next dictation". Side-effect free (it never observes devices or triggers an apply).
+    func defaultMicrophoneName() -> String? {
+        microphonePrioritySnapshot(devices: MicrophoneDeviceManager.availableInputDevices()).nextVisibleDeviceName
+    }
+
+    // MARK: - Setup wizard (F3)
+
+    /// Opens the setup wizard (Settings › General › Run setup again, the menu, or first launch).
+    func openSetupWizard() {
+        refreshRelaySetupStatusAsync()
+        setupWizard.show()
+    }
+
+    /// "Run setup…" in the menu-bar popover: close the popover first, as Open Settings… does.
+    func openSetupWizardFromMenuBar(popover: NSWindow?) {
+        Self.dismissMenuBarPopover(popover, keeping: nil)
+        openSetupWizard()
+    }
+
+    /// First launch: once the F5 listener has started, decide whether the wizard opens by itself
+    /// (SetupWizardLaunchPolicy). A Mac that has dictated before is already set up and never sees it (#211 r1).
+    /// QA and test instances that skip permission prompts never show it.
+    private func scheduleFirstRunSetupIfNeeded() {
+        guard VoiceBarDefaults.shouldPromptForPermissions() else { return }
+        let store = SetupWizardCompletionStore(defaults: defaults)
+        guard !store.isCompleted else { return }
+        let recentTranscriptionCount = voiceState.recentTranscriptionEntries.count
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            // A directory listing of the recordings archive; kept off the main thread.
+            let hasPriorUse = SetupPriorUse.detect(
+                archiveRoot: SettingsHistoryArchive.defaultRoot,
+                recentTranscriptionCount: recentTranscriptionCount
+            )
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let readiness = SetupLaunchReadiness(
+                    permissionsGranted: SetupPermissionsStep(snapshot: currentSetupPermissionSnapshot()).allGranted,
+                    listenerActive: hotkeyEnabled
+                )
+                if SetupWizardLaunchPolicy.resolve(store: store, hasPriorUse: hasPriorUse, readiness: readiness) {
+                    openSetupWizard()
+                }
+            }
+        }
+    }
+
+    /// The same preflight reads Settings shows (no prompt), plus whether the F5 listener is running.
+    private func currentSetupPermissionSnapshot() -> SetupPermissionSnapshot {
+        let hotkey = HotkeyManager.currentPermissionStatus()
+        return SetupPermissionSnapshot(
+            microphone: Self.setupMicrophoneAuthorization(AVCaptureDevice.authorizationStatus(for: .audio)),
+            accessibilityGranted: hotkey.accessibilityGranted,
+            inputMonitoringGranted: hotkey.listenEventGranted,
+            hotkeyListenerActive: hotkeyEnabled
+        )
+    }
+
+    static func setupMicrophoneAuthorization(_ status: AVAuthorizationStatus) -> SetupMicrophoneAuthorization {
+        switch status {
+        case .authorized: .granted
+        case .notDetermined: .notRequested
+        default: .denied
+        }
+    }
+
+    /// Every check and action the wizard shows is the app's existing one.
+    func makeSetupWizardDependencies() -> SetupWizardDependencies {
+        SetupWizardDependencies(
+            permissionSnapshot: { [weak self] in self?.currentSetupPermissionSnapshot() ?? .unknown },
+            onRequestMicrophone: { completion in
+                AVCaptureDevice.requestAccess(for: .audio) { _ in DispatchQueue.main.async(execute: completion) }
+            },
+            f5KeyStatus: { [weak self] in
+                SetupF5KeyStatus(
+                    listenerActive: self?.hotkeyEnabled ?? false,
+                    helperInstalled: self?.cachedRelaySetupStatus.isReady ?? false
+                )
+            },
+            onRunRelaySetup: { [weak self] completion in
+                self?.runRelaySetupAsync(completion: completion)
+                    ?? completion(SettingsRelaySetupResult(outcome: .failed(reason: "VoiceBar is not available"),
+                                                           finishedAt: Date()))
+            },
+            defaultMicrophoneName: { [weak self] in self?.defaultMicrophoneName() },
+            onChangeMicrophone: { [weak self] in self?.openMicrophonePrioritySettings() },
+            tryItObservation: { [weak self] in
+                guard let self else { return .none }
+                let activity: SetupTryItActivity = switch voiceState.mode {
+                case .recording: .recording
+                case .transcribing: .transcribing
+                default: .idle
+                }
+                return SetupTryItObservation(
+                    entry: voiceState.lastDictationCardEntry,
+                    insertion: voiceState.latestDictationInsertionStatus,
+                    activity: activity,
+                    // An empty final is mode .error, "Transcription failed", with no new entry (#210 r1).
+                    failure: voiceState.mode == .error ? voiceState.errorMessage : nil
+                )
+            }
+        )
     }
 
     static func historyFileRevealSelection(for audioPath: URL) -> [URL] {
@@ -2451,22 +2682,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             missingPermissions: missingHotkeyPermissions,
             availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
             selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
-            onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
+            prioritySnapshot: { [weak self] in
+                self?.currentMicrophonePrioritySnapshot() ?? .unavailable
+            },
+            onReorderPriority: { [weak self] uids in
+                self?.reorderMicrophonePriority(uids)
+            },
             polishDegradation: { [weak self] in self?.voiceState.polishDegradation },
             onDismissPolishDegradation: { [weak self] in
                 self?.voiceState.dismissPolishDegradation()
             },
-            anchorMode: { [weak self] in self?.currentAnchorMode() ?? .follow },
-            onSelectAnchorMode: { [weak self] in self?.selectAnchorMode($0) },
             performanceEffort: { [weak self] in self?.currentPerformanceEffort() ?? .accurate },
             performanceEffortNotice: { [weak self] in self?.currentPerformanceEffortNotice() },
             onSelectPerformanceEffort: { [weak self] in self?.selectPerformanceEffort($0) },
+            modelsStatus: { [weak self] in self?.voiceState.modelsSettingsState ?? .disconnected },
+            onRefreshModelsStatus: { [weak self] in
+                self?.voiceState.refreshModelsSettingsStatus()
+            },
+            residencyNotice: { [weak self] in self?.voiceState.residencyNotice },
+            onSelectResidency: { [weak self] target in
+                self?.voiceState.setWhisperResidency(target)
+            },
+            processingPending: { [weak self] in self?.voiceState.processingPending ?? [:] },
+            processingNotice: { [weak self] in self?.voiceState.processingNotice },
+            onToggleProcessing: { [weak self] key, value in
+                self?.voiceState.setProcessingSetting(key, value)
+                self?.refreshSettingsWindowAnchorState()
+            },
             vocabularyPreview: { [weak self] in
                 self?.currentVocabularyPreview() ?? STTVocabularyPreview(
                     updatedAt: nil,
                     promptTerms: [],
                     aliases: []
                 )
+            },
+            vocabularyRevision: { [weak self] in
+                self?.voiceState.transcriptionVocabularyRevision ?? 0
             },
             onAddVocabularyAlias: { [weak self] correct, wrong in
                 self?.voiceState.addVocabularyAlias(
@@ -2486,11 +2737,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             isHotkeyRemapActive: { [weak self] in
                 self?.cachedRelaySetupStatus.isReady ?? false
             },
+            lastMousePressUptime: { Self.lastMousePressUptime() },
+            onCheckShortcut: { [weak self] completion in
+                self?.checkShortcutAsync(completion: completion)
+                    ?? completion("Shortcut check unavailable.")
+            },
             isMicrophonePermissionGranted: { [weak self] in
                 self?.microphonePermissionGranted() ?? false
             },
             isVoiceBarHidden: { [weak self] in
                 self?.isSnoozed ?? false
+            },
+            voiceBarHiddenUntil: { [weak self] in
+                self?.snoozedUntil
             },
             onHideVoiceBar: { [weak self] in
                 self?.snoozeForOneHour()
@@ -2500,9 +2759,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             onRunRelaySetup: { [weak self] completion in
                 self?.runRelaySetupAsync(completion: completion)
-                    ?? completion("Relay setup failed: VoiceBar is not available.")
+                    ?? completion(SettingsRelaySetupResult(outcome: .failed(reason: "VoiceBar is not available"),
+                                                           finishedAt: Date()))
             },
-            historyPage: { limit in SettingsHistoryArchive.loadPage(limit: limit) },
+            lastDictationEntry: { [weak self] in
+                self?.voiceState.lastDictationCardEntry
+            },
+            lastDictationInsertionStatus: { [weak self] in
+                self?.voiceState.latestDictationInsertionStatus ?? .unverified
+            },
+            onCopyLastDictation: { [weak self] text in
+                self?.voiceState.copyTranscript(text)
+            },
+            historyPage: { limit in await SettingsArchiveIndex.shared.dictationPage(limit: limit) },
             onCopyHistoryTranscript: { [weak self] text in
                 self?.voiceState.copyTranscript(text)
             },
@@ -2528,7 +2797,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 NSWorkspace.shared.activateFileViewerSelecting(
                     Self.historyFileRevealSelection(for: audioPath)
                 )
-            }
+            },
+            footerPresentation: { [weak self] in
+                if let self {
+                    return VoiceBarFooterPresentation.resolve(state: voiceState)
+                }
+                return .resolve(
+                    isConnected: false,
+                    mode: .disconnected,
+                    captureLive: false,
+                    errorMessage: nil,
+                    remoteSTTConfigured: nil
+                )
+            },
+            onRunSetup: { [weak self] in self?.openSetupWizard() },
+            initialTab: lastSettingsTab,
+            tabRequest: settingsTabRequest,
+            onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab }
+        )
+    }
+
+    private func currentMicrophonePrioritySnapshot() -> MicrophonePrioritySnapshot {
+        let devices = MicrophoneDeviceManager.availableInputDevices()
+        refreshAvailableMicrophones(devices)
+        return microphonePrioritySnapshot(devices: devices)
+    }
+
+    private func microphonePrioritySnapshot(devices: [MicrophoneDevice]) -> MicrophonePrioritySnapshot {
+        let selectedID = microphonePriority.resolveDeviceID(
+            in: devices,
+            fallbackDeviceID: MicrophoneDeviceManager.selectedInputDeviceID()
+        )
+        let next = devices.first(where: { $0.id == selectedID })
+        return MicrophonePrioritySnapshot(
+            rows: microphonePriority.rows(for: devices),
+            nextDeviceName: next?.name,
+            nextDeviceUID: next?.uid?.trimmingCharacters(in: .whitespacesAndNewlines),
+            nextDeviceID: next?.id
+        )
+    }
+
+    private func refreshAvailableMicrophones(
+        _ devices: [MicrophoneDevice] = MicrophoneDeviceManager.availableInputDevices()
+    ) {
+        microphonePriority.observe(devices)
+        guard VoiceLayerPaths.enforcesSingletonInstance,
+              !microphonePriority.preferredUIDs.isEmpty
+        else { return }
+        microphonePriorityApply.availableDevicesDidChange(
+            devices,
+            mode: voiceState.mode,
+            captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
+        )
+    }
+
+    private func reorderMicrophonePriority(_ uids: [String]) {
+        let devices = MicrophoneDeviceManager.availableInputDevices()
+        microphonePriority.replacePreferredUIDs(uids, observing: devices)
+        microphonePriorityApply.requestApply(
+            mode: voiceState.mode,
+            captureLive: voiceState.captureLive || voiceState.isRecordingHandoffPending
         )
     }
 
@@ -2649,54 +2977,50 @@ func shouldIgnoreHotkeyEvent(
 @main
 struct VoiceBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @State private var menuMicrophoneRefresh = 0
 
     var body: some Scene {
         MenuBarExtra {
-            VStack(alignment: .leading, spacing: 6) {
-                if let degradation = appDelegate.voiceState.polishDegradation {
-                    Label(degradation.hint, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(.caption, weight: .medium))
-                        .foregroundStyle(.orange)
-                    Divider()
-                }
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(appDelegate.voiceState.isConnected ? .green : .red)
-                        .frame(width: 8, height: 8)
-                    Text(appDelegate.voiceState.isConnected ? "Connected" : "Disconnected")
-                        .font(.system(.caption, weight: .medium))
-                }
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(appDelegate.hotkeyEnabled ? .green : .orange)
-                        .frame(width: 8, height: 8)
-                    Text(
-                        VoiceBarPresentation.hotkeyPermissionHint(
-                            hotkeyEnabled: appDelegate.hotkeyEnabled,
-                            missingPermissions: appDelegate.missingHotkeyPermissions
-                        )
+            MenuBarPopoverView(
+                footer: .resolve(state: appDelegate.voiceState),
+                hotkeyHint: appDelegate.hotkeyEnabled
+                    ? "Hold F5 to dictate"
+                    : VoiceBarPresentation.hotkeyPermissionHint(
+                        hotkeyEnabled: appDelegate.hotkeyEnabled,
+                        missingPermissions: appDelegate.missingHotkeyPermissions
+                    ),
+                defaultMicrophoneName: menuDefaultMicrophoneName,
+                transcript: appDelegate.voiceState.latestReusableTranscript,
+                degradationHint: appDelegate.voiceState.polishDegradation?.hint,
+                onCopy: { appDelegate.voiceState.copyLastTranscript() },
+                onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
+                onQuit: { appDelegate.quitFromMenuBar() },
+                onRunSetup: { appDelegate.openSetupWizardFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
+                onChangeMicrophone: {
+                    appDelegate.openSettingsFromMenuBar(
+                        popover: AppDelegate.menuBarPopoverWindow(),
+                        tab: .general,
+                        focus: .microphonePriority
                     )
-                    .font(.system(.caption, weight: .medium))
                 }
-                Divider()
-                ForEach(appDelegate.quickMenuActions()) { action in
-                    Button(action.title) {
-                        action.perform()
-                    }
-                }
-            }
-            .padding(8)
+            )
             .onAppear {
                 appDelegate.voiceState.acknowledgePolishMenuSignal()
+                menuMicrophoneRefresh &+= 1
+            }
+            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+                menuMicrophoneRefresh &+= 1
             }
         } label: {
-            Label(
-                "VoiceBar",
-                systemImage: appDelegate.voiceState.polishMenuSignalPending
+            // R4 UI pass #20: VoiceOver read the SF Symbol's name ("Waveform In A Filled Circle").
+            Image(
+                systemName: appDelegate.voiceState.polishMenuSignalPending
                     ? "exclamationmark.triangle.fill"
                     : "waveform.circle.fill"
             )
+            .accessibilityLabel("VoiceBar")
         }
+        .menuBarExtraStyle(.window)
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") {
@@ -2705,5 +3029,11 @@ struct VoiceBarApp: App {
                 .keyboardShortcut(",", modifiers: .command)
             }
         }
+    }
+
+    /// Re-read on the popover's 1 s refresh, so a priority change or a plugged-in mic shows up while it is open.
+    private var menuDefaultMicrophoneName: String? {
+        _ = menuMicrophoneRefresh
+        return appDelegate.defaultMicrophoneName()
     }
 }

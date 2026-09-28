@@ -7,8 +7,7 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         for variant in VoiceBarNotchMorphVariant.allCases {
             XCTAssertEqual(
                 VoiceBarNotchMorphVariant.resolve(
-                    environment: [VoiceBarNotchMorphVariant.environmentVariable: variant.rawValue],
-                    persistedRawValue: nil
+                    environment: [VoiceBarNotchMorphVariant.environmentVariable: variant.rawValue]
                 ),
                 variant
             )
@@ -16,25 +15,14 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
 
         XCTAssertEqual(
             VoiceBarNotchMorphVariant.resolve(
-                environment: [VoiceBarNotchMorphVariant.environmentVariable: "unknown"],
-                persistedRawValue: VoiceBarNotchMorphVariant.p3SpringDelight.rawValue
+                environment: [VoiceBarNotchMorphVariant.environmentVariable: "unknown"]
             ),
             .p1Matched
         )
     }
 
-    func testPersistedSelectionIsUsedWhenEnvironmentIsAbsent() {
-        XCTAssertEqual(
-            VoiceBarNotchMorphVariant.resolve(
-                environment: [:],
-                persistedRawValue: VoiceBarNotchMorphVariant.p2NativeGlass.rawValue
-            ),
-            .p2NativeGlass
-        )
-        XCTAssertEqual(
-            VoiceBarNotchMorphVariant.resolve(environment: [:], persistedRawValue: nil),
-            .p1Matched
-        )
+    func testWithoutTheEnvironmentVariableTheVariantIsP1() {
+        XCTAssertEqual(VoiceBarNotchMorphVariant.resolve(environment: [:]), .p1Matched)
     }
 
     func testP2FallsBackToP1BeforeMacOS26WithoutChangingTheUserSelection() {
@@ -97,22 +85,36 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         XCTAssertEqual(reduced.maximumOvershoot, 0)
     }
 
-    func testSelectionModelUpdatesLiveAndPersistsTheRawValue() throws {
+    /// The Morph Prototype menu is gone (R4 UI pass #4). A saved P2/P3 choice would keep a prototype
+    /// shell with no control left to change it, so the running app ignores it and forgets it; only the
+    /// dev/capture environment variable still selects a variant.
+    func testSelectionIgnoresAndForgetsAPersistedPrototype() throws {
         let suiteName = "VoiceBarNotchMorphPrototypeTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(
+            VoiceBarNotchMorphVariant.p3SpringDelight.rawValue,
+            forKey: VoiceBarNotchMorphSelection.defaultsKey
+        )
+
+        let selection = VoiceBarNotchMorphSelection(environment: [:], defaults: defaults)
+
+        XCTAssertEqual(selection.variant, .p1Matched)
+        XCTAssertNil(defaults.object(forKey: VoiceBarNotchMorphSelection.defaultsKey))
+    }
+
+    func testSelectionStillHonoursTheDevEnvironmentVariable() throws {
+        let suiteName = "VoiceBarNotchMorphPrototypeTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
         let selection = VoiceBarNotchMorphSelection(
-            environment: [:],
+            environment: [VoiceBarNotchMorphVariant.environmentVariable: VoiceBarNotchMorphVariant.p2NativeGlass
+                .rawValue],
             defaults: defaults
         )
 
-        selection.select(.p3SpringDelight)
-
-        XCTAssertEqual(selection.variant, .p3SpringDelight)
-        XCTAssertEqual(
-            defaults.string(forKey: VoiceBarNotchMorphSelection.defaultsKey),
-            VoiceBarNotchMorphVariant.p3SpringDelight.rawValue
-        )
+        XCTAssertEqual(selection.variant, .p2NativeGlass)
     }
 
     func testPrototypeCanvasKeepsStableMaximumWidthAndStateSizedHeight() {

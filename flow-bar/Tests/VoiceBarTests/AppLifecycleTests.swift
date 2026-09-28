@@ -8,6 +8,54 @@ final class AppLifecycleTests: XCTestCase {
         var isInside = true
     }
 
+    /// A hand-driven polling clock for `RetainedReadbackDismissalCoordinator`.
+    /// `sleep` parks until `tick()` releases it, so a test decides exactly how
+    /// many delays have elapsed.
+    @MainActor
+    private final class ManualTicker {
+        private var parked: [CheckedContinuation<Void, Never>] = []
+
+        var pendingSleepCount: Int {
+            parked.count
+        }
+
+        nonisolated var sleep: RetainedReadbackDismissalCoordinator.Sleep {
+            { [self] _ in await park() }
+        }
+
+        private func park() async {
+            await withCheckedContinuation { parked.append($0) }
+        }
+
+        /// Waits for the watchdog to reach its next sleep.
+        func waitForPendingSleep(file: StaticString = #filePath, line: UInt = #line) async {
+            await settle(until: { false })
+            XCTAssertFalse(parked.isEmpty, "the watchdog never reached its sleep", file: file, line: line)
+        }
+
+        /// One elapsed delay: releases the parked sleep, then waits until the
+        /// watchdog has parked again or `done` holds (e.g. it dismissed).
+        func tick(
+            until done: () -> Bool = { false },
+            file: StaticString = #filePath,
+            line: UInt = #line
+        ) async {
+            await waitForPendingSleep(file: file, line: line)
+            let released = parked
+            parked.removeAll()
+            released.forEach { $0.resume() }
+            await settle(until: done)
+        }
+
+        /// The deadline is liveness only: every caller waits on an outcome.
+        private func settle(until done: () -> Bool) async {
+            let deadline = Date().addingTimeInterval(5)
+            while parked.isEmpty, !done(), Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+        }
+    }
+
     @MainActor
     func testPanelMousePassthroughCapturesRenderedSurfaceButNotCanvasMargins() {
         let presentation = VoiceBarPresentation.notchPresentation(
@@ -246,10 +294,21 @@ final class AppLifecycleTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let uiSourceDirectory = repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBarUI")
+        // AIDEV-NOTE: The menu-bar popover is also a legitimate home for the Quit control, and so is the
+        // right-click menu (Etan's approved spec §3 ends it with "Quit VoiceBar"); both hand off to the app's
+        // authorized `requestTermination(.menuBar)` and never terminate themselves.
+        let quitHomes = ["VoiceBarMenu.swift", "MenuBarPopoverView.swift", "PillContextMenuController.swift"]
         let uiSources = try FileManager.default.contentsOfDirectory(
             at: uiSourceDirectory,
             includingPropertiesForKeys: nil
-        ).filter { $0.pathExtension == "swift" && $0.lastPathComponent != "VoiceBarMenu.swift" }
+        ).filter {
+            $0.pathExtension == "swift" && !quitHomes.contains($0.lastPathComponent)
+        }
+        let contextMenuSource = try String(
+            contentsOf: uiSourceDirectory.appendingPathComponent("PillContextMenuController.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(contextMenuSource.contains("terminate"), "the right-click Quit calls back into the app")
         let surfaceSources = uiSources + [
             repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift"),
         ]
@@ -370,6 +429,7 @@ final class AppLifecycleTests: XCTestCase {
 
     func testUnsnoozeRestoresIdleMode() {
         let state = VoiceState()
+        state.setConnectionStatus(true)
         state.snooze()
         XCTAssertEqual(state.mode, .disconnected)
 
@@ -788,7 +848,8 @@ final class AppLifecycleTests: XCTestCase {
     func testSettingsWindowWiresHistoryAndVisibilityActions() throws {
         let source = try voiceBarAppSource()
 
-        XCTAssertTrue(source.contains("historyPage: { limit in SettingsHistoryArchive.loadPage(limit: limit) }"))
+        XCTAssertTrue(source
+            .contains("historyPage: { limit in await SettingsArchiveIndex.shared.dictationPage(limit: limit) }"))
         XCTAssertFalse(source.contains("historyGroups: { SettingsHistoryArchive.load() }"))
         XCTAssertTrue(source.contains("voiceState.copyTranscript(text)"))
         XCTAssertTrue(source.contains("voiceState.repasteTranscript(text, source: \"settings_history\")"))
@@ -800,6 +861,174 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("snoozeForOneHour()"))
         XCTAssertTrue(source.contains("onShowVoiceBar: { [weak self] in"))
         XCTAssertTrue(source.contains("unsnoozeNow()"))
+    }
+
+    func testSettingsWindowWiresLiveModelsStatusAndReconnectRefresh() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertTrue(source.contains("modelsStatus: { [weak self] in self?.voiceState.modelsSettingsState"))
+        XCTAssertTrue(source.contains("self?.voiceState.refreshModelsSettingsStatus()"))
+        XCTAssertTrue(source.contains("voiceState.onConnectionChange = { [weak self] connected in"))
+    }
+
+    @MainActor
+    func testSettingsWindowSizingMatchesCandidateRootAndRepairsSmallHost() {
+        XCTAssertEqual(SettingsWindowSizing.minimumContentSize, NSSize(width: 780, height: 620))
+        XCTAssertEqual(
+            SettingsWindowSizing.correctedContentSize(for: NSSize(width: 520, height: 620)),
+            NSSize(width: 780, height: 620)
+        )
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 540),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        SettingsWindowSizing.apply(to: window)
+
+        XCTAssertEqual(window.contentMinSize, NSSize(width: 780, height: 620))
+        XCTAssertEqual(window.contentLayoutRect.size, NSSize(width: 780, height: 620))
+    }
+
+    @MainActor
+    func testSettingsWindowSizingPreservesLargerUserSize() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 920, height: 700),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        SettingsWindowSizing.apply(to: window)
+
+        XCTAssertEqual(window.contentMinSize, NSSize(width: 780, height: 620))
+        XCTAssertEqual(window.contentLayoutRect.size, NSSize(width: 920, height: 700))
+    }
+
+    @MainActor
+    func testSettingsWindowFrameAutosaveRestoresLargerContentSizeOffscreen() {
+        let name = "VoiceBar.SettingsWindow.Test.\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(name)") }
+        let first = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 940, height: 760),
+            styleMask: [.titled, .resizable], backing: .buffered, defer: false
+        )
+        first.saveFrame(usingName: name)
+
+        let restored = NSWindow(
+            contentRect: SettingsWindowSizing.initialContentRect,
+            styleMask: [.titled, .resizable], backing: .buffered, defer: false
+        )
+        XCTAssertTrue(restored.setFrameUsingName(name))
+        SettingsWindowSizing.apply(to: restored)
+        XCTAssertGreaterThanOrEqual(restored.contentLayoutRect.width, 940)
+        XCTAssertGreaterThanOrEqual(restored.contentLayoutRect.height, 760)
+    }
+
+    /// R4 UI pass #20: VoiceOver announced the status item as the SF Symbol ("Waveform In A Filled Circle").
+    /// Checked on an isolated instance through System Events: the menu bar item now reads "VoiceBar".
+    func testStatusItemAnnouncesVoiceBarNotTheSymbolName() throws {
+        let source = try voiceBarAppSource()
+        let label = try XCTUnwrap(source.range(of: "} label: {"))
+        let end = try XCTUnwrap(source.range(
+            of: ".menuBarExtraStyle(.window)",
+            range: label.upperBound ..< source.endIndex
+        ))
+        let body = source[label.upperBound ..< end.lowerBound]
+        XCTAssertTrue(body.contains(".accessibilityLabel(\"VoiceBar\")"))
+        XCTAssertFalse(body.contains(" Label("), "a Label's title never reached the status item's AX title")
+    }
+
+    /// R4 UI pass #12: "Open Settings…" left the menu-bar popover open over Settings.
+    @MainActor
+    func testOpenSettingsFromTheMenuBarClosesThePopoverAndKeysSettings() throws {
+        let app = AppDelegate()
+        let popover = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 200, height: 100),
+                               styleMask: [.borderless], backing: .buffered, defer: false)
+        popover.isReleasedWhenClosed = false
+        popover.orderFront(nil)
+        XCTAssertTrue(popover.isVisible)
+
+        app.openSettingsFromMenuBar(popover: popover)
+        defer { app.settingsWindowForTesting?.close() }
+
+        XCTAssertFalse(popover.isVisible, "the popover must close when Settings opens")
+        let settings = try XCTUnwrap(app.settingsWindowForTesting)
+        XCTAssertTrue(settings.isVisible)
+        XCTAssertTrue(settings.canBecomeKey)
+        XCTAssertTrue(settings.collectionBehavior.contains(.moveToActiveSpace))
+    }
+
+    /// Counts `orderOut` calls, so the identity guard is observed directly (#157 review, mutation M2: the
+    /// old visibility check passed without the guard because Settings is re-fronted right after).
+    @MainActor
+    private final class OrderOutCountingWindow: NSWindow {
+        private(set) var orderOutCount = 0
+        override func orderOut(_ sender: Any?) {
+            orderOutCount += 1
+            super.orderOut(sender)
+        }
+    }
+
+    @MainActor
+    func testMenuBarDismissalOrdersOutOnlyAWindowThatIsNotSettings() {
+        func window() -> OrderOutCountingWindow {
+            OrderOutCountingWindow(contentRect: NSRect(x: -20000, y: -20000, width: 10, height: 10),
+                                   styleMask: [.borderless], backing: .buffered, defer: true)
+        }
+        let settings = window()
+        let popover = window()
+
+        AppDelegate.dismissMenuBarPopover(settings, keeping: settings)
+        XCTAssertEqual(settings.orderOutCount, 0, "the Settings window itself is never ordered out")
+
+        AppDelegate.dismissMenuBarPopover(popover, keeping: settings)
+        XCTAssertEqual(popover.orderOutCount, 1, "any other window (the popover) is")
+
+        AppDelegate.dismissMenuBarPopover(nil, keeping: settings)
+        XCTAssertEqual(settings.orderOutCount + popover.orderOutCount, 1)
+    }
+
+    /// #157 review, mutation M4: reverting "Open Settings…" to plain `openSettingsWindow()` (the reported
+    /// bug) failed no test. This pins the menu-bar popover's Settings button to the dismissing path.
+    func testMenuBarPopoverOpenSettingsGoesThroughTheDismissingPath() throws {
+        let source = try voiceBarAppSource()
+        let popover = try XCTUnwrap(source.range(of: "MenuBarPopoverView("))
+        let end = try XCTUnwrap(source.range(of: "onQuit:", range: popover.upperBound ..< source.endIndex))
+        let arguments = source[popover.upperBound ..< end.lowerBound]
+        XCTAssertTrue(
+            arguments
+                .contains(
+                    "onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) }"
+                ),
+            "Open Settings… must close the popover it was clicked in"
+        )
+    }
+
+    func testSettingsWindowAppliesSizingContractOnInitialOpenAndReopen() throws {
+        let source = try voiceBarAppSource()
+        let openStart = try XCTUnwrap(source.range(of: "func openSettingsWindow("))
+        let nextFunction = try XCTUnwrap(
+            source.range(
+                of: "static func historyFileRevealSelection",
+                range: openStart.upperBound ..< source.endIndex
+            )
+        )
+        let openSettingsWindow = source[openStart.lowerBound ..< nextFunction.lowerBound]
+        let existingWindowBranch = try XCTUnwrap(
+            openSettingsWindow.range(of: "if let settingsWindow")
+        )
+        let hostingController = try XCTUnwrap(
+            openSettingsWindow.range(of: "let hosting = NSHostingController")
+        )
+        let existingWindowPath = openSettingsWindow[
+            existingWindowBranch.lowerBound ..< hostingController.lowerBound
+        ]
+
+        XCTAssertTrue(existingWindowPath.contains("SettingsWindowSizing.apply(to: settingsWindow)"))
+        XCTAssertTrue(openSettingsWindow.contains("contentRect: SettingsWindowSizing.initialContentRect"))
+        XCTAssertTrue(openSettingsWindow.contains("SettingsWindowSizing.apply(to: window)"))
+        XCTAssertTrue(openSettingsWindow.contains("setFrameAutosaveName(SettingsWindowSizing.autosaveName)"))
     }
 
     func testVoiceModeChangesRefreshOpenSettingsActionEnablement() throws {
@@ -823,22 +1052,17 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(AppDelegate.historyFileRevealSelection(for: audioURL), [audioURL])
     }
 
-    func testDictionaryAddWindowIsStandaloneAndClosable() throws {
-        let source = try voiceBarAppSource()
-
-        XCTAssertFalse(
-            source.contains("panel.beginSheet(sheet)"),
-            "Add-to-Dictionary must not attach a large sheet to the tiny nonactivating pill panel"
-        )
-        XCTAssertTrue(source.contains("sheet.styleMask = [.titled, .closable]"))
-        XCTAssertTrue(source.contains("sheet.makeKeyAndOrderFront(nil)"))
-    }
-
+    // AIDEV-NOTE: these drive the watchdog's polling clock by hand. They used
+    // wall-clock sleeps against 20-100 ms delays and failed under load: 7/10
+    // runs at background QoS, and on the first macOS CI run. Each `tick()` is
+    // exactly one elapsed `delay`.
     @MainActor
     func testReadbackWatchdogDismissesOutsideTheVisibleNotchSurface() async {
+        let ticker = ManualTicker()
         var dismissCount = 0
         let coordinator = RetainedReadbackDismissalCoordinator(
-            delay: .milliseconds(20)
+            delay: .milliseconds(20),
+            sleep: ticker.sleep
         )
 
         coordinator.synchronize(
@@ -847,16 +1071,18 @@ final class AppLifecycleTests: XCTestCase {
         ) {
             dismissCount += 1
         }
-        try? await Task.sleep(for: .milliseconds(40))
+        await ticker.tick(until: { dismissCount == 1 })
 
         XCTAssertEqual(dismissCount, 1)
     }
 
     @MainActor
     func testRepeatedUnattendedReadbackSynchronizationDoesNotRestartGraceWindow() async {
+        let ticker = ManualTicker()
         var dismissCount = 0
         let coordinator = RetainedReadbackDismissalCoordinator(
-            delay: .milliseconds(100)
+            delay: .milliseconds(100),
+            sleep: ticker.sleep
         )
         let synchronize = {
             coordinator.synchronize(
@@ -868,9 +1094,10 @@ final class AppLifecycleTests: XCTestCase {
         }
 
         synchronize()
-        try? await Task.sleep(for: .milliseconds(70))
+        await ticker.waitForPendingSleep()
         synchronize()
-        try? await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(ticker.pendingSleepCount, 1, "a repeated broadcast must not start a second window")
+        await ticker.tick(until: { dismissCount == 1 })
 
         XCTAssertEqual(
             dismissCount,
@@ -881,10 +1108,12 @@ final class AppLifecycleTests: XCTestCase {
 
     @MainActor
     func testReadbackWatchdogPersistsInsideThenDismissesAfterPointerLeaves() async {
+        let ticker = ManualTicker()
         let pointer = PointerProbe()
         var dismissCount = 0
         let coordinator = RetainedReadbackDismissalCoordinator(
-            delay: .milliseconds(20)
+            delay: .milliseconds(20),
+            sleep: ticker.sleep
         )
 
         coordinator.synchronize(
@@ -893,20 +1122,25 @@ final class AppLifecycleTests: XCTestCase {
         ) {
             dismissCount += 1
         }
-        try? await Task.sleep(for: .milliseconds(35))
+        await ticker.tick()
+        await ticker.tick()
         XCTAssertEqual(dismissCount, 0)
 
         pointer.isInside = false
-        try? await Task.sleep(for: .milliseconds(60))
+        await ticker.tick()
+        XCTAssertEqual(dismissCount, 0, "the first tick after exit is the fresh grace window")
+        await ticker.tick(until: { dismissCount == 1 })
         XCTAssertEqual(dismissCount, 1)
     }
 
     @MainActor
     func testReadbackWatchdogStartsAFreshGraceWindowAfterObservingPointerExit() async {
+        let ticker = ManualTicker()
         let pointer = PointerProbe()
         var dismissCount = 0
         let coordinator = RetainedReadbackDismissalCoordinator(
-            delay: .milliseconds(80)
+            delay: .milliseconds(80),
+            sleep: ticker.sleep
         )
 
         coordinator.synchronize(
@@ -915,17 +1149,17 @@ final class AppLifecycleTests: XCTestCase {
         ) {
             dismissCount += 1
         }
-        try? await Task.sleep(for: .milliseconds(60))
+        await ticker.waitForPendingSleep()
         pointer.isInside = false
 
-        try? await Task.sleep(for: .milliseconds(45))
+        await ticker.tick()
         XCTAssertEqual(
             dismissCount,
             0,
             "A read-back that was hovered must not inherit the current polling deadline after exit"
         )
 
-        try? await Task.sleep(for: .milliseconds(75))
+        await ticker.tick(until: { dismissCount == 1 })
         XCTAssertEqual(dismissCount, 1)
     }
 
@@ -1242,6 +1476,20 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("contentView?.displayIfNeeded()"))
         XCTAssertTrue(source.contains("VoiceBarNotchPlaybackEdgeCommitPolicy.glassRemovalDelay"))
         XCTAssertTrue(source.contains("playbackEdgeLayoutTask?.cancel()"))
+    }
+
+    /// #161 review: `onOpenHistory` defaulted to a no-op, so a caller could silently drop "Open History…".
+    func testNotchOpenHistoryIsRequiredAndOpensSettingsOnHistory() throws {
+        let barView = try String(
+            contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+                .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI/BarView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(barView.contains("onOpenHistory: @escaping () -> Void,"))
+        XCTAssertFalse(barView.contains("onOpenHistory: @escaping () -> Void = {}"))
+        XCTAssertTrue(try voiceBarAppSource().contains(
+            "onOpenHistory: { [weak self] in self?.openSettingsWindow(tab: .history) }"
+        ))
     }
 
     private func voiceBarAppSource() throws -> String {

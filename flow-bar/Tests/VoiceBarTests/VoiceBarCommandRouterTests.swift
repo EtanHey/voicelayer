@@ -45,6 +45,25 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertNotNil(commands.first?["id"] as? String)
     }
 
+    func testSettingsURLOpensSettingsOnTheNamedTab() throws {
+        var opened: [SettingsTab?] = []
+        let router = VoiceBarCommandRouter(voiceState: VoiceState(), openSettings: { opened.append($0) })
+
+        for (url, tab) in [
+            ("voicebar://settings", nil),
+            ("voicebar://settings/", nil),
+            ("voicebar://settings/general", SettingsTab.general),
+            ("voicebar://settings/models", .models),
+            ("voicebar://settings/dictionary", .dictionary),
+            ("voicebar://settings/History", .history),
+            ("voicebar://settings/unknown-tab", nil),
+        ] as [(String, SettingsTab?)] {
+            opened.removeAll()
+            try router.handle(url: XCTUnwrap(URL(string: url)))
+            XCTAssertEqual(opened, [tab], url)
+        }
+    }
+
     func testShowURLRunsShowVoiceBarHandler() throws {
         let state = VoiceState()
         var showCount = 0
@@ -450,11 +469,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
         gesture.handleKeyDown()
         gesture.handleKeyUp()
-        RunLoop.main.run(
-            until: Date().addingTimeInterval(
-                Double(GestureStateMachine.doubleTapWindowMs + 100) / 1000
-            )
-        )
+        runMainLoop(until: { phases.last == .idle && singleTapCount > 0 })
 
         XCTAssertEqual(gesture.state, .idle)
         XCTAssertEqual(phases, [.pressing, .awaitingSecondTap, .idle])
@@ -622,7 +637,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         app.configureHotkeyCallbacksForTesting()
 
         app.handleLocalControlCommand(.startRecording)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        runMainLoop(until: { spyRouter.holdStartCount == 1 })
         app.handleLocalControlCommand(.stopRecording)
 
         XCTAssertEqual(spyRouter.holdStartCount, 1)
@@ -642,7 +657,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         app.configureHotkeyCallbacksForTesting()
 
         app.handleLocalControlCommand(.startRecording)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        runMainLoop(until: { diagnostics.contains { $0.event == "hotkey_hold_start" } })
 
         let keyDown = try XCTUnwrap(diagnostics.first { $0.event == "hotkey_key_down" })
         XCTAssertNotNil(try Int(XCTUnwrap(keyDown.details["hotkeyEventUptimeMs"])))
@@ -671,5 +686,16 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(spyRouter.holdEndCount, 0)
         XCTAssertEqual(spyRouter.doubleTapCount, 1)
         XCTAssertTrue(spyRouter.handledURLs.isEmpty)
+    }
+
+    /// Pumps the main run loop until `condition` holds. The hold timer is 160 ms;
+    /// a fixed 200 ms window lost that race on the macOS CI runner, so wait on
+    /// the transition itself. The deadline is liveness only (2 s also ran out
+    /// under a loaded background-QoS run).
+    private func runMainLoop(until condition: () -> Bool, timeout: TimeInterval = 5) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
     }
 }

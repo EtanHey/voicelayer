@@ -1,0 +1,212 @@
+@testable import VoiceBarUI
+import XCTest
+
+/// P1: real Processing toggles. The daemon persists them; env-set flags are shown, locked.
+final class ProcessingTogglesTests: XCTestCase {
+    private static func controls(
+        polish: (String, Any, String) = ("default", NSNull(), "on"),
+        outro: (String, Any, Bool) = ("default", NSNull(), true),
+        chunks: (String, Any, Bool) = ("default", NSNull(), false),
+        boundaries: (String, Any, Bool) = ("settings", NSNull(), true)
+    ) -> [String: Any] {
+        [
+            "model_polish": ["source": polish.0, "raw": polish.1, "effective": polish.2],
+            "outro_gate": ["source": outro.0, "raw": outro.1, "effective": outro.2],
+            "smart_chunks": ["source": chunks.0, "raw": chunks.1, "effective": chunks.2],
+            "smart_boundaries": ["source": boundaries.0, "raw": boundaries.1, "effective": boundaries.2],
+        ]
+    }
+
+    private static func health(_ controls: [String: Any]) -> [String: Any] {
+        [
+            "type": "health",
+            "recording_state": "idle",
+            "model_status": [
+                "configured_model": ["name": "large-v3-turbo", "size_bytes": 10, "installed": true],
+                "residency": "loaded", "active_model": "large-v3-turbo",
+                "configured_effort": "accurate", "active_effort": "accurate",
+            ] as [String: Any],
+            "polish_controls": controls,
+        ]
+    }
+
+    func testParsesTheSettingsSource() throws {
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
+        XCTAssertEqual(state.smartBoundaries.source, .settings)
+        XCTAssertTrue(state.smartBoundaries.effective)
+        // A settings source must not carry a raw env value.
+        XCTAssertNil(PolishControlsState(healthEvent: Self.health(Self.controls(boundaries: ("settings", "1", true)))))
+    }
+
+    func testRowsSayWhatEachDoesAndLockEnvSetFlags() throws {
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls(
+            outro: ("environment", "0", false)
+        ))))
+        let rows = ModelsSettingsView.processingRows(for: state)
+
+        XCTAssertEqual(rows.map(\.key), [.modelPolish, .outroGate, .smartChunks, .smartBoundaries])
+        XCTAssertEqual(rows.map(\.isOn), [true, false, false, true])
+        XCTAssertEqual(rows.map(\.experimental), [false, false, true, true])
+        XCTAssertTrue(rows.allSatisfy { !$0.line.isEmpty })
+        XCTAssertNil(rows[0].lockedReason)
+        XCTAssertEqual(rows[1].lockedReason, "Set by VOICELAYER_STT_OUTRO_GATE")
+        XCTAssertNil(rows[3].lockedReason, "a flag from the settings file is the user's to change")
+    }
+
+    /// C22 (QA recording 2026-09-25): Smart chunks / Smart boundaries gave no sign of what they do. A flag set by
+    /// its env var replaced its explanation with "Set by …", so the explanation vanished exactly there; and the
+    /// lines didn't say when each one runs, so on an ordinary short dictation there was nothing to notice.
+    func testALockedRowKeepsItsExplanationAndAddsWhyItIsLocked() throws {
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls(
+            outro: ("environment", "0", false), boundaries: ("environment", "1", true)
+        ))))
+        let rows = ModelsSettingsView.processingRows(for: state)
+        for row in rows {
+            XCTAssertEqual(row.captionLines.first, row.line, "\(row.key): the explanation is always first")
+        }
+        XCTAssertEqual(rows[1].captionLines, [rows[1].line, "Set by VOICELAYER_STT_OUTRO_GATE"])
+        XCTAssertEqual(rows[3].captionLines, [rows[3].line, "Set by VOICELAYER_STT_SMART_BOUNDARIES"])
+        XCTAssertEqual(rows[2].captionLines, [rows[2].line], "an unlocked row shows only its explanation")
+    }
+
+    /// D194-r1 (Medium): both features run only on the resident Whisper server path; the whisper-cli and Wispr
+    /// Flow backends return no segments and have no smart chunk path, so the copy must say so, never "every
+    /// dictation". (Low): Rule B demotes a stop only when the clause is unfinished or runs straight on.
+    func testSmartRowsSayWhenTheyRunWhatChangesAndWhichBackendRunsThem() throws {
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
+        let rows = ModelsSettingsView.processingRows(for: state)
+        let serverOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
+        XCTAssertEqual(
+            rows[2].line,
+            "Recordings of 90 s or more split at your pauses instead of every 30 s; shorter ones are never split. "
+                + serverOnly
+        )
+        XCTAssertEqual(
+            rows[3].line,
+            "Turns a full stop into a comma when the sentence isn't finished or runs straight on without a pause. "
+                + "Never adds a stop or drops a word. " + serverOnly
+        )
+        XCTAssertFalse(rows.contains { $0.line.contains("Every dictation") })
+    }
+
+    func testTheRowRendersEveryCaptionLine() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(source.contains("Text(row.lockedReason ?? row.line)"))
+        XCTAssertTrue(source.contains("ForEach(row.captionLines, id: \\.self)"))
+    }
+
+    func testPolishPreviewModeIsShownButNotAToggleState() throws {
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls(
+            polish: ("environment", "shadow", "shadow")
+        ))))
+        let polish = try XCTUnwrap(ModelsSettingsView.processingRows(for: state).first)
+        XCTAssertEqual(polish.lockedReason, "Preview only (set by QA_VOICE_STT_POLISH)")
+    }
+
+    func testToggleSendsTheCommandAndTheAckUpdatesTheRow() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.health(Self.controls()))
+
+        state.setProcessingSetting(.outroGate, false)
+        let command = try XCTUnwrap(commands.last)
+        XCTAssertEqual(command["cmd"] as? String, "set_processing_setting")
+        XCTAssertEqual(command["key"] as? String, "outro_gate")
+        XCTAssertEqual(command["value"] as? Bool, false)
+        XCTAssertEqual(state.processingPending[.outroGate], false)
+
+        state.handleEvent([
+            "type": "ack", "command": "set_processing_setting", "outcome": "accept",
+            "id": command["id"] as Any,
+            "polish_controls": Self.controls(outro: ("settings", NSNull(), false)),
+        ])
+        XCTAssertNil(state.processingPending[.outroGate])
+        XCTAssertEqual(state.modelsSettingsState.polishControls?.outroGate.source, .settings)
+        XCTAssertEqual(state.modelsSettingsState.polishControls?.outroGate.effective, false)
+        XCTAssertNil(state.processingNotice)
+    }
+
+    func testRejectShowsWhyAndDisconnectDropsThePendingToggle() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.health(Self.controls()))
+
+        state.setProcessingSetting(.smartChunks, true)
+        state.handleEvent([
+            "type": "ack", "command": "set_processing_setting", "outcome": "reject",
+            "id": commands.last?["id"] as Any, "reason": "busy",
+        ])
+        XCTAssertNil(state.processingPending[.smartChunks])
+        XCTAssertEqual(state.processingNotice, "Couldn't change Smart chunks - busy")
+
+        state.setProcessingSetting(.smartChunks, true)
+        XCTAssertEqual(state.processingPending[.smartChunks], true)
+        state.setConnectionStatus(false)
+        XCTAssertTrue(state.processingPending.isEmpty)
+    }
+
+    func testBusyShowsTheSameReasonInTheProcessingCard() throws {
+        var busy = Self.health(Self.controls())
+        busy["queue_depth"] = 1
+        let state = ModelsSettingsState(healthEvent: busy)
+        let reason = try XCTUnwrap(ModelsSettingsView.effortDisabledReason(for: state))
+        XCTAssertEqual(ModelsSettingsView.processingBusyReason(for: state), reason)
+        XCTAssertNil(ModelsSettingsView
+            .processingBusyReason(for: ModelsSettingsState(healthEvent: Self.health(Self.controls()))))
+        XCTAssertNil(ModelsSettingsView.processingBusyReason(for: .disconnected),
+                     "unavailable already shows its own Processing placeholder")
+    }
+
+    func testEverySettledToggleAsksForARebuild() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        var settled = 0
+        state.sendCommand = { commands.append($0) }
+        state.onProcessingSettled = { settled += 1 }
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.health(Self.controls()))
+
+        state.setProcessingSetting(.outroGate, false)
+        state.handleEvent([
+            "type": "ack", "command": "set_processing_setting", "outcome": "accept",
+            "id": commands.last?["id"] as Any,
+            "polish_controls": Self.controls(outro: ("settings", NSNull(), false)),
+        ])
+        XCTAssertEqual(settled, 1, "accept")
+
+        state.setProcessingSetting(.smartChunks, true)
+        state.handleEvent([
+            "type": "ack", "command": "set_processing_setting", "outcome": "reject",
+            "id": commands.last?["id"] as Any, "reason": "busy",
+        ])
+        XCTAssertEqual(settled, 2, "reject")
+        XCTAssertNil(state.processingPending[.smartChunks])
+    }
+
+    @MainActor
+    func testATimedOutToggleAsksForARebuild() async throws {
+        let state = VoiceState()
+        var settled = 0
+        state.sendCommand = { _ in }
+        state.onProcessingSettled = { settled += 1 }
+        state.processingAckTimeout = .milliseconds(30)
+        state.setConnectionStatus(true)
+        state.handleEvent(Self.health(Self.controls()))
+
+        state.setProcessingSetting(.outroGate, false)
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertNil(state.processingPending[.outroGate])
+        XCTAssertEqual(settled, 1)
+        XCTAssertNotNil(state.processingNotice)
+    }
+}

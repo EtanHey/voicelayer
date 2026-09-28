@@ -47,6 +47,7 @@ enum SettingsArchiveScanner {
         var hasMore = false
 
         for dayURL in sortedDayURLs {
+            guard !Task.isCancelled else { break }
             let dayKey = dayURL.lastPathComponent
             guard let dayDate = parseDayKey(dayKey),
                   let entryURLs = try? fileManager.contentsOfDirectory(
@@ -65,6 +66,7 @@ enum SettingsArchiveScanner {
             var entries: [Entry] = []
             var reachedLimit = false
             for entryURL in candidates {
+                guard !Task.isCancelled else { break }
                 guard let entry = loadEntry(entryURL, dayKey, dayDate) else { continue }
                 if loadedEntryCount == boundedLimit {
                     // One entry past the limit materialized, so older entries genuinely exist.
@@ -80,6 +82,9 @@ enum SettingsArchiveScanner {
                 days.append(SettingsArchiveDayScan(dayKey: dayKey, date: dayDate, entries: entries))
             }
             if reachedLimit {
+                break
+            }
+            if Task.isCancelled {
                 break
             }
         }
@@ -146,6 +151,22 @@ struct SettingsArchiveMetadata: Decodable {
     let durationMs: Int?
     /// The slice of that audio handed to speech-to-text.
     let transcribedDurationMs: Int?
+    /// ≈ speech time with pauses left out, measured after the paste (F1).
+    let spokenDurationMs: Int?
+    /// The dictation's post-capture processing time (F1).
+    let processingDurationMs: Int?
+    let inputDeviceName: String?
+    let provenance: RecordingModelProvenance?
+
+    struct RecordingModelProvenance: Decodable {
+        let whisperModelPath: String?
+        let performanceEffort: String?
+
+        enum CodingKeys: String, CodingKey {
+            case whisperModelPath = "whisper_model_path"
+            case performanceEffort = "performance_effort"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -153,6 +174,10 @@ struct SettingsArchiveMetadata: Decodable {
         case source
         case durationMs = "duration_ms"
         case transcribedDurationMs = "transcribed_duration_ms"
+        case spokenDurationMs = "spoken_duration_ms"
+        case processingDurationMs = "processing_duration_ms"
+        case inputDeviceName = "input_device_name"
+        case provenance
     }
 
     /// True when this archive is an ask exchange rather than an F5 dictation.

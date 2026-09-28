@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Every job only checks out and runs local tooling.
+permissions:
+  contents: read
+
 jobs:
   docs-local-guard:
     name: No tracked docs.local
@@ -31,3 +35,32 @@ jobs:
 
       - name: Type check
         run: bun run typecheck
+
+  swift:
+    name: Swift (VoiceBar)
+    # AIDEV-NOTE: main's Swift suite was red from #75 until #124 and nothing
+    # noticed, because no job ran it. VoiceBarUI uses macOS 26 SDK API
+    # (glassEffect), so this needs an Xcode 26+ image. Public repo: macOS
+    # runner minutes are free.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build VoiceBar
+        run: swift build --package-path flow-bar --product VoiceBar
+
+      # Etan ruling 2: the QA probes are dev/CI-only. The release configuration must compile
+      # them out; this is the same check build-app.sh and release-voicebar.sh run.
+      - name: Release build carries no QA probes
+        run: |
+          swift build -c release --package-path flow-bar --product VoiceBar
+          bash scripts/check-voicebar-qa-free.sh "$(swift build -c release --package-path flow-bar --show-bin-path)/VoiceBar"
+
+      - name: Swift tests
+        run: swift test --package-path flow-bar

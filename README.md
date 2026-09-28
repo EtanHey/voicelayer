@@ -10,6 +10,8 @@
 **Voice I/O for AI coding assistants.** Press F5, speak to Claude Code, get on-device
 transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
 
+On a mouse with side buttons, button 5 (forward) works like F5 and button 4 (back) presses Return.
+
 ```
   You ──🎤──> whisper.cpp ──> Claude Code ──> edge-tts ──🔊──> You
          STT (local)           MCP tools         TTS (free)
@@ -89,8 +91,10 @@ floating over your work:
 
 - **Liquid-Glass wings** flank the camera housing, with a graceful fallback on older macOS.
 - **Teleprompter** with word-by-word karaoke highlighting as your agent speaks.
-- **Idle-hover to summon** — collapsed it draws no pixels; hovering reveals recent transcripts,
-  the dictionary, and replay.
+- **Idle-hover to summon** — collapsed it draws no pixels; hovering reveals the mic, History and
+  Settings.
+- **Settings** — General · Models · Dictionary · History. Open with ⌘, or right-click → Settings…,
+  or from a script: `open voicebar://settings/models`.
 - **Morph animations** between idle ↔ recording ↔ speaking, Reduce-Motion aware.
 
 ## STT backends

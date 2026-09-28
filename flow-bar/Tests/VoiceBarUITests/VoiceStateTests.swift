@@ -2,6 +2,44 @@
 import XCTest
 
 final class VoiceStateTests: XCTestCase {
+    func testQueuedSpeaksKeepCurrentTeleprompterThenAdvanceItsWords() {
+        let state = VoiceState()
+        let firstWords: [[String: Any]] = [
+            ["offset_ms": 0, "duration_ms": 200, "text": "First"],
+            ["offset_ms": 200, "duration_ms": 200, "text": "sentence"],
+        ]
+        let secondWords: [[String: Any]] = [
+            ["offset_ms": 0, "duration_ms": 180, "text": "Second"],
+            ["offset_ms": 180, "duration_ms": 240, "text": "sentence"],
+        ]
+        func item(_ text: String, current: Bool) -> [String: Any] {
+            ["text": text, "voice": "fixture", "priority": "normal", "is_current": current, "progress": 0.0]
+        }
+
+        state.handleEvent(["type": "queue", "depth": 1, "items": [item("First sentence", current: false)]])
+        state.handleEvent(["type": "state", "state": "speaking", "text": "First sentence"])
+        state.handleEvent(["type": "subtitle", "words": firstWords])
+        state.handleEvent(["type": "queue", "depth": 1, "items": [item("First sentence", current: true)]])
+        state.handleEvent([
+            "type": "queue", "depth": 2,
+            "items": [item("First sentence", current: true), item("Second sentence", current: false)],
+        ])
+
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(state.teleprompterText, "First sentence")
+        XCTAssertEqual(state.teleprompterWordBoundaries.map(\.text), ["First", "sentence"])
+        XCTAssertEqual(state.queuedSpeakCount, 1)
+
+        state.handleEvent(["type": "queue", "depth": 1, "items": [item("Second sentence", current: false)]])
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Second sentence"])
+        state.handleEvent(["type": "subtitle", "words": secondWords])
+        state.handleEvent(["type": "queue", "depth": 1, "items": [item("Second sentence", current: true)]])
+
+        XCTAssertEqual(state.teleprompterText, "Second sentence")
+        XCTAssertEqual(state.teleprompterWordBoundaries.map(\.text), ["Second", "sentence"])
+        XCTAssertEqual(state.queuedSpeakCount, 0)
+    }
+
     func testRepeatedSpeakingReceiptAdvancesPlaybackEpochForInPlaceReplay() {
         let state = VoiceState()
 
@@ -722,9 +760,9 @@ final class VoiceStateTests: XCTestCase {
             recentTranscriptionEntriesLoader: { [] },
             recentTranscriptionEntriesSaver: { _ in }
         )
-        var historyArchiveChangeCount = 0
-        state.onHistoryArchiveChange = {
-            historyArchiveChangeCount += 1
+        var changedPaths: [String?] = []
+        state.onHistoryArchiveChange = { path in
+            changedPaths.append(path)
         }
 
         state.handleEvent([
@@ -733,7 +771,9 @@ final class VoiceStateTests: XCTestCase {
             "recording_path": audioPath,
         ])
 
-        XCTAssertEqual(historyArchiveChangeCount, 1)
+        // R4/H1-a: the path lets the app drop exactly that entry from the History index (a re-transcription
+        // rewrites an old entry in place).
+        XCTAssertEqual(changedPaths, [audioPath])
     }
 
     func testHistoryRetranscribeUpdatesOlderEntryInPlaceWithoutReordering() {
@@ -825,6 +865,165 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(pastedTexts, [])
     }
 
+    /// QA 2.2.25 C9: re-transcribing an archived recording that is not in the recent list put it at the top as
+    /// "Just now", pushed the eighth row out, and made it the "last transcript" that Paste / Copy Last Transcript
+    /// reuse. A re-transcription rewrites an old recording; it is not a new dictation.
+    func testHistoryRetranscribeOfARecordingOutsideTheRecentListLeavesTheListAlone() async throws {
+        try await assertArchivedResultLeavesTheRecentListAlone { _ in }
+    }
+
+    /// #186 review: another client's error clears the History request before its result arrives. The result is
+    /// still an old recording.
+    func testArchivedResultStaysOutOfTheRecentListAfterAnInterveningError() async throws {
+        try await assertArchivedResultLeavesTheRecentListAlone { state in
+            state.handleEvent(["type": "error", "message": "Synthetic error from another client"])
+        }
+    }
+
+    /// #186 review: the transcription timeout clears the History request; the daemon may still deliver late.
+    func testArchivedResultStaysOutOfTheRecentListAfterATimeoutAndALateResult() async throws {
+        try await assertArchivedResultLeavesTheRecentListAlone { state in
+            state.barInitiatedTranscriptionTimeout = .milliseconds(20)
+            state.transcriptionTimeout = .milliseconds(20)
+            state.handleEvent(["type": "state", "state": "transcribing"])
+            try? await Task.sleep(for: .milliseconds(80))
+            XCTAssertFalse(state.isHistoryRetranscriptionPending, "the timeout cleared the request")
+        }
+    }
+
+    /// #186 review round 2 (Medium): a same-path retry that the daemon rejects as busy undoes only its own marker;
+    /// the first job's late result is still archived.
+    func testARejectedSamePathRetryKeepsTheFirstJobsArchivedOrigin() async throws {
+        try await assertArchivedResultLeavesTheRecentListAlone { state in
+            state.handleEvent(["type": "error", "message": "Synthetic error from another client"])
+            var retry: [String: Any]?
+            state.sendCommand = { retry = $0 }
+            state.retranscribeHistoryEntry(recordingPath: Self.archivedFixturePath)
+            guard let id = retry?["id"] as? String else { return XCTFail("the retry was sent") }
+            state.handleEvent([
+                "type": "ack", "command": "retranscribe_recording", "outcome": "reject", "id": id,
+                "reason": "Synthetic busy",
+            ])
+        }
+    }
+
+    /// #186 review round 2 (High): after another client's error clears the History request, a new dictation
+    /// starts; the old archived result must never paste into the new dictation's target, and the new dictation's
+    /// own result still pastes.
+    func testALateArchivedResultNeverPastesIntoANewDictation() throws {
+        try assertLateArchivedResultNeverPastesIntoANewDictation(recordingStateFirst: false)
+    }
+
+    /// The same, when the new dictation's "recording" state arrives before the late archived result.
+    func testALateArchivedResultNeverPastesIntoANewDictationAlreadyRecording() throws {
+        try assertLateArchivedResultNeverPastesIntoANewDictation(recordingStateFirst: true)
+    }
+
+    private func assertLateArchivedResultNeverPastesIntoANewDictation(recordingStateFirst: Bool) throws {
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+        state.minimumTranscribingDisplayDuration = 0
+        state.pasteConfirmationDelay = 0
+        var sentCommand: [String: Any]?
+        var pastedTexts: [String] = []
+        state.sendCommand = { sentCommand = $0 }
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.retranscribeHistoryEntry(recordingPath: Self.archivedFixturePath)
+        let id = try XCTUnwrap(sentCommand?["id"] as? String)
+        state.handleEvent(["type": "ack", "command": "retranscribe_recording", "outcome": "accept", "id": id])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent(["type": "error", "message": "Synthetic error from another client"])
+
+        state.record()
+        if recordingStateFirst { state.handleEvent(["type": "state", "state": "recording", "bar_owned": true]) }
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Synthetic re-transcribed archive text",
+            "recording_path": Self.archivedFixturePath,
+        ])
+        XCTAssertEqual(pastedTexts, [], "the archived result never pastes")
+        XCTAssertFalse(state.recentTranscriptionEntries.contains { $0.recordingPath == Self.archivedFixturePath })
+
+        let newPath = "/tmp/fixture/recordings/2026-01-02T00-00-00/audio.wav"
+        if !recordingStateFirst { state.handleEvent(["type": "state", "state": "recording", "bar_owned": true]) }
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Synthetic new dictation",
+            "recording_path": newPath,
+        ])
+        XCTAssertEqual(pastedTexts, ["Synthetic new dictation"], "the new dictation still pastes, once")
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.recordingPath, newPath)
+        XCTAssertEqual(state.latestReusableTranscript, "Synthetic new dictation")
+    }
+
+    private static let archivedFixturePath = "/tmp/fixture/recordings/2025-12-31T00-00-00/audio.wav"
+
+    private func assertArchivedResultLeavesTheRecentListAlone(
+        before result: (VoiceState) async -> Void,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        let recentPaths = (1 ... 8).map { "/tmp/fixture/recordings/2026-01-01T00-0\($0)-00/audio.wav" }
+        let archivedPath = Self.archivedFixturePath
+        let dictatedAt = Date(timeIntervalSince1970: 1_767_225_600) // 2026-01-01T00:00:00Z
+        let seeded = recentPaths.enumerated().map { index, path in
+            RecentTranscriptionEntry(
+                text: "Synthetic dictation \(index + 1)",
+                recordingPath: path,
+                createdAt: dictatedAt.addingTimeInterval(TimeInterval(-60 * index))
+            )
+        }
+        var savedEntries: [[RecentTranscriptionEntry]] = []
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { seeded },
+            recentTranscriptionEntriesSaver: { savedEntries.append($0) }
+        )
+        state.minimumTranscribingDisplayDuration = 0
+        var sentCommand: [String: Any]?
+        var pastedTexts: [String] = []
+        var changedPaths: [String?] = []
+        state.sendCommand = { sentCommand = $0 }
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+        state.onHistoryArchiveChange = { changedPaths.append($0) }
+
+        state.retranscribeHistoryEntry(recordingPath: archivedPath)
+        let id = try XCTUnwrap(sentCommand?["id"] as? String, file: file, line: line)
+        state.handleEvent(["type": "ack", "command": "retranscribe_recording", "outcome": "accept", "id": id])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        await result(state)
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Synthetic re-transcribed archive text",
+            "recording_path": archivedPath,
+        ])
+
+        XCTAssertNil(state.activeHistoryRetranscriptionPath, file: file, line: line)
+        XCTAssertEqual(state.recentTranscriptionEntries, seeded, "no 'Just now' row, nothing evicted, nothing moved",
+                       file: file, line: line)
+        XCTAssertEqual(state.recentTranscriptions, seeded.map(\.text), file: file, line: line)
+        XCTAssertEqual(state.latestReusableTranscript, "Synthetic dictation 1",
+                       "Paste Last still means the last dictation", file: file, line: line)
+        XCTAssertTrue(savedEntries.allSatisfy { $0 == seeded }, "nothing new persisted to the recent list",
+                      file: file, line: line)
+        XCTAssertEqual(changedPaths, [archivedPath], "Settings History still refreshes the rewritten entry",
+                       file: file, line: line)
+        XCTAssertEqual(pastedTexts, [], file: file, line: line)
+    }
+
     func testHistoryRetranscribeAckStillClearsAfterReplayOverwritesPendingIntent() throws {
         let firstAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-first/audio.wav"
         let secondAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-second/audio.wav"
@@ -899,7 +1098,7 @@ final class VoiceStateTests: XCTestCase {
             "type": "state",
             "state": "recording",
         ])
-        try? await Task.sleep(for: .milliseconds(90))
+        await waitForDeferredFinal(in: state, text: "Etan confirmed the corrected transcript")
 
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
             "Etan confirmed the corrected transcript",
@@ -955,7 +1154,7 @@ final class VoiceStateTests: XCTestCase {
         ])
 
         state.record()
-        try? await Task.sleep(for: .milliseconds(90))
+        await waitForDeferredFinal(in: state, text: "Etan confirmed the corrected transcript")
 
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
             "Etan confirmed the corrected transcript",
@@ -1311,11 +1510,17 @@ final class VoiceStateTests: XCTestCase {
         }
 
         state.dismissTeleprompter()
-        try? await Task.sleep(for: .milliseconds(30))
+        do {
+            let settled = await settle { relayoutCount >= 1 }
+            XCTAssertTrue(settled)
+        }
         XCTAssertEqual(relayoutCount, 1)
 
         state.showTeleprompter()
-        try? await Task.sleep(for: .milliseconds(30))
+        do {
+            let settled = await settle { relayoutCount >= 2 }
+            XCTAssertTrue(settled)
+        }
         XCTAssertEqual(relayoutCount, 2)
     }
 
@@ -1586,5 +1791,17 @@ final class VoiceStateTests: XCTestCase {
         ])
 
         XCTAssertFalse(state.isRecordingHoldEngaged)
+    }
+
+    /// Waits for a deferred final (held back by `minimumTranscribingDisplayDuration`)
+    /// to land in history. A fixed 90 ms sleep against the 50 ms display floor lost
+    /// under load (8/10 runs at background QoS). If the final was dropped, this
+    /// times out and the caller's assertions fail. The deadline is liveness only.
+    @MainActor
+    private func waitForDeferredFinal(in state: VoiceState, text: String) async {
+        let deadline = Date().addingTimeInterval(2)
+        while state.recentTranscriptionEntries.map(\.text) != [text], Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
     }
 }

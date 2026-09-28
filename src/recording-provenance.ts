@@ -22,6 +22,7 @@
  * it spawns `which` and `<candidate> --version` with no timeout. Every other
  * field is an in-process lookup.
  */
+import { processingEnv } from "./processing-settings";
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { hostname } from "os";
 
@@ -634,7 +635,7 @@ export function buildRecordingProvenance(
       whisper_server_pid: null,
       whisper_server_started_at: null,
       performance_effort: null,
-      polish_mode: (probe.polishMode ?? (() => getSTTPolishMode()))(),
+      polish_mode: (probe.polishMode ?? (() => getSTTPolishMode(processingEnv())))(),
       polish_reachable: polishReachabilityForStatus(polishStatus),
       polish_status: polishStatus,
       language_mode: input.languageMode,
@@ -678,7 +679,7 @@ export function buildRecordingProvenance(
     performance_effort: (
       probe.performanceEffort ?? (() => defaultPerformanceEffort(kind))
     )(),
-    polish_mode: (probe.polishMode ?? (() => getSTTPolishMode()))(),
+    polish_mode: (probe.polishMode ?? (() => getSTTPolishMode(processingEnv())))(),
     polish_reachable: polishReachabilityForStatus(polishStatus),
     polish_status: polishStatus,
     language_mode: input.languageMode,
@@ -736,12 +737,12 @@ function defaultWhisperServerProcess(kind: WhisperBackendKind): {
  */
 function defaultPerformanceEffort(
   kind: WhisperBackendKind,
-): WhisperPerformanceEffort {
+): WhisperPerformanceEffort | null {
   // The CLI reads the effort setting per invocation, so the configured value is
   // the truth for it; only a resident server has a launched-with effort.
   if (kind === "cli") return getWhisperPerformanceEffort();
-  return (
-    whisperServerLaunchRecord()?.performanceEffort ??
-    getWhisperPerformanceEffort()
-  );
+  const record = whisperServerLaunchRecord();
+  return record
+    ? record.performanceEffort
+    : getWhisperPerformanceEffort();
 }

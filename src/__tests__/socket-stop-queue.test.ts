@@ -20,6 +20,7 @@ import * as socketClient from "../socket-client";
 import * as sessionBooking from "../session-booking";
 import * as daemonHealth from "../daemon-health";
 import * as input from "../input";
+import * as modelStatus from "../model-status";
 import { handleSocketCommand } from "../socket-handlers";
 
 describe("socket stop/cancel → stopPlayback()", () => {
@@ -95,6 +96,7 @@ describe("socket health command", () => {
   let getQueueDepthSpy: ReturnType<typeof spyOn>;
   let getRecordingStateSpy: ReturnType<typeof spyOn>;
   let getUptimeSecondsSpy: ReturnType<typeof spyOn>;
+  let modelStatusSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     getQueueDepthSpy = spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(3);
@@ -104,20 +106,67 @@ describe("socket health command", () => {
     getUptimeSecondsSpy = spyOn(daemonHealth, "getUptimeSeconds").mockReturnValue(
       42,
     );
+    modelStatusSpy = spyOn(modelStatus, "readWhisperModelStatus").mockResolvedValue({
+      configured_model: { name: "large-v3-turbo", size_bytes: 10, installed: true },
+      residency: "loaded",
+      active_model: null,
+      configured_effort: "accurate",
+      active_effort: null,
+    });
   });
 
   afterEach(() => {
     getQueueDepthSpy.mockRestore();
     getRecordingStateSpy.mockRestore();
     getUptimeSecondsSpy.mockRestore();
+    modelStatusSpy.mockRestore();
   });
 
-  it("returns daemon health snapshot with uptime, queue depth, and recording state", () => {
-    const response = handleSocketCommand({ cmd: "health" });
+  it("returns daemon health snapshot with model status", async () => {
+    const response = await handleSocketCommand({ cmd: "health" });
     expect(response).toEqual({
       type: "health",
       uptime_seconds: 42,
       queue_depth: 3,
+      recording_state: "recording",
+      remote_stt_configured: expect.any(Boolean),
+      model_status: {
+        configured_model: { name: "large-v3-turbo", size_bytes: 10, installed: true },
+        residency: "loaded",
+        active_model: null,
+        configured_effort: "accurate",
+        active_effort: null,
+      },
+      polish_controls: {
+        model_polish: { source: "default", raw: null, effective: "on" },
+        outro_gate: { source: "default", raw: null, effective: true },
+        smart_chunks: { source: "default", raw: null, effective: false },
+        smart_boundaries: { source: "default", raw: null, effective: false },
+      },
+    });
+  });
+
+  it("re-reads busy state after the asynchronous model probe", async () => {
+    let releaseProbe = () => {};
+    modelStatusSpy.mockImplementation(() => new Promise((resolve) => {
+      releaseProbe = () => resolve({
+        configured_model: { name: null, size_bytes: null, installed: false },
+        residency: "unknown",
+        active_model: null,
+        configured_effort: "accurate",
+        active_effort: null,
+      });
+    }));
+    getQueueDepthSpy.mockReturnValue(0);
+    getRecordingStateSpy.mockReturnValue("idle");
+
+    const pending = handleSocketCommand({ cmd: "health" });
+    getQueueDepthSpy.mockReturnValue(2);
+    getRecordingStateSpy.mockReturnValue("recording");
+    releaseProbe();
+
+    await expect(pending).resolves.toMatchObject({
+      queue_depth: 2,
       recording_state: "recording",
     });
   });

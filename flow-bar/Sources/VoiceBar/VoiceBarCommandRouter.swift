@@ -5,15 +5,18 @@ class VoiceBarCommandRouter: BarCommandRouting {
     private let voiceState: VoiceState
     private let resetHotkeyState: () -> Void
     private let showVoiceBar: () -> Void
+    private let openSettings: (SettingsTab?) -> Void
 
     init(
         voiceState: VoiceState,
         resetHotkeyState: @escaping () -> Void = {},
-        showVoiceBar: @escaping () -> Void = {}
+        showVoiceBar: @escaping () -> Void = {},
+        openSettings: @escaping (SettingsTab?) -> Void = { _ in }
     ) {
         self.voiceState = voiceState
         self.resetHotkeyState = resetHotkeyState
         self.showVoiceBar = showVoiceBar
+        self.openSettings = openSettings
     }
 
     func handle(url: URL) {
@@ -36,6 +39,10 @@ class VoiceBarCommandRouter: BarCommandRouting {
             handleCancel()
         case "show":
             handleShowVoiceBar()
+        case "settings":
+            // voicebar://settings opens Settings; voicebar://settings/<tab> opens that tab. An unknown
+            // tab still opens Settings rather than doing nothing.
+            openSettings(url.pathComponents.dropFirst().first.flatMap(SettingsTab.init(urlComponent:)))
         default:
             NSLog("[VoiceBar] Unknown URL command: %@", command)
         }

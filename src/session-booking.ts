@@ -13,6 +13,15 @@ import { LOCK_FILE, STOP_FILE, CANCEL_FILE, safeWriteFileSync } from "./paths";
 
 /** Maximum age for a lock before it's considered orphaned (5 minutes). */
 export const ORPHAN_TIMEOUT_MS = 5 * 60 * 1000;
+let voiceMaintenanceActive = false;
+let releaseMaintenanceForCapture: (() => void) | null = null;
+
+export const EXTERNAL_VOICE_SESSION_REASON = "Another app is using the voice session";
+
+/** Capture has priority over a Settings unload, including its temporary booking. */
+export function yieldVoiceMaintenanceToCapture(): void {
+  releaseMaintenanceForCapture?.();
+}
 
 export interface SessionLock {
   pid: number;
@@ -111,6 +120,9 @@ export function bookVoiceSession(sessionId?: string): {
   error?: string;
   lock?: SessionLock;
 } {
+  if (voiceMaintenanceActive) {
+    return { success: false, error: "whisper unload in progress" };
+  }
   // Clean stale locks first
   cleanStaleLock();
 
@@ -157,6 +169,7 @@ export function bookVoiceSession(sessionId?: string): {
  * Release the voice session lock. Only releases if we own it.
  */
 export function releaseVoiceSession(): void {
+  if (voiceMaintenanceActive) return;
   const lock = readLock();
   if (lock && lock.pid === process.pid) {
     try {
@@ -165,6 +178,26 @@ export function releaseVoiceSession(): void {
   }
   // Also clean stop signal
   clearStopSignal();
+}
+
+/** Reserve maintenance without mistaking our session-long booking for active work. */
+export function reserveVoiceMaintenance(isBusy: () => boolean): (() => void) | null {
+  if (voiceMaintenanceActive || isBusy()) return null;
+  const booking = isVoiceBooked();
+  if (booking.booked && !booking.ownedByUs) return null;
+  const createdLock = !booking.booked;
+  if (createdLock && !bookVoiceSession(`whisper-unload-${process.pid}`).success) return null;
+  voiceMaintenanceActive = true;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    voiceMaintenanceActive = false;
+    if (releaseMaintenanceForCapture === release) releaseMaintenanceForCapture = null;
+    if (createdLock) releaseVoiceSession();
+  };
+  releaseMaintenanceForCapture = release;
+  return release;
 }
 
 /**

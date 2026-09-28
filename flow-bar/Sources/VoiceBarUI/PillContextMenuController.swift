@@ -5,45 +5,78 @@ import Foundation
 public struct MicrophoneDevice: Equatable {
     public var id: String
     public var name: String
+    public var uid: String?
+    public var isVirtualOrAggregateTransport: Bool?
+
+    public init(id: String, name: String, uid: String? = nil, isVirtualOrAggregateTransport: Bool? = nil) {
+        self.id = id
+        self.name = name
+        self.uid = uid
+        self.isVirtualOrAggregateTransport = isVirtualOrAggregateTransport
+    }
 }
 
-public struct MicrophoneDeviceOption: Equatable {
-    public var id: String
-    public var title: String
-    public var isSelected: Bool
+/// AIDEV-NOTE: The ONE rule for which input devices a user may pick (R4 UI pass #2: the menus used to list
+/// VoiceBar's own `CADefaultDeviceAggregate-<pid>-0` and the Teams/Zoom loopbacks while Settings hid them).
+/// Since D2 (2026-09-25) Settings' priority list is the only picker; the menu and popover show its default
+/// read-only, with `hiddenDeviceLabel` when that default is a hidden device.
+public extension MicrophoneDevice {
+    /// CoreAudio's transport type decides when it is known; the device identity is only the fallback. (That
+    /// fallback's "aggregate" substring would also hide a user-built aggregate, but only when the transport
+    /// read fails, and then an aggregate is the safer guess.)
+    static func isVirtualOrAggregate(uid: String?, name: String, transport: Bool?) -> Bool {
+        if let transport { return transport }
+        let identity = "\(uid ?? "") \(name)".lowercased()
+        return [
+            "cadefaultdeviceaggregate-", "aggregate", "virtual", "blackhole", "loopback",
+            "microsoft teams audio", "msteamsaudio", "zoomaudiodevice",
+        ].contains { identity.contains($0) }
+    }
+
+    var isVirtualOrAggregate: Bool {
+        Self.isVirtualOrAggregate(uid: uid, name: name, transport: isVirtualOrAggregateTransport)
+    }
+
+    /// The one label for a hidden device in use, shared by the popover, the right-click menu and Settings.
+    static func hiddenDeviceLabel(_ name: String) -> String {
+        "\(name) (hidden device)"
+    }
 }
 
 public final class PillContextMenuController: NSObject {
     public var transcriptProvider: () -> String = { "" }
-    public var recentTranscriptionsProvider: () -> [String] = { [] }
-    public var transcriptionVocabularyTermsProvider: () -> [String] = { [] }
-    public var transcriptionVocabularyAliasesProvider: () -> [STTVocabularyAliasPreview] = { [] }
-    public var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
-    public var selectedDeviceIDProvider: () -> String? = { nil }
-    public var anchorModeProvider: () -> VoiceBarAnchorMode = { .follow }
-    public var morphPrototypeProvider: () -> VoiceBarNotchMorphVariant = { .p1Matched }
+    public var recentTranscriptionEntriesProvider: () -> [RecentTranscriptionEntry] = { [] }
+    public var now: () -> Date = { Date() }
+    /// The microphone-priority default (the name Settings shows as "Next dictation").
+    public var defaultMicrophoneNameProvider: () -> String? = { nil }
 
     public var onOpenSettings: () -> Void = {}
     public var onSnooze: () -> Void = {}
     public var onUnsnooze: () -> Void = {}
     public var isSnoozedProvider: () -> Bool = { false }
-    public var onSelectDevice: (String) -> Void = { _ in }
-    public var onTranscribeLatestRecording: () -> Void = {}
-    public var onAddSelectionToDictionary: () -> Void = {}
+    /// Opens Settings › General › Microphone priority. There is no direct device pick here (D2).
+    public var onChangeMicrophone: () -> Void = {}
+    public var onQuit: () -> Void = {}
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
+    public var canRetranscribeLatestProvider: () -> Bool = { false }
+    public var onRetranscribeLatest: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
-    public var onSelectAnchorMode: (VoiceBarAnchorMode) -> Void = { _ in }
-    public var onSelectMorphPrototype: (VoiceBarNotchMorphVariant) -> Void = { _ in }
 
+    /// Etan's approved spec §3 (p03-design-spec-approval/spec.md), item for item: Settings… · Hide for 1 hour ·
+    /// — · Recent Transcriptions › · Paste/Copy Last Transcript · Re-transcribe latest · — · Microphone › · — · Quit
+    /// VoiceBar.
     public func makeMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.autoenablesItems = false
 
         let settingsItem = NSMenuItem(
-            title: "Settings",
+            title: "Settings…",
             action: #selector(handleOpenSettings),
             keyEquivalent: ""
         )
+        settingsItem.keyEquivalentModifierMask = .command
+        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         settingsItem.target = self
         menu.addItem(settingsItem)
 
@@ -65,243 +98,117 @@ public final class PillContextMenuController: NSObject {
             menu.addItem(snoozeItem)
         }
 
-        let historyItem = NSMenuItem(title: "Recent Transcripts", action: nil, keyEquivalent: "")
+        menu.addItem(.separator())
+
+        let historyItem = NSMenuItem(title: "Recent Transcriptions", action: nil, keyEquivalent: "")
         historyItem.submenu = makeRecentTranscriptsSubmenu()
         menu.addItem(historyItem)
 
+        let hasTranscript = Self.isPasteEnabled(transcript: transcriptProvider())
         let pasteItem = NSMenuItem(
-            title: "Paste last transcript",
+            title: "Paste Last Transcript",
             action: #selector(handlePasteLastTranscript),
             keyEquivalent: ""
         )
         pasteItem.target = self
-        pasteItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
+        pasteItem.isEnabled = hasTranscript
         menu.addItem(pasteItem)
 
         let copyItem = NSMenuItem(
-            title: "Copy last transcript",
+            title: "Copy Last Transcript",
             action: #selector(handleCopyLastTranscript),
             keyEquivalent: ""
         )
         copyItem.target = self
-        copyItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
+        copyItem.isEnabled = hasTranscript
         menu.addItem(copyItem)
 
-        let toolsItem = NSMenuItem(title: "Transcription Tools", action: nil, keyEquivalent: "")
-        toolsItem.submenu = makeTranscriptionToolsSubmenu()
-        menu.addItem(toolsItem)
-
-        let preferencesItem = NSMenuItem(title: "Preferences", action: nil, keyEquivalent: "")
-        preferencesItem.submenu = makePreferencesSubmenu()
-        menu.addItem(preferencesItem)
-
-        return menu
-    }
-
-    public func makeTranscriptionToolsSubmenu() -> NSMenu {
-        let menu = NSMenu()
-
-        let recoverItem = NSMenuItem(
-            title: "Transcribe latest recording",
-            action: #selector(handleTranscribeLatestRecording),
+        let retranscribeItem = NSMenuItem(
+            title: "Re-transcribe latest",
+            action: #selector(handleRetranscribeLatest),
             keyEquivalent: ""
         )
-        recoverItem.target = self
-        menu.addItem(recoverItem)
+        retranscribeItem.target = self
+        retranscribeItem.isEnabled = canRetranscribeLatestProvider()
+        menu.addItem(retranscribeItem)
 
-        let addDictionaryItem = NSMenuItem(
-            title: "Add to Dictionary…",
-            action: #selector(handleAddSelectionToDictionary),
-            keyEquivalent: ""
-        )
-        addDictionaryItem.target = self
-        menu.addItem(addDictionaryItem)
-
-        let vocabularyItem = NSMenuItem(title: "Transcription Vocabulary", action: nil, keyEquivalent: "")
-        vocabularyItem.submenu = makeTranscriptionVocabularySubmenu()
-        menu.addItem(vocabularyItem)
-
-        return menu
-    }
-
-    public func makePreferencesSubmenu() -> NSMenu {
-        let menu = NSMenu()
-
-        let anchorItem = NSMenuItem(title: "Anchor", action: nil, keyEquivalent: "")
-        anchorItem.submenu = makeAnchorSubmenu()
-        menu.addItem(anchorItem)
+        menu.addItem(.separator())
 
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
+        if #available(macOS 14.4, *) {
+            microphoneItem.subtitle = defaultMicrophoneNameProvider()
+        }
         menu.addItem(microphoneItem)
 
-        let morphItem = NSMenuItem(title: "Morph Prototype", action: nil, keyEquivalent: "")
-        morphItem.submenu = makeMorphPrototypeSubmenu()
-        menu.addItem(morphItem)
+        menu.addItem(.separator())
 
-        return menu
-    }
+        let quitItem = NSMenuItem(title: "Quit VoiceBar", action: #selector(handleQuit), keyEquivalent: "")
+        quitItem.target = self
+        menu.addItem(quitItem)
 
-    public func makeAnchorSubmenu() -> NSMenu {
-        let menu = NSMenu()
-        let selectedMode = anchorModeProvider()
-        for mode in VoiceBarAnchorMode.anchorMenuModes {
-            let item = NSMenuItem(
-                title: mode.anchorMenuTitle,
-                action: #selector(handleSelectAnchorMode(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = mode.rawValue
-            item.state = mode == selectedMode ? .on : .off
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    public func makeMorphPrototypeSubmenu() -> NSMenu {
-        let menu = NSMenu()
-        let selectedVariant = morphPrototypeProvider()
-        for variant in VoiceBarNotchMorphVariant.allCases {
-            let item = NSMenuItem(
-                title: variant.menuTitle,
-                action: #selector(handleSelectMorphPrototype(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = variant.rawValue
-            item.state = variant == selectedVariant ? .on : .off
-            menu.addItem(item)
-        }
         return menu
     }
 
     public func makeRecentTranscriptsSubmenu() -> NSMenu {
         let menu = NSMenu()
-        let transcripts = recentTranscriptionsProvider()
+        let entries = recentTranscriptionEntriesProvider()
 
-        guard !transcripts.isEmpty else {
+        guard !entries.isEmpty else {
             let empty = NSMenuItem(title: "No recent transcripts", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
             return menu
         }
 
-        for (index, transcript) in transcripts.enumerated() {
+        let now = now()
+        for entry in entries {
             let item = NSMenuItem(
-                title: Self.recentTranscriptMenuTitle(for: transcript, isLatest: index == 0),
+                title: Self.recentTranscriptMenuTitle(
+                    for: entry.text,
+                    time: VoiceBarRelativeTime.label(entry.createdAt, now: now)
+                ),
                 action: #selector(handlePasteRecentTranscript(_:)),
                 keyEquivalent: ""
             )
             item.target = self
-            item.representedObject = transcript
+            item.representedObject = entry.text
             menu.addItem(item)
         }
 
         return menu
     }
 
-    public func makeTranscriptionVocabularySubmenu() -> NSMenu {
-        let menu = NSMenu()
-        let terms = transcriptionVocabularyTermsProvider()
-        let aliases = transcriptionVocabularyAliasesProvider()
-
-        guard !terms.isEmpty || !aliases.isEmpty else {
-            let empty = NSMenuItem(title: "Vocabulary not loaded yet", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-            return menu
-        }
-
-        if !terms.isEmpty {
-            let termsItem = NSMenuItem(title: "Terms", action: nil, keyEquivalent: "")
-            termsItem.submenu = makeTranscriptionVocabularyTermsSubmenu(terms)
-            menu.addItem(termsItem)
-        }
-
-        if !aliases.isEmpty {
-            let aliasesItem = NSMenuItem(title: "Corrections", action: nil, keyEquivalent: "")
-            aliasesItem.submenu = makeTranscriptionVocabularyAliasesSubmenu(aliases)
-            menu.addItem(aliasesItem)
-        }
-
-        return menu
-    }
-
-    private func makeTranscriptionVocabularyTermsSubmenu(_ terms: [String]) -> NSMenu {
-        let menu = NSMenu()
-        for term in terms {
-            let item = NSMenuItem(title: term, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    private func makeTranscriptionVocabularyAliasesSubmenu(
-        _ aliases: [STTVocabularyAliasPreview]
-    ) -> NSMenu {
-        let menu = NSMenu()
-        for alias in aliases {
-            let item = NSMenuItem(
-                title: "\(alias.from) → \(alias.to)",
-                action: nil,
-                keyEquivalent: ""
-            )
-            item.isEnabled = false
-            menu.addItem(item)
-        }
-        return menu
-    }
-
+    /// Read-only (D2): the priority default, then "Change…". Picking a device here used to write the macOS default
+    /// directly, and the priority list then put its own top device back.
     public func makeMicrophoneSubmenu() -> NSMenu {
         let menu = NSMenu()
-        let selectedID = selectedDeviceIDProvider()
-        let options = Self.deviceOptions(
-            devices: availableDevicesProvider(),
-            selectedID: selectedID
+        let current = NSMenuItem(
+            title: MicrophoneDefaultPresentation.title(defaultMicrophoneNameProvider()),
+            action: nil,
+            keyEquivalent: ""
         )
-
-        if options.isEmpty {
-            let empty = NSMenuItem(title: "No input devices found", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-            return menu
-        }
-
-        for option in options {
-            let item = NSMenuItem(
-                title: option.title,
-                action: #selector(handleSelectDevice(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.state = option.isSelected ? .on : .off
-            item.representedObject = option.id
-            menu.addItem(item)
-        }
-
+        current.isEnabled = false
+        menu.addItem(current)
+        menu.addItem(.separator())
+        let change = NSMenuItem(
+            title: MicrophoneDefaultPresentation.changeTitle,
+            action: #selector(handleChangeMicrophone),
+            keyEquivalent: ""
+        )
+        change.target = self
+        change.toolTip = MicrophoneDefaultPresentation.changeAccessibilityLabel
+        change.setAccessibilityLabel(MicrophoneDefaultPresentation.changeAccessibilityLabel)
+        menu.addItem(change)
         return menu
-    }
-
-    public static func deviceOptions(
-        devices: [MicrophoneDevice],
-        selectedID: String?
-    ) -> [MicrophoneDeviceOption] {
-        devices.map {
-            MicrophoneDeviceOption(
-                id: $0.id,
-                title: $0.name,
-                isSelected: $0.id == selectedID
-            )
-        }
     }
 
     public static func isPasteEnabled(transcript: String) -> Bool {
         !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    public static func recentTranscriptMenuTitle(for transcript: String, isLatest: Bool) -> String {
+    /// Spec §3: time + the first words; no "Latest —".
+    public static func recentTranscriptMenuTitle(for transcript: String, time: String?) -> String {
         let flattened = transcript
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
@@ -312,7 +219,7 @@ public final class PillContextMenuController: NSObject {
         let preview = trimmed.count > previewLimit
             ? String(trimmed.prefix(previewLimit - 1)) + "…"
             : trimmed
-        return isLatest ? "Latest — \(preview)" : preview
+        return time.map { "\($0) · \(preview)" } ?? preview
     }
 
     @objc private func handleOpenSettings() {
@@ -331,6 +238,11 @@ public final class PillContextMenuController: NSObject {
         onPasteLastTranscript()
     }
 
+    @objc private func handleRetranscribeLatest() {
+        guard canRetranscribeLatestProvider() else { return }
+        onRetranscribeLatest()
+    }
+
     @objc private func handleCopyLastTranscript() {
         onCopyLastTranscript()
     }
@@ -340,31 +252,12 @@ public final class PillContextMenuController: NSObject {
         onPasteTranscript(transcript)
     }
 
-    @objc private func handleSelectDevice(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        onSelectDevice(id)
+    @objc private func handleChangeMicrophone() {
+        onChangeMicrophone()
     }
 
-    @objc private func handleTranscribeLatestRecording() {
-        onTranscribeLatestRecording()
-    }
-
-    @objc private func handleSelectAnchorMode(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let mode = VoiceBarAnchorMode(rawValue: rawValue)
-        else { return }
-        onSelectAnchorMode(mode)
-    }
-
-    @objc private func handleSelectMorphPrototype(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let variant = VoiceBarNotchMorphVariant(rawValue: rawValue)
-        else { return }
-        onSelectMorphPrototype(variant)
-    }
-
-    @objc private func handleAddSelectionToDictionary() {
-        onAddSelectionToDictionary()
+    @objc private func handleQuit() {
+        onQuit()
     }
 }
 
@@ -402,9 +295,25 @@ public enum MicrophoneDeviceManager {
             guard isInputDevice(deviceID) else { return nil }
             return MicrophoneDevice(
                 id: String(deviceID),
-                name: deviceName(for: deviceID) ?? "Unknown Microphone"
+                name: deviceName(for: deviceID) ?? "Unknown Microphone",
+                uid: deviceUID(for: deviceID),
+                isVirtualOrAggregateTransport: isVirtualOrAggregateTransport(for: deviceID)
             )
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private static func isVirtualOrAggregateTransport(for deviceID: AudioDeviceID) -> Bool? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var transportType: UInt32 = 0
+        var dataSize = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &transportType) == noErr
+        else { return nil }
+        return transportType == kAudioDeviceTransportTypeAggregate ||
+            transportType == kAudioDeviceTransportTypeVirtual
     }
 
     public static func selectedInputDeviceID() -> String? {
@@ -460,8 +369,19 @@ public enum MicrophoneDeviceManager {
     }
 
     private static func deviceName(for deviceID: AudioDeviceID) -> String? {
+        stringProperty(kAudioObjectPropertyName, for: deviceID)
+    }
+
+    private static func deviceUID(for deviceID: AudioDeviceID) -> String? {
+        stringProperty(kAudioDevicePropertyDeviceUID, for: deviceID)
+    }
+
+    private static func stringProperty(
+        _ selector: AudioObjectPropertySelector,
+        for deviceID: AudioDeviceID
+    ) -> String? {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioObjectPropertyName,
+            mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
@@ -471,4 +391,19 @@ public enum MicrophoneDeviceManager {
         guard status == noErr, let name else { return nil }
         return name.takeUnretainedValue() as String
     }
+}
+
+/// Etan's D2 (2026-09-25): every surface shows the microphone-priority default read-only; "Change…" leads to
+/// Settings › Microphone priority, the one place the default is chosen.
+public enum MicrophoneDefaultPresentation {
+    public static func title(_ name: String?) -> String {
+        "Default: \(name ?? "Unavailable")"
+    }
+
+    public static func accessibilityLabel(_ name: String?) -> String {
+        "Default microphone: \(name ?? "unavailable")"
+    }
+
+    public static let changeTitle = "Change…"
+    public static let changeAccessibilityLabel = "Change default microphone in Settings"
 }

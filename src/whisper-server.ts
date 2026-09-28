@@ -31,6 +31,9 @@ import {
   getVoiceBarSocketPath,
   isDefaultVoiceBarSocketPath,
 } from "./paths";
+import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
+import type { UnloadResult } from "./whisper-lifecycle-gate";
+import { reserveVoiceMaintenance, isVoiceBooked, EXTERNAL_VOICE_SESSION_REASON } from "./session-booking";
 
 /** Default port for the whisper-server sidecar. */
 const DEFAULT_PORT = 8178;
@@ -40,6 +43,9 @@ const HEALTH_TIMEOUT = 2000;
 
 /** Max time to wait for server startup in ms. */
 const STARTUP_TIMEOUT = 30000;
+
+/** A final health probe may finish after the launch deadline; ps rounds to seconds. */
+const MAX_VERIFIED_LAUNCH_WINDOW_MS = STARTUP_TIMEOUT + HEALTH_TIMEOUT + 1_000;
 
 /** Max time to wait for `whisper-server --help` capability probing. */
 const HELP_PROBE_TIMEOUT = 2000;
@@ -160,15 +166,18 @@ interface WhisperServerTestHooks {
   findModel?: () => string | null;
   readHelpText?: (binary: string) => WhisperServerHelpProbeResult;
   spawn?: WhisperServerSpawn;
-  isServerHealthy?: (port: number) => Promise<boolean>;
+  isServerHealthy?: (port: number) => Promise<boolean | null>;
   findExternalWhisperServerPids?: (port: number) => number[];
   findPortListenerPids?: (port: number) => number[];
   killExternalPid?: (pid: number, signal: NodeJS.Signals) => void;
   isPidAlive?: (pid: number) => boolean;
+  processStartTimeMs?: (pid: number) => number | null;
   sleep?: (ms: number) => Promise<void>;
   startupTimeoutMs?: number;
   inferenceTimeoutMs?: (wavData: Uint8Array) => number;
   residentLiveStack?: () => boolean;
+  reserveVoiceMaintenance?: () => (() => void) | null;
+  postUnloadListeners?: (port: number) => number[] | null;
 }
 
 let testHooks: WhisperServerTestHooks = {};
@@ -237,7 +246,7 @@ export interface WhisperServerLaunchRecord {
   binary: string;
   modelPath: string;
   args: string[];
-  performanceEffort: WhisperPerformanceEffort;
+  performanceEffort: WhisperPerformanceEffort | null;
   accelerationMode: WhisperAccelerationMode;
   /** PID of the resident server, so a server log line ties to a recording. */
   pid: number;
@@ -256,9 +265,46 @@ export interface WhisperServerLaunchRecord {
 }
 
 let lastLaunchRecord: WhisperServerLaunchRecord | null = null;
+const modelStateListeners = new Set<() => void>();
+
+export function onWhisperModelStateChange(listener: () => void): () => void {
+  modelStateListeners.add(listener);
+  return () => modelStateListeners.delete(listener);
+}
+
+function notifyWhisperModelStateChange(): void {
+  for (const listener of modelStateListeners) listener();
+}
 
 export function whisperServerLaunchRecord(): WhisperServerLaunchRecord | null {
   return lastLaunchRecord;
+}
+
+/**
+ * Return launch provenance only while the recorded process is still the live
+ * listener on `port`. Health proves that some server answered; it does not
+ * prove that the historical launch record belongs to that server.
+ *
+ * Unlike launch ownership during startup, an empty listener probe is not
+ * accepted here: missing identity evidence must withhold display attribution.
+ */
+export function verifiedWhisperServerLaunchRecord(
+  port: number = DEFAULT_PORT,
+): WhisperServerLaunchRecord | null {
+  const record = lastLaunchRecord;
+  if (!record || !isPidAlive(record.pid)) return null;
+  const listeners = findPortListenerPids(port);
+  if (listeners.length === 0 || !listeners.includes(record.pid)) return null;
+  const processStartedAtMs = processStartTimeMs(record.pid);
+  const recordedAtMs = Date.parse(record.startedAt);
+  if (
+    processStartedAtMs === null ||
+    !Number.isFinite(processStartedAtMs) ||
+    !Number.isFinite(recordedAtMs) ||
+    processStartedAtMs > recordedAtMs ||
+    recordedAtMs - processStartedAtMs > MAX_VERIFIED_LAUNCH_WINDOW_MS
+  ) return null;
+  return record;
 }
 
 export function __clearWhisperServerLaunchRecordForTests(): void {
@@ -488,9 +534,10 @@ export function readWhisperServerHelpText(
 }
 
 /** Check if the server is healthy. */
-export async function isServerHealthy(
+export async function probeWhisperServerHealth(
   port: number = DEFAULT_PORT,
-): Promise<boolean> {
+): Promise<boolean | null> {
+  if (testHooks.isServerHealthy) return testHooks.isServerHealthy(port);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT);
   try {
@@ -498,17 +545,22 @@ export async function isServerHealthy(
       signal: controller.signal,
     });
     if (!resp.ok) return false;
-    const body = await resp.json();
-    return body?.status === "ok";
+    const body: unknown = await resp.json();
+    if (typeof body !== "object" || body === null || !("status" in body)) return null;
+    return (body as { status?: unknown }).status === "ok" ? true : null;
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
+export async function isServerHealthy(port: number = DEFAULT_PORT): Promise<boolean> {
+  return (await probeWhisperServerHealth(port)) === true;
+}
+
 async function checkServerHealthy(port: number): Promise<boolean> {
-  if (testHooks.isServerHealthy) return testHooks.isServerHealthy(port);
+  if (testHooks.isServerHealthy) return (await testHooks.isServerHealthy(port)) === true;
   return isServerHealthy(port);
 }
 
@@ -569,6 +621,22 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
+function processStartTimeMs(pid: number): number | null {
+  if (testHooks.processStartTimeMs) return testHooks.processStartTimeMs(pid);
+  try {
+    const result = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: PORT_OWNER_PROBE_TIMEOUT,
+    });
+    if (result.exitCode !== 0) return null;
+    const startedAt = Date.parse(result.stdout.toString().trim());
+    return Number.isFinite(startedAt) ? startedAt : null;
+  } catch {
+    return null;
+  }
+}
+
 function killExternalPid(pid: number, signal: NodeJS.Signals): void {
   if (testHooks.killExternalPid) {
     testHooks.killExternalPid(pid, signal);
@@ -624,6 +692,23 @@ function findPortListenerPids(port: number): number[] {
     return testHooks.findPortListenerPids(port);
   }
   return portOwnerPids(port, PORT_OWNER_PROBE_TIMEOUT);
+}
+
+/** Null means the listener probe failed; only a confirmed empty port is unloaded. */
+export function probeWhisperServerListeners(port: number): number[] | null {
+  if (testHooks.postUnloadListeners) return testHooks.postUnloadListeners(port);
+  try {
+    const result = Bun.spawnSync(
+      ["lsof", "-nP", `-tiTCP:${port}`, "-sTCP:LISTEN"],
+      { stdout: "pipe", stderr: "pipe", timeout: PORT_OWNER_PROBE_TIMEOUT },
+    );
+    const pids = result.stdout.toString().split(/\s+/)
+      .map((raw) => Number.parseInt(raw, 10))
+      .filter((pid) => Number.isFinite(pid) && pid > 0);
+    if (result.exitCode === 0) return pids;
+    if (result.exitCode === 1 && result.stderr.toString().trim() === "") return [];
+  } catch {}
+  return null;
 }
 
 /**
@@ -717,9 +802,7 @@ function adoptHealthyServer(port: number): void {
       binary: record.binary,
       modelPath: record.model_path,
       args: record.args,
-      performanceEffort:
-        parseWhisperPerformanceEffort(record.performance_effort) ??
-        getWhisperPerformanceEffort(),
+      performanceEffort: parseWhisperPerformanceEffort(record.performance_effort),
       accelerationMode: normalizeAdoptedAccelerationMode(
         record.acceleration_mode,
       ),
@@ -729,6 +812,7 @@ function adoptHealthyServer(port: number): void {
       ownerPid: record.owner_pid,
       flagsMatch,
     };
+    notifyWhisperModelStateChange();
     return;
   }
 
@@ -740,6 +824,7 @@ function adoptHealthyServer(port: number): void {
   // No ownership record means no provenance. Reporting the flags we *would*
   // have used would be a guess, not provenance.
   lastLaunchRecord = null;
+  notifyWhisperModelStateChange();
 }
 
 function normalizeAdoptedAccelerationMode(
@@ -777,6 +862,10 @@ async function reclaimExternalWhisperServers(port: number): Promise<boolean> {
  * Returns the port number.
  */
 export function ensureServer(portOverride?: number): Promise<number> {
+  return whisperLifecycleGate.use(() => ensureServerReserved(portOverride));
+}
+
+function ensureServerReserved(portOverride?: number): Promise<number> {
   const port =
     portOverride ||
     parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT || "", 10) ||
@@ -850,6 +939,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     console.error("[voicelayer] whisper-server died, restarting...");
     serverState = null;
     lastLaunchRecord = null;
+    notifyWhisperModelStateChange();
   }
 
   // A healthy occupant is somebody's live server. Adopt it — never kill it,
@@ -1021,6 +1111,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
         console.error(
           `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
         );
+        notifyWhisperModelStateChange();
         return true;
       }
       await sleep(500);
@@ -1061,6 +1152,7 @@ export function stopServer(): void {
   const state = serverState;
   serverState = null;
   lastLaunchRecord = null;
+  notifyWhisperModelStateChange();
 
   if (state.adopted || !state.proc) {
     console.error(
@@ -1073,10 +1165,82 @@ export function stopServer(): void {
   try {
     state.proc.kill();
   } catch {}
+  void state.proc.exited?.then(() => {
+    if (!serverState) notifyWhisperModelStateChange();
+  });
   clearWhisperServerOwnership(state.port);
 }
 
-configureWhisperPerformanceRestart(stopServer);
+/**
+ * `stopServer`, then wait for the owned child to exit. A relaunch that does not
+ * wait finds the dying server still answering health and adopts it (seen in the
+ * E2 real-client check: "adopting … PID 0", then nothing loaded).
+ */
+export async function stopServerAndWait(): Promise<void> {
+  const proc = serverState && !serverState.adopted ? serverState.proc : null;
+  stopServer();
+  if (!proc || (await waitForWhisperProcessExit(proc))) return;
+  // Our own child ignored SIGTERM. Relaunching now would adopt it with its old
+  // flags (#142 round 2), so escalate; never signal a server we did not launch.
+  console.error(`[voicelayer] whisper-server (PID ${proc.pid}) ignored SIGTERM; sending SIGKILL`);
+  try {
+    proc.kill("SIGKILL");
+  } catch {}
+  if (await waitForWhisperProcessExit(proc)) return;
+  throw new Error(`the old model server (PID ${proc.pid}) did not stop`);
+}
+
+/** Explicit user unload. Only the live child this process launched may be stopped. */
+export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> {
+  return whisperLifecycleGate.unload(isBusy, async () => {
+    const release = (testHooks.reserveVoiceMaintenance ?? reserveVoiceMaintenance)(isBusy);
+    if (!release) {
+      const booking = isVoiceBooked();
+      throw new Error(booking.booked && !booking.ownedByUs
+        ? EXTERNAL_VOICE_SESSION_REASON : "busy");
+    }
+    try {
+      const state = serverState;
+      if (!state || state.adopted || !state.proc) {
+        throw new Error("not owned");
+      }
+      const record = verifiedWhisperServerLaunchRecord(state.port);
+      if (!record || record.adopted || record.pid !== state.pid) {
+        throw new Error("owner identity unavailable");
+      }
+      if (!state.proc.exited) throw new Error("child exit unavailable");
+
+      if (whisperLifecycleGate.shouldYieldToCapture) throw new Error("capture took priority");
+
+      state.proc.kill("SIGTERM");
+      if (!(await waitForWhisperProcessExit(state.proc))) {
+        throw new Error("child exit unconfirmed");
+      }
+      // The child exited; detach our stale state even if another listener arrived.
+      if (serverState === state) {
+        serverState = null;
+        lastLaunchRecord = null;
+        notifyWhisperModelStateChange();
+      }
+      const owner = readWhisperServerOwnership(state.port);
+      if (owner?.pid === state.pid && owner.owner_pid === process.pid &&
+          owner.started_at === record.startedAt) {
+        clearWhisperServerOwnership(state.port);
+      }
+      const listeners = probeWhisperServerListeners(state.port);
+      const healthy = await checkServerHealthy(state.port);
+      if (listeners === null || listeners.length !== 0 || healthy) {
+        throw new Error("fresh residency is not not_loaded");
+      }
+      if (whisperLifecycleGate.shouldYieldToCapture) throw new Error("capture took priority");
+      return "not_loaded";
+    } finally {
+      release();
+    }
+  });
+}
+
+configureWhisperPerformanceRestart(stopServerAndWait);
 
 /**
  * Transcribe a WAV audio buffer via whisper-server HTTP API.
@@ -1226,7 +1390,9 @@ export async function transcribeViaServer(
   port?: number,
   options?: WhisperServerTranscribeOptions,
 ): Promise<string> {
-  return transcribeViaServerAttempt(wavData, port, true, options);
+  return whisperLifecycleGate.use(() =>
+    transcribeViaServerAttempt(wavData, port, true, options)
+  );
 }
 
 function normalizeTranscriptionText(text: string): string {
@@ -1298,7 +1464,14 @@ async function transcribeViaServerAttempt(
         if (options?.preserveServerOnTimeout) {
           throw controller.signal.reason ?? err;
         }
-        if (allowRetry) {
+        // An adopted server is never killed, so it is still running the
+        // aborted decode: a retry re-adopts the same busy process and spends
+        // a second full timeout before the whisper-cli fallback. The skip is
+        // for that server only; `serverPort` is the port this attempt hit
+        // (explicit or from ensureServer), so another port keeps its retry.
+        const timedOutOnAdoptedServer =
+          serverState?.adopted === true && serverState.port === serverPort;
+        if (allowRetry && !timedOutOnAdoptedServer) {
           await markServerUnhealthy();
           const retryPort = await ensureServer(port);
           return transcribeViaServerAttempt(wavData, retryPort, false, options);
@@ -1343,6 +1516,7 @@ async function markServerUnhealthy(): Promise<void> {
   const unhealthyState = serverState;
   serverState = null;
   lastLaunchRecord = null;
+  notifyWhisperModelStateChange();
   // An adopted server is not ours to terminate, however sick it looks: the
   // process that launched it owns its lifecycle. Drop our reference instead.
   if (unhealthyState.adopted || !unhealthyState.proc) return;

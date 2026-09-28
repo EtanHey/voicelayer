@@ -7,20 +7,31 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public let trailingControlCountFromOuter: Int
     public let trailingOuterInset: CGFloat
     public let lowerControlCount: Int
+    /// The whole lower surface takes clicks, hover and scroll (the History panel's rows).
+    public let lowerSurfaceIsInteractive: Bool
 
     public init(
         leadingControlCount: Int = 0,
         trailingControlCountFromCore: Int = 0,
         trailingControlCountFromOuter: Int = 0,
         trailingOuterInset: CGFloat = VoiceBarNotchContract.material.compactContentInset,
-        lowerControlCount: Int = 0
+        lowerControlCount: Int = 0,
+        lowerSurfaceIsInteractive: Bool = false
     ) {
         self.leadingControlCount = max(0, leadingControlCount)
         self.trailingControlCountFromCore = max(0, trailingControlCountFromCore)
         self.trailingControlCountFromOuter = max(0, trailingControlCountFromOuter)
         self.trailingOuterInset = max(0, trailingOuterInset)
         self.lowerControlCount = max(0, lowerControlCount)
+        self.lowerSurfaceIsInteractive = lowerSurfaceIsInteractive
     }
+
+    /// The History panel: the launcher's buttons stay live (History closes it again) and the body is live.
+    public static let historyPanel = VoiceBarNotchInteractionConfiguration(
+        leadingControlCount: 1,
+        trailingControlCountFromCore: 2,
+        lowerSurfaceIsInteractive: true
+    )
 
     public static let none = VoiceBarNotchInteractionConfiguration()
 
@@ -46,6 +57,8 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
             .none
         case .teleprompter:
             VoiceBarNotchInteractionConfiguration(lowerControlCount: 1)
+        case .history:
+            .historyPanel
         }
     }
 }
@@ -121,6 +134,15 @@ public struct VoiceBarNotchHitRegion: Equatable {
                     )
                 )
             }
+        }
+
+        if configuration.lowerSurfaceIsInteractive, geometry.lowerSurfaceHeight > 0 {
+            rects.append(CGRect(
+                x: geometry.bodyOriginX,
+                y: 0,
+                width: geometry.bodyWidth,
+                height: geometry.lowerSurfaceHeight
+            ))
         }
 
         self.rects = rects

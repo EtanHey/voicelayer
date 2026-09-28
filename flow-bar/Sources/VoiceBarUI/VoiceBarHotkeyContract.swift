@@ -23,9 +23,12 @@ public enum VoiceBarHotkeyContract {
 
     public static let remapExplanation =
         "VoiceBar listens for F5 directly. The dictation key (🎤) is "
-        + "remapped to F18 by the com.voicelayer.f5-to-f18-hidutil launch "
-        + "agent so macOS Dictation never intercepts it; VoiceBar listens "
-        + "for F18 too."
+            + "remapped to F18 by the com.voicelayer.f5-to-f18-hidutil launch "
+            + "agent so macOS Dictation never intercepts it; VoiceBar listens "
+            + "for F18 too."
+
+    /// What the F5 key helper does, in the user's words. The technical chain above is the tooltip.
+    public static let remapPlainSummary = "Your Mac's dictation key (🎤) starts dictation too."
 
     public static func shortcutChainLabel(remapDetected: Bool) -> String {
         remapDetected ? "F5  ·  🎤 → F18" : "F5"

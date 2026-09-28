@@ -44,7 +44,7 @@ public struct VoiceBarNotchMaterialDescriptor: Equatable {
             continuous(surfaceCount: 0)
         case .hoverLauncher, .recording, .compactStatus:
             continuous(surfaceCount: 1)
-        case .teleprompter:
+        case .teleprompter, .history:
             continuous(surfaceCount: VoiceBarNotchContract.material.lowerSurfaceLayerCount)
         }
     }
@@ -117,8 +117,13 @@ public struct VoiceBarGlassContainer<Content: View>: View {
 
 /// Shared filled material primitive for the persistent notch surface. It
 /// deliberately never wraps the black hardware core.
-public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
-    public let shape: SurfaceShape
+///
+/// Animatable (lane C2/C4): the native glass is an AppKit view masked by `shape.path`, and SwiftUI only
+/// interpolates a shape it draws itself. Without this the glass mask jumped to the destination on frame one
+/// while the SwiftUI border strokes and clip still animated, so the border rippled inside an already-grown
+/// container and a wing that grew more than its neighbour visibly jumped.
+public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier, Animatable {
+    public var shape: SurfaceShape
     public let appearance: VoiceBarNotchAppearance
     public let forceOpaqueFallback: Bool
     public let morphVariant: VoiceBarNotchMorphVariant
@@ -133,6 +138,11 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
         self.appearance = appearance
         self.forceOpaqueFallback = forceOpaqueFallback
         self.morphVariant = morphVariant
+    }
+
+    public var animatableData: SurfaceShape.AnimatableData {
+        get { shape.animatableData }
+        set { shape.animatableData = newValue }
     }
 
     public func body(content: Content) -> some View {

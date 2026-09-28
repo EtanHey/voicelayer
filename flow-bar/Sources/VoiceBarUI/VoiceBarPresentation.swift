@@ -49,6 +49,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var statusText: String
     public var isHovered: Bool
     public var isKeyboardFocused: Bool
+    /// The notch History panel is open (spec §4). Recording and the teleprompter still take precedence.
+    public var isHistoryPanelOpen: Bool = false
     public var isCollapsed: Bool
     public var coreWidth: CGFloat
     public var visibleCoreOcclusionInset: CGFloat
@@ -131,6 +133,7 @@ public enum VoiceBarPresentation {
             hasTeleprompter: hasTeleprompter,
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
+            hasHistoryPanel: input.isHistoryPanelOpen,
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(
                 mode: input.mode
             ),
@@ -242,8 +245,8 @@ public enum VoiceBarPresentation {
     ) -> VoiceBarRecordingHoldControl? {
         guard mode == .recording, recordingMode == "vad" else { return nil }
         return VoiceBarRecordingHoldControl(
-            iconName: isEngaged ? "hand.raised.fill" : "hand.raised",
-            accessibilityLabel: isEngaged ? "Release recording hold" : "Hold recording",
+            iconName: "lock.fill",
+            accessibilityLabel: isEngaged ? "Unlock recording" : "Lock recording",
             accessibilityHint: isEngaged
                 ? "Resume automatic silence stop"
                 : "Keep recording through silence",

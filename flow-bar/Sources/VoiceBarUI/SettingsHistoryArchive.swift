@@ -16,6 +16,13 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     /// The slice of that audio handed to speech-to-text. Shorter than `durationMs`
     /// when the trailing-silence trim fired.
     public let transcribedDurationMs: Int?
+    /// ≈ speech time with the pauses left out (F1). Nil on entries archived before it was measured.
+    public let spokenDurationMs: Int?
+    /// Post-capture processing time of the dictation (F1). Nil on older entries.
+    public let processingDurationMs: Int?
+    public let modelLabel: String?
+    public let performanceEffort: VoiceBarPerformanceEffort?
+    public let inputDeviceLabel: String?
 
     public init(
         id: String,
@@ -25,7 +32,12 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         transcript: String,
         audioPath: URL,
         durationMs: Int? = nil,
-        transcribedDurationMs: Int? = nil
+        transcribedDurationMs: Int? = nil,
+        spokenDurationMs: Int? = nil,
+        processingDurationMs: Int? = nil,
+        modelLabel: String? = nil,
+        performanceEffort: VoiceBarPerformanceEffort? = nil,
+        inputDeviceLabel: String? = nil
     ) {
         self.id = id
         self.dayKey = dayKey
@@ -35,6 +47,11 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         self.audioPath = audioPath
         self.durationMs = durationMs
         self.transcribedDurationMs = transcribedDurationMs
+        self.spokenDurationMs = spokenDurationMs
+        self.processingDurationMs = processingDurationMs
+        self.modelLabel = modelLabel
+        self.performanceEffort = performanceEffort
+        self.inputDeviceLabel = inputDeviceLabel
     }
 
     public var durationLabel: String? {
@@ -116,6 +133,18 @@ public struct SettingsHistoryPage: Equatable, Sendable {
 public enum SettingsHistoryArchive {
     public static let defaultPageSize = 100
 
+    public static func lastDictationProvenanceLabel(for recordingPath: String?) -> String? {
+        guard let recordingPath, !recordingPath.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: recordingPath)
+        let directory = url.pathExtension.lowercased() == "wav" ? url.deletingLastPathComponent() : url
+        let metadata = SettingsArchiveMetadata.load(from: directory.appendingPathComponent("metadata.json"))
+        let model = VoiceModelDisplayName.normalize(metadata?.provenance?.whisperModelPath)
+        let effort = metadata?.provenance?.performanceEffort
+            .flatMap(VoiceBarPerformanceEffort.init)?.displayName
+        let parts = [model, effort].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     public static var defaultRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local")
@@ -132,7 +161,12 @@ public enum SettingsHistoryArchive {
         from root: URL = defaultRoot,
         limit: Int = defaultPageSize
     ) -> SettingsHistoryPage {
-        let scan = SettingsArchiveScanner.scan(root: root, limit: limit, loadEntry: loadEntry)
+        page(from: SettingsArchiveScanner.scan(root: root, limit: limit, loadEntry: loadEntry))
+    }
+
+    /// The one page assembly for a newest-first walk, shared with `SettingsArchiveIndex` so an indexed page
+    /// is identical to a scanned one.
+    static func page(from scan: SettingsArchiveScanResult<SettingsHistoryEntry>) -> SettingsHistoryPage {
         let groups = scan.days.map { day in
             SettingsHistoryDayGroup(
                 dayKey: day.dayKey,
@@ -147,7 +181,7 @@ public enum SettingsHistoryArchive {
         )
     }
 
-    private static func loadEntry(
+    static func loadEntry(
         from recordingURL: URL,
         dayKey: String,
         fallbackDate: Date
@@ -181,7 +215,13 @@ public enum SettingsHistoryArchive {
             transcript: transcript,
             audioPath: audioURL,
             durationMs: metadata?.durationMs,
-            transcribedDurationMs: metadata?.transcribedDurationMs
+            transcribedDurationMs: metadata?.transcribedDurationMs,
+            spokenDurationMs: metadata?.spokenDurationMs,
+            processingDurationMs: metadata?.processingDurationMs,
+            modelLabel: VoiceModelDisplayName.normalize(metadata?.provenance?.whisperModelPath),
+            performanceEffort: metadata?.provenance?.performanceEffort.flatMap(VoiceBarPerformanceEffort.init),
+            inputDeviceLabel: metadata?.inputDeviceName?
+                .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty
         )
     }
 

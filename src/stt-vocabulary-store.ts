@@ -34,6 +34,13 @@ export interface STTDictionaryEntry {
   variants: string[];
 }
 
+export type STTDictionaryEntrySource = "bundled" | "personal";
+
+export interface STTDictionaryDisplayEntry extends STTDictionaryEntry {
+  row_id: string;
+  source: STTDictionaryEntrySource;
+}
+
 // Built-in post-decode vocabulary uses the same canonical-entry shape as the
 // persisted VoiceBar store. These Hebrew phonetic forms are cleanup aliases,
 // not decoder prompt seeds: auto mode must remain free of vocabulary bias.
@@ -105,6 +112,30 @@ export function listVocabulary(
   options: STTVocabularyStoreOptions = {},
 ): STTVocabularySnapshot {
   return readSnapshot(getSTTVocabularyPath(options));
+}
+
+/**
+ * Additive UI projection. Provenance comes from the owning collection, never
+ * from canonical-name matching, so same-name bundled and personal rows remain
+ * independently addressable.
+ */
+export function buildDictionaryDisplayEntries(
+  personalEntries: readonly STTDictionaryEntry[],
+): STTDictionaryDisplayEntry[] {
+  const project = (
+    source: STTDictionaryEntrySource,
+    entries: readonly STTDictionaryEntry[],
+  ): STTDictionaryDisplayEntry[] => entries.map((entry) => ({
+    row_id: `${source}:${entry.canonical}`,
+    source,
+    canonical: entry.canonical,
+    variants: [...entry.variants],
+  }));
+
+  return [
+    ...project("bundled", BUILTIN_STT_DICTIONARY_ENTRIES),
+    ...project("personal", personalEntries),
+  ];
 }
 
 export function addAlias(

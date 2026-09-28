@@ -1,282 +1,174 @@
+import AppKit
 @testable import VoiceBarUI
 import XCTest
 
 final class PillContextMenuControllerTests: XCTestCase {
     func testHistorySubmenuShowsEmptyStateWhenNoRecentTranscriptionsExist() throws {
         let controller = PillContextMenuController()
-        controller.recentTranscriptionsProvider = { [] }
+        controller.recentTranscriptionEntriesProvider = { [] }
 
         let menu = controller.makeMenu()
-        let historyItem = try XCTUnwrap(menu.items.first { $0.title == "Recent Transcripts" })
+        let historyItem = try XCTUnwrap(menu.items.first { $0.title == "Recent Transcriptions" })
         let submenu = try XCTUnwrap(historyItem.submenu)
 
         XCTAssertEqual(submenu.items.map(\.title), ["No recent transcripts"])
         XCTAssertFalse(submenu.items[0].isEnabled)
     }
 
-    func testMenuGroupsSecondaryActionsIntoSubmenus() throws {
+    private let now = Date(timeIntervalSince1970: 1_790_000_000)
+
+    private func titles(_ menu: NSMenu) -> [String] {
+        menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
+    }
+
+    /// Etan's approved spec §3 (p03-design-spec-approval/spec.md), item for item.
+    func testMenuMatchesTheApprovedSpecExactly() throws {
         let controller = PillContextMenuController()
-        controller.anchorModeProvider = { .topCenter }
-        controller.transcriptionVocabularyTermsProvider = {
-            ["VoiceLayer", "Wispr Flow"]
-        }
-        controller.transcriptionVocabularyAliasesProvider = {
-            [STTVocabularyAliasPreview(from: "work claude", to: "orcClaude")]
-        }
-
         let menu = controller.makeMenu()
-        let titles = menu.items.map(\.title)
 
-        XCTAssertEqual(titles, [
-            "Settings",
+        XCTAssertEqual(titles(menu), [
+            "Settings…",
             "Hide for 1 hour",
-            "Recent Transcripts",
-            "Paste last transcript",
-            "Copy last transcript",
-            "Transcription Tools",
-            "Preferences",
-        ])
-
-        let toolsItem = try XCTUnwrap(menu.items.first { $0.title == "Transcription Tools" })
-        let toolsSubmenu = try XCTUnwrap(toolsItem.submenu)
-        XCTAssertEqual(toolsSubmenu.items.map(\.title), [
-            "Transcribe latest recording",
-            "Add to Dictionary…",
-            "Transcription Vocabulary",
-        ])
-
-        let vocabularyItem = try XCTUnwrap(toolsSubmenu.items.first { $0.title == "Transcription Vocabulary" })
-        let submenu = try XCTUnwrap(vocabularyItem.submenu)
-        XCTAssertEqual(submenu.items.map(\.title), [
-            "Terms",
-            "Corrections",
-        ])
-
-        let terms = submenu.items[0].submenu?.items.map(\.title)
-        XCTAssertEqual(terms, ["VoiceLayer", "Wispr Flow"])
-
-        let corrections = submenu.items[1].submenu?.items.map(\.title)
-        XCTAssertEqual(corrections, ["work claude → orcClaude"])
-
-        let preferencesItem = try XCTUnwrap(menu.items.first { $0.title == "Preferences" })
-        let preferencesSubmenu = try XCTUnwrap(preferencesItem.submenu)
-        XCTAssertEqual(preferencesSubmenu.items.map(\.title), [
-            "Anchor",
+            "—",
+            "Recent Transcriptions",
+            "Paste Last Transcript",
+            "Copy Last Transcript",
+            "Re-transcribe latest",
+            "—",
             "Microphone",
-            "Morph Prototype",
+            "—",
+            "Quit VoiceBar",
         ])
-
-        let anchorItem = try XCTUnwrap(preferencesSubmenu.items.first { $0.title == "Anchor" })
-        let anchorSubmenu = try XCTUnwrap(anchorItem.submenu)
-        XCTAssertEqual(anchorSubmenu.items.map(\.title), [
-            "Off",
-            "Top Center",
-            "Bottom Center",
-        ])
-        XCTAssertEqual(anchorSubmenu.items[1].state, .on)
-        XCTAssertFalse(anchorSubmenu.items.map(\.title).contains("Lock Position"))
+        let settings = try XCTUnwrap(menu.items.first)
+        XCTAssertEqual(settings.keyEquivalent, "")
+        XCTAssertEqual(settings.keyEquivalentModifierMask, .command)
+        XCTAssertNotNil(settings.image, "Settings… carries the gearshape symbol")
+        XCTAssertNotNil(menu.items.first { $0.title == "Recent Transcriptions" }?.submenu)
+        XCTAssertNotNil(menu.items.first { $0.title == "Microphone" }?.submenu)
     }
 
-    func testVocabularySubmenuShowsEmptyStateWhenSnapshotHasNoTermsOrCorrections() throws {
+    func testRetranscribeLatestInvokesCallbackOnceWithoutShortcut() throws {
         let controller = PillContextMenuController()
-        controller.transcriptionVocabularyTermsProvider = { [] }
-        controller.transcriptionVocabularyAliasesProvider = { [] }
-
-        let menu = controller.makeMenu()
-        let toolsItem = try XCTUnwrap(menu.items.first { $0.title == "Transcription Tools" })
-        let toolsSubmenu = try XCTUnwrap(toolsItem.submenu)
-        let vocabularyItem = try XCTUnwrap(toolsSubmenu.items.first { $0.title == "Transcription Vocabulary" })
-        let submenu = try XCTUnwrap(vocabularyItem.submenu)
-
-        XCTAssertEqual(submenu.items.map(\.title), ["Vocabulary not loaded yet"])
-        XCTAssertFalse(submenu.items[0].isEnabled)
+        controller.canRetranscribeLatestProvider = { true }
+        var calls = 0
+        controller.onRetranscribeLatest = { calls += 1 }
+        let item = try XCTUnwrap(controller.makeMenu().item(withTitle: "Re-transcribe latest"))
+        XCTAssertTrue(item.isEnabled)
+        XCTAssertEqual(item.keyEquivalent, "")
+        _ = item.target?.perform(item.action, with: item)
+        XCTAssertEqual(calls, 1)
     }
 
-    func testDeviceOptionsMarkSelectedMicrophone() {
-        let options = PillContextMenuController.deviceOptions(
-            devices: [
-                MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone"),
-                MicrophoneDevice(id: "usb", name: "USB Mic"),
-            ],
-            selectedID: "usb"
-        )
+    func testRetranscribeLatestDisabledForEveryBusyStateAndMissingCapture() throws {
+        let state = VoiceState()
+        let controller = PillContextMenuController()
+        var hasCapture = false
+        controller.canRetranscribeLatestProvider = {
+            state.canRetranscribeLatestCapture(hasLatestCapture: hasCapture)
+        }
+        func assertEnabled(_ expected: Bool, file: StaticString = #filePath, line: UInt = #line) throws {
+            let menu = controller.makeMenu()
+            menu.update()
+            let item = try XCTUnwrap(menu.item(withTitle: "Re-transcribe latest"))
+            XCTAssertEqual(item.isEnabled, expected, file: file, line: line)
+        }
+        state.mode = .idle
+        try assertEnabled(false)
+        hasCapture = true
+        try assertEnabled(true)
+        state.mode = .recording
+        try assertEnabled(false)
+        state.mode = .transcribing
+        try assertEnabled(false)
+        state.mode = .idle
+        state.retranscribeHistoryEntry(recordingPath: "/test/capture.wav")
+        try assertEnabled(false)
 
-        XCTAssertEqual(options.map(\.title), [
-            "MacBook Pro Microphone",
-            "USB Mic",
+        let latestState = VoiceState()
+        controller.canRetranscribeLatestProvider = {
+            latestState.canRetranscribeLatestCapture(hasLatestCapture: true)
+        }
+        latestState.retranscribeLastCapture()
+        try assertEnabled(false)
+    }
+
+    func testSnoozedMenuSwapsOnlyTheHideItem() {
+        let controller = PillContextMenuController()
+        controller.isSnoozedProvider = { true }
+        XCTAssertEqual(titles(controller.makeMenu())[1], "Show VoiceBar")
+    }
+
+    /// Spec §3 removes Transcription Tools (Transcribe latest, Add to Dictionary, the vocabulary wall),
+    /// Anchor and Morph Prototype. Add to Dictionary lives in Settings → Dictionary.
+    func testMenuTreeCarriesNoRemovedItems() {
+        func all(_ menu: NSMenu) -> [String] {
+            menu.items.flatMap { [$0.title] + ($0.submenu.map(all) ?? []) }
+        }
+        let every = all(PillContextMenuController().makeMenu())
+        for removed in ["Transcription Tools", "Transcribe latest", "Add to Dictionary", "Open Dictionary",
+                        "Vocabulary", "Anchor", "Morph", "Preferences", "Latest —"] {
+            XCTAssertFalse(every.contains { $0.contains(removed) }, "\(removed) is back: \(every)")
+        }
+    }
+
+    func testRecentItemsShowTimeAndFirstWordsWithoutLatestDash() throws {
+        let controller = PillContextMenuController()
+        controller.now = { self.now }
+        controller.recentTranscriptionEntriesProvider = {
+            [
+                RecentTranscriptionEntry(text: "latest note", createdAt: self.now.addingTimeInterval(-120)),
+                RecentTranscriptionEntry(
+                    text: "older note with\nnew lines flattened",
+                    createdAt: self.now.addingTimeInterval(-7200)
+                ),
+                RecentTranscriptionEntry(text: "saved before times existed"),
+            ]
+        }
+
+        let submenu = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Recent Transcriptions" }?.submenu)
+
+        XCTAssertEqual(submenu.items.map(\.title), [
+            "2 min ago · latest note",
+            "2 hr ago · older note with new lines flattened",
+            "saved before times existed",
         ])
-        XCTAssertEqual(options.map(\.isSelected), [false, true])
+        XCTAssertFalse(submenu.items.contains { $0.title.contains("—") })
+    }
+
+    func testRecentItemPastesThatTranscript() throws {
+        let controller = PillContextMenuController()
+        var pasted: [String] = []
+        controller.onPasteTranscript = { pasted.append($0) }
+        controller.recentTranscriptionEntriesProvider = { [RecentTranscriptionEntry(text: "paste me")] }
+        let item = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Recent Transcriptions" }?.submenu?
+            .items.first)
+        _ = item.target?.perform(item.action, with: item)
+        XCTAssertEqual(pasted, ["paste me"])
+    }
+
+    func testQuitCallsHandler() throws {
+        let controller = PillContextMenuController()
+        var quits = 0
+        controller.onQuit = { quits += 1 }
+        let quit = try XCTUnwrap(controller.makeMenu().items.last)
+        _ = quit.target?.perform(quit.action, with: quit)
+        XCTAssertEqual(quits, 1)
+    }
+
+    func testMicrophoneItemShowsThePriorityDefault() throws {
+        let controller = PillContextMenuController()
+        controller.defaultMicrophoneNameProvider = { "USB Mic" }
+        let microphone = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Microphone" })
+        if #available(macOS 14.4, *) {
+            XCTAssertEqual(microphone.subtitle, "USB Mic")
+        }
+        XCTAssertEqual(microphone.submenu?.items.first?.title, "Default: USB Mic")
+        XCTAssertTrue(microphone.submenu?.items.allSatisfy { $0.state == .off } == true, "nothing to pick or check")
     }
 
     func testPasteActionEnabledOnlyWhenTranscriptExists() {
         XCTAssertFalse(PillContextMenuController.isPasteEnabled(transcript: ""))
         XCTAssertFalse(PillContextMenuController.isPasteEnabled(transcript: "   "))
         XCTAssertTrue(PillContextMenuController.isPasteEnabled(transcript: "latest note"))
-    }
-
-    func testMenuIncludesSettingsHistoryCopyAndGroupedTools() throws {
-        let controller = PillContextMenuController()
-        controller.anchorModeProvider = { .follow }
-        controller.transcriptProvider = { "latest note" }
-        controller.recentTranscriptionsProvider = {
-            [
-                "latest note",
-                "older note with\nnew lines flattened",
-            ]
-        }
-        controller.transcriptionVocabularyTermsProvider = {
-            ["VoiceLayer", "orcClaude", "Wispr Flow"]
-        }
-        controller.transcriptionVocabularyAliasesProvider = {
-            [
-                STTVocabularyAliasPreview(from: "work claude", to: "orcClaude"),
-                STTVocabularyAliasPreview(from: "whisper flow", to: "Wispr Flow"),
-            ]
-        }
-
-        let menu = controller.makeMenu()
-
-        XCTAssertEqual(menu.items.map(\.title), [
-            "Settings",
-            "Hide for 1 hour",
-            "Recent Transcripts",
-            "Paste last transcript",
-            "Copy last transcript",
-            "Transcription Tools",
-            "Preferences",
-        ])
-
-        let toolsSubmenu = try XCTUnwrap(menu.items.first { $0.title == "Transcription Tools" }?.submenu)
-        let recoverItem = try XCTUnwrap(toolsSubmenu.items.first { $0.title == "Transcribe latest recording" })
-        XCTAssertTrue(recoverItem.isEnabled)
-
-        let submenuTitles = menu.items[2].submenu?.items.map(\.title)
-        XCTAssertEqual(submenuTitles, [
-            "Latest — latest note",
-            "older note with new lines flattened",
-        ])
-
-        let vocabularyItem = try XCTUnwrap(toolsSubmenu.items.first { $0.title == "Transcription Vocabulary" })
-        let vocabularyTitles = vocabularyItem.submenu?.items.map(\.title)
-        XCTAssertEqual(vocabularyTitles, [
-            "Terms",
-            "Corrections",
-        ])
-
-        let vocabularyTerms = vocabularyItem.submenu?.items[0].submenu?.items.map(\.title)
-        XCTAssertEqual(vocabularyTerms, [
-            "VoiceLayer",
-            "orcClaude",
-            "Wispr Flow",
-        ])
-
-        let vocabularyCorrections = vocabularyItem.submenu?.items[1].submenu?.items.map(\.title)
-        XCTAssertEqual(vocabularyCorrections, [
-            "work claude → orcClaude",
-            "whisper flow → Wispr Flow",
-        ])
-
-        let preferencesSubmenu = try XCTUnwrap(menu.items.first { $0.title == "Preferences" }?.submenu)
-        let anchorItem = try XCTUnwrap(preferencesSubmenu.items.first { $0.title == "Anchor" })
-        let anchorTitles = anchorItem.submenu?.items.map(\.title)
-        XCTAssertEqual(anchorTitles, [
-            "Off",
-            "Top Center",
-            "Bottom Center",
-        ])
-        XCTAssertEqual(anchorItem.submenu?.items[0].state, .on)
-    }
-
-    func testAnchorSubmenuActionsCallOnlyAnchorSelectionHandlers() throws {
-        let controller = PillContextMenuController()
-        controller.anchorModeProvider = { .follow }
-        var selectedModes: [VoiceBarAnchorMode] = []
-        controller.onSelectAnchorMode = { selectedModes.append($0) }
-
-        let preferencesItem = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Preferences" })
-        let anchorItem = try XCTUnwrap(preferencesItem.submenu?.items.first { $0.title == "Anchor" })
-        let submenu = try XCTUnwrap(anchorItem.submenu)
-        let topCenter = try XCTUnwrap(submenu.items.first { $0.title == "Top Center" })
-
-        _ = topCenter.target?.perform(topCenter.action, with: topCenter)
-
-        XCTAssertEqual(selectedModes, [.topCenter])
-        XCTAssertNil(submenu.items.first { $0.title == "Lock Position" })
-    }
-
-    func testAnchorSubmenuHasExactlyOneCheckedStateForEachMode() throws {
-        for mode in VoiceBarAnchorMode.anchorMenuModes {
-            let controller = PillContextMenuController()
-            controller.anchorModeProvider = { mode }
-
-            let preferencesItem = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Preferences" })
-            let anchorItem = try XCTUnwrap(preferencesItem.submenu?.items.first { $0.title == "Anchor" })
-            let submenu = try XCTUnwrap(anchorItem.submenu)
-            let checkedItems = submenu.items.filter { $0.state == .on }
-
-            XCTAssertEqual(submenu.items.map(\.title), [
-                "Off",
-                "Top Center",
-                "Bottom Center",
-            ])
-            XCTAssertEqual(checkedItems.map(\.title), [mode.anchorMenuTitle])
-        }
-    }
-
-    func testMorphPrototypeSubmenuIsLiveSelectableWithExactlyOneCheckmark() throws {
-        let controller = PillContextMenuController()
-        controller.morphPrototypeProvider = { .p2NativeGlass }
-        var selected: [VoiceBarNotchMorphVariant] = []
-        controller.onSelectMorphPrototype = { selected.append($0) }
-
-        let preferences = try XCTUnwrap(
-            controller.makeMenu().items.first { $0.title == "Preferences" }?.submenu
-        )
-        let morph = try XCTUnwrap(
-            preferences.items.first { $0.title == "Morph Prototype" }?.submenu
-        )
-
-        XCTAssertEqual(morph.items.map(\.title), VoiceBarNotchMorphVariant.allCases.map(\.menuTitle))
-        XCTAssertEqual(morph.items.filter { $0.state == .on }.map(\.title), [
-            VoiceBarNotchMorphVariant.p2NativeGlass.menuTitle,
-        ])
-
-        let p3 = try XCTUnwrap(
-            morph.items.first { $0.title == VoiceBarNotchMorphVariant.p3SpringDelight.menuTitle }
-        )
-        _ = p3.target?.perform(p3.action, with: p3)
-        XCTAssertEqual(selected, [.p3SpringDelight])
-    }
-
-    func testTranscribeLatestRecordingActionCallsHandler() throws {
-        let controller = PillContextMenuController()
-        var tapped = false
-        controller.onTranscribeLatestRecording = {
-            tapped = true
-        }
-
-        let menu = controller.makeMenu()
-        let toolsItem = try XCTUnwrap(menu.items.first { $0.title == "Transcription Tools" })
-        let recoverItem = try XCTUnwrap(toolsItem.submenu?.items.first { $0.title == "Transcribe latest recording" })
-
-        _ = recoverItem.target?.perform(recoverItem.action, with: recoverItem)
-
-        XCTAssertTrue(tapped)
-    }
-
-    func testAddToDictionaryActionCallsHandler() throws {
-        let controller = PillContextMenuController()
-        var tapped = false
-        controller.onAddSelectionToDictionary = {
-            tapped = true
-        }
-
-        let menu = controller.makeMenu()
-        let toolsItem = try XCTUnwrap(menu.items.first { $0.title == "Transcription Tools" })
-        let addItem = try XCTUnwrap(toolsItem.submenu?.items.first { $0.title == "Add to Dictionary…" })
-
-        _ = addItem.target?.perform(addItem.action, with: addItem)
-
-        XCTAssertTrue(tapped)
     }
 }

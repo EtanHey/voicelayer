@@ -5,6 +5,9 @@
  * broadcast() to communicate state back to Voice Bar clients.
  */
 
+import { PROCESSING_ENV_VARS, setProcessingSetting } from "./processing-settings";
+import { readPolishControlsStatus } from "./polish-controls-status";
+import { ensureSTTPolishServer, stopSTTPolishServerAndWait } from "./stt-polish-server";
 import { existsSync, unlinkSync } from "fs";
 import {
   TTS_DISABLED_FILE,
@@ -29,9 +32,11 @@ import {
 import {
   bookVoiceSession,
   isVoiceBooked,
+  yieldVoiceMaintenanceToCapture,
+  EXTERNAL_VOICE_SESSION_REASON,
   setCancelSignal,
 } from "./session-booking";
-import { broadcast } from "./socket-client";
+import { broadcast, isConnected } from "./socket-client";
 import type {
   AckCommand,
   AckEvent,
@@ -45,6 +50,7 @@ import { getRecordingState } from "./input";
 import {
   addAlias,
   addPromptTerm,
+  buildDictionaryDisplayEntries,
   listVocabulary,
   removeAlias,
   removePromptTerm,
@@ -54,10 +60,35 @@ import {
   isRecordingConflictError,
 } from "./recording-state";
 import {
+  getPersistedWhisperPerformanceEffort,
   restartWhisperServerForPerformanceChange,
+  restorePersistedWhisperPerformanceEffort,
   setWhisperPerformanceEffort,
 } from "./whisper-performance";
 import { setRecordingHold } from "./recording-hold";
+import { readWhisperModelStatus } from "./model-status";
+import {
+  ensureServer,
+  onWhisperModelStateChange,
+  unloadOwnedServer,
+  verifiedWhisperServerLaunchRecord,
+} from "./whisper-server";
+import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
+import { hasActiveVoiceOperation } from "./voice-operation-reservation";
+
+let modelStatusRevision = 0;
+function publishModelStatusEvent(): void {
+  const revision = ++modelStatusRevision;
+  if (!isConnected()) return;
+  void readWhisperModelStatus().then((modelStatus) => {
+    if (revision === modelStatusRevision) {
+      broadcast({ type: "model_status", model_status: modelStatus });
+    }
+  }).catch((error) => {
+    console.error(`[voicelayer] Model status event failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+onWhisperModelStateChange(publishModelStatusEvent);
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -175,6 +206,8 @@ export function handleSocketCommand(
         });
         return buildAck(command, "reject", "mic disabled");
       }
+      whisperLifecycleGate.yieldToCapture();
+      yieldVoiceMaintenanceToCapture();
       // H5 fix: check session booking to prevent concurrent recordings
       const booking = isVoiceBooked();
       if (booking.booked && !booking.ownedByUs) {
@@ -255,10 +288,13 @@ export function handleSocketCommand(
       return buildAck(command, "accept");
     }
     case "health":
-      return buildHealthResponse({
-        queueDepth: playbackQueueDepth,
-        recordingState,
-      });
+      return readWhisperModelStatus().then((modelStatus) =>
+        buildHealthResponse({
+          queueDepth: getPlaybackQueueDepth(),
+          recordingState: getRecordingState(),
+          modelStatus,
+        }),
+      );
     case "command":
       broadcast({
         type: "command_mode",
@@ -301,6 +337,7 @@ export function handleSocketCommand(
         type: "vocab_list",
         ...(command.id ? { id: command.id } : {}),
         ...snapshot,
+        display_entries: buildDictionaryDisplayEntries(snapshot.entries),
       };
     }
     case "vocab_remove": {
@@ -343,16 +380,20 @@ export function handleSocketCommand(
       }
     }
     case "set_whisper_effort":
-      if (recordingState === "recording" || recordingState === "transcribing") {
-        return buildAck(command, "reject", "busy");
+      if (residencyLoadPending) {
+        return buildAck(command, "reject", "Model load in progress");
       }
-      try {
-        setWhisperPerformanceEffort(command.effort);
-        restartWhisperServerForPerformanceChange();
-        return buildAck(command, "accept");
-      } catch (error) {
-        return buildAck(command, "reject", vocabularyErrorReason(error));
+      if (residencyBusy() || whisperLifecycleGate.isUnloading ||
+          whisperLifecycleGate.isInUse) {
+        const booking = isVoiceBooked();
+        return buildAck(command, "reject", booking.booked && !booking.ownedByUs
+          ? EXTERNAL_VOICE_SESSION_REASON : "busy");
       }
+      return handleEffortCommand(command);
+    case "set_whisper_residency":
+      return handleResidencyCommand(command);
+    case "set_processing_setting":
+      return handleProcessingSettingCommand(command);
     case "set_recording_hold":
       if (recordingState !== "recording") {
         return buildAck(command, "noop", "not recording");
@@ -364,6 +405,226 @@ export function handleSocketCommand(
         return buildAck(command, "reject", vocabularyErrorReason(error));
       }
   }
+}
+
+function residencyBusy(): boolean {
+  const booking = isVoiceBooked();
+  return getRecordingState() !== "idle" ||
+    getPlaybackQueueDepth() > 0 || hasActiveVoiceOperation() ||
+    (booking.booked && !booking.ownedByUs);
+}
+
+function residencyBusyReason(): string {
+  const state = getRecordingState();
+  const booking = isVoiceBooked();
+  if (booking.booked && !booking.ownedByUs) return EXTERNAL_VOICE_SESSION_REASON;
+  if (state === "recording") return "Recording in progress";
+  if (state === "transcribing") return "Transcription in progress";
+  if (getPlaybackQueueDepth() > 0) return "Playing back audio";
+  if (hasActiveVoiceOperation()) return "Voice session in progress";
+  return "busy";
+}
+
+// Settings requests reserve their own admission slot. Capture booking remains
+// higher priority: it can proceed while load is pending, and the load then
+// rejects at its next busy check rather than refusing a live dictation.
+let residencyLoadPending = false;
+
+async function handleResidencyCommand(
+  command: Extract<SocketCommand, { cmd: "set_whisper_residency" }>,
+): Promise<AckEvent> {
+  let outcome: AckEvent["outcome"] = "reject";
+  let reason: string | undefined;
+  let ownsLoadSlot = false;
+  const startedAt = Date.now();
+  console.error(`[voicelayer] Residency request ${command.id} ${command.action} started`);
+  const backend = (process.env.QA_VOICE_STT_BACKEND ?? "auto").toLowerCase();
+  if (backend === "wispr" || backend === "whisper") {
+    reason = "resident backend is not configured";
+  } else if (residencyLoadPending || residencyBusy()) {
+    reason = residencyLoadPending ? "Model load in progress" : residencyBusyReason();
+  } else if (command.action === "load") {
+    residencyLoadPending = true;
+    ownsLoadSlot = true;
+    try {
+      await ensureServer();
+      if (residencyBusy()) reason = residencyBusyReason();
+      else {
+        const port = Number.parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT ?? "", 10) || 8178;
+        const record = verifiedWhisperServerLaunchRecord(port);
+        if (!record || record.adopted) reason = "server is not owned by this daemon";
+        else outcome = "accept";
+      }
+    } catch (error) {
+      reason = vocabularyErrorReason(error);
+    }
+  } else {
+    const result = await unloadOwnedServer(residencyBusy);
+    outcome = result.outcome;
+    if (result.outcome === "reject") reason = result.reason;
+  }
+  try {
+    const modelStatus = await readWhisperModelStatus();
+    if (command.action === "load" && outcome === "accept" && residencyBusy()) {
+      outcome = "reject";
+      reason = residencyBusyReason();
+    }
+    const expected = command.action === "load" ? "loaded" : "not_loaded";
+    if (outcome === "accept" && modelStatus.residency !== expected) {
+      outcome = "reject";
+      reason = "fresh residency differs from requested state";
+    }
+    return {
+      ...buildAck(command, outcome, reason),
+      residency: modelStatus.residency,
+      model_status: modelStatus,
+    };
+  } catch (error) {
+    outcome = "reject";
+    reason ??= vocabularyErrorReason(error);
+    return {
+      ...buildAck(command, "reject", reason),
+      residency: "unknown",
+    };
+  } finally {
+    if (ownsLoadSlot) residencyLoadPending = false;
+    publishModelStatusEvent();
+    console.error(
+      `[voicelayer] Residency request ${command.id} ${command.action} ${outcome}` +
+      ` reason=${reason ?? "none"} elapsed_ms=${Date.now() - startedAt}`,
+    );
+  }
+}
+
+let polishTransitions: Promise<void> = Promise.resolve();
+
+/** Resolves once every queued Polish on/off transition has finished (tests). */
+export function polishTransitionsSettled(): Promise<void> {
+  return polishTransitions;
+}
+
+/**
+ * Effort is a whisper-server launch flag, so a change stops the server. If the
+ * model was in memory, relaunch it with the new effort before acking, so "In
+ * memory" returns to Loaded without a click (E2). The socket client sends the
+ * same `loading` ack a Load gets while this runs.
+ *
+ * AIDEV-NOTE: a server this daemon did not launch is only detached by the stop
+ * and re-adopted with its old flags, so the ack says the effort is not active
+ * yet instead of claiming it applied.
+ */
+async function handleEffortCommand(
+  command: Extract<SocketCommand, { cmd: "set_whisper_effort" }>,
+): Promise<AckEvent> {
+  residencyLoadPending = true;
+  let reason: string | undefined;
+  try {
+    const wasLoaded = (await readWhisperModelStatus()).residency === "loaded";
+    // The status probe yielded; a capture may have started meanwhile.
+    if (residencyBusy() || whisperLifecycleGate.isInUse) {
+      return buildAck(command, "reject", residencyBusyReason());
+    }
+    // The SAVED preference, not an env override: restoring the override would
+    // write it into the file and lose the user's choice (#142 round 3).
+    const previousEffort = getPersistedWhisperPerformanceEffort();
+    try {
+      setWhisperPerformanceEffort(command.effort);
+    } catch (error) {
+      return buildAck(command, "reject", vocabularyErrorReason(error));
+    }
+    try {
+      await restartWhisperServerForPerformanceChange();
+    } catch (error) {
+      // The old server is still running its old flags: say so, and keep the
+      // setting truthful rather than report an effort that is not in effect.
+      try {
+        restorePersistedWhisperPerformanceEffort(previousEffort);
+      } catch (rollbackError) {
+        return buildAck(
+          command,
+          "reject",
+          `Effort change failed (${vocabularyErrorReason(error)}) and the saved effort ` +
+            `could not be restored (${vocabularyErrorReason(rollbackError)})`,
+        );
+      }
+      return buildAck(
+        command,
+        "reject",
+        `Effort unchanged: ${vocabularyErrorReason(error)}`,
+      );
+    }
+    if (wasLoaded) {
+      try {
+        await ensureServer();
+      } catch (error) {
+        reason = `Saved, but the model did not reload: ${vocabularyErrorReason(error)}`;
+      }
+    }
+  } finally {
+    residencyLoadPending = false;
+  }
+  try {
+    const modelStatus = await readWhisperModelStatus();
+    if (!reason && modelStatus.configured_effort !== command.effort) {
+      // QA_VOICE_WHISPER_PERFORMANCE_EFFORT outranks the saved choice, so the
+      // relaunched server runs the override: say that, not "not ours".
+      reason = `Saved. QA_VOICE_WHISPER_PERFORMANCE_EFFORT=${modelStatus.configured_effort} ` +
+        "overrides it, so the model uses that until the override is removed.";
+    } else if (!reason && modelStatus.residency === "loaded" &&
+        modelStatus.active_effort !== command.effort) {
+      reason = "Saved. The running model server was not started by VoiceLayer, " +
+        "so it keeps its current effort until it restarts.";
+    }
+    return {
+      ...buildAck(command, "accept", reason),
+      residency: modelStatus.residency,
+      model_status: modelStatus,
+    };
+  } catch (error) {
+    return buildAck(command, "accept", reason ?? vocabularyErrorReason(error));
+  } finally {
+    publishModelStatusEvent();
+  }
+}
+
+/**
+ * Settings → Models → Processing (P1). The toggle applies from the next
+ * dictation. Rejected while busy (as effort is), so one transcription never
+ * mixes settings, and when the environment sets the flag, because the file
+ * could not change what the pipeline reads.
+ */
+function handleProcessingSettingCommand(
+  command: Extract<SocketCommand, { cmd: "set_processing_setting" }>,
+): AckEvent {
+  if (residencyBusy() || residencyLoadPending || whisperLifecycleGate.isInUse) {
+    const booking = isVoiceBooked();
+    return buildAck(command, "reject", booking.booked && !booking.ownedByUs
+      ? EXTERNAL_VOICE_SESSION_REASON : "busy");
+  }
+  const envVar = PROCESSING_ENV_VARS[command.key];
+  if (process.env[envVar] !== undefined) {
+    return buildAck(command, "reject", `set by ${envVar}`);
+  }
+  try {
+    setProcessingSetting(command.key, command.value);
+  } catch (error) {
+    return buildAck(command, "reject", vocabularyErrorReason(error));
+  }
+  if (command.key === "model_polish") {
+    // Off frees the local polish model (waiting for it to exit); either way the
+    // server status is re-published. Transitions run one at a time, so a rapid
+    // off → on never probes a server that is still shutting down (#146 round 2).
+    const turnOn = command.value;
+    polishTransitions = polishTransitions
+      .then(async () => {
+        if (!turnOn) await stopSTTPolishServerAndWait();
+        await ensureSTTPolishServer();
+      })
+      .catch((error: unknown) => {
+        console.error(`[voicelayer] polish server after toggle: ${vocabularyErrorReason(error)}`);
+      });
+  }
+  return { ...buildAck(command, "accept"), polish_controls: readPolishControlsStatus() };
 }
 
 function vocabularyErrorReason(error: unknown): string {

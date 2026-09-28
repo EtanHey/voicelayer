@@ -1,11 +1,61 @@
 import Foundation
 import SwiftUI
 
-public enum SettingsTab: Hashable {
+public enum SettingsTab: Hashable, CaseIterable, Identifiable {
     case general
-    case audio
-    case history
+    case models
     case dictionary
+    case history
+
+    public var id: Self {
+        self
+    }
+
+    public var title: String {
+        switch self {
+        case .general: "General"
+        case .models: "Models"
+        case .dictionary: "Dictionary"
+        case .history: "History"
+        }
+    }
+
+    /// The `voicebar://settings/<tab>` path component, matched case-insensitively against the title.
+    public init?(urlComponent: String) {
+        guard let tab = Self.allCases.first(where: { $0.title.lowercased() == urlComponent.lowercased() })
+        else { return nil }
+        self = tab
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .general: "gearshape"
+        case .models: "cpu"
+        case .dictionary: "text.book.closed"
+        case .history: "clock.arrow.circlepath"
+        }
+    }
+}
+
+/// Asks an open Settings window to show `tab`. The app swaps the hosting controller's root view and
+/// SwiftUI keeps `@State` across that swap, so `initialTab` cannot switch a live window; a new `id` makes
+/// a repeat request for the same tab fire again, and an unchanged request never overrides the user.
+public struct SettingsTabRequest: Equatable {
+    public let tab: SettingsTab
+    public let focus: SettingsFocus?
+    public let id: Int
+
+    public init(tab: SettingsTab, focus: SettingsFocus? = nil, id: Int) {
+        self.tab = tab
+        self.focus = focus
+        self.id = id
+    }
+}
+
+/// A section a Settings request scrolls to after switching tab.
+public enum SettingsFocus: String, Equatable, Hashable {
+    /// General › Microphone priority, where the default microphone is chosen (D2 "Change…").
+    case microphonePriority = "settings-general-microphone-priority"
 }
 
 /// The two lists inside Settings → History. Order is the on-screen order: recording sits on the
@@ -16,7 +66,7 @@ public enum SettingsHistoryScope: String, Hashable, CaseIterable, Sendable {
 
     public var title: String {
         switch self {
-        case .recording: "Recording"
+        case .recording: "Dictations"
         case .ask: "Ask"
         }
     }
@@ -46,6 +96,11 @@ struct SettingsHistoryMediaPart: Equatable {
     let audioPath: URL?
     let durationLabel: String?
     let transcribedDurationLabel: String?
+    /// ≈ speech time with pauses left out; when present it replaces `transcribedDurationLabel` (F1: no third
+    /// number).
+    var spokenDurationLabel: String?
+    /// "1.2 s processing", the same figure as the last-dictation card.
+    var processingLabel: String?
 
     var label: String? {
         switch role {
@@ -94,10 +149,27 @@ struct SettingsHistoryMediaPart: Equatable {
     }
 }
 
+/// Whether a History action shows, and if it is blocked for now, why (UI pass #10: a disabled button with no
+/// reason looks broken).
+enum SettingsHistoryActionStyle {
+    /// On top of the system's own dimming of a disabled button.
+    static let disabledOpacity = 0.4
+}
+
+enum SettingsHistoryActionAvailability: Equatable {
+    case available
+    /// Can never apply to this part (no transcript to copy, no audio to play): not shown at all.
+    case hidden
+    /// Blocked for now; the reason is the tooltip and the VoiceOver hint.
+    case unavailable(String)
+}
+
 struct SettingsHistoryActionEnablement: Equatable {
     let isRetranscribing: Bool
     let isRecording: Bool
     let isTranscribing: Bool
+    /// The recording being re-transcribed, so its own Re-transcribe says so instead of "Another…".
+    var retranscribingPath: String?
 
     func isEnabled(
         _ action: SettingsHistoryAction,
@@ -105,6 +177,9 @@ struct SettingsHistoryActionEnablement: Equatable {
     ) -> Bool {
         guard part.isEnabled(action) else { return false }
 
+        if action == .play, isRecording || isTranscribing {
+            return false
+        }
         if action == .retranscribe, isRetranscribing || isRecording || isTranscribing {
             return false
         }
@@ -113,6 +188,33 @@ struct SettingsHistoryActionEnablement: Equatable {
         }
         return true
     }
+
+    func availability(
+        _ action: SettingsHistoryAction,
+        for part: SettingsHistoryMediaPart
+    ) -> SettingsHistoryActionAvailability {
+        guard part.isEnabled(action) else { return .hidden }
+        guard !isEnabled(action, for: part) else { return .available }
+        switch action {
+        case .play, .retranscribe:
+            if isRecording { return .unavailable("Unavailable while recording") }
+            // AIDEV-NOTE: a re-transcription also puts the daemon in "transcribing", so this must be checked first
+            // or every blocked button said "Unavailable while transcribing" (QA 2.2.25 C6, 04:52).
+            if isRetranscribing {
+                if action == .play { return .unavailable("Wait for the re-transcription to finish") }
+                if let path = part.audioPath?.path, path == retranscribingPath {
+                    return .unavailable("Re-transcribing this recording")
+                }
+                return .unavailable("Another re-transcription is running")
+            }
+            if isTranscribing { return .unavailable("Unavailable while transcribing") }
+            return .unavailable("Unavailable right now")
+        case .copy, .paste:
+            return .unavailable("Wait for the re-transcription to finish")
+        case .finder:
+            return .unavailable("Unavailable right now")
+        }
+    }
 }
 
 struct SettingsHistoryRowModel: Equatable {
@@ -120,9 +222,12 @@ struct SettingsHistoryRowModel: Equatable {
     let parts: [SettingsHistoryMediaPart]
 
     static func recording(_ entry: SettingsHistoryEntry) -> SettingsHistoryRowModel {
+        // F1: spoken length (≤ the trimmed length) replaces the trimmed one; entries archived before it was
+        // measured keep the trimmed label.
+        let hasSpokenLength = entry.spokenDurationMs != nil
         let durationLabels = durationLabels(
             durationMs: entry.durationMs,
-            transcribedDurationMs: entry.transcribedDurationMs
+            transcribedDurationMs: hasSpokenLength ? entry.spokenDurationMs : entry.transcribedDurationMs
         )
         return SettingsHistoryRowModel(
             timestamp: entry.timestamp(),
@@ -134,10 +239,17 @@ struct SettingsHistoryRowModel: Equatable {
                     actionableText: entry.hasTranscript ? entry.transcript : nil,
                     audioPath: entry.audioPath,
                     durationLabel: durationLabels.audio,
-                    transcribedDurationLabel: durationLabels.transcribed
+                    transcribedDurationLabel: hasSpokenLength ? nil : durationLabels.transcribed,
+                    spokenDurationLabel: hasSpokenLength ? durationLabels.transcribed : nil,
+                    processingLabel: processingLabel(entry.processingDurationMs)
                 ),
             ]
         )
+    }
+
+    static func processingLabel(_ milliseconds: Int?) -> String? {
+        guard let milliseconds, milliseconds > 0 else { return nil }
+        return String(format: "%.1f s processing", Double(milliseconds) / 1000)
     }
 
     static func ask(_ entry: SettingsAskHistoryEntry) -> SettingsHistoryRowModel {
@@ -189,15 +301,100 @@ struct SettingsHistoryRowModel: Equatable {
 
 private enum DictEditorField: Hashable {
     case search
-    case newTerm
-    case editTerm
-    case addVariant
 }
 
 private enum DictionaryCardLayout {
     static let headerHeight: CGFloat = 24
-    static let inlineControlHeight: CGFloat = 28
-    static let inlineFieldVerticalPadding: CGFloat = 5
+    /// UI pass #19: the pencil and trash were 10–12 pt targets.
+    static let actionTarget: CGFloat = 24
+}
+
+struct SettingsVocabularyRevisionObserver: ViewModifier {
+    let revision: UInt64
+    let onRefresh: () -> Void
+
+    func body(content: Content) -> some View {
+        content.onChange(of: revision) {
+            onRefresh()
+        }
+    }
+}
+
+struct SettingsHistoryLoadFence {
+    private var generation = 0
+
+    mutating func begin() -> Int {
+        generation &+= 1
+        return generation
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+    }
+
+    func accepts(_ candidate: Int) -> Bool {
+        candidate == generation
+    }
+}
+
+public enum SettingsShortcutCheck {
+    static let readyMessage = "Shortcut ready: F5 listener and relay are active."
+
+    public static func message(
+        hotkeyEnabled: Bool,
+        missingPermissions: [HotkeyPermission],
+        relayReady: Bool,
+        relaySummary: String
+    ) -> String {
+        if hotkeyEnabled, missingPermissions.isEmpty, relayReady {
+            return readyMessage
+        }
+        var problems: [String] = []
+        if !hotkeyEnabled { problems.append("F5 listener unavailable") }
+        if !missingPermissions.isEmpty { problems.append("Required permissions missing") }
+        if !relayReady { problems.append(relaySummary) }
+        return "Shortcut needs attention: \(problems.joined(separator: "; "))."
+    }
+
+    /// R4 UI pass #15: pressing Check changed nothing on screen. The line now says when the check ran and
+    /// marks a pass, e.g. "Checked ✓ just now · Shortcut ready: …".
+    public static func feedback(
+        message: String,
+        checkedAt: Date,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        let when = VoiceBarRelativeTime.label(checkedAt, now: now, calendar: calendar) ?? "Just now"
+        // Only the relative words read mid-sentence in lower case; a date keeps its capitalisation
+        // (#163 review: "Checked sep 18").
+        let phrase = ["Just now", "Yesterday"].contains(when) ? when.lowercased() : when
+        return "\(message == readyMessage ? "Checked ✓" : "Checked") \(phrase) · \(message)"
+    }
+}
+
+/// R4 UI pass #14: "Hidden" didn't say when VoiceBar comes back.
+/// The dot beside a Settings status: green when ready, red when something is wrong, gray when it is a choice.
+public enum SettingsStatusTone: Equatable {
+    case ready
+    case attention
+    case neutral
+}
+
+public enum SettingsVisibility {
+    /// Hidden by choice isn't broken (#163 review), so it gets the neutral dot, not red.
+    public static func tone(isHidden: Bool) -> SettingsStatusTone {
+        isHidden ? .neutral : .ready
+    }
+
+    public static func hiddenStatus(until: Date?, calendar: Calendar = .current) -> String {
+        guard let until else { return "Hidden" }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = calendar.locale ?? .current
+        formatter.setLocalizedDateFormatFromTemplate("jmm")
+        return "Hidden until \(formatter.string(from: until))"
+    }
 }
 
 public struct SettingsView: View {
@@ -205,27 +402,51 @@ public struct SettingsView: View {
     public let missingPermissions: [HotkeyPermission]
     public let availableDevices: () -> [MicrophoneDevice]
     public let selectedDeviceID: () -> String?
-    public let onSelectDevice: (String) -> Void
+    public let prioritySnapshot: () -> MicrophonePrioritySnapshot
+    public let onReorderPriority: ([String]) -> Void
     public let polishDegradation: () -> STTPolishDegradation?
     public let onDismissPolishDegradation: () -> Void
-    public let anchorMode: () -> VoiceBarAnchorMode
-    public let onSelectAnchorMode: (VoiceBarAnchorMode) -> Void
     public let performanceEffort: () -> VoiceBarPerformanceEffort
     public let performanceEffortNotice: () -> String?
     public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
+    public let modelsStatus: () -> ModelsSettingsState
+    public let tabRequest: SettingsTabRequest?
+    /// Tells the app which tab is showing, so a Settings window rebuilt after a close reopens on it.
+    public let onSelectedTabChange: (SettingsTab) -> Void
+    public let onRefreshModelsStatus: () -> Void
+    public let residencyNotice: () -> String?
+    public let onSelectResidency: ((VoiceModelResidency) -> Void)?
+    public let processingPending: () -> [ProcessingKey: Bool]
+    public let processingNotice: () -> String?
+    public let onToggleProcessing: ((ProcessingKey, Bool) -> Void)?
     public let vocabularyPreview: () -> STTVocabularyPreview
+    private let hasInitialDictionaryPreview: Bool
+    public let vocabularyRevision: () -> UInt64
     public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
     public let onAddPromptTerm: (String) -> Void
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
+    /// C12: when the latest left-mouse press happened (system uptime), from the app's event source. It tells one
+    /// drag session from the next; nil means unknown. VoiceBarUI stays presentation-only, so the app reads it.
+    public let lastMousePressUptime: () -> TimeInterval?
+    public let onCheckShortcut: (@escaping (String) -> Void) -> Void
     public let isMicrophonePermissionGranted: () -> Bool
     public let isVoiceBarHidden: () -> Bool
+    public let voiceBarHiddenUntil: () -> Date?
     public let onHideVoiceBar: () -> Void
     public let onShowVoiceBar: () -> Void
-    public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
-    public let historyPage: @Sendable (Int) -> SettingsHistoryPage
-    public let askHistoryPage: @Sendable (Int) -> SettingsAskHistoryPage
+    public let onRunRelaySetup: (@escaping (SettingsRelaySetupResult) -> Void) -> Void
+    public let lastDictationEntry: () -> RecentTranscriptionEntry?
+    public let lastDictationInsertionStatus: () -> DictationInsertionStatus
+    public let onCopyLastDictation: (String) -> Void
+    public let historyPage: @Sendable (Int) async -> SettingsHistoryPage
+    public let askHistoryPage: @Sendable (Int) async -> SettingsAskHistoryPage
+    /// H1-c: a page of matches for a non-blank query, paged and cached by the index like the unfiltered pages.
+    public let historySearchPage: @Sendable (Int, String) async -> SettingsHistoryPage
+    public let askHistorySearchPage: @Sendable (Int, String) async -> SettingsAskHistoryPage
+    /// Warms the search text in the background once History has its pages (lead add-on).
+    public let searchPrewarm: @Sendable () async -> Void
     public let onCopyHistoryTranscript: (String) -> Void
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
@@ -234,22 +455,24 @@ public struct SettingsView: View {
     public let isRecordingActive: () -> Bool
     public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
+    public let footerPresentation: () -> VoiceBarFooterPresentation
+    /// Opens the setup wizard (F3): General › Setup › Run setup again.
+    public let onRunSetup: () -> Void
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
 
     @State private var selectedTab: SettingsTab
-    @State private var selectedAnchorMode: VoiceBarAnchorMode
-    @State private var selectedAnchoredMode: VoiceBarAnchorMode
     @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
     @State private var localVoiceBarHidden: Bool
     @State private var historyDayGroups: [SettingsHistoryDayGroup]
     @State private var historyLoadedEntryCount: Int
     @State private var historyLoadedEntryLimit: Int
     @State private var historyHasMore: Bool
+    @State private var selectedHistoryEntryID: String?
     @State private var isHistoryLoading = false
-    @State private var historyLoadGeneration = 0
+    @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
     @State private var selectedHistoryScope: SettingsHistoryScope
     @State private var askHistoryDayGroups: [SettingsAskHistoryDayGroup]
@@ -257,19 +480,47 @@ public struct SettingsView: View {
     @State private var askHistoryLoadedEntryLimit: Int
     @State private var askHistoryHasMore: Bool
     @State private var isAskHistoryLoading = false
-    @State private var askHistoryLoadGeneration = 0
+    @State private var askHistoryLoadFence = SettingsHistoryLoadFence()
     @State private var askHistoryRefreshTask: Task<Void, Never>?
+    @State private var hasPrefetchedAskHistory = false
+    /// History scopes shown at least once in this Settings session; they stay mounted (lane E).
+    @State private var mountedHistoryScopes: Set<SettingsHistoryScope> = []
+    /// Set when History is (re)entered, so the next Dictations page selects the newest row (UI pass #9).
+    @State private var selectNewestOnNextHistoryPage = true
+    @State private var searchPrewarmTask: Task<Void, Never>?
     @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
+    @State private var historySearch = ""
+    @State private var askHistorySearch = ""
+    @State private var includedTermsExpanded = false
+    /// Etan (M27): "a collapsible Personal section". Expanded by default.
+    @State private var yourTermsExpanded = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// UI pass #18: after Add/Edit the saved term is scrolled to, selected and flashed.
+    @State private var selectedTermRowID: String?
+    @State private var flashingTermRowID: String?
+    @State private var pendingScrollRowID: String?
+    @State private var dictionaryLoading = false
+    @State private var hasLoadedDictionaryOnce: Bool
+    @State private var dictionaryReloadQueued = false
+    @State private var dictionaryReloadGate = DictionaryReloadGate()
     @State private var localEntries: [STTDictionaryEntry]
-    @State private var editingCanonical: String?
-    @State private var editTermText = ""
-    @State private var addingVariantFor: String?
-    @State private var variantText = ""
+    @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
+    /// The one Add/Edit sheet (nil = closed). Etan's 2.2.24 review #3: no inline box, no per-term misheard row.
+    @State private var termSheet: DictionaryTermEdit?
     @State private var pendingDeleteCanonical: String?
-    @State private var newTermText = ""
-    @State private var relaySetupFeedback: String?
+    /// The last Set up / Reinstall: which one ran, and its result (nil while it runs).
+    @State private var relaySetupFeedback: (
+        action: SettingsRelaySetupFeedback.Action,
+        result: SettingsRelaySetupResult?
+    )?
     @State private var relaySetupRunning = false
+    @State private var shortcutCheckRunning = false
+    @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
+    @State private var isAdvancedExpanded = false
+    @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
+    @State private var microphoneDrag: MicrophoneDragState
+    @State private var lastDictationProvenanceLabel: String?
     @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
@@ -277,36 +528,58 @@ public struct SettingsView: View {
         missingPermissions: [HotkeyPermission],
         availableDevices: @escaping () -> [MicrophoneDevice],
         selectedDeviceID: @escaping () -> String?,
-        onSelectDevice: @escaping (String) -> Void,
+        prioritySnapshot: @escaping () -> MicrophonePrioritySnapshot = { .unavailable },
+        onReorderPriority: @escaping ([String]) -> Void = { _ in },
         polishDegradation: @escaping () -> STTPolishDegradation? = { nil },
         onDismissPolishDegradation: @escaping () -> Void = {},
-        anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
-        onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in },
         performanceEffort: @escaping () -> VoiceBarPerformanceEffort = { .accurate },
         performanceEffortNotice: @escaping () -> String? = { nil },
         onSelectPerformanceEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
+        modelsStatus: @escaping () -> ModelsSettingsState,
+        onRefreshModelsStatus: @escaping () -> Void,
+        residencyNotice: @escaping () -> String? = { nil },
+        onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
+        processingPending: @escaping () -> [ProcessingKey: Bool] = { [:] },
+        processingNotice: @escaping () -> String? = { nil },
+        onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil,
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
+        vocabularyRevision: @escaping () -> UInt64,
         onAddVocabularyAlias: @escaping (String, String) -> Void = { _, _ in },
         onRemoveVocabularyAlias: @escaping (STTVocabularyAliasPreview) -> Void = { _ in },
         onAddPromptTerm: @escaping (String) -> Void = { _ in },
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
+        lastMousePressUptime: @escaping () -> TimeInterval? = { nil },
+        onCheckShortcut: @escaping (@escaping (String) -> Void) -> Void = { $0("Shortcut check unavailable.") },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
         isVoiceBarHidden: @escaping () -> Bool = { false },
+        voiceBarHiddenUntil: @escaping () -> Date? = { nil },
         onHideVoiceBar: @escaping () -> Void = {},
         onShowVoiceBar: @escaping () -> Void = {},
-        onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
-            completion("Relay setup requested.")
+        onRunRelaySetup: @escaping (@escaping (SettingsRelaySetupResult) -> Void) -> Void = { completion in
+            completion(SettingsRelaySetupResult(outcome: .failed(reason: "not available here"), finishedAt: Date()))
         },
-        historyPage: @escaping @Sendable (Int) -> SettingsHistoryPage = { limit in
-            SettingsHistoryArchive.loadPage(limit: limit)
+        lastDictationEntry: @escaping () -> RecentTranscriptionEntry? = { nil },
+        lastDictationInsertionStatus: @escaping () -> DictationInsertionStatus = { .unverified },
+        onCopyLastDictation: @escaping (String) -> Void = { _ in },
+        historyPage: @escaping @Sendable (Int) async -> SettingsHistoryPage = { limit in
+            await SettingsArchiveIndex.shared.dictationPage(limit: limit)
         },
         historyGroups: (@Sendable () -> [SettingsHistoryDayGroup])? = nil,
         initialHistoryPage: SettingsHistoryPage? = nil,
-        askHistoryPage: @escaping @Sendable (Int) -> SettingsAskHistoryPage = { limit in
-            SettingsAskHistoryArchive.loadPage(limit: limit)
+        askHistoryPage: @escaping @Sendable (Int) async -> SettingsAskHistoryPage = { limit in
+            await SettingsArchiveIndex.shared.askPage(limit: limit)
+        },
+        historySearchPage: @escaping @Sendable (Int, String) async -> SettingsHistoryPage = { limit, query in
+            await SettingsArchiveIndex.shared.dictationPage(limit: limit, matching: query)
+        },
+        askHistorySearchPage: @escaping @Sendable (Int, String) async -> SettingsAskHistoryPage = { limit, query in
+            await SettingsArchiveIndex.shared.askPage(limit: limit, matching: query)
+        },
+        searchPrewarm: @escaping @Sendable () async -> Void = {
+            await SettingsArchiveIndex.shared.prewarmSearchText()
         },
         initialAskHistoryPage: SettingsAskHistoryPage? = nil,
         onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
@@ -317,32 +590,70 @@ public struct SettingsView: View {
         isRecordingActive: @escaping () -> Bool = { false },
         isTranscribingActive: @escaping () -> Bool = { false },
         onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
+        footerPresentation: @escaping () -> VoiceBarFooterPresentation = {
+            .resolve(
+                isConnected: false,
+                mode: .disconnected,
+                captureLive: false,
+                errorMessage: nil,
+                remoteSTTConfigured: nil
+            )
+        },
+        onRunSetup: @escaping () -> Void = {},
         initialTab: SettingsTab = .general,
-        initialHistoryScope: SettingsHistoryScope = .recording
+        tabRequest: SettingsTabRequest? = nil,
+        initialHistoryScope: SettingsHistoryScope = .recording,
+        initialDictionarySearch: String = "",
+        initialHistorySearch: String = "",
+        initialAskHistorySearch: String = "",
+        initialAdvancedExpanded: Bool = false,
+        initialRelaySetupFeedback: (action: SettingsRelaySetupFeedback.Action,
+                                    result: SettingsRelaySetupResult?)? = nil,
+        initialMicrophoneDrag: MicrophoneDragState = MicrophoneDragState(),
+        initialDictionaryPreview: STTVocabularyPreview? = nil,
+        initialIncludedTermsExpanded: Bool = false,
+        initialYourTermsExpanded: Bool = true,
+        initialSelectedTermRowID: String? = nil,
+        onSelectedTabChange: @escaping (SettingsTab) -> Void = { _ in },
+        historyPlayback: SettingsAudioPlayback? = nil
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
         self.availableDevices = availableDevices
         self.selectedDeviceID = selectedDeviceID
-        self.onSelectDevice = onSelectDevice
+        self.prioritySnapshot = prioritySnapshot
+        self.onReorderPriority = onReorderPriority
         self.polishDegradation = polishDegradation
         self.onDismissPolishDegradation = onDismissPolishDegradation
-        self.anchorMode = anchorMode
-        self.onSelectAnchorMode = onSelectAnchorMode
         self.performanceEffort = performanceEffort
         self.performanceEffortNotice = performanceEffortNotice
         self.onSelectPerformanceEffort = onSelectPerformanceEffort
+        self.modelsStatus = modelsStatus
+        self.onRefreshModelsStatus = onRefreshModelsStatus
+        self.residencyNotice = residencyNotice
+        self.onSelectResidency = onSelectResidency
+        self.processingPending = processingPending
+        self.processingNotice = processingNotice
+        self.onToggleProcessing = onToggleProcessing
         self.vocabularyPreview = vocabularyPreview
+        hasInitialDictionaryPreview = initialDictionaryPreview != nil
+        self.vocabularyRevision = vocabularyRevision
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
         self.onAddPromptTerm = onAddPromptTerm
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
+        self.lastMousePressUptime = lastMousePressUptime
+        self.onCheckShortcut = onCheckShortcut
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
         self.isVoiceBarHidden = isVoiceBarHidden
+        self.voiceBarHiddenUntil = voiceBarHiddenUntil
         self.onHideVoiceBar = onHideVoiceBar
         self.onShowVoiceBar = onShowVoiceBar
         self.onRunRelaySetup = onRunRelaySetup
+        self.lastDictationEntry = lastDictationEntry
+        self.lastDictationInsertionStatus = lastDictationInsertionStatus
+        self.onCopyLastDictation = onCopyLastDictation
         if let historyGroups {
             self.historyPage = { limit in
                 let groups = Self.newestFirstHistoryGroups(historyGroups())
@@ -357,6 +668,9 @@ public struct SettingsView: View {
             self.historyPage = historyPage
         }
         self.askHistoryPage = askHistoryPage
+        self.historySearchPage = historySearchPage
+        self.askHistorySearchPage = askHistorySearchPage
+        self.searchPrewarm = searchPrewarm
         self.onCopyHistoryTranscript = onCopyHistoryTranscript
         self.onPasteHistoryTranscript = onPasteHistoryTranscript
         self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
@@ -365,60 +679,92 @@ public struct SettingsView: View {
         self.isRecordingActive = isRecordingActive
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
-        let initialAnchorMode = anchorMode()
+        self.footerPresentation = footerPresentation
+        self.onRunSetup = onRunSetup
         let initialPerformanceEffort = performanceEffort()
-        let initialVocabulary = vocabularyPreview()
-        _selectedTab = State(initialValue: initialTab)
+        self.tabRequest = tabRequest
+        self.onSelectedTabChange = onSelectedTabChange
+        _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
+        _dictionarySearch = State(initialValue: initialDictionarySearch)
+        _historySearch = State(initialValue: initialHistorySearch)
+        _askHistorySearch = State(initialValue: initialAskHistorySearch)
+        _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
+        _relaySetupFeedback = State(initialValue: initialRelaySetupFeedback)
+        _microphoneDrag = State(initialValue: initialMicrophoneDrag)
+        _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
+        _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
+        _selectedTermRowID = State(initialValue: initialSelectedTermRowID)
         _selectedHistoryScope = State(initialValue: initialHistoryScope)
+        if let historyPlayback {
+            _historyPlayback = State(initialValue: historyPlayback)
+        }
         _askHistoryDayGroups = State(initialValue: initialAskHistoryPage?.groups ?? [])
         _askHistoryLoadedEntryCount = State(initialValue: initialAskHistoryPage?.loadedEntryCount ?? 0)
         _askHistoryLoadedEntryLimit = State(
             initialValue: max(Self.historyPageSize, initialAskHistoryPage?.loadedEntryCount ?? 0)
         )
         _askHistoryHasMore = State(initialValue: initialAskHistoryPage?.hasMore ?? false)
-        _selectedAnchorMode = State(initialValue: initialAnchorMode)
         _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
         _localVoiceBarHidden = State(initialValue: isVoiceBarHidden())
         let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
         _historyDayGroups = State(initialValue: initialHistoryPage?.groups ?? [])
         _historyLoadedEntryCount = State(initialValue: initialHistoryPage?.loadedEntryCount ?? 0)
+        _selectedHistoryEntryID = State(initialValue: initialHistoryPage?.groups.first?.entries.first?.id)
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
-        _localEntries = State(initialValue: initialVocabulary.entries)
-        _selectedAnchoredMode = State(
-            initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
-                ? initialAnchorMode
-                : .topCenter
-        )
+        _localEntries = State(initialValue: initialDictionaryPreview?.entries ?? [])
+        _hasLoadedDictionaryOnce = State(initialValue: initialDictionaryPreview != nil)
+        _dictionaryDisplayIndex = State(initialValue: STTDictionaryDisplayIndex(entries:
+            initialDictionaryPreview?.displayEntries ?? initialDictionaryPreview?.entries.map {
+                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+            } ?? []))
     }
 
     public var body: some View {
-        TabView(selection: $selectedTab) {
-            generalTab
-                .tabItem { Label("General", systemImage: "gear") }
-                .tag(SettingsTab.general)
-            audioTab
-                .tabItem { Label("Audio", systemImage: "mic.fill") }
-                .tag(SettingsTab.audio)
-            historyTab
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
-                .tag(SettingsTab.history)
-            dictionaryTab
-                .tabItem { Label("Dictionary", systemImage: "text.book.closed") }
-                .tag(SettingsTab.dictionary)
+        SettingsNavigationShell(selection: $selectedTab, footer: footerPresentation()) {
+            switch selectedTab {
+            case .dictionary:
+                dictionaryTab
+            case .history:
+                settingsPage(
+                    title: "History",
+                    subtitle: "Your recordings and conversations"
+                ) { historyTab }
+            case .models:
+                settingsPage(title: "Models") { modelsTab }
+            case .general:
+                settingsPage(title: "General") { generalTab }
+            }
         }
-        .frame(width: 520, height: 620)
+        .frame(minWidth: 780, maxWidth: .infinity, minHeight: 620, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: vocabularyPreview()) { _, preview in
-            reconcileLocalEntries(with: preview.entries)
+        .modifier(
+            SettingsVocabularyRevisionObserver(
+                revision: vocabularyRevision(),
+                onRefresh: { loadDictionaryPreview() }
+            )
+        )
+        .onChange(of: tabRequest) { _, request in
+            if let request { selectedTab = request.tab }
+        }
+        // A view built on a requested tab sets it in init, where no onChange fires; report it here too.
+        .onAppear { onSelectedTabChange(selectedTab) }
+        .task(id: selectedTab) {
+            if selectedTab == .dictionary, !hasInitialDictionaryPreview { loadDictionaryPreview() }
         }
         .onChange(of: selectedTab) { _, tab in
+            onSelectedTabChange(tab)
             if tab == .history {
                 switch selectedHistoryScope {
                 case .recording:
-                    requestHistoryReload()
+                    selectNewestOnNextHistoryPage = true
+                    if !isHistoryLoading {
+                        requestHistoryReload()
+                    }
                 case .ask:
-                    requestAskHistoryReload()
+                    if !isAskHistoryLoading {
+                        requestAskHistoryReload()
+                    }
                 }
             } else {
                 historyPlayback.stop()
@@ -428,13 +774,60 @@ public struct SettingsView: View {
             cancelHistoryLoads()
             historyPlayback.stop()
         }
+        .onChange(of: isRecordingActive() || isTranscribingActive()) { _, active in
+            if active { historyPlayback.stop() }
+        }
+    }
+
+    private func settingsPage(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 19)
+            .padding(.bottom, 14)
+
+            Divider()
+            content()
+        }
     }
 
     // MARK: - General Tab
 
     private var generalTab: some View {
+        ScrollViewReader { proxy in
+            generalForm
+                .onAppear { scrollToRequestedFocus(proxy, animated: false) }
+                .onChange(of: tabRequest) { _, _ in scrollToRequestedFocus(proxy, animated: true) }
+        }
+    }
+
+    /// "Change…" from the menu or popover lands here with the Microphone priority list in view (D2).
+    private func scrollToRequestedFocus(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard let focus = tabRequest?.focus, tabRequest?.tab == .general else { return }
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation { proxy.scrollTo(focus, anchor: .top) }
+            } else {
+                proxy.scrollTo(focus, anchor: .top)
+            }
+        }
+    }
+
+    private var generalForm: some View {
         Form {
-            Section("Permissions & Hotkey Setup") {
+            Section("Shortcut") {
                 LabeledContent("Shortcut") {
                     HStack(spacing: 6) {
                         Image(systemName: "keyboard")
@@ -443,100 +836,138 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if isHotkeyRemapActive() {
-                    Text(VoiceBarHotkeyContract.remapExplanation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                // C14: the status sits in the same trailing column as the shortcut above it (and every other
+                // General value); Check shortcut is its own row below, like Visibility's Hide button.
                 LabeledContent("Status") {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(hotkeyEnabled ? .green : .red)
-                            .frame(width: 8, height: 8)
-                        Text(hotkeyStatusText)
+                    statusBadge(hotkeyStatusText, isReady: hotkeyEnabled)
+                }
+                if !hotkeyEnabled {
+                    Text(
+                        "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+                Button("Check shortcut") {
+                    shortcutCheckRunning = true
+                    onCheckShortcut { result in
+                        shortcutCheckFeedback = (result, Date())
+                        shortcutCheckRunning = false
                     }
                 }
-
-                permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
-                permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
-                permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
-
-                LabeledContent("Relay (hidutil LaunchAgent)") {
-                    HStack(spacing: 8) {
-                        statusBadge(isHotkeyRemapActive() ? "Ready" : "Needs setup", isReady: isHotkeyRemapActive())
-                        Button("Set up") {
-                            runRelaySetup()
-                        }
-                        .disabled(relaySetupRunning)
-                    }
+                .disabled(shortcutCheckRunning)
+                if let shortcutCheckFeedback {
+                    SettingsShortcutCheckLine(
+                        message: shortcutCheckFeedback.message,
+                        checkedAt: shortcutCheckFeedback.checkedAt
+                    )
                 }
+            }
 
-                if let relaySetupFeedback {
-                    Text(relaySetupFeedback)
-                        .font(.caption)
-                        .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
+            // Always flat, even when everything is granted (Etan's 2.2.24 review #4; BrainBar #920).
+            Section("Permissions") {
+                permissionRows
+            }
+
+            Section("Setup") {
+                Button("Run setup again") {
+                    onRunSetup()
                 }
+                Text("Walks through permissions, the F5 key, your microphone and a test dictation.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             visibilitySection
+            microphonePrioritySection
 
-            Section("Gestures") {
-                LabeledContent("Single tap") {
-                    Text(VoiceBarHotkeyContract.singleTapDescription)
-                        .foregroundStyle(.secondary)
+            SettingsDisclosureRow("Advanced", isExpanded: $isAdvancedExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledContent("F5 key helper") {
+                        HStack(spacing: 8) {
+                            if isHotkeyRemapActive() {
+                                statusBadge("Installed", isReady: true)
+                            } else if hotkeyEnabled {
+                                Text("Not installed").foregroundStyle(.secondary)
+                            } else {
+                                statusBadge("Needs setup", isReady: false)
+                            }
+                            Button(isHotkeyRemapActive() ? "Reinstall" : "Set up") {
+                                runRelaySetup()
+                            }
+                            .disabled(relaySetupRunning)
+                        }
+                    }
+                    .help(VoiceBarHotkeyContract.remapExplanation)
+                    // C13: the last Set up / Reinstall sits right under its button, with a check or a warning.
+                    if let feedback = relaySetupFeedback {
+                        let action = feedback.action
+                        if let result = feedback.result {
+                            Label {
+                                Text(SettingsRelaySetupFeedback.line(for: result, action: action))
+                                    .foregroundStyle(result.succeeded ? Color.primary : Color.red)
+                            } icon: {
+                                Image(systemName: result.succeeded ? "checkmark.circle.fill"
+                                    : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(result.succeeded ? Color.green : Color.red)
+                            }
+                            .font(.callout)
+                        } else {
+                            Label {
+                                Text(SettingsRelaySetupFeedback.running(action))
+                                    .foregroundStyle(.secondary)
+                            } icon: {
+                                ProgressView().controlSize(.small)
+                            }
+                            .font(.callout)
+                        }
+                    }
+                    Text("Lets F5 start dictation even if your Mac remaps the dictation key.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if isHotkeyRemapActive() {
+                        Text(VoiceBarHotkeyContract.remapPlainSummary)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    Text("Gestures").font(.headline)
+                    LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)
+                    LabeledContent("Hold", value: VoiceBarHotkeyContract.holdDescription)
+                    LabeledContent("Double-tap", value: VoiceBarHotkeyContract.doubleTapDescription)
+                    LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel,
+                                   value: VoiceBarHotkeyContract.repasteDescription)
                 }
-                LabeledContent("Hold") {
-                    Text(VoiceBarHotkeyContract.holdDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent("Double-tap") {
-                    Text(VoiceBarHotkeyContract.doubleTapDescription)
-                        .foregroundStyle(.secondary)
-                }
-                LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel) {
-                    Text(VoiceBarHotkeyContract.repasteDescription)
-                        .foregroundStyle(.secondary)
-                }
+                .padding(.top, 6)
             }
 
-            Section("Position") {
-                Toggle("Anchor", isOn: Binding(
-                    get: { selectedAnchorMode != .follow },
-                    set: { enabled in
-                        if enabled {
-                            selectAnchorMode(selectedAnchoredMode)
-                        } else {
-                            selectAnchorMode(.follow)
-                        }
+            Section("Last dictation") {
+                if let entry = lastDictationEntry() {
+                    DictationCard(
+                        entry: entry,
+                        insertionStatus: lastDictationInsertionStatus(),
+                        onCopy: onCopyLastDictation
+                    )
+                    Button("View history →") {
+                        selectedTab = .history
                     }
-                ))
-
-                if selectedAnchorMode != .follow {
-                    Picker("Position", selection: Binding(
-                        get: { selectedAnchoredMode },
-                        set: { mode in
-                            selectAnchorMode(mode)
-                        }
-                    )) {
-                        ForEach(VoiceBarAnchorMode.anchoredPositionModes) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    .buttonStyle(.link)
+                } else {
+                    Text("No dictation yet")
+                        .foregroundStyle(.secondary)
                 }
-
-                Text(positionModeDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
+        .onAppear(perform: refreshMicrophoneSnapshot)
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+            refreshMicrophoneSnapshot()
+        }
     }
 
     private var visibilitySection: some View {
         Section("Visibility") {
             LabeledContent("VoiceBar") {
-                statusBadge(localVoiceBarHidden ? "Hidden" : "Visible", isReady: !localVoiceBarHidden)
+                statusBadge(
+                    localVoiceBarHidden ? SettingsVisibility.hiddenStatus(until: voiceBarHiddenUntil()) : "Visible",
+                    tone: SettingsVisibility.tone(isHidden: localVoiceBarHidden)
+                )
             }
 
             if localVoiceBarHidden {
@@ -566,73 +997,184 @@ public struct SettingsView: View {
         }
     }
 
-    // MARK: - Audio Tab
+    // MARK: - General microphone priority
 
-    private var audioTab: some View {
-        Form {
-            Section("Input Device") {
-                let devices = availableDevices()
-                let selected = selectedDeviceID()
-
-                if devices.isEmpty {
-                    Text("No input devices found")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Picker("Microphone", selection: Binding(
-                        get: { selected ?? "" },
-                        set: { onSelectDevice($0) }
-                    )) {
-                        ForEach(devices, id: \.id) { device in
-                            Text(device.name).tag(device.id)
-                        }
-                    }
-                    .pickerStyle(.radioGroup)
+    private var microphonePrioritySection: some View {
+        Section {
+            LabeledContent("Next dictation") {
+                Text(microphoneSnapshot.nextVisibleDeviceName ?? "Unavailable")
+                    .foregroundStyle(.secondary)
+            }
+            if let visibleFirst = microphoneSnapshot.visibleFirstUIDs {
+                Button("Use visible microphones first") {
+                    onReorderPriority(visibleFirst)
+                    refreshMicrophoneSnapshot()
                 }
+                .help("A hidden system or virtual device would be used next. This puts your microphones ahead of it.")
             }
 
-            Section("Performance") {
-                if let degradation = polishDegradation() {
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .accessibilityHidden(true)
-                        Text(degradation.hint)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                        Button {
-                            onDismissPolishDegradation()
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Dismiss STT polish warning")
-                        .accessibilityLabel("Dismiss STT polish warning")
-                    }
-                    .accessibilityElement(children: .combine)
+            if microphoneSnapshot.visibleRows.isEmpty {
+                Text("No known input devices")
+                    .foregroundStyle(.secondary)
+            }
+            let visibleRows = microphoneSnapshot.visibleRows
+            ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
+                microphonePriorityRow(row, at: index, visibleCount: visibleRows.count)
+            }
+            Text("Make a microphone the default, or drag to reorder. Disconnected microphones keep their place.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("Microphone priority")
+                .id(SettingsFocus.microphonePriority)
+        }
+    }
+
+    /// Etan's 2.2.24 review #5: one click makes a microphone the default, and rows drag to reorder. The
+    /// arrows are gone; VoiceOver keeps Make default / Move up / Move down as named actions.
+    @ViewBuilder
+    private func microphonePriorityRow(_ row: MicrophonePriorityRow, at index: Int, visibleCount: Int) -> some View {
+        let content = HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.tertiary)
+                .opacity(row.canPrioritize ? 1 : 0)
+                .accessibilityHidden(true)
+            Image(systemName: "mic")
+                .foregroundStyle(.secondary)
+            Text(row.label)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(row.isConnected ? "Connected" : "Disconnected")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !row.canPrioritize {
+                Text("UID unavailable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if index == 0 {
+                Text("Default")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.18)))
+            } else {
+                Button("Make default") {
+                    makeMicrophoneDefault(at: index)
                 }
-                Picker("Effort", selection: Binding(
-                    get: { selectedPerformanceEffort },
-                    set: { effort in
-                        selectedPerformanceEffort = effort
-                        onSelectPerformanceEffort(effort)
-                    }
-                )) {
-                    ForEach(VoiceBarPerformanceEffort.allCases) { effort in
-                        Text(performanceEffortLabel(effort)).tag(effort)
-                    }
-                }
-                .pickerStyle(.segmented)
-                if let notice = performanceEffortNotice() {
-                    Text(notice)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
+                .controlSize(.small)
             }
         }
-        .formStyle(.grouped)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "Make default") {
+            makeMicrophoneDefault(at: index)
+        }
+        .accessibilityAction(named: "Move up") {
+            moveMicrophone(at: index, by: -1)
+        }
+        .accessibilityAction(named: "Move down") {
+            moveMicrophone(at: index, by: 1)
+        }
+        if let uid = row.uid {
+            // C12: while a drag hovers this row, an insertion line marks where the mic will land, and the row
+            // being dragged dims. The drop itself still reads the dragged UID from the payload.
+            let edge = microphoneDrag.targetIndex == index
+                ? microphoneSnapshot.dropEdge(dragging: microphoneDrag.sourceUID, onto: index) : nil
+            content
+                .opacity(microphoneDrag.targetIndex != nil && microphoneDrag.sourceUID == uid ? 0.45 : 1)
+                .overlay(alignment: edge == .bottom ? .bottom : .top) {
+                    if edge != nil {
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .frame(height: 3)
+                            .offset(y: edge == .bottom ? Self.dropLineOffset : -Self.dropLineOffset)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .onDrag {
+                    microphoneDrag = .started(dragging: uid, pressedAt: lastMousePressUptime())
+                    return NSItemProvider(object: uid as NSString)
+                } preview: {
+                    content // the row lifts, as with .draggable
+                }
+                .dropDestination(for: String.self) { uids, _ in
+                    microphoneDrag = MicrophoneDragState()
+                    return dropMicrophone(uids.first, onto: index)
+                } isTargeted: { targeted in
+                    if targeted {
+                        microphoneDrag.hover(index, pressedAt: lastMousePressUptime())
+                    } else {
+                        microphoneDrag.leave(index)
+                    }
+                }
+        } else {
+            content
+        }
+    }
+
+    /// Half the gap between two priority rows' content, so the line sits on the divider between them.
+    private static let dropLineOffset: CGFloat = 11.5
+
+    private func makeMicrophoneDefault(at index: Int) {
+        guard let uids = microphoneSnapshot.makingDefaultUIDs(at: index) else { return }
+        onReorderPriority(uids)
+        refreshMicrophoneSnapshot()
+    }
+
+    /// Dropping onto a row lands the dragged mic in that row's place: below it when dragged down, above it
+    /// when dragged up (SwiftUI onMove indices), exactly where the insertion line was drawn.
+    private func dropMicrophone(_ uid: String?, onto index: Int) -> Bool {
+        guard let uid, let uids = microphoneSnapshot.droppingVisibleUIDs(uid, onto: index) else { return false }
+        onReorderPriority(uids)
+        refreshMicrophoneSnapshot()
+        return true
+    }
+
+    private func refreshMicrophoneSnapshot() {
+        let latest = prioritySnapshot()
+        if latest != microphoneSnapshot {
+            microphoneSnapshot = latest
+        }
+    }
+
+    private func moveMicrophone(at index: Int, by offset: Int) {
+        guard let uids = microphoneSnapshot.reorderedVisibleUIDs(moving: index, by: offset) else { return }
+        onReorderPriority(uids)
+        refreshMicrophoneSnapshot()
+    }
+
+    private var modelsTab: some View {
+        ModelsSettingsView(
+            state: modelsStatus(),
+            effort: $selectedPerformanceEffort,
+            notice: performanceEffortNotice(),
+            onSelectEffort: onSelectPerformanceEffort,
+            residencyNotice: residencyNotice(),
+            onSelectResidency: onSelectResidency,
+            lastDictationLabel: lastDictationProvenanceLabel,
+            degradation: polishDegradation(),
+            onDismissDegradation: onDismissPolishDegradation,
+            processingPending: processingPending(),
+            processingNotice: processingNotice(),
+            onToggleProcessing: onToggleProcessing
+        )
+        // The picker's local state gives one click instant feedback; it follows the app's value
+        // (the selection in flight, else the daemon's effort) so a reject or a daemon-side change
+        // never leaves it stale. There is no persisted copy (E2).
+        .onChange(of: performanceEffort()) { _, current in
+            selectedPerformanceEffort = current
+        }
+        .onAppear {
+            selectedPerformanceEffort = performanceEffort()
+            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(
+                for: lastDictationEntry()?.recordingPath
+            )
+            onRefreshModelsStatus()
+        }
+        .onChange(of: lastDictationEntry()?.recordingPath) { _, path in
+            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(for: path)
+        }
     }
 
     // MARK: - History Tab
@@ -641,18 +1183,41 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             historyScopePicker
 
-            switch selectedHistoryScope {
-            case .recording:
-                recordingHistoryScope
-            case .ask:
-                askHistoryScope
+            // AIDEV-NOTE: lane E (QA 2.2.25 C10). A `switch` here tore down and rebuilt the whole list on every
+            // Dictations ↔ Ask click; on the 11k archive that rebuild was most of the switch's main-thread time.
+            // Each scope mounts the first time it is shown and then stays; the hidden one is fully inert (not
+            // drawn, not hit-testable, not focusable, hidden from VoiceOver).
+            ZStack(alignment: .topLeading) {
+                if mountedHistoryScopes.contains(.recording) || selectedHistoryScope == .recording {
+                    recordingHistoryScope
+                        .historyScopeVisibility(selectedHistoryScope == .recording)
+                }
+                if mountedHistoryScopes.contains(.ask) || selectedHistoryScope == .ask {
+                    askHistoryScope
+                        .historyScopeVisibility(selectedHistoryScope == .ask)
+                }
             }
         }
-        // AIDEV-NOTE: Always reload the scope being switched to. An inactive scope is out of the
-        // view hierarchy, so its `.onReceive(voiceBarHistoryArchiveDidChange)` never fires — without
-        // this, switching back shows a list frozen at whenever that scope was last on screen.
+        // AIDEV-NOTE: A scope not yet mounted in this History visit is out of the view hierarchy, so its
+        // `.onReceive(voiceBarHistoryArchiveDidChange)` never fired — it reloads when first shown. Once mounted it
+        // stays mounted (hidden) and keeps itself current, so switching back to it does not reload (lane E).
+        // Leaving the History tab unmounts both, so the set resets in `.onDisappear`.
+        // H1-c: a new query starts from the first page again; typing is debounced by the load itself.
+        .onChange(of: SettingsHistorySearch(historySearch)) { _, _ in
+            historyLoadedEntryLimit = Self.historyPageSize
+            requestHistoryReload(debounce: true, scrollToLatest: false)
+        }
+        .onChange(of: SettingsHistorySearch(askHistorySearch)) { _, _ in
+            askHistoryLoadedEntryLimit = Self.historyPageSize
+            requestAskHistoryReload(debounce: true, scrollToLatest: false)
+        }
+        .onAppear { mountedHistoryScopes.insert(selectedHistoryScope) }
         .onChange(of: selectedHistoryScope) { _, scope in
             historyPlayback.stop()
+            // A scope that stayed mounted kept its own `.onReceive(voiceBarHistoryArchiveDidChange)` and search
+            // reloads while hidden, so its list is current: showing it again needs no reload (lane E). A scope
+            // shown for the first time since History appeared loads as before.
+            guard mountedHistoryScopes.insert(scope).inserted else { return }
             switch scope {
             case .recording:
                 requestHistoryReload()
@@ -663,6 +1228,7 @@ public struct SettingsView: View {
         .onDisappear {
             cancelHistoryLoads()
             historyPlayback.stop()
+            mountedHistoryScopes = []
         }
     }
 
@@ -692,11 +1258,13 @@ public struct SettingsView: View {
                     VStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Loading history...")
+                        Text(SettingsHistorySearch(historySearch).isActive ? "Searching…" : "Loading history...")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if historyDayGroups.isEmpty, SettingsHistorySearch(historySearch).isActive {
+                    historyNoMatches(SettingsHistorySearch(historySearch).query)
                 } else if historyDayGroups.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "clock.arrow.circlepath")
@@ -710,51 +1278,63 @@ public struct SettingsView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        LazyVStack(
-                            alignment: .leading,
-                            spacing: 18,
-                            pinnedViews: [.sectionHeaders]
-                        ) {
-                            Color.clear
-                                .frame(height: 1)
-                                .id(latestHistoryAnchorID)
-
-                            ForEach(historyDayGroups) { group in
-                                historyDaySection(title: group.dayTitle()) {
-                                    ForEach(group.entries) { entry in
-                                        historyEntryRow(SettingsHistoryRowModel.recording(entry))
-                                    }
-                                }
-                            }
-
-                            if historyHasMore {
-                                Button {
-                                    loadOlderHistory()
-                                } label: {
-                                    if isHistoryLoading {
-                                        HStack(spacing: 6) {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                            Text("Loading older")
+                    GeometryReader { geometry in
+                        VStack(alignment: .leading, spacing: 0) {
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 2) {
+                                    Color.clear.frame(height: 1).id(latestHistoryAnchorID)
+                                    ForEach(historyDayGroups) { group in
+                                        ForEach(group.entries) { entry in
+                                            Button {
+                                                selectedHistoryEntryID = entry.id
+                                            } label: {
+                                                recordingHistoryListRow(entry)
+                                            }
+                                            .buttonStyle(.plain)
                                         }
-                                    } else {
-                                        Label("Load older", systemImage: "chevron.down")
                                     }
                                 }
-                                .buttonStyle(.bordered)
-                                .disabled(isHistoryLoading)
-                                .frame(maxWidth: .infinity)
-                                .help("Load older history")
-                                .accessibilityLabel("Load older history")
+                                .padding(12)
                             }
+                            .frame(minHeight: 100, maxHeight: .infinity)
+
+                            if let entry = selectedHistoryEntry {
+                                Divider()
+                                ScrollView {
+                                    recordingHistoryDetail(entry)
+                                        .padding(18)
+                                }
+                                // Each entry gets its own detail: switching entries starts at its top and carries no
+                                // view state (scroll offset, in-flight animation) over from the previous one (C7, C9).
+                                .id(entry.id)
+                                // UI pass #9: the list gets most of the height.
+                                .frame(height: SettingsHistoryLayout.detailHeight(available: geometry.size.height))
+                            }
+
+                            Divider()
+                            HStack {
+                                Text(SettingsHistorySearch(historySearch).isActive
+                                    ? "\(historyLoadedEntryCount) matches shown"
+                                    : "\(historyLoadedEntryCount) saved shown")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                if historyHasMore {
+                                    Button(isHistoryLoading ? "Loading…" : "Load more") {
+                                        loadOlderHistory()
+                                    }
+                                    .disabled(isHistoryLoading)
+                                }
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 10)
                         }
-                        .padding(18)
                     }
                 }
             }
             .onAppear {
-                if historyDayGroups.isEmpty {
+                // A preloaded page is unfiltered, so an active query must still search (#165 Macroscope).
+                if historyDayGroups.isEmpty || SettingsHistorySearch(historySearch).isActive, !isHistoryLoading {
                     requestHistoryReload(scrollProxy: proxy, animated: false)
                 }
             }
@@ -762,6 +1342,65 @@ public struct SettingsView: View {
                 requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
             }
         }
+    }
+
+    private var selectedHistoryEntry: SettingsHistoryEntry? {
+        historyDayGroups.lazy.flatMap(\.entries).first { $0.id == selectedHistoryEntryID }
+    }
+
+    private func recordingHistoryListRow(_ entry: SettingsHistoryEntry) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.displayTranscript)
+                    .lineLimit(1)
+                Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if let duration = entry.durationLabel {
+                Text(duration)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            if let effort = entry.performanceEffort {
+                Text(effort.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            entry.id == selectedHistoryEntryID
+                ? Color.accentColor.opacity(0.13)
+                : Color.clear
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        // UI pass #7: one element, one concise label; the children each repeated the transcript.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(SettingsHistoryAccessibility.rowLabel(entry))
+        .accessibilityAddTraits(entry.id == selectedHistoryEntryID ? .isSelected : [])
+    }
+
+    private func recordingHistoryDetail(_ entry: SettingsHistoryEntry) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            historyMediaPartRow(SettingsHistoryRowModel.recording(entry).parts[0])
+            Divider()
+            Label("Saved on this Mac", systemImage: "internaldrive")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            let attribution = [entry.inputDeviceLabel, entry.modelLabel, entry.performanceEffort?.displayName]
+                .compactMap { $0 }.joined(separator: " · ")
+            if !attribution.isEmpty {
+                Text(attribution)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - History Tab (Ask scope)
@@ -776,11 +1415,13 @@ public struct SettingsView: View {
                     VStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Loading ask history...")
+                        Text(SettingsHistorySearch(askHistorySearch).isActive ? "Searching…" : "Loading ask history...")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if askHistoryDayGroups.isEmpty, SettingsHistorySearch(askHistorySearch).isActive {
+                    historyNoMatches(SettingsHistorySearch(askHistorySearch).query)
                 } else if askHistoryDayGroups.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "bubble.left.and.bubble.right")
@@ -801,10 +1442,6 @@ public struct SettingsView: View {
                             spacing: 18,
                             pinnedViews: [.sectionHeaders]
                         ) {
-                            Color.clear
-                                .frame(height: 1)
-                                .id(latestAskHistoryAnchorID)
-
                             ForEach(askHistoryDayGroups) { group in
                                 historyDaySection(title: group.dayTitle()) {
                                     ForEach(group.entries) { entry in
@@ -834,12 +1471,20 @@ public struct SettingsView: View {
                                 .accessibilityLabel("Load older ask history")
                             }
                         }
-                        .padding(18)
+                        // UI pass #10: the scroll anchor sits behind the stack, not in it, so no stack spacing
+                        // follows it; with the old in-stack anchor the first date sat ~50 pt down.
+                        .background(alignment: .top) {
+                            Color.clear.frame(height: 0).id(latestAskHistoryAnchorID)
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 18)
+                        .padding(.top, SettingsHistoryLayout.askListTopInset)
                     }
                 }
             }
             .onAppear {
-                if askHistoryDayGroups.isEmpty {
+                if askHistoryDayGroups.isEmpty || SettingsHistorySearch(askHistorySearch).isActive,
+                   !isAskHistoryLoading {
                     requestAskHistoryReload(scrollProxy: proxy, animated: false)
                 }
             }
@@ -854,11 +1499,18 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Ask")
                     .font(.title3.weight(.semibold))
-                Text("\(askHistoryLoadedEntryCount) exchanges")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(Self.historyCountLabel(
+                    askHistoryLoadedEntryCount,
+                    hasMore: askHistoryHasMore,
+                    noun: "exchanges",
+                    searching: SettingsHistorySearch(askHistorySearch).isActive,
+                    loading: isAskHistoryLoading
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
+            historySearchField("Search questions and answers", text: $askHistorySearch)
             if isAskHistoryLoading {
                 ProgressView()
                     .controlSize(.small)
@@ -879,13 +1531,20 @@ public struct SettingsView: View {
     private func historyToolbar(proxy: ScrollViewProxy) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("History")
+                Text("Dictations")
                     .font(.title3.weight(.semibold))
-                Text("\(historyLoadedEntryCount) transcripts")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(Self.historyCountLabel(
+                    historyLoadedEntryCount,
+                    hasMore: historyHasMore,
+                    noun: "transcripts",
+                    searching: SettingsHistorySearch(historySearch).isActive,
+                    loading: isHistoryLoading
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
+            historySearchField("Search transcripts", text: $historySearch)
             if isHistoryLoading {
                 ProgressView()
                     .controlSize(.small)
@@ -911,6 +1570,63 @@ public struct SettingsView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
+    }
+
+    private func historySearchField(_ prompt: String, text: Binding<String>) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+            if !text.wrappedValue.isEmpty {
+                Button {
+                    text.wrappedValue = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Clear search")
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+        .frame(maxWidth: 240)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(prompt)
+    }
+
+    private func historyNoMatches(_ query: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("No matches for \u{201C}\(query)\u{201D}")
+                .font(.headline)
+            Text("Search looks through the whole archive, not just the loaded page.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// "12 transcripts", or while searching "3 matches" / "100+ matches" (more load with Load more), and
+    /// "Searching…" while a search is still loading.
+    static func historyCountLabel(
+        _ count: Int,
+        hasMore: Bool,
+        noun: String,
+        searching: Bool,
+        loading: Bool = false
+    ) -> String {
+        guard searching else { return "\(count) \(noun)" }
+        guard !loading else { return "Searching…" }
+        let shown = hasMore ? "\(count)+" : "\(count)"
+        return "\(shown) \(count == 1 && !hasMore ? "match" : "matches")"
     }
 
     private func historyDaySection(
@@ -980,7 +1696,8 @@ public struct SettingsView: View {
         let enablement = SettingsHistoryActionEnablement(
             isRetranscribing: isAnyHistoryRetranscribing(),
             isRecording: isRecordingActive(),
-            isTranscribing: isTranscribingActive()
+            isTranscribing: isTranscribingActive(),
+            retranscribingPath: isRetranscribing ? part.audioPath?.path : nil
         )
 
         VStack(alignment: .leading, spacing: 6) {
@@ -1009,6 +1726,14 @@ public struct SettingsView: View {
                 isRetranscribing: isRetranscribing,
                 enablement: enablement
             )
+
+            if let audioPath = part.audioPath, historyPlayback.isPlaying(audioPath) {
+                SettingsPlaybackScrubBar(
+                    playback: historyPlayback,
+                    url: audioPath,
+                    accessibilityNoun: part.accessibilityNoun
+                )
+            }
         }
     }
 
@@ -1018,8 +1743,10 @@ public struct SettingsView: View {
     private func historyMediaPartStats(_ part: SettingsHistoryMediaPart) -> some View {
         let audioLabel = part.durationLabel
         let heardLabel = part.transcribedDurationLabel
+        let spokenLabel = part.spokenDurationLabel
+        let processingLabel = part.processingLabel
 
-        if audioLabel != nil || heardLabel != nil {
+        if audioLabel != nil || heardLabel != nil || spokenLabel != nil || processingLabel != nil {
             HStack(spacing: 12) {
                 if let audioLabel {
                     Label(audioLabel, systemImage: "waveform")
@@ -1032,6 +1759,16 @@ public struct SettingsView: View {
                             "Transcribed — the audio actually sent to speech-to-text after trailing silence was trimmed"
                         )
                         .accessibilityLabel("Transcribed length \(heardLabel)")
+                }
+                if let spokenLabel {
+                    Label(spokenLabel, systemImage: "waveform.path")
+                        .help("≈ Spoken — speech time with the pauses left out, estimated in quarter-second steps")
+                        .accessibilityLabel("Spoken length about \(spokenLabel)")
+                }
+                if let processingLabel {
+                    Label(processingLabel, systemImage: "timer")
+                        .help("Processing — from the end of recording to the finished transcript")
+                        .accessibilityLabel("Processing time \(processingLabel)")
                 }
             }
             .font(.caption.monospacedDigit())
@@ -1046,7 +1783,7 @@ public struct SettingsView: View {
         enablement: SettingsHistoryActionEnablement
     ) -> some View {
         HStack(spacing: 8) {
-            ForEach(part.actions, id: \.self) { action in
+            ForEach(part.actions.filter { enablement.availability($0, for: part) != .hidden }, id: \.self) { action in
                 historyActionButton(
                     action,
                     for: part,
@@ -1059,26 +1796,31 @@ public struct SettingsView: View {
         .controlSize(.small)
     }
 
+    // AIDEV-NOTE: the in-flight Re-transcribe icon turns off the clock (HistorySpinningSymbol), never an implicit
+    // animation. It used `.animation(.repeatForever, value: isSpinning)`: that only started on a false→true flip,
+    // so an entry already re-transcribing when shown sat still (QA 2.2.25 C8), and once started it animated every
+    // later layout move too, so the icon animated from stale positions or disappeared (C7, C9). Fixed 28 pt slot.
     private func historyActionLabel(
         _ title: String,
         systemImage: String,
+        isEnabled: Bool,
         isSpinning: Bool = false
     ) -> some View {
         Label {
             Text(title)
         } icon: {
-            Image(systemName: systemImage)
-                .rotationEffect(.degrees(isSpinning ? 360 : 0))
-                .animation(
-                    isSpinning
-                        ? .linear(duration: 0.8).repeatForever(autoreverses: false)
-                        : .default,
-                    value: isSpinning
-                )
+            if isSpinning {
+                HistorySpinningSymbol(systemName: systemImage)
+            } else {
+                Image(systemName: systemImage)
+            }
         }
         .labelStyle(.iconOnly)
-        .frame(minWidth: 28, minHeight: 28)
+        .frame(width: 28, height: 28)
         .contentShape(Rectangle())
+        // The system dims a disabled borderless button too little to read as blocked (QA 2.2.25 C6, 04:55). The
+        // spinning icon is the entry's status, so it keeps full strength.
+        .opacity(isEnabled || isSpinning ? 1 : SettingsHistoryActionStyle.disabledOpacity)
     }
 
     @ViewBuilder
@@ -1089,21 +1831,32 @@ public struct SettingsView: View {
         enablement: SettingsHistoryActionEnablement
     ) -> some View {
         let disabled = !enablement.isEnabled(action, for: part)
+        let reason: String? = if case let .unavailable(why) = enablement.availability(action, for: part) {
+            why
+        } else {
+            nil
+        }
         let isPlaying = part.audioPath.map(historyPlayback.isPlaying) ?? false
 
         switch action {
         case .play:
             Button {
                 guard let audioPath = part.audioPath else { return }
+                guard !isRecordingActive(), !isTranscribingActive() else {
+                    historyPlayback.stop()
+                    return
+                }
                 historyPlayback.toggle(audioPath)
             } label: {
                 historyActionLabel(
                     isPlaying ? "Stop" : "Play",
-                    systemImage: isPlaying ? "stop.fill" : "play.fill"
+                    systemImage: isPlaying ? "stop.fill" : "play.fill",
+                    isEnabled: !disabled
                 )
             }
             .disabled(disabled)
-            .help(isPlaying ? "Stop" : "Play")
+            .help(reason ?? (isPlaying ? "Stop" : "Play"))
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel("\(isPlaying ? "Stop" : "Play") \(part.accessibilityNoun)")
 
         case .copy:
@@ -1111,10 +1864,11 @@ public struct SettingsView: View {
                 guard let text = part.actionableText else { return }
                 onCopyHistoryTranscript(text)
             } label: {
-                historyActionLabel("Copy", systemImage: "doc.on.doc")
+                historyActionLabel("Copy", systemImage: "doc.on.doc", isEnabled: !disabled)
             }
             .disabled(disabled)
-            .help("Copy")
+            .help(reason ?? "Copy")
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel("Copy transcript")
 
         case .paste:
@@ -1122,10 +1876,11 @@ public struct SettingsView: View {
                 guard let text = part.actionableText else { return }
                 onPasteHistoryTranscript(text)
             } label: {
-                historyActionLabel("Paste", systemImage: "doc.on.clipboard")
+                historyActionLabel("Paste", systemImage: "doc.on.clipboard", isEnabled: !disabled)
             }
             .disabled(disabled)
-            .help("Paste")
+            .help(reason ?? "Paste")
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel("Paste transcript")
 
         case .retranscribe:
@@ -1136,11 +1891,13 @@ public struct SettingsView: View {
                 historyActionLabel(
                     "Re-transcribe",
                     systemImage: "arrow.triangle.2.circlepath",
+                    isEnabled: !disabled,
                     isSpinning: isRetranscribing
                 )
             }
             .disabled(disabled)
-            .help(enablement.isTranscribing ? "Transcribing…" : "Re-transcribe")
+            .help(reason ?? "Re-transcribe")
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel(
                 isRetranscribing ? "Re-transcribing stored audio" : "Re-transcribe stored audio"
             )
@@ -1150,10 +1907,11 @@ public struct SettingsView: View {
                 guard let audioPath = part.audioPath else { return }
                 onRevealHistoryFile(audioPath)
             } label: {
-                historyActionLabel("Open in Finder", systemImage: "folder")
+                historyActionLabel("Open in Finder", systemImage: "folder", isEnabled: !disabled)
             }
             .disabled(disabled)
-            .help("Open in Finder")
+            .help(reason ?? "Open in Finder")
+            .accessibilityHint(reason ?? "")
             .accessibilityLabel("Open stored audio in Finder")
         }
     }
@@ -1161,39 +1919,139 @@ public struct SettingsView: View {
     // MARK: - Dictionary Tab
 
     private var dictionaryTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                addTermRow
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Dictionary").font(.title2.weight(.semibold))
+                    Text("Used on every dictation").font(.subheadline).foregroundStyle(.secondary)
+                }
                 searchRow
-
-                ForEach(localVocabularyPreview.filteredEntries(matching: dictionarySearch), id: \.canonical) { entry in
-                    dictionaryEntryCard(entry)
+                Button {
+                    termSheet = DictionaryTermEdit()
+                } label: {
+                    Label("Add term", systemImage: "plus")
+                }
+                .disabled(!Self.addTermEnabled(loaded: hasLoadedDictionaryOnce))
+                .help("Add a term to your dictionary")
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 19)
+            .padding(.bottom, 14)
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    let isSearching = !Self.dictionaryQuery(dictionarySearch).isEmpty
+                    let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
+                    let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        Button {
+                            yourTermsExpanded.toggle()
+                        } label: {
+                            HStack {
+                                Image(systemName: yourTermsExpanded ? "chevron.down" : "chevron.right")
+                                    .frame(width: 14)
+                                Text(Self.dictionarySectionTitle(
+                                    "Your terms", count: dictionaryDisplayIndex.personalCount,
+                                    matches: isSearching ? personal.count : nil,
+                                    loaded: hasLoadedDictionaryOnce
+                                ))
+                                Spacer()
+                            }
+                            .font(.headline)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
+                        .accessibilityValue(yourTermsExpanded ? "Expanded" : "Collapsed")
+                        .padding(.bottom, 8)
+                        if yourTermsExpanded || isSearching {
+                            switch Self.dictionaryPlaceholder(
+                                loaded: hasLoadedDictionaryOnce, personalIsEmpty: personal.isEmpty,
+                                searching: isSearching
+                            ) {
+                            case .loading:
+                                HStack(spacing: 8) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Loading…").foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 170)
+                            case .empty:
+                                VStack(spacing: 10) {
+                                    Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
+                                    Text("No terms yet").font(.headline)
+                                    Text("Add names, products, and other preferred spellings.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 170)
+                            case nil:
+                                EmptyView()
+                            }
+                            ForEach(personal, id: \.rowID) { row in
+                                dictionaryEntryCard(row.entry, rowID: row.rowID)
+                                    .id(row.rowID)
+                                Divider()
+                            }
+                        }
+                        Button {
+                            includedTermsExpanded.toggle()
+                        } label: {
+                            HStack {
+                                Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
+                                    .frame(width: 14)
+                                Text(Self.dictionarySectionTitle(
+                                    "Included terms", count: dictionaryDisplayIndex.includedCount,
+                                    matches: isSearching ? included.count : nil,
+                                    loaded: hasLoadedDictionaryOnce
+                                ))
+                                Spacer()
+                                Text("built in").font(.caption).foregroundStyle(.secondary)
+                            }
+                            .font(.headline)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
+                        .accessibilityValue(includedTermsExpanded ? "Expanded" : "Collapsed")
+                        .accessibilityHint("Built-in terms are read-only")
+                        .padding(.top, 18)
+                        if includedTermsExpanded || isSearching {
+                            ForEach(included, id: \.rowID) { row in
+                                dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(18)
+                }
+                .onChange(of: pendingScrollRowID) { _, rowID in
+                    guard let rowID else { return }
+                    // The saved row lands in the list on the same update; scroll once it has been laid out.
+                    DispatchQueue.main.async {
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                            proxy.scrollTo(rowID, anchor: .center)
+                        }
+                        pendingScrollRowID = nil
+                    }
                 }
             }
-            .padding(18)
         }
-    }
-
-    private var addTermRow: some View {
-        HStack(spacing: 8) {
-            HStack {
-                TextField("Add a term, e.g. VoiceLayer", text: $newTermText)
-                    .dictionaryTextField()
-                    .focused($focusedEditorField, equals: .newTerm)
-                    .onSubmit(commitNewTerm)
-            }
-            .dictionaryFieldContainer()
-            .contentShape(Rectangle())
-            .onTapGesture {
-                focusedEditorField = .newTerm
-            }
-            Button(action: commitNewTerm) {
-                Image(systemName: "plus.circle.fill")
-            }
-            .buttonStyle(.borderless)
-            .disabled(newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .help("Add term")
-            .accessibilityLabel("Add term")
+        .sheet(item: $termSheet) { edit in
+            DictionaryAddSheetView(edit: edit, existingEntries: localEntries, onSave: { saved in
+                saveTermSheet(saved)
+            }, onCancel: { termSheet = nil })
+                .frame(width: 420)
+        }
+        .onAppear {
+            resetDictionaryEditors()
+        }
+        .onChange(of: hasPendingDictionaryEdit) { _, pending in
+            if !pending, dictionaryReloadGate.editEnded() { loadDictionaryPreview() }
+        }
+        .onChange(of: localEntries) { _, entries in
+            let bundled = dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }
+            dictionaryDisplayIndex = STTDictionaryDisplayIndex(entries: bundled + entries.map {
+                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+            })
         }
     }
 
@@ -1212,60 +2070,67 @@ public struct SettingsView: View {
         }
     }
 
-    private func dictionaryEntryCard(_ entry: STTDictionaryEntry) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            dictionaryEntryHeader(entry)
-            Divider()
-            variantChips(entry)
-            if addingVariantFor == entry.canonical {
-                addVariantInlineEditor(entry)
+    private func dictionaryEntryCard(
+        _ entry: STTDictionaryEntry,
+        rowID: String,
+        isEditable: Bool = true
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
+            if !entry.variants.isEmpty {
+                Text(Self.variantSummary(entry.variants))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(Self.variantSummary(entry.variants))
             }
         }
-        .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.accentColor.opacity(
+                    flashingTermRowID == rowID ? 0.28 : selectedTermRowID == rowID ? 0.12 : 0
+                ))
         )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: flashingTermRowID)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            if isEditable { termSheet = DictionaryTermEdit(original: entry) }
+        }
+        .onTapGesture {
+            selectedTermRowID = rowID
+        }
+        .accessibilityAddTraits(selectedTermRowID == rowID ? .isSelected : [])
     }
 
-    @ViewBuilder
-    private func dictionaryEntryHeader(_ entry: STTDictionaryEntry) -> some View {
-        if editingCanonical == entry.canonical {
-            HStack(spacing: 8) {
-                TextField("Term", text: $editTermText)
-                    .dictionaryTextField()
-                    .focused($focusedEditorField, equals: .editTerm)
-                    .onSubmit { saveTermRename(entry.canonical) }
-                    .frame(maxWidth: .infinity)
-                Button("Cancel") {
-                    cancelTermRename()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .frame(height: DictionaryCardLayout.headerHeight)
-                Button("Save") {
-                    saveTermRename(entry.canonical)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .frame(height: DictionaryCardLayout.headerHeight)
-                .disabled(editTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .frame(minHeight: DictionaryCardLayout.headerHeight)
-        } else {
-            HStack(spacing: 8) {
-                Text(entry.canonical)
-                    .font(.headline)
-                Spacer()
+    /// A term's misheard spellings on one quiet line under it, only when it has some.
+    static func variantSummary(_ variants: [String]) -> String {
+        "misheard as " + variants.joined(separator: ", ")
+    }
+
+    private func dictionaryEntryHeader(
+        _ entry: STTDictionaryEntry,
+        rowID: String,
+        isEditable: Bool
+    ) -> some View {
+        HStack(spacing: 4) {
+            Text(entry.canonical)
+                .font(.headline)
+            Spacer()
+            if isEditable {
                 if pendingDeleteCanonical == entry.canonical {
                     deleteDictionaryEntryButton(entry.canonical)
                 } else {
                     Button {
-                        beginTermRename(entry.canonical)
+                        pendingDeleteCanonical = nil
+                        termSheet = DictionaryTermEdit(original: entry)
                     } label: {
                         Image(systemName: "pencil")
+                            .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
                     .help("Edit term")
@@ -1273,85 +2138,8 @@ public struct SettingsView: View {
                     deleteDictionaryEntryButton(entry.canonical)
                 }
             }
-            .frame(minHeight: DictionaryCardLayout.headerHeight)
         }
-    }
-
-    private func variantChips(_ entry: STTDictionaryEntry) -> some View {
-        FlowLayout(spacing: 8) {
-            ForEach(entry.variants, id: \.self) { variant in
-                HStack(spacing: 6) {
-                    Text(variant)
-                    Button {
-                        SettingsDictionaryMutations.removeVariant(
-                            canonical: entry.canonical,
-                            variant: variant,
-                            localEntries: &localEntries,
-                            onRemoveVocabularyAlias: onRemoveVocabularyAlias
-                        )
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Remove variant \(variant)")
-                }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(Color(nsColor: .quaternaryLabelColor).opacity(0.24))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-            }
-            addVariantButton(entry.canonical)
-        }
-    }
-
-    private func addVariantButton(_ canonical: String) -> some View {
-        Button {
-            addingVariantFor = canonical
-            variantText = ""
-            focusedEditorField = .addVariant
-        } label: {
-            Text("+ add misheard variant")
-                .padding(.vertical, 5)
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
-        .accessibilityLabel("Add misheard variant for \(canonical)")
-    }
-
-    private func addVariantInlineEditor(_ entry: STTDictionaryEntry) -> some View {
-        HStack(spacing: 8) {
-            TextField("Type the misheard spelling...", text: $variantText)
-                .dictionaryTextField()
-                .focused($focusedEditorField, equals: .addVariant)
-                .onSubmit { saveVariant(entry.canonical) }
-                .padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)
-                .padding(.horizontal, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(addVariantInputFill)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.accentColor, lineWidth: 1.5)
-                )
-                .frame(maxWidth: .infinity)
-                .frame(height: DictionaryCardLayout.inlineControlHeight)
-            Button("Cancel") {
-                addingVariantFor = nil
-                variantText = ""
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .frame(height: DictionaryCardLayout.inlineControlHeight)
-            Button("Add") {
-                saveVariant(entry.canonical)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .frame(height: DictionaryCardLayout.inlineControlHeight)
-            .disabled(variantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
+        .frame(minHeight: DictionaryCardLayout.headerHeight)
     }
 
     @ViewBuilder
@@ -1370,6 +2158,7 @@ public struct SettingsView: View {
                     localEntries: &localEntries,
                     onRemovePromptTerm: onRemovePromptTerm
                 )
+                dictionaryReloadGate.mutationSent()
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
@@ -1383,20 +2172,14 @@ public struct SettingsView: View {
                 )
             } label: {
                 Image(systemName: "trash")
+                    .frame(width: DictionaryCardLayout.actionTarget, height: DictionaryCardLayout.actionTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.red)
             .help("Delete term")
             .accessibilityLabel("Delete term \(canonical)")
         }
-    }
-
-    private func commitNewTerm() {
-        SettingsDictionaryMutations.commitNewTerm(
-            newTermText: &newTermText,
-            localEntries: &localEntries,
-            onAddPromptTerm: onAddPromptTerm
-        )
     }
 
     // MARK: - Helpers
@@ -1430,23 +2213,31 @@ public struct SettingsView: View {
         scrollToLatest shouldScrollToLatest: Bool = true,
         animated: Bool = true
     ) {
-        historyLoadGeneration += 1
-        let generation = historyLoadGeneration
-        let loader = historyPage
+        let generation = historyLoadFence.begin()
+        let search = SettingsHistorySearch(historySearch)
+        let pageLoader = historyPage
+        let searchLoader = historySearchPage
+        let loader: @Sendable (Int) async -> SettingsHistoryPage
+        if search.isActive {
+            let query = search.query
+            loader = { limit in await searchLoader(limit, query) }
+        } else {
+            loader = pageLoader
+        }
         isHistoryLoading = true
         historyRefreshTask?.cancel()
-        historyRefreshTask = Task {
+        historyRefreshTask = Task.detached(priority: .utility) {
             if debounce {
                 try? await Task.sleep(for: .milliseconds(300))
             }
             guard !Task.isCancelled else { return }
-            let page = await Task.detached(priority: .utility) {
-                loader(limit)
-            }.value
+            let page = await loader(limit)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard generation == historyLoadGeneration, !Task.isCancelled else { return }
+                guard historyLoadFence.accepts(generation), !Task.isCancelled else { return }
                 applyHistoryPage(page)
                 isHistoryLoading = false
+                prefetchAskHistoryIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {
                     scrollToLatest(scrollProxy, animated: animated)
                 }
@@ -1456,6 +2247,12 @@ public struct SettingsView: View {
 
     private func applyHistoryPage(_ page: SettingsHistoryPage) {
         historyDayGroups = Self.newestFirstHistoryGroups(page.groups)
+        selectedHistoryEntryID = SettingsHistoryLayout.selection(
+            current: selectedHistoryEntryID,
+            entries: historyDayGroups.flatMap(\.entries).map(\.id),
+            preferNewest: selectNewestOnNextHistoryPage
+        )
+        selectNewestOnNextHistoryPage = false
         historyLoadedEntryCount = page.loadedEntryCount
         historyHasMore = page.hasMore
     }
@@ -1468,10 +2265,42 @@ public struct SettingsView: View {
     private func cancelHistoryLoads() {
         historyRefreshTask?.cancel()
         historyRefreshTask = nil
+        historyLoadFence.cancel()
         isHistoryLoading = false
         askHistoryRefreshTask?.cancel()
         askHistoryRefreshTask = nil
+        askHistoryLoadFence.cancel()
         isAskHistoryLoading = false
+        searchPrewarmTask?.cancel()
+        searchPrewarmTask = nil
+    }
+
+    /// #153 review MUST-FIX 2: the first switch to Ask walked that scope cold (~2.5x the Dictations page,
+    /// 304.7 ms on an 11k archive). Once the Dictations page has landed, load the Ask page in the background so
+    /// the switch finds the index warm.
+    ///
+    /// AIDEV-NOTE: This runs from the Dictations load's completion on purpose. Started alongside it, the two
+    /// detached loads race for the index actor and the prefetch can delay the page the user is looking at.
+    /// A switch while it is in flight cancels it, and the walk keeps what it already decoded.
+    private func prefetchAskHistoryIfNeeded() {
+        guard !hasPrefetchedAskHistory, askHistoryDayGroups.isEmpty, !isAskHistoryLoading else { return }
+        hasPrefetchedAskHistory = true
+        requestAskHistoryReload(scrollToLatest: false)
+    }
+
+    /// Lead add-on: the first search of a Settings session read ~11k text files (2.3–3.2 s). Once the Ask page
+    /// has landed (after the Dictations page and its prefetch), warm the search text in the background so a search
+    /// typed a couple of seconds later is served from memory.
+    ///
+    /// AIDEV-NOTE: Background priority, and the index yields between chunks, so it never delays a page the user
+    /// asked for. `cancelHistoryLoads()` cancels it when History goes away; closing Settings drops this view and
+    /// releases the index, which also stops a prewarm mid-walk.
+    private func startSearchPrewarmIfNeeded() {
+        guard searchPrewarmTask == nil else { return }
+        let prewarm = searchPrewarm
+        searchPrewarmTask = Task.detached(priority: .background) {
+            await prewarm()
+        }
     }
 
     private func requestAskHistoryReload(
@@ -1502,23 +2331,31 @@ public struct SettingsView: View {
         scrollToLatest shouldScrollToLatest: Bool = true,
         animated: Bool = true
     ) {
-        askHistoryLoadGeneration += 1
-        let generation = askHistoryLoadGeneration
-        let loader = askHistoryPage
+        let generation = askHistoryLoadFence.begin()
+        let search = SettingsHistorySearch(askHistorySearch)
+        let pageLoader = askHistoryPage
+        let searchLoader = askHistorySearchPage
+        let loader: @Sendable (Int) async -> SettingsAskHistoryPage
+        if search.isActive {
+            let query = search.query
+            loader = { limit in await searchLoader(limit, query) }
+        } else {
+            loader = pageLoader
+        }
         isAskHistoryLoading = true
         askHistoryRefreshTask?.cancel()
-        askHistoryRefreshTask = Task {
+        askHistoryRefreshTask = Task.detached(priority: .utility) {
             if debounce {
                 try? await Task.sleep(for: .milliseconds(300))
             }
             guard !Task.isCancelled else { return }
-            let page = await Task.detached(priority: .utility) {
-                loader(limit)
-            }.value
+            let page = await loader(limit)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard generation == askHistoryLoadGeneration, !Task.isCancelled else { return }
+                guard askHistoryLoadFence.accepts(generation), !Task.isCancelled else { return }
                 applyAskHistoryPage(page)
                 isAskHistoryLoading = false
+                startSearchPrewarmIfNeeded()
                 if shouldScrollToLatest, let scrollProxy {
                     scrollToLatestAsk(scrollProxy, animated: animated)
                 }
@@ -1613,32 +2450,35 @@ public struct SettingsView: View {
         return "Missing: \(names.joined(separator: ", "))"
     }
 
-    private var positionModeDescription: String {
-        switch selectedAnchorMode {
-        case .follow:
-            "Follows the active screen while you drag freely."
-        case .topCenter:
-            "Anchored to the top center of the active screen."
-        case .bottomCenter:
-            "Anchored to the bottom center of the active screen."
-        }
-    }
-
     private func permissionRow(_ permission: HotkeyPermission, isGranted: Bool) -> some View {
         LabeledContent(permission.label) {
             HStack(spacing: 8) {
                 statusBadge(isGranted ? "Granted" : "Missing", isReady: isGranted)
-                Button("Open") {
-                    openPermissionSettings(permission)
+                if !isGranted {
+                    Button("Open") {
+                        openPermissionSettings(permission)
+                    }
                 }
             }
         }
     }
 
+    private var permissionRows: some View {
+        Group {
+            permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
+            permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
+            permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
+        }
+    }
+
     private func statusBadge(_ text: String, isReady: Bool) -> some View {
+        statusBadge(text, tone: isReady ? .ready : .attention)
+    }
+
+    private func statusBadge(_ text: String, tone: SettingsStatusTone) -> some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(isReady ? .green : .red)
+                .fill(tone == .ready ? Color.green : tone == .attention ? Color.red : Color.gray)
                 .frame(width: 8, height: 8)
             Text(text)
                 .foregroundStyle(.secondary)
@@ -1654,9 +2494,10 @@ public struct SettingsView: View {
     private func runRelaySetup() {
         guard !relaySetupRunning else { return }
         relaySetupRunning = true
-        relaySetupFeedback = "Setting up relay..."
-        onRunRelaySetup { feedback in
-            relaySetupFeedback = feedback
+        let action: SettingsRelaySetupFeedback.Action = isHotkeyRemapActive() ? .reinstall : .setUp
+        relaySetupFeedback = (action, nil)
+        onRunRelaySetup { result in
+            relaySetupFeedback = (action, result)
             relaySetupRunning = false
         }
     }
@@ -1672,73 +2513,186 @@ public struct SettingsView: View {
         }
     }
 
-    private var localVocabularyPreview: STTVocabularyPreview {
-        STTVocabularyPreview(updatedAt: nil, entries: localEntries)
+    struct DictionaryFocus: Equatable {
+        let rowID: String
+        let clearsSearch: Bool
+    }
+
+    /// Where the list goes after a save (UI pass #18): the saved term's row, and the search cleared if it
+    /// would hide that term.
+    /// The one trimmed search every Dictionary check uses; matching already trims (#148 Macroscope).
+    static func dictionaryQuery(_ search: String) -> String {
+        search.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func dictionaryFocus(afterSaving canonical: String, variants: [String] = [],
+                                search: String) -> DictionaryFocus {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return DictionaryFocus(
+            rowID: STTDictionaryDisplayEntry(
+                source: "personal",
+                entry: STTDictionaryEntry(canonical: canonical, variants: [])
+            ).rowID,
+            // The list matches misheard spellings too, so a search that still shows the term through one is kept.
+            clearsSearch: !query.isEmpty && !([canonical] + variants).contains {
+                $0.localizedCaseInsensitiveContains(query)
+            }
+        )
+    }
+
+    /// Fold-3 review S2: a load that finishes while an edit is open must not overwrite the list, and must not be
+    /// lost either. It is remembered and re-run when the edit ends.
+    struct DictionaryReloadGate: Equatable {
+        private(set) var reloadWhenEditEnds = false
+
+        /// True when the finished load may be applied now.
+        mutating func loadFinished(duringEdit: Bool) -> Bool {
+            reloadWhenEditEnds = duringEdit
+            return !duringEdit
+        }
+
+        /// A save or delete went to the daemon as the edit ended: its revision bump reloads with fresh data, so a
+        /// deferred load must not run first and briefly undo the edit (#151 CodeRabbit).
+        mutating func mutationSent() {
+            reloadWhenEditEnds = false
+        }
+
+        /// True (once) when a deferred reload must run now that the edit ended.
+        mutating func editEnded() -> Bool {
+            defer { reloadWhenEditEnds = false }
+            return reloadWhenEditEnds
+        }
     }
 
     private var hasPendingDictionaryEdit: Bool {
-        editingCanonical != nil ||
-            addingVariantFor != nil ||
-            pendingDeleteCanonical != nil ||
-            !newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        termSheet != nil || pendingDeleteCanonical != nil
     }
 
-    private func reconcileLocalEntries(with entries: [STTDictionaryEntry]) {
-        guard !hasPendingDictionaryEdit else { return }
-        localEntries = entries
-    }
-
-    private func beginTermRename(_ canonical: String) {
-        editingCanonical = canonical
-        editTermText = canonical
+    /// Arriving on the tab never finds an editor already open (UI pass #17: the first row was).
+    private func resetDictionaryEditors() {
+        termSheet = nil
         pendingDeleteCanonical = nil
-        focusedEditorField = .editTerm
     }
 
-    private func cancelTermRename() {
-        editingCanonical = nil
-        editTermText = ""
-        focusedEditorField = nil
-    }
-
-    private func saveTermRename(_ canonical: String) {
-        SettingsDictionaryMutations.renameTerm(
-            canonical,
-            editText: &editTermText,
+    private func saveTermSheet(_ edit: DictionaryTermEdit) {
+        let entriesBefore = localEntries
+        let saved = SettingsDictionaryMutations.apply(
+            edit,
             localEntries: &localEntries,
             onAddPromptTerm: onAddPromptTerm,
             onRemovePromptTerm: onRemovePromptTerm,
-            onAddVocabularyAlias: onAddVocabularyAlias
+            onAddVocabularyAlias: onAddVocabularyAlias,
+            onRemoveVocabularyAlias: onRemoveVocabularyAlias
         )
-        editingCanonical = nil
-        focusedEditorField = nil
-    }
-
-    private func saveVariant(_ canonical: String) {
-        SettingsDictionaryMutations.addVariant(
-            canonical: canonical,
-            variantText: &variantText,
-            addingVariantFor: &addingVariantFor,
-            localEntries: &localEntries,
-            onAddVocabularyAlias: onAddVocabularyAlias
-        )
-        focusedEditorField = nil
-    }
-
-    private func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
-        selectedAnchorMode = mode
-        if mode != .follow {
-            selectedAnchoredMode = mode
+        if localEntries != entriesBefore { dictionaryReloadGate.mutationSent() }
+        termSheet = nil
+        guard let saved else { return }
+        let savedVariants = localEntries.first { $0.canonical == saved }?.variants ?? []
+        let focus = Self.dictionaryFocus(afterSaving: saved, variants: savedVariants, search: dictionarySearch)
+        if focus.clearsSearch { dictionarySearch = "" }
+        yourTermsExpanded = true
+        selectedTermRowID = focus.rowID
+        flashingTermRowID = focus.rowID
+        pendingScrollRowID = focus.rowID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            if flashingTermRowID == focus.rowID { flashingTermRowID = nil }
         }
-        onSelectAnchorMode(mode)
     }
 
-    private var addVariantInputFill: Color {
-        Color(red: 31 / 255, green: 39 / 255, blue: 51 / 255)
+    private func loadDictionaryPreview() {
+        guard !dictionaryLoading else {
+            dictionaryReloadQueued = true
+            return
+        }
+        dictionaryLoading = true
+        let provider = vocabularyPreview
+        Task {
+            let (preview, index) = await Task.detached(priority: .userInitiated) {
+                let preview = provider()
+                let index = STTDictionaryDisplayIndex(preview: preview)
+                return (preview, index)
+            }.value
+            dictionaryLoading = false
+            if dictionaryReloadQueued {
+                dictionaryReloadQueued = false
+                loadDictionaryPreview()
+                return
+            }
+            guard dictionaryReloadGate.loadFinished(duringEdit: hasPendingDictionaryEdit) else { return }
+            localEntries = preview.entries
+            dictionaryDisplayIndex = index
+            hasLoadedDictionaryOnce = true
+        }
+    }
+
+    /// #201 r1: Add term waits for the first dictionary load. Until then the sheet would get no entries, and a load
+    /// that lands while it is open is deferred, so it could not recognise a term that is already there.
+    static func addTermEnabled(loaded: Bool) -> Bool {
+        loaded
+    }
+
+    enum DictionaryPlaceholder: Equatable {
+        case loading
+        case empty
+    }
+
+    /// What stands in for "Your terms" rows: nothing while there are rows or a search, a quiet "Loading…" before
+    /// the first async load lands (never a false "No terms yet"), and the empty state only once it has.
+    static func dictionaryPlaceholder(loaded: Bool, personalIsEmpty: Bool, searching: Bool) -> DictionaryPlaceholder? {
+        guard personalIsEmpty, !searching else { return nil }
+        return loaded ? .empty : .loading
+    }
+
+    static func dictionarySectionTitle(_ title: String, count: Int, matches: Int? = nil, loaded: Bool) -> String {
+        guard loaded else { return title }
+        guard let matches else { return "\(title) (\(count))" }
+        return "\(title) (\(matches) of \(count))"
     }
 }
 
 enum SettingsDictionaryMutations {
+    /// Applies one Add/Edit sheet save through the existing single-step mutations (remove variants, rename,
+    /// add), and returns the canonical spelling the term ends up under, so the list can scroll to it.
+    @discardableResult
+    static func apply(
+        _ edit: DictionaryTermEdit,
+        localEntries: inout [STTDictionaryEntry],
+        onAddPromptTerm: (String) -> Void,
+        onRemovePromptTerm: (String) -> Void,
+        onAddVocabularyAlias: (String, String) -> Void,
+        onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
+    ) -> String? {
+        let correct = edit.trimmedCorrect
+        guard !correct.isEmpty else { return nil }
+        var canonical = correct
+        if let original = edit.original {
+            canonical = original.canonical
+            for variant in edit.removedVariants where original.variants.contains(variant) {
+                removeVariant(canonical: canonical, variant: variant, localEntries: &localEntries,
+                              onRemoveVocabularyAlias: onRemoveVocabularyAlias)
+            }
+            if correct != canonical {
+                var editText = correct
+                renameTerm(canonical, editText: &editText, localEntries: &localEntries,
+                           onAddPromptTerm: onAddPromptTerm, onRemovePromptTerm: onRemovePromptTerm,
+                           onAddVocabularyAlias: onAddVocabularyAlias)
+            }
+        } else if !localEntries.contains(where: { sameCanonical($0.canonical, correct) }) {
+            // A new term is always persisted as a term, even when its misheard spelling is dropped below
+            // (equal to it by alias key), or it would vanish on the next reload (#144 CodeRabbit).
+            var newTermText = correct
+            commitNewTerm(newTermText: &newTermText, localEntries: &localEntries, onAddPromptTerm: onAddPromptTerm)
+        }
+        let resolved = localEntries.first(where: { sameCanonical($0.canonical, correct) })?.canonical ?? correct
+        if !edit.trimmedWrong.isEmpty {
+            var variantText = edit.trimmedWrong
+            var pending: String? = resolved
+            addVariant(canonical: resolved, variantText: &variantText, addingVariantFor: &pending,
+                       localEntries: &localEntries, onAddVocabularyAlias: onAddVocabularyAlias)
+        }
+        return localEntries.first(where: { sameCanonical($0.canonical, resolved) })?.canonical ?? resolved
+    }
+
     static func commitNewTerm(
         newTermText: inout String,
         localEntries: inout [STTDictionaryEntry],
@@ -1763,14 +2717,14 @@ enum SettingsDictionaryMutations {
         guard !trimmed.isEmpty, let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else {
             return
         }
-        guard localEntries[index].canonical.localizedCaseInsensitiveCompare(trimmed) != .orderedSame else {
+        // F2b (#201 r2): the same `sameCanonical` rule as the save's lookup in `apply`. A case-only check here let a
+        // rename onto "zephyr   board" create a second row while the new variant went to "Zephyr Board".
+        guard !sameCanonical(localEntries[index].canonical, trimmed) else {
             editText = ""
             return
         }
         let variants = localEntries[index].variants
-        if let existingIndex = localEntries.firstIndex(where: {
-            $0.canonical.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
-        }) {
+        if let existingIndex = localEntries.firstIndex(where: { sameCanonical($0.canonical, trimmed) }) {
             let targetCanonical = localEntries[existingIndex].canonical
             for variant in variants where !localEntries[existingIndex].variants.contains(variant) {
                 localEntries[existingIndex].variants.append(variant)
@@ -1820,19 +2774,20 @@ enum SettingsDictionaryMutations {
     ) {
         let trimmed = variantText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        upsertEntry(canonical, in: &localEntries)
-        guard let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else { return }
-        guard aliasKey(trimmed) != aliasKey(localEntries[index].canonical) else {
+        defer {
+            // AIDEV-NOTE: every exit clears the editor; a leftover addingVariantFor blocks all later reloads.
             variantText = ""
             addingVariantFor = nil
-            return
         }
+        upsertEntry(canonical, in: &localEntries)
+        // Same case-insensitive match as upsertEntry, so "swiftui" lands on an existing "SwiftUI".
+        guard let index = localEntries.firstIndex(where: { sameCanonical($0.canonical, canonical) }) else { return }
+        let existingCanonical = localEntries[index].canonical
+        guard aliasKey(trimmed) != aliasKey(existingCanonical) else { return }
         if !localEntries[index].variants.contains(where: { aliasKey($0) == aliasKey(trimmed) }) {
             localEntries[index].variants.append(trimmed)
-            onAddVocabularyAlias(canonical, trimmed)
+            onAddVocabularyAlias(existingCanonical, trimmed)
         }
-        variantText = ""
-        addingVariantFor = nil
     }
 
     static func removeVariant(
@@ -1847,11 +2802,12 @@ enum SettingsDictionaryMutations {
     }
 
     private static func upsertEntry(_ canonical: String, in entries: inout [STTDictionaryEntry]) {
-        guard !entries.contains(where: { $0.canonical.localizedCaseInsensitiveCompare(canonical) == .orderedSame })
-        else {
-            return
-        }
+        guard !entries.contains(where: { sameCanonical($0.canonical, canonical) }) else { return }
         entries.append(STTDictionaryEntry(canonical: canonical, variants: []))
+    }
+
+    private static func sameCanonical(_ lhs: String, _ rhs: String) -> Bool {
+        DictionaryTermEdit.sameTerm(lhs, rhs)
     }
 
     private static func aliasKey(_ value: String) -> String {
@@ -1866,7 +2822,8 @@ enum SettingsDictionaryMutations {
     }
 }
 
-private extension HotkeyPermission {
+/// Shared with the setup wizard's Permissions step (F3), so both name and open each pane the same way.
+extension HotkeyPermission {
     var label: String {
         switch self {
         case .inputMonitoring:
@@ -1887,5 +2844,17 @@ private extension HotkeyPermission {
         case .microphone:
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
         }
+    }
+}
+
+private extension View {
+    /// The scope not on screen stays mounted but inert: not drawn, not hit-testable, not focusable, not read by
+    /// VoiceOver.
+    func historyScopeVisibility(_ visible: Bool) -> some View {
+        opacity(visible ? 1 : 0)
+            .allowsHitTesting(visible)
+            .disabled(!visible)
+            .accessibilityHidden(!visible)
+            .zIndex(visible ? 1 : 0)
     }
 }

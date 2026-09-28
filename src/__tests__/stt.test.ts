@@ -991,13 +991,111 @@ describe("STT backends", () => {
 
       expect(requestSizes).toHaveLength(4);
       expect(requestSizes.every((size) => size < 95 * 16000 * 2)).toBe(true);
-      expect(prompts[0]).toBeUndefined();
-      expect(prompts[1]).toContain("first chunk has setup");
-      expect(prompts[2]).toContain("setup and middle chunk continues");
+      // Chunk decodes carry no transcript prompt: a prompted beam decode runs
+      // away at a chunk that ends mid-phrase (S1, 2.2.24).
+      expect(prompts).toEqual([undefined, undefined, undefined, undefined]);
       expect(result.text).toBe(
         "first chunk has setup and middle chunk continues with final decision",
       );
       expect(result.backend).toBe("whisper-server+chunks");
+    });
+
+    describe("prompted chunk runaway (S1 specimen shapes)", () => {
+      // A synthetic decoder with the specimens' behaviour: one word per second
+      // of audio; an UNPROMPTED decode of a slice returns exactly that slice's
+      // words, a PROMPTED decode skips the words its prompt already holds and,
+      // at the runaway chunk, repeats itself the way beam search did live.
+      const SECONDS = 95;
+      const RUNAWAY_START = 25;
+      const speech = Array.from({ length: SECONDS }, (_, i) => `tok${i}`);
+
+      function markedWav(): Uint8Array {
+        const wav = makePcm16Wav(SECONDS);
+        const view = new DataView(wav.buffer);
+        // Second i's first sample is a zero crossing of the tone; stamp it so
+        // the fake decoder can tell which slice it was sent.
+        for (let i = 0; i < SECONDS; i++) view.setInt16(44 + i * 32_000, 1_000 + i, true);
+        return wav;
+      }
+
+      function sliceOf(wavData: Uint8Array): { start: number; seconds: number } {
+        const view = new DataView(wavData.buffer, wavData.byteOffset, wavData.byteLength);
+        return {
+          start: view.getInt16(44, true) - 1_000,
+          seconds: Math.round(view.getUint32(40, true) / 32_000),
+        };
+      }
+
+      function decoder(
+        words: string[],
+        runaway: (clean: string[]) => string[],
+        requests: Array<{ start: number; seconds: number; prompt?: string }>,
+      ) {
+        return async (wavData: Uint8Array, options?: { prompt?: string }) => {
+          const { start, seconds } = sliceOf(wavData);
+          requests.push({ start, seconds, prompt: options?.prompt });
+          const clean = words.slice(start, start + seconds);
+          if (!options?.prompt) return clean.join(" ");
+          const held = new Set(options.prompt.split(/\s+/));
+          const skipped = clean.filter((word) => !held.has(word));
+          return (start === RUNAWAY_START && seconds === 30 ? runaway(skipped) : skipped).join(" ");
+        };
+      }
+
+      it("keeps one copy when a prompted chunk decode re-transcribes itself (specimen A: rewind)", async () => {
+        const wavPath = "/tmp/voicelayer-s1-rewind-test.wav";
+        await Bun.write(wavPath, markedWav());
+        const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
+        const backend = new WhisperServerBackend({
+          isServerAvailable: () => true,
+          transcribeViaServer: decoder(speech, (clean) => [...clean, ...clean], requests),
+        });
+
+        const result = await backend.transcribe(wavPath);
+
+        expect(result.text).toBe(speech.join(" "));
+        expect(requests.filter((r) => r.seconds === 30 && r.prompt)).toEqual([]);
+      });
+
+      it("keeps one copy when a prompted chunk decode loops a short phrase (specimen B)", async () => {
+        const wavPath = "/tmp/voicelayer-s1-short-loop-test.wav";
+        await Bun.write(wavPath, markedWav());
+        const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
+        const loop = (clean: string[]) => [
+          ...clean.slice(0, 10),
+          ...Array.from({ length: 5 }, () => clean.slice(10, 13)).flat(),
+          ...clean.slice(13),
+        ];
+        const backend = new WhisperServerBackend({
+          isServerAvailable: () => true,
+          transcribeViaServer: decoder(speech, loop, requests),
+        });
+
+        const result = await backend.transcribe(wavPath);
+
+        expect(result.text).toBe(speech.join(" "));
+      });
+
+      it("keeps genuine repeats, retractions and fragments the audio carries", async () => {
+        const said = [...speech];
+        // A five-word phrase said three times, a retraction, a cut-off word.
+        // On the seams (review #139): the phrase spans the 25–30 s overlap, the
+        // retraction the 50–55 s one, and "fu…" sits inside 75–80 s.
+        said.splice(22, 15, ...Array.from({ length: 3 }, () => ["we", "need", "to", "ship", "this"]).flat());
+        said.splice(49, 6, "the", "red", "—", "no,", "the", "blue");
+        said[77] = "fu…";
+        const wavPath = "/tmp/voicelayer-s1-word-safety-test.wav";
+        await Bun.write(wavPath, markedWav());
+        const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
+        const backend = new WhisperServerBackend({
+          isServerAvailable: () => true,
+          transcribeViaServer: decoder(said, (clean) => clean, requests),
+        });
+
+        const result = await backend.transcribe(wavPath);
+
+        expect(result.text).toBe(said.join(" "));
+      });
     });
 
     it("re-decodes a prompted internal loop with agreeing extended acoustic witnesses", async () => {
@@ -1564,6 +1662,193 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks+witness");
     });
 
+    it("keeps three spoken tail repetitions when the extension boundary is missing", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-tail-missing-boundary-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "please keep these exact spoken words";
+      const spoken = Array(3).fill(repeated).join(" ");
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${spoken}`;
+          if (calls === 3 || calls === 4) {
+            return `the boundary ${repeated} ${repeated} extension was reworded`;
+          }
+          if (calls === 5) return "separate acoustic extension begins now";
+          return "next topic continues onward";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+      expect(result.text.match(/please keep these exact spoken words/gu)).toHaveLength(3);
+    });
+
+    for (const chunkCopies of [4, 3]) {
+      it(`collapses ${chunkCopies} tail loop copies to one with an unlocated extension boundary`, async () => {
+        const wavPath = `/tmp/voicelayer-whisper-server-tail-margin-${chunkCopies}-test.wav`;
+        await Bun.write(wavPath, makePcm16Wav(95));
+        const repeated = "these repeated words are an unsupported loop";
+        let calls = 0;
+        const backend = new WhisperServerBackend({
+          isServerAvailable: () => true,
+          transcribeViaServer: async () => {
+            calls++;
+            if (calls === 1) return "intro reaches the boundary";
+            if (calls === 2) {
+              return `the boundary ${Array(chunkCopies).fill(repeated).join(" ")}`;
+            }
+            if (calls === 3 || calls === 4) {
+              return `the boundary ${repeated} extension was reworded`;
+            }
+            if (calls === 5) return "separate acoustic extension begins now";
+            return "next topic continues onward";
+          },
+        });
+
+        const result = await backend.transcribe(wavPath);
+        expect(result.text.match(/these repeated words are an unsupported loop/gu)).toHaveLength(1);
+        expect(result.backend).toBe("whisper-server+chunks+witness");
+      });
+    }
+
+    it("collapses a tail loop when two acoustic witnesses agree but the extension wording drifts", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-tail-loop-drift-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "the spoken status remains correct today";
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${Array(7).fill(repeated).join(" ")}`;
+          if (calls === 3) return `the boundary ${Array(4).fill(repeated).join(" ")} next topic begins here`;
+          if (calls === 4) return `the boundary ${repeated} next topic begins here`;
+          if (calls === 5) return `intro reaches the boundary ${repeated} next topic begins here and finishes`;
+          if (calls === 6) return "a differently worded next topic begins";
+          if (calls === 7) return "next topic begins here and finishes";
+          return "and finishes";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(`intro reaches the boundary ${repeated} next topic begins here and finishes`);
+      expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
+    it("keeps a retraction and cutoff fragment outside an acoustically rejected loop", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-loop-retraction-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const spoken = "I want the red — no, the blue one fu…";
+      const repeated = "the spoken status remains correct today";
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${spoken} ${Array(7).fill(repeated).join(" ")}`;
+          if (calls === 3) return `the boundary ${spoken} ${Array(4).fill(repeated).join(" ")} next topic begins here`;
+          if (calls === 4) return `the boundary ${spoken} ${repeated} next topic begins here`;
+          if (calls === 5) return `intro reaches the boundary ${spoken} ${repeated} next topic begins here and finishes`;
+          if (calls === 6) return "a differently worded next topic begins";
+          if (calls === 7) return "next topic begins here and finishes";
+          return "and finishes";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toContain(spoken);
+      expect(result.text.match(/the spoken status remains correct today/gu)).toHaveLength(1);
+      expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
+    it("keeps different consecutive sentences that share a long prefix beside a loop", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-shared-prefix-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "the status remains correct for this recording";
+      const different = "the status remains correct for this session";
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${Array(7).fill(repeated).join(". ")}. ${different}.`;
+          if (calls === 3) return `the boundary ${Array(4).fill(repeated).join(". ")}. ${different}. next topic begins here`;
+          if (calls === 4) return `the boundary ${repeated}. ${different}. next topic begins here`;
+          if (calls === 5) return `intro reaches the boundary ${repeated}. ${different}. next topic begins here and finishes`;
+          if (calls === 6) return "a differently worded next topic begins";
+          if (calls === 7) return "next topic begins here and finishes";
+          return "and finishes";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toContain(`${repeated}. ${different}.`);
+      expect(result.text.match(/the status remains correct for this recording/gu)).toHaveLength(1);
+      expect(result.text.match(/the status remains correct for this session/gu)).toHaveLength(1);
+    });
+
+    it("removes acoustically unsupported five-word copies without losing intervening words", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-five-word-loop-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "the status stays correct today";
+      const bridges = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
+      const loop = [repeated, ...bridges.flatMap((bridge) => [bridge, repeated])].join(" ");
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${loop}`;
+          if (calls === 3) return `the boundary ${Array(3).fill(repeated).join(" ")} a later topic follows`;
+          if (calls === 4) return `the boundary ${repeated} a later topic follows`;
+          if (calls === 5) return `intro reaches the boundary ${repeated} a later topic follows and finishes`;
+          if (calls === 6) return "different later topic starts here";
+          if (calls === 7) return "a later topic follows and finishes";
+          return "and finishes";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text.match(/the status stays correct today/gu)).toHaveLength(1);
+      for (const bridge of bridges) expect(result.text).toContain(bridge);
+      expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
+    it("keeps five-word repetition when acoustic witnesses hear all copies", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-five-word-genuine-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "repeat this thought exactly today";
+      const spoken = Array(3).fill(repeated).join(" ");
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${spoken} and then continue`;
+          if (calls === 3 || calls === 4) return `the boundary ${spoken} and then continue onward`;
+          if (calls === 5) return "continue onward to the end";
+          return "onward to the end";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text.match(/repeat this thought exactly today/gu)).toHaveLength(3);
+      expect(result.backend).toBe("whisper-server+chunks");
+    });
+
     it("preserves a tail loop when the extension boundary repeats the same phrase", async () => {
       const wavPath =
         "/tmp/voicelayer-whisper-server-chunked-ambiguous-tail-boundary-test.wav";
@@ -2030,6 +2315,124 @@ describe("STT backends", () => {
   });
 
   describe("Phase 7 chunk assembly", () => {
+    describe("unprompted overlap re-decodes (S1)", () => {
+      it("drops a word cut off at the seam when the next chunk re-says it", () => {
+        expect(
+          mergeChunkTranscripts([
+            "we moved the cursor to the top and then it",
+            "the cursor to the top and then it's gone from view",
+          ]),
+        ).toBe("we moved the cursor to the top and then it's gone from view");
+      });
+
+      it("matches a split token across the seam", () => {
+        expect(
+          mergeChunkTranscripts([
+            "and the panel whenever it 's dragged out it",
+            "whenever it's dragged out it snaps back",
+          ]),
+        ).toBe("and the panel whenever it 's dragged out it snaps back");
+      });
+
+      it("matches a compound written two ways across the seam", () => {
+        expect(
+          mergeChunkTranscripts([
+            "a quick check like DarkMode has to just",
+            "like dark mode has to just stay on",
+          ]),
+        ).toBe("a quick check like DarkMode has to just stay on");
+      });
+
+      it("drops a word the next chunk adds inside the overlap", () => {
+        expect(
+          mergeChunkTranscripts([
+            "earlier we said the build step became a",
+            "we said like the build step became a separate job now",
+          ]),
+        ).toBe("earlier we said the build step became a separate job now");
+      });
+
+      it("takes the next chunk's reading of one word cut at the seam", () => {
+        expect(
+          mergeChunkTranscripts([
+            "you can ask a helper to check it against the harbor",
+            "a helper to check it against the harness and report back",
+          ]),
+        ).toBe("you can ask a helper to check it against the harness and report back");
+      });
+
+      it("keeps two cut-edge words the next chunk does not re-say", () => {
+        const merged = mergeChunkTranscripts([
+          "we will ship the whole build tonight maybe",
+          "we will ship the whole build now and check it",
+        ]);
+        expect(merged.split(" ")).toEqual(
+          expect.arrayContaining(["tonight", "maybe", "now"]),
+        );
+      });
+
+      it("keeps a genuine phrase said three times across the seam (review #139 P1)", () => {
+        const merged = mergeChunkTranscripts([
+          "one two three alpha beta we need to ship this we need to ship this",
+          "ship this we need to ship this we need to ship this and then gamma",
+        ]);
+        expect(merged.split("we need to ship this").length - 1).toBe(3);
+        expect(merged.endsWith("and then gamma")).toBe(true);
+      });
+
+      it("keeps a re-said sentence after a garbled overlap (review #139 P2)", () => {
+        const merged = mergeChunkTranscripts([
+          "we talked about the release plan and then I said we need to fix the notch gear",
+          "we need to fits the not gear. Okay so again, we need to fix the notch gear before the release",
+        ]);
+        expect(merged).toContain("Okay so again,");
+        expect(merged.split("fix the notch gear").length - 1).toBe(2);
+      });
+
+      it("keeps both attempts of a retraction restarted at the seam (review #139 P3)", () => {
+        const merged = mergeChunkTranscripts([
+          "right so the thing I want to",
+          "so the thing I want to — so the thing I want to say is ship it",
+        ]);
+        expect(merged.split("the thing I want to").length - 1).toBe(2);
+      });
+
+      // KNOWN LIMITATION (lead's call, #139 round 2): one cut-edge word is replaced
+      // by the next chunk's reading, so a genuine "fu…" the next decode omits is lost.
+      // Needs segment timing; see the AIDEV-NOTE on findCompactChunkSeam.
+      it.todo("keeps a cut-off fragment at the seam when the next decode omits it (review #139 P4)");
+
+      it("keeps next-chunk lead-in words the earlier chunk never had (review #139)", () => {
+        const merged = mergeChunkTranscripts([
+          "we need to test the new build",
+          "and then the assistant said we need to test the new build now",
+        ]);
+        expect(merged).toContain("and then the assistant said");
+        expect(merged.endsWith("now")).toBe(true);
+      });
+
+      // Pre-existing on main, not this PR: the exact merge's ≤3-word prefix shift
+      // drops a short lead-in the earlier chunk missed (Macroscope #139, stt.ts:433).
+      it.todo("keeps a lead-in of three words or fewer the earlier chunk never had");
+
+      it("never equates code tokens that differ only by operators (review #139)", () => {
+        const merged = mergeChunkTranscripts([
+          "the service is written in C++ and",
+          "is written in C# and the client too",
+        ]);
+        expect(merged.split(" ")).toContain("C#");
+      });
+
+      it("keeps a trailing word the next chunk does not re-say", () => {
+        const merged = mergeChunkTranscripts([
+          "then we ship the build tomorrow",
+          "ship the build now and check it",
+        ]);
+        expect(merged.split(" ")).toContain("tomorrow");
+        expect(merged).toContain("now and check it");
+      });
+    });
+
     it("buildChunkPrompt carries recent tokens for continuity", () => {
       expect(
         buildChunkPrompt(

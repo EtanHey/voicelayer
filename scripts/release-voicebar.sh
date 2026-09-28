@@ -110,6 +110,7 @@ rm -rf "$APP_PATH" "$ZIP_PATH"
 echo "[release-voicebar] Building notarized VoiceBar $VERSION at $APP_PATH"
 (
     cd "$PACKAGE_ROOT"
+    VOICEBAR_QA_BUILD=0 \
     VOICEBAR_SKIP_LAUNCHD_INSTALL=1 \
     VOICEBAR_ENTITLEMENTS="$ENTITLEMENTS_PLIST" \
     VOICEBAR_NOTARY_PROFILE="$NOTARY_PROFILE" \
@@ -120,6 +121,9 @@ echo "[release-voicebar] Building notarized VoiceBar $VERSION at $APP_PATH"
         --no-stop \
         --no-relaunch
 )
+
+# The notarized bundle must not carry the dev/CI-only QA probes (Etan ruling 2).
+bash "$PACKAGE_ROOT/scripts/check-voicebar-qa-free.sh" "$APP_PATH/Contents/MacOS/VoiceBar"
 
 VERIFY_ARGS=(
     --version "$VERSION"

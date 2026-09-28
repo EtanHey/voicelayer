@@ -34,13 +34,13 @@ The retained content SHALL survive the idle-collapse timer and transient/generic
 
 ### Requirement: Hold-recording control
 
-The recording surface SHALL offer a VAD-only HOLD-RECORDING control. The control SHALL use `hand.raised` when released and `hand.raised.fill` when selected, with accessibility labels “Hold recording” and “Release recording hold.” Push-to-talk SHALL NOT expose this control because PTT already ignores silence auto-close.
+The recording surface SHALL offer a VAD-only LOCK-RECORDING control. The control SHALL use `lock.fill` when released and selected, with accessibility labels “Lock recording” and “Unlock recording.” Push-to-talk SHALL NOT expose this control because PTT already ignores silence auto-close. LOCK-RECORDING is the control; HOLD is the recording state it engages and releases, and the requirements below name that state.
 
 While HOLD is engaged, both the pre-speech no-voice timeout and post-speech silence timeout SHALL be suppressed and their accumulated silence counters SHALL reset. Releasing HOLD SHALL start the applicable silence countdown from a fresh full window. Explicit stop, explicit cancel, and the overall recording safety timeout SHALL remain effective while held.
 
 #### Scenario: Post-speech thinking pause does not end the turn
 
-- **WHEN** VAD recording has detected speech and the user engages HOLD-RECORDING
+- **WHEN** VAD recording has detected speech and the user engages LOCK-RECORDING
 - **AND** silence lasts longer than the active silence-mode threshold
 - **THEN** recording continues
 - **AND WHEN** the user releases HOLD
@@ -48,7 +48,7 @@ While HOLD is engaged, both the pre-speech no-voice timeout and post-speech sile
 
 #### Scenario: Pre-speech thinking pause does not time out
 
-- **WHEN** the user engages HOLD-RECORDING before speech is detected
+- **WHEN** the user engages LOCK-RECORDING before speech is detected
 - **AND** silence lasts longer than the normal pre-speech timeout
 - **THEN** recording continues
 - **AND WHEN** the user releases HOLD without speaking
@@ -56,7 +56,7 @@ While HOLD is engaged, both the pre-speech no-voice timeout and post-speech sile
 
 #### Scenario: Explicit termination remains authoritative
 
-- **WHEN** HOLD-RECORDING is engaged
+- **WHEN** LOCK-RECORDING is engaged
 - **AND** the user sends explicit stop or cancel, or the overall safety timeout expires
 - **THEN** recording ends according to that explicit termination path
 
@@ -109,7 +109,7 @@ Opening motion SHALL reveal wings before the lower body, delay the lower body by
 - **WHEN** VoiceBar enters recording
 - **THEN** the 72/152-point recording wings open around the unchanged core
 - **AND** the trailing waveform remains driven by the merged `VoiceState.audioLevel -> WaveformView` contract
-- **AND** the mock's first recording-control slot maps to the existing VAD-only HOLD control (and remains absent for PTT), while stop and cancel retain their existing behavior and accessibility
+- **AND** the mock's first recording-control slot maps to the existing VAD-only LOCK-RECORDING control (and remains absent for PTT), while stop and cancel retain their existing behavior and accessibility
 - **AND** the visual port does not introduce a new recording-pause protocol
 
 #### Scenario: Teleprompter is one centered surface

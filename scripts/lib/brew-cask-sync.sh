@@ -50,6 +50,7 @@ bcs_run() {
 # and silently reads as "not installed".
 bcs_brew_bin() {
     if [[ -n "${BREW_CASK_SYNC_BREW_BIN:-}" ]]; then
+        [[ -x "$BREW_CASK_SYNC_BREW_BIN" ]] || return 1
         printf '%s\n' "$BREW_CASK_SYNC_BREW_BIN"
         return 0
     fi

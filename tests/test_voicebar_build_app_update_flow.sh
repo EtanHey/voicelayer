@@ -652,6 +652,212 @@ SH
     rm -rf "$bin_dir"
 }
 
+# Exercise the real update/repair functions with an isolated Homebrew keg swap.
+# Every executable reached after the swap is a fixture; no live app or brew calls.
+# Sourced functions consume these variables and invoke the overridden helpers.
+# shellcheck disable=SC2030,SC2034,SC2329
+test_formula_upgrade_refreshes_keg_path() (
+    export FIXTURE_KEEP_OLD_KEG="${1:-0}"
+    local fixture old_root new_root helper
+    fixture="$(mktemp -d)"
+    trap 'rm -rf "${fixture:?}"' EXIT
+    fixture="$(cd "$fixture" && pwd -P)"
+    export FIXTURE_OLD_KEG="$fixture/Cellar/voicelayer/old"
+    export FIXTURE_NEW_KEG="$fixture/Cellar/voicelayer/new"
+    export FIXTURE_HELPER_LOG="$fixture/helpers.log"
+    old_root="$FIXTURE_OLD_KEG/libexec/lib/node_modules/voicelayer-mcp"
+    new_root="$FIXTURE_NEW_KEG/libexec/lib/node_modules/voicelayer-mcp"
+    mkdir -p "$old_root/scripts/lib" "$old_root/flow-bar" "$new_root/scripts" "$new_root/flow-bar"
+    cp "$UPDATE_SCRIPT" "$old_root/scripts/voicelayer-update.sh"
+    cp "$UPDATE_SCRIPT" "$new_root/scripts/voicelayer-update.sh"
+    cp "$ROOT_DIR/scripts/lib/brew-cask-sync.sh" "$old_root/scripts/lib/"
+    cat > "$fixture/brew" <<'BREW'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+    upgrade)
+        if [[ "$FIXTURE_KEEP_OLD_KEG" != 1 ]]; then
+            rm -rf "${FIXTURE_OLD_KEG:?}"
+        fi
+        ;;
+    --prefix) printf '%s\n' "$FIXTURE_NEW_KEG" ;;
+    *) printf 'Unexpected fake brew invocation: %s\n' "$*" >&2; exit 1 ;;
+esac
+BREW
+    chmod +x "$fixture/brew"
+    for helper in scripts/voicelayer-dedupe-voicebar.sh scripts/install-voicebar-f5-hidutil.sh \
+        scripts/install-voicebar-autostart.sh scripts/verify-voicebar-hotkey-health.sh flow-bar/build-app.sh; do
+        cat > "$new_root/$helper" <<'HELPER'
+#!/usr/bin/env bash
+printf '%s\n' "$0" >> "$FIXTURE_HELPER_LOG"
+HELPER
+        cp "$new_root/$helper" "$old_root/$helper"
+    done
+    export BREW_CASK_SYNC_BREW_BIN="$fixture/brew"
+    export BREW_CASK_SYNC_TEST_FORMULA_VERSION=1.0.0
+    export VOICELAYER_UPDATE_TEST_FORMULA_OFFERED_VERSION=2.0.0
+    export VOICELAYER_UPDATE_TEST_INSTALL_TYPE=brew-formula
+    # shellcheck source=/dev/null
+    source "$old_root/scripts/voicelayer-update.sh"
+    DRY_RUN=0
+    DRY_RUN_COMMANDS=0
+    bcs_tap_update() { :; }
+    voicebar_app_update_mode() { printf 'build\n'; }
+    update_package
+    if [[ "$FIXTURE_KEEP_OLD_KEG" == 1 ]]; then
+        [[ -d "$FIXTURE_OLD_KEG" ]] || fail "fake upgrade must retain old keg"
+    else
+        [[ ! -d "$FIXTURE_OLD_KEG" ]] || fail "fake upgrade did not delete old keg"
+    fi
+    update_voicebar_app
+    repair_and_verify_voicebar_hotkey_path
+    assert_eq "$new_root" "$PACKAGE_ROOT" "package root follows the upgraded keg"
+    assert_eq "5" "$(wc -l < "$FIXTURE_HELPER_LOG" | tr -d ' ')" "all post-upgrade helpers ran"
+    while IFS= read -r helper; do
+        [[ "$helper" == "$new_root/"* ]] || fail "helper came from stale keg: $helper"
+    done < "$FIXTURE_HELPER_LOG"
+)
+
+# Keep using an intact keg when Homebrew cannot resolve the formula prefix.
+# Every helper is a fixture; no live app or brew calls.
+# Sourced functions consume these variables and invoke the overridden helpers.
+# shellcheck disable=SC2030,SC2031,SC2034,SC2329
+test_formula_update_keeps_existing_keg_when_prefix_fails() (
+    local fixture old_root helper
+    fixture="$(mktemp -d)"
+    trap 'rm -rf "${fixture:?}"' EXIT
+    fixture="$(cd "$fixture" && pwd -P)"
+    export FIXTURE_OLD_KEG="$fixture/Cellar/voicelayer/old"
+    export FIXTURE_HELPER_LOG="$fixture/helpers.log"
+    old_root="$FIXTURE_OLD_KEG/libexec/lib/node_modules/voicelayer-mcp"
+    mkdir -p "$old_root/scripts/lib" "$old_root/flow-bar"
+    cp "$UPDATE_SCRIPT" "$old_root/scripts/voicelayer-update.sh"
+    cp "$ROOT_DIR/scripts/lib/brew-cask-sync.sh" "$old_root/scripts/lib/"
+    cat > "$fixture/brew" <<'BREW'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+    upgrade) exit 1 ;;
+    --prefix) exit 1 ;;
+    *) printf 'Unexpected fake brew invocation: %s\n' "$*" >&2; exit 1 ;;
+esac
+BREW
+    chmod +x "$fixture/brew"
+    for helper in scripts/voicelayer-dedupe-voicebar.sh scripts/install-voicebar-f5-hidutil.sh \
+        scripts/install-voicebar-autostart.sh scripts/verify-voicebar-hotkey-health.sh flow-bar/build-app.sh; do
+        cat > "$old_root/$helper" <<'HELPER'
+#!/usr/bin/env bash
+printf '%s\n' "$0" >> "$FIXTURE_HELPER_LOG"
+HELPER
+    done
+    export BREW_CASK_SYNC_BREW_BIN="$fixture/brew"
+    export BREW_CASK_SYNC_TEST_FORMULA_VERSION=1.0.0
+    export VOICELAYER_UPDATE_TEST_FORMULA_OFFERED_VERSION=1.0.0
+    export VOICELAYER_UPDATE_TEST_INSTALL_TYPE=brew-formula
+    # shellcheck source=/dev/null
+    source "$old_root/scripts/voicelayer-update.sh"
+    DRY_RUN=0
+    DRY_RUN_COMMANDS=0
+    bcs_tap_update() { :; }
+    voicebar_app_update_mode() { printf 'build\n'; }
+    update_package
+    [[ -d "$FIXTURE_OLD_KEG" ]] || fail "existing keg must remain available"
+    update_voicebar_app
+    repair_and_verify_voicebar_hotkey_path
+    assert_eq "$old_root" "$PACKAGE_ROOT" "package root remains at the existing keg"
+    assert_eq "5" "$(wc -l < "$FIXTURE_HELPER_LOG" | tr -d ' ')" "all post-upgrade helpers ran"
+    while IFS= read -r helper; do
+        [[ "$helper" == "$old_root/"* ]] || fail "helper did not come from existing keg: $helper"
+    done < "$FIXTURE_HELPER_LOG"
+)
+
+# A fake brew reproduces the self-lock seen when a formula upgrade also updates
+# openssl. The retry must complete the formula upgrade; other brew failures stay
+# fatal. No real Homebrew command runs.
+# shellcheck disable=SC2031,SC2329
+test_formula_upgrade_self_lock_retry() (
+    local fixture upgrade_output
+    fixture="$(mktemp -d)"
+    trap 'rm -rf "${fixture:?}"' EXIT
+    export FIXTURE_BREW_CALLS="$fixture/brew-calls"
+    export FIXTURE_FORMULA_UPGRADED="$fixture/upgraded"
+    export FIXTURE_BREW_ERROR=lock
+    cat > "$fixture/brew" <<'BREW'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == 'upgrade --formula etanhey/layers/voicelayer' ]] || exit 70
+printf 'call\n' >> "$FIXTURE_BREW_CALLS"
+if [[ "$FIXTURE_BREW_ERROR" == always_lock ||
+      ( "$FIXTURE_BREW_ERROR" == lock && "$(wc -l < "$FIXTURE_BREW_CALLS")" -eq 1 ) ]]; then
+    printf 'Error: etanhey/layers/voicelayer: A `brew upgrade --formula etanhey/layers/voicelayer` process has already locked /opt/homebrew/Cellar/openssl@3.\n' >&2
+    exit 1
+fi
+if [[ "$FIXTURE_BREW_ERROR" == other ]]; then
+    printf 'Error: bottle checksum mismatch\n' >&2
+    exit 42
+fi
+if [[ "$FIXTURE_BREW_ERROR" == warning ]]; then
+    printf 'Warning: synthetic-dep is deprecated\n' >&2
+fi
+touch "$FIXTURE_FORMULA_UPGRADED"
+BREW
+    chmod +x "$fixture/brew"
+    export BREW_CASK_SYNC_BREW_BIN="$fixture/brew"
+    # shellcheck source=/dev/null
+    source "$UPDATE_SCRIPT"
+    VOICELAYER_UPDATE_TEST_INSTALL_TYPE=brew-formula
+    bcs_formula_version() { printf '1.0.0\n'; }
+    formula_offered_version() { printf '2.0.0\n'; }
+    bcs_tap_update() { :; }
+    refresh_formula_package_root() { :; }
+    update_package || fail "formula update did not recover from Homebrew self-lock"
+    [[ -f "$FIXTURE_FORMULA_UPGRADED" ]] || fail "formula was not upgraded after the self-lock"
+    assert_eq "2" "$(wc -l < "$FIXTURE_BREW_CALLS" | tr -d ' ')" "self-lock upgrade attempts"
+
+    : > "$FIXTURE_BREW_CALLS"
+    FIXTURE_BREW_ERROR=warning
+    upgrade_output="$(update_package 2>&1)" || fail "warning-bearing brew upgrade must succeed"
+    [[ "$upgrade_output" == *'Warning: synthetic-dep is deprecated'* ]] ||
+        fail "successful brew upgrade must print its stderr warning"
+    assert_eq "1" "$(wc -l < "$FIXTURE_BREW_CALLS" | tr -d ' ')" "warning upgrade attempts"
+
+    : > "$FIXTURE_BREW_CALLS"
+    rm -f "${FIXTURE_FORMULA_UPGRADED:?}"
+    FIXTURE_BREW_ERROR=other
+    if update_package; then
+        fail "unrelated brew error must fail the formula upgrade"
+    fi
+    [[ ! -f "$FIXTURE_FORMULA_UPGRADED" ]] || fail "unrelated brew error must not mark formula upgraded"
+    assert_eq "1" "$(wc -l < "$FIXTURE_BREW_CALLS" | tr -d ' ')" "unrelated brew error attempts"
+
+    : > "$FIXTURE_BREW_CALLS"
+    FIXTURE_BREW_ERROR=always_lock
+    if update_package; then
+        fail "persistent self-lock must fail the formula upgrade"
+    fi
+    assert_eq "2" "$(wc -l < "$FIXTURE_BREW_CALLS" | tr -d ' ')" "persistent self-lock attempts"
+)
+
+# Each fixture deliberately isolates install-mode overrides in its own subshell.
+# shellcheck disable=SC2031,SC2329
+test_git_checkout_update_keeps_its_package_root() (
+    local original_root fixture
+    fixture="$(mktemp -d)"
+    trap 'rm -rf "${fixture:?}"' EXIT
+    export VOICELAYER_UPDATE_TEST_INSTALL_TYPE=git-checkout
+    # shellcheck source=/dev/null
+    source "$UPDATE_SCRIPT"
+    original_root="$PACKAGE_ROOT"
+    ensure_command() { :; }
+    warn_if_dirty() { :; }
+    run_cmd() { printf '%s\n' "$*" >> "$fixture/commands"; }
+    bcs_brew() { fail "git checkout must not resolve a formula keg"; }
+    update_package
+    assert_eq "$original_root" "$PACKAGE_ROOT" "git checkout root is unchanged"
+    assert_eq "$(printf 'git -C %s pull --ff-only\nbun install --cwd %s' "$original_root" "$original_root")" \
+        "$(cat "$fixture/commands")" "git checkout update commands are unchanged"
+)
+
 test_parse_no_stop_and_no_relaunch_flags
 test_parse_rejects_empty_install_path
 test_parse_rejects_newline_install_path
@@ -682,5 +888,11 @@ test_developer_id_signature_guard_rejects_partial_chain
 test_resident_app_install_rejects_apple_development_without_dangerous_override
 test_resident_app_install_allows_apple_development_with_dangerous_override
 test_build_strips_security_xattrs_before_signing
+
+test_formula_upgrade_refreshes_keg_path 0
+test_formula_upgrade_refreshes_keg_path 1
+test_formula_update_keeps_existing_keg_when_prefix_fails
+test_formula_upgrade_self_lock_retry
+test_git_checkout_update_keeps_its_package_root
 
 printf 'PASS: VoiceBar build/update flow shell tests\n'

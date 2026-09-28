@@ -198,6 +198,20 @@ describe("socket-protocol", () => {
       expect(parsed.recording_path).toEndWith("/audio.wav");
     });
 
+    it("serializes completed dictation receipt durations additively", () => {
+      const event: SocketEvent = {
+        type: "transcription",
+        text: "Etan confirmed the fix.",
+        recording_path: "/recordings/dictation/audio.wav",
+        dictation_receipt: {
+          audio_duration_ms: 1_234,
+          processing_duration_ms: 226,
+        },
+      };
+
+      expect(JSON.parse(serializeEvent(event).trim())).toEqual(event);
+    });
+
     it("serializes explicit unpolished transcription honesty metadata", () => {
       const event: SocketEvent = {
         type: "transcription",
@@ -610,6 +624,15 @@ describe("socket-protocol", () => {
       expect(
         parseCommand('{"cmd":"set_whisper_effort","effort":"slow"}'),
       ).toBeNull();
+    });
+
+    it("accepts only explicit whisper residency actions", () => {
+      expect(parseCommand('{"cmd":"set_whisper_residency","action":"load","id":"r1"}'))
+        .toEqual({ cmd: "set_whisper_residency", action: "load", id: "r1" });
+      expect(parseCommand('{"cmd":"set_whisper_residency","action":"unload","id":"r2"}'))
+        .toEqual({ cmd: "set_whisper_residency", action: "unload", id: "r2" });
+      expect(parseCommand('{"cmd":"set_whisper_residency","action":"toggle"}'))
+        .toBeNull();
     });
   });
 });

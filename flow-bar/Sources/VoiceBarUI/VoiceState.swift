@@ -73,10 +73,35 @@ public typealias AsyncDictationInsertionHandler = (
 public struct RecentTranscriptionEntry: Codable, Equatable {
     public var text: String
     public var recordingPath: String?
+    public var dictationReceipt: DictationReceipt?
+    /// When it was dictated. Nil for entries saved before times were recorded; those show no time.
+    public var createdAt: Date?
 
-    public init(text: String, recordingPath: String? = nil) {
+    public init(
+        text: String,
+        recordingPath: String? = nil,
+        dictationReceipt: DictationReceipt? = nil,
+        createdAt: Date? = nil
+    ) {
         self.text = text
         self.recordingPath = recordingPath
+        self.dictationReceipt = dictationReceipt
+        self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text
+        case recordingPath
+        case dictationReceipt
+        case createdAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+        recordingPath = try container.decodeIfPresent(String.self, forKey: .recordingPath)
+        dictationReceipt = try? container.decode(DictationReceipt.self, forKey: .dictationReceipt)
+        createdAt = try? container.decode(Date.self, forKey: .createdAt)
     }
 }
 
@@ -101,6 +126,11 @@ private struct HistoryRetranscriptionRequest {
     private var activePath: String?
     private var pendingIntent: Intent?
     private var suppressedPaths = Set<String>()
+    /// Outstanding History requests per recording path whose result has not arrived yet. Request cleanup (another
+    /// client's error, the transcription timeout) never clears these: a late result is still an old recording, not a
+    /// new dictation (QA 2.2.25 C9, #186 review). A count, not a set, so a rejected same-path retry undoes only its
+    /// own request. Each result for that path, or each refused request, removes one.
+    private var awaitedArchivedResults: [String: Int] = [:]
 
     var isPending: Bool {
         activePath != nil
@@ -115,6 +145,25 @@ private struct HistoryRetranscriptionRequest {
         activePath = path
         pendingIntent = Intent(id: id, path: path)
         suppressedPaths.insert(path)
+        awaitedArchivedResults[path, default: 0] += 1
+        return true
+    }
+
+    /// A result for `path` answers a History request whose live state was already cleaned up (another client's
+    /// error, the timeout). Does not consume.
+    func isLateArchivedResult(for path: String) -> Bool {
+        awaitedArchivedResults[path] != nil && !suppressesPaste(for: path)
+    }
+
+    /// Whether a result for `path` answers a History request, even one already cleaned up. Consumes one.
+    mutating func takeArchivedOrigin(for path: String) -> Bool {
+        releaseArchivedOrigin(for: path)
+    }
+
+    @discardableResult
+    private mutating func releaseArchivedOrigin(for path: String) -> Bool {
+        guard let count = awaitedArchivedResults[path] else { return false }
+        awaitedArchivedResults[path] = count > 1 ? count - 1 : nil
         return true
     }
 
@@ -156,6 +205,7 @@ private struct HistoryRetranscriptionRequest {
     mutating func reject(path: String?) {
         if let path {
             suppressedPaths.remove(path)
+            releaseArchivedOrigin(for: path)
             if activePath == path {
                 activePath = nil
             }
@@ -181,6 +231,7 @@ public final class VoiceState {
     public var mode: VoiceMode = .idle {
         didSet {
             previousMode = oldValue
+            synchronizeModelsSettingsState(from: oldValue, to: mode)
             if oldValue != mode, oldValue == .recording || mode == .recording {
                 resetRecordingHold()
             }
@@ -240,6 +291,8 @@ public final class VoiceState {
     // capture path is live. Only the daemon's first `audio_level` frame is.
     // `.recording` + false = booting; `.recording` + true = live.
     public private(set) var captureLive = false
+    /// Presentation-only guard for the brief idle frame before playback hands off to capture.
+    public private(set) var isRecordingHandoffPending = false
     public var recordingTimingClock: () -> TimeInterval = {
         ProcessInfo.processInfo.systemUptime
     }
@@ -318,18 +371,150 @@ public final class VoiceState {
         }
     }
 
+    public private(set) var latestDictationInsertionStatus: DictationInsertionStatus = .unverified
+    public private(set) var lastDictationCardEntry: RecentTranscriptionEntry?
+    private var latestDictationOperationID: UUID?
+
     /// Recent transcription text projection kept for older menu and hotkey paths.
     public var recentTranscriptions: [String] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != recentTranscriptions.isEmpty) }
     }
 
     /// Active STT vocabulary hints loaded from the daemon snapshot.
+    public private(set) var transcriptionVocabularyRevision: UInt64 = 0
+    public private(set) var modelsSettingsState = ModelsSettingsState.loading
+    public private(set) var residencyNotice: String?
+    private var pendingResidencyID: String?
+    private var timedOutResidencyID: String?
+    private var pendingResidencyTarget: VoiceModelResidency?
+    private var pendingResidencyTimeout: Task<Void, Never>?
+    private var modelsRecordingBusy = true
+    private var modelsRecordingReason: String?
+    /// An effort change the daemon acked `loading`: it is relaunching the model (E2).
+    private var pendingEffortReloadID: String?
+    private var pendingEffortReloadTimeout: Task<Void, Never>?
+    /// Processing toggles sent and not yet acked (P1): the value the row shows meanwhile.
+    public private(set) var processingPending: [ProcessingKey: Bool] = [:]
+    public private(set) var processingNotice: String?
+    private var processingPendingIDs: [String: ProcessingKey] = [:]
+    /// Called whenever an in-flight Processing toggle settles (accept, reject, timeout,
+    /// disconnect), so the settings window rebuilds and the row re-enables at once.
+    public var onProcessingSettled: (() -> Void)?
+    /// How long a toggle may wait for its ack before it falls back to the daemon's value.
+    public var processingAckTimeout: Duration = .seconds(10)
+
+    private func refreshModelsBusy() {
+        guard modelsSettingsState.availability == .available else { return }
+        let reason = pendingResidencyID != nil
+            ? (pendingResidencyTarget == .loaded ? "Loading model…" : "Unloading model…")
+            : pendingEffortReloadID != nil ? "Reloading model…"
+            : Self.blocksModelsEffort(mode) ? ModelsSettingsState.busyReason(mode: mode)
+            : modelsRecordingReason ?? (queueDepth > 0 ? "Playing back" : nil)
+        modelsSettingsState = modelsSettingsState.settingBusy(
+            modelsRecordingBusy || queueDepth > 0 || pendingResidencyID != nil
+                || pendingEffortReloadID != nil || Self.blocksModelsEffort(mode),
+            reason: reason
+        )
+    }
+
+    private func handleEffortAck(_ ack: SocketAckEvent, event: [String: Any]) {
+        if ack.outcome == .loading {
+            pendingEffortReloadID = ack.id
+            pendingEffortReloadTimeout?.cancel()
+            // Same budget as a Load: two 30 s startup attempts plus probes.
+            pendingEffortReloadTimeout = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 75_000_000_000)
+                guard !Task.isCancelled, let self, pendingEffortReloadID == ack.id else { return }
+                pendingEffortReloadID = nil
+                refreshModelsBusy()
+                sendCommand?(["cmd": "health"])
+            }
+            refreshModelsBusy()
+            return
+        }
+        if ack.id == pendingEffortReloadID {
+            pendingEffortReloadID = nil
+            pendingEffortReloadTimeout?.cancel()
+            pendingEffortReloadTimeout = nil
+        }
+        if let modelStatus = event["model_status"] as? [String: Any] {
+            let fresh = ModelsSettingsState(healthEvent: [
+                "type": "health", "recording_state": "idle", "model_status": modelStatus,
+            ])
+            modelsSettingsState = fresh.retainingPolishControls(from: modelsSettingsState)
+        } else if ack.outcome == .accept {
+            sendCommand?(["cmd": "health"])
+        }
+        refreshModelsBusy()
+    }
+
+    /// A lock-protected copy of the three vocabulary fields, written on main by their `didSet` (and at the end of
+    /// init, where `didSet` does not run), so the Dictionary's detached load reads it without hopping to main.
+    @ObservationIgnored let vocabularyMirror = STTVocabularySnapshotMirror()
+
+    /// While > 0, field setters don't publish; the batch publishes once at the end (#151 CodeRabbit: one event
+    /// sets three fields, and a detached read must never see new terms with old aliases).
+    @ObservationIgnored private var vocabularyMirrorBatchDepth = 0
+
+    private func withVocabularyMirrorBatch(_ update: () -> Void) {
+        vocabularyMirrorBatchDepth += 1
+        defer {
+            vocabularyMirrorBatchDepth -= 1
+            if vocabularyMirrorBatchDepth == 0 { syncVocabularyMirror() }
+        }
+        update()
+    }
+
+    private func syncVocabularyMirror() {
+        guard vocabularyMirrorBatchDepth == 0 else { return }
+        vocabularyMirror.store(
+            terms: transcriptionVocabularyTerms,
+            aliases: transcriptionVocabularyAliases,
+            displayEntries: transcriptionVocabularyDisplayEntries
+        )
+    }
+
+    /// The Dictionary tab's off-main vocabulary read (D1-c / fold-3 review S1). It used to hop to main with
+    /// `DispatchQueue.main.sync`, which deadlocks as soon as main waits synchronously on the load.
+    public nonisolated func vocabularyPreviewOffMain() -> STTVocabularyPreview {
+        let snapshot = vocabularyMirror.load()
+        return STTVocabularyPreview(
+            updatedAt: nil,
+            entries: STTVocabularyPreview(updatedAt: nil, promptTerms: snapshot.terms, aliases: snapshot.aliases)
+                .entries,
+            displayEntries: snapshot.displayEntries
+        )
+    }
+
+    public private(set) var transcriptionVocabularyDisplayEntries: [STTDictionaryDisplayEntry]? {
+        didSet {
+            if oldValue != transcriptionVocabularyDisplayEntries {
+                transcriptionVocabularyRevision &+= 1
+            }
+            syncVocabularyMirror()
+        }
+    }
+
+    public private(set) var remoteSTTConfigured: Bool?
+
     public var transcriptionVocabularyTerms: [String] = [] {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty) }
+        didSet {
+            if oldValue != transcriptionVocabularyTerms {
+                transcriptionVocabularyRevision &+= 1
+            }
+            syncVocabularyMirror()
+            notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty)
+        }
     }
 
     public var transcriptionVocabularyAliases: [STTVocabularyAliasPreview] = [] {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyAliases.isEmpty) }
+        didSet {
+            if oldValue != transcriptionVocabularyAliases {
+                transcriptionVocabularyRevision &+= 1
+            }
+            syncVocabularyMirror()
+            notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyAliases.isEmpty)
+        }
     }
 
     /// Latest completed transcript safe for re-paste/copy actions.
@@ -344,6 +529,12 @@ public final class VoiceState {
 
     public var queueItems: [QueueItemState] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.count != queueItems.count) }
+    }
+
+    /// The queue snapshot includes the currently playing utterance.
+    public var queuedSpeakCount: Int {
+        guard mode == .speaking else { return 0 }
+        return queueItems.filter { !$0.isCurrent }.count
     }
 
     public var commandModeState: CommandModeState? {
@@ -551,7 +742,9 @@ public final class VoiceState {
     /// Callback when voice mode changes — used to lock/unlock pill dragging.
     public var onModeChange: ((VoiceMode) -> Void)?
     public var onPanelLayoutChange: (() -> Void)?
-    public var onHistoryArchiveChange: (() -> Void)?
+    /// Called with the archived recording's audio path when a transcription lands in the archive (a new
+    /// dictation or a re-transcription of an old one).
+    public var onHistoryArchiveChange: ((String?) -> Void)?
     public var onAckEvent: ((SocketAckEvent) -> Void)?
     public var onPolishStatusChange: (() -> Void)?
     public var diagnosticLogger: ((String, [String: String]) -> Void)?
@@ -597,14 +790,120 @@ public final class VoiceState {
             recentTranscriptionEntriesLoader(),
             fallbackTexts: recentTranscriptionsLoader()
         )
+        lastDictationCardEntry = recentTranscriptionEntries.first { $0.dictationReceipt != nil }
         recentTranscriptions = recentTranscriptionEntries.map(\.text)
         transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
         transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
             transcriptionVocabularyAliasLoader()
         )
+        syncVocabularyMirror()
     }
 
     // MARK: - Commands
+
+    public func refreshModelsSettingsStatus() {
+        guard isConnected else {
+            modelsSettingsState = .disconnected
+            return
+        }
+        // AIDEV-NOTE: keep the last-known health while the refresh is in flight. Dropping to `.loading`
+        // here made the footer and popover flash "Starting…" (B1 reviewer); "Starting…" is only for a
+        // real (re)connect, which `setConnectionStatus(true)` marks.
+        modelsSettingsState = lastKnownModelsStateWhileRefreshing()
+        sendCommand?(["cmd": "health"])
+    }
+
+    /// Save one Processing toggle in the daemon. It applies from the next dictation.
+    public func setProcessingSetting(_ key: ProcessingKey, _ value: Bool) {
+        guard isConnected,
+              modelsSettingsState.availability == .available,
+              !modelsSettingsState.isBusy,
+              processingPending[key] == nil,
+              let sendCommand
+        else { return }
+        let id = UUID().uuidString
+        processingPending[key] = value
+        processingPendingIDs[id] = key
+        processingNotice = nil
+        sendCommand([
+            "cmd": "set_processing_setting",
+            "key": key.rawValue,
+            "value": value,
+            "id": id,
+        ])
+        let timeout = processingAckTimeout
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard let self, processingPendingIDs.removeValue(forKey: id) != nil else { return }
+            processingPending[key] = nil
+            processingNotice = "Couldn't confirm the \(key.title) change - showing VoiceLayer's current setting"
+            self.sendCommand?(["cmd": "health"])
+            onProcessingSettled?()
+        }
+    }
+
+    private func handleProcessingAck(_ ack: SocketAckEvent, event: [String: Any]) {
+        guard ack.outcome != .loading,
+              let key = processingPendingIDs.removeValue(forKey: ack.id)
+        else { return }
+        processingPending[key] = nil
+        if ack.outcome == .accept {
+            processingNotice = nil
+            if let raw = event["polish_controls"] as? [String: Any],
+               let controls = PolishControlsState(controls: raw) {
+                modelsSettingsState = modelsSettingsState.replacingPolishControls(controls)
+            } else {
+                sendCommand?(["cmd": "health"])
+            }
+        } else {
+            let reason = ack.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            processingNotice = "Couldn't change \(key.title)" + (reason.isEmpty ? "" : " - \(reason)")
+        }
+        onProcessingSettled?()
+    }
+
+    public func setWhisperResidency(_ target: VoiceModelResidency) {
+        guard isConnected,
+              modelsSettingsState.availability == .available,
+              !modelsSettingsState.isBusy,
+              pendingResidencyID == nil,
+              target != .unknown,
+              let sendCommand
+        else { return }
+        let id = UUID().uuidString
+        timedOutResidencyID = nil
+        pendingResidencyID = id
+        pendingResidencyTarget = target
+        residencyNotice = nil
+        refreshModelsBusy()
+        scheduleResidencyTimeout(id: id, after: 8)
+        sendCommand([
+            "cmd": "set_whisper_residency",
+            "action": target == .loaded ? "load" : "unload",
+            "id": id,
+        ])
+    }
+
+    private func scheduleResidencyTimeout(id: String, after seconds: Int) {
+        pendingResidencyTimeout?.cancel()
+        pendingResidencyTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, self?.pendingResidencyID == id else { return }
+            self?.expirePendingResidencyForTests()
+        }
+    }
+
+    func expirePendingResidencyForTests() {
+        guard pendingResidencyID != nil else { return }
+        timedOutResidencyID = pendingResidencyID
+        pendingResidencyID = nil
+        pendingResidencyTarget = nil
+        pendingResidencyTimeout?.cancel()
+        pendingResidencyTimeout = nil
+        residencyNotice = "Model request timed out. Checking current state."
+        refreshModelsBusy()
+        sendCommand?(["cmd": "health"])
+    }
 
     public func stop() {
         let shouldShowTranscribing = mode == .recording
@@ -722,6 +1021,11 @@ public final class VoiceState {
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
 
+    public func canRetranscribeLatestCapture(hasLatestCapture: Bool) -> Bool {
+        hasLatestCapture && mode != .recording && mode != .transcribing &&
+            !pendingRecoveredTranscriptionPaste && !isHistoryRetranscriptionPending
+    }
+
     public func retranscribeLastCapture() {
         guard !pendingRecoveredTranscriptionPaste else { return }
         pendingRecoveredTranscriptionPaste = true
@@ -743,7 +1047,15 @@ public final class VoiceState {
         ])
     }
 
-    public func snooze() {
+    /// "Hide for 1 hour" is on. Etan's D1 (2026-09-25): while hidden, F5 does not dictate. `record()` checks this
+    /// flag itself, because `mode` does not stay `.disconnected`: a reconnect or an agent's speak ending moves it.
+    public private(set) var isHidden = false
+    /// When the hide ends ("Hidden until HH:MM"); nil while shown, or when the caller gave no end time.
+    public private(set) var hiddenUntil: Date?
+
+    public func snooze(until: Date? = nil) {
+        isHidden = true
+        hiddenUntil = until
         switch mode {
         case .recording, .transcribing:
             sendIntent(command: .cancel, payload: ["cmd": "cancel"], trackPending: false)
@@ -773,15 +1085,21 @@ public final class VoiceState {
         resetAudioLevels()
         hotkeyPhase = .idle
         mode = .disconnected
+        isRecordingHandoffPending = false
         onModeChange?(.disconnected)
         collapseTimer?.cancel()
         isCollapsed = false
     }
 
     public func unsnooze() {
-        guard mode == .disconnected else { return }
+        // An agent's speech can move `mode` off `.disconnected` while hidden, so the flag says whether we were.
+        guard isHidden || mode == .disconnected else { return }
+        isHidden = false
+        hiddenUntil = nil
         keepsPasteFlowEnvelope = false
         isCollapsed = false
+        // A socket that really dropped while hidden still reads as disconnected once shown.
+        guard mode == .disconnected, isConnected else { return }
         mode = .idle
         onModeChange?(.idle)
         startCollapseTimer()
@@ -896,14 +1214,24 @@ public final class VoiceState {
         copyTranscript(latestReusableTranscript)
     }
 
-    public func copyTranscript(_ text: String) {
+    /// True only when the text reached the pasteboard, so no surface claims "Copied" for a copy that
+    /// didn't land (CodeRabbit on #161).
+    @discardableResult
+    public func copyTranscript(_ text: String) -> Bool {
         let reusableText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !reusableText.isEmpty else { return }
+        guard !reusableText.isEmpty else { return false }
         pasteboardWriter(reusableText)
+        guard pasteboardStringProvider() == reusableText else {
+            logDiagnostic("copy_transcript_not_confirmed", details: [
+                "transcriptLength": String(reusableText.count),
+            ])
+            return false
+        }
         logDiagnostic("copy_transcript", details: [
             "transcriptLength": String(reusableText.count),
         ])
         showConfirmation("Copied")
+        return true
     }
 
     public func addVocabularyAlias(
@@ -931,6 +1259,13 @@ public final class VoiceState {
         sendCommand?(STTVocabularyCommandPayload.list())
     }
 
+    /// Asks the daemon for its Dictionary snapshot. Its `vocab_list` reply is the only message that carries the
+    /// bundled rows ("Included terms"), so a (re)connect asks for one (QA 2.2.25 C11).
+    public func requestVocabularySnapshot() {
+        guard isConnected else { return }
+        sendCommand?(STTVocabularyCommandPayload.list())
+    }
+
     public func removeVocabularyPromptTerm(_ term: String) {
         let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -940,6 +1275,7 @@ public final class VoiceState {
 
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     public func record(pressToTalk: Bool = false) {
+        guard !isHidden else { return }
         guard mode == .idle || mode == .error else { return }
         guard pendingIntent?.command != .record else { return }
         clearRetainedTeleprompter()
@@ -1053,6 +1389,8 @@ public final class VoiceState {
                 // stale idle events would kill the paste flag. Recording-sourced
                 // idle gets a short final-transcript grace before clearing it.
                 if idleSource == "recording" {
+                    modelsRecordingBusy = false
+                    modelsRecordingReason = nil
                     releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
                     barInitiatedTimeout?.cancel()
                     if historyRetranscriptionRequest.currentPath() != nil,
@@ -1069,6 +1407,7 @@ public final class VoiceState {
                 } else {
                     enterIdleState(clearQueue: idleSource == "playback")
                 }
+                if idleSource == "recording" { refreshModelsBusy() }
             case "speaking":
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 pendingRecordingIdleAfterFinal = false
@@ -1095,6 +1434,7 @@ public final class VoiceState {
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
+                isRecordingHandoffPending = false
                 let startsNewRecording = mode != .recording
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 // AIDEV-NOTE: `bar_owned` is optional on the wire. Only explicit `true` confirms
@@ -1208,13 +1548,25 @@ public final class VoiceState {
         case "transcription":
             if let text = event["text"] as? String {
                 let isPartial = (event["partial"] as? Bool) == true
+                let recordingPath = (event["recording_path"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let normalizedRecordingPath = recordingPath?.isEmpty == false ? recordingPath : nil
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // AIDEV-NOTE: a late History result belongs to no live capture. Classify it before ANY live state:
+                // the polish metadata, the partial `transcript`, the empty-final failTranscription(), and the
+                // display-floor deferral, which holds one final at a time. Any of those let a late archived result
+                // overwrite or cancel the current dictation's final, and its words were lost (#186 review round 3,
+                // #188 review round 1: an empty late result failed the new dictation).
+                if let path = normalizedRecordingPath, historyRetranscriptionRequest.isLateArchivedResult(for: path) {
+                    handleLateArchivedTranscription(trimmed, recordingPath: path, isPartial: isPartial)
+                    return
+                }
+
                 if !isPartial {
                     lastTranscriptionPolished = event["polished"] as? Bool
                     lastTranscriptionPolishReason = event["polish_reason"] as? String
                 }
-                let recordingPath = (event["recording_path"] as? String)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
                     if isPartial {
                         return
@@ -1228,15 +1580,24 @@ public final class VoiceState {
                     return
                 }
 
+                let isHistoryRetranscription = normalizedRecordingPath.map {
+                    historyRetranscriptionRequest.suppressesPaste(for: $0)
+                } ?? false
+                let dictationReceipt = normalizedRecordingPath != nil && !isHistoryRetranscription
+                    ? DictationReceipt.parse(event["dictation_receipt"])
+                    : nil
+
                 if scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
                     trimmed,
-                    recordingPath: recordingPath?.isEmpty == false ? recordingPath : nil
+                    recordingPath: normalizedRecordingPath,
+                    dictationReceipt: dictationReceipt
                 ) {
                     return
                 }
                 handleFinalTranscription(
                     trimmed,
-                    recordingPath: recordingPath?.isEmpty == false ? recordingPath : nil
+                    recordingPath: normalizedRecordingPath,
+                    dictationReceipt: dictationReceipt
                 )
             }
 
@@ -1255,6 +1616,7 @@ public final class VoiceState {
         case "queue":
             if let depth = event["depth"] as? Int {
                 queueDepth = max(0, depth)
+                refreshModelsBusy()
             }
             if let items = event["items"] as? [[String: Any]] {
                 queueItems = items.compactMap { item in
@@ -1288,8 +1650,35 @@ public final class VoiceState {
                 noteFirstRecordingAudioLevelIfNeeded(socketRMS: socketAudioLevel)
             }
 
+        case "health":
+            let status = ModelsSettingsState(healthEvent: event)
+            modelsRecordingBusy = event["recording_state"] as? String != "idle"
+            modelsRecordingReason = (event["recording_state"] as? String)
+                .flatMap(ModelsSettingsState.busyReason(recordingState:))
+            if let depth = event["queue_depth"] as? Int { queueDepth = max(0, depth) }
+            modelsSettingsState = status
+            refreshModelsBusy()
+            remoteSTTConfigured = event["remote_stt_configured"] as? Bool
+
+        case "model_status":
+            if isConnected, let modelStatus = event["model_status"] as? [String: Any] {
+                let fresh = ModelsSettingsState(healthEvent: [
+                    "type": "health", "recording_state": "idle", "model_status": modelStatus,
+                ])
+                modelsSettingsState = fresh.retainingPolishControls(from: modelsSettingsState)
+                refreshModelsBusy()
+            }
+
         case "command_mode":
             handleCommandModeEvent(event)
+
+        case "archive_metadata_updated":
+            // F1: metadata written after the transcript was delivered (the ≈ spoken length). Refresh History's copy
+            // of that entry only; this is not a transcript, so nothing is remembered, pasted or sent.
+            guard let path = (event["recording_path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !path.isEmpty
+            else { return }
+            onHistoryArchiveChange?(path)
 
         case "vocabulary", "vocab_list", "stt_vocabulary":
             applyVocabularyEvent(event)
@@ -1343,7 +1732,13 @@ public final class VoiceState {
     }
 
     private func applyVocabularyEvent(_ event: [String: Any]) {
+        withVocabularyMirrorBatch { applyVocabularyEventFields(event) }
+    }
+
+    private func applyVocabularyEventFields(_ event: [String: Any]) {
         var appliedSnapshot = false
+        let displayRows = (event["display_entries"] as? [[String: Any]])?
+            .compactMap(STTDictionaryDisplayEntry.init(eventRow:))
 
         if let entries = event["entries"] as? [[String: Any]] {
             let preview = STTVocabularyPreview(
@@ -1378,7 +1773,12 @@ public final class VoiceState {
             appliedSnapshot = true
         }
 
-        if !appliedSnapshot {
+        if appliedSnapshot {
+            transcriptionVocabularyDisplayEntries = displayRows
+        } else {
+            // No snapshot: reload from the file, keeping the newest bundled rows this event or an earlier reply
+            // carried (a row-less event must not wipe them).
+            if let displayRows { transcriptionVocabularyDisplayEntries = displayRows }
             refreshTranscriptionVocabulary()
         }
     }
@@ -1387,11 +1787,13 @@ public final class VoiceState {
         let previous = isConnected
         isConnected = connected
         guard previous != connected else { return }
+        remoteSTTConfigured = nil
 
         onConnectionChange?(connected)
 
         if connected {
-            if mode == .disconnected {
+            modelsSettingsState = .loading
+            if mode == .disconnected, !isHidden {
                 mode = .idle
                 onModeChange?(.idle)
                 startCollapseTimer()
@@ -1399,6 +1801,21 @@ public final class VoiceState {
             return
         }
 
+        modelsSettingsState = .disconnected
+        pendingResidencyID = nil
+        timedOutResidencyID = nil
+        pendingResidencyTarget = nil
+        pendingResidencyTimeout?.cancel()
+        pendingResidencyTimeout = nil
+        residencyNotice = nil
+        pendingEffortReloadID = nil
+        pendingEffortReloadTimeout?.cancel()
+        pendingEffortReloadTimeout = nil
+        let hadPendingProcessing = !processingPending.isEmpty
+        processingPending = [:]
+        processingPendingIDs = [:]
+        processingNotice = nil
+        if hadPendingProcessing { onProcessingSettled?() }
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -1424,9 +1841,40 @@ public final class VoiceState {
         hotkeyPhase = .idle
         resetAudioLevels()
         mode = .disconnected
+        isRecordingHandoffPending = false
         onModeChange?(.disconnected)
         collapseTimer?.cancel()
         isCollapsed = false
+    }
+
+    private func synchronizeModelsSettingsState(from oldMode: VoiceMode, to newMode: VoiceMode) {
+        if Self.blocksModelsEffort(newMode) {
+            modelsSettingsState = modelsSettingsState.settingBusy(
+                true, reason: ModelsSettingsState.busyReason(mode: newMode)
+            )
+        } else if Self.blocksModelsEffort(oldMode) {
+            // Session over: keep the last-known health so a dictation never flashes "Starting…"; the
+            // effort controls stay locked, with a reason, until the post-dictation refresh answers.
+            modelsSettingsState = isConnected ? lastKnownModelsStateWhileRefreshing() : .disconnected
+        }
+    }
+
+    /// What Models shows while a health refresh is in flight: the last-known status, never a "Starting…"
+    /// flash. An available state keeps its values with effort locked until the reply; an unreadable one stays
+    /// "Status unreadable" (#162 review nit). Only an unknown state waits as `.loading`.
+    private func lastKnownModelsStateWhileRefreshing() -> ModelsSettingsState {
+        switch modelsSettingsState.availability {
+        case .available:
+            modelsSettingsState.settingBusy(true, reason: ModelsSettingsState.refreshingReason)
+        case .unreadable:
+            .unreadable
+        case .loading, .disconnected:
+            .loading
+        }
+    }
+
+    private static func blocksModelsEffort(_ mode: VoiceMode) -> Bool {
+        mode == .recording || mode == .transcribing
     }
 
     // MARK: - Idle collapse
@@ -1531,19 +1979,47 @@ public final class VoiceState {
         }
     }
 
-    private func rememberRecentTranscription(_ text: String, recordingPath: String? = nil) {
+    private func rememberRecentTranscription(
+        _ text: String,
+        recordingPath: String? = nil,
+        dictationReceipt: DictationReceipt? = nil,
+        preservingExistingReceipt: Bool = false,
+        insertingWhenAbsent: Bool = true
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
         let trimmedPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedPath = trimmedPath?.isEmpty == false ? trimmedPath : nil
-        let entry = RecentTranscriptionEntry(text: trimmed, recordingPath: normalizedPath)
         if let normalizedPath,
            let existingIndex = recentTranscriptionEntries.firstIndex(where: { $0.recordingPath == normalizedPath }) {
+            let receipt = preservingExistingReceipt
+                ? recentTranscriptionEntries[existingIndex].dictationReceipt
+                : dictationReceipt
+            // A re-transcription keeps the time the row was dictated.
+            let entry = RecentTranscriptionEntry(
+                text: trimmed,
+                recordingPath: normalizedPath,
+                dictationReceipt: receipt,
+                createdAt: recentTranscriptionEntries[existingIndex].createdAt
+            )
             recentTranscriptionEntries[existingIndex] = entry
         } else {
+            // AIDEV-NOTE: a History re-transcription rewrites an OLD recording. Inserting it here made a days-old
+            // recording the top "Just now" row, evicted the eighth, and turned it into the "last transcript" that
+            // Paste / Copy Last reuse (QA 2.2.25 C9). Rows already in the list are still updated in place above.
+            guard insertingWhenAbsent else { return }
+            let entry = RecentTranscriptionEntry(
+                text: trimmed,
+                recordingPath: normalizedPath,
+                dictationReceipt: dictationReceipt,
+                createdAt: Date()
+            )
             recentTranscriptionEntries.removeAll { existing in
-                existing.text == trimmed || (normalizedPath != nil && existing.recordingPath == normalizedPath)
+                if let normalizedPath {
+                    return existing.recordingPath == normalizedPath
+                }
+                return existing.text == trimmed
             }
             recentTranscriptionEntries.insert(entry, at: 0)
         }
@@ -1556,10 +2032,23 @@ public final class VoiceState {
     }
 
     private func refreshTranscriptionVocabulary() {
-        transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
-        transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
-            transcriptionVocabularyAliasLoader()
-        )
+        withVocabularyMirrorBatch {
+            // AIDEV-NOTE: the file holds personal entries only; the bundled rows arrive solely in the daemon's
+            // vocab_list reply. Keep the last ones it sent and rebuild the personal rows from the file, or every
+            // final transcription reset Settings to "Included terms (0)" (QA 2.2.25 C11).
+            let bundledRows = transcriptionVocabularyDisplayEntries?.filter { !$0.isPersonal }
+            transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
+            transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
+                transcriptionVocabularyAliasLoader()
+            )
+            transcriptionVocabularyDisplayEntries = bundledRows.map { bundled in
+                bundled + STTVocabularyPreview(
+                    updatedAt: nil,
+                    promptTerms: transcriptionVocabularyTerms,
+                    aliases: transcriptionVocabularyAliases
+                ).entries.map { STTDictionaryDisplayEntry(source: "personal", entry: $0) }
+            }
+        }
     }
 
     private func refreshAudioLevel() {
@@ -1630,7 +2119,12 @@ public final class VoiceState {
             let key = normalizedPath ?? text
             guard !seenKeys.contains(key) else { continue }
             seenKeys.insert(key)
-            unique.append(RecentTranscriptionEntry(text: text, recordingPath: normalizedPath))
+            unique.append(RecentTranscriptionEntry(
+                text: text,
+                recordingPath: normalizedPath,
+                dictationReceipt: entry.dictationReceipt,
+                createdAt: entry.createdAt
+            ))
             if unique.count == maxRecentTranscriptions {
                 break
             }
@@ -1705,6 +2199,7 @@ public final class VoiceState {
     }
 
     private func enterIdleState(clearQueue: Bool) {
+        isRecordingHandoffPending = false
         if clearQueue, mode == .speaking {
             let trimmed = statusText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
@@ -1740,6 +2235,7 @@ public final class VoiceState {
     /// material and its slots derive from the same collapsed presentation, so
     /// both disappear in one render transaction before recording is announced.
     private func enterPlaybackToRecordingTransition() {
+        isRecordingHandoffPending = true
         collapseTimer?.cancel()
         clearRetainedTeleprompter()
         statusText = ""
@@ -1840,7 +2336,8 @@ public final class VoiceState {
 
     private func scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
         _ text: String,
-        recordingPath: String?
+        recordingPath: String?,
+        dictationReceipt: DictationReceipt?
     ) -> Bool {
         guard mode == .transcribing, let transcribingStartedAt else { return false }
 
@@ -1855,21 +2352,75 @@ public final class VoiceState {
             guard let self, !Task.isCancelled else { return }
             deferredFinalTranscriptionTask = nil
             deferredFinalTranscriptionRecordingPath = nil
-            handleFinalTranscription(text, recordingPath: recordingPath)
+            handleFinalTranscription(
+                text,
+                recordingPath: recordingPath,
+                dictationReceipt: dictationReceipt
+            )
         }
         return true
     }
 
-    private func handleFinalTranscription(_ text: String, recordingPath: String? = nil) {
+    /// A result for a History request whose live state was already cleaned up. Only a nonempty final touches
+    /// anything, and then only its own archive row (via `handleFinalTranscription`'s late-archive branch).
+    private func handleLateArchivedTranscription(_ text: String, recordingPath: String, isPartial: Bool) {
+        guard !isPartial else { return }
+        guard !text.isEmpty else {
+            _ = historyRetranscriptionRequest.takeArchivedOrigin(for: recordingPath)
+            logDiagnostic("transcription_final_archived_late_empty", details: ["recordingPath": recordingPath])
+            return
+        }
+        handleFinalTranscription(text, recordingPath: recordingPath)
+    }
+
+    private func handleFinalTranscription(
+        _ text: String,
+        recordingPath: String? = nil,
+        dictationReceipt: DictationReceipt? = nil
+    ) {
+        let wasHistoryRetranscription = recordingPath.map { path in
+            historyRetranscriptionRequest.suppressesPaste(for: path)
+        } ?? false
+        // Outlives request cleanup, so an archived result that arrives after an error or timeout is still recognised.
+        let isArchivedResult = recordingPath.map { path in
+            historyRetranscriptionRequest.takeArchivedOrigin(
+                for: path.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        } ?? false
+        let rewritesArchivedRecording = wasHistoryRetranscription || isArchivedResult
+        // AIDEV-NOTE: a History result whose request was already cleaned up belongs to no live capture. It only
+        // rewrites its archive row; it must never paste, claim the last-dictation card, or end the timeouts/idle of
+        // a dictation that started since (#186 review round 2: it pasted the archived text into the new target).
+        if isArchivedResult, !wasHistoryRetranscription {
+            rememberRecentTranscription(
+                text,
+                recordingPath: recordingPath,
+                preservingExistingReceipt: true,
+                insertingWhenAbsent: false
+            )
+            if let recordingPath { onHistoryArchiveChange?(recordingPath) }
+            refreshTranscriptionVocabulary()
+            logDiagnostic("transcription_final_archived_late", details: [
+                "textLength": String(text.count),
+                "recordingPath": recordingPath ?? "nil",
+            ])
+            return
+        }
         transcriptionTimeoutTask?.cancel()
         cancelDeferredFinalTranscription()
         transcribingStartedAt = nil
         transcribingStatusText = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         transcript = text
-        rememberRecentTranscription(text, recordingPath: recordingPath)
+        rememberRecentTranscription(
+            text,
+            recordingPath: recordingPath,
+            dictationReceipt: rewritesArchivedRecording ? nil : dictationReceipt,
+            preservingExistingReceipt: rewritesArchivedRecording,
+            insertingWhenAbsent: !rewritesArchivedRecording
+        )
         if recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            onHistoryArchiveChange?()
+            onHistoryArchiveChange?(recordingPath)
         }
         refreshTranscriptionVocabulary()
         logDiagnostic("transcription_final", details: [
@@ -1880,9 +2431,6 @@ public final class VoiceState {
             "recordingPath": recordingPath ?? "nil",
         ])
 
-        let wasHistoryRetranscription = recordingPath.map { path in
-            historyRetranscriptionRequest.suppressesPaste(for: path)
-        } ?? false
         // AIDEV-NOTE: The effective remote-capture block is an independent second gate on top of
         // the classification fix in the "recording" handler. A remote-owned transcript belongs to
         // the blocked MCP caller; auto-pasting it leaks the answer into whatever app is frontmost
@@ -1893,11 +2441,24 @@ public final class VoiceState {
             barInitiatedRecording
                 && !remoteOwnedRecording
                 && !supersededRemoteTranscriptPending
-                && !wasHistoryRetranscription
+                && !rewritesArchivedRecording
         let shouldPasteRecoveredTranscription =
             pendingRecoveredTranscriptionPaste
                 && !remoteCaptureBlocksPaste
-                && !wasHistoryRetranscription
+                && !rewritesArchivedRecording
+        let normalizedRecordingPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cardIsThisDictation = !rewritesArchivedRecording && !remoteCaptureBlocksPaste
+            && (barInitiatedRecording || pendingRecoveredTranscriptionPaste || pendingRecordingIdleAfterFinal)
+            && recentTranscriptionEntries.first?.text == text.trimmingCharacters(in: .whitespacesAndNewlines)
+            && recentTranscriptionEntries.first?.recordingPath == (normalizedRecordingPath?.isEmpty == false
+                ? normalizedRecordingPath : nil)
+        let cardOperationID = cardIsThisDictation ? UUID() : nil
+        if let cardOperationID {
+            lastDictationCardEntry = recentTranscriptionEntries.first
+            latestDictationOperationID = cardOperationID
+            latestDictationInsertionStatus = shouldAutoPaste || shouldPasteRecoveredTranscription
+                ? .pending : .notInserted
+        }
         let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
         pendingRecordingIdleAfterFinal = false
         pendingRecoveredTranscriptionPaste = false
@@ -1911,9 +2472,19 @@ public final class VoiceState {
             barInitiatedRecording = false
             barInitiatedTimeout?.cancel()
             recordingIdleCleanupTask?.cancel()
-            pasteTranscript(text, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
+            pasteTranscript(
+                text,
+                for: resolvedPasteTarget(forRepaste: false),
+                plan: .autoPaste,
+                operationID: cardOperationID
+            )
         } else if shouldPasteRecoveredTranscription {
-            pasteTranscript(text, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
+            pasteTranscript(
+                text,
+                for: resolvedPasteTarget(forRepaste: true),
+                plan: .repaste,
+                operationID: cardOperationID
+            )
         }
 
         if shouldApplyPendingRecordingIdle, !shouldAutoPaste, !shouldPasteRecoveredTranscription {
@@ -1993,7 +2564,8 @@ public final class VoiceState {
         _ text: String,
         for targetApp: NSRunningApplication?,
         plan: VoicePastePlan,
-        allowAXInsertion: Bool = false
+        allowAXInsertion: Bool = false,
+        operationID: UUID? = nil
     ) {
         let recordStartTargetApp = frontmostAppOnRecordStart
         let insertionHandler = plan == .autoPaste ? recordStartInsertionHandler : nil
@@ -2014,7 +2586,8 @@ public final class VoiceState {
             recordStartInsertionHandler = nil
             finishPasteConfirmation(
                 outcome: pasteHandler(text) ? .pasted : .failed(Self.genericPasteFailureMessage),
-                text: text
+                text: text,
+                operationID: operationID
             )
             return
         } else {
@@ -2025,7 +2598,10 @@ public final class VoiceState {
                     "plan": String(describing: plan),
                     "hasCapturedInsertion": boolString(insertionHandler != nil),
                 ])
-                finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                finishPasteConfirmation(
+                    outcome: .failed(Self.genericPasteFailureMessage), text: text,
+                    operationID: operationID
+                )
                 return
             }
 
@@ -2055,7 +2631,10 @@ public final class VoiceState {
                         "plan": String(describing: plan),
                         "hasCapturedInsertion": boolString(capturedInsertionHandler != nil),
                     ])
-                    finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                    finishPasteConfirmation(
+                        outcome: .failed(Self.genericPasteFailureMessage), text: text,
+                        operationID: operationID
+                    )
                     return
                 }
 
@@ -2108,13 +2687,14 @@ public final class VoiceState {
                             text: text,
                             plan: plan,
                             targetBundleID: pasteTargetBundleID,
-                            source: "fresh"
+                            source: "fresh",
+                            operationID: operationID
                         )
                         if attempt == .started {
                             return
                         }
                         if attempt == .busy {
-                            rejectCompetingAXInsertion(text: text, plan: plan)
+                            rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
                             return
                         }
                     }
@@ -2125,20 +2705,21 @@ public final class VoiceState {
                             text: text,
                             plan: plan,
                             targetBundleID: pasteTargetBundleID,
-                            source: "captured"
+                            source: "captured",
+                            operationID: operationID
                         )
                         if attempt == .started {
                             return
                         }
                         if attempt == .busy {
-                            rejectCompetingAXInsertion(text: text, plan: plan)
+                            rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
                             return
                         }
                     }
 
                     if isAXInsertionInFlight,
                        activeAXInsertionTargetBundleID == pasteTargetBundleID {
-                        rejectCompetingAXInsertion(text: text, plan: plan)
+                        rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
                         return
                     }
 
@@ -2204,7 +2785,8 @@ public final class VoiceState {
                             pasted: typed,
                             plan: plan
                         ),
-                        text: deliveredText
+                        text: deliveredText,
+                        operationID: operationID
                     )
                 }
             }
@@ -2235,7 +2817,8 @@ public final class VoiceState {
         text: String,
         plan: VoicePastePlan,
         targetBundleID: String,
-        source: String
+        source: String,
+        operationID: UUID?
     ) -> AXInsertionAttempt {
         guard !isAXInsertionInFlight else {
             return .busy
@@ -2259,7 +2842,7 @@ public final class VoiceState {
                 "targetApp": targetBundleID,
                 "source": source,
             ])
-            finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
+            finishPasteConfirmation(outcome: .insertedAtCursor, text: text, operationID: operationID)
         }
 
         let started = handler(text) {
@@ -2298,7 +2881,8 @@ public final class VoiceState {
                 ])
                 finishPasteConfirmation(
                     outcome: .failed("Text insertion timed out"),
-                    text: text
+                    text: text,
+                    operationID: operationID
                 )
             }
             axInsertionWatchdog = watchdog
@@ -2310,14 +2894,19 @@ public final class VoiceState {
         return .started
     }
 
-    private func rejectCompetingAXInsertion(text: String, plan: VoicePastePlan) {
+    private func rejectCompetingAXInsertion(
+        text: String,
+        plan: VoicePastePlan,
+        operationID: UUID?
+    ) {
         logDiagnostic("paste_ax_insert_busy", details: [
             "plan": String(describing: plan),
             "textLength": String(text.count),
         ])
         finishPasteConfirmation(
             outcome: .failed("Text insertion already in progress"),
-            text: text
+            text: text,
+            operationID: operationID
         )
     }
 
@@ -2342,7 +2931,18 @@ public final class VoiceState {
         return lhs.processIdentifier == rhs.processIdentifier
     }
 
-    private func finishPasteConfirmation(outcome: VoicePasteOutcome, text: String) {
+    private func finishPasteConfirmation(
+        outcome: VoicePasteOutcome,
+        text: String,
+        operationID: UUID? = nil
+    ) {
+        if let operationID, operationID == latestDictationOperationID {
+            latestDictationInsertionStatus = switch outcome {
+            case .insertedAtCursor: .insertedAtCursor
+            case .pasted: .pasted
+            case .failed: .failed
+            }
+        }
         logDiagnostic("paste_confirmation", details: [
             "outcome": String(describing: outcome),
         ])
@@ -2530,6 +3130,43 @@ public final class VoiceState {
         }
 
         onAckEvent?(ack)
+
+        if ack.command == .setWhisperEffort {
+            handleEffortAck(ack, event: event)
+            return
+        }
+
+        if ack.command == .setProcessingSetting {
+            handleProcessingAck(ack, event: event)
+            return
+        }
+
+        if ack.command == .setWhisperResidency,
+           ack.id == pendingResidencyID || ack.id == timedOutResidencyID {
+            if ack.outcome == .loading {
+                if ack.id == pendingResidencyID {
+                    // Two 30 s STARTUP_TIMEOUT attempts (CoreML then Metal), plus health and cleanup probes.
+                    scheduleResidencyTimeout(id: ack.id, after: 75)
+                }
+                return
+            }
+            pendingResidencyID = nil
+            timedOutResidencyID = nil
+            pendingResidencyTarget = nil
+            pendingResidencyTimeout?.cancel()
+            pendingResidencyTimeout = nil
+            residencyNotice = ack.outcome == .accept ? nil : (ack.reason ?? "Could not change memory state")
+            if let modelStatus = event["model_status"] as? [String: Any] {
+                let fresh = ModelsSettingsState(healthEvent: [
+                    "type": "health", "recording_state": "idle", "model_status": modelStatus,
+                ])
+                modelsSettingsState = fresh.retainingPolishControls(from: modelsSettingsState)
+                refreshModelsBusy()
+            } else {
+                refreshModelsSettingsStatus()
+            }
+            return
+        }
 
         if ack.command == .setRecordingHold,
            let pendingRecordingHold,

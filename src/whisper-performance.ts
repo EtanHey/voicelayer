@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { STATE_DIR, safeWriteFileSync } from "./paths";
 
@@ -7,7 +7,7 @@ export type WhisperPerformanceEffort = "fast" | "balanced" | "accurate";
 const CONFIG_OVERRIDE_ENV = "QA_VOICE_WHISPER_PERFORMANCE_PATH";
 const DEFAULT_EFFORT: WhisperPerformanceEffort = "accurate";
 
-let restartWhisperServer: () => void = () => {};
+let restartWhisperServer: () => void | Promise<void> = () => {};
 
 export function whisperPerformanceConfigPath(
   env: NodeJS.ProcessEnv = process.env,
@@ -44,6 +44,27 @@ export function whisperPerformanceArgsForEffort(
   }
 }
 
+/** Only what the file holds (no env override); null when nothing valid is saved. */
+export function getPersistedWhisperPerformanceEffort(
+  env: NodeJS.ProcessEnv = process.env,
+): WhisperPerformanceEffort | null {
+  try {
+    const raw = readFileSync(whisperPerformanceConfigPath(env), "utf8");
+    return parseWhisperPerformanceEffort((JSON.parse(raw) as { effort?: unknown }).effort);
+  } catch {
+    return null;
+  }
+}
+
+/** Put the saved preference back exactly: a value, or no file at all. */
+export function restorePersistedWhisperPerformanceEffort(
+  previous: WhisperPerformanceEffort | null,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (previous) setWhisperPerformanceEffort(previous, env);
+  else rmSync(whisperPerformanceConfigPath(env), { force: true });
+}
+
 export function getWhisperPerformanceEffort(
   env: NodeJS.ProcessEnv = process.env,
 ): WhisperPerformanceEffort {
@@ -78,10 +99,13 @@ export function setWhisperPerformanceEffort(
   );
 }
 
-export function configureWhisperPerformanceRestart(callback: () => void): void {
+export function configureWhisperPerformanceRestart(
+  callback: () => void | Promise<void>,
+): void {
   restartWhisperServer = callback;
 }
 
-export function restartWhisperServerForPerformanceChange(): void {
-  restartWhisperServer();
+/** Resolves once the server this process launched has exited (E2 relaunches right after). */
+export async function restartWhisperServerForPerformanceChange(): Promise<void> {
+  await restartWhisperServer();
 }

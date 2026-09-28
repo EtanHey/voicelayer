@@ -32,10 +32,10 @@ final class DictionaryVisualArtifactTests: XCTestCase {
                     missingPermissions: [],
                     availableDevices: { [MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone")] },
                     selectedDeviceID: { "built-in" },
-                    onSelectDevice: { _ in },
-                    anchorMode: { .follow },
-                    onSelectAnchorMode: { _ in },
+                    modelsStatus: { .loading },
+                    onRefreshModelsStatus: {},
                     vocabularyPreview: { preview },
+                    vocabularyRevision: { 0 },
                     onAddVocabularyAlias: { _, _ in },
                     onRemoveVocabularyAlias: { _ in },
                     initialTab: .dictionary

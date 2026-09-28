@@ -26,6 +26,7 @@ import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import { handleConverse, handleVoiceAsk } from "../handlers";
 import { reserveArchiveRetranscription } from "../voice-operation-reservation";
+import { whisperLifecycleGate } from "../whisper-lifecycle-gate";
 
 const capturedPrompt = () => ({
   displayText: "test question",
@@ -78,6 +79,78 @@ describe("handleConverse resilience — P0-2", () => {
     clearStopSpy = spyOn(sessionBooking, "clearStopSignal").mockImplementation(
       () => {},
     );
+  });
+
+  it("voice_ask preempts unload maintenance and reaches capture", async () => {
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+    waitSpy = spyOn(input, "waitForInput").mockResolvedValue("dictated answer");
+    const release = sessionBooking.reserveVoiceMaintenance(() => false);
+    let finishUnload!: () => void;
+    const unload = whisperLifecycleGate.unload(() => false, () => new Promise<"not_loaded">((resolve) => {
+      finishUnload = () => resolve("not_loaded");
+    }));
+    try {
+      expect(release).toBeFunction();
+      const result = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      expect(result.isError).not.toBe(true);
+      expect(waitSpy).toHaveBeenCalledTimes(1);
+      finishUnload();
+      expect(await unload).toEqual({ outcome: "reject", reason: "capture took priority" });
+    } finally {
+      finishUnload();
+      await unload;
+      release?.();
+    }
+  });
+
+  it("holds the mic booking when capture preempts maintenance's temporary lock", async () => {
+    bookingSpy.mockRestore();
+    sessionBooking.releaseVoiceSession();
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+    let bookingAtCapture: ReturnType<typeof sessionBooking.isVoiceBooked> | undefined;
+    waitSpy = spyOn(input, "waitForInput").mockImplementation(async () => {
+      bookingAtCapture = sessionBooking.isVoiceBooked();
+      return "dictated answer";
+    });
+    const release = sessionBooking.reserveVoiceMaintenance(() => false);
+    try {
+      expect(release).toBeFunction();
+      expect(sessionBooking.isVoiceBooked()).toMatchObject({
+        booked: true,
+        ownedByUs: true,
+        owner: { sessionId: `whisper-unload-${process.pid}` },
+      });
+
+      const result = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      expect(result.isError).not.toBe(true);
+      expect(bookingAtCapture).toMatchObject({ booked: true, ownedByUs: true });
+      expect(bookingAtCapture?.owner?.sessionId?.startsWith("whisper-unload-")).toBe(false);
+    } finally {
+      release?.();
+      sessionBooking.releaseVoiceSession();
+    }
+  });
+
+  it("a voice_ask rejected by external booking does not cancel an unload", async () => {
+    let finishUnload!: () => void;
+    const unload = whisperLifecycleGate.unload(() => false, () => new Promise<"not_loaded">((resolve) => {
+      finishUnload = () => resolve("not_loaded");
+    }));
+    bookingSpy.mockReturnValue({
+      booked: true,
+      ownedByUs: false,
+      owner: { pid: 12345, sessionId: "external", startedAt: new Date().toISOString() },
+    });
+    try {
+      const result = await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toContain("busy");
+      finishUnload();
+      expect(await unload).toEqual({ outcome: "accept", residency: "not_loaded" });
+    } finally {
+      finishUnload();
+      await unload;
+    }
   });
 
   afterEach(() => {
