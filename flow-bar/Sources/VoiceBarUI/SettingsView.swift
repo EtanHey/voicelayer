@@ -817,22 +817,10 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                // C14: the status sits in the same trailing column as the shortcut above it (and every other
+                // General value); Check shortcut is its own row below, like Visibility's Hide button.
                 LabeledContent("Status") {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(hotkeyEnabled ? .green : .red)
-                            .frame(width: 8, height: 8)
-                        Text(hotkeyStatusText)
-                    }
-                    Spacer(minLength: 8)
-                    Button("Check shortcut") {
-                        shortcutCheckRunning = true
-                        onCheckShortcut { result in
-                            shortcutCheckFeedback = (result, Date())
-                            shortcutCheckRunning = false
-                        }
-                    }
-                    .disabled(shortcutCheckRunning)
+                    statusBadge(hotkeyStatusText, isReady: hotkeyEnabled)
                 }
                 if !hotkeyEnabled {
                     Text(
@@ -840,6 +828,14 @@ public struct SettingsView: View {
                     )
                     .font(.caption).foregroundStyle(.secondary)
                 }
+                Button("Check shortcut") {
+                    shortcutCheckRunning = true
+                    onCheckShortcut { result in
+                        shortcutCheckFeedback = (result, Date())
+                        shortcutCheckRunning = false
+                    }
+                }
+                .disabled(shortcutCheckRunning)
                 if let shortcutCheckFeedback {
                     SettingsShortcutCheckLine(
                         message: shortcutCheckFeedback.message,
