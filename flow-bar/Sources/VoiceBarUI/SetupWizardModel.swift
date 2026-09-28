@@ -63,6 +63,17 @@ public struct SetupWizardModel: Equatable, Sendable {
         self.step = step
     }
 
+    /// A resumed run: only setup steps that come before `step` can have been skipped.
+    init(step: SetupWizardStep, skippedSteps: [SetupWizardStep]) {
+        self.step = step
+        var kept: [SetupWizardStep] = []
+        for skipped in skippedSteps
+            where skipped.isSetupStep && Self.order(skipped) < Self.order(step) && !kept.contains(skipped) {
+            kept.append(skipped)
+        }
+        self.skippedSteps = kept.sorted { Self.order($0) < Self.order($1) }
+    }
+
     /// Done has no Back: setup is over, and Settings is where anything is changed afterwards.
     public var canGoBack: Bool {
         step != .done && step.previous != nil
@@ -96,11 +107,12 @@ public struct SetupWizardModel: Equatable, Sendable {
     }
 }
 
-/// The persisted `setupCompleted` flag, plus the step to resume at when VoiceBar quits mid-setup (granting Input
-/// Monitoring can require a relaunch).
+/// The persisted `setupCompleted` flag, plus where to resume when VoiceBar quits mid-setup (granting Input Monitoring
+/// can require a relaunch): the step, and the steps skipped so far so Done still names them.
 public final class SetupWizardCompletionStore {
     public static let completedKey = "setupCompleted"
     public static let resumeStepKey = "setupResumeStep"
+    public static let resumeSkippedStepsKey = "setupResumeSkippedSteps"
 
     private let defaults: UserDefaults
 
@@ -116,13 +128,20 @@ public final class SetupWizardCompletionStore {
         defaults.string(forKey: Self.resumeStepKey).flatMap(SetupWizardStep.init(rawValue:))
     }
 
+    /// Unreadable entries are dropped.
+    public var resumeSkippedSteps: [SetupWizardStep] {
+        (defaults.stringArray(forKey: Self.resumeSkippedStepsKey) ?? []).compactMap(SetupWizardStep.init(rawValue:))
+    }
+
     public func markCompleted() {
         defaults.set(true, forKey: Self.completedKey)
         defaults.removeObject(forKey: Self.resumeStepKey)
+        defaults.removeObject(forKey: Self.resumeSkippedStepsKey)
     }
 
-    func saveResumeStep(_ step: SetupWizardStep) {
-        defaults.set(step.rawValue, forKey: Self.resumeStepKey)
+    func saveResume(_ model: SetupWizardModel) {
+        defaults.set(model.step.rawValue, forKey: Self.resumeStepKey)
+        defaults.set(model.skippedSteps.map(\.rawValue), forKey: Self.resumeSkippedStepsKey)
     }
 }
 
@@ -145,8 +164,11 @@ public final class SetupWizardController {
         self.store = store
         self.onClose = onClose
         isFirstRun = !store.isCompleted
-        let resume = isFirstRun ? store.resumeStep.flatMap { $0 == .done ? nil : $0 } : nil
-        self.model = model ?? SetupWizardModel(step: resume ?? .welcome)
+        // Done is resumed too: reaching it is not finishing, and only Finish (or skipping/closing) completes setup.
+        let resumed = isFirstRun ? store.resumeStep.map {
+            SetupWizardModel(step: $0, skippedSteps: store.resumeSkippedSteps)
+        } : nil
+        self.model = model ?? resumed ?? SetupWizardModel()
     }
 
     public func continueToNextStep() {
@@ -191,7 +213,7 @@ public final class SetupWizardController {
 
     private func saveProgress() {
         guard isFirstRun else { return }
-        store.saveResumeStep(model.step)
+        store.saveResume(model)
     }
 }
 

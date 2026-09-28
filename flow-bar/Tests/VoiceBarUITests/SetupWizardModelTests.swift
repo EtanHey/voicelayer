@@ -113,6 +113,65 @@ final class SetupWizardControllerTests: XCTestCase {
         XCTAssertEqual(SetupWizardController(store: store).model.step, .f5Key)
     }
 
+    /// Round 1 (Macroscope / CodeRabbit): a skipped step must still be named on Done after a relaunch.
+    func testSkippedStepsSurviveARelaunchAndCompletionClearsThem() {
+        let first = SetupWizardController(store: SetupWizardCompletionStore(defaults: defaults))
+        first.continueToNextStep() // Welcome → Permissions
+        first.skipStep() // Permissions skipped → F5 key
+        XCTAssertEqual(first.model.skippedSteps, [.permissions])
+
+        let store = SetupWizardCompletionStore(defaults: defaults)
+        let resumed = SetupWizardController(store: store)
+        XCTAssertEqual(resumed.model.step, .f5Key)
+        XCTAssertEqual(resumed.model.skippedSteps, [.permissions])
+        for _ in 0 ..< 3 {
+            resumed.continueToNextStep()
+        }
+        XCTAssertEqual(resumed.model.step, .done)
+        XCTAssertEqual(SetupWizardDoneSummary(skippedSteps: resumed.model.skippedSteps).skippedNames, ["Permissions"])
+
+        resumed.continueToNextStep() // Finish
+        XCTAssertTrue(store.isCompleted)
+        XCTAssertNil(store.resumeStep)
+        XCTAssertEqual(store.resumeSkippedSteps, [])
+        XCTAssertNil(defaults.object(forKey: SetupWizardCompletionStore.resumeSkippedStepsKey))
+    }
+
+    /// Round 1: reaching Done is not finishing, so a quit there resumes at Done, not Welcome.
+    func testAQuitOnDoneResumesAtDoneWithItsSkippedSteps() {
+        let first = SetupWizardController(store: SetupWizardCompletionStore(defaults: defaults))
+        first.continueToNextStep()
+        first.continueToNextStep()
+        first.skipStep() // F5 key skipped
+        first.continueToNextStep()
+        first.continueToNextStep()
+        XCTAssertEqual(first.model.step, .done)
+
+        let store = SetupWizardCompletionStore(defaults: defaults)
+        XCTAssertFalse(store.isCompleted)
+        let resumed = SetupWizardController(store: store)
+        XCTAssertEqual(resumed.model.step, .done)
+        XCTAssertEqual(resumed.model.skippedSteps, [.f5Key])
+    }
+
+    func testCompletingFromSkipSetupOrWindowCloseClearsTheSkippedSteps() {
+        let first = SetupWizardController(store: SetupWizardCompletionStore(defaults: defaults))
+        first.continueToNextStep()
+        first.skipStep()
+        first.windowDidClose()
+        let store = SetupWizardCompletionStore(defaults: defaults)
+        XCTAssertNil(store.resumeStep)
+        XCTAssertEqual(store.resumeSkippedSteps, [])
+    }
+
+    func testUnreadableSkippedEntriesAreDropped() {
+        defaults.set(SetupWizardStep.microphone.rawValue, forKey: SetupWizardCompletionStore.resumeStepKey)
+        defaults.set(["f5Key", "not-a-step", "welcome"], forKey: SetupWizardCompletionStore.resumeSkippedStepsKey)
+        let controller = SetupWizardController(store: SetupWizardCompletionStore(defaults: defaults))
+        XCTAssertEqual(controller.model.step, .microphone)
+        XCTAssertEqual(controller.model.skippedSteps, [.f5Key], "only setup steps before the resume step")
+    }
+
     func testFinishingMarksSetupCompletedAndClosesOnce() {
         var closes = 0
         let store = SetupWizardCompletionStore(defaults: defaults)
