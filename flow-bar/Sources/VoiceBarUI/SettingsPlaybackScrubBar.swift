@@ -17,6 +17,7 @@ struct SettingsPlaybackScrubBar: View {
 
     /// Where the finger is while dragging, so the knob follows it rather than the sampled clock.
     @State private var drag = SettingsScrubDrag()
+    @State private var focusRing = SettingsScrubFocusRing()
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -44,6 +45,8 @@ struct SettingsPlaybackScrubBar: View {
         }
         .focusable()
         .focused($isFocused)
+        .focusEffectDisabled(focusRing.isHidden)
+        .onChange(of: isFocused) { _, focused in focusRing.focusChanged(to: focused) }
         .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
             guard let delta = Self.seekDelta(for: press.key) else { return .ignored }
             SettingsScrubDrag.step(playback: playback, url: url, by: delta)
@@ -76,6 +79,7 @@ struct SettingsPlaybackScrubBar: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
+                        focusRing.pointerScrubbed()
                         isFocused = true
                         drag.changed(
                             toFraction: Double(value.location.x / width),
@@ -157,5 +161,20 @@ struct SettingsScrubDrag {
     static func step(playback: SettingsAudioPlayback, url: URL, by delta: TimeInterval) {
         guard let position = playback.position(of: url) else { return }
         playback.seek(url, to: clampedTime(position.currentTime + delta, duration: position.duration))
+    }
+}
+
+/// #199: whether the bar's focus ring shows. A mouse scrub focuses the bar so ←/→ step right after it, but draws
+/// no ring, like a click on a native slider. Focus that arrives any other way (Tab, VoiceOver) shows the ring.
+/// The ring stays hidden while the bar keeps focus and comes back once focus leaves.
+struct SettingsScrubFocusRing {
+    private(set) var isHidden = false
+
+    mutating func pointerScrubbed() {
+        isHidden = true
+    }
+
+    mutating func focusChanged(to focused: Bool) {
+        if !focused { isHidden = false }
     }
 }
