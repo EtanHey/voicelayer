@@ -66,6 +66,15 @@ final class SetupWizardArtifactTests: XCTestCase {
             at: .tryIt, tryIt: SetupTryItObservation(entry: heard, insertion: .pasted, activity: .idle)
         )))
         cases.append(("tryIt-not-typed", wizard(
+            at: .tryIt, tryIt: SetupTryItObservation(entry: heard, insertion: .notInserted, activity: .idle)
+        )))
+        var failedTracker = SetupTryItTracker(first: .none)
+        let emptyAttempt = SetupTryItObservation(
+            entry: nil, insertion: .unverified, activity: .idle, failure: "Transcription failed"
+        )
+        failedTracker.observe(emptyAttempt)
+        cases.append(("tryIt-heard-nothing", wizard(at: .tryIt, tryIt: emptyAttempt, tryItTracker: failedTracker)))
+        cases.append(("tryIt-typing-failed", wizard(
             at: .tryIt, tryIt: SetupTryItObservation(entry: heard, insertion: .failed, activity: .idle)
         )))
         cases.append(("permissions-restart", wizard(at: .permissions, permissions: SetupPermissionSnapshot(
@@ -86,7 +95,8 @@ final class SetupWizardArtifactTests: XCTestCase {
         f5Key: SetupF5KeyStatus = SetupF5KeyStatus(listenerActive: true, helperInstalled: true),
         relayRun: SetupRelayRun? = nil,
         microphone: String? = "Studio USB Mic",
-        tryIt: SetupTryItObservation = .none
+        tryIt: SetupTryItObservation = .none,
+        tryItTracker: SetupTryItTracker? = nil
     ) -> some View {
         let suite = "SetupWizardArtifactTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -96,7 +106,10 @@ final class SetupWizardArtifactTests: XCTestCase {
             if skipping.contains(model.step) { model.skipStep() } else { model.continueToNextStep() }
         }
         let controller = SetupWizardController(
-            store: SetupWizardCompletionStore(defaults: defaults), model: model, relayRun: relayRun
+            store: SetupWizardCompletionStore(defaults: defaults),
+            model: model,
+            relayRun: relayRun,
+            tryIt: tryItTracker ?? SetupTryItTracker(first: .none)
         )
         return SetupWizardView(
             controller: controller,
@@ -105,8 +118,7 @@ final class SetupWizardArtifactTests: XCTestCase {
                 f5KeyStatus: { f5Key },
                 defaultMicrophoneName: { microphone },
                 tryItObservation: { tryIt }
-            ),
-            initialTryItBaseline: .some(nil)
+            )
         )
         .frame(width: SetupWizardView.contentSize.width, height: SetupWizardView.contentSize.height)
         .background(Color(nsColor: .windowBackgroundColor))

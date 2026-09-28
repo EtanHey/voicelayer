@@ -14,10 +14,19 @@ public struct SetupTryItObservation: Equatable {
     public let entry: RecentTranscriptionEntry?
     public let insertion: DictationInsertionStatus
     public let activity: SetupTryItActivity
-    public init(entry: RecentTranscriptionEntry?, insertion: DictationInsertionStatus, activity: SetupTryItActivity) {
+    /// VoiceState's error message while its mode is `.error` (an empty final is "Transcription failed").
+    public let failure: String?
+
+    public init(
+        entry: RecentTranscriptionEntry?,
+        insertion: DictationInsertionStatus,
+        activity: SetupTryItActivity,
+        failure: String? = nil
+    ) {
         self.entry = entry
         self.insertion = insertion
         self.activity = activity
+        self.failure = failure
     }
 
     public static let none = Self(entry: nil, insertion: .unverified, activity: .idle)
@@ -50,9 +59,44 @@ private extension SetupWizardStep {
     }
 }
 
+/// What Try it remembers between polls (#210 r1): the last dictation when the step first showed, and a failed
+/// attempt. VoiceState reports an empty final as mode `.error` ("Transcription failed") with no new entry, and the
+/// error clears to idle a moment later, so a failure is held until the next attempt starts or a new dictation lands.
+public struct SetupTryItTracker: Equatable {
+    public let baseline: RecentTranscriptionEntry?
+    public private(set) var failure: String?
+    private var entryAtFailure: RecentTranscriptionEntry?
+    /// An error already showing when the step opened belongs to an earlier attempt.
+    private var staleFailure: String?
+
+    public init(first: SetupTryItObservation) {
+        baseline = first.entry
+        staleFailure = first.activity == .idle ? first.failure : nil
+    }
+
+    public mutating func observe(_ observation: SetupTryItObservation) {
+        if observation.activity != .idle {
+            failure = nil
+            staleFailure = nil
+            return
+        }
+        if let reported = observation.failure {
+            guard reported != staleFailure, failure == nil else { return }
+            failure = reported
+            entryAtFailure = observation.entry
+            return
+        }
+        staleFailure = nil
+        if failure != nil, observation.entry != entryAtFailure {
+            failure = nil
+        }
+    }
+}
+
 public struct SetupTryItStep: Equatable {
     public enum Phase: Equatable {
         case waiting
+        case failed
         case listening
         case transcribing
         case heard
@@ -67,6 +111,7 @@ public struct SetupTryItStep: Equatable {
     private let newEntry: RecentTranscriptionEntry?
     private let observation: SetupTryItObservation
     private let readiness: SetupReadiness
+    private var failure: String?
 
     /// `baseline` is the last dictation when the step opened; only a different one counts.
     public init(baseline: RecentTranscriptionEntry?, observation: SetupTryItObservation, readiness: SetupReadiness) {
@@ -75,11 +120,19 @@ public struct SetupTryItStep: Equatable {
         self.readiness = readiness
     }
 
+    public init(tracker: SetupTryItTracker, observation: SetupTryItObservation, readiness: SetupReadiness) {
+        self.init(baseline: tracker.baseline, observation: observation, readiness: readiness)
+        failure = tracker.failure
+    }
+
+    /// VoiceState's message for an empty final transcript (`failTranscription`).
+    static let emptyTranscriptFailure = "Transcription failed"
+
     public var phase: Phase {
         switch observation.activity {
         case .recording: .listening
         case .transcribing: .transcribing
-        case .idle: newEntry == nil ? .waiting : .heard
+        case .idle: failure != nil ? .failed : newEntry == nil ? .waiting : .heard
         }
     }
 
@@ -87,7 +140,7 @@ public struct SetupTryItStep: Equatable {
         switch phase {
         case .listening: "Listening… let go of F5 when you're done."
         case .transcribing: "Transcribing…"
-        case .waiting, .heard: nil
+        case .waiting, .heard, .failed: nil
         }
     }
 
@@ -108,9 +161,13 @@ public struct SetupTryItStep: Equatable {
         switch observation.insertion {
         case .insertedAtCursor, .pasted:
             return "Typed into the app you were in."
-        case .failed, .notInserted:
-            return "It wasn't typed anywhere: VoiceBar types into the app you were in, not into this window. "
-                + "Click into Notes or TextEdit and try again."
+        case .failed:
+            // Also a paste-handler failure, an AX timeout or a competing insertion with the target focused (#210 r1).
+            return "VoiceBar heard you but couldn't type it. Put the cursor in a text box in another app and try "
+                + "again; if it keeps failing, check Accessibility in Allow access."
+        case .notInserted:
+            // VoiceBar didn't try to type this dictation; say what to do, not why.
+            return "It wasn't typed anywhere. Click into Notes or TextEdit, hold F5, and try again."
         case .pending, .unverified:
             return nil
         }
@@ -126,8 +183,11 @@ public struct SetupTryItStep: Equatable {
 
     /// What is still unfinished, each with the step that fixes it.
     public var problems: [SetupTryItProblem] {
-        if phase == .heard, heardText == nil {
-            return [SetupTryItProblem(step: .microphone, text: "VoiceBar heard nothing. Check your microphone.")]
+        if phase == .failed, let failure {
+            let text = failure == Self.emptyTranscriptFailure
+                ? "VoiceBar heard nothing. Check your microphone."
+                : "That try didn't work (\(failure)). Check your microphone."
+            return [SetupTryItProblem(step: .microphone, text: text)]
         }
         var problems: [SetupTryItProblem] = []
         if !SetupPermissionsStep(snapshot: readiness.permissions).allGranted {

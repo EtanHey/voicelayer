@@ -175,9 +175,11 @@ public final class SetupWizardController {
         store: SetupWizardCompletionStore,
         model: SetupWizardModel?,
         relayRun: SetupRelayRun?,
+        tryIt: SetupTryItTracker? = nil,
         onClose: @escaping () -> Void = {}
     ) {
         self.relayRun = relayRun
+        self.tryIt = tryIt
         self.store = store
         self.onClose = onClose
         isFirstRun = !store.isCompleted
@@ -224,6 +226,19 @@ public final class SetupWizardController {
         run { [weak self] result in
             self?.relayRun = SetupRelayRun(action: action, result: result)
         }
+    }
+
+    /// Try it's baseline and failed attempt, held here for the same reason as `relayRun`: the step's view is rebuilt
+    /// on every step change. The first observation sets the baseline.
+    public private(set) var tryIt: SetupTryItTracker?
+
+    public func observeTryIt(_ observation: SetupTryItObservation) {
+        guard var tracker = tryIt else {
+            tryIt = SetupTryItTracker(first: observation)
+            return
+        }
+        tracker.observe(observation)
+        if tracker != tryIt { tryIt = tracker }
     }
 
     public func goBack(to step: SetupWizardStep) {
