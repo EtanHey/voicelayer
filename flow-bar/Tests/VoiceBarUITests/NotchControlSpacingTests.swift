@@ -119,15 +119,22 @@ final class NotchControlSpacingTests: XCTestCase {
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         defer { window.contentView = nil }
         host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        host.layoutSubtreeIfNeeded()
-        let bitmap = try XCTUnwrap(NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: Int(size.width * Self.scale), pixelsHigh: Int(size.height * Self.scale),
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-        ))
-        bitmap.size = size
-        host.cacheDisplay(in: host.bounds, to: bitmap)
+        // A cold CI runner can take well over one short run-loop turn to draw the first frame, so capture
+        // until the Stop red is on screen (every view rendered here has it), for at most five seconds.
+        let deadline = Date().addingTimeInterval(5)
+        var bitmap: NSBitmapImageRep
+        repeat {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            host.layoutSubtreeIfNeeded()
+            bitmap = try XCTUnwrap(NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: Int(size.width * Self.scale),
+                pixelsHigh: Int(size.height * Self.scale),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+            ))
+            bitmap.size = size
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+        } while redBounds(in: bitmap) == nil && Date() < deadline
         return bitmap
     }
 
