@@ -51,23 +51,20 @@ public struct SetupWizardView: View {
 
     private let controller: SetupWizardController
     private let dependencies: SetupWizardDependencies
-    private let initialRelayRun: SetupRelayRun?
     private let initialTryItBaseline: RecentTranscriptionEntry??
 
     public init(controller: SetupWizardController, dependencies: SetupWizardDependencies = SetupWizardDependencies()) {
-        self.init(controller: controller, dependencies: dependencies, initialRelayRun: nil)
+        self.init(controller: controller, dependencies: dependencies, initialTryItBaseline: nil)
     }
 
-    /// Tests and artifacts start a step mid-flow: a finished helper setup, or a Try it baseline taken earlier.
+    /// Tests and artifacts start Try it with a baseline taken earlier (a helper run is seeded on the controller).
     init(
         controller: SetupWizardController,
         dependencies: SetupWizardDependencies,
-        initialRelayRun: SetupRelayRun?,
-        initialTryItBaseline: RecentTranscriptionEntry?? = nil
+        initialTryItBaseline: RecentTranscriptionEntry??
     ) {
         self.controller = controller
         self.dependencies = dependencies
-        self.initialRelayRun = initialRelayRun
         self.initialTryItBaseline = initialTryItBaseline
     }
 
@@ -113,7 +110,8 @@ public struct SetupWizardView: View {
         case .f5Key:
             SetupWizardF5KeyBody(
                 dependencies: dependencies,
-                initialRun: initialRelayRun,
+                run: controller.relayRun,
+                onRunHelper: { controller.startRelaySetup($0, using: dependencies.onRunRelaySetup) },
                 onFix: { controller.goBack(to: $0) }
             )
         case .microphone:

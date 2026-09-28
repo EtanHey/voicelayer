@@ -162,11 +162,22 @@ public final class SetupWizardController {
     @ObservationIgnored private let isFirstRun: Bool
     @ObservationIgnored private var isClosed = false
 
-    public init(
+    public convenience init(
         store: SetupWizardCompletionStore,
         model: SetupWizardModel? = nil,
         onClose: @escaping () -> Void = {}
     ) {
+        self.init(store: store, model: model, relayRun: nil, onClose: onClose)
+    }
+
+    /// Tests and artifacts start with a helper run already pending or finished.
+    init(
+        store: SetupWizardCompletionStore,
+        model: SetupWizardModel?,
+        relayRun: SetupRelayRun?,
+        onClose: @escaping () -> Void = {}
+    ) {
+        self.relayRun = relayRun
         self.store = store
         self.onClose = onClose
         isFirstRun = !store.isCompleted
@@ -197,6 +208,22 @@ public final class SetupWizardController {
         guard !isClosed else { return }
         model.skipStep()
         saveProgress()
+    }
+
+    /// The F5 key helper's last Set up / Reinstall (#208 r1): held here, not in the step's view, so leaving the F5
+    /// step mid-run keeps its spinner, and a result that lands while another step shows is there on return. In
+    /// memory only; the installer and its in-flight guard are the app's.
+    public private(set) var relayRun: SetupRelayRun?
+
+    public func startRelaySetup(
+        _ action: SettingsRelaySetupFeedback.Action,
+        using run: (@escaping (SettingsRelaySetupResult) -> Void) -> Void
+    ) {
+        guard !isClosed, relayRun == nil || relayRun?.result != nil else { return }
+        relayRun = SetupRelayRun(action: action, result: nil)
+        run { [weak self] result in
+            self?.relayRun = SetupRelayRun(action: action, result: result)
+        }
     }
 
     public func goBack(to step: SetupWizardStep) {
