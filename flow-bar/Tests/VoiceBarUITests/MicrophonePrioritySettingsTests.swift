@@ -40,6 +40,18 @@ final class MicrophonePrioritySettingsTests: XCTestCase {
         XCTAssertTrue(source.contains("microphoneSnapshot.droppingVisibleUIDs(uid, onto: index)"))
     }
 
+    /// D195-r1: the drag-session stamp comes from the app (VoiceBarUI may not touch CGEvent). Without this wiring
+    /// the default (unknown) keeps a stale source, and a cancelled drag's ghost line comes back.
+    func testTheAppSuppliesTheMousePressTimeForDragSessions() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBar/VoiceBarApp.swift")
+        let app = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(app.contains("lastMousePressUptime: { Self.lastMousePressUptime() },"))
+        XCTAssertTrue(app
+            .contains("CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .leftMouseDown)"))
+    }
+
     // MARK: - Helpers
 
     private func prioritySection() throws -> String {

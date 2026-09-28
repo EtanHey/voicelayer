@@ -2295,6 +2295,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// C12: when the latest left-mouse press happened, on the system-uptime clock. Every drag starts with one, so
+    /// Settings uses it to tell one microphone drag session from the next. nil when no usable time is reported.
+    static func lastMousePressUptime() -> TimeInterval? {
+        let since = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .leftMouseDown)
+        guard since.isFinite, since >= 0 else { return nil }
+        return ProcessInfo.processInfo.systemUptime - since
+    }
+
     private func checkShortcutAsync(completion: @escaping (String) -> Void) {
         let listenerEnabled = hotkeyEnabled
         let permissions = missingHotkeyPermissions
@@ -2626,6 +2634,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             isHotkeyRemapActive: { [weak self] in
                 self?.cachedRelaySetupStatus.isReady ?? false
             },
+            lastMousePressUptime: { Self.lastMousePressUptime() },
             onCheckShortcut: { [weak self] completion in
                 self?.checkShortcutAsync(completion: completion)
                     ?? completion("Shortcut check unavailable.")

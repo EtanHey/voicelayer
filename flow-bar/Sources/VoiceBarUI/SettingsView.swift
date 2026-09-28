@@ -427,6 +427,9 @@ public struct SettingsView: View {
     public let onAddPromptTerm: (String) -> Void
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
+    /// C12: when the latest left-mouse press happened (system uptime), from the app's event source. It tells one
+    /// drag session from the next; nil means unknown. VoiceBarUI stays presentation-only, so the app reads it.
+    public let lastMousePressUptime: () -> TimeInterval?
     public let onCheckShortcut: (@escaping (String) -> Void) -> Void
     public let isMicrophonePermissionGranted: () -> Bool
     public let isVoiceBarHidden: () -> Bool
@@ -546,6 +549,7 @@ public struct SettingsView: View {
         onAddPromptTerm: @escaping (String) -> Void = { _ in },
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
+        lastMousePressUptime: @escaping () -> TimeInterval? = { nil },
         onCheckShortcut: @escaping (@escaping (String) -> Void) -> Void = { $0("Shortcut check unavailable.") },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
         isVoiceBarHidden: @escaping () -> Bool = { false },
@@ -636,6 +640,7 @@ public struct SettingsView: View {
         self.onAddPromptTerm = onAddPromptTerm
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
+        self.lastMousePressUptime = lastMousePressUptime
         self.onCheckShortcut = onCheckShortcut
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
         self.isVoiceBarHidden = isVoiceBarHidden
@@ -1076,7 +1081,7 @@ public struct SettingsView: View {
                     }
                 }
                 .onDrag {
-                    microphoneDrag = .started(dragging: uid, pressedAt: Self.lastMousePressUptime())
+                    microphoneDrag = .started(dragging: uid, pressedAt: lastMousePressUptime())
                     return NSItemProvider(object: uid as NSString)
                 } preview: {
                     content // the row lifts, as with .draggable
@@ -1086,7 +1091,7 @@ public struct SettingsView: View {
                     return dropMicrophone(uids.first, onto: index)
                 } isTargeted: { targeted in
                     if targeted {
-                        microphoneDrag.hover(index, pressedAt: Self.lastMousePressUptime())
+                        microphoneDrag.hover(index, pressedAt: lastMousePressUptime())
                     } else {
                         microphoneDrag.leave(index)
                     }
@@ -1094,14 +1099,6 @@ public struct SettingsView: View {
         } else {
             content
         }
-    }
-
-    /// When the latest left-mouse press happened, on the system-uptime clock: every drag starts with one, so it
-    /// tells one drag session from the next. nil when the system reports no usable time.
-    private static func lastMousePressUptime() -> TimeInterval? {
-        let since = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .leftMouseDown)
-        guard since.isFinite, since >= 0 else { return nil }
-        return ProcessInfo.processInfo.systemUptime - since
     }
 
     /// Half the gap between two priority rows' content, so the line sits on the divider between them.
