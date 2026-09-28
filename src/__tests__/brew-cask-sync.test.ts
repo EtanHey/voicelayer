@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -15,6 +15,18 @@ import { join } from "path";
 const repoRoot = join(import.meta.dir, "..", "..");
 const syncLib = join(repoRoot, "scripts", "lib", "brew-cask-sync.sh");
 const token = "etanhey/layers/voicebar";
+const fixtureRoots: string[] = [];
+const pendingFixtureRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of pendingFixtureRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+afterAll(() => {
+  expect(fixtureRoots.every((root) => !existsSync(root))).toBe(true);
+});
 
 type Sandbox = {
   root: string;
@@ -52,6 +64,8 @@ function sandbox(options: {
 }): Sandbox {
   const offeredVersion = options.offeredVersion ?? "2.2.6";
   const root = mkdtempSync(join(tmpdir(), "brew-cask-sync-"));
+  fixtureRoots.push(root);
+  pendingFixtureRoots.push(root);
   const prefix = join(root, "prefix");
   const brewRepository = join(root, "brew-repo");
   const tapRepo = join(brewRepository, "Library/Taps/etanhey/homebrew-layers");

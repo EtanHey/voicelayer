@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
@@ -33,6 +34,20 @@ const voicebarAutostartScriptPath = join(
   "scripts",
   "install-voicebar-autostart.sh",
 );
+const fixtureRoots = new Set<string>();
+
+function fixtureHome(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  fixtureRoots.add(root);
+  return root;
+}
+
+afterEach(() => {
+  for (const root of fixtureRoots) {
+    rmSync(root, { recursive: true, force: true });
+  }
+  fixtureRoots.clear();
+});
 
 describe("MCP daemon LaunchAgent install contract", () => {
   test("retires the daemon LaunchAgent plist from the repo", () => {
@@ -92,7 +107,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
   });
 
   test("VoiceBar autostart no-start unloads a loaded job and tolerates a concurrent unload", () => {
-    const tempHome = mkdtempSync(join(tmpdir(), "voicebar-autostart-reload-"));
+    const tempHome = fixtureHome("voicebar-autostart-reload-");
     const binDir = join(tempHome, "bin");
     const launchctlLog = join(tempHome, "launchctl.log");
     const launchctlState = join(tempHome, "launchctl.state");
@@ -146,7 +161,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
   });
 
   test("VoiceBar autostart reload waits for asynchronous bootout before bootstrap", () => {
-    const tempHome = mkdtempSync(join(tmpdir(), "voicebar-autostart-wait-"));
+    const tempHome = fixtureHome("voicebar-autostart-wait-");
     const binDir = join(tempHome, "bin");
     const launchctlLog = join(tempHome, "launchctl.log");
     const launchctlState = join(tempHome, "launchctl.state");
@@ -210,7 +225,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
   });
 
   test("VoiceBar autostart installer can write an unloaded definition without starting it", () => {
-    const tempHome = mkdtempSync(join(tmpdir(), "voicebar-autostart-no-start-"));
+    const tempHome = fixtureHome("voicebar-autostart-no-start-");
     const binDir = join(tempHome, "bin");
     const launchctlLog = join(tempHome, "launchctl.log");
     const launchctlStub = join(binDir, "launchctl");
