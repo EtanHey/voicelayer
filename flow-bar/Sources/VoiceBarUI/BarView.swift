@@ -868,6 +868,13 @@ public struct BarView: View {
         return copy
     }
 
+    /// Visual shots only: mount with the History panel open, so its button renders selected.
+    func presentingHistoryForShots() -> BarView {
+        var copy = self
+        copy._isHistoryPresented = State(initialValue: true)
+        return copy
+    }
+
     /// Spec §4: the History panel inside the notch's lower surface.
     private func historyPanelContent() -> some View {
         NotchHistoryPanel(
