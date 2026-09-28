@@ -427,6 +427,9 @@ public struct SettingsView: View {
     public let onAddPromptTerm: (String) -> Void
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
+    /// C12: when the latest left-mouse press happened (system uptime), from the app's event source. It tells one
+    /// drag session from the next; nil means unknown. VoiceBarUI stays presentation-only, so the app reads it.
+    public let lastMousePressUptime: () -> TimeInterval?
     public let onCheckShortcut: (@escaping (String) -> Void) -> Void
     public let isMicrophonePermissionGranted: () -> Bool
     public let isVoiceBarHidden: () -> Bool
@@ -514,6 +517,7 @@ public struct SettingsView: View {
     @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
     @State private var isAdvancedExpanded = false
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
+    @State private var microphoneDrag: MicrophoneDragState
     @State private var lastDictationProvenanceLabel: String?
     @FocusState private var focusedEditorField: DictEditorField?
 
@@ -545,6 +549,7 @@ public struct SettingsView: View {
         onAddPromptTerm: @escaping (String) -> Void = { _ in },
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
+        lastMousePressUptime: @escaping () -> TimeInterval? = { nil },
         onCheckShortcut: @escaping (@escaping (String) -> Void) -> Void = { $0("Shortcut check unavailable.") },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
         isVoiceBarHidden: @escaping () -> Bool = { false },
@@ -601,6 +606,7 @@ public struct SettingsView: View {
         initialAdvancedExpanded: Bool = false,
         initialRelaySetupFeedback: (action: SettingsRelaySetupFeedback.Action,
                                     result: SettingsRelaySetupResult?)? = nil,
+        initialMicrophoneDrag: MicrophoneDragState = MicrophoneDragState(),
         initialDictionaryPreview: STTVocabularyPreview? = nil,
         initialIncludedTermsExpanded: Bool = false,
         initialYourTermsExpanded: Bool = true,
@@ -634,6 +640,7 @@ public struct SettingsView: View {
         self.onAddPromptTerm = onAddPromptTerm
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
+        self.lastMousePressUptime = lastMousePressUptime
         self.onCheckShortcut = onCheckShortcut
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
         self.isVoiceBarHidden = isVoiceBarHidden
@@ -679,6 +686,7 @@ public struct SettingsView: View {
         _askHistorySearch = State(initialValue: initialAskHistorySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
         _relaySetupFeedback = State(initialValue: initialRelaySetupFeedback)
+        _microphoneDrag = State(initialValue: initialMicrophoneDrag)
         _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
         _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
         _selectedTermRowID = State(initialValue: initialSelectedTermRowID)
@@ -1056,15 +1064,45 @@ public struct SettingsView: View {
             moveMicrophone(at: index, by: 1)
         }
         if let uid = row.uid {
+            // C12: while a drag hovers this row, an insertion line marks where the mic will land, and the row
+            // being dragged dims. The drop itself still reads the dragged UID from the payload.
+            let edge = microphoneDrag.targetIndex == index
+                ? microphoneSnapshot.dropEdge(dragging: microphoneDrag.sourceUID, onto: index) : nil
             content
-                .draggable(uid)
+                .opacity(microphoneDrag.targetIndex != nil && microphoneDrag.sourceUID == uid ? 0.45 : 1)
+                .overlay(alignment: edge == .bottom ? .bottom : .top) {
+                    if edge != nil {
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .frame(height: 3)
+                            .offset(y: edge == .bottom ? Self.dropLineOffset : -Self.dropLineOffset)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .onDrag {
+                    microphoneDrag = .started(dragging: uid, pressedAt: lastMousePressUptime())
+                    return NSItemProvider(object: uid as NSString)
+                } preview: {
+                    content // the row lifts, as with .draggable
+                }
                 .dropDestination(for: String.self) { uids, _ in
-                    dropMicrophone(uids.first, onto: index)
+                    microphoneDrag = MicrophoneDragState()
+                    return dropMicrophone(uids.first, onto: index)
+                } isTargeted: { targeted in
+                    if targeted {
+                        microphoneDrag.hover(index, pressedAt: lastMousePressUptime())
+                    } else {
+                        microphoneDrag.leave(index)
+                    }
                 }
         } else {
             content
         }
     }
+
+    /// Half the gap between two priority rows' content, so the line sits on the divider between them.
+    private static let dropLineOffset: CGFloat = 11.5
 
     private func makeMicrophoneDefault(at index: Int) {
         guard let uids = microphoneSnapshot.makingDefaultUIDs(at: index) else { return }
@@ -1073,15 +1111,9 @@ public struct SettingsView: View {
     }
 
     /// Dropping onto a row lands the dragged mic in that row's place: below it when dragged down, above it
-    /// when dragged up (SwiftUI onMove indices).
+    /// when dragged up (SwiftUI onMove indices), exactly where the insertion line was drawn.
     private func dropMicrophone(_ uid: String?, onto index: Int) -> Bool {
-        guard let uid,
-              let source = microphoneSnapshot.visibleRows.firstIndex(where: { $0.uid == uid }),
-              let uids = microphoneSnapshot.movingVisibleUIDs(
-                  from: IndexSet(integer: source),
-                  to: index > source ? index + 1 : index
-              )
-        else { return false }
+        guard let uid, let uids = microphoneSnapshot.droppingVisibleUIDs(uid, onto: index) else { return false }
         onReorderPriority(uids)
         refreshMicrophoneSnapshot()
         return true

@@ -247,6 +247,16 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                      "Settings General: microphone priority (Default badge, Make default, drag handles)",
                      settings(tab: .general, vocabulary: empty, micRows: threeMics),
                      size: CGSize(width: 780, height: 1000), appearance: appearance)
+            // C12: mid-drag, the insertion line shows where the mic lands (below when dragged down, above when up).
+            for (direction, drag) in [
+                ("down", MicrophoneDragState(sourceUID: "fixture-rx", targetIndex: 1)),
+                ("up", MicrophoneDragState(sourceUID: "fixture-airpods", targetIndex: 1)),
+            ] {
+                try shot("settings-general-mic-drag-\(direction)\(suffix).png",
+                         "Settings General: dragging a microphone \(direction) over the second row",
+                         settings(tab: .general, vocabulary: empty, micRows: threeMics, micDrag: drag),
+                         size: CGSize(width: 780, height: 1000), appearance: appearance)
+            }
         }
         try shot("settings-general-advanced.png", "Settings General: Advanced F5 helper expanded",
                  settings(tab: .general, vocabulary: empty, advanced: true),
@@ -478,7 +488,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         modelState: ModelsSettingsState = .loading,
         footerMode: VoiceMode = .idle,
         hiddenUntil: Date? = nil,
-        relayFeedback: (action: SettingsRelaySetupFeedback.Action, result: SettingsRelaySetupResult?)? = nil
+        relayFeedback: (action: SettingsRelaySetupFeedback.Action, result: SettingsRelaySetupResult?)? = nil,
+        micDrag: MicrophoneDragState = MicrophoneDragState()
     ) -> SettingsView {
         let historyFixture = historyDetail
             ? syntheticHistoryPage ?? SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
@@ -528,7 +539,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                             },
                             initialTab: tab, initialDictionarySearch: search,
                             initialAdvancedExpanded: advanced,
-                            initialRelaySetupFeedback: relayFeedback)
+                            initialRelaySetupFeedback: relayFeedback,
+                            initialMicrophoneDrag: micDrag)
     }
 
     private func menuShots(
