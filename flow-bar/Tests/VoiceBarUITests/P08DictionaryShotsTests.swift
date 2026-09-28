@@ -76,6 +76,56 @@ final class P08DictionaryShotsTests: XCTestCase {
         }
     }
 
+    /// UXP-1: the Included terms header while the daemon's rows are pending, once they arrive, and when the daemon
+    /// reports none. Synthetic rows only.
+    func testRenderIncludedTermsHeaderStates() throws {
+        guard let path = ProcessInfo.processInfo.environment["VOICEBAR_UXP1_SHOTS_DIR"] else {
+            throw XCTSkip("Set VOICEBAR_UXP1_SHOTS_DIR to render UXP-1 artifacts")
+        }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let personal = [
+            STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"]),
+            STTDictionaryEntry(canonical: "SwiftUI", variants: []),
+        ]
+        let bundled = [
+            STTDictionaryEntry(canonical: "AppKit", variants: []),
+            STTDictionaryEntry(canonical: "macOS", variants: ["mac o s"]),
+        ]
+        let personalRows = personal.map { STTDictionaryDisplayEntry(source: "personal", entry: $0) }
+        let states: [(String, STTVocabularyPreview)] = [
+            ("loading", STTVocabularyPreview(updatedAt: nil, entries: personal)),
+            ("loaded", STTVocabularyPreview(
+                updatedAt: nil, entries: personal,
+                displayEntries: personalRows + bundled.map { STTDictionaryDisplayEntry(source: "bundled", entry: $0) }
+            )),
+            ("empty", STTVocabularyPreview(updatedAt: nil, entries: personal, displayEntries: personalRows)),
+        ]
+        for (scheme, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            for (state, data) in states {
+                let view = SettingsView(
+                    hotkeyEnabled: true,
+                    missingPermissions: [],
+                    availableDevices: { [] },
+                    selectedDeviceID: { nil },
+                    modelsStatus: { .loading },
+                    onRefreshModelsStatus: {},
+                    vocabularyPreview: { data },
+                    vocabularyRevision: { 0 },
+                    initialTab: .dictionary,
+                    initialDictionaryPreview: data,
+                    initialIncludedTermsExpanded: state == "loaded",
+                    initialYourTermsExpanded: false
+                )
+                try render(
+                    view.environment(\.colorScheme, scheme == "light" ? .light : .dark),
+                    appearance: NSAppearance(named: appearance),
+                    to: directory.appendingPathComponent("included-terms-\(state)-\(scheme).png")
+                )
+            }
+        }
+    }
+
     private func render(
         _ view: some View, appearance: NSAppearance?,
         size: CGSize = CGSize(width: 780, height: 620), to url: URL

@@ -484,6 +484,105 @@ final class SocketServerTests: XCTestCase {
         XCTAssertEqual(state.hotkeyPhase, .idle)
         XCTAssertEqual(state.errorMessage, "VoiceLayer is starting")
     }
+
+    /// UXP-1: the daemon's `vocab_list` reply is over 8 KiB and carries the bundled rows' Hebrew variants, so a
+    /// socket read can end inside a multi-byte character. Each read chunk used to be decoded on its own, a split
+    /// chunk decoded to nil and was dropped, and the reply arrived as "Bad JSON" — Settings read "Included terms (0)".
+    func testALineSplitInsideAMultiByteCharacterAcrossTwoReadsStillArrives() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let socketURL = directory.appendingPathComponent("voicelayer.sock")
+        let state = VoiceState()
+        let server = SocketServer(state: state, socketPath: socketURL.path)
+        server.start()
+        defer { server.stop() }
+
+        XCTAssertTrue(waitForSocket(at: socketURL.path))
+        let daemon = try connectUnixSocket(path: socketURL.path)
+        defer { close(daemon) }
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#,
+            to: daemon
+        )
+        XCTAssertTrue(waitForConnectionStatus(state, connected: true, timeout: 1))
+
+        // Synthetic rows only. "אבג" is three 2-byte characters; the split lands inside the first one.
+        let reply = #"{"type":"vocab_list","entries":[],"display_entries":["#
+            + #"{"row_id":"bundled:Synthterm","source":"bundled","canonical":"Synthterm","variants":["אבג"]}]}"#
+            + "\n"
+        let bytes = Array(reply.utf8)
+        let hebrewStart = try XCTUnwrap(bytes.firstIndex(of: 0xD7))
+        let split = hebrewStart + 1
+        // Barrier (r2): the second half is written only after the server has read the first, so the two writes
+        // can never coalesce into one read, however slow the runner.
+        let readBefore = server.bytesReadForTesting()
+        try writeBytes(Array(bytes[..<split]), to: daemon)
+        XCTAssertTrue(
+            waitUntil(timeout: 2) { server.bytesReadForTesting() == readBefore + split },
+            "the server never consumed the first half on its own"
+        )
+        try writeBytes(Array(bytes[split...]), to: daemon)
+
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline, state.transcriptionVocabularyDisplayEntries == nil {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        let rows = try XCTUnwrap(
+            state.transcriptionVocabularyDisplayEntries,
+            "the vocab_list reply split inside a multi-byte character never reached VoiceState"
+        )
+        XCTAssertEqual(rows.map(\.rowID), ["bundled:Synthterm"])
+        XCTAssertEqual(rows.first?.entry.variants, ["אבג"])
+    }
+
+    /// UXP-1 r2 (RXF3 Medium): a peer that never sends a newline may not grow VoiceBar's memory or hold up the
+    /// shared server queue. Past the cap its connection is closed; every other client keeps flowing.
+    func testAnOverCapLineClosesOnlyItsOwnClientAndALineAtTheCapStillArrives() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let cap = 64 * 1024
+        let socketURL = directory.appendingPathComponent("voicelayer.sock")
+        let state = VoiceState()
+        let server = SocketServer(state: state, socketPath: socketURL.path, maxLineBytes: cap)
+        server.start()
+        defer { server.stop() }
+
+        XCTAssertTrue(waitForSocket(at: socketURL.path))
+        let flooder = try connectUnixSocket(path: socketURL.path)
+        let daemon = try connectUnixSocket(path: socketURL.path)
+        defer {
+            close(flooder)
+            close(daemon)
+        }
+        try writeLine(#"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#, to: flooder)
+        try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: daemon)
+        XCTAssertTrue(waitForRegisteredRoles(server, ["mcp-daemon", "mcp-server"]))
+
+        try writeBytes(Array(repeating: 0x61, count: cap + 1), to: flooder)
+
+        XCTAssertTrue(waitForPeerClose(flooder, timeout: 2), "the over-cap client was not closed")
+        XCTAssertTrue(waitForRegisteredRoles(server, ["mcp-daemon"]), "the over-cap client is still registered")
+
+        // A synthetic vocab_list padded to exactly the cap, from the other client, still arrives.
+        let head = #"{"type":"vocab_list","entries":[],"display_entries":["#
+            + #"{"row_id":"bundled:Synthterm","source":"bundled","canonical":"Synthterm","variants":[]}],"pad":""#
+        let tail = #""}"#
+        let line = head + String(repeating: "x", count: cap - head.utf8.count - tail.utf8.count) + tail
+        XCTAssertEqual(line.utf8.count, cap)
+        try writeLine(line, to: daemon)
+
+        XCTAssertTrue(
+            waitUntil(timeout: 2) { state.transcriptionVocabularyDisplayEntries != nil },
+            "a line at the cap from the healthy client never arrived"
+        )
+        XCTAssertEqual(state.transcriptionVocabularyDisplayEntries?.map(\.rowID), ["bundled:Synthterm"])
+    }
 }
 
 /// Runtime-only leg. The Bun corpus harness owns the daemon lifecycle, then
@@ -1215,8 +1314,29 @@ private func connectUnixSocketOnce(path: String) throws -> Int32 {
     return fd
 }
 
+/// Waits until the server closes this client: a read returns end-of-file.
+private func waitForPeerClose(_ fd: Int32, timeout: TimeInterval) -> Bool {
+    waitUntil(timeout: timeout) {
+        var byte: UInt8 = 0
+        return read(fd, &byte, 1) == 0
+    }
+}
+
+/// Spins the main run loop (VoiceState updates land there) until the condition holds; the deadline is liveness only.
+private func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return true }
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    }
+    return condition()
+}
+
 private func writeLine(_ line: String, to fd: Int32) throws {
-    let payload = Array((line + "\n").utf8)
+    try writeBytes(Array((line + "\n").utf8), to: fd)
+}
+
+private func writeBytes(_ payload: [UInt8], to fd: Int32) throws {
     var offset = 0
     while offset < payload.count {
         let written = payload.withUnsafeBufferPointer { ptr in

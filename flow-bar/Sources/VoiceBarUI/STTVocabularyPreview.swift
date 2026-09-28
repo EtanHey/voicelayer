@@ -53,8 +53,10 @@ public struct STTDictionaryDisplayIndex {
     public let sortedEntries: [STTDictionaryDisplayEntry]
     public let personalCount: Int
     public let includedCount: Int
+    public let bundledRowsKnown: Bool
 
-    public init(entries: [STTDictionaryDisplayEntry]) {
+    public init(entries: [STTDictionaryDisplayEntry], bundledRowsKnown: Bool = true) {
+        self.bundledRowsKnown = bundledRowsKnown
         sortedEntries = entries.sorted {
             if $0.source != $1.source { return $0.isPersonal }
             return Self.sortsBefore($0.entry.canonical, $1.entry.canonical)
@@ -65,10 +67,14 @@ public struct STTDictionaryDisplayIndex {
 
     /// The Dictionary tab's index for one provider load. Without daemon display rows every entry is the user's
     /// own: the file-backed store holds personal entries only, and the bundled list lives in TS.
+    /// `bundledRowsKnown` is false until that reply has arrived: Included terms is then unknown, not empty (UXP-1).
     public init(preview: STTVocabularyPreview) {
-        self.init(entries: preview.displayEntries ?? preview.entries.map {
-            STTDictionaryDisplayEntry(source: "personal", entry: $0)
-        })
+        self.init(
+            entries: preview.displayEntries ?? preview.entries.map {
+                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+            },
+            bundledRowsKnown: preview.displayEntries != nil
+        )
     }
 
     /// Real words first (UI pass #17: "-s" and the slash-command entries led the list), then everything that
