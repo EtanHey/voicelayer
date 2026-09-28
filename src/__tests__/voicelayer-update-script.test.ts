@@ -595,7 +595,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("Secure Input held by another app warns and lets the summary run", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-secure-input-"));
+    const tempRoot = fixtureRoot("voicelayer-secure-input-");
     const scriptsDir = join(tempRoot, "scripts");
     mkdirSync(scriptsDir, { recursive: true });
     writeFileSync(join(scriptsDir, "verify-voicebar-hotkey-health.sh"),
@@ -613,7 +613,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("a missing hotkey relay still fails", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-relay-missing-"));
+    const tempRoot = fixtureRoot("voicelayer-relay-missing-");
     const scriptsDir = join(tempRoot, "scripts");
     mkdirSync(scriptsDir, { recursive: true });
     writeFileSync(join(scriptsDir, "verify-voicebar-hotkey-health.sh"),

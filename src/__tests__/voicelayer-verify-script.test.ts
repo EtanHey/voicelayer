@@ -17,6 +17,7 @@ const repoRoot = new URL("../..", import.meta.url).pathname;
 const scriptPath = join(repoRoot, "scripts", "voicelayer-verify.sh");
 
 let tempRoot = "";
+let initialTempRoot = "";
 let pidsDir = "";
 
 function run(command: string[], options: { env?: Record<string, string>; cwd?: string; input?: string } = {}) {
@@ -91,11 +92,16 @@ function writeFakeExecutable(name: string, body: string) {
 
 beforeEach(() => {
   tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
+  initialTempRoot = tempRoot;
   initFakeRepo();
 });
 
 afterEach(() => {
   if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
+  if (initialTempRoot && initialTempRoot !== tempRoot) {
+    rmSync(initialTempRoot, { recursive: true, force: true });
+  }
+  initialTempRoot = "";
   if (pidsDir) rmSync(pidsDir, { recursive: true, force: true });
   pidsDir = "";
 });
