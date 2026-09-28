@@ -433,7 +433,7 @@ public struct SettingsView: View {
     public let voiceBarHiddenUntil: () -> Date?
     public let onHideVoiceBar: () -> Void
     public let onShowVoiceBar: () -> Void
-    public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
+    public let onRunRelaySetup: (@escaping (SettingsRelaySetupResult) -> Void) -> Void
     public let lastDictationEntry: () -> RecentTranscriptionEntry?
     public let lastDictationInsertionStatus: () -> DictationInsertionStatus
     public let onCopyLastDictation: (String) -> Void
@@ -504,7 +504,11 @@ public struct SettingsView: View {
     /// The one Add/Edit sheet (nil = closed). Etan's 2.2.24 review #3: no inline box, no per-term misheard row.
     @State private var termSheet: DictionaryTermEdit?
     @State private var pendingDeleteCanonical: String?
-    @State private var relaySetupFeedback: String?
+    /// The last Set up / Reinstall: which one ran, and its result (nil while it runs).
+    @State private var relaySetupFeedback: (
+        action: SettingsRelaySetupFeedback.Action,
+        result: SettingsRelaySetupResult?
+    )?
     @State private var relaySetupRunning = false
     @State private var shortcutCheckRunning = false
     @State private var shortcutCheckFeedback: (message: String, checkedAt: Date)?
@@ -548,8 +552,8 @@ public struct SettingsView: View {
         voiceBarHiddenUntil: @escaping () -> Date? = { nil },
         onHideVoiceBar: @escaping () -> Void = {},
         onShowVoiceBar: @escaping () -> Void = {},
-        onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
-            completion("Relay setup requested.")
+        onRunRelaySetup: @escaping (@escaping (SettingsRelaySetupResult) -> Void) -> Void = { completion in
+            completion(SettingsRelaySetupResult(outcome: .failed(reason: "not available here"), finishedAt: Date()))
         },
         lastDictationEntry: @escaping () -> RecentTranscriptionEntry? = { nil },
         lastDictationInsertionStatus: @escaping () -> DictationInsertionStatus = { .unverified },
@@ -596,6 +600,8 @@ public struct SettingsView: View {
         initialHistorySearch: String = "",
         initialAskHistorySearch: String = "",
         initialAdvancedExpanded: Bool = false,
+        initialRelaySetupFeedback: (action: SettingsRelaySetupFeedback.Action,
+                                    result: SettingsRelaySetupResult?)? = nil,
         initialMicrophoneDrag: MicrophoneDragState = MicrophoneDragState(),
         initialDictionaryPreview: STTVocabularyPreview? = nil,
         initialIncludedTermsExpanded: Bool = false,
@@ -674,6 +680,7 @@ public struct SettingsView: View {
         _historySearch = State(initialValue: initialHistorySearch)
         _askHistorySearch = State(initialValue: initialAskHistorySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
+        _relaySetupFeedback = State(initialValue: initialRelaySetupFeedback)
         _microphoneDrag = State(initialValue: initialMicrophoneDrag)
         _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
         _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
@@ -820,22 +827,10 @@ public struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                // C14: the status sits in the same trailing column as the shortcut above it (and every other
+                // General value); Check shortcut is its own row below, like Visibility's Hide button.
                 LabeledContent("Status") {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(hotkeyEnabled ? .green : .red)
-                            .frame(width: 8, height: 8)
-                        Text(hotkeyStatusText)
-                    }
-                    Spacer(minLength: 8)
-                    Button("Check shortcut") {
-                        shortcutCheckRunning = true
-                        onCheckShortcut { result in
-                            shortcutCheckFeedback = (result, Date())
-                            shortcutCheckRunning = false
-                        }
-                    }
-                    .disabled(shortcutCheckRunning)
+                    statusBadge(hotkeyStatusText, isReady: hotkeyEnabled)
                 }
                 if !hotkeyEnabled {
                     Text(
@@ -843,6 +838,14 @@ public struct SettingsView: View {
                     )
                     .font(.caption).foregroundStyle(.secondary)
                 }
+                Button("Check shortcut") {
+                    shortcutCheckRunning = true
+                    onCheckShortcut { result in
+                        shortcutCheckFeedback = (result, Date())
+                        shortcutCheckRunning = false
+                    }
+                }
+                .disabled(shortcutCheckRunning)
                 if let shortcutCheckFeedback {
                     SettingsShortcutCheckLine(
                         message: shortcutCheckFeedback.message,
@@ -877,16 +880,34 @@ public struct SettingsView: View {
                         }
                     }
                     .help(VoiceBarHotkeyContract.remapExplanation)
+                    // C13: the last Set up / Reinstall sits right under its button, with a check or a warning.
+                    if let feedback = relaySetupFeedback {
+                        let action = feedback.action
+                        if let result = feedback.result {
+                            Label {
+                                Text(SettingsRelaySetupFeedback.line(for: result, action: action))
+                                    .foregroundStyle(result.succeeded ? Color.primary : Color.red)
+                            } icon: {
+                                Image(systemName: result.succeeded ? "checkmark.circle.fill"
+                                    : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(result.succeeded ? Color.green : Color.red)
+                            }
+                            .font(.callout)
+                        } else {
+                            Label {
+                                Text(SettingsRelaySetupFeedback.running(action))
+                                    .foregroundStyle(.secondary)
+                            } icon: {
+                                ProgressView().controlSize(.small)
+                            }
+                            .font(.callout)
+                        }
+                    }
                     Text("Lets F5 start dictation even if your Mac remaps the dictation key.")
                         .font(.caption).foregroundStyle(.secondary)
                     if isHotkeyRemapActive() {
                         Text(VoiceBarHotkeyContract.remapPlainSummary)
                             .font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let relaySetupFeedback {
-                        Text(relaySetupFeedback)
-                            .font(.caption)
-                            .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
                     }
                     Divider()
                     Text("Gestures").font(.headline)
@@ -2455,9 +2476,10 @@ public struct SettingsView: View {
     private func runRelaySetup() {
         guard !relaySetupRunning else { return }
         relaySetupRunning = true
-        relaySetupFeedback = "Setting up relay..."
-        onRunRelaySetup { feedback in
-            relaySetupFeedback = feedback
+        let action: SettingsRelaySetupFeedback.Action = isHotkeyRemapActive() ? .reinstall : .setUp
+        relaySetupFeedback = (action, nil)
+        onRunRelaySetup { result in
+            relaySetupFeedback = (action, result)
             relaySetupRunning = false
         }
     }
