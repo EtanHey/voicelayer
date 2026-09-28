@@ -166,8 +166,10 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(settingsSource.contains(".opacity(isRetranscribing ?"))
         XCTAssertTrue(settingsSource.contains("isRetranscribing: isRetranscribing,"))
         XCTAssertTrue(settingsSource.contains("isSpinning: isRetranscribing"))
-        XCTAssertTrue(settingsSource.contains(".rotationEffect(.degrees(isSpinning ? 360 : 0))"))
-        XCTAssertTrue(settingsSource.contains(".repeatForever(autoreverses: false)"))
+        // QA 2.2.25 C7/C8/C9: the icon turns off the clock; an implicit repeatForever animation only started on a
+        // state flip and then animated every later layout move.
+        XCTAssertTrue(settingsSource.contains("HistorySpinningSymbol(systemName: systemImage)"))
+        XCTAssertFalse(settingsSource.contains(".repeatForever("))
         XCTAssertTrue(settingsSource.contains("isRetranscribing ? \"Re-transcribing stored audio\""))
         XCTAssertTrue(barSource.contains("activeHistoryRetranscriptionPath"))
         // Spec §4: the notch History panel (its own file) says so while a row re-transcribes.
@@ -176,7 +178,8 @@ final class SettingsViewContractTests: XCTestCase {
                 .deletingLastPathComponent().appendingPathComponent("Sources/VoiceBarUI/NotchHistoryPanel.swift"),
             encoding: .utf8
         )
-        XCTAssertTrue(panelSource.contains("Re-transcribing…"))
+        XCTAssertTrue(panelSource.contains("HistoryRetranscribingBadge("))
+        XCTAssertEqual(HistoryRetranscribingBadge<ProcessingSpinner>.title, "Re-transcribing…")
         XCTAssertTrue(appSource.contains("voiceState.activeHistoryRetranscriptionPath == recordingPath"))
         XCTAssertTrue(settingsSource.contains("isTranscribingActive: () -> Bool"))
         XCTAssertTrue(appSource.contains("isTranscribingActive: { [weak self] in"))
@@ -369,7 +372,7 @@ final class SettingsViewContractTests: XCTestCase {
         let actions = source[actionsStart.lowerBound ..< actionsEnd.lowerBound]
 
         XCTAssertTrue(actions.contains(".labelStyle(.iconOnly)"))
-        XCTAssertTrue(actions.contains(".frame(minWidth: 28, minHeight: 28)"))
+        XCTAssertTrue(actions.contains(".frame(width: 28, height: 28)"))
         // H1-d (UI pass #10): a blocked action's tooltip is its reason; otherwise the action's name.
         XCTAssertTrue(actions.contains(".help(reason ?? (isPlaying ? \"Stop\" : \"Play\"))"))
         XCTAssertTrue(actions.contains(".help(reason ?? \"Copy\")"))

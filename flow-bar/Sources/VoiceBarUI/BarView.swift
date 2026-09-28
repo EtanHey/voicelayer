@@ -72,12 +72,45 @@ public struct PulsingStatusLabel: View {
 }
 
 public struct ProcessingSpinner: View {
-    private let size: CGFloat = 14
+    public static let defaultDiameter: CGFloat = 14
+
+    private let size: CGFloat
+    private let showsTrack: Bool
+
+    public init() {
+        self.init(diameter: Self.defaultDiameter, showsTrack: false)
+    }
+
+    init(diameter: CGFloat, showsTrack: Bool) {
+        size = diameter
+        self.showsTrack = showsTrack
+    }
 
     public var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let angle = timeline.date.timeIntervalSinceReferenceDate * 360
+            ProcessingSpinnerFrame(
+                angle: timeline.date.timeIntervalSinceReferenceDate * 360,
+                diameter: size,
+                showsTrack: showsTrack
+            )
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
 
+/// One frame of `ProcessingSpinner` at a fixed angle, so a test can render any point of the turn.
+struct ProcessingSpinnerFrame: View {
+    let angle: Double
+    let diameter: CGFloat
+    var showsTrack = false
+
+    var body: some View {
+        ZStack {
+            if showsTrack {
+                Circle()
+                    .stroke(Theme.speakingColor.opacity(0.28), lineWidth: 2.2)
+            }
             Circle()
                 .trim(from: 0.08, to: 0.74)
                 .stroke(
@@ -85,10 +118,8 @@ public struct ProcessingSpinner: View {
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
-                .frame(width: size, height: size)
         }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        .frame(width: diameter, height: diameter)
     }
 }
 

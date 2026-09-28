@@ -151,6 +151,11 @@ struct SettingsHistoryMediaPart: Equatable {
 
 /// Whether a History action shows, and if it is blocked for now, why (UI pass #10: a disabled button with no
 /// reason looks broken).
+enum SettingsHistoryActionStyle {
+    /// On top of the system's own dimming of a disabled button.
+    static let disabledOpacity = 0.4
+}
+
 enum SettingsHistoryActionAvailability: Equatable {
     case available
     /// Can never apply to this part (no transcript to copy, no audio to play): not shown at all.
@@ -163,6 +168,8 @@ struct SettingsHistoryActionEnablement: Equatable {
     let isRetranscribing: Bool
     let isRecording: Bool
     let isTranscribing: Bool
+    /// The recording being re-transcribed, so its own Re-transcribe says so instead of "Another…".
+    var retranscribingPath: String?
 
     func isEnabled(
         _ action: SettingsHistoryAction,
@@ -191,8 +198,17 @@ struct SettingsHistoryActionEnablement: Equatable {
         switch action {
         case .play, .retranscribe:
             if isRecording { return .unavailable("Unavailable while recording") }
+            // AIDEV-NOTE: a re-transcription also puts the daemon in "transcribing", so this must be checked first
+            // or every blocked button said "Unavailable while transcribing" (QA 2.2.25 C6, 04:52).
+            if isRetranscribing {
+                if action == .play { return .unavailable("Wait for the re-transcription to finish") }
+                if let path = part.audioPath?.path, path == retranscribingPath {
+                    return .unavailable("Re-transcribing this recording")
+                }
+                return .unavailable("Another re-transcription is running")
+            }
             if isTranscribing { return .unavailable("Unavailable while transcribing") }
-            return .unavailable("Another re-transcription is running")
+            return .unavailable("Unavailable right now")
         case .copy, .paste:
             return .unavailable("Wait for the re-transcription to finish")
         case .finder:
@@ -1223,6 +1239,9 @@ public struct SettingsView: View {
                                     recordingHistoryDetail(entry)
                                         .padding(18)
                                 }
+                                // Each entry gets its own detail: switching entries starts at its top and carries no
+                                // view state (scroll offset, in-flight animation) over from the previous one (C7, C9).
+                                .id(entry.id)
                                 // UI pass #9: the list gets most of the height.
                                 .frame(height: SettingsHistoryLayout.detailHeight(available: geometry.size.height))
                             }
@@ -1612,7 +1631,8 @@ public struct SettingsView: View {
         let enablement = SettingsHistoryActionEnablement(
             isRetranscribing: isAnyHistoryRetranscribing(),
             isRecording: isRecordingActive(),
-            isTranscribing: isTranscribingActive()
+            isTranscribing: isTranscribingActive(),
+            retranscribingPath: isRetranscribing ? part.audioPath?.path : nil
         )
 
         VStack(alignment: .leading, spacing: 6) {
@@ -1711,26 +1731,31 @@ public struct SettingsView: View {
         .controlSize(.small)
     }
 
+    // AIDEV-NOTE: the in-flight Re-transcribe icon turns off the clock (HistorySpinningSymbol), never an implicit
+    // animation. It used `.animation(.repeatForever, value: isSpinning)`: that only started on a false→true flip,
+    // so an entry already re-transcribing when shown sat still (QA 2.2.25 C8), and once started it animated every
+    // later layout move too, so the icon animated from stale positions or disappeared (C7, C9). Fixed 28 pt slot.
     private func historyActionLabel(
         _ title: String,
         systemImage: String,
+        isEnabled: Bool,
         isSpinning: Bool = false
     ) -> some View {
         Label {
             Text(title)
         } icon: {
-            Image(systemName: systemImage)
-                .rotationEffect(.degrees(isSpinning ? 360 : 0))
-                .animation(
-                    isSpinning
-                        ? .linear(duration: 0.8).repeatForever(autoreverses: false)
-                        : .default,
-                    value: isSpinning
-                )
+            if isSpinning {
+                HistorySpinningSymbol(systemName: systemImage)
+            } else {
+                Image(systemName: systemImage)
+            }
         }
         .labelStyle(.iconOnly)
-        .frame(minWidth: 28, minHeight: 28)
+        .frame(width: 28, height: 28)
         .contentShape(Rectangle())
+        // The system dims a disabled borderless button too little to read as blocked (QA 2.2.25 C6, 04:55). The
+        // spinning icon is the entry's status, so it keeps full strength.
+        .opacity(isEnabled || isSpinning ? 1 : SettingsHistoryActionStyle.disabledOpacity)
     }
 
     @ViewBuilder
@@ -1760,7 +1785,8 @@ public struct SettingsView: View {
             } label: {
                 historyActionLabel(
                     isPlaying ? "Stop" : "Play",
-                    systemImage: isPlaying ? "stop.fill" : "play.fill"
+                    systemImage: isPlaying ? "stop.fill" : "play.fill",
+                    isEnabled: !disabled
                 )
             }
             .disabled(disabled)
@@ -1773,7 +1799,7 @@ public struct SettingsView: View {
                 guard let text = part.actionableText else { return }
                 onCopyHistoryTranscript(text)
             } label: {
-                historyActionLabel("Copy", systemImage: "doc.on.doc")
+                historyActionLabel("Copy", systemImage: "doc.on.doc", isEnabled: !disabled)
             }
             .disabled(disabled)
             .help(reason ?? "Copy")
@@ -1785,7 +1811,7 @@ public struct SettingsView: View {
                 guard let text = part.actionableText else { return }
                 onPasteHistoryTranscript(text)
             } label: {
-                historyActionLabel("Paste", systemImage: "doc.on.clipboard")
+                historyActionLabel("Paste", systemImage: "doc.on.clipboard", isEnabled: !disabled)
             }
             .disabled(disabled)
             .help(reason ?? "Paste")
@@ -1800,6 +1826,7 @@ public struct SettingsView: View {
                 historyActionLabel(
                     "Re-transcribe",
                     systemImage: "arrow.triangle.2.circlepath",
+                    isEnabled: !disabled,
                     isSpinning: isRetranscribing
                 )
             }
@@ -1815,7 +1842,7 @@ public struct SettingsView: View {
                 guard let audioPath = part.audioPath else { return }
                 onRevealHistoryFile(audioPath)
             } label: {
-                historyActionLabel("Open in Finder", systemImage: "folder")
+                historyActionLabel("Open in Finder", systemImage: "folder", isEnabled: !disabled)
             }
             .disabled(disabled)
             .help(reason ?? "Open in Finder")
