@@ -5,17 +5,8 @@ import XCTest
 
 /// Lane C1: while recording, the notch's Stop disc and the Cancel (X) control must read as two
 /// separate buttons — a visible gap between them, and neither plate wider than its layout slot.
-/// Measured on production views rendered offscreen at 2×, in both appearances.
 @MainActor
 final class NotchControlSpacingTests: XCTestCase {
-    private final class NoopRouter: BarCommandRouting {
-        func handlePrimaryTap() {}
-        func handleCancel() {}
-        func handleStop() {}
-        func handleReplay() {}
-        func handleRetranscribeHistoryEntry(recordingPath: String) {}
-    }
-
     private static let scale: CGFloat = 2
     private var slot: CGFloat {
         VoiceBarNotchContract.material.compactControlSize
@@ -25,46 +16,48 @@ final class NotchControlSpacingTests: XCTestCase {
         VoiceBarNotchContract.material.compactControlSpacing
     }
 
-    func testRecordingStopDiscFitsItsSlotAndLeavesAGapBeforeCancel() throws {
-        for appearance in [NSAppearance.Name.darkAqua, .aqua] {
-            let state = VoiceState()
-            state.isConnected = true
-            state.isCollapsed = false
-            state.mode = .recording
-            state.recordingMode = "vad"
-            let bitmap = try render(
-                BarView(state: state, commandRouter: NoopRouter(), onOpenSettings: {}, onOpenHistory: {},
-                        includesPanelOutsets: true),
-                size: CGSize(width: 600, height: 80),
-                appearance: appearance
-            )
-            let disc = try XCTUnwrap(redBounds(in: bitmap), "\(appearance.rawValue): no Stop disc rendered")
-            let discWidth = CGFloat(disc.maxX - disc.minX + 1) / Self.scale
-            XCTAssertLessThanOrEqual(
-                discWidth, slot + 0.5,
-                "\(appearance.rawValue): the Stop disc (\(discWidth) pt) is wider than its \(slot) pt slot"
-            )
+    /// Geometry, not pixels: deterministic on a headless runner (an offscreen capture through the native
+    /// glass host can draw nothing there). The pair test below measures the drawn result without that host.
+    func testRecordingStopDiscFitsItsSlotAndLeavesAGapBeforeCancel() {
+        let plate = VoiceBarPillControlButton.plateDiameter
+        let pitch = slot + spacing
+        XCTAssertLessThanOrEqual(plate, slot, "the \(plate) pt plate overhangs its \(slot) pt slot")
+        XCTAssertGreaterThanOrEqual(
+            pitch - plate, spacing,
+            "neighbouring plates (Stop and a hovered X) sit \(pitch - plate) pt apart; they read as touching"
+        )
+        let xGlyph = VoiceBarNotchControlOptics.resolve(for: "xmark").pointSize
+        XCTAssertGreaterThanOrEqual(
+            pitch - plate / 2 - xGlyph / 2, spacing,
+            "only \(pitch - plate / 2 - xGlyph / 2) pt between the Stop disc and the X glyph"
+        )
+        XCTAssertLessThanOrEqual(
+            VoiceBarNotchControlOptics.resolve(for: "stop.fill").pointSize, plate / 2,
+            "the Stop square is too big for its disc"
+        )
 
-            // The first non-background ink to the right of the disc, inside the disc's rows, is the X.
-            let background = pixel(bitmap, x: disc.minX - 3 * Int(Self.scale), y: (disc.minY + disc.maxY) / 2)
-            var gapColumns = 0
-            var x = disc.maxX + 1
-            // Skip the disc's own antialiased rim (at most one point).
-            while x <= disc.maxX + Int(Self.scale), columnHasInk(bitmap, x: x, rows: disc.minY ... disc.maxY,
-                                                                 background: background) {
-                x += 1
-            }
-            while x < bitmap.pixelsWide, !columnHasInk(bitmap, x: x, rows: disc.minY ... disc.maxY,
-                                                       background: background) {
-                gapColumns += 1
-                x += 1
-            }
-            let gap = CGFloat(gapColumns) / Self.scale
-            XCTAssertGreaterThanOrEqual(
-                gap, spacing,
-                "\(appearance.rawValue): only \(gap) pt between the Stop disc and the X; they read as touching"
-            )
-        }
+        // The click target is unchanged: a 26 pt circle whose overhang is cancelled by the negative padding,
+        // so each control still occupies exactly its slot.
+        XCTAssertEqual(VoiceBarPillControlButton.hitDiameter, 26)
+        XCTAssertEqual(VoiceBarPillControlButton.hitOverhang * 2 + slot, VoiceBarPillControlButton.hitDiameter)
+
+        // Hosted layout: one control, and the recording row (Stop · X · Lock), occupy their slots exactly.
+        let single = NSHostingView(rootView: button("xmark", destructive: false))
+        XCTAssertEqual(single.fittingSize, NSSize(width: slot, height: slot))
+        let row = NSHostingView(rootView: HStack(spacing: spacing) {
+            button("stop.fill", destructive: true)
+            button("xmark", destructive: false)
+            button("lock.fill", destructive: false)
+        })
+        XCTAssertEqual(row.fittingSize, NSSize(width: 3 * slot + 2 * spacing, height: slot))
+    }
+
+    private func button(_ icon: String, destructive: Bool) -> VoiceBarPillControlButton {
+        VoiceBarPillControlButton(
+            icon: icon, optics: .resolve(for: icon), foreground: .white, halo: .clear,
+            isSelected: false, isDestructive: destructive, accessibilityLabel: icon, accessibilityHint: "",
+            action: {}
+        )
     }
 
     func testHoveredNeighbourPlatesNeverTouch() throws {
@@ -85,7 +78,12 @@ final class NotchControlSpacingTests: XCTestCase {
             .padding(20)
             .background(appearance == .aqua ? Color.white : Color.black)
             let bitmap = try render(pair, size: CGSize(width: 120, height: 70), appearance: appearance)
-            let disc = try XCTUnwrap(redBounds(in: bitmap))
+            let disc = try XCTUnwrap(redBounds(in: bitmap), "\(appearance.rawValue): no Stop disc rendered")
+            let discWidth = CGFloat(disc.maxX - disc.minX + 1) / Self.scale
+            XCTAssertLessThanOrEqual(
+                discWidth, slot + 0.5,
+                "\(appearance.rawValue): the drawn Stop disc (\(discWidth) pt) is wider than its \(slot) pt slot"
+            )
             let row = (disc.minY + disc.maxY) / 2
             let background = pixel(bitmap, x: disc.minX - 4 * Int(Self.scale), y: row)
             // Walk right from the disc along its middle row: past at most one point of antialiased
@@ -119,8 +117,8 @@ final class NotchControlSpacingTests: XCTestCase {
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         defer { window.contentView = nil }
         host.layoutSubtreeIfNeeded()
-        // A cold CI runner can take well over one short run-loop turn to draw the first frame, so capture
-        // until the Stop red is on screen (every view rendered here has it), for at most five seconds.
+        // A cold runner can take more than one short run-loop turn to draw the first frame, so capture
+        // until the Stop red is on screen, for at most five seconds.
         let deadline = Date().addingTimeInterval(5)
         var bitmap: NSBitmapImageRep
         repeat {
@@ -152,10 +150,6 @@ final class NotchControlSpacingTests: XCTestCase {
 
     private func isInk(_ p: RGB, background: RGB) -> Bool {
         abs(p.r - background.r) + abs(p.g - background.g) + abs(p.b - background.b) > 24
-    }
-
-    private func columnHasInk(_ bitmap: NSBitmapImageRep, x: Int, rows: ClosedRange<Int>, background: RGB) -> Bool {
-        rows.contains { isInk(pixel(bitmap, x: x, y: $0), background: background) }
     }
 
     /// The bounding box of the saturated Stop red, in pixels. Only the Stop disc uses it here.

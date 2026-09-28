@@ -186,7 +186,12 @@ struct VoiceBarPillControlButton: View {
     let previewPressed: Bool
     @State private var isHovered = false
 
+    /// The drawn plate fills the layout slot; the invisible hit circle overhangs it by `hitOverhang` per side.
     static let plateDiameter = VoiceBarNotchContract.material.compactControlSize
+    static let hitDiameter: CGFloat = 26
+    static var hitOverhang: CGFloat {
+        (hitDiameter - plateDiameter) / 2
+    }
 
     init(
         icon: String,
@@ -230,12 +235,12 @@ struct VoiceBarPillControlButton: View {
                             : isSelected ? Theme.recordingColor.opacity(0.30)
                             : isHovered || previewHovered || previewPressed ? foreground.opacity(0.12) : .clear)
                 }
-                .frame(width: 26, height: 26)
+                .frame(width: Self.hitDiameter, height: Self.hitDiameter)
                 .contentShape(Circle())
         }
         .buttonStyle(VoiceBarPillPressStyle(previewPressed: previewPressed))
         .onHover { isHovered = $0 }
-        .padding(-3)
+        .padding(-Self.hitOverhang)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
         .help(accessibilityLabel)

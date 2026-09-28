@@ -110,9 +110,9 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertFalse(source.contains("Color(nsColor: .labelColor)"))
         XCTAssertTrue(buttonSource.contains("icon == \"stop.fill\""))
         XCTAssertTrue(buttonSource.contains("VoiceBarPillControlButton("))
-        XCTAssertTrue(source.contains(".frame(width: 26, height: 26)"))
+        XCTAssertTrue(source.contains(".frame(width: Self.hitDiameter, height: Self.hitDiameter)"))
         XCTAssertTrue(source.contains(".contentShape(Circle())"))
-        XCTAssertTrue(source.contains(".padding(-3)"))
+        XCTAssertTrue(source.contains(".padding(-Self.hitOverhang)"))
         XCTAssertTrue(source.contains("if isDestructive {"))
     }
 
