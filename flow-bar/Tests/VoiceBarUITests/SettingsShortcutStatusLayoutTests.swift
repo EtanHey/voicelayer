@@ -42,16 +42,33 @@ final class SettingsShortcutStatusLayoutTests: XCTestCase {
         XCTAssertLessThan(span, 70 * scale, "only the status word follows the dot on its row")
     }
 
+    /// Bugbot on #192: the listener-off state is the one most likely to crowd the trailing column. Its red
+    /// "Missing: …" status must still read as one phrase ending on the same trailing edge as "Granted" below.
+    func testWithTheListenerOffTheMissingStatusStillEndsOnTheTrailingEdge() throws {
+        let image = try renderGeneral(hotkeyEnabled: false, missing: [.accessibility, .inputMonitoring])
+        let status = try XCTUnwrap(dots(in: image, where: { $0.r > 200 && $0.g < 90 && $0.b < 90 }).first,
+                                   "the red status dot")
+        let granted = try XCTUnwrap(greenDots(in: image).first, "Microphone's green Granted dot")
+
+        let statusInk = inkedColumns(in: image, rightOf: status)
+        let statusEnd = try XCTUnwrap(statusInk.last, "the Missing status text")
+        let grantedEnd = try XCTUnwrap(inkedColumns(in: image, rightOf: granted).last, "Granted")
+        XCTAssertEqual(CGFloat(statusEnd), CGFloat(grantedEnd), accuracy: 3 * scale,
+                       "Missing: … ends on the same trailing edge as Granted")
+        let widestGap = zip(statusInk, statusInk.dropFirst()).map { $1 - $0 }.max() ?? 0
+        XCTAssertLessThan(CGFloat(widestGap), 20 * scale, "one phrase after the dot, no button beside it")
+    }
+
     // MARK: - Helpers
 
     private let scale: CGFloat = 2
     private let size = CGSize(width: 780, height: 620)
 
     /// The General tab in an offscreen titled window, light appearance, at 2×, like the P03 shots harness.
-    private func renderGeneral() throws -> RenderedImage {
+    private func renderGeneral(hotkeyEnabled: Bool = true, missing: [HotkeyPermission] = []) throws -> RenderedImage {
         let view = SettingsView(
-            hotkeyEnabled: true,
-            missingPermissions: [],
+            hotkeyEnabled: hotkeyEnabled,
+            missingPermissions: missing,
             availableDevices: { [MicrophoneDevice(id: "fixture-mic", name: "Fixture Microphone")] },
             selectedDeviceID: { "fixture-mic" },
             modelsStatus: { .loading },
@@ -87,14 +104,28 @@ final class SettingsShortcutStatusLayoutTests: XCTestCase {
         return try RenderedImage(XCTUnwrap(bitmap.cgImage))
     }
 
+    /// Columns right of `dot`, on its row and short of the card's trailing edge, holding ink.
+    private func inkedColumns(in image: RenderedImage, rightOf dot: CGRect) -> [Int] {
+        let background = image.pixel(x: Int(dot.minX) - 12, y: Int(dot.midY))
+        return (Int(dot.maxX) + 2 ..< Int((size.width - 24) * scale)).filter { x in
+            (Int(dot.minY) ..< Int(dot.maxY)).contains { y in
+                let p = image.pixel(x: x, y: y)
+                return abs(p.r - background.r) + abs(p.g - background.g) + abs(p.b - background.b) > 60
+            }
+        }
+    }
+
     /// Green status dots in the content pane (right of the sidebar), top-down, in pixel coordinates.
     private func greenDots(in image: RenderedImage) -> [CGRect] {
+        dots(in: image, where: { $0.g > 150 && $0.r < 110 && $0.b < 130 })
+    }
+
+    private func dots(in image: RenderedImage, where matches: (RenderedImage.Pixel) -> Bool) -> [CGRect] {
         let sidebarEdge = Int(200 * scale)
         var boxes: [CGRect] = []
         for y in 0 ..< image.height {
             for x in sidebarEdge ..< image.width {
-                let p = image.pixel(x: x, y: y)
-                guard p.g > 150, p.r < 110, p.b < 130 else { continue }
+                guard matches(image.pixel(x: x, y: y)) else { continue }
                 let point = CGRect(x: x, y: y, width: 1, height: 1)
                 if let index = boxes.firstIndex(where: { $0.insetBy(dx: -3, dy: -3).intersects(point) }) {
                     boxes[index] = boxes[index].union(point)
