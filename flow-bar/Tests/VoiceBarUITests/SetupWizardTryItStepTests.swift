@@ -187,3 +187,67 @@ final class SetupWizardTryItStepTests: XCTestCase {
         XCTAssertEqual(noHelper.problems, [], "F5 is listened for directly; the helper is for the dictation key")
     }
 }
+
+/// #210 r2 (RXF3 + Macroscope): the baseline is the snapshot the step opened with. The first render and the first
+/// poll used to read VoiceState separately, so a dictation finishing between the two reads became the baseline and
+/// the step stayed on Waiting.
+final class SetupWizardTryItBaselineRaceTests: XCTestCase {
+    private let ready = SetupReadiness(
+        permissions: .allGranted,
+        f5Key: SetupF5KeyStatus(listenerActive: true, helperInstalled: true),
+        microphoneName: "Studio USB Mic"
+    )
+    private let earlier = RecentTranscriptionEntry(
+        text: "an older dictation",
+        createdAt: Date(timeIntervalSince1970: 100)
+    )
+    private let fresh = RecentTranscriptionEntry(
+        text: "Testing one two three.",
+        createdAt: Date(timeIntervalSince1970: 200)
+    )
+    private var suiteName = ""
+    private var defaults: UserDefaults!
+
+    override func setUpWithError() throws {
+        suiteName = "SetupWizardTryItBaselineRaceTests-\(UUID().uuidString)"
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults = nil
+    }
+
+    private func controllerOnTryIt() -> SetupWizardController {
+        SetupWizardController(
+            store: SetupWizardCompletionStore(defaults: defaults),
+            model: SetupWizardModel(step: .tryIt)
+        )
+    }
+
+    func testADictationThatFinishesBetweenTheOpeningSnapshotAndTheFirstPollIsShown() throws {
+        let controller = controllerOnTryIt()
+        let opening = SetupTryItObservation(entry: earlier, insertion: .pasted, activity: .transcribing)
+        let firstPoll = SetupTryItObservation(entry: fresh, insertion: .pasted, activity: .idle)
+
+        controller.openTryIt(with: opening) // the snapshot the first render used
+        controller.observeTryIt(firstPoll) // the dictation finished in between
+
+        let tracker = try XCTUnwrap(controller.tryIt)
+        XCTAssertEqual(tracker.baseline, earlier)
+        let step = SetupTryItStep(tracker: tracker, observation: firstPoll, readiness: ready)
+        XCTAssertEqual(step.phase, .heard)
+        XCTAssertEqual(step.heardText, "Testing one two three.")
+        XCTAssertEqual(step.insertionLine, "Typed into the app you were in.")
+    }
+
+    func testReopeningTryItKeepsTheFirstBaseline() throws {
+        let controller = controllerOnTryIt()
+        controller.openTryIt(with: SetupTryItObservation(entry: earlier, insertion: .pasted, activity: .idle))
+        controller.observeTryIt(SetupTryItObservation(entry: fresh, insertion: .pasted, activity: .idle))
+        controller.goBack()
+        controller.continueToNextStep()
+        controller.openTryIt(with: SetupTryItObservation(entry: fresh, insertion: .pasted, activity: .idle))
+        XCTAssertEqual(try XCTUnwrap(controller.tryIt).baseline, earlier, "a second visit doesn't re-baseline")
+    }
+}
