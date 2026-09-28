@@ -7,7 +7,7 @@ struct NotchHistoryPanel: View {
     let entries: [RecentTranscriptionEntry]
     let activeRetranscriptionPath: String?
     let palette: VoiceBarNotchContrastPalette
-    /// Returns whether the text reached the pasteboard; "Copied ✓" shows only then (#161 review).
+    /// Returns whether the text reached the pasteboard; the tick shows only then (#161 review).
     let onCopy: (RecentTranscriptionEntry) -> Bool
     let onPaste: (RecentTranscriptionEntry) -> Void
     let onRetranscribe: (String) -> Void
@@ -16,7 +16,7 @@ struct NotchHistoryPanel: View {
     var forcedHoverIndex: Int?
 
     @State private var hoveredID: String?
-    @State private var copyFeedback = NotchHistoryCopyFeedback()
+    @State private var copyFeedback = CopyFeedback()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -51,7 +51,7 @@ struct NotchHistoryPanel: View {
 
     private func row(_ entry: RecentTranscriptionEntry, index: Int, id: String) -> some View {
         let isRetranscribing = entry.recordingPath != nil && entry.recordingPath == activeRetranscriptionPath
-        let isCopied = copyFeedback.isCopied(row: id)
+        let isCopied = copyFeedback.isCopied(key: id, at: Date())
         let showsActions = forcedHoverIndex == index || hoveredID == id || isCopied
         return VStack(alignment: .leading, spacing: 2) {
             // One fixed-height lane for the header and the 24 pt actions, so they share a center line
@@ -64,12 +64,8 @@ struct NotchHistoryPanel: View {
                 if isRetranscribing {
                     HistoryRetranscribingBadge(fontSize: 10, color: palette.secondary.color)
                 } else {
-                    if isCopied {
-                        Text(NotchHistoryPresentation.copyTitle(isCopied: true))
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundStyle(palette.secondary.color)
-                    }
-                    actionButtons(entry, id: id, isCopied: isCopied)
+                    // UXP-3: the Copy glyph itself turns into the tick; no second "Copied ✓" beside it.
+                    actionButtons(entry, id: id)
                         .opacity(showsActions ? 1 : 0)
                 }
             }
@@ -104,14 +100,21 @@ struct NotchHistoryPanel: View {
         )
     }
 
-    private func actionButtons(_ entry: RecentTranscriptionEntry, id: String, isCopied: Bool) -> some View {
+    private func actionButtons(_ entry: RecentTranscriptionEntry, id: String) -> some View {
         HStack(spacing: 2) {
             ForEach(NotchHistoryPresentation.rowActions, id: \.symbol) { action in
-                if action.kind != .retranscribe || entry.recordingPath != nil {
+                if action.kind == .copy {
+                    CopyFeedbackButton(
+                        action.label,
+                        key: id,
+                        feedback: $copyFeedback,
+                        foreground: palette.primary.color
+                    ) { onCopy(entry) }
+                } else if action.kind != .retranscribe || entry.recordingPath != nil {
                     Button {
                         perform(action.kind, entry: entry, id: id)
                     } label: {
-                        Image(systemName: action.kind == .copy && isCopied ? "checkmark" : action.symbol)
+                        Image(systemName: action.symbol)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(palette.primary.color)
                             .frame(
@@ -122,21 +125,20 @@ struct NotchHistoryPanel: View {
                     }
                     .buttonStyle(.plain)
                     .help(action.label)
-                    .accessibilityLabel(action.kind == .copy && isCopied ? "Copied" : action.label)
+                    .accessibilityLabel(action.label)
                 }
             }
         }
     }
 
-    private func perform(_ kind: NotchHistoryPresentation.RowAction.Kind, entry: RecentTranscriptionEntry, id: String) {
+    private func perform(
+        _ kind: NotchHistoryPresentation.RowAction.Kind,
+        entry: RecentTranscriptionEntry,
+        id _: String
+    ) {
         switch kind {
         case .copy:
-            guard onCopy(entry) else { return }
-            let generation = copyFeedback.copied(row: id)
-            Task { @MainActor in
-                try? await Task.sleep(for: NotchHistoryPresentation.copiedFeedbackDuration)
-                copyFeedback.expire(generation)
-            }
+            break // Copy is the shared CopyFeedbackButton (UXP-3).
         case .paste:
             onPaste(entry)
         case .retranscribe:

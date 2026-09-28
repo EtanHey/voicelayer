@@ -8,7 +8,9 @@ public struct MenuBarPopoverView: View {
     public let defaultMicrophoneName: String?
     public let transcript: String
     public let degradationHint: String?
-    public let onCopy: () -> Void
+    /// Returns whether the text reached the pasteboard, so a failed copy shows no tick.
+    public let onCopy: () -> Bool
+    @State private var copyFeedback = CopyFeedback()
     public let onSettings: () -> Void
     public let onQuit: () -> Void
     /// Opens the setup wizard (F3).
@@ -23,7 +25,7 @@ public struct MenuBarPopoverView: View {
         defaultMicrophoneName: String?,
         transcript: String,
         degradationHint: String? = nil,
-        onCopy: @escaping () -> Void = {},
+        onCopy: @escaping () -> Bool = { false },
         onSettings: @escaping () -> Void = {},
         onQuit: @escaping () -> Void = {},
         onRunSetup: @escaping () -> Void = {},
@@ -124,17 +126,9 @@ public struct MenuBarPopoverView: View {
                         .font(.system(size: 12))
                         .lineLimit(3)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(action: onCopy) {
-                        Image(systemName: "doc.on.doc")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy last transcript")
-                    .accessibilityLabel("Copy last transcript")
-                    .accessibilityIdentifier("popover-copy")
-                    .popoverFrame("copy")
+                    CopyFeedbackButton("Copy last transcript", feedback: $copyFeedback, copy: onCopy)
+                        .accessibilityIdentifier("popover-copy")
+                        .popoverFrame("copy")
                 }
                 .padding(9)
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -148,10 +148,10 @@ final class NotchHistoryPanelTests: XCTestCase {
         ] {
             let ids = NotchHistoryPresentation.rowIDs(for: entries)
             XCTAssertEqual(Set(ids).count, 2, "\(ids)")
-            var feedback = NotchHistoryCopyFeedback()
-            _ = feedback.copied(row: ids[0])
-            XCTAssertTrue(feedback.isCopied(row: ids[0]))
-            XCTAssertFalse(feedback.isCopied(row: ids[1]), "copying one marks only that row")
+            var feedback = CopyFeedback()
+            feedback.copied(key: ids[0], succeeded: true, byPointer: true, at: now)
+            XCTAssertTrue(feedback.isCopied(key: ids[0], at: now))
+            XCTAssertFalse(feedback.isCopied(key: ids[1], at: now), "copying one marks only that row")
         }
     }
 

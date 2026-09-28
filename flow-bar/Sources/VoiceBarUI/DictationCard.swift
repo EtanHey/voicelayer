@@ -29,11 +29,14 @@ public enum DictationInsertionStatus: Equatable {
     }
 }
 
+/// General › Last dictation. It sits in the Form's own grouped row, so it draws no card of its own and hugs its
+/// content (UXP-3, UX pass #15: a card inside a card with a ~50 pt empty band).
 public struct DictationCard: View {
     public let entry: RecentTranscriptionEntry
     public let insertionStatus: DictationInsertionStatus
     /// Returns whether the text reached the pasteboard (`VoiceState.copyTranscript`), so a failed copy shows no tick.
     public let onCopy: (String) -> Bool
+    @State private var copyFeedback = CopyFeedback()
 
     public init(
         entry: RecentTranscriptionEntry,
@@ -55,21 +58,13 @@ public struct DictationCard: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 Text(entry.text)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    _ = onCopy(entry.text)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-                .buttonStyle(.borderless)
-                .help("Copy last dictation")
-                .accessibilityLabel("Copy last dictation")
+                CopyFeedbackButton("Copy last dictation", feedback: $copyFeedback) { onCopy(entry.text) }
             }
-            Spacer(minLength: 24)
             HStack {
                 Label(insertionStatus.label, systemImage: insertionStatus.systemImage)
                 Spacer()
@@ -80,9 +75,6 @@ public struct DictationCard: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
