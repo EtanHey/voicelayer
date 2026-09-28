@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
@@ -7,73 +6,114 @@ import XCTest
 /// took focus. After a pointer scrub the bar draws no ring, yet ←/→ still step; focus that arrives any other way
 /// (Tab, VoiceOver) keeps the ring.
 ///
-/// Hosted: the bar sits under a focusable decoy (as Settings has the search field) in a plain borderless
-/// window, where AppKit delivers synthetic drags and keys to SwiftUI. SwiftUI mounts one `_FocusRingView` per
-/// focusable view whose focus effect is enabled, so a ring view over the bar's row means the bar would draw a
-/// ring when focused. A test process never owns the key window, so Tab cannot move focus here; the Tab path is
-/// proven on `SettingsScrubFocusRing` and stays an installed-app check.
+/// Deterministic by design: these drive `SettingsScrubDrag`, the same handler the bar's DragGesture calls, and pin
+/// how the view wires it. Synthetic drags never reach the gesture on the headless CI runner (#200 run
+/// 36452576587), and offscreen Tab cannot move SwiftUI focus, so the real ring stays an installed-app check.
 @MainActor
 final class SettingsPlaybackScrubFocusTests: XCTestCase {
     private let clipURL = URL(fileURLWithPath: "/tmp/fixture/recording/audio.wav")
-    private static let size = CGSize(width: 400, height: 80)
-    /// The bar's row, from the top of the flipped host: the decoy fills 0..<30, spacing 10, then the bar.
-    private static let barRowMinY: CGFloat = 40
 
-    func testAMouseScrubLeavesNoFocusRingButArrowKeysStillStep() throws {
+    func testAMouseScrubHidesTheFocusRingWhileTheBarKeepsFocus() {
         let seeks = SeekLog()
-        let (window, host) = makeHost(seeks: seeks)
-        defer { tearDown(window) }
-        XCTAssertTrue(barHasFocusRing(host), "before any scrub the bar keeps its focus ring for keyboard users")
+        let playback = playback(seeks: seeks)
+        var drag = SettingsScrubDrag()
+        XCTAssertFalse(drag.hidesFocusRing, "before any scrub, Tab focus shows the ring")
 
-        try drag(host, fromX: 150, toX: 250)
+        drag.changed(toFraction: 0.3, duration: 100, playback: playback, url: clipURL)
+        drag.focusChanged(to: true) // the gesture focuses the bar
+        drag.changed(toFraction: 0.6, duration: 100, playback: playback, url: clipURL)
+        drag.ended(atFraction: 0.6, duration: 100, playback: playback, url: clipURL)
 
-        XCTAssertEqual(seeks.times.count, 1, "the drag must reach the bar and seek once on release")
-        XCTAssertFalse(barHasFocusRing(host), "a mouse scrub must not leave a focus ring on the bar")
+        XCTAssertEqual(seeks.times, [60], "the scrub still seeks once on release")
+        XCTAssertTrue(drag.hidesFocusRing, "a mouse scrub must not leave a focus ring")
 
+        drag.focusChanged(to: true)
+        XCTAssertTrue(drag.hidesFocusRing, "staying focused for ←/→ keeps the ring hidden")
+    }
+
+    func testArrowKeysStillStepAfterAScrub() {
+        let seeks = SeekLog()
+        let playback = playback(seeks: seeks)
+        var drag = SettingsScrubDrag()
+        drag.changed(toFraction: 0.5, duration: 100, playback: playback, url: clipURL)
+        drag.ended(atFraction: 0.5, duration: 100, playback: playback, url: clipURL)
         seeks.times.removeAll()
-        try window.sendEvent(arrow(right: true, window: window))
-        settle()
-        XCTAssertEqual(seeks.times, [25], "→ right after a scrub still steps forward")
-        XCTAssertFalse(barHasFocusRing(host), "a key step after a mouse scrub keeps the ring hidden")
 
-        try window.sendEvent(arrow(right: false, window: window))
-        settle()
-        XCTAssertEqual(seeks.times, [25, 15], "← steps back too")
+        SettingsScrubDrag.step(
+            playback: playback,
+            url: clipURL,
+            by: SettingsPlaybackScrubBar.seekDelta(for: .rightArrow) ?? 0
+        )
+        SettingsScrubDrag.step(
+            playback: playback,
+            url: clipURL,
+            by: SettingsPlaybackScrubBar.seekDelta(for: .leftArrow) ?? 0
+        )
+
+        XCTAssertEqual(seeks.times, [25, 15])
+        XCTAssertTrue(drag.hidesFocusRing, "a key step does not bring the ring back")
     }
 
-    func testPointerFocusHidesTheRingUntilFocusLeaves() {
-        var ring = SettingsScrubFocusRing()
-        XCTAssertFalse(ring.isHidden, "focus that arrives by Tab or VoiceOver shows the ring")
+    func testTheRingReturnsOnceFocusLeaves() {
+        let playback = playback(seeks: SeekLog())
+        var drag = SettingsScrubDrag()
+        drag.changed(toFraction: 0.5, duration: 100, playback: playback, url: clipURL)
+        drag.focusChanged(to: true)
 
-        ring.pointerScrubbed()
-        ring.focusChanged(to: true)
-        XCTAssertTrue(ring.isHidden, "a mouse scrub focuses the bar without a ring")
+        drag.focusChanged(to: false)
+        XCTAssertFalse(drag.hidesFocusRing, "focus left the bar")
 
-        ring.focusChanged(to: true)
-        XCTAssertTrue(ring.isHidden, "staying focused (←/→ steps) keeps it hidden")
-
-        ring.focusChanged(to: false)
-        XCTAssertFalse(ring.isHidden, "once focus leaves, the next arrival by Tab shows the ring again")
-        ring.focusChanged(to: true)
-        XCTAssertFalse(ring.isHidden)
+        drag.focusChanged(to: true)
+        XCTAssertFalse(drag.hidesFocusRing, "focus that comes back by Tab shows the ring")
     }
 
-    func testAScrubWhileKeyboardFocusedHidesTheRing() {
-        var ring = SettingsScrubFocusRing()
-        ring.focusChanged(to: true)
-        XCTAssertFalse(ring.isHidden, "Tab focus draws the ring")
-
-        ring.pointerScrubbed()
-        XCTAssertTrue(ring.isHidden, "a mouse scrub after Tab focus hides it, like a click on a native control")
+    func testTabFocusAloneKeepsTheRing() {
+        var drag = SettingsScrubDrag()
+        drag.focusChanged(to: true)
+        XCTAssertFalse(drag.hidesFocusRing)
     }
 
-    func testTheVoiceOverAdjustableActionIsUnchanged() throws {
+    func testAScrubWhileTabFocusedHidesTheRing() {
+        let playback = playback(seeks: SeekLog())
+        var drag = SettingsScrubDrag()
+        drag.focusChanged(to: true)
+
+        drag.changed(toFraction: 0.5, duration: 100, playback: playback, url: clipURL)
+
+        XCTAssertTrue(drag.hidesFocusRing, "like a click on a native control after Tab focus")
+    }
+
+    func testAScrubOverAClipWithNoDurationYetStillHidesTheRing() {
+        let playback = playback(seeks: SeekLog())
+        var drag = SettingsScrubDrag()
+
+        drag.changed(toFraction: 0.5, duration: 0, playback: playback, url: clipURL)
+
+        XCTAssertTrue(drag.hidesFocusRing, "the gesture focuses the bar even before the clip reports a duration")
+        XCTAssertNil(drag.fraction)
+    }
+
+    /// The view side, which offscreen tests cannot drive: the gesture focuses the bar and feeds `changed`, the
+    /// focus effect reads the drag state, focus changes reach it, and VoiceOver's adjustable action is unchanged.
+    func testTheBarWiresTheDragStateToItsFocusEffect() throws {
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
                 .appendingPathComponent("Sources/VoiceBarUI/SettingsPlaybackScrubBar.swift"),
             encoding: .utf8
         )
+
+        XCTAssertTrue(source.contains("""
+                .focusable()
+                .focused($isFocused)
+                .focusEffectDisabled(drag.hidesFocusRing)
+                .onChange(of: isFocused) { _, focused in drag.focusChanged(to: focused) }
+        """))
+        XCTAssertTrue(source.contains("""
+                            .onChanged { value in
+                                isFocused = true
+                                drag.changed(
+        """))
         XCTAssertTrue(source.contains("""
                     .accessibilityAdjustableAction { direction in
                         SettingsScrubDrag.step(playback: playback, url: url, by: Self.seekDelta(for: direction))
@@ -83,22 +123,7 @@ final class SettingsPlaybackScrubFocusTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private struct Harness: View {
-        let bar: SettingsPlaybackScrubBar
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 10) {
-                Color.gray.frame(width: 360, height: 30).focusable()
-                bar.frame(width: 360)
-            }
-            .padding(.horizontal, 20)
-            .frame(width: SettingsPlaybackScrubFocusTests.size.width,
-                   height: SettingsPlaybackScrubFocusTests.size.height,
-                   alignment: .top)
-        }
-    }
-
-    private func makeHost(seeks: SeekLog) -> (NSWindow, NSView) {
+    private func playback(seeks: SeekLog) -> SettingsAudioPlayback {
         let playback = SettingsAudioPlayback(
             start: { _ in true },
             stop: {},
@@ -106,65 +131,7 @@ final class SettingsPlaybackScrubFocusTests: XCTestCase {
             seek: { seeks.times.append($0) }
         )
         playback.toggle(clipURL)
-        let host = NSHostingView(rootView: Harness(
-            bar: SettingsPlaybackScrubBar(playback: playback, url: clipURL, accessibilityNoun: "recording audio")
-        ))
-        host.frame = NSRect(origin: .zero, size: Self.size)
-        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.contentView = host
-        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        window.orderBack(nil)
-        host.layoutSubtreeIfNeeded()
-        settle()
-        return (window, host)
-    }
-
-    private func tearDown(_ window: NSWindow) {
-        window.orderOut(nil)
-        window.contentView = nil
-    }
-
-    private func settle() {
-        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
-    }
-
-    private func barHasFocusRing(_ host: NSView) -> Bool {
-        host.layoutSubtreeIfNeeded()
-        return focusRings(in: host).contains { $0.convert($0.bounds, to: host).minY >= Self.barRowMinY }
-    }
-
-    private func focusRings(in view: NSView) -> [NSView] {
-        (String(describing: type(of: view)).contains("_FocusRingView") ? [view] : [])
-            + view.subviews.flatMap { focusRings(in: $0) }
-    }
-
-    private func drag(_ host: NSView, fromX startX: CGFloat, toX endX: CGFloat) throws {
-        let window = try XCTUnwrap(host.window)
-        // Window coordinates are unflipped: the middle of the bar's track row, measured from the bottom.
-        let y = Self.size.height - Self.barRowMinY - SettingsPlaybackScrubBar.knobDiameter / 2 - 2
-        for (type, x) in [
-            (NSEvent.EventType.leftMouseDown, startX),
-            (.leftMouseDragged, (startX + endX) / 2),
-            (.leftMouseDragged, endX),
-            (.leftMouseUp, endX),
-        ] {
-            try window.sendEvent(XCTUnwrap(NSEvent.mouseEvent(
-                with: type, location: NSPoint(x: x, y: y), modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1
-            )))
-            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
-        }
-        settle()
-    }
-
-    private func arrow(right: Bool, window: NSWindow) throws -> NSEvent {
-        let character = right ? "\u{F703}" : "\u{F702}"
-        return try XCTUnwrap(NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: [.numericPad, .function], timestamp: 0,
-            windowNumber: window.windowNumber, context: nil, characters: character,
-            charactersIgnoringModifiers: character, isARepeat: false, keyCode: right ? 124 : 123
-        ))
+        return playback
     }
 }
 
