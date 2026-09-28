@@ -95,7 +95,9 @@ final class SetupWizardArtifactTests: XCTestCase {
         while model.step != step {
             if skipping.contains(model.step) { model.skipStep() } else { model.continueToNextStep() }
         }
-        let controller = SetupWizardController(store: SetupWizardCompletionStore(defaults: defaults), model: model)
+        let controller = SetupWizardController(
+            store: SetupWizardCompletionStore(defaults: defaults), model: model, relayRun: relayRun
+        )
         return SetupWizardView(
             controller: controller,
             dependencies: SetupWizardDependencies(
@@ -104,7 +106,6 @@ final class SetupWizardArtifactTests: XCTestCase {
                 defaultMicrophoneName: { microphone },
                 tryItObservation: { tryIt }
             ),
-            initialRelayRun: relayRun,
             initialTryItBaseline: .some(nil)
         )
         .frame(width: SetupWizardView.contentSize.width, height: SetupWizardView.contentSize.height)
