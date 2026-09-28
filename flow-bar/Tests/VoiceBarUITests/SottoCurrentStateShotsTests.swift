@@ -256,6 +256,20 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                      "Settings General: Advanced expanded, F5 key helper installed (Reinstall, plain copy)",
                      settings(tab: .general, vocabulary: empty, advanced: true, remapActive: true),
                      size: CGSize(width: 960, height: 1180), appearance: appearance)
+            // C13: what Reinstall did, read back from the probes, and a plain failure.
+            let finished = Calendar.current.date(bySettingHour: 14, minute: 2, second: 0, of: Date()) ?? Date()
+            for (state, result) in [
+                ("ready", SettingsRelaySetupResult(outcome: .ready, finishedAt: finished)),
+                ("failed", SettingsRelaySetupResult.installerRun(
+                    exitCode: 1, output: "ERROR: plist template not found", missingAfter: [], finishedAt: finished
+                )),
+            ] {
+                try shot("settings-general-advanced-reinstall-\(state)\(suffix).png",
+                         "Settings General: Advanced, after Reinstall (\(state))",
+                         settings(tab: .general, vocabulary: empty, advanced: true, remapActive: true,
+                                  relayFeedback: (.reinstall, result)),
+                         size: CGSize(width: 960, height: 1180), appearance: appearance)
+            }
             try shot("settings-general-permission-missing\(suffix).png",
                      "Settings General: Input Monitoring missing (Open shown only on the missing row)",
                      settings(tab: .general, vocabulary: empty, missingPermissions: [.inputMonitoring]),
@@ -463,7 +477,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         historyDetail: Bool = true,
         modelState: ModelsSettingsState = .loading,
         footerMode: VoiceMode = .idle,
-        hiddenUntil: Date? = nil
+        hiddenUntil: Date? = nil,
+        relayFeedback: (action: SettingsRelaySetupFeedback.Action, result: SettingsRelaySetupResult?)? = nil
     ) -> SettingsView {
         let historyFixture = historyDetail
             ? syntheticHistoryPage ?? SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
@@ -512,7 +527,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                                          errorMessage: nil, remoteSTTConfigured: false, hasFreshHealth: true)
                             },
                             initialTab: tab, initialDictionarySearch: search,
-                            initialAdvancedExpanded: advanced)
+                            initialAdvancedExpanded: advanced,
+                            initialRelaySetupFeedback: relayFeedback)
     }
 
     private func menuShots(
