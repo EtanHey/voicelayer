@@ -17,6 +17,9 @@ public struct SetupWizardDependencies {
     public var defaultMicrophoneName: () -> String?
     /// Settings › General scrolled to Microphone priority, as "Change…" does from the menu and popover.
     public var onChangeMicrophone: () -> Void
+    /// The last dictation, its insertion status and whether one is recording or transcribing — what Settings'
+    /// "Last dictation" card reads. Read twice a second while Try it shows.
+    public var tryItObservation: () -> SetupTryItObservation
 
     public init(
         permissionSnapshot: @escaping () -> SetupPermissionSnapshot = { .unknown },
@@ -27,7 +30,8 @@ public struct SetupWizardDependencies {
             completion(SettingsRelaySetupResult(outcome: .failed(reason: "not available here"), finishedAt: Date()))
         },
         defaultMicrophoneName: @escaping () -> String? = { nil },
-        onChangeMicrophone: @escaping () -> Void = {}
+        onChangeMicrophone: @escaping () -> Void = {},
+        tryItObservation: @escaping () -> SetupTryItObservation = { .none }
     ) {
         self.permissionSnapshot = permissionSnapshot
         self.onRequestMicrophone = onRequestMicrophone
@@ -36,6 +40,7 @@ public struct SetupWizardDependencies {
         self.onRunRelaySetup = onRunRelaySetup
         self.defaultMicrophoneName = defaultMicrophoneName
         self.onChangeMicrophone = onChangeMicrophone
+        self.tryItObservation = tryItObservation
     }
 }
 
@@ -101,7 +106,12 @@ public struct SetupWizardView: View {
         case .microphone:
             SetupWizardMicrophoneBody(dependencies: dependencies)
         case .tryIt:
-            EmptyView()
+            SetupWizardTryItBody(
+                dependencies: dependencies,
+                tracker: controller.tryIt,
+                onObserve: { controller.observeTryIt($0) },
+                onFix: { controller.goBack(to: $0) }
+            )
         }
     }
 }

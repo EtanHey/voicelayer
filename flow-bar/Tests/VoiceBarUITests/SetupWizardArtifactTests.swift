@@ -48,6 +48,35 @@ final class SetupWizardArtifactTests: XCTestCase {
             ))
         )))
         cases.append(("microphone-none", wizard(at: .microphone, microphone: nil)))
+        let heard = RecentTranscriptionEntry(
+            text: "Testing the new microphone, one two three.", createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        cases.append(("tryIt-problems", wizard(
+            at: .tryIt,
+            permissions: SetupPermissionSnapshot(
+                microphone: .granted, accessibilityGranted: false, inputMonitoringGranted: true,
+                hotkeyListenerActive: false
+            ),
+            f5Key: SetupF5KeyStatus(listenerActive: false, helperInstalled: true)
+        )))
+        cases.append(("tryIt-listening", wizard(
+            at: .tryIt, tryIt: SetupTryItObservation(entry: nil, insertion: .unverified, activity: .recording)
+        )))
+        cases.append(("tryIt-typed", wizard(
+            at: .tryIt, tryIt: SetupTryItObservation(entry: heard, insertion: .pasted, activity: .idle)
+        )))
+        cases.append(("tryIt-not-typed", wizard(
+            at: .tryIt, tryIt: SetupTryItObservation(entry: heard, insertion: .notInserted, activity: .idle)
+        )))
+        var failedTracker = SetupTryItTracker(first: .none)
+        let emptyAttempt = SetupTryItObservation(
+            entry: nil, insertion: .unverified, activity: .idle, failure: "Transcription failed"
+        )
+        failedTracker.observe(emptyAttempt)
+        cases.append(("tryIt-heard-nothing", wizard(at: .tryIt, tryIt: emptyAttempt, tryItTracker: failedTracker)))
+        cases.append(("tryIt-typing-failed", wizard(
+            at: .tryIt, tryIt: SetupTryItObservation(entry: heard, insertion: .failed, activity: .idle)
+        )))
         cases.append(("permissions-restart", wizard(at: .permissions, permissions: SetupPermissionSnapshot(
             microphone: .granted, accessibilityGranted: true, inputMonitoringGranted: true, hotkeyListenerActive: false
         ))))
@@ -65,7 +94,9 @@ final class SetupWizardArtifactTests: XCTestCase {
         permissions: SetupPermissionSnapshot = .allGranted,
         f5Key: SetupF5KeyStatus = SetupF5KeyStatus(listenerActive: true, helperInstalled: true),
         relayRun: SetupRelayRun? = nil,
-        microphone: String? = "Studio USB Mic"
+        microphone: String? = "Studio USB Mic",
+        tryIt: SetupTryItObservation = .none,
+        tryItTracker: SetupTryItTracker? = nil
     ) -> some View {
         let suite = "SetupWizardArtifactTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -75,14 +106,18 @@ final class SetupWizardArtifactTests: XCTestCase {
             if skipping.contains(model.step) { model.skipStep() } else { model.continueToNextStep() }
         }
         let controller = SetupWizardController(
-            store: SetupWizardCompletionStore(defaults: defaults), model: model, relayRun: relayRun
+            store: SetupWizardCompletionStore(defaults: defaults),
+            model: model,
+            relayRun: relayRun,
+            tryIt: tryItTracker ?? SetupTryItTracker(first: .none)
         )
         return SetupWizardView(
             controller: controller,
             dependencies: SetupWizardDependencies(
                 permissionSnapshot: { permissions },
                 f5KeyStatus: { f5Key },
-                defaultMicrophoneName: { microphone }
+                defaultMicrophoneName: { microphone },
+                tryItObservation: { tryIt }
             )
         )
         .frame(width: SetupWizardView.contentSize.width, height: SetupWizardView.contentSize.height)
