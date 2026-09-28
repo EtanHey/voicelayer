@@ -89,15 +89,21 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
             visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
         )
         let maximumCompactWingWidth = VoiceBarNotchContract.morphCanvasWingCapacity
+        // The canvas's wings reach as far as its body does. `coreOriginX` reads the wings when there is no
+        // lower surface and the body when there is one, so wings narrower than the body put the core 10 pt
+        // further right once History or the teleprompter opened; the window moved back 10 pt in a separate
+        // AppKit commit and every control jumped for a frame (lane C3).
         let canvasGeometry = VoiceBarNotchGeometry(
             coreWidth: teleprompterGeometry.coreWidth,
             topHeight: teleprompterGeometry.topHeight,
             leadingWingWidth: max(
                 teleprompterGeometry.leadingWingWidth,
+                teleprompterGeometry.bodyLeadingExtent,
                 maximumCompactWingWidth
             ),
             trailingWingWidth: max(
                 teleprompterGeometry.trailingWingWidth,
+                teleprompterGeometry.bodyTrailingExtent,
                 maximumCompactWingWidth
             ),
             bodyLeadingExtent: max(
