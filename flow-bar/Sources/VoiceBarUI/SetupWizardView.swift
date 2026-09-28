@@ -13,6 +13,10 @@ public struct SetupWizardDependencies {
     public var f5KeyStatus: () -> SetupF5KeyStatus
     /// Settings' Set up / Reinstall of the F5 key helper, with its #193 result.
     public var onRunRelaySetup: (@escaping (SettingsRelaySetupResult) -> Void) -> Void
+    /// The microphone-priority default every read-only row shows (the app's `defaultMicrophoneName()`).
+    public var defaultMicrophoneName: () -> String?
+    /// Settings › General scrolled to Microphone priority, as "Change…" does from the menu and popover.
+    public var onChangeMicrophone: () -> Void
 
     public init(
         permissionSnapshot: @escaping () -> SetupPermissionSnapshot = { .unknown },
@@ -21,13 +25,17 @@ public struct SetupWizardDependencies {
         f5KeyStatus: @escaping () -> SetupF5KeyStatus = { .unknown },
         onRunRelaySetup: @escaping (@escaping (SettingsRelaySetupResult) -> Void) -> Void = { completion in
             completion(SettingsRelaySetupResult(outcome: .failed(reason: "not available here"), finishedAt: Date()))
-        }
+        },
+        defaultMicrophoneName: @escaping () -> String? = { nil },
+        onChangeMicrophone: @escaping () -> Void = {}
     ) {
         self.permissionSnapshot = permissionSnapshot
         self.onRequestMicrophone = onRequestMicrophone
         self.openURL = openURL
         self.f5KeyStatus = f5KeyStatus
         self.onRunRelaySetup = onRunRelaySetup
+        self.defaultMicrophoneName = defaultMicrophoneName
+        self.onChangeMicrophone = onChangeMicrophone
     }
 }
 
@@ -90,7 +98,9 @@ public struct SetupWizardView: View {
                 onRunHelper: { controller.startRelaySetup($0, using: dependencies.onRunRelaySetup) },
                 onFix: { controller.goBack(to: $0) }
             )
-        case .microphone, .tryIt:
+        case .microphone:
+            SetupWizardMicrophoneBody(dependencies: dependencies)
+        case .tryIt:
             EmptyView()
         }
     }
