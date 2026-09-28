@@ -484,6 +484,53 @@ final class SocketServerTests: XCTestCase {
         XCTAssertEqual(state.hotkeyPhase, .idle)
         XCTAssertEqual(state.errorMessage, "VoiceLayer is starting")
     }
+
+    /// UXP-1: the daemon's `vocab_list` reply is over 8 KiB and carries the bundled rows' Hebrew variants, so a
+    /// socket read can end inside a multi-byte character. Each read chunk used to be decoded on its own, a split
+    /// chunk decoded to nil and was dropped, and the reply arrived as "Bad JSON" — Settings read "Included terms (0)".
+    func testALineSplitInsideAMultiByteCharacterAcrossTwoReadsStillArrives() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let socketURL = directory.appendingPathComponent("voicelayer.sock")
+        let state = VoiceState()
+        let server = SocketServer(state: state, socketPath: socketURL.path)
+        server.start()
+        defer { server.stop() }
+
+        XCTAssertTrue(waitForSocket(at: socketURL.path))
+        let daemon = try connectUnixSocket(path: socketURL.path)
+        defer { close(daemon) }
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#,
+            to: daemon
+        )
+        XCTAssertTrue(waitForConnectionStatus(state, connected: true, timeout: 1))
+
+        // Synthetic rows only. "אבג" is three 2-byte characters; the split lands inside the first one.
+        let reply = #"{"type":"vocab_list","entries":[],"display_entries":["#
+            + #"{"row_id":"bundled:Synthterm","source":"bundled","canonical":"Synthterm","variants":["אבג"]}]}"#
+            + "\n"
+        let bytes = Array(reply.utf8)
+        let hebrewStart = try XCTUnwrap(bytes.firstIndex(of: 0xD7))
+        let split = hebrewStart + 1
+        try writeBytes(Array(bytes[..<split]), to: daemon)
+        Thread.sleep(forTimeInterval: 0.15) // let the server read the first half on its own
+        try writeBytes(Array(bytes[split...]), to: daemon)
+
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline, state.transcriptionVocabularyDisplayEntries == nil {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        let rows = try XCTUnwrap(
+            state.transcriptionVocabularyDisplayEntries,
+            "the vocab_list reply split inside a multi-byte character never reached VoiceState"
+        )
+        XCTAssertEqual(rows.map(\.rowID), ["bundled:Synthterm"])
+        XCTAssertEqual(rows.first?.entry.variants, ["אבג"])
+    }
 }
 
 /// Runtime-only leg. The Bun corpus harness owns the daemon lifecycle, then
@@ -1216,7 +1263,10 @@ private func connectUnixSocketOnce(path: String) throws -> Int32 {
 }
 
 private func writeLine(_ line: String, to fd: Int32) throws {
-    let payload = Array((line + "\n").utf8)
+    try writeBytes(Array((line + "\n").utf8), to: fd)
+}
+
+private func writeBytes(_ payload: [UInt8], to fd: Int32) throws {
     var offset = 0
     while offset < payload.count {
         let written = payload.withUnsafeBufferPointer { ptr in
