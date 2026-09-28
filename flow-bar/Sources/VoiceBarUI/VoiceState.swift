@@ -126,6 +126,11 @@ private struct HistoryRetranscriptionRequest {
     private var activePath: String?
     private var pendingIntent: Intent?
     private var suppressedPaths = Set<String>()
+    /// Outstanding History requests per recording path whose result has not arrived yet. Request cleanup (another
+    /// client's error, the transcription timeout) never clears these: a late result is still an old recording, not a
+    /// new dictation (QA 2.2.25 C9, #186 review). A count, not a set, so a rejected same-path retry undoes only its
+    /// own request. Each result for that path, or each refused request, removes one.
+    private var awaitedArchivedResults: [String: Int] = [:]
 
     var isPending: Bool {
         activePath != nil
@@ -140,6 +145,19 @@ private struct HistoryRetranscriptionRequest {
         activePath = path
         pendingIntent = Intent(id: id, path: path)
         suppressedPaths.insert(path)
+        awaitedArchivedResults[path, default: 0] += 1
+        return true
+    }
+
+    /// Whether a result for `path` answers a History request, even one already cleaned up. Consumes one.
+    mutating func takeArchivedOrigin(for path: String) -> Bool {
+        releaseArchivedOrigin(for: path)
+    }
+
+    @discardableResult
+    private mutating func releaseArchivedOrigin(for path: String) -> Bool {
+        guard let count = awaitedArchivedResults[path] else { return false }
+        awaitedArchivedResults[path] = count > 1 ? count - 1 : nil
         return true
     }
 
@@ -181,6 +199,7 @@ private struct HistoryRetranscriptionRequest {
     mutating func reject(path: String?) {
         if let path {
             suppressedPaths.remove(path)
+            releaseArchivedOrigin(for: path)
             if activePath == path {
                 activePath = nil
             }
@@ -1947,7 +1966,8 @@ public final class VoiceState {
         _ text: String,
         recordingPath: String? = nil,
         dictationReceipt: DictationReceipt? = nil,
-        preservingExistingReceipt: Bool = false
+        preservingExistingReceipt: Bool = false,
+        insertingWhenAbsent: Bool = true
     ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -1968,6 +1988,10 @@ public final class VoiceState {
             )
             recentTranscriptionEntries[existingIndex] = entry
         } else {
+            // AIDEV-NOTE: a History re-transcription rewrites an OLD recording. Inserting it here made a days-old
+            // recording the top "Just now" row, evicted the eighth, and turned it into the "last transcript" that
+            // Paste / Copy Last reuse (QA 2.2.25 C9). Rows already in the list are still updated in place above.
+            guard insertingWhenAbsent else { return }
             let entry = RecentTranscriptionEntry(
                 text: trimmed,
                 recordingPath: normalizedPath,
@@ -2325,20 +2349,46 @@ public final class VoiceState {
         recordingPath: String? = nil,
         dictationReceipt: DictationReceipt? = nil
     ) {
+        let wasHistoryRetranscription = recordingPath.map { path in
+            historyRetranscriptionRequest.suppressesPaste(for: path)
+        } ?? false
+        // Outlives request cleanup, so an archived result that arrives after an error or timeout is still recognised.
+        let isArchivedResult = recordingPath.map { path in
+            historyRetranscriptionRequest.takeArchivedOrigin(
+                for: path.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        } ?? false
+        let rewritesArchivedRecording = wasHistoryRetranscription || isArchivedResult
+        // AIDEV-NOTE: a History result whose request was already cleaned up belongs to no live capture. It only
+        // rewrites its archive row; it must never paste, claim the last-dictation card, or end the timeouts/idle of
+        // a dictation that started since (#186 review round 2: it pasted the archived text into the new target).
+        if isArchivedResult, !wasHistoryRetranscription {
+            rememberRecentTranscription(
+                text,
+                recordingPath: recordingPath,
+                preservingExistingReceipt: true,
+                insertingWhenAbsent: false
+            )
+            if let recordingPath { onHistoryArchiveChange?(recordingPath) }
+            refreshTranscriptionVocabulary()
+            logDiagnostic("transcription_final_archived_late", details: [
+                "textLength": String(text.count),
+                "recordingPath": recordingPath ?? "nil",
+            ])
+            return
+        }
         transcriptionTimeoutTask?.cancel()
         cancelDeferredFinalTranscription()
         transcribingStartedAt = nil
         transcribingStatusText = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         transcript = text
-        let wasHistoryRetranscription = recordingPath.map { path in
-            historyRetranscriptionRequest.suppressesPaste(for: path)
-        } ?? false
         rememberRecentTranscription(
             text,
             recordingPath: recordingPath,
-            dictationReceipt: wasHistoryRetranscription ? nil : dictationReceipt,
-            preservingExistingReceipt: wasHistoryRetranscription
+            dictationReceipt: rewritesArchivedRecording ? nil : dictationReceipt,
+            preservingExistingReceipt: rewritesArchivedRecording,
+            insertingWhenAbsent: !rewritesArchivedRecording
         )
         if recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             onHistoryArchiveChange?(recordingPath)
@@ -2362,13 +2412,13 @@ public final class VoiceState {
             barInitiatedRecording
                 && !remoteOwnedRecording
                 && !supersededRemoteTranscriptPending
-                && !wasHistoryRetranscription
+                && !rewritesArchivedRecording
         let shouldPasteRecoveredTranscription =
             pendingRecoveredTranscriptionPaste
                 && !remoteCaptureBlocksPaste
-                && !wasHistoryRetranscription
+                && !rewritesArchivedRecording
         let normalizedRecordingPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cardIsThisDictation = !wasHistoryRetranscription && !remoteCaptureBlocksPaste
+        let cardIsThisDictation = !rewritesArchivedRecording && !remoteCaptureBlocksPaste
             && (barInitiatedRecording || pendingRecoveredTranscriptionPaste || pendingRecordingIdleAfterFinal)
             && recentTranscriptionEntries.first?.text == text.trimmingCharacters(in: .whitespacesAndNewlines)
             && recentTranscriptionEntries.first?.recordingPath == (normalizedRecordingPath?.isEmpty == false
