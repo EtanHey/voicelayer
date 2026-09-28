@@ -33,6 +33,7 @@ import {
   isPingRequest,
   buildPongResponse,
 } from "./daemon-health";
+import { MAX_NDJSON_LINE_BYTES } from "./ndjson-byte-framer";
 
 export interface McpDaemonOptions {
   /** Unix socket path to listen on. */
@@ -46,6 +47,8 @@ export interface McpDaemonOptions {
 interface ClientState {
   protocol: "mcp" | "ndjson" | "unknown";
   buffer: string;
+  decoder: TextDecoder;
+  oversized: boolean;
   disconnected: boolean;
   loggingLevel?: McpLoggingLevel;
 }
@@ -125,18 +128,27 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     unix: socketPath,
     socket: {
       open(socket) {
-        socket.data = { protocol: "unknown", buffer: "", disconnected: false };
+        socket.data = {
+          protocol: "unknown", buffer: "", decoder: new TextDecoder(),
+          oversized: false, disconnected: false,
+        };
         onConnect();
       },
 
       data(socket, raw) {
-        const chunk = raw.toString("utf-8");
+        if (socket.data.oversized) return;
+        // The socket also carries Content-Length MCP frames; streaming decode preserves UTF-8
+        // for both protocols while the existing MCP frame parser keeps its byte counts.
+        const chunk = socket.data.decoder.decode(raw, { stream: true });
         socket.data.buffer += chunk;
 
         // Detect protocol on first data
         if (socket.data.protocol === "unknown") {
           socket.data.protocol = detectProtocol(socket.data.buffer);
           if (socket.data.protocol === "unknown") {
+            if (Buffer.byteLength(socket.data.buffer, "utf8") > MAX_NDJSON_LINE_BYTES) {
+              closeOversizedClient(socket);
+            }
             return; // Need more data
           }
         }
@@ -273,6 +285,10 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     socket.data.buffer = lines.pop() ?? "";
 
     for (const line of lines) {
+      if (Buffer.byteLength(line, "utf8") > MAX_NDJSON_LINE_BYTES) {
+        closeOversizedClient(socket);
+        return;
+      }
       if (!line.trim()) continue;
       try {
         const msg = JSON.parse(line);
@@ -352,6 +368,16 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         // Invalid JSON line — skip
       }
     }
+    if (Buffer.byteLength(socket.data.buffer, "utf8") > MAX_NDJSON_LINE_BYTES) {
+      closeOversizedClient(socket);
+    }
+  }
+
+  function closeOversizedClient(socket: { data: ClientState; end: () => void }) {
+    socket.data.oversized = true;
+    socket.data.buffer = "";
+    console.error("[mcp-daemon] NDJSON message exceeded byte limit; closing client");
+    socket.end();
   }
 
   return {
