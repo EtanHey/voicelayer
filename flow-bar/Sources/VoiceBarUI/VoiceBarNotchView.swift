@@ -39,6 +39,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private let morphVariant: VoiceBarNotchMorphVariant
     private let canvasGeometry: VoiceBarNotchGeometry?
     @State private var renderedGeometry: VoiceBarNotchGeometry
+    @State private var renderedOuterCornerRadius: CGFloat
     @State private var surfaceRevealProgress: CGFloat
     @Namespace private var morphNamespace
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -58,6 +59,9 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         self.morphVariant = morphVariant
         self.canvasGeometry = canvasGeometry
         _renderedGeometry = State(initialValue: presentation.geometry)
+        _renderedOuterCornerRadius = State(
+            initialValue: VoiceBarNotchContract.material.compactOuterCornerRadius(for: presentation.visualState)
+        )
         _surfaceRevealProgress = State(
             initialValue: presentation.visualState == .idle ? 0 : 1
         )
@@ -97,6 +101,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         .onHover(perform: onHoverChanged)
         .onAppear {
             renderedGeometry = presentation.geometry
+            renderedOuterCornerRadius = compactOuterCornerRadius
             surfaceRevealProgress = presentation.visualState == .idle ? 0 : 1
         }
         .onChange(of: presentation.geometry) { _, nextGeometry in
@@ -104,8 +109,16 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 && nextGeometry.lowerSurfaceHeight == 0
                 ? VoiceBarNotchContract.motion.contentExitDuration
                 : 0
+            // The radius rides the same transaction as the geometry, so the two interpolate together.
             withAnimation(shellAnimation.delay(closingGeometryDelay)) {
                 renderedGeometry = nextGeometry
+                renderedOuterCornerRadius = compactOuterCornerRadius
+            }
+        }
+        .onChange(of: compactOuterCornerRadius) { _, nextRadius in
+            guard renderedGeometry == presentation.geometry else { return } // the geometry change carries it
+            withAnimation(shellAnimation) {
+                renderedOuterCornerRadius = nextRadius
             }
         }
         .task(id: presentation.visualState) {
@@ -258,7 +271,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private var notchSurface: some View {
         let shape = VoiceBarNotchContinuousShape(
             geometry: renderedGeometry,
-            compactOuterCornerRadius: compactOuterCornerRadius,
+            compactOuterCornerRadius: renderedOuterCornerRadius,
             coreAnchorX: resolvedCanvasGeometry.coreOriginX
         )
         return ZStack(alignment: .topLeading) {

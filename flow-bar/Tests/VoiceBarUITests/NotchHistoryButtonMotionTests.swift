@@ -4,7 +4,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// Lane C3: tapping History must not move its button, and its selected colour must ease in rather than snap.
+/// Lane C3: tapping History must not move its button, and its selected plate must ease in rather than snap.
+/// UXP-2 made that plate neutral (red is for recording only); the easing contract is unchanged.
 @MainActor
 final class NotchHistoryButtonMotionTests: XCTestCase {
     /// The panel window is placed so the core lands on the camera housing:
@@ -58,7 +59,7 @@ final class NotchHistoryButtonMotionTests: XCTestCase {
             if red != (samples.last ?? idle) { samples.append(red) }
         }
         let selected = try XCTUnwrap(samples.last, "the plate never changed colour")
-        XCTAssertGreaterThan(selected - idle, 20, "the selected plate should read as red")
+        XCTAssertGreaterThan(selected - idle, 20, "the selected plate should read as selected (a neutral plate)")
         let firstStep = Double(samples[0] - idle) / Double(selected - idle)
         XCTAssertLessThan(
             firstStep, 0.9,
@@ -156,10 +157,14 @@ private typealias SelectionBox = NotchHistorySelectionBox
 private struct SelectionHarness: View {
     let box: NotchHistorySelectionBox
     var body: some View {
+        // Mirrors BarView: History is navigation, so its glyph keeps the primary label colour when open (UXP-2).
+        let role = VoiceBarNotchGlyphForegroundRole.resolve(
+            isDestructive: false, isSelected: box.isSelected, selectionStyle: .navigation
+        )
         VoiceBarPillControlButton(
             icon: "clock.arrow.circlepath", optics: .resolve(for: "clock.arrow.circlepath"),
-            foreground: box.isSelected ? Theme.recordingColor : box.isDark ? .white : .black, halo: .clear,
-            isSelected: box.isSelected, isDestructive: false,
+            foreground: role == .stateAccent ? Theme.recordingColor : box.isDark ? .white : .black, halo: .clear,
+            isSelected: box.isSelected, selectionStyle: .navigation, isDestructive: false,
             accessibilityLabel: "History", accessibilityHint: "", action: {}
         )
         .frame(width: 60, height: 60)

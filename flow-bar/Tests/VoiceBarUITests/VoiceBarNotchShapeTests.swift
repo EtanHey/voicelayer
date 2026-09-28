@@ -33,7 +33,7 @@ final class VoiceBarNotchShapeTests: XCTestCase {
         XCTAssertEqual(layout.trailingWingRect, CGRect(x: 325, y: 0, width: 78, height: 32))
         XCTAssertEqual(layout.bodyRect, CGRect(x: 0, y: 32, width: 465, height: 196))
         XCTAssertEqual(layout.inverseJoinRadius, 5)
-        XCTAssertEqual(layout.lowerCornerRadius, 18)
+        XCTAssertEqual(VoiceBarNotchContract.material.compactOuterCornerRadius(for: .teleprompter), 18)
         XCTAssertEqual(layout.coreRect.midX, layout.bodyRect.midX)
     }
 
@@ -82,7 +82,7 @@ final class VoiceBarNotchShapeTests: XCTestCase {
         midpoint.scale(by: 0.5)
         var shape = VoiceBarNotchContinuousShape(geometry: compact)
 
-        shape.animatableData = midpoint
+        shape.animatableData.first = midpoint
 
         XCTAssertEqual(shape.geometry.coreWidth, (compact.coreWidth + expanded.coreWidth) / 2)
         XCTAssertEqual(shape.geometry.leadingWingWidth, (compact.leadingWingWidth + expanded.leadingWingWidth) / 2)

@@ -45,13 +45,17 @@ final class NotchHistoryPanelTests: XCTestCase {
                 XCTAssertEqual(geometry.bodyLeadingExtent, geometry.bodyTrailingExtent, "symmetric about the core")
             }
         }
+        // UXP-2: the History body is flush with the launcher wings, and a flush side is drawn straight down (the
+        // old S-hook came from a shoulder curve drawn at the wing's own x; a flush shoulder now has no depth).
         for core in [CGFloat(185), 200, 220] {
             let history = VoiceBarNotchContract.geometry(for: .history, coreWidth: core)
-            XCTAssertGreaterThanOrEqual(
-                history.bodyTrailingExtent,
-                history.trailingWingWidth + VoiceBarNotchContract.historyShoulderClearance,
-                "a flush wing and body edge draws an S-hook; the body clears the wing like the teleprompter's"
-            )
+            XCTAssertEqual(history.bodyTrailingExtent, history.trailingWingWidth, "flush @\(core)")
+            let path = VoiceBarNotchContinuousShape(
+                geometry: history,
+                compactOuterCornerRadius: VoiceBarNotchContract.material.compactOuterCornerRadius(for: .history)
+            ).path(in: CGRect(x: 0, y: 0, width: history.totalWidth, height: history.totalHeight))
+            XCTAssertEqual(path.boundingRect.minX, 0, accuracy: 0.001, "no hook sticks out @\(core)")
+            XCTAssertEqual(path.boundingRect.maxX, history.totalWidth, accuracy: 0.001, "no hook sticks out @\(core)")
         }
         XCTAssertLessThan(VoiceBarNotchContract.geometry(for: .history).bodyWidth,
                           VoiceBarNotchContract.geometry(for: .teleprompter).bodyWidth, "still narrower")

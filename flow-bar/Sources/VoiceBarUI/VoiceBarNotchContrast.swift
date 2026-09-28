@@ -12,15 +12,42 @@ public enum VoiceBarNotchAppearance: Equatable {
     }
 }
 
+/// What "selected" means for a notch control (UX pass #3). Red is the recording colour, so only a control whose
+/// selection *is* a recording state (the hold lock) turns red; an open History panel is navigation and stays neutral.
+public enum VoiceBarNotchSelectionStyle: Equatable {
+    case navigation
+    case recordingState
+}
+
 public enum VoiceBarNotchGlyphForegroundRole: Equatable {
     case primaryLabel
     case stateAccent
 
     public static func resolve(
         isDestructive: Bool,
-        isSelected: Bool
+        isSelected: Bool,
+        selectionStyle: VoiceBarNotchSelectionStyle
     ) -> Self {
-        isDestructive || isSelected ? .stateAccent : .primaryLabel
+        isDestructive || (isSelected && selectionStyle == .recordingState) ? .stateAccent : .primaryLabel
+    }
+}
+
+public enum VoiceBarNotchControlPlate: Equatable {
+    case recordingSolid
+    case recordingSelected
+    case neutralSelected
+    case hover
+    case none
+
+    public static func resolve(
+        isDestructive: Bool,
+        isSelected: Bool,
+        selectionStyle: VoiceBarNotchSelectionStyle,
+        isHovered: Bool
+    ) -> Self {
+        if isDestructive { return .recordingSolid }
+        if isSelected { return selectionStyle == .recordingState ? .recordingSelected : .neutralSelected }
+        return isHovered ? .hover : .none
     }
 }
 

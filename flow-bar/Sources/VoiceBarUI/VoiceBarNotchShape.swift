@@ -9,16 +9,31 @@ public enum VoiceBarNotchSide: Equatable, Sendable {
 public struct VoiceBarNotchShapeLayout: Equatable {
     public let geometry: VoiceBarNotchGeometry
     public let inverseJoinRadius: CGFloat
-    public let lowerCornerRadius: CGFloat
+    /// How far each visible wing's glass runs in under the housing (UXP-2). The housing's lower corners are
+    /// rounded, so a wing that stopped at the core's edge left an unpainted pocket beside each corner. The glass
+    /// still never reaches the housing's middle.
+    public let housingTuck: CGFloat
 
     public init(
         geometry: VoiceBarNotchGeometry,
         inverseJoinRadius: CGFloat = VoiceBarNotchContract.material.inverseJoinRadius,
-        lowerCornerRadius: CGFloat = 18
+        housingTuck: CGFloat = VoiceBarNotchContract.material.hardwareCoreLowerCornerRadius
     ) {
         self.geometry = geometry
         self.inverseJoinRadius = inverseJoinRadius
-        self.lowerCornerRadius = lowerCornerRadius
+        self.housingTuck = housingTuck
+    }
+
+    /// The housing cut-out the glass leaves open: the core, narrowed by the tuck on each side that has a wing.
+    public var housingCutout: CGRect {
+        let leading = geometry.leadingWingWidth > 0 ? housingTuck : 0
+        let trailing = geometry.trailingWingWidth > 0 ? housingTuck : 0
+        return CGRect(
+            x: coreRect.minX + leading,
+            y: 0,
+            width: max(0, coreRect.width - leading - trailing),
+            height: geometry.topHeight
+        )
     }
 
     public var totalSize: CGSize {
@@ -249,9 +264,14 @@ public struct VoiceBarNotchContinuousShape: Shape {
         self.coreAnchorX = coreAnchorX
     }
 
-    public var animatableData: VoiceBarNotchGeometryAnimatableData {
-        get { VoiceBarNotchGeometryAnimatableData(geometry: geometry) }
-        set { geometry = newValue.geometry }
+    /// The outer radius is animated with the geometry (Lane C follow-up): as a plain stored value it jumped to
+    /// the destination state's radius on the first frame of every morph.
+    public var animatableData: AnimatablePair<VoiceBarNotchGeometryAnimatableData, CGFloat> {
+        get { AnimatablePair(VoiceBarNotchGeometryAnimatableData(geometry: geometry), compactOuterCornerRadius) }
+        set {
+            geometry = newValue.first.geometry
+            compactOuterCornerRadius = newValue.second
+        }
     }
 
     public func path(in rect: CGRect) -> Path {
@@ -284,22 +304,25 @@ public struct VoiceBarNotchContinuousShape: Shape {
 
     private func compactPath(layout: VoiceBarNotchShapeLayout) -> Path {
         var path = Path()
+        let cutout = layout.housingCutout
         if layout.leadingWingRect.width > 0 {
+            let wing = layout.leadingWingRect
             path.addPath(
                 VoiceBarNotchWingShape(
                     side: .leading,
                     outerCornerRadius: compactOuterCornerRadius
                 )
-                .path(in: layout.leadingWingRect)
+                .path(in: CGRect(x: wing.minX, y: wing.minY, width: cutout.minX - wing.minX, height: wing.height))
             )
         }
         if layout.trailingWingRect.width > 0 {
+            let wing = layout.trailingWingRect
             path.addPath(
                 VoiceBarNotchWingShape(
                     side: .trailing,
                     outerCornerRadius: compactOuterCornerRadius
                 )
-                .path(in: layout.trailingWingRect)
+                .path(in: CGRect(x: cutout.maxX, y: wing.minY, width: wing.maxX - cutout.maxX, height: wing.height))
             )
         }
         return path
@@ -309,21 +332,28 @@ public struct VoiceBarNotchContinuousShape: Shape {
         let body = layout.bodyRect
         let leadingWing = layout.leadingWingRect
         let trailingWing = layout.trailingWingRect
-        let core = layout.coreRect
+        let core = layout.housingCutout
+        // A shoulder can only be as deep as the body sticks out past its wing: a body flush with the wing
+        // (History, UXP-2) continues the wing's side straight down.
         let leadingShoulderRadius = min(
             layout.inverseJoinRadius,
             leadingWing.width,
-            layout.geometry.topHeight
+            layout.geometry.topHeight,
+            max(0, leadingWing.minX - body.minX)
         )
         let trailingShoulderRadius = min(
             layout.inverseJoinRadius,
             trailingWing.width,
-            layout.geometry.topHeight
+            layout.geometry.topHeight,
+            max(0, body.maxX - trailingWing.maxX)
         )
+        // With both sides flush the corner may reach up into the wings, so a panel one point tall keeps the
+        // wings' rounded corners instead of squaring them off.
+        let isFlush = leadingShoulderRadius == 0 && trailingShoulderRadius == 0
         let lowerRadius = min(
-            layout.lowerCornerRadius,
+            compactOuterCornerRadius,
             body.width / 2,
-            body.height / 2
+            isFlush ? (body.maxY / 2) : (body.height / 2)
         )
         var path = Path()
 
