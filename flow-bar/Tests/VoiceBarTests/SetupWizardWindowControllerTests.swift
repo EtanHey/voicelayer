@@ -75,6 +75,7 @@ final class SetupWizardWindowControllerTests: XCTestCase {
             "HotkeyManager.currentPermissionStatus()",
             "voiceState.lastDictationCardEntry",
             "voiceState.latestDictationInsertionStatus",
+            "failure: voiceState.mode == .error ? voiceState.errorMessage : nil",
             "onRunSetup: { [weak self] in self?.openSetupWizard() }",
             "onRunSetup: { appDelegate.openSetupWizardFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) }",
         ] {

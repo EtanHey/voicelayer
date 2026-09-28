@@ -2666,7 +2666,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return SetupTryItObservation(
                     entry: voiceState.lastDictationCardEntry,
                     insertion: voiceState.latestDictationInsertionStatus,
-                    activity: activity
+                    activity: activity,
+                    // An empty final is mode .error, "Transcription failed", with no new entry (#210 r1).
+                    failure: voiceState.mode == .error ? voiceState.errorMessage : nil
                 )
             }
         )
