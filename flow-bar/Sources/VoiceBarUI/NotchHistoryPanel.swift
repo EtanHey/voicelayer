@@ -62,10 +62,7 @@ struct NotchHistoryPanel: View {
                     .foregroundStyle(palette.secondary.color)
                 Spacer(minLength: 4)
                 if isRetranscribing {
-                    ProcessingSpinner()
-                    Text("Re-transcribing…")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(palette.secondary.color)
+                    HistoryRetranscribingBadge(fontSize: 10, color: palette.secondary.color)
                 } else {
                     if isCopied {
                         Text(NotchHistoryPresentation.copyTitle(isCopied: true))
