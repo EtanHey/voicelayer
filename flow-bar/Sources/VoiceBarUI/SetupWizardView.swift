@@ -51,21 +51,10 @@ public struct SetupWizardView: View {
 
     private let controller: SetupWizardController
     private let dependencies: SetupWizardDependencies
-    private let initialTryItBaseline: RecentTranscriptionEntry??
 
     public init(controller: SetupWizardController, dependencies: SetupWizardDependencies = SetupWizardDependencies()) {
-        self.init(controller: controller, dependencies: dependencies, initialTryItBaseline: nil)
-    }
-
-    /// Tests and artifacts start Try it with a baseline taken earlier (a helper run is seeded on the controller).
-    init(
-        controller: SetupWizardController,
-        dependencies: SetupWizardDependencies,
-        initialTryItBaseline: RecentTranscriptionEntry??
-    ) {
         self.controller = controller
         self.dependencies = dependencies
-        self.initialTryItBaseline = initialTryItBaseline
     }
 
     public var body: some View {
@@ -119,7 +108,8 @@ public struct SetupWizardView: View {
         case .tryIt:
             SetupWizardTryItBody(
                 dependencies: dependencies,
-                baseline: initialTryItBaseline,
+                tracker: controller.tryIt,
+                onObserve: { controller.observeTryIt($0) },
                 onFix: { controller.goBack(to: $0) }
             )
         }

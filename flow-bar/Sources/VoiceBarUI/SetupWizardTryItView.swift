@@ -3,25 +3,16 @@ import SwiftUI
 /// F3 step 4: dictate once in any app and see what VoiceBar heard in the wizard's own field.
 struct SetupWizardTryItBody: View {
     let dependencies: SetupWizardDependencies
+    /// The wizard controller's Try it memory (baseline + a failed attempt); it outlives this view (#210 r1).
+    let tracker: SetupTryItTracker?
+    let onObserve: (SetupTryItObservation) -> Void
     let onFix: (SetupWizardStep) -> Void
-    /// The last dictation when the step opened; a different one is this step's dictation.
-    @State private var baseline: RecentTranscriptionEntry??
     @State private var observation: SetupTryItObservation?
-
-    init(
-        dependencies: SetupWizardDependencies,
-        baseline: RecentTranscriptionEntry?? = nil,
-        onFix: @escaping (SetupWizardStep) -> Void
-    ) {
-        self.dependencies = dependencies
-        self.onFix = onFix
-        _baseline = State(initialValue: baseline)
-    }
 
     var body: some View {
         let current = observation ?? dependencies.tryItObservation()
         let step = SetupTryItStep(
-            baseline: baseline ?? current.entry,
+            tracker: tracker ?? SetupTryItTracker(first: current),
             observation: current,
             readiness: SetupReadiness(
                 permissions: dependencies.permissionSnapshot(),
@@ -67,14 +58,14 @@ struct SetupWizardTryItBody: View {
                 }
             }
         }
-        .onAppear {
-            let now = dependencies.tryItObservation()
-            if baseline == nil { baseline = .some(now.entry) }
-            observation = now
-        }
-        .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
-            observation = dependencies.tryItObservation()
-        }
+        .onAppear(perform: poll)
+        .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in poll() }
+    }
+
+    private func poll() {
+        let now = dependencies.tryItObservation()
+        onObserve(now)
+        observation = now
     }
 
     private func heardField(_ step: SetupTryItStep) -> some View {
