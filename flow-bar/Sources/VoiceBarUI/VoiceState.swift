@@ -1266,6 +1266,8 @@ public final class VoiceState {
         sendCommand?(STTVocabularyCommandPayload.list())
     }
 
+    public func requestVocabularySnapshotIfMissing() {}
+
     public func removeVocabularyPromptTerm(_ term: String) {
         let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

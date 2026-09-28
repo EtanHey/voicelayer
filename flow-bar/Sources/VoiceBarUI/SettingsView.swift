@@ -422,6 +422,7 @@ public struct SettingsView: View {
     public let vocabularyPreview: () -> STTVocabularyPreview
     private let hasInitialDictionaryPreview: Bool
     public let vocabularyRevision: () -> UInt64
+    public let onRequestVocabularySnapshot: () -> Void
     public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
     public let onAddPromptTerm: (String) -> Void
@@ -546,6 +547,7 @@ public struct SettingsView: View {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
         vocabularyRevision: @escaping () -> UInt64,
+        onRequestVocabularySnapshot: @escaping () -> Void = {},
         onAddVocabularyAlias: @escaping (String, String) -> Void = { _, _ in },
         onRemoveVocabularyAlias: @escaping (STTVocabularyAliasPreview) -> Void = { _ in },
         onAddPromptTerm: @escaping (String) -> Void = { _ in },
@@ -638,6 +640,7 @@ public struct SettingsView: View {
         self.vocabularyPreview = vocabularyPreview
         hasInitialDictionaryPreview = initialDictionaryPreview != nil
         self.vocabularyRevision = vocabularyRevision
+        self.onRequestVocabularySnapshot = onRequestVocabularySnapshot
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
         self.onAddPromptTerm = onAddPromptTerm
@@ -2641,6 +2644,26 @@ public struct SettingsView: View {
     static func dictionaryPlaceholder(loaded: Bool, personalIsEmpty: Bool, searching: Bool) -> DictionaryPlaceholder? {
         guard personalIsEmpty, !searching else { return nil }
         return loaded ? .empty : .loading
+    }
+
+    struct IncludedTermsHeader: Equatable {
+        let title: String
+        let isLoading: Bool
+        let showsChevron: Bool
+    }
+
+    static func includedTermsHeader(index: STTDictionaryDisplayIndex, matches: Int?,
+                                    loaded: Bool) -> IncludedTermsHeader {
+        IncludedTermsHeader(
+            title: dictionarySectionTitle(
+                "Included terms",
+                count: index.includedCount,
+                matches: matches,
+                loaded: loaded
+            ),
+            isLoading: false,
+            showsChevron: true
+        )
     }
 
     static func dictionarySectionTitle(_ title: String, count: Int, matches: Int? = nil, loaded: Bool) -> String {

@@ -53,8 +53,10 @@ public struct STTDictionaryDisplayIndex {
     public let sortedEntries: [STTDictionaryDisplayEntry]
     public let personalCount: Int
     public let includedCount: Int
+    public let bundledRowsKnown: Bool
 
-    public init(entries: [STTDictionaryDisplayEntry]) {
+    public init(entries: [STTDictionaryDisplayEntry], bundledRowsKnown: Bool = true) {
+        self.bundledRowsKnown = bundledRowsKnown
         sortedEntries = entries.sorted {
             if $0.source != $1.source { return $0.isPersonal }
             return Self.sortsBefore($0.entry.canonical, $1.entry.canonical)
