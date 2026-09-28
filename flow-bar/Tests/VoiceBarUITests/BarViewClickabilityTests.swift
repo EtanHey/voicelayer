@@ -94,12 +94,12 @@ final class BarViewClickabilityTests: XCTestCase {
         let eye = VoiceBarNotchControlOptics.resolve(for: "eye")
         let eyeSlash = VoiceBarNotchControlOptics.resolve(for: "eye.slash")
 
-        XCTAssertEqual(stop.pointSize, 10)
+        XCTAssertEqual(stop.pointSize, 8)
         XCTAssertEqual(stop.offsetX, 0)
         XCTAssertEqual(stop.offsetY, 0)
         XCTAssertEqual(eye.pointSize, eyeSlash.pointSize)
-        XCTAssertEqual(eye.pointSize, 15)
-        XCTAssertEqual(replay.pointSize, 15)
+        XCTAssertEqual(eye.pointSize, 12)
+        XCTAssertEqual(replay.pointSize, 12)
 
         let source = try barViewSource()
         let buttonStart = try XCTUnwrap(source.range(of: "private func notchButton"))
