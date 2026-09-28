@@ -55,27 +55,45 @@ final class MicrophoneDragIndicatorTests: XCTestCase {
 
     // MARK: - The drag state belongs to one drag session
 
+    /// Every drag starts with its own mouse press; the state is stamped with the press that started it.
     func testTheDraggedMicIsKeptAcrossRowsWithinOneDrag() {
-        var drag = MicrophoneDragState.started(dragging: "mic-a")
-        drag.hover(0, dragPasteboardChangeCount: 5)
+        var drag = MicrophoneDragState.started(dragging: "mic-a", pressedAt: 100)
+        drag.hover(0, pressedAt: 100)
         drag.leave(0)
         XCTAssertNil(drag.targetIndex)
         XCTAssertEqual(drag.sourceUID, "mic-a", "leaving a row mid-drag keeps the source, so the line doesn't blink")
-        drag.hover(1, dragPasteboardChangeCount: 5)
-        XCTAssertEqual(drag, MicrophoneDragState(sourceUID: "mic-a", targetIndex: 1, dragPasteboardChangeCount: 5))
+        drag.hover(1, pressedAt: 100.01)
+        XCTAssertEqual(drag, MicrophoneDragState(sourceUID: "mic-a", targetIndex: 1, pressedAt: 100))
         drag.leave(0)
         XCTAssertEqual(drag.targetIndex, 1, "a late leave from the previous row doesn't clear the new target")
     }
 
     /// Bugbot on #195: a drag cancelled outside the list never reaches the drop, so its source used to stick and a
-    /// later text drag over the list drew a ghost line and dimmed that mic. A new drag has a new drag pasteboard.
+    /// later text drag over the list drew a ghost line and dimmed that mic.
     func testAHoverFromALaterDragForgetsAStaleSource() {
-        var drag = MicrophoneDragState.started(dragging: "mic-a")
-        drag.hover(1, dragPasteboardChangeCount: 5)
+        var drag = MicrophoneDragState.started(dragging: "mic-a", pressedAt: 100)
+        drag.hover(1, pressedAt: 100)
         drag.leave(1) // dropped outside the list: no drop, so no reset
-        drag.hover(1, dragPasteboardChangeCount: 9) // someone drags text over the list later
+        drag.hover(1, pressedAt: 250) // someone drags text over the list later: a new press
         XCTAssertNil(drag.sourceUID)
         XCTAssertNil(snapshot.dropEdge(dragging: drag.sourceUID, onto: 1), "no ghost line")
+    }
+
+    /// D195-r1 (Medium): the round-1 stamp was taken on the first hover, so a drag cancelled BEFORE any hover kept
+    /// its source unstamped and the next external drag's hover adopted it. The start now carries the stamp.
+    func testADragCancelledBeforeAnyHoverLeavesNoGhostForTheNextDrag() {
+        var drag = MicrophoneDragState.started(dragging: "mic-a", pressedAt: 100)
+        // Cancelled outside the list: no hover, no leave, no drop.
+        drag.hover(1, pressedAt: 250)
+        XCTAssertNil(drag.sourceUID, "the later drag's press is not the one that started mic-a's drag")
+        XCTAssertEqual(drag.targetIndex, 1)
+        XCTAssertNil(snapshot.dropEdge(dragging: drag.sourceUID, onto: 1), "no ghost line, no dimmed mic")
+    }
+
+    func testAnUnknownPressTimeKeepsTheSourceRatherThanGuessing() {
+        var drag = MicrophoneDragState.started(dragging: "mic-a", pressedAt: nil)
+        drag.hover(1, pressedAt: 250)
+        XCTAssertEqual(drag.sourceUID, "mic-a")
     }
 
     // MARK: - The line is drawn, live, in the real Settings view

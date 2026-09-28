@@ -155,26 +155,28 @@ public enum MicrophoneDropEdge: Equatable, Sendable {
 public struct MicrophoneDragState: Equatable, Sendable {
     public var sourceUID: String?
     public var targetIndex: Int?
-    /// The drag pasteboard's change count first seen by a hover of this drag. SwiftUI reports no drag end, so a
-    /// drag dropped outside the list leaves `sourceUID` behind; a later drag writes the drag pasteboard again,
-    /// and a hover that sees a different count forgets the stale source (Bugbot on #195).
-    public var dragPasteboardChangeCount: Int?
+    /// When the mouse press that started this drag happened (system uptime), stamped at the start. SwiftUI reports
+    /// no drag end, so a drag dropped or cancelled outside the list leaves `sourceUID` behind; every later drag
+    /// needs a new press, so a hover that sees a later press forgets the stale source (Bugbot + D195-r1 on #195).
+    /// nil when the system can't say; then the source is kept rather than guessed away.
+    public var pressedAt: TimeInterval?
 
-    public init(sourceUID: String? = nil, targetIndex: Int? = nil, dragPasteboardChangeCount: Int? = nil) {
+    /// Two readings of the same press differ only by clock rounding.
+    static let samePressTolerance: TimeInterval = 0.05
+
+    public init(sourceUID: String? = nil, targetIndex: Int? = nil, pressedAt: TimeInterval? = nil) {
         self.sourceUID = sourceUID
         self.targetIndex = targetIndex
-        self.dragPasteboardChangeCount = dragPasteboardChangeCount
+        self.pressedAt = pressedAt
     }
 
-    public static func started(dragging uid: String) -> Self {
-        Self(sourceUID: uid)
+    public static func started(dragging uid: String, pressedAt: TimeInterval?) -> Self {
+        Self(sourceUID: uid, pressedAt: pressedAt)
     }
 
-    public mutating func hover(_ index: Int, dragPasteboardChangeCount count: Int) {
-        if let seen = dragPasteboardChangeCount, seen != count {
+    public mutating func hover(_ index: Int, pressedAt latest: TimeInterval?) {
+        if let pressedAt, let latest, abs(latest - pressedAt) > Self.samePressTolerance {
             self = Self()
-        } else if sourceUID != nil {
-            dragPasteboardChangeCount = count
         }
         targetIndex = index
     }

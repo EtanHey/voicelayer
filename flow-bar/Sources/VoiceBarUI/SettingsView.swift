@@ -1076,7 +1076,7 @@ public struct SettingsView: View {
                     }
                 }
                 .onDrag {
-                    microphoneDrag = .started(dragging: uid)
+                    microphoneDrag = .started(dragging: uid, pressedAt: Self.lastMousePressUptime())
                     return NSItemProvider(object: uid as NSString)
                 } preview: {
                     content // the row lifts, as with .draggable
@@ -1086,7 +1086,7 @@ public struct SettingsView: View {
                     return dropMicrophone(uids.first, onto: index)
                 } isTargeted: { targeted in
                     if targeted {
-                        microphoneDrag.hover(index, dragPasteboardChangeCount: NSPasteboard(name: .drag).changeCount)
+                        microphoneDrag.hover(index, pressedAt: Self.lastMousePressUptime())
                     } else {
                         microphoneDrag.leave(index)
                     }
@@ -1094,6 +1094,14 @@ public struct SettingsView: View {
         } else {
             content
         }
+    }
+
+    /// When the latest left-mouse press happened, on the system-uptime clock: every drag starts with one, so it
+    /// tells one drag session from the next. nil when the system reports no usable time.
+    private static func lastMousePressUptime() -> TimeInterval? {
+        let since = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .leftMouseDown)
+        guard since.isFinite, since >= 0 else { return nil }
+        return ProcessInfo.processInfo.systemUptime - since
     }
 
     /// Half the gap between two priority rows' content, so the line sits on the divider between them.
