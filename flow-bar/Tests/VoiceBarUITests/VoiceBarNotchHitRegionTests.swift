@@ -12,18 +12,21 @@ final class VoiceBarNotchHitRegionTests: XCTestCase {
             )
         )
 
+        // Relative to the core, which the panel pins to the housing, so these are the on-screen targets. UXP-2
+        // widened the mic's wing outward (its local origin moved 26 pt) but left every target where it was.
+        let core = geometry.coreOriginX
         XCTAssertEqual(region.rects, [
-            CGRect(x: 14, y: 6, width: 20, height: 20),
-            CGRect(x: 246, y: 6, width: 20, height: 20),
-            CGRect(x: 272, y: 6, width: 20, height: 20),
+            CGRect(x: core - 33.5, y: 6, width: 20, height: 20),
+            CGRect(x: core + 185 + 13.5, y: 6, width: 20, height: 20),
+            CGRect(x: core + 185 + 39.5, y: 6, width: 20, height: 20),
         ])
-        XCTAssertTrue(region.contains(CGPoint(x: 24, y: 16)))
-        XCTAssertTrue(region.contains(CGPoint(x: 256, y: 16)))
-        XCTAssertTrue(region.contains(CGPoint(x: 282, y: 16)))
+        XCTAssertTrue(region.contains(CGPoint(x: core - 23.5, y: 16)))
+        XCTAssertTrue(region.contains(CGPoint(x: core + 185 + 23.5, y: 16)))
+        XCTAssertTrue(region.contains(CGPoint(x: core + 185 + 49.5, y: 16)))
         XCTAssertFalse(region.contains(CGPoint(x: geometry.coreMidX, y: 16)))
-        XCTAssertFalse(region.contains(CGPoint(x: 1, y: 16)))
-        XCTAssertFalse(region.contains(CGPoint(x: 35, y: 16)))
-        XCTAssertFalse(region.contains(CGPoint(x: 293, y: 16)))
+        XCTAssertFalse(region.contains(CGPoint(x: core - 46.5, y: 16)))
+        XCTAssertFalse(region.contains(CGPoint(x: core - 12.5, y: 16)))
+        XCTAssertFalse(region.contains(CGPoint(x: core + 185 + 60.5, y: 16)))
     }
 
     func testVADRecordingHitsExactlyHoldCancelAndStopOnLeadingSide() {

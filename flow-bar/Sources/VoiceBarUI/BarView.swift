@@ -178,6 +178,7 @@ struct VoiceBarPillControlButton: View {
     let foreground: Color
     let halo: Color
     let isSelected: Bool
+    let selectionStyle: VoiceBarNotchSelectionStyle
     let isDestructive: Bool
     let accessibilityLabel: String
     let accessibilityHint: String
@@ -199,6 +200,7 @@ struct VoiceBarPillControlButton: View {
         foreground: Color,
         halo: Color,
         isSelected: Bool,
+        selectionStyle: VoiceBarNotchSelectionStyle = .navigation,
         isDestructive: Bool,
         accessibilityLabel: String,
         accessibilityHint: String,
@@ -211,6 +213,7 @@ struct VoiceBarPillControlButton: View {
         self.foreground = foreground
         self.halo = halo
         self.isSelected = isSelected
+        self.selectionStyle = selectionStyle
         self.isDestructive = isDestructive
         self.accessibilityLabel = accessibilityLabel
         self.accessibilityHint = accessibilityHint
@@ -230,12 +233,9 @@ struct VoiceBarPillControlButton: View {
                 .offset(x: optics.offsetX, y: optics.offsetY)
                 .frame(width: Self.plateDiameter, height: Self.plateDiameter)
                 .background {
-                    Circle()
-                        .fill(isDestructive ? Theme.recordingColor
-                            : isSelected ? Theme.recordingColor.opacity(0.30)
-                            : isHovered || previewHovered || previewPressed ? foreground.opacity(0.12) : .clear)
+                    Circle().fill(plateColor)
                 }
-                // C3: History's selected plate and red glyph ease in and out instead of snapping.
+                // C3: a selected plate and its glyph colour ease in and out instead of snapping.
                 .animation(.easeOut(duration: 0.2), value: isSelected)
                 .frame(width: Self.hitDiameter, height: Self.hitDiameter)
                 .contentShape(Circle())
@@ -246,6 +246,22 @@ struct VoiceBarPillControlButton: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
         .help(accessibilityLabel)
+    }
+
+    private var plateColor: Color {
+        switch VoiceBarNotchControlPlate.resolve(
+            isDestructive: isDestructive,
+            isSelected: isSelected,
+            selectionStyle: selectionStyle,
+            isHovered: isHovered || previewHovered || previewPressed
+        ) {
+        case .recordingSolid: Theme.recordingColor
+        case .recordingSelected: Theme.recordingColor.opacity(0.30)
+        // UX pass #3: a neutral plate in the glyph's own colour, a step above hover so "open" reads as open.
+        case .neutralSelected: foreground.opacity(0.18)
+        case .hover: foreground.opacity(0.12)
+        case .none: .clear
+        }
     }
 
     @ViewBuilder private var glyph: some View {
@@ -463,6 +479,7 @@ public struct BarView: View {
                     notchButton(
                         icon: recordingHoldControl.iconName,
                         isSelected: recordingHoldControl.isSelected,
+                        selectionStyle: .recordingState,
                         accessibilityLabel: recordingHoldControl.accessibilityLabel,
                         accessibilityHint: recordingHoldControl.accessibilityHint
                     ) {
@@ -874,6 +891,7 @@ public struct BarView: View {
     private func notchButton(
         icon: String,
         isSelected: Bool = false,
+        selectionStyle: VoiceBarNotchSelectionStyle = .navigation,
         isDestructive: Bool = false,
         accessibilityLabel: String? = nil,
         accessibilityHint: String? = nil,
@@ -883,7 +901,7 @@ public struct BarView: View {
         let foregroundRole = VoiceBarNotchGlyphForegroundRole.resolve(
             isDestructive: isDestructive,
             isSelected: isSelected,
-            selectionStyle: .recordingState
+            selectionStyle: selectionStyle
         )
         return VoiceBarPillControlButton(
             icon: icon,
@@ -891,6 +909,7 @@ public struct BarView: View {
             foreground: foregroundRole == .stateAccent ? Theme.recordingColor : notchPrimaryLabelColor,
             halo: notchGlyphContrastHaloColor,
             isSelected: isSelected,
+            selectionStyle: selectionStyle,
             isDestructive: isDestructive && icon == "stop.fill",
             accessibilityLabel: accessibilityLabel ?? icon,
             accessibilityHint: accessibilityHint ?? "",

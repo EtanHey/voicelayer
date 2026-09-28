@@ -17,13 +17,14 @@ final class VoiceBarNotchContractTests: XCTestCase {
         )
         XCTAssertEqual(
             VoiceBarNotchContract.geometry(for: .hoverLauncher),
+            // UXP-2: equal wings (centred shell); the body extents match History's so the panel only grows down.
             VoiceBarNotchGeometry(
                 coreWidth: 185,
                 topHeight: 32,
-                leadingWingWidth: 47.5,
+                leadingWingWidth: 73.5,
                 trailingWingWidth: 73.5,
-                bodyLeadingExtent: 0,
-                bodyTrailingExtent: 0,
+                bodyLeadingExtent: 73.5,
+                bodyTrailingExtent: 73.5,
                 lowerSurfaceHeight: 0
             )
         )
@@ -62,8 +63,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(idle.topWidth, 185)
         XCTAssertEqual(idle.totalWidth, 185)
         XCTAssertEqual(idle.totalHeight, 32)
-        XCTAssertEqual(hover.topWidth, 306)
-        XCTAssertEqual(hover.totalWidth, 306)
+        XCTAssertEqual(hover.topWidth, 332)
+        XCTAssertEqual(hover.totalWidth, 332)
         XCTAssertEqual(recording.topWidth, 336.5)
         XCTAssertEqual(recording.totalWidth, 336.5)
         XCTAssertEqual(teleprompter.topWidth, 263)
@@ -77,7 +78,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         let recording = VoiceBarNotchContract.geometry(for: .recording)
         let status = VoiceBarNotchContract.geometry(for: .compactStatus)
 
-        XCTAssertEqual(hover.leadingWingWidth, 47.5)
+        XCTAssertEqual(hover.leadingWingWidth, 73.5)
         XCTAssertEqual(recording.leadingWingWidth, 73.5)
         XCTAssertEqual(recording.trailingWingWidth, 78)
         XCTAssertEqual(status.leadingWingWidth, 47.5)
@@ -97,12 +98,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
         let recording = VoiceBarNotchContract.geometry(for: .recording)
         let teleprompter = VoiceBarNotchContract.geometry(for: .teleprompter)
 
-        XCTAssertEqual(
-            hover.leadingWingWidth,
-            VoiceBarNotchContract.compactContentFitWingWidth(
-                contentWidth: material.compactControlSize
-            )
-        )
+        // UXP-2: the mic's wing takes the History + Settings width so the launcher is centred on the housing.
+        XCTAssertEqual(hover.leadingWingWidth, VoiceBarNotchContract.launcherWingWidth)
         XCTAssertEqual(
             hover.trailingWingWidth,
             VoiceBarNotchContract.compactContentFitWingWidth(
@@ -110,7 +107,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
                     material.compactControlSpacing
             )
         )
-        XCTAssertNotEqual(hover.leadingWingWidth, hover.trailingWingWidth)
+        XCTAssertEqual(hover.leadingWingWidth, hover.trailingWingWidth)
 
         XCTAssertEqual(teleprompter.leadingWingWidth, 0)
         XCTAssertEqual(
@@ -185,7 +182,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
             XCTAssertEqual(trailing.coreInset, 13.5)
             XCTAssertEqual(leading.outerInset, 14)
             XCTAssertEqual(trailing.outerInset, 14)
-            XCTAssertEqual(leading.alignment, .center)
+            XCTAssertEqual(leading.alignment, .core, "UXP-2: the mic stays where its hit target is")
             XCTAssertEqual(trailing.alignment, .center)
         }
 
@@ -322,7 +319,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
             isKeyboardFocused: false
         )
 
-        XCTAssertEqual(presentation.geometry.totalWidth, 306)
+        XCTAssertEqual(presentation.geometry.totalWidth, 332)
         XCTAssertEqual(presentation.contentRoles, [.microphone, .history, .dictionary])
         XCTAssertEqual(presentation.accessibilityLabel, "VoiceBar launcher")
     }

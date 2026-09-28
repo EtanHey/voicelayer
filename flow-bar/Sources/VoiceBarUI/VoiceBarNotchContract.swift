@@ -142,23 +142,30 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         } else {
             VoiceBarNotchContract.compactCoreContentInset
         }
+        // UXP-2: the launcher's left wing is as wide as the right one, so the mic would drift outward if centred.
+        // It stays on the core side, where its core-anchored hit target is (`VoiceBarNotchHitRegion`).
+        let isLauncherLeading = side == .leading && (state == .hoverLauncher || state == .history)
         return VoiceBarNotchWingContentLayout(
             side: side,
             coreInset: coreInset,
             outerInset: isWaveformTrailing || isTeleprompter
                 ? WaveformLayout.outerInset
                 : compactContentInset,
-            alignment: .center
+            alignment: isLauncherLeading ? .core : .center
         )
     }
 
+    /// The shell's outer bottom corner radius: the compact wings' corners, or the lower body's when it has one.
+    /// One animated value for both (UXP-2), so opening a panel eases 15 → 18 pt instead of jumping.
     public func compactOuterCornerRadius(
         for visualState: VoiceBarNotchVisualState
     ) -> CGFloat {
         switch visualState {
         case .hoverLauncher, .recording, .compactStatus:
             15
-        case .idle, .teleprompter, .history:
+        case .teleprompter, .history:
+            18
+        case .idle:
             11
         }
     }
@@ -338,6 +345,10 @@ public enum VoiceBarNotchContract {
         contentWidth: 2 * material.compactControlSize + material.compactControlSpacing
     )
 
+    /// UXP-2 (UX pass #4): both launcher wings take the wider (History + Settings) width, so the shell is centred
+    /// on the housing instead of sitting 13 pt to its right.
+    public static let launcherWingWidth = hoverLauncherTrailingWingWidth
+
     public static let waveformWingWidth = WaveformLayout.coreGap +
         material.waveformSlotWidth + WaveformLayout.outerInset
 
@@ -441,11 +452,15 @@ public enum VoiceBarNotchContract {
                 trailingWingWidth: 0
             )
         case .hoverLauncher:
+            // No body here; its extents match History's so opening the panel only grows its height. From a zero
+            // extent the body grew out of the core narrower than the wings, squaring their corners mid-morph.
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: compactIndicatorLaneWidth,
-                trailingWingWidth: hoverLauncherTrailingWingWidth
+                leadingWingWidth: launcherWingWidth,
+                trailingWingWidth: launcherWingWidth,
+                bodyLeadingExtent: historyBodyExtent(coreWidth: coreWidth),
+                bodyTrailingExtent: historyBodyExtent(coreWidth: coreWidth)
             )
         case .recording:
             geometry(
@@ -477,8 +492,8 @@ public enum VoiceBarNotchContract {
             geometry(
                 coreWidth: coreWidth,
                 topHeight: resolvedTopHeight,
-                leadingWingWidth: compactIndicatorLaneWidth,
-                trailingWingWidth: hoverLauncherTrailingWingWidth,
+                leadingWingWidth: launcherWingWidth,
+                trailingWingWidth: launcherWingWidth,
                 bodyLeadingExtent: historyBodyExtent(coreWidth: coreWidth),
                 bodyTrailingExtent: historyBodyExtent(coreWidth: coreWidth),
                 lowerSurfaceHeight: historyLowerSurfaceHeight
@@ -486,19 +501,10 @@ public enum VoiceBarNotchContract {
         }
     }
 
-    /// The History body encloses both launcher wings like the teleprompter's does (#166 review: a symmetric
-    /// 320 pt body let the History + Settings wing overhang it by 6–23.5 pt), and stays symmetric about the core.
-    /// It clears the widest wing by the two corner radii: a body edge flush with a wing edge draws the wing's
-    /// corner and the body's shoulder at the same x, an S-shaped hook (seen in the round-2 shots).
+    /// The History body continues straight down from both launcher wings (UXP-2: no shoulders). It keeps the
+    /// spec's minimum width if a narrow core would leave it narrower, and stays symmetric about the core.
     static func historyBodyExtent(coreWidth: CGFloat) -> CGFloat {
-        max(
-            (historyBodyWidth - coreWidth) / 2,
-            max(compactIndicatorLaneWidth, hoverLauncherTrailingWingWidth) + historyShoulderClearance
-        )
-    }
-
-    static var historyShoulderClearance: CGFloat {
-        material.compactOuterCornerRadius(for: .history) + material.inverseJoinRadius
+        max((historyBodyWidth - coreWidth) / 2, launcherWingWidth)
     }
 
     private static func geometry(
