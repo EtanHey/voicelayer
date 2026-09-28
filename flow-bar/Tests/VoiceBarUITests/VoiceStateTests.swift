@@ -891,13 +891,89 @@ final class VoiceStateTests: XCTestCase {
         }
     }
 
+    /// #186 review round 2 (Medium): a same-path retry that the daemon rejects as busy undoes only its own marker;
+    /// the first job's late result is still archived.
+    func testARejectedSamePathRetryKeepsTheFirstJobsArchivedOrigin() async throws {
+        try await assertArchivedResultLeavesTheRecentListAlone { state in
+            state.handleEvent(["type": "error", "message": "Synthetic error from another client"])
+            var retry: [String: Any]?
+            state.sendCommand = { retry = $0 }
+            state.retranscribeHistoryEntry(recordingPath: Self.archivedFixturePath)
+            guard let id = retry?["id"] as? String else { return XCTFail("the retry was sent") }
+            state.handleEvent([
+                "type": "ack", "command": "retranscribe_recording", "outcome": "reject", "id": id,
+                "reason": "Synthetic busy",
+            ])
+        }
+    }
+
+    /// #186 review round 2 (High): after another client's error clears the History request, a new dictation
+    /// starts; the old archived result must never paste into the new dictation's target, and the new dictation's
+    /// own result still pastes.
+    func testALateArchivedResultNeverPastesIntoANewDictation() throws {
+        try assertLateArchivedResultNeverPastesIntoANewDictation(recordingStateFirst: false)
+    }
+
+    /// The same, when the new dictation's "recording" state arrives before the late archived result.
+    func testALateArchivedResultNeverPastesIntoANewDictationAlreadyRecording() throws {
+        try assertLateArchivedResultNeverPastesIntoANewDictation(recordingStateFirst: true)
+    }
+
+    private func assertLateArchivedResultNeverPastesIntoANewDictation(recordingStateFirst: Bool) throws {
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+        state.minimumTranscribingDisplayDuration = 0
+        state.pasteConfirmationDelay = 0
+        var sentCommand: [String: Any]?
+        var pastedTexts: [String] = []
+        state.sendCommand = { sentCommand = $0 }
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.retranscribeHistoryEntry(recordingPath: Self.archivedFixturePath)
+        let id = try XCTUnwrap(sentCommand?["id"] as? String)
+        state.handleEvent(["type": "ack", "command": "retranscribe_recording", "outcome": "accept", "id": id])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent(["type": "error", "message": "Synthetic error from another client"])
+
+        state.record()
+        if recordingStateFirst { state.handleEvent(["type": "state", "state": "recording", "bar_owned": true]) }
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Synthetic re-transcribed archive text",
+            "recording_path": Self.archivedFixturePath,
+        ])
+        XCTAssertEqual(pastedTexts, [], "the archived result never pastes")
+        XCTAssertFalse(state.recentTranscriptionEntries.contains { $0.recordingPath == Self.archivedFixturePath })
+
+        let newPath = "/tmp/fixture/recordings/2026-01-02T00-00-00/audio.wav"
+        if !recordingStateFirst { state.handleEvent(["type": "state", "state": "recording", "bar_owned": true]) }
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Synthetic new dictation",
+            "recording_path": newPath,
+        ])
+        XCTAssertEqual(pastedTexts, ["Synthetic new dictation"], "the new dictation still pastes, once")
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.recordingPath, newPath)
+        XCTAssertEqual(state.latestReusableTranscript, "Synthetic new dictation")
+    }
+
+    private static let archivedFixturePath = "/tmp/fixture/recordings/2025-12-31T00-00-00/audio.wav"
+
     private func assertArchivedResultLeavesTheRecentListAlone(
         before result: (VoiceState) async -> Void,
         file: StaticString = #filePath,
         line: UInt = #line
     ) async throws {
         let recentPaths = (1 ... 8).map { "/tmp/fixture/recordings/2026-01-01T00-0\($0)-00/audio.wav" }
-        let archivedPath = "/tmp/fixture/recordings/2025-12-31T00-00-00/audio.wav"
+        let archivedPath = Self.archivedFixturePath
         let dictatedAt = Date(timeIntervalSince1970: 1_767_225_600) // 2026-01-01T00:00:00Z
         let seeded = recentPaths.enumerated().map { index, path in
             RecentTranscriptionEntry(
