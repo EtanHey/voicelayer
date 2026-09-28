@@ -38,13 +38,14 @@ func classifySocketWriteResult(bytesWritten: Int, errnoCode: Int32) -> SocketWri
 
 private struct ClientConnection {
     let source: DispatchSourceRead
-    var framer = NDJSONLineFramer()
+    var framer: NDJSONLineFramer
     var role: String?
     var pid: Int?
     var acceptsCommands: Bool
 
-    init(source: DispatchSourceRead) {
+    init(source: DispatchSourceRead, maxLineBytes: Int) {
         self.source = source
+        framer = NDJSONLineFramer(maxLineBytes: maxLineBytes)
         acceptsCommands = false
     }
 }
@@ -54,26 +55,47 @@ private struct ClientConnection {
 /// `String(bytes:encoding:)` then returns nil, and the old `?? ""` silently dropped the chunk, so every vocab_list
 /// reply (>8 KiB, Hebrew variants) reached VoiceState as "Bad JSON" and Settings read "Included terms (0)".
 struct NDJSONLineFramer {
+    struct Frame: Equatable {
+        var lines: [String]
+        var overflowed: Bool
+    }
+
+    static let defaultMaxLineBytes = 4 * 1024 * 1024
+
+    let maxLineBytes: Int
     private var pending: [UInt8] = []
+    private(set) var scannedByteCount = 0
+
+    var pendingByteCount: Int {
+        pending.count
+    }
+
+    init(maxLineBytes: Int = defaultMaxLineBytes) {
+        self.maxLineBytes = maxLineBytes
+    }
 
     /// Appends bytes and returns every complete, non-empty line they finish, in order.
-    mutating func append(_ bytes: some Sequence<UInt8>) -> [String] {
+    mutating func append(_ bytes: some Sequence<UInt8>) -> Frame {
         pending.append(contentsOf: bytes)
         var lines: [String] = []
         var lineStart = pending.startIndex
         while let newline = pending[lineStart...].firstIndex(of: 0x0A) {
+            scannedByteCount += newline - lineStart + 1
             if newline > lineStart {
                 lines.append(String(decoding: pending[lineStart ..< newline], as: UTF8.self))
             }
             lineStart = pending.index(after: newline)
         }
+        scannedByteCount += pending.endIndex - lineStart
         pending.removeSubrange(pending.startIndex ..< lineStart)
-        return lines
+        return Frame(lines: lines, overflowed: false)
     }
 }
 
 final class SocketServer {
     private let socketPath: String
+    private let maxLineBytes: Int
+    private var totalBytesRead = 0
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
@@ -100,7 +122,12 @@ final class SocketServer {
 
     // MARK: - Lifecycle
 
-    init(state: VoiceState, socketPath: String = VoiceLayerPaths.socketPath) {
+    init(
+        state: VoiceState,
+        socketPath: String = VoiceLayerPaths.socketPath,
+        maxLineBytes: Int = NDJSONLineFramer.defaultMaxLineBytes
+    ) {
+        self.maxLineBytes = maxLineBytes
         self.state = state
         self.socketPath = socketPath
     }
@@ -223,7 +250,7 @@ final class SocketServer {
         }
         readSource.resume()
 
-        clients[clientFD] = ClientConnection(source: readSource)
+        clients[clientFD] = ClientConnection(source: readSource, maxLineBytes: maxLineBytes)
         updateConnectionState()
     }
 
@@ -249,8 +276,9 @@ final class SocketServer {
 
         guard clients[fd] != nil else { return }
 
-        let lines = clients[fd]?.framer.append(buf[0 ..< bytesRead]) ?? []
-        for line in lines {
+        totalBytesRead += bytesRead
+        let frame = clients[fd]?.framer.append(buf[0 ..< bytesRead])
+        for line in frame?.lines ?? [] {
             parseLine(line, from: fd)
         }
     }
@@ -359,6 +387,12 @@ final class SocketServer {
     /// route by these roles, and each client's socket is read independently, so a test must wait for every
     /// hello before it sends one (the stop-interrupt flake: a stop sent before the second playback client
     /// registered never reached it).
+    /// Tests: every byte the server has read from any client so far, read on the server queue. A barrier for a test
+    /// that must know one write was consumed before it sends the next.
+    func bytesReadForTesting() -> Int {
+        queue.sync { totalBytesRead }
+    }
+
     func registeredClientRolesForTesting() -> [String] {
         queue.sync { clients.values.compactMap(\.role).sorted() }
     }
