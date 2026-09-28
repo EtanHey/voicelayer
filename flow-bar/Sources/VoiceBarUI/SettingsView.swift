@@ -2705,14 +2705,14 @@ enum SettingsDictionaryMutations {
         guard !trimmed.isEmpty, let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else {
             return
         }
-        guard localEntries[index].canonical.localizedCaseInsensitiveCompare(trimmed) != .orderedSame else {
+        // F2b (#201 r2): the same `sameCanonical` rule as the save's lookup in `apply`. A case-only check here let a
+        // rename onto "zephyr   board" create a second row while the new variant went to "Zephyr Board".
+        guard !sameCanonical(localEntries[index].canonical, trimmed) else {
             editText = ""
             return
         }
         let variants = localEntries[index].variants
-        if let existingIndex = localEntries.firstIndex(where: {
-            $0.canonical.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
-        }) {
+        if let existingIndex = localEntries.firstIndex(where: { sameCanonical($0.canonical, trimmed) }) {
             let targetCanonical = localEntries[existingIndex].canonical
             for variant in variants where !localEntries[existingIndex].variants.contains(variant) {
                 localEntries[existingIndex].variants.append(variant)
