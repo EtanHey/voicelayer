@@ -387,6 +387,8 @@ public struct DictionaryTermEdit: Equatable, Identifiable {
     public var correct: String
     public var wrong: String
     public var removedVariants: [String]
+    /// F2: this edit began as an Add of a term that was already there (the sheet shows why it changed).
+    public private(set) var openedExisting = false
 
     public init(original: STTDictionaryEntry? = nil, correct: String = "", wrong: String = "",
                 removedVariants: [String] = []) {
@@ -394,6 +396,27 @@ public struct DictionaryTermEdit: Equatable, Identifiable {
         self.correct = correct.isEmpty ? original?.canonical ?? "" : correct
         self.wrong = wrong
         self.removedVariants = removedVariants
+    }
+
+    /// F2: the term an Add names when it is already in `entries`, ignoring case and extra whitespace. Nil when
+    /// editing: renaming a term onto another is the edit flow's business.
+    public func existingTerm(in entries: [STTDictionaryEntry]) -> STTDictionaryEntry? {
+        guard !isEditing else { return nil }
+        let key = Self.matchKey(correct)
+        guard !key.isEmpty else { return nil }
+        return entries.first { Self.matchKey($0.canonical) == key }
+    }
+
+    /// F2: this Add, reopened as an edit of `entry`. The term keeps its stored spelling, so saving never renames
+    /// it; a misheard spelling already typed is kept.
+    public func openingExisting(_ entry: STTDictionaryEntry) -> DictionaryTermEdit {
+        var opened = DictionaryTermEdit(original: entry, wrong: wrong)
+        opened.openedExisting = true
+        return opened
+    }
+
+    private static func matchKey(_ value: String) -> String {
+        value.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
     }
 
     public var id: String {

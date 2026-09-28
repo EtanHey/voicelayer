@@ -2023,7 +2023,7 @@ public struct SettingsView: View {
             }
         }
         .sheet(item: $termSheet) { edit in
-            DictionaryAddSheetView(edit: edit, onSave: { saved in
+            DictionaryAddSheetView(edit: edit, existingEntries: localEntries, onSave: { saved in
                 saveTermSheet(saved)
             }, onCancel: { termSheet = nil })
                 .frame(width: 420)
