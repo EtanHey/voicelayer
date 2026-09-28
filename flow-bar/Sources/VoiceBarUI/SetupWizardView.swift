@@ -17,6 +17,9 @@ public struct SetupWizardDependencies {
     public var defaultMicrophoneName: () -> String?
     /// Settings › General scrolled to Microphone priority, as "Change…" does from the menu and popover.
     public var onChangeMicrophone: () -> Void
+    /// The last dictation, its insertion status and whether one is recording or transcribing — what Settings'
+    /// "Last dictation" card reads. Read twice a second while Try it shows.
+    public var tryItObservation: () -> SetupTryItObservation
 
     public init(
         permissionSnapshot: @escaping () -> SetupPermissionSnapshot = { .unknown },
@@ -27,7 +30,8 @@ public struct SetupWizardDependencies {
             completion(SettingsRelaySetupResult(outcome: .failed(reason: "not available here"), finishedAt: Date()))
         },
         defaultMicrophoneName: @escaping () -> String? = { nil },
-        onChangeMicrophone: @escaping () -> Void = {}
+        onChangeMicrophone: @escaping () -> Void = {},
+        tryItObservation: @escaping () -> SetupTryItObservation = { .none }
     ) {
         self.permissionSnapshot = permissionSnapshot
         self.onRequestMicrophone = onRequestMicrophone
@@ -36,6 +40,7 @@ public struct SetupWizardDependencies {
         self.onRunRelaySetup = onRunRelaySetup
         self.defaultMicrophoneName = defaultMicrophoneName
         self.onChangeMicrophone = onChangeMicrophone
+        self.tryItObservation = tryItObservation
     }
 }
 
@@ -47,16 +52,23 @@ public struct SetupWizardView: View {
     private let controller: SetupWizardController
     private let dependencies: SetupWizardDependencies
     private let initialRelayRun: SetupRelayRun?
+    private let initialTryItBaseline: RecentTranscriptionEntry??
 
     public init(controller: SetupWizardController, dependencies: SetupWizardDependencies = SetupWizardDependencies()) {
         self.init(controller: controller, dependencies: dependencies, initialRelayRun: nil)
     }
 
-    /// Tests and artifacts start the F5 key step with a finished or running helper setup.
-    init(controller: SetupWizardController, dependencies: SetupWizardDependencies, initialRelayRun: SetupRelayRun?) {
+    /// Tests and artifacts start a step mid-flow: a finished helper setup, or a Try it baseline taken earlier.
+    init(
+        controller: SetupWizardController,
+        dependencies: SetupWizardDependencies,
+        initialRelayRun: SetupRelayRun?,
+        initialTryItBaseline: RecentTranscriptionEntry?? = nil
+    ) {
         self.controller = controller
         self.dependencies = dependencies
         self.initialRelayRun = initialRelayRun
+        self.initialTryItBaseline = initialTryItBaseline
     }
 
     public var body: some View {
@@ -107,7 +119,11 @@ public struct SetupWizardView: View {
         case .microphone:
             SetupWizardMicrophoneBody(dependencies: dependencies)
         case .tryIt:
-            EmptyView()
+            SetupWizardTryItBody(
+                dependencies: dependencies,
+                baseline: initialTryItBaseline,
+                onFix: { controller.goBack(to: $0) }
+            )
         }
     }
 }
