@@ -79,6 +79,38 @@ final class SetupWizardArtifactTests: XCTestCase {
         }
     }
 
+    /// The two ways back in: "Run setup…" in the menu-bar popover and General › Setup › Run setup again.
+    func testWritesTheEntryPointsInLightAndDark() throws {
+        try VisualArtifactTestPolicy.requireRegeneration()
+        let directory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("docs.local/design/2026-09-28-f3-wizard")
+        let popover = MenuBarPopoverView(
+            footer: .resolve(isConnected: true, mode: .idle, captureLive: true, errorMessage: nil,
+                             remoteSTTConfigured: nil),
+            hotkeyHint: "Hold F5 to dictate",
+            defaultMicrophoneName: "Studio USB Mic",
+            transcript: "A synthetic last transcript."
+        ).background(Color(nsColor: .windowBackgroundColor))
+        let settings = SettingsView(
+            hotkeyEnabled: true,
+            missingPermissions: [],
+            availableDevices: { [MicrophoneDevice(id: "built-in", name: "Studio USB Mic")] },
+            selectedDeviceID: { "built-in" },
+            modelsStatus: { .loading },
+            onRefreshModelsStatus: {},
+            vocabularyRevision: { 0 },
+            initialTab: .general
+        )
+        for (appearance, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            try writePNG(popover, size: CGSize(width: 300, height: 300), appearance: NSAppearance(named: appearance),
+                         to: directory.appendingPathComponent("entry-popover-\(name).png"))
+            try writePNG(settings, size: CGSize(width: 720, height: 900), appearance: NSAppearance(named: appearance),
+                         to: directory.appendingPathComponent("entry-settings-general-\(name).png"))
+        }
+    }
+
     private func wizard(
         at step: SetupWizardStep,
         skipping: [SetupWizardStep] = [],
@@ -112,7 +144,10 @@ final class SetupWizardArtifactTests: XCTestCase {
     }
 
     private func writePNG(_ view: some View, appearance: NSAppearance?, to url: URL) throws {
-        let size = SetupWizardView.contentSize
+        try writePNG(view, size: SetupWizardView.contentSize, appearance: appearance, to: url)
+    }
+
+    private func writePNG(_ view: some View, size: CGSize, appearance: NSAppearance?, to url: URL) throws {
         let host = NSHostingView(rootView: view)
         host.appearance = appearance
         host.frame = NSRect(origin: .zero, size: size)
