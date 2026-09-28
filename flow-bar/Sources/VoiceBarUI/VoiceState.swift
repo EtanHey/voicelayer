@@ -149,6 +149,12 @@ private struct HistoryRetranscriptionRequest {
         return true
     }
 
+    /// A result for `path` answers a History request whose live state was already cleaned up (another client's
+    /// error, the timeout). Does not consume.
+    func isLateArchivedResult(for path: String) -> Bool {
+        awaitedArchivedResults[path] != nil && !suppressesPaste(for: path)
+    }
+
     /// Whether a result for `path` answers a History request, even one already cleaned up. Consumes one.
     mutating func takeArchivedOrigin(for path: String) -> Bool {
         releaseArchivedOrigin(for: path)
@@ -1560,6 +1566,15 @@ public final class VoiceState {
 
                 if isPartial {
                     transcript = trimmed
+                    return
+                }
+
+                // AIDEV-NOTE: a late History result belongs to no live capture. Handle it now, never through the
+                // display-floor deferral below: that holds one final at a time, so a late archived result arriving
+                // inside the window cancelled the current dictation's deferred final and its words were lost
+                // (#186 review round 3).
+                if let path = normalizedRecordingPath, historyRetranscriptionRequest.isLateArchivedResult(for: path) {
+                    handleFinalTranscription(trimmed, recordingPath: path)
                     return
                 }
 
