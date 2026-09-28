@@ -49,6 +49,7 @@ interface ClientState {
   buffer: string;
   decoder: TextDecoder;
   oversized: boolean;
+  pendingResponses: Set<Promise<void>>;
   disconnected: boolean;
   loggingLevel?: McpLoggingLevel;
 }
@@ -130,7 +131,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
       open(socket) {
         socket.data = {
           protocol: "unknown", buffer: "", decoder: new TextDecoder(),
-          oversized: false, disconnected: false,
+          oversized: false, pendingResponses: new Set(), disconnected: false,
         };
         onConnect();
       },
@@ -311,7 +312,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           console.error(
             `[mcp-daemon] MCP-over-NDJSON request (method: ${msg.method})`,
           );
-          handleMcpRequest(
+          const pending = handleMcpRequest(
             msg as {
               jsonrpc: string;
               id?: number | string;
@@ -359,7 +360,9 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
                   }) + "\n",
                 );
               } catch {}
-            });
+            })
+            .finally(() => socket.data.pendingResponses.delete(pending));
+          socket.data.pendingResponses.add(pending);
           continue;
         }
 
@@ -377,7 +380,18 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     socket.data.oversized = true;
     socket.data.buffer = "";
     console.error("[mcp-daemon] NDJSON message exceeded byte limit; closing client");
-    socket.end();
+    if (socket.data.pendingResponses.size === 0) {
+      socket.end();
+    } else {
+      let timer: ReturnType<typeof setTimeout>;
+      Promise.race([
+        Promise.allSettled([...socket.data.pendingResponses]),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); }),
+      ]).finally(() => {
+        clearTimeout(timer);
+        socket.end();
+      });
+    }
   }
 
   return {

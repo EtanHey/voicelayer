@@ -98,6 +98,17 @@ it("keeps ordered lines and a partial tail, skips empty lines, and rejects an ov
   expect(framer.append(Buffer.from("ignored\n"))).toEqual({ lines: [], overflow: false });
 });
 
+it("keeps a long line with thousands of one-byte reads intact", () => {
+  const line = "a".repeat(16_384);
+  const framer = new NDJSONByteFramer(line.length);
+  let overflow = false;
+  for (const byte of Buffer.from(line)) {
+    overflow ||= framer.append(Buffer.of(byte)).overflow;
+  }
+  expect(overflow).toBe(false);
+  expect(framer.append(Buffer.from("\n"))).toEqual({ lines: [line], overflow: false });
+});
+
 it("closes and reconnects after a no-newline command exceeds the byte limit", async () => {
   let firstSocket!: {
     write: (bytes: Uint8Array) => number;
@@ -235,8 +246,12 @@ it("keeps a split Unicode NDJSON message intact at the MCP daemon socket", async
 it("handles daemon messages before closing on an oversized NDJSON line", async () => {
   let handled!: () => void;
   const first = new Promise<void>((resolve) => { handled = resolve; });
+  let resolveTool!: (result: { content: Array<{ type: string; text: string }> }) => void;
+  let replyReceived!: () => void;
+  const reply = new Promise<void>((resolve) => { replyReceived = resolve; });
   daemon = await createMcpDaemon({
     socketPath: TEST_SOCKET,
+    toolExecutor: { executeTool: () => new Promise((resolve) => { resolveTool = resolve; }) },
     onNdjsonMessage(message) {
       if (message.type === "probe") handled();
     },
@@ -247,18 +262,31 @@ it("handles daemon messages before closing on an oversized NDJSON line", async (
   let writer!: { write: (bytes: Uint8Array) => number };
   let opened!: () => void;
   let drained!: () => void;
+  let responseBuffer = "";
   const open = new Promise<void>((resolve) => { opened = resolve; });
   const client = await Bun.connect({
     unix: TEST_SOCKET,
     socket: {
       open(socket) { writer = socket; opened(); },
-      data() {}, close() { closed(); }, error() {}, connectError() {}, drain() { drained?.(); },
+      data(_socket, raw) {
+        responseBuffer += raw.toString("utf8"); // synthetic JSON-RPC response is ASCII
+        if (responseBuffer.includes('"id":17')) replyReceived();
+      },
+      close() { closed(); }, error() {}, connectError() {}, drain() { drained?.(); },
     },
+  });
+  const originalError = console.error;
+  const errorSpy = spyOn(console, "error").mockImplementation((...args) => {
+    originalError(...args);
+    if (String(args[0]).includes("NDJSON message exceeded byte limit")) {
+      resolveTool({ content: [{ type: "text", text: "synthetic" }] });
+    }
   });
   try {
     await within(open, "daemon client open");
     const payload = Buffer.concat([
       Buffer.from('{"type":"probe"}\n'),
+      Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 17, method: "tools/call", params: { name: "voice_speak", arguments: {} } }) + "\n"),
       Buffer.alloc(MAX_NDJSON_LINE_BYTES + 1, 0x61),
       Buffer.from("\n"),
     ]);
@@ -272,8 +300,10 @@ it("handles daemon messages before closing on an oversized NDJSON line", async (
       }
     }
     await within(first, "earlier daemon message", 5_000);
+    await within(reply, "earlier daemon MCP reply", 5_000);
     await within(close, "oversized daemon close", 5_000);
   } finally {
+    errorSpy.mockRestore();
     client.end();
   }
 });
