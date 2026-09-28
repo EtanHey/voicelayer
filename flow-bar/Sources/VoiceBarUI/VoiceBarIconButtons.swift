@@ -1,11 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// The action glyphs shared by every surface (UXP-3).
+/// The action glyphs shared by every surface (UXP-3, UX pass #7).
 public enum VoiceBarActionSymbol {
     public static let copy = "doc.on.doc"
-    /// UXP-3 part 2 stub.
-    public static let paste = "doc.on.clipboard"
+    /// Paste types the text into the app you were using, so it shows text going in at a cursor. The old
+    /// `doc.on.clipboard` was a near twin of Copy's `doc.on.doc` at 12 pt.
+    public static let paste = "text.insert"
     public static let copied = "checkmark"
 }
 
@@ -116,11 +117,36 @@ public struct CopyFeedbackButton: View {
     }
 }
 
-/// UXP-3 part 2 stub.
+/// An icon-only Settings button (UXP-3, UX pass #7/#15): always a tooltip, always a 24 pt target.
 public struct SettingsIconButtonSpec: Equatable {
     public let symbol: String
     public let help: String
 
-    public static let hitTarget: CGFloat = 0
-    public static let all: [SettingsIconButtonSpec] = []
+    public static let hitTarget: CGFloat = 24
+
+    public static let refreshHistory = Self(symbol: "arrow.clockwise", help: "Refresh history")
+    public static let refreshAskHistory = Self(symbol: "arrow.clockwise", help: "Refresh ask history")
+    public static let jumpToLatest = Self(symbol: "arrow.up.to.line", help: "Jump to latest")
+    public static let clearSearch = Self(symbol: "xmark.circle.fill", help: "Clear search")
+
+    public static let all: [Self] = [refreshHistory, refreshAskHistory, jumpToLatest, clearSearch]
+}
+
+struct SettingsIconButton: View {
+    let spec: SettingsIconButtonSpec
+    /// Pulls the 24 pt target back into the layout by this much per side, for a button that sits inside a field.
+    var layoutInset: CGFloat = 0
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: spec.symbol)
+                .frame(width: SettingsIconButtonSpec.hitTarget, height: SettingsIconButtonSpec.hitTarget)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .padding(-layoutInset)
+        .help(spec.help)
+        .accessibilityLabel(spec.help)
+    }
 }

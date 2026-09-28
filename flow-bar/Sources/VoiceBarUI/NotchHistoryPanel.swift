@@ -98,6 +98,13 @@ struct NotchHistoryPanel: View {
                 .compactMap { $0 }
                 .joined(separator: ", ")
         )
+        // UXP-3: the hover buttons exist only under the pointer; VoiceOver and keyboard users get the same actions
+        // on the row itself.
+        .accessibilityActions {
+            ForEach(NotchHistoryPresentation.accessibilityActions(for: entry), id: \.symbol) { action in
+                Button(action.label) { perform(action.kind, entry: entry, id: id) }
+            }
+        }
     }
 
     private func actionButtons(_ entry: RecentTranscriptionEntry, id: String) -> some View {
@@ -131,14 +138,19 @@ struct NotchHistoryPanel: View {
         }
     }
 
-    private func perform(
-        _ kind: NotchHistoryPresentation.RowAction.Kind,
-        entry: RecentTranscriptionEntry,
-        id _: String
-    ) {
+    /// The row's actions for VoiceOver: the same calls the hover buttons make. A copy made this way gets the same
+    /// tick and announcement once the row is revealed.
+    private func perform(_ kind: NotchHistoryPresentation.RowAction.Kind, entry: RecentTranscriptionEntry, id: String) {
         switch kind {
         case .copy:
-            break // Copy is the shared CopyFeedbackButton (UXP-3).
+            let succeeded = onCopy(entry)
+            copyFeedback.copied(key: id, succeeded: succeeded, byPointer: false, at: Date())
+            guard succeeded else { return }
+            AccessibilityNotification.Announcement("Copied").post()
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(CopyFeedback.duration))
+                copyFeedback.expire(at: Date())
+            }
         case .paste:
             onPaste(entry)
         case .retranscribe:

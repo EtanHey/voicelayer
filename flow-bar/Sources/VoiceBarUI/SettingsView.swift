@@ -1515,14 +1515,9 @@ public struct SettingsView: View {
                 ProgressView()
                     .controlSize(.small)
             }
-            Button {
+            SettingsIconButton(spec: .refreshAskHistory) {
                 requestAskHistoryReload(scrollProxy: proxy)
-            } label: {
-                Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
-            .help("Refresh ask history")
-            .accessibilityLabel("Refresh ask history")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
@@ -1549,24 +1544,14 @@ public struct SettingsView: View {
                 ProgressView()
                     .controlSize(.small)
             }
-            Button {
+            SettingsIconButton(spec: .refreshHistory) {
                 requestHistoryReload(scrollProxy: proxy)
-            } label: {
-                Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
-            .help("Refresh history")
-            .accessibilityLabel("Refresh history")
 
-            Button {
+            SettingsIconButton(spec: .jumpToLatest) {
                 scrollToLatest(proxy)
-            } label: {
-                Image(systemName: "arrow.up.to.line")
             }
-            .buttonStyle(.borderless)
             .disabled(historyDayGroups.isEmpty)
-            .help("Jump to latest")
-            .accessibilityLabel("Jump to latest")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
@@ -1579,15 +1564,11 @@ public struct SettingsView: View {
             TextField(prompt, text: text)
                 .textFieldStyle(.plain)
             if !text.wrappedValue.isEmpty {
-                Button {
+                // Inside the field: the 24 pt target overhangs its 14 pt glyph instead of growing the field.
+                SettingsIconButton(spec: .clearSearch, layoutInset: 5) {
                     text.wrappedValue = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderless)
-                .help("Clear search")
-                .accessibilityLabel("Clear search")
+                .foregroundStyle(.secondary)
             }
         }
         .font(.callout)
@@ -1876,7 +1857,7 @@ public struct SettingsView: View {
                 guard let text = part.actionableText else { return }
                 onPasteHistoryTranscript(text)
             } label: {
-                historyActionLabel("Paste", systemImage: "doc.on.clipboard", isEnabled: !disabled)
+                historyActionLabel("Paste", systemImage: VoiceBarActionSymbol.paste, isEnabled: !disabled)
             }
             .disabled(disabled)
             .help(reason ?? "Paste")
