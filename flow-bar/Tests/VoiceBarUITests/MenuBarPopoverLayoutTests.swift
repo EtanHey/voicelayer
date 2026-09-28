@@ -34,6 +34,10 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         XCTAssertEqual(transcriptRow.minY - mic.maxY, 10, accuracy: 1)
         XCTAssertEqual(divider.minY - transcriptRow.maxY, 10, accuracy: 1)
         XCTAssertEqual(footer.minY - divider.maxY, 10, accuracy: 1)
+        // F3: "Run setup…" sits on its own row under Open Settings… / Quit, on the same 10 pt rhythm.
+        let setup = try XCTUnwrap(frames["setup"])
+        XCTAssertEqual(setup.minY - footer.maxY, 10, accuracy: 1)
+        XCTAssertEqual(setup.minX, footer.minX, accuracy: 1)
     }
 
     func testNoFocusRingWhenPopoverOpensAcrossRebuilds() {

@@ -157,6 +157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
     private var settingsWindow: NSWindow?
+    private lazy var setupWizard = SetupWizardWindowController(defaults: defaults) { [weak self] in
+        self?.makeSetupWizardDependencies() ?? SetupWizardDependencies()
+    }
+
     /// The last tab the app asked Settings to show (see `SettingsTabRequest`).
     private var settingsTabRequest: SettingsTabRequest?
     /// The tab Settings last showed. Closing drops the view (SettingsWindowLifecycle), so a reopen seeds it.
@@ -577,6 +581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setupHotkey()
         }
         configureWakeRecovery()
+        scheduleFirstRunSetupIfNeeded()
 
         // Floating pill
         refreshNotchPresentationModel()
@@ -2569,6 +2574,104 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         microphonePrioritySnapshot(devices: MicrophoneDeviceManager.availableInputDevices()).nextVisibleDeviceName
     }
 
+    // MARK: - Setup wizard (F3)
+
+    /// Opens the setup wizard (Settings › General › Run setup again, the menu, or first launch).
+    func openSetupWizard() {
+        refreshRelaySetupStatusAsync()
+        setupWizard.show()
+    }
+
+    /// "Run setup…" in the menu-bar popover: close the popover first, as Open Settings… does.
+    func openSetupWizardFromMenuBar(popover: NSWindow?) {
+        Self.dismissMenuBarPopover(popover, keeping: nil)
+        openSetupWizard()
+    }
+
+    /// First launch: once the F5 listener has started, decide whether the wizard opens by itself
+    /// (SetupWizardLaunchPolicy). A Mac that has dictated before is already set up and never sees it (#211 r1).
+    /// QA and test instances that skip permission prompts never show it.
+    private func scheduleFirstRunSetupIfNeeded() {
+        guard VoiceBarDefaults.shouldPromptForPermissions() else { return }
+        let store = SetupWizardCompletionStore(defaults: defaults)
+        guard !store.isCompleted else { return }
+        let recentTranscriptionCount = voiceState.recentTranscriptionEntries.count
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            // A directory listing of the recordings archive; kept off the main thread.
+            let hasPriorUse = SetupPriorUse.detect(
+                archiveRoot: SettingsHistoryArchive.defaultRoot,
+                recentTranscriptionCount: recentTranscriptionCount
+            )
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let readiness = SetupLaunchReadiness(
+                    permissionsGranted: SetupPermissionsStep(snapshot: currentSetupPermissionSnapshot()).allGranted,
+                    listenerActive: hotkeyEnabled
+                )
+                if SetupWizardLaunchPolicy.resolve(store: store, hasPriorUse: hasPriorUse, readiness: readiness) {
+                    openSetupWizard()
+                }
+            }
+        }
+    }
+
+    /// The same preflight reads Settings shows (no prompt), plus whether the F5 listener is running.
+    private func currentSetupPermissionSnapshot() -> SetupPermissionSnapshot {
+        let hotkey = HotkeyManager.currentPermissionStatus()
+        return SetupPermissionSnapshot(
+            microphone: Self.setupMicrophoneAuthorization(AVCaptureDevice.authorizationStatus(for: .audio)),
+            accessibilityGranted: hotkey.accessibilityGranted,
+            inputMonitoringGranted: hotkey.listenEventGranted,
+            hotkeyListenerActive: hotkeyEnabled
+        )
+    }
+
+    static func setupMicrophoneAuthorization(_ status: AVAuthorizationStatus) -> SetupMicrophoneAuthorization {
+        switch status {
+        case .authorized: .granted
+        case .notDetermined: .notRequested
+        default: .denied
+        }
+    }
+
+    /// Every check and action the wizard shows is the app's existing one.
+    func makeSetupWizardDependencies() -> SetupWizardDependencies {
+        SetupWizardDependencies(
+            permissionSnapshot: { [weak self] in self?.currentSetupPermissionSnapshot() ?? .unknown },
+            onRequestMicrophone: { completion in
+                AVCaptureDevice.requestAccess(for: .audio) { _ in DispatchQueue.main.async(execute: completion) }
+            },
+            f5KeyStatus: { [weak self] in
+                SetupF5KeyStatus(
+                    listenerActive: self?.hotkeyEnabled ?? false,
+                    helperInstalled: self?.cachedRelaySetupStatus.isReady ?? false
+                )
+            },
+            onRunRelaySetup: { [weak self] completion in
+                self?.runRelaySetupAsync(completion: completion)
+                    ?? completion(SettingsRelaySetupResult(outcome: .failed(reason: "VoiceBar is not available"),
+                                                           finishedAt: Date()))
+            },
+            defaultMicrophoneName: { [weak self] in self?.defaultMicrophoneName() },
+            onChangeMicrophone: { [weak self] in self?.openMicrophonePrioritySettings() },
+            tryItObservation: { [weak self] in
+                guard let self else { return .none }
+                let activity: SetupTryItActivity = switch voiceState.mode {
+                case .recording: .recording
+                case .transcribing: .transcribing
+                default: .idle
+                }
+                return SetupTryItObservation(
+                    entry: voiceState.lastDictationCardEntry,
+                    insertion: voiceState.latestDictationInsertionStatus,
+                    activity: activity,
+                    // An empty final is mode .error, "Transcription failed", with no new entry (#210 r1).
+                    failure: voiceState.mode == .error ? voiceState.errorMessage : nil
+                )
+            }
+        )
+    }
+
     static func historyFileRevealSelection(for audioPath: URL) -> [URL] {
         [audioPath]
     }
@@ -2707,6 +2810,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     remoteSTTConfigured: nil
                 )
             },
+            onRunSetup: { [weak self] in self?.openSetupWizard() },
             initialTab: lastSettingsTab,
             tabRequest: settingsTabRequest,
             onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab }
@@ -2891,6 +2995,7 @@ struct VoiceBarApp: App {
                 onCopy: { appDelegate.voiceState.copyLastTranscript() },
                 onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
                 onQuit: { appDelegate.quitFromMenuBar() },
+                onRunSetup: { appDelegate.openSetupWizardFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
                 onChangeMicrophone: {
                     appDelegate.openSettingsFromMenuBar(
                         popover: AppDelegate.menuBarPopoverWindow(),

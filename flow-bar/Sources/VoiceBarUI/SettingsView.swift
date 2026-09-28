@@ -456,6 +456,8 @@ public struct SettingsView: View {
     public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
     public let footerPresentation: () -> VoiceBarFooterPresentation
+    /// Opens the setup wizard (F3): General › Setup › Run setup again.
+    public let onRunSetup: () -> Void
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -597,6 +599,7 @@ public struct SettingsView: View {
                 remoteSTTConfigured: nil
             )
         },
+        onRunSetup: @escaping () -> Void = {},
         initialTab: SettingsTab = .general,
         tabRequest: SettingsTabRequest? = nil,
         initialHistoryScope: SettingsHistoryScope = .recording,
@@ -677,6 +680,7 @@ public struct SettingsView: View {
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
         self.footerPresentation = footerPresentation
+        self.onRunSetup = onRunSetup
         let initialPerformanceEffort = performanceEffort()
         self.tabRequest = tabRequest
         self.onSelectedTabChange = onSelectedTabChange
@@ -862,6 +866,14 @@ public struct SettingsView: View {
             // Always flat, even when everything is granted (Etan's 2.2.24 review #4; BrainBar #920).
             Section("Permissions") {
                 permissionRows
+            }
+
+            Section("Setup") {
+                Button("Run setup again") {
+                    onRunSetup()
+                }
+                Text("Walks through permissions, the F5 key, your microphone and a test dictation.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             visibilitySection

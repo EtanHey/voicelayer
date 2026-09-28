@@ -11,6 +11,8 @@ public struct MenuBarPopoverView: View {
     public let onCopy: () -> Void
     public let onSettings: () -> Void
     public let onQuit: () -> Void
+    /// Opens the setup wizard (F3).
+    public let onRunSetup: () -> Void
     /// Opens Settings › General › Microphone priority. There is no direct device pick here (D2).
     public let onChangeMicrophone: () -> Void
     public let onLayout: ([String: CGRect]) -> Void
@@ -24,6 +26,7 @@ public struct MenuBarPopoverView: View {
         onCopy: @escaping () -> Void = {},
         onSettings: @escaping () -> Void = {},
         onQuit: @escaping () -> Void = {},
+        onRunSetup: @escaping () -> Void = {},
         onChangeMicrophone: @escaping () -> Void = {},
         onLayout: @escaping ([String: CGRect]) -> Void = { _ in }
     ) {
@@ -35,6 +38,7 @@ public struct MenuBarPopoverView: View {
         self.onCopy = onCopy
         self.onSettings = onSettings
         self.onQuit = onQuit
+        self.onRunSetup = onRunSetup
         self.onChangeMicrophone = onChangeMicrophone
         self.onLayout = onLayout
     }
@@ -160,6 +164,12 @@ public struct MenuBarPopoverView: View {
             .font(.system(size: 12))
             .buttonStyle(.plain)
             .popoverFrame("footer")
+            Button("Run setup…", action: onRunSetup)
+                .buttonStyle(.link)
+                .font(.system(size: 12))
+                .help("Walk through permissions, the F5 key, your microphone and a test dictation again.")
+                .accessibilityIdentifier("popover-setup")
+                .popoverFrame("setup")
         }
         .frame(width: 276)
         .padding(12)
