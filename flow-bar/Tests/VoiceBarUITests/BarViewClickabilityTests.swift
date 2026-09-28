@@ -94,12 +94,12 @@ final class BarViewClickabilityTests: XCTestCase {
         let eye = VoiceBarNotchControlOptics.resolve(for: "eye")
         let eyeSlash = VoiceBarNotchControlOptics.resolve(for: "eye.slash")
 
-        XCTAssertEqual(stop.pointSize, 10)
+        XCTAssertEqual(stop.pointSize, 8)
         XCTAssertEqual(stop.offsetX, 0)
         XCTAssertEqual(stop.offsetY, 0)
         XCTAssertEqual(eye.pointSize, eyeSlash.pointSize)
-        XCTAssertEqual(eye.pointSize, 15)
-        XCTAssertEqual(replay.pointSize, 15)
+        XCTAssertEqual(eye.pointSize, 12)
+        XCTAssertEqual(replay.pointSize, 12)
 
         let source = try barViewSource()
         let buttonStart = try XCTUnwrap(source.range(of: "private func notchButton"))
@@ -110,9 +110,9 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertFalse(source.contains("Color(nsColor: .labelColor)"))
         XCTAssertTrue(buttonSource.contains("icon == \"stop.fill\""))
         XCTAssertTrue(buttonSource.contains("VoiceBarPillControlButton("))
-        XCTAssertTrue(source.contains(".frame(width: 26, height: 26)"))
+        XCTAssertTrue(source.contains(".frame(width: Self.hitDiameter, height: Self.hitDiameter)"))
         XCTAssertTrue(source.contains(".contentShape(Circle())"))
-        XCTAssertTrue(source.contains(".padding(-3)"))
+        XCTAssertTrue(source.contains(".padding(-Self.hitOverhang)"))
         XCTAssertTrue(source.contains("if isDestructive {"))
     }
 

@@ -128,8 +128,10 @@ public struct VoiceBarNotchControlOptics: Equatable {
     public let offsetX: CGFloat
     public let offsetY: CGFloat
 
+    /// Sized for the plate, which fills the 20 pt layout slot (C1: the 26 pt plate and 15 pt glyphs
+    /// made Stop and X touch). Scaled from P05's 10/15 on 26 by 20/26.
     public static func resolve(for systemName: String) -> Self {
-        VoiceBarNotchControlOptics(pointSize: systemName == "stop.fill" ? 10 : 15, offsetX: 0, offsetY: 0)
+        VoiceBarNotchControlOptics(pointSize: systemName == "stop.fill" ? 8 : 12, offsetX: 0, offsetY: 0)
     }
 
     /// The pre-P05 compact optics. P05's 26 pt system (`resolve`) is for the pill controls only;
@@ -184,6 +186,13 @@ struct VoiceBarPillControlButton: View {
     let previewPressed: Bool
     @State private var isHovered = false
 
+    /// The drawn plate fills the layout slot; the invisible hit circle overhangs it by `hitOverhang` per side.
+    static let plateDiameter = VoiceBarNotchContract.material.compactControlSize
+    static let hitDiameter: CGFloat = 26
+    static var hitOverhang: CGFloat {
+        (hitDiameter - plateDiameter) / 2
+    }
+
     init(
         icon: String,
         optics: VoiceBarNotchControlOptics,
@@ -215,9 +224,11 @@ struct VoiceBarPillControlButton: View {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
             action()
         } label: {
+            // The plate is drawn at the layout slot, so neighbours keep the slot spacing between them;
+            // only the invisible hit circle stays 26 pt (it overhangs the slot by the -3 padding).
             glyph
                 .offset(x: optics.offsetX, y: optics.offsetY)
-                .frame(width: 26, height: 26)
+                .frame(width: Self.plateDiameter, height: Self.plateDiameter)
                 .background {
                     Circle()
                         .fill(isDestructive ? Theme.recordingColor
@@ -226,11 +237,12 @@ struct VoiceBarPillControlButton: View {
                 }
                 // C3: History's selected plate and red glyph ease in and out instead of snapping.
                 .animation(.easeOut(duration: 0.2), value: isSelected)
+                .frame(width: Self.hitDiameter, height: Self.hitDiameter)
                 .contentShape(Circle())
         }
         .buttonStyle(VoiceBarPillPressStyle(previewPressed: previewPressed))
         .onHover { isHovered = $0 }
-        .padding(-3)
+        .padding(-Self.hitOverhang)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
         .help(accessibilityLabel)
