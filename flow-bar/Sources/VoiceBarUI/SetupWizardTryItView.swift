@@ -5,14 +5,32 @@ struct SetupWizardTryItBody: View {
     let dependencies: SetupWizardDependencies
     /// The wizard controller's Try it memory (baseline + a failed attempt); it outlives this view (#210 r1).
     let tracker: SetupTryItTracker?
+    let onOpen: (SetupTryItObservation) -> Void
     let onObserve: (SetupTryItObservation) -> Void
     let onFix: (SetupWizardStep) -> Void
+    /// Read once, when this view is first created: the first render and the controller's baseline both use it.
+    @State private var opening: SetupTryItObservation
     @State private var observation: SetupTryItObservation?
 
+    init(
+        dependencies: SetupWizardDependencies,
+        tracker: SetupTryItTracker?,
+        onOpen: @escaping (SetupTryItObservation) -> Void,
+        onObserve: @escaping (SetupTryItObservation) -> Void,
+        onFix: @escaping (SetupWizardStep) -> Void
+    ) {
+        self.dependencies = dependencies
+        self.tracker = tracker
+        self.onOpen = onOpen
+        self.onObserve = onObserve
+        self.onFix = onFix
+        _opening = State(initialValue: dependencies.tryItObservation())
+    }
+
     var body: some View {
-        let current = observation ?? dependencies.tryItObservation()
+        let current = observation ?? opening
         let step = SetupTryItStep(
-            tracker: tracker ?? SetupTryItTracker(first: current),
+            tracker: tracker ?? SetupTryItTracker(first: opening),
             observation: current,
             readiness: SetupReadiness(
                 permissions: dependencies.permissionSnapshot(),
@@ -58,7 +76,10 @@ struct SetupWizardTryItBody: View {
                 }
             }
         }
-        .onAppear(perform: poll)
+        .onAppear {
+            onOpen(opening)
+            poll()
+        }
         .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in poll() }
     }
 

@@ -232,6 +232,13 @@ public final class SetupWizardController {
     /// on every step change. The first observation sets the baseline.
     public private(set) var tryIt: SetupTryItTracker?
 
+    /// Seeds the baseline from the snapshot Try it opened (and first rendered) with, once per window. A later poll
+    /// must not become the baseline: a dictation finishing between the two reads would count as old (#210 r2).
+    public func openTryIt(with opening: SetupTryItObservation) {
+        guard tryIt == nil else { return }
+        tryIt = SetupTryItTracker(first: opening)
+    }
+
     public func observeTryIt(_ observation: SetupTryItObservation) {
         guard var tracker = tryIt else {
             tryIt = SetupTryItTracker(first: observation)

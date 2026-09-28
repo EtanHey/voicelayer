@@ -109,6 +109,7 @@ public struct SetupWizardView: View {
             SetupWizardTryItBody(
                 dependencies: dependencies,
                 tracker: controller.tryIt,
+                onOpen: { controller.openTryIt(with: $0) },
                 onObserve: { controller.observeTryIt($0) },
                 onFix: { controller.goBack(to: $0) }
             )
