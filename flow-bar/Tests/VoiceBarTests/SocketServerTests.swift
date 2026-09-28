@@ -713,9 +713,12 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         let router = VoiceBarCommandRouter(voiceState: state)
         var recordingTransitions = 0
         var idleTransitions = 0
+        let interactionStartedAt = ProcessInfo.processInfo.systemUptime
+        var modeTimeline: [(mode: VoiceMode, elapsed: TimeInterval)] = []
         state.onModeChange = { mode in
             if mode == .recording { recordingTransitions += 1 }
             if mode == .idle { idleTransitions += 1 }
+            modeTimeline.append((mode, ProcessInfo.processInfo.systemUptime - interactionStartedAt))
         }
 
         dispatchRuntimeKey(virtualKey: 79, router: router)
@@ -1044,7 +1047,12 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             XCTAssertLessThanOrEqual(concurrent, 1)
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
-        XCTAssertEqual(state.mode, .recording)
+        if state.mode != .recording {
+            let transitions = modeTimeline.map { "\($0.mode)@\(String(format: "%.3f", $0.elapsed))s" }
+            XCTFail(
+                "voice_ask recording transition missing; final mode=\(state.mode); modes=\(transitions.joined(separator: ","))"
+            )
+        }
         XCTAssertEqual(maxConcurrentAfplay, 1)
         router.handleCancel()
         XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 15))
