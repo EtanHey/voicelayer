@@ -53,6 +53,53 @@ final class ProcessingTogglesTests: XCTestCase {
         XCTAssertNil(rows[3].lockedReason, "a flag from the settings file is the user's to change")
     }
 
+    /// C22 (QA recording 2026-09-25): Smart chunks / Smart boundaries gave no sign of what they do. A flag set by
+    /// its env var replaced its explanation with "Set by …", so the explanation vanished exactly there; and the
+    /// lines didn't say when each one runs, so on an ordinary short dictation there was nothing to notice.
+    func testALockedRowKeepsItsExplanationAndAddsWhyItIsLocked() throws {
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls(
+            outro: ("environment", "0", false), boundaries: ("environment", "1", true)
+        ))))
+        let rows = ModelsSettingsView.processingRows(for: state)
+        for row in rows {
+            XCTAssertEqual(row.captionLines.first, row.line, "\(row.key): the explanation is always first")
+        }
+        XCTAssertEqual(rows[1].captionLines, [rows[1].line, "Set by VOICELAYER_STT_OUTRO_GATE"])
+        XCTAssertEqual(rows[3].captionLines, [rows[3].line, "Set by VOICELAYER_STT_SMART_BOUNDARIES"])
+        XCTAssertEqual(rows[2].captionLines, [rows[2].line], "an unlocked row shows only its explanation")
+    }
+
+    /// D194-r1 (Medium): both features run only on the resident Whisper server path; the whisper-cli and Wispr
+    /// Flow backends return no segments and have no smart chunk path, so the copy must say so, never "every
+    /// dictation". (Low): Rule B demotes a stop only when the clause is unfinished or runs straight on.
+    func testSmartRowsSayWhenTheyRunWhatChangesAndWhichBackendRunsThem() throws {
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
+        let rows = ModelsSettingsView.processingRows(for: state)
+        let serverOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
+        XCTAssertEqual(
+            rows[2].line,
+            "Recordings of 90 s or more split at your pauses instead of every 30 s; shorter ones are never split. "
+                + serverOnly
+        )
+        XCTAssertEqual(
+            rows[3].line,
+            "Turns a full stop into a comma when the sentence isn't finished or runs straight on without a pause. "
+                + "Never adds a stop or drops a word. " + serverOnly
+        )
+        XCTAssertFalse(rows.contains { $0.line.contains("Every dictation") })
+    }
+
+    func testTheRowRendersEveryCaptionLine() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(source.contains("Text(row.lockedReason ?? row.line)"))
+        XCTAssertTrue(source.contains("ForEach(row.captionLines, id: \\.self)"))
+    }
+
     func testPolishPreviewModeIsShownButNotAToggleState() throws {
         let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls(
             polish: ("environment", "shadow", "shadow")

@@ -249,10 +249,12 @@ public struct ModelsSettingsView: View {
             .disabled(row.lockedReason != nil || busyReason != nil || onToggleProcessing == nil
                 || processingPending[row.key] != nil)
             .accessibilityIdentifier("models-processing-\(row.key.rawValue)")
-            Text(row.lockedReason ?? row.line)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            ForEach(row.captionLines, id: \.self) { caption in
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -263,6 +265,11 @@ public struct ModelsSettingsView: View {
         let experimental: Bool
         let isOn: Bool
         let lockedReason: String?
+
+        /// C22: the explanation always shows; a lock adds its reason below instead of replacing it.
+        var captionLines: [String] {
+            [line] + (lockedReason.map { [$0] } ?? [])
+        }
     }
 
     /// Spec §5: busy always shows a reason, here as under the effort picker. nil when the
@@ -270,6 +277,10 @@ public struct ModelsSettingsView: View {
     static func processingBusyReason(for state: ModelsSettingsState) -> String? {
         state.availability == .available ? effortDisabledReason(for: state) : nil
     }
+
+    /// D194-r1: smart chunks and smart boundaries exist only on the resident Whisper server path (src/stt.ts);
+    /// whisper-cli and Wispr Flow return no segments, and a server request that falls back to the CLI skips them.
+    static let whisperServerOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
 
     static func processingRows(for controls: PolishControlsState) -> [ProcessingRow] {
         func locked(_ key: ProcessingKey, _ setting: PolishSetting<some Any>) -> String? {
@@ -295,14 +306,16 @@ public struct ModelsSettingsView: View {
             ),
             ProcessingRow(
                 key: .smartChunks,
-                line: "Long recordings (90 s+): cut at your pauses instead of every 30 s.",
+                line: "Recordings of 90 s or more split at your pauses instead of every 30 s; shorter ones are "
+                    + "never split. " + Self.whisperServerOnly,
                 experimental: true,
                 isOn: controls.smartChunks.effective,
                 lockedReason: locked(.smartChunks, controls.smartChunks)
             ),
             ProcessingRow(
                 key: .smartBoundaries,
-                line: "Turns a full stop into a comma when you didn't actually pause.",
+                line: "Turns a full stop into a comma when the sentence isn't finished or runs straight on without "
+                    + "a pause. Never adds a stop or drops a word. " + Self.whisperServerOnly,
                 experimental: true,
                 isOn: controls.smartBoundaries.effective,
                 lockedReason: locked(.smartBoundaries, controls.smartBoundaries)
