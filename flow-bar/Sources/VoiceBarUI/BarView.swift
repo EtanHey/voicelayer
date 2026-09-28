@@ -235,6 +235,8 @@ struct VoiceBarPillControlButton: View {
                             : isSelected ? Theme.recordingColor.opacity(0.30)
                             : isHovered || previewHovered || previewPressed ? foreground.opacity(0.12) : .clear)
                 }
+                // C3: History's selected plate and red glyph ease in and out instead of snapping.
+                .animation(.easeOut(duration: 0.2), value: isSelected)
                 .frame(width: Self.hitDiameter, height: Self.hitDiameter)
                 .contentShape(Circle())
         }
