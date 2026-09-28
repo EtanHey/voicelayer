@@ -776,7 +776,7 @@ HELPER
 # fatal. No real Homebrew command runs.
 # shellcheck disable=SC2031,SC2329
 test_formula_upgrade_self_lock_retry() (
-    local fixture
+    local fixture upgrade_output
     fixture="$(mktemp -d)"
     trap 'rm -rf "${fixture:?}"' EXIT
     export FIXTURE_BREW_CALLS="$fixture/brew-calls"
@@ -796,6 +796,9 @@ if [[ "$FIXTURE_BREW_ERROR" == other ]]; then
     printf 'Error: bottle checksum mismatch\n' >&2
     exit 42
 fi
+if [[ "$FIXTURE_BREW_ERROR" == warning ]]; then
+    printf 'Warning: synthetic-dep is deprecated\n' >&2
+fi
 touch "$FIXTURE_FORMULA_UPGRADED"
 BREW
     chmod +x "$fixture/brew"
@@ -810,6 +813,13 @@ BREW
     update_package || fail "formula update did not recover from Homebrew self-lock"
     [[ -f "$FIXTURE_FORMULA_UPGRADED" ]] || fail "formula was not upgraded after the self-lock"
     assert_eq "2" "$(wc -l < "$FIXTURE_BREW_CALLS" | tr -d ' ')" "self-lock upgrade attempts"
+
+    : > "$FIXTURE_BREW_CALLS"
+    FIXTURE_BREW_ERROR=warning
+    upgrade_output="$(update_package 2>&1)" || fail "warning-bearing brew upgrade must succeed"
+    [[ "$upgrade_output" == *'Warning: synthetic-dep is deprecated'* ]] ||
+        fail "successful brew upgrade must print its stderr warning"
+    assert_eq "1" "$(wc -l < "$FIXTURE_BREW_CALLS" | tr -d ' ')" "warning upgrade attempts"
 
     : > "$FIXTURE_BREW_CALLS"
     rm -f "${FIXTURE_FORMULA_UPGRADED:?}"

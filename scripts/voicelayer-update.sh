@@ -565,12 +565,15 @@ update_formula() {
     fi
     upgrade_stderr="$(mktemp)" || return 1
     if bcs_brew_run upgrade --formula "$VOICEBAR_FORMULA_NAME" 2>"$upgrade_stderr"; then
-        rm -f "${upgrade_stderr:?}"
-        return 0
+        upgrade_status=0
     else
         upgrade_status=$?
     fi
     cat "$upgrade_stderr" >&2
+    if [[ "$upgrade_status" -eq 0 ]]; then
+        rm -f "${upgrade_stderr:?}"
+        return 0
+    fi
     if grep -Fq "Error: $VOICEBAR_FORMULA_NAME: A \`brew upgrade --formula $VOICEBAR_FORMULA_NAME\` process has already locked " "$upgrade_stderr"; then
         rm -f "${upgrade_stderr:?}"
         log "Homebrew formula upgrade hit its dependency self-lock; retrying once."
