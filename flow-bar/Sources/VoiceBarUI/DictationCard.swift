@@ -32,12 +32,13 @@ public enum DictationInsertionStatus: Equatable {
 public struct DictationCard: View {
     public let entry: RecentTranscriptionEntry
     public let insertionStatus: DictationInsertionStatus
-    public let onCopy: (String) -> Void
+    /// Returns whether the text reached the pasteboard (`VoiceState.copyTranscript`), so a failed copy shows no tick.
+    public let onCopy: (String) -> Bool
 
     public init(
         entry: RecentTranscriptionEntry,
         insertionStatus: DictationInsertionStatus,
-        onCopy: @escaping (String) -> Void
+        onCopy: @escaping (String) -> Bool
     ) {
         self.entry = entry
         self.insertionStatus = insertionStatus
@@ -60,7 +61,7 @@ public struct DictationCard: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
-                    onCopy(entry.text)
+                    _ = onCopy(entry.text)
                 } label: {
                     Image(systemName: "doc.on.doc")
                 }
