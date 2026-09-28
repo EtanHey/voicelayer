@@ -53,6 +53,46 @@ final class ProcessingTogglesTests: XCTestCase {
         XCTAssertNil(rows[3].lockedReason, "a flag from the settings file is the user's to change")
     }
 
+    /// C22 (QA recording 2026-09-25): Smart chunks / Smart boundaries gave no sign of what they do. A flag set by
+    /// its env var replaced its explanation with "Set by …", so the explanation vanished exactly there; and the
+    /// lines didn't say when each one runs, so on an ordinary short dictation there was nothing to notice.
+    func testALockedRowKeepsItsExplanationAndAddsWhyItIsLocked() throws {
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls(
+            outro: ("environment", "0", false), boundaries: ("environment", "1", true)
+        ))))
+        let rows = ModelsSettingsView.processingRows(for: state)
+        for row in rows {
+            XCTAssertEqual(row.captionLines.first, row.line, "\(row.key): the explanation is always first")
+        }
+        XCTAssertEqual(rows[1].captionLines, [rows[1].line, "Set by VOICELAYER_STT_OUTRO_GATE"])
+        XCTAssertEqual(rows[3].captionLines, [rows[3].line, "Set by VOICELAYER_STT_SMART_BOUNDARIES"])
+        XCTAssertEqual(rows[2].captionLines, [rows[2].line], "an unlocked row shows only its explanation")
+    }
+
+    func testSmartRowsSayWhenTheyRunAndWhatChanges() throws {
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
+        let rows = ModelsSettingsView.processingRows(for: state)
+        XCTAssertEqual(
+            rows[2].line,
+            "Only recordings of 90 s or more: splits them at your pauses instead of every 30 s. Shorter ones are never split."
+        )
+        XCTAssertEqual(
+            rows[3].line,
+            "Every dictation: a full stop stays only where you paused or started a new thought; otherwise it becomes a comma. Never adds a stop or changes a word."
+        )
+    }
+
+    func testTheRowRendersEveryCaptionLine() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(source.contains("Text(row.lockedReason ?? row.line)"))
+        XCTAssertTrue(source.contains("ForEach(row.captionLines, id: \\.self)"))
+    }
+
     func testPolishPreviewModeIsShownButNotAToggleState() throws {
         let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls(
             polish: ("environment", "shadow", "shadow")
