@@ -2810,7 +2810,8 @@ enum SettingsDictionaryMutations {
     }
 }
 
-private extension HotkeyPermission {
+/// Shared with the setup wizard's Permissions step (F3), so both name and open each pane the same way.
+extension HotkeyPermission {
     var label: String {
         switch self {
         case .inputMonitoring:

@@ -1,4 +1,25 @@
+import AppKit
 import SwiftUI
+
+/// What the wizard reads and does through the app. VoiceBarUI stays presentation-only: every check and action here
+/// is the app's existing one, passed in.
+public struct SetupWizardDependencies {
+    /// Read about once a second while the Permissions step shows.
+    public var permissionSnapshot: () -> SetupPermissionSnapshot
+    /// Shows the macOS microphone prompt, then calls back so the step re-reads the snapshot.
+    public var onRequestMicrophone: (@escaping () -> Void) -> Void
+    public var openURL: (URL) -> Void
+
+    public init(
+        permissionSnapshot: @escaping () -> SetupPermissionSnapshot = { .unknown },
+        onRequestMicrophone: @escaping (@escaping () -> Void) -> Void = { $0() },
+        openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }
+    ) {
+        self.permissionSnapshot = permissionSnapshot
+        self.onRequestMicrophone = onRequestMicrophone
+        self.openURL = openURL
+    }
+}
 
 /// F3: the setup wizard window's content. The frame (progress, heading, footer) is shared; each step's body
 /// reuses the matching Settings control. The window itself is the app's.
@@ -6,9 +27,11 @@ public struct SetupWizardView: View {
     public static let contentSize = CGSize(width: 560, height: 460)
 
     private let controller: SetupWizardController
+    private let dependencies: SetupWizardDependencies
 
-    public init(controller: SetupWizardController) {
+    public init(controller: SetupWizardController, dependencies: SetupWizardDependencies = SetupWizardDependencies()) {
         self.controller = controller
+        self.dependencies = dependencies
     }
 
     public var body: some View {
@@ -48,7 +71,9 @@ public struct SetupWizardView: View {
             SetupWizardWelcomeBody()
         case .done:
             SetupWizardDoneBody(summary: SetupWizardDoneSummary(skippedSteps: model.skippedSteps))
-        case .permissions, .f5Key, .microphone, .tryIt:
+        case .permissions:
+            SetupWizardPermissionsBody(dependencies: dependencies)
+        case .f5Key, .microphone, .tryIt:
             EmptyView()
         }
     }
