@@ -2719,6 +2719,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             vocabularyRevision: { [weak self] in
                 self?.voiceState.transcriptionVocabularyRevision ?? 0
             },
+            onRequestVocabularySnapshot: { [weak self] in
+                self?.voiceState.requestVocabularySnapshotIfMissing()
+            },
             onAddVocabularyAlias: { [weak self] correct, wrong in
                 self?.voiceState.addVocabularyAlias(
                     correct: correct,

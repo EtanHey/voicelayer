@@ -1266,7 +1266,12 @@ public final class VoiceState {
         sendCommand?(STTVocabularyCommandPayload.list())
     }
 
-    public func requestVocabularySnapshotIfMissing() {}
+    /// The Dictionary tab's ask (UXP-1): only while no reply has delivered the bundled rows, so an open tab costs no
+    /// extra daemon round-trip once they are here.
+    public func requestVocabularySnapshotIfMissing() {
+        guard transcriptionVocabularyDisplayEntries == nil else { return }
+        requestVocabularySnapshot()
+    }
 
     public func removeVocabularyPromptTerm(_ term: String) {
         let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -717,10 +717,9 @@ public struct SettingsView: View {
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialDictionaryPreview?.entries ?? [])
         _hasLoadedDictionaryOnce = State(initialValue: initialDictionaryPreview != nil)
-        _dictionaryDisplayIndex = State(initialValue: STTDictionaryDisplayIndex(entries:
-            initialDictionaryPreview?.displayEntries ?? initialDictionaryPreview?.entries.map {
-                STTDictionaryDisplayEntry(source: "personal", entry: $0)
-            } ?? []))
+        _dictionaryDisplayIndex = State(initialValue: initialDictionaryPreview
+            .map(STTDictionaryDisplayIndex.init(preview:))
+            ?? STTDictionaryDisplayIndex(entries: [], bundledRowsKnown: false))
     }
 
     public var body: some View {
@@ -753,7 +752,10 @@ public struct SettingsView: View {
         // A view built on a requested tab sets it in init, where no onChange fires; report it here too.
         .onAppear { onSelectedTabChange(selectedTab) }
         .task(id: selectedTab) {
-            if selectedTab == .dictionary, !hasInitialDictionaryPreview { loadDictionaryPreview() }
+            guard selectedTab == .dictionary else { return }
+            // UXP-1: the bundled rows come only from the daemon's reply; ask again if they never arrived.
+            onRequestVocabularySnapshot()
+            if !hasInitialDictionaryPreview { loadDictionaryPreview() }
         }
         .onChange(of: selectedTab) { _, tab in
             onSelectedTabChange(tab)
@@ -1995,28 +1997,28 @@ public struct SettingsView: View {
                                 Divider()
                             }
                         }
-                        Button {
-                            includedTermsExpanded.toggle()
-                        } label: {
-                            HStack {
-                                Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
-                                    .frame(width: 14)
-                                Text(Self.dictionarySectionTitle(
-                                    "Included terms", count: dictionaryDisplayIndex.includedCount,
-                                    matches: isSearching ? included.count : nil,
-                                    loaded: hasLoadedDictionaryOnce
-                                ))
-                                Spacer()
-                                Text("built in").font(.caption).foregroundStyle(.secondary)
+                        let includedHeader = Self.includedTermsHeader(
+                            index: dictionaryDisplayIndex,
+                            matches: isSearching ? included.count : nil,
+                            loaded: hasLoadedDictionaryOnce
+                        )
+                        if includedHeader.showsChevron {
+                            Button {
+                                includedTermsExpanded.toggle()
+                            } label: {
+                                includedTermsHeaderLabel(includedHeader)
                             }
-                            .font(.headline)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
+                            .accessibilityValue(includedTermsExpanded ? "Expanded" : "Collapsed")
+                            .accessibilityHint("Built-in terms are read-only")
+                            .padding(.top, 18)
+                        } else {
+                            // Nothing to open: loading, or a list the daemon reports empty (UXP-1).
+                            includedTermsHeaderLabel(includedHeader)
+                                .accessibilityElement(children: .combine)
+                                .padding(.top, 18)
                         }
-                        .buttonStyle(.plain)
-                        .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
-                        .accessibilityValue(includedTermsExpanded ? "Expanded" : "Collapsed")
-                        .accessibilityHint("Built-in terms are read-only")
-                        .padding(.top, 18)
                         if includedTermsExpanded || isSearching {
                             ForEach(included, id: \.rowID) { row in
                                 dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
@@ -2052,10 +2054,29 @@ public struct SettingsView: View {
         }
         .onChange(of: localEntries) { _, entries in
             let bundled = dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }
-            dictionaryDisplayIndex = STTDictionaryDisplayIndex(entries: bundled + entries.map {
-                STTDictionaryDisplayEntry(source: "personal", entry: $0)
-            })
+            dictionaryDisplayIndex = STTDictionaryDisplayIndex(
+                entries: bundled + entries.map { STTDictionaryDisplayEntry(source: "personal", entry: $0) },
+                bundledRowsKnown: dictionaryDisplayIndex.bundledRowsKnown
+            )
         }
+    }
+
+    private func includedTermsHeaderLabel(_ header: IncludedTermsHeader) -> some View {
+        HStack {
+            Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
+                .frame(width: 14)
+                .opacity(header.showsChevron ? 1 : 0)
+                .accessibilityHidden(!header.showsChevron)
+            Text(header.title)
+            if header.isLoading {
+                ProgressView().controlSize(.small)
+                Text("Loading…").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("built in").font(.caption).foregroundStyle(.secondary)
+        }
+        .font(.headline)
+        .contentShape(Rectangle())
     }
 
     private var searchRow: some View {
@@ -2652,17 +2673,17 @@ public struct SettingsView: View {
         let showsChevron: Bool
     }
 
+    /// UXP-1: until the daemon's bundled rows arrive the count is unknown, not zero ("Loading…", nothing to open);
+    /// a list the daemon reports empty has nothing to open either, so neither shows a chevron.
     static func includedTermsHeader(index: STTDictionaryDisplayIndex, matches: Int?,
                                     loaded: Bool) -> IncludedTermsHeader {
-        IncludedTermsHeader(
-            title: dictionarySectionTitle(
-                "Included terms",
-                count: index.includedCount,
-                matches: matches,
-                loaded: loaded
-            ),
+        guard loaded, index.bundledRowsKnown else {
+            return IncludedTermsHeader(title: "Included terms", isLoading: true, showsChevron: false)
+        }
+        return IncludedTermsHeader(
+            title: dictionarySectionTitle("Included terms", count: index.includedCount, matches: matches, loaded: true),
             isLoading: false,
-            showsChevron: true
+            showsChevron: index.includedCount > 0
         )
     }
 
