@@ -3,16 +3,11 @@ import SwiftUI
 /// F3 step 2: is F5 listened for, and is the F5 key helper installed — with Settings' Set up / Reinstall.
 struct SetupWizardF5KeyBody: View {
     let dependencies: SetupWizardDependencies
+    /// The wizard controller's helper run: it outlives this view, which is rebuilt on every step change.
+    let run: SetupRelayRun?
+    let onRunHelper: (SettingsRelaySetupFeedback.Action) -> Void
     let onFix: (SetupWizardStep) -> Void
     @State private var status: SetupF5KeyStatus?
-    @State private var run: SetupRelayRun?
-
-    init(dependencies: SetupWizardDependencies, initialRun: SetupRelayRun?,
-         onFix: @escaping (SetupWizardStep) -> Void) {
-        self.dependencies = dependencies
-        self.onFix = onFix
-        _run = State(initialValue: initialRun)
-    }
 
     var body: some View {
         let step = SetupF5KeyStep(status: status ?? dependencies.f5KeyStatus(), run: run)
@@ -25,7 +20,7 @@ struct SetupWizardF5KeyBody: View {
                 }
                 Divider()
                 row("F5 key helper", status: step.helperStatus, isReady: step.helperAction == .reinstall) {
-                    Button(step.helperButtonTitle) { runHelperSetup(step.helperAction) }
+                    Button(step.helperButtonTitle) { onRunHelper(step.helperAction) }
                         .disabled(!step.helperButtonEnabled)
                 }
             }
@@ -51,6 +46,7 @@ struct SetupWizardF5KeyBody: View {
         }
         .onAppear(perform: refresh)
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in refresh() }
+        .onChange(of: run) { _, _ in refresh() }
     }
 
     private func row(
@@ -93,15 +89,6 @@ struct SetupWizardF5KeyBody: View {
                     .foregroundStyle(succeeded ? Color.green : Color.red)
             }
             .font(.callout)
-        }
-    }
-
-    private func runHelperSetup(_ action: SettingsRelaySetupFeedback.Action) {
-        guard run == nil || run?.result != nil else { return }
-        run = SetupRelayRun(action: action, result: nil)
-        dependencies.onRunRelaySetup { result in
-            run = SetupRelayRun(action: action, result: result)
-            refresh()
         }
     }
 

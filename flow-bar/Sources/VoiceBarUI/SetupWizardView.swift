@@ -38,17 +38,10 @@ public struct SetupWizardView: View {
 
     private let controller: SetupWizardController
     private let dependencies: SetupWizardDependencies
-    private let initialRelayRun: SetupRelayRun?
 
     public init(controller: SetupWizardController, dependencies: SetupWizardDependencies = SetupWizardDependencies()) {
-        self.init(controller: controller, dependencies: dependencies, initialRelayRun: nil)
-    }
-
-    /// Tests and artifacts start the F5 key step with a finished or running helper setup.
-    init(controller: SetupWizardController, dependencies: SetupWizardDependencies, initialRelayRun: SetupRelayRun?) {
         self.controller = controller
         self.dependencies = dependencies
-        self.initialRelayRun = initialRelayRun
     }
 
     public var body: some View {
@@ -93,7 +86,8 @@ public struct SetupWizardView: View {
         case .f5Key:
             SetupWizardF5KeyBody(
                 dependencies: dependencies,
-                initialRun: initialRelayRun,
+                run: controller.relayRun,
+                onRunHelper: { controller.startRelaySetup($0, using: dependencies.onRunRelaySetup) },
                 onFix: { controller.goBack(to: $0) }
             )
         case .microphone, .tryIt:
