@@ -3,19 +3,44 @@ import SwiftUI
 /// The one Add/Edit sheet for a Dictionary term: Correct / Misheard as (+ swap), and in edit mode the term's
 /// existing misheard spellings with a remove button each. Settings opens it from "Add term", the pencil, or a
 /// double-click on a row; the right-click "Add to Dictionary" window uses it for a correct ⇄ misheard pair.
+///
+/// F2: an Add that names a term already in "Your terms" opens that term instead, with Misheard as focused, when
+/// focus moves from Correct into Misheard as, or Add is pressed with no misheard spelling. With one typed, Add
+/// saves it as an edit of the existing term in one step.
+///
+/// AIDEV-NOTE: #201 r1 High: one Add click must open OR save, never both. A click on Add can take focus from
+/// Correct before the button action runs; if that focus change opened the term, the action then saved the
+/// now-open edit and closed the sheet. So only a move INTO Misheard as redirects, and the button goes through
+/// `submitAction` alone. Both are pure statics so tests replay either event order without focus or clicks.
 public struct DictionaryAddSheetView: View {
-    @State private var edit: DictionaryTermEdit
+    enum SubmitAction: Equatable {
+        case save(DictionaryTermEdit)
+        case open(DictionaryTermEdit)
+    }
 
+    enum Field: Hashable {
+        case correct
+        case misheard
+    }
+
+    static let existingTermHint = "Already in your dictionary — add a misheard spelling"
+
+    @State private var edit: DictionaryTermEdit
+    @FocusState private var focusedField: Field?
+
+    private let existingEntries: [STTDictionaryEntry]
     private let onSaveEdit: (DictionaryTermEdit) -> Void
     private let onCancel: () -> Void
     private let requiresMisheard: Bool
 
     public init(
         edit: DictionaryTermEdit,
+        existingEntries: [STTDictionaryEntry] = [],
         onSave: @escaping (DictionaryTermEdit) -> Void,
         onCancel: @escaping () -> Void
     ) {
         _edit = State(initialValue: edit)
+        self.existingEntries = existingEntries
         requiresMisheard = false
         onSaveEdit = onSave
         self.onCancel = onCancel
@@ -28,6 +53,7 @@ public struct DictionaryAddSheetView: View {
         onCancel: @escaping () -> Void
     ) {
         _edit = State(initialValue: DictionaryTermEdit(correct: draft.correct, wrong: draft.wrong))
+        existingEntries = []
         requiresMisheard = !allowTermOnly
         onSaveEdit = { onSave(STTVocabularyDraft(correct: $0.correct, wrong: $0.wrong)) }
         self.onCancel = onCancel
@@ -46,6 +72,7 @@ public struct DictionaryAddSheetView: View {
                         TextField("Intended text", text: $edit.correct)
                             .dictionaryTextField()
                             .dictionaryFieldContainer()
+                            .focused($focusedField, equals: .correct)
                             .accessibilityLabel("Correct spelling")
                     }
                     GridRow {
@@ -53,6 +80,7 @@ public struct DictionaryAddSheetView: View {
                         TextField(edit.isEditing ? "Add a misheard spelling" : "Misheard text", text: $edit.wrong)
                             .dictionaryTextField()
                             .dictionaryFieldContainer()
+                            .focused($focusedField, equals: .misheard)
                             .accessibilityLabel("Misheard as")
                     }
                 }
@@ -65,6 +93,12 @@ public struct DictionaryAddSheetView: View {
                 }
                 .help("Swap correct and misheard")
                 .accessibilityLabel("Swap correct and misheard text")
+            }
+
+            if Self.showsExistingTermHint(for: edit, existingEntries: existingEntries) {
+                Text(Self.existingTermHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if edit.isEditing, !edit.keptVariants.isEmpty {
@@ -103,7 +137,7 @@ public struct DictionaryAddSheetView: View {
                 }
                 .keyboardShortcut(.cancelAction)
                 Button(edit.isEditing ? "Save" : "Add") {
-                    onSaveEdit(edit)
+                    submit()
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!edit.canSave || (requiresMisheard && edit.trimmedWrong.isEmpty))
@@ -111,5 +145,47 @@ public struct DictionaryAddSheetView: View {
         }
         .padding(18)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: focusedField) { previous, next in
+            if let opened = Self.focusRedirect(edit, from: previous, to: next, existingEntries: existingEntries) {
+                open(opened)
+            }
+        }
+    }
+
+    private func submit() {
+        switch Self.submitAction(for: edit, existingEntries: existingEntries) {
+        case let .save(saved): onSaveEdit(saved)
+        case let .open(opened): open(opened)
+        }
+    }
+
+    private func open(_ opened: DictionaryTermEdit) {
+        edit = opened
+        focusedField = .misheard
+    }
+
+    /// Add/Save. A draft naming an existing term never saves as a new one: with no misheard spelling the press only
+    /// opens the term; with one, it saves as an edit of that term (stored spelling kept, variant added).
+    static func submitAction(for edit: DictionaryTermEdit, existingEntries: [STTDictionaryEntry]) -> SubmitAction {
+        guard let entry = edit.existingTerm(in: existingEntries) else { return .save(edit) }
+        let opened = edit.openingExisting(entry)
+        return opened.trimmedWrong.isEmpty ? .open(opened) : .save(opened)
+    }
+
+    /// The edit a focus change opens, if any: only Correct → Misheard as (Tab, or a click into that field).
+    static func focusRedirect(
+        _ edit: DictionaryTermEdit,
+        from previous: Field?,
+        to next: Field?,
+        existingEntries: [STTDictionaryEntry]
+    ) -> DictionaryTermEdit? {
+        guard previous == .correct, next == .misheard, let entry = edit.existingTerm(in: existingEntries) else {
+            return nil
+        }
+        return edit.openingExisting(entry)
+    }
+
+    static func showsExistingTermHint(for edit: DictionaryTermEdit, existingEntries: [STTDictionaryEntry]) -> Bool {
+        edit.openedExisting || edit.existingTerm(in: existingEntries) != nil
     }
 }
