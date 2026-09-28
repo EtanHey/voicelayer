@@ -1548,14 +1548,25 @@ public final class VoiceState {
         case "transcription":
             if let text = event["text"] as? String {
                 let isPartial = (event["partial"] as? Bool) == true
-                if !isPartial {
-                    lastTranscriptionPolished = event["polished"] as? Bool
-                    lastTranscriptionPolishReason = event["polish_reason"] as? String
-                }
                 let recordingPath = (event["recording_path"] as? String)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let normalizedRecordingPath = recordingPath?.isEmpty == false ? recordingPath : nil
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // AIDEV-NOTE: a late History result belongs to no live capture. Classify it before ANY live state:
+                // the polish metadata, the partial `transcript`, the empty-final failTranscription(), and the
+                // display-floor deferral, which holds one final at a time. Any of those let a late archived result
+                // overwrite or cancel the current dictation's final, and its words were lost (#186 review round 3,
+                // #188 review round 1: an empty late result failed the new dictation).
+                if let path = normalizedRecordingPath, historyRetranscriptionRequest.isLateArchivedResult(for: path) {
+                    handleLateArchivedTranscription(trimmed, recordingPath: path, isPartial: isPartial)
+                    return
+                }
+
+                if !isPartial {
+                    lastTranscriptionPolished = event["polished"] as? Bool
+                    lastTranscriptionPolishReason = event["polish_reason"] as? String
+                }
                 guard !trimmed.isEmpty else {
                     if isPartial {
                         return
@@ -1566,15 +1577,6 @@ public final class VoiceState {
 
                 if isPartial {
                     transcript = trimmed
-                    return
-                }
-
-                // AIDEV-NOTE: a late History result belongs to no live capture. Handle it now, never through the
-                // display-floor deferral below: that holds one final at a time, so a late archived result arriving
-                // inside the window cancelled the current dictation's deferred final and its words were lost
-                // (#186 review round 3).
-                if let path = normalizedRecordingPath, historyRetranscriptionRequest.isLateArchivedResult(for: path) {
-                    handleFinalTranscription(trimmed, recordingPath: path)
                     return
                 }
 
@@ -2357,6 +2359,18 @@ public final class VoiceState {
             )
         }
         return true
+    }
+
+    /// A result for a History request whose live state was already cleaned up. Only a nonempty final touches
+    /// anything, and then only its own archive row (via `handleFinalTranscription`'s late-archive branch).
+    private func handleLateArchivedTranscription(_ text: String, recordingPath: String, isPartial: Bool) {
+        guard !isPartial else { return }
+        guard !text.isEmpty else {
+            _ = historyRetranscriptionRequest.takeArchivedOrigin(for: recordingPath)
+            logDiagnostic("transcription_final_archived_late_empty", details: ["recordingPath": recordingPath])
+            return
+        }
+        handleFinalTranscription(text, recordingPath: recordingPath)
     }
 
     private func handleFinalTranscription(

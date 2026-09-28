@@ -53,12 +53,22 @@ final class HistoryLateResultRaceTests: XCTestCase {
         return Harness(state: state, pasted: { pastedTexts }, archiveChanges: { archiveChanges })
     }
 
-    private func sendNewFinal(to state: VoiceState) {
-        state.handleEvent(["type": "transcription", "text": Self.newText, "recording_path": Self.newPath])
+    private func sendNewFinal(to state: VoiceState, extra: [String: Any] = [:]) {
+        state.handleEvent(
+            ["type": "transcription", "text": Self.newText, "recording_path": Self.newPath]
+                .merging(extra) { _, new in new }
+        )
     }
 
-    private func sendLateArchivedFinal(to state: VoiceState) {
-        state.handleEvent(["type": "transcription", "text": Self.archivedText, "recording_path": Self.archivedPath])
+    private func sendLateArchivedFinal(
+        to state: VoiceState,
+        text: String = HistoryLateResultRaceTests.archivedText,
+        extra: [String: Any] = [:]
+    ) {
+        state.handleEvent(
+            ["type": "transcription", "text": text, "recording_path": Self.archivedPath]
+                .merging(extra) { _, new in new }
+        )
     }
 
     private func assertNewDictationLanded(_ harness: Harness, file: StaticString = #filePath, line: UInt = #line) {
@@ -134,5 +144,35 @@ final class HistoryLateResultRaceTests: XCTestCase {
             Date(timeIntervalSince1970: 1_767_139_200),
             "a re-transcription keeps the time the row was dictated"
         )
+    }
+
+    func testAnEmptyLateHistoryResultDoesNotFailTheNewDictation() async throws {
+        let harness = try startNewDictationAfterAbandonedHistoryRequest()
+        sendNewFinal(to: harness.state)
+        // An old request can come back empty; it belongs to no live capture, so it must not fail this one.
+        sendLateArchivedFinal(to: harness.state, text: "  ")
+        XCTAssertNotEqual(harness.state.mode, .error)
+        try? await Task.sleep(for: .milliseconds(300))
+
+        assertNewDictationLanded(harness)
+        XCTAssertNotEqual(harness.state.mode, .error)
+        XCTAssertFalse(harness.archiveChanges().contains(Self.archivedPath), "an empty result rewrites nothing")
+    }
+
+    func testALateHistoryResultLeavesTheNewDictationsPolishMetadataAndPartialAlone() async throws {
+        let harness = try startNewDictationAfterAbandonedHistoryRequest()
+        harness.state.handleEvent(["type": "transcription", "text": "Synthetic new partial", "partial": true])
+        sendLateArchivedFinal(to: harness.state, text: "Synthetic archive partial", extra: ["partial": true])
+        XCTAssertEqual(harness.state.transcript, "Synthetic new partial")
+
+        sendNewFinal(to: harness.state, extra: ["polished": true, "polish_reason": "synthetic-new"])
+        sendLateArchivedFinal(to: harness.state, extra: ["polished": false, "polish_reason": "synthetic-archive"])
+        XCTAssertEqual(harness.state.lastTranscriptionPolished, true)
+        XCTAssertEqual(harness.state.lastTranscriptionPolishReason, "synthetic-new")
+        try? await Task.sleep(for: .milliseconds(300))
+
+        assertNewDictationLanded(harness)
+        XCTAssertEqual(harness.state.lastTranscriptionPolished, true)
+        XCTAssertEqual(harness.state.lastTranscriptionPolishReason, "synthetic-new")
     }
 }
