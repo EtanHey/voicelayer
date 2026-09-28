@@ -496,7 +496,7 @@ update_package() {
             ;;
         brew-formula)
             bcs_tap_update "$(bcs_cask_tap "$VOICEBAR_CASK_NAME")" "$VOICEBAR_CASK_TAP_BRANCH"
-            update_formula
+            update_formula || return
             refresh_formula_package_root
             ;;
         *)
@@ -546,7 +546,7 @@ print(f"{version}_{revision}" if revision else version)
 }
 
 update_formula() {
-    local installed offered
+    local installed offered upgrade_stderr upgrade_status
     if ! installed="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")"; then
         log "Homebrew formula $VOICEBAR_FORMULA_NAME could not be queried; skipping formula upgrade."
         return 0
@@ -563,7 +563,22 @@ update_formula() {
         log "Homebrew formula $VOICEBAR_FORMULA_NAME is already at $installed."
         return 0
     fi
-    bcs_brew_run upgrade --formula "$VOICEBAR_FORMULA_NAME"
+    upgrade_stderr="$(mktemp)" || return 1
+    if bcs_brew_run upgrade --formula "$VOICEBAR_FORMULA_NAME" 2>"$upgrade_stderr"; then
+        rm -f "${upgrade_stderr:?}"
+        return 0
+    else
+        upgrade_status=$?
+    fi
+    cat "$upgrade_stderr" >&2
+    if grep -Fq "Error: $VOICEBAR_FORMULA_NAME: A \`brew upgrade --formula $VOICEBAR_FORMULA_NAME\` process has already locked " "$upgrade_stderr"; then
+        rm -f "${upgrade_stderr:?}"
+        log "Homebrew formula upgrade hit its dependency self-lock; retrying once."
+        bcs_brew_run upgrade --formula "$VOICEBAR_FORMULA_NAME"
+    else
+        rm -f "${upgrade_stderr:?}"
+        return "$upgrade_status"
+    fi
 }
 
 installed_package_version() {
