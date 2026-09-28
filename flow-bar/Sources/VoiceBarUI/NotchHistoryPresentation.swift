@@ -26,6 +26,11 @@ public enum NotchHistoryPresentation {
         RowAction(kind: .retranscribe, symbol: "arrow.clockwise", label: "Re-transcribe"),
     ]
 
+    /// UXP-3 part 2 stub.
+    public static func accessibilityActions(for _: RecentTranscriptionEntry) -> [RowAction] {
+        []
+    }
+
     /// Each row's identity across list changes: its audio when it has one (a re-transcription keeps its row),
     /// else its text plus when it was dictated (#166 Macroscope: an offset moved "Copied ✓" when an entry was
     /// inserted at 0). Ids are unique within the list: a repeat of the same base gets `#n`, so two identical

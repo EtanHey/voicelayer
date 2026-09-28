@@ -3,8 +3,9 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// UXP-3 (UX pass #5, #15): one Copy button with feedback on every surface, and a Last-dictation card that hugs its
-/// content. Headless: models, sizes and source pins only. (#7 is the stacked PR above this one.)
+/// UXP-3 (UX pass #5, #7, #15): one Copy button with feedback on every surface, a Paste glyph that can't be
+/// mistaken for Copy, tooltips and 24 pt targets on Settings' icon buttons, row actions reachable without hover,
+/// and a Last-dictation card that hugs its content. Headless: models, sizes and source pins only.
 @MainActor
 final class IconButtonsCopyFeedbackTests: XCTestCase {
     private let t0 = Date(timeIntervalSinceReferenceDate: 1000)
@@ -73,6 +74,51 @@ final class IconButtonsCopyFeedbackTests: XCTestCase {
         XCTAssertFalse(
             try sourceFile("NotchHistoryPanel.swift").contains("copyTitle(isCopied: true)"),
             "the notch showed \"Copied ✓\" next to a ✓ glyph: one tick is enough"
+        )
+    }
+
+    // MARK: - #7 Paste glyph, tooltips, row actions
+
+    func testPasteHasItsOwnGlyphEverywhere() throws {
+        XCTAssertFalse(VoiceBarActionSymbol.paste.hasPrefix("doc.on"), "Paste must not read as another Copy")
+        XCTAssertNotNil(NSImage(systemSymbolName: VoiceBarActionSymbol.paste, accessibilityDescription: nil))
+        XCTAssertEqual(
+            NotchHistoryPresentation.rowActions.first { $0.kind == .paste }?.symbol, VoiceBarActionSymbol.paste
+        )
+        let settings = try sourceFile("SettingsView.swift")
+        XCTAssertFalse(settings.contains("\"doc.on.clipboard\""), "Settings still draws the old Paste glyph")
+    }
+
+    func testEveryIconOnlySettingsButtonHasATooltipAndA24PointTarget() throws {
+        XCTAssertGreaterThanOrEqual(SettingsIconButtonSpec.hitTarget, 24)
+        let symbols = Set(SettingsIconButtonSpec.all.map(\.symbol))
+        XCTAssertTrue(
+            symbols.isSuperset(of: ["arrow.clockwise", "arrow.up.to.line", "xmark.circle.fill"]),
+            "the toolbar's Refresh / Jump to latest and the search field's Clear are in the inventory: \(symbols)"
+        )
+        for spec in SettingsIconButtonSpec.all {
+            XCTAssertFalse(spec.help.isEmpty, "\(spec.symbol) has no tooltip")
+        }
+        let settings = try sourceFile("SettingsView.swift")
+        for glyph in ["arrow.clockwise", "arrow.up.to.line", "xmark.circle.fill"] {
+            XCTAssertFalse(
+                settings.contains("Image(systemName: \"\(glyph)\")"),
+                "\(glyph) is still a bare glyph button instead of a SettingsIconButton"
+            )
+        }
+    }
+
+    func testRowActionsAreReachableWithoutHover() throws {
+        let withAudio = RecentTranscriptionEntry(text: "Synthetic.", recordingPath: "/synthetic/a.wav")
+        let withoutAudio = RecentTranscriptionEntry(text: "Synthetic.")
+        XCTAssertEqual(
+            NotchHistoryPresentation.accessibilityActions(for: withAudio).map(\.kind), [.copy, .paste, .retranscribe]
+        )
+        XCTAssertEqual(NotchHistoryPresentation.accessibilityActions(for: withoutAudio).map(\.kind), [.copy, .paste])
+        XCTAssertTrue(
+            try sourceFile("NotchHistoryPanel.swift")
+                .contains("NotchHistoryPresentation.accessibilityActions(for: entry)"),
+            "the row must offer its actions to VoiceOver"
         )
     }
 

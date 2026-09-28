@@ -4,6 +4,8 @@ import SwiftUI
 /// The action glyphs shared by every surface (UXP-3).
 public enum VoiceBarActionSymbol {
     public static let copy = "doc.on.doc"
+    /// UXP-3 part 2 stub.
+    public static let paste = "doc.on.clipboard"
     public static let copied = "checkmark"
 }
 
@@ -112,4 +114,13 @@ public struct CopyFeedbackButton: View {
         .help(isCopied ? "Copied" : label)
         .accessibilityLabel(isCopied ? "Copied" : label)
     }
+}
+
+/// UXP-3 part 2 stub.
+public struct SettingsIconButtonSpec: Equatable {
+    public let symbol: String
+    public let help: String
+
+    public static let hitTarget: CGFloat = 0
+    public static let all: [SettingsIconButtonSpec] = []
 }
