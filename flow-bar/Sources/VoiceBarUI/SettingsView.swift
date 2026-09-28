@@ -1055,17 +1055,19 @@ public struct SettingsView: View {
                     }
                 }
                 .onDrag {
-                    microphoneDrag = MicrophoneDragState(sourceUID: uid)
+                    microphoneDrag = .started(dragging: uid)
                     return NSItemProvider(object: uid as NSString)
+                } preview: {
+                    content // the row lifts, as with .draggable
                 }
                 .dropDestination(for: String.self) { uids, _ in
                     microphoneDrag = MicrophoneDragState()
                     return dropMicrophone(uids.first, onto: index)
                 } isTargeted: { targeted in
                     if targeted {
-                        microphoneDrag.targetIndex = index
-                    } else if microphoneDrag.targetIndex == index {
-                        microphoneDrag.targetIndex = nil
+                        microphoneDrag.hover(index, dragPasteboardChangeCount: NSPasteboard(name: .drag).changeCount)
+                    } else {
+                        microphoneDrag.leave(index)
                     }
                 }
         } else {

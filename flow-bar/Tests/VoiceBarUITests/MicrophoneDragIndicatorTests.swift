@@ -46,6 +46,38 @@ final class MicrophoneDragIndicatorTests: XCTestCase {
         XCTAssertNil(snapshot.droppingVisibleUIDs("some text", onto: 1))
     }
 
+    /// Macroscope on #195: an out-of-range target trapped on `index + 1` instead of returning nil.
+    func testAnOutOfRangeTargetIsRefusedNotTrapped() {
+        XCTAssertNil(snapshot.droppingVisibleUIDs("mic-a", onto: Int.max))
+        XCTAssertNil(snapshot.droppingVisibleUIDs("mic-b", onto: -1))
+        XCTAssertNil(snapshot.dropEdge(dragging: "mic-a", onto: Int.max))
+    }
+
+    // MARK: - The drag state belongs to one drag session
+
+    func testTheDraggedMicIsKeptAcrossRowsWithinOneDrag() {
+        var drag = MicrophoneDragState.started(dragging: "mic-a")
+        drag.hover(0, dragPasteboardChangeCount: 5)
+        drag.leave(0)
+        XCTAssertNil(drag.targetIndex)
+        XCTAssertEqual(drag.sourceUID, "mic-a", "leaving a row mid-drag keeps the source, so the line doesn't blink")
+        drag.hover(1, dragPasteboardChangeCount: 5)
+        XCTAssertEqual(drag, MicrophoneDragState(sourceUID: "mic-a", targetIndex: 1, dragPasteboardChangeCount: 5))
+        drag.leave(0)
+        XCTAssertEqual(drag.targetIndex, 1, "a late leave from the previous row doesn't clear the new target")
+    }
+
+    /// Bugbot on #195: a drag cancelled outside the list never reaches the drop, so its source used to stick and a
+    /// later text drag over the list drew a ghost line and dimmed that mic. A new drag has a new drag pasteboard.
+    func testAHoverFromALaterDragForgetsAStaleSource() {
+        var drag = MicrophoneDragState.started(dragging: "mic-a")
+        drag.hover(1, dragPasteboardChangeCount: 5)
+        drag.leave(1) // dropped outside the list: no drop, so no reset
+        drag.hover(1, dragPasteboardChangeCount: 9) // someone drags text over the list later
+        XCTAssertNil(drag.sourceUID)
+        XCTAssertNil(snapshot.dropEdge(dragging: drag.sourceUID, onto: 1), "no ghost line")
+    }
+
     // MARK: - The line is drawn, live, in the real Settings view
 
     func testAHoveredRowDrawsTheLineBelowWhenDraggingDownAndAboveWhenDraggingUp() throws {

@@ -115,7 +115,9 @@ public struct MicrophonePrioritySnapshot: Equatable {
     /// down, above it when dragged up (SwiftUI onMove indices). nil when the drop would change nothing, or when
     /// `uid` is not a visible row (text dragged in from elsewhere, a hidden device).
     public func droppingVisibleUIDs(_ uid: String, onto index: Int) -> [String]? {
-        guard let source = visibleRows.firstIndex(where: { $0.uid == uid }) else { return nil }
+        guard visibleRows.indices.contains(index),
+              let source = visibleRows.firstIndex(where: { $0.uid == uid })
+        else { return nil }
         return movingVisibleUIDs(from: IndexSet(integer: source), to: index > source ? index + 1 : index)
     }
 
@@ -153,10 +155,32 @@ public enum MicrophoneDropEdge: Equatable, Sendable {
 public struct MicrophoneDragState: Equatable, Sendable {
     public var sourceUID: String?
     public var targetIndex: Int?
+    /// The drag pasteboard's change count first seen by a hover of this drag. SwiftUI reports no drag end, so a
+    /// drag dropped outside the list leaves `sourceUID` behind; a later drag writes the drag pasteboard again,
+    /// and a hover that sees a different count forgets the stale source (Bugbot on #195).
+    public var dragPasteboardChangeCount: Int?
 
-    public init(sourceUID: String? = nil, targetIndex: Int? = nil) {
+    public init(sourceUID: String? = nil, targetIndex: Int? = nil, dragPasteboardChangeCount: Int? = nil) {
         self.sourceUID = sourceUID
         self.targetIndex = targetIndex
+        self.dragPasteboardChangeCount = dragPasteboardChangeCount
+    }
+
+    public static func started(dragging uid: String) -> Self {
+        Self(sourceUID: uid)
+    }
+
+    public mutating func hover(_ index: Int, dragPasteboardChangeCount count: Int) {
+        if let seen = dragPasteboardChangeCount, seen != count {
+            self = Self()
+        } else if sourceUID != nil {
+            dragPasteboardChangeCount = count
+        }
+        targetIndex = index
+    }
+
+    public mutating func leave(_ index: Int) {
+        if targetIndex == index { targetIndex = nil }
     }
 }
 
