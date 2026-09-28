@@ -44,6 +44,8 @@ struct SettingsPlaybackScrubBar: View {
         }
         .focusable()
         .focused($isFocused)
+        .focusEffectDisabled(drag.hidesFocusRing)
+        .onChange(of: isFocused) { _, focused in drag.focusChanged(to: focused) }
         .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
             guard let delta = Self.seekDelta(for: press.key) else { return .ignored }
             SettingsScrubDrag.step(playback: playback, url: url, by: delta)
@@ -116,6 +118,10 @@ struct SettingsPlaybackScrubBar: View {
 
 /// The scrub bar's drag and step logic, kept out of the view so it can be tested without a drag session.
 ///
+/// AIDEV-NOTE: #199: a drag focuses the bar (so ←/→ step right after it) but must not leave the system focus
+/// ring, like a click on a native slider. `hidesFocusRing` feeds `.focusEffectDisabled`; it is set by the drag
+/// and cleared once focus leaves, so focus that arrives by Tab or VoiceOver shows the ring.
+///
 /// AIDEV-NOTE: #160 review: a drag that overshot the end seeked to the duration, which finishes the clip, which
 /// unmounts this bar mid-drag. So a drag moves only the knob, clamped short of the end, and seeks once on
 /// release; ←/→ and VoiceOver steps clamp the same way. The clip ends only by playing to its end.
@@ -124,6 +130,7 @@ struct SettingsScrubDrag {
     static let endMargin: TimeInterval = 0.1
 
     private(set) var fraction: Double?
+    private(set) var hidesFocusRing = false
 
     static func clampedTime(_ time: TimeInterval, duration: TimeInterval) -> TimeInterval {
         guard duration.isFinite, duration > 0, time.isFinite else { return 0 }
@@ -137,6 +144,7 @@ struct SettingsScrubDrag {
         playback _: SettingsAudioPlayback,
         url _: URL
     ) {
+        hidesFocusRing = true
         guard duration.isFinite, duration > 0 else { return }
         fraction = Self.clampedTime(raw * duration, duration: duration) / duration
     }
@@ -151,6 +159,10 @@ struct SettingsScrubDrag {
         defer { fraction = nil }
         guard duration.isFinite, duration > 0, raw.isFinite else { return }
         playback.seek(url, to: Self.clampedTime(raw * duration, duration: duration))
+    }
+
+    mutating func focusChanged(to focused: Bool) {
+        if !focused { hidesFocusRing = false }
     }
 
     @MainActor
