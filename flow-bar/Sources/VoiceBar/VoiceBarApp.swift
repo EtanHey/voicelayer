@@ -220,6 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         f5MappingActive: false
     )
     private var relaySetupStatusRefreshInFlight = false
+    private var relayStatusWriteGate = RelayStatusWriteGate()
     private var relaySetupInFlight = false
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
@@ -2267,6 +2268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     return
                 }
                 cachedRelaySetupStatus = result.status
+                relayStatusWriteGate.setupFinished()
                 relaySetupInFlight = false
                 completion(result.result)
             }
@@ -2276,12 +2278,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func refreshRelaySetupStatusAsync() {
         guard !relaySetupStatusRefreshInFlight else { return }
         relaySetupStatusRefreshInFlight = true
+        let ticket = relayStatusWriteGate.ticket()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             let status = currentRelaySetupStatus()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                cachedRelaySetupStatus = status
+                if relayStatusWriteGate.mayWrite(ticket, setupInFlight: relaySetupInFlight) {
+                    cachedRelaySetupStatus = status
+                }
                 relaySetupStatusRefreshInFlight = false
                 if !relaySetupInFlight {
                     refreshSettingsWindowAnchorState()
@@ -2293,12 +2298,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func checkShortcutAsync(completion: @escaping (String) -> Void) {
         let listenerEnabled = hotkeyEnabled
         let permissions = missingHotkeyPermissions
+        let ticket = relayStatusWriteGate.ticket()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             // Same read-only launchctl and hidutil probes as `voicelayer hotkey status`.
             let status = currentRelaySetupStatus()
             DispatchQueue.main.async { [weak self] in
-                self?.cachedRelaySetupStatus = status
+                if let self, relayStatusWriteGate.mayWrite(ticket, setupInFlight: relaySetupInFlight) {
+                    cachedRelaySetupStatus = status
+                }
                 completion(SettingsShortcutCheck.message(
                     hotkeyEnabled: listenerEnabled,
                     missingPermissions: permissions,
