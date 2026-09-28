@@ -26,6 +26,13 @@ final class SetupWizardArtifactTests: XCTestCase {
 
         var cases = SetupWizardStep.allCases.map { step in (step.rawValue, wizard(at: step)) }
         cases.append(("done-skipped", wizard(at: .done, skipping: [.permissions, .microphone])))
+        cases.append(("permissions-missing", wizard(at: .permissions, permissions: SetupPermissionSnapshot(
+            microphone: .notRequested, accessibilityGranted: false, inputMonitoringGranted: true,
+            hotkeyListenerActive: false
+        ))))
+        cases.append(("permissions-restart", wizard(at: .permissions, permissions: SetupPermissionSnapshot(
+            microphone: .granted, accessibilityGranted: true, inputMonitoringGranted: true, hotkeyListenerActive: false
+        ))))
         for (name, view) in cases {
             for (appearance, appearanceName) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
                 try writePNG(view, appearance: NSAppearance(named: appearance),
@@ -34,7 +41,11 @@ final class SetupWizardArtifactTests: XCTestCase {
         }
     }
 
-    private func wizard(at step: SetupWizardStep, skipping: [SetupWizardStep] = []) -> some View {
+    private func wizard(
+        at step: SetupWizardStep,
+        skipping: [SetupWizardStep] = [],
+        permissions: SetupPermissionSnapshot = .allGranted
+    ) -> some View {
         let suite = "SetupWizardArtifactTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
@@ -43,9 +54,12 @@ final class SetupWizardArtifactTests: XCTestCase {
             if skipping.contains(model.step) { model.skipStep() } else { model.continueToNextStep() }
         }
         let controller = SetupWizardController(store: SetupWizardCompletionStore(defaults: defaults), model: model)
-        return SetupWizardView(controller: controller)
-            .frame(width: SetupWizardView.contentSize.width, height: SetupWizardView.contentSize.height)
-            .background(Color(nsColor: .windowBackgroundColor))
+        return SetupWizardView(
+            controller: controller,
+            dependencies: SetupWizardDependencies(permissionSnapshot: { permissions })
+        )
+        .frame(width: SetupWizardView.contentSize.width, height: SetupWizardView.contentSize.height)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private func writePNG(_ view: some View, appearance: NSAppearance?, to url: URL) throws {
