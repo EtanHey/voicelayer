@@ -9,15 +9,25 @@ public struct SetupWizardDependencies {
     /// Shows the macOS microphone prompt, then calls back so the step re-reads the snapshot.
     public var onRequestMicrophone: (@escaping () -> Void) -> Void
     public var openURL: (URL) -> Void
+    /// The F5 listener and helper, read about once a second while the F5 key step shows.
+    public var f5KeyStatus: () -> SetupF5KeyStatus
+    /// Settings' Set up / Reinstall of the F5 key helper, with its #193 result.
+    public var onRunRelaySetup: (@escaping (SettingsRelaySetupResult) -> Void) -> Void
 
     public init(
         permissionSnapshot: @escaping () -> SetupPermissionSnapshot = { .unknown },
         onRequestMicrophone: @escaping (@escaping () -> Void) -> Void = { $0() },
-        openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }
+        openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
+        f5KeyStatus: @escaping () -> SetupF5KeyStatus = { .unknown },
+        onRunRelaySetup: @escaping (@escaping (SettingsRelaySetupResult) -> Void) -> Void = { completion in
+            completion(SettingsRelaySetupResult(outcome: .failed(reason: "not available here"), finishedAt: Date()))
+        }
     ) {
         self.permissionSnapshot = permissionSnapshot
         self.onRequestMicrophone = onRequestMicrophone
         self.openURL = openURL
+        self.f5KeyStatus = f5KeyStatus
+        self.onRunRelaySetup = onRunRelaySetup
     }
 }
 
@@ -73,7 +83,14 @@ public struct SetupWizardView: View {
             SetupWizardDoneBody(summary: SetupWizardDoneSummary(skippedSteps: model.skippedSteps))
         case .permissions:
             SetupWizardPermissionsBody(dependencies: dependencies)
-        case .f5Key, .microphone, .tryIt:
+        case .f5Key:
+            SetupWizardF5KeyBody(
+                dependencies: dependencies,
+                run: controller.relayRun,
+                onRunHelper: { controller.startRelaySetup($0, using: dependencies.onRunRelaySetup) },
+                onFix: { controller.goBack(to: $0) }
+            )
+        case .microphone, .tryIt:
             EmptyView()
         }
     }
