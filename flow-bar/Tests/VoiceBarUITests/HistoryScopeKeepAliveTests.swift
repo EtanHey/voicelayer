@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Vision
 @testable import VoiceBarUI
 import XCTest
 
@@ -48,8 +49,8 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
         if let root { try? FileManager.default.removeItem(at: root) }
     }
 
-    private func host(counter: Counter) -> (NSWindow, NSHostingView<SettingsView>) {
-        let index = SettingsArchiveIndex()
+    private func host(counter: Counter, index: SettingsArchiveIndex = SettingsArchiveIndex())
+        -> (NSWindow, NSHostingView<SettingsView>) {
         let archive = root!
         let view = SettingsView(
             hotkeyEnabled: true, missingPermissions: [],
@@ -101,9 +102,13 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
         XCTAssertEqual(counter.count("ask"), ask, "Ask stayed mounted: no reload")
     }
 
+    /// #185 (CodeRabbit 4116416090 on #183): the hidden list must not only call its loader but render what it
+    /// loaded. Read back with on-device text recognition over the hosted render, since SwiftUI builds no
+    /// accessibility tree offscreen; the synthetic rows use plain words so recognition is unambiguous.
     func testAHiddenScopeStillPicksUpAnArchiveChange() throws {
         let counter = Counter()
-        let (window, host) = host(counter: counter)
+        let index = SettingsArchiveIndex()
+        let (window, host) = host(counter: counter, index: index)
         defer { window.orderOut(nil)
             window.contentView = nil
         }
@@ -114,11 +119,34 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
         pause()
         let dictations = counter.count("dictations")
 
-        // A new dictation lands while Ask is on screen.
+        // A new dictation lands while Ask is on screen: written to the archive, dropped from the index, then
+        // announced, in the order VoiceBarApp's onHistoryArchiveChange uses.
+        let newest = try writeDictation(entry: "2026-09-27T10-02-00-000Z-c", transcript: Self.newestTranscript)
+        let invalidated = expectation(description: "index invalidated")
+        Task {
+            await index.invalidate(entryPath: newest.path)
+            invalidated.fulfill()
+        }
+        wait(for: [invalidated], timeout: 5)
         NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
 
         XCTAssertTrue(settle { counter.count("dictations") > dictations },
                       "the hidden Dictations list reloads itself, so switching back shows it current")
+        pause(0.6) // the reload's page lands and is applied while Dictations is still hidden
+        let reloaded = counter.count("dictations")
+
+        select(segmented, 0)
+        pause()
+
+        XCTAssertEqual(counter.count("dictations"), reloaded, "switching back shows the kept list, no new load")
+        var text: [String] = []
+        XCTAssertTrue(
+            settle { text = (try? recognizedText(in: host)) ?? []
+                return text.contains { $0.contains(Self.newestTranscript) }
+            },
+            "the new dictation's row renders when Dictations is shown again; saw \(text)"
+        )
+        XCTAssertTrue(text.contains { $0.contains("2 saved shown") }, "the footer counts it; saw \(text)")
     }
 
     func testLeavingHistoryResetsSoTheOtherScopeReloadsOnReturn() throws {
@@ -150,6 +178,37 @@ final class HistoryScopeKeepAliveTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    private static let newestTranscript = "Newest synthetic dictation"
+
+    private func writeDictation(entry: String, transcript: String) throws -> URL {
+        let dir = root.appendingPathComponent("2026-09-27").appendingPathComponent(entry)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let audio = dir.appendingPathComponent("audio.wav")
+        try Data(count: 44).write(to: audio)
+        try transcript.write(
+            to: dir.appendingPathComponent("voicelayer-transcript.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"source":"voicebar","duration_ms":1000}"#.write(
+            to: dir.appendingPathComponent("metadata.json"), atomically: true, encoding: .utf8
+        )
+        return audio
+    }
+
+    /// The text lines drawn in the hosted view, read back with on-device recognition (no network).
+    private func recognizedText(in host: NSView) throws -> [String] {
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = try XCTUnwrap(bitmap.cgImage)
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+    }
 
     private func select(_ segmented: NSSegmentedControl, _ segment: Int) {
         segmented.selectedSegment = segment
