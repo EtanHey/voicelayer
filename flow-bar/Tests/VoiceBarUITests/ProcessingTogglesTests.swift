@@ -69,17 +69,24 @@ final class ProcessingTogglesTests: XCTestCase {
         XCTAssertEqual(rows[2].captionLines, [rows[2].line], "an unlocked row shows only its explanation")
     }
 
-    func testSmartRowsSayWhenTheyRunAndWhatChanges() throws {
+    /// D194-r1 (Medium): both features run only on the resident Whisper server path; the whisper-cli and Wispr
+    /// Flow backends return no segments and have no smart chunk path, so the copy must say so, never "every
+    /// dictation". (Low): Rule B demotes a stop only when the clause is unfinished or runs straight on.
+    func testSmartRowsSayWhenTheyRunWhatChangesAndWhichBackendRunsThem() throws {
         let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
         let rows = ModelsSettingsView.processingRows(for: state)
+        let serverOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
         XCTAssertEqual(
             rows[2].line,
-            "Only recordings of 90 s or more: splits them at your pauses instead of every 30 s. Shorter ones are never split."
+            "Recordings of 90 s or more split at your pauses instead of every 30 s; shorter ones are never split. "
+                + serverOnly
         )
         XCTAssertEqual(
             rows[3].line,
-            "Every dictation: a full stop stays only where you paused or started a new thought; otherwise it becomes a comma. Never adds a stop or changes a word."
+            "Turns a full stop into a comma when the sentence isn't finished or runs straight on without a pause. "
+                + "Never adds a stop or drops a word. " + serverOnly
         )
+        XCTAssertFalse(rows.contains { $0.line.contains("Every dictation") })
     }
 
     func testTheRowRendersEveryCaptionLine() throws {
