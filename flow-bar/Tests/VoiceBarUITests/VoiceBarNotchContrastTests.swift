@@ -274,21 +274,24 @@ final class VoiceBarNotchContrastTests: XCTestCase {
         XCTAssertEqual(
             VoiceBarNotchGlyphForegroundRole.resolve(
                 isDestructive: false,
-                isSelected: false
+                isSelected: false,
+                selectionStyle: .navigation
             ),
             .primaryLabel
         )
         XCTAssertEqual(
             VoiceBarNotchGlyphForegroundRole.resolve(
                 isDestructive: true,
-                isSelected: false
+                isSelected: false,
+                selectionStyle: .navigation
             ),
             .stateAccent
         )
         XCTAssertEqual(
             VoiceBarNotchGlyphForegroundRole.resolve(
                 isDestructive: false,
-                isSelected: true
+                isSelected: true,
+                selectionStyle: .recordingState
             ),
             .stateAccent
         )

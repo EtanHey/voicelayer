@@ -882,7 +882,8 @@ public struct BarView: View {
         let optics = VoiceBarNotchControlOptics.resolve(for: icon)
         let foregroundRole = VoiceBarNotchGlyphForegroundRole.resolve(
             isDestructive: isDestructive,
-            isSelected: isSelected
+            isSelected: isSelected,
+            selectionStyle: .recordingState
         )
         return VoiceBarPillControlButton(
             icon: icon,

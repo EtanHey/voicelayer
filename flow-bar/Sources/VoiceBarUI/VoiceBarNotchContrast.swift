@@ -12,15 +12,40 @@ public enum VoiceBarNotchAppearance: Equatable {
     }
 }
 
+public enum VoiceBarNotchSelectionStyle: Equatable {
+    case navigation
+    case recordingState
+}
+
 public enum VoiceBarNotchGlyphForegroundRole: Equatable {
     case primaryLabel
     case stateAccent
 
     public static func resolve(
         isDestructive: Bool,
-        isSelected: Bool
+        isSelected: Bool,
+        selectionStyle _: VoiceBarNotchSelectionStyle
     ) -> Self {
         isDestructive || isSelected ? .stateAccent : .primaryLabel
+    }
+}
+
+public enum VoiceBarNotchControlPlate: Equatable {
+    case recordingSolid
+    case recordingSelected
+    case neutralSelected
+    case hover
+    case none
+
+    public static func resolve(
+        isDestructive: Bool,
+        isSelected: Bool,
+        selectionStyle _: VoiceBarNotchSelectionStyle,
+        isHovered: Bool
+    ) -> Self {
+        if isDestructive { return .recordingSolid }
+        if isSelected { return .recordingSelected }
+        return isHovered ? .hover : .none
     }
 }
 
