@@ -13,7 +13,7 @@ final class MicrophonePrioritySettingsTests: XCTestCase {
         XCTAssertFalse(section.contains("Use the arrows"))
         XCTAssertTrue(section.contains("Button(\"Make default\")"))
         XCTAssertTrue(section.contains("makeMicrophoneDefault(at: index)"))
-        XCTAssertTrue(section.contains(".draggable(uid)"))
+        XCTAssertTrue(section.contains(".onDrag {"))
         XCTAssertTrue(section.contains(".dropDestination(for: String.self)"))
         XCTAssertTrue(section.contains("Image(systemName: \"line.3.horizontal\")"))
     }
@@ -37,7 +37,7 @@ final class MicrophonePrioritySettingsTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("microphoneSnapshot.makingDefaultUIDs(at: index)"))
-        XCTAssertTrue(source.contains("microphoneSnapshot.movingVisibleUIDs("))
+        XCTAssertTrue(source.contains("microphoneSnapshot.droppingVisibleUIDs(uid, onto: index)"))
     }
 
     // MARK: - Helpers

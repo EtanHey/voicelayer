@@ -111,6 +111,23 @@ public struct MicrophonePrioritySnapshot: Equatable {
         return moved + trailingUIDs + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
     }
 
+    /// Dropping `uid` onto the visible row at `index` lands it in that row's place: below the row when dragged
+    /// down, above it when dragged up (SwiftUI onMove indices). nil when the drop would change nothing, or when
+    /// `uid` is not a visible row (text dragged in from elsewhere, a hidden device).
+    public func droppingVisibleUIDs(_ uid: String, onto index: Int) -> [String]? {
+        guard let source = visibleRows.firstIndex(where: { $0.uid == uid }) else { return nil }
+        return movingVisibleUIDs(from: IndexSet(integer: source), to: index > source ? index + 1 : index)
+    }
+
+    /// C12: which edge of the hovered row the insertion line goes on, so the line is exactly where the drop
+    /// lands. nil when there is no line to draw: the drop would change nothing, or the drag is not a visible mic.
+    public func dropEdge(dragging uid: String?, onto index: Int) -> MicrophoneDropEdge? {
+        guard let uid, let source = visibleRows.firstIndex(where: { $0.uid == uid }),
+              droppingVisibleUIDs(uid, onto: index) != nil
+        else { return nil }
+        return index > source ? .bottom : .top
+    }
+
     public func reorderedVisibleUIDs(moving index: Int, by offset: Int) -> [String]? {
         let visible = visibleRows
         let target = index + offset
@@ -123,6 +140,23 @@ public struct MicrophonePrioritySnapshot: Equatable {
         else { return nil }
         visibleUIDs.swapAt(source, destination)
         return visibleUIDs + rows.filter(\.isVirtualOrAggregate).compactMap(\.uid)
+    }
+}
+
+public enum MicrophoneDropEdge: Equatable, Sendable {
+    case top
+    case bottom
+}
+
+/// C12: the drag in progress in the Microphone priority list. `sourceUID` is set when a row starts dragging;
+/// `targetIndex` follows the row the drag is over, nil between rows or outside the list.
+public struct MicrophoneDragState: Equatable, Sendable {
+    public var sourceUID: String?
+    public var targetIndex: Int?
+
+    public init(sourceUID: String? = nil, targetIndex: Int? = nil) {
+        self.sourceUID = sourceUID
+        self.targetIndex = targetIndex
     }
 }
 
