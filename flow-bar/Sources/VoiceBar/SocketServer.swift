@@ -38,15 +38,37 @@ func classifySocketWriteResult(bytesWritten: Int, errnoCode: Int32) -> SocketWri
 
 private struct ClientConnection {
     let source: DispatchSourceRead
-    var buffer: String
+    var framer = NDJSONLineFramer()
     var role: String?
     var pid: Int?
     var acceptsCommands: Bool
 
     init(source: DispatchSourceRead) {
         self.source = source
-        buffer = ""
         acceptsCommands = false
+    }
+}
+
+/// NDJSON framing over raw socket bytes. Bytes are buffered until a newline and only a COMPLETE line is decoded.
+/// AIDEV-NOTE: never decode a read() chunk on its own (UXP-1). A chunk can end inside a multi-byte UTF-8 character;
+/// `String(bytes:encoding:)` then returns nil, and the old `?? ""` silently dropped the chunk, so every vocab_list
+/// reply (>8 KiB, Hebrew variants) reached VoiceState as "Bad JSON" and Settings read "Included terms (0)".
+struct NDJSONLineFramer {
+    private var pending: [UInt8] = []
+
+    /// Appends bytes and returns every complete, non-empty line they finish, in order.
+    mutating func append(_ bytes: some Sequence<UInt8>) -> [String] {
+        pending.append(contentsOf: bytes)
+        var lines: [String] = []
+        var lineStart = pending.startIndex
+        while let newline = pending[lineStart...].firstIndex(of: 0x0A) {
+            if newline > lineStart {
+                lines.append(String(decoding: pending[lineStart ..< newline], as: UTF8.self))
+            }
+            lineStart = pending.index(after: newline)
+        }
+        pending.removeSubrange(pending.startIndex ..< lineStart)
+        return lines
     }
 }
 
@@ -227,17 +249,9 @@ final class SocketServer {
 
         guard clients[fd] != nil else { return }
 
-        let chunk = String(bytes: buf[0 ..< bytesRead], encoding: .utf8) ?? ""
-        clients[fd]?.buffer.append(chunk)
-
-        // NDJSON framing: split on newlines
-        while let buffer = clients[fd]?.buffer,
-              let idx = buffer.firstIndex(of: "\n") {
-            let line = String(buffer[buffer.startIndex ..< idx])
-            clients[fd]?.buffer = String(buffer[buffer.index(after: idx)...])
-            if !line.isEmpty {
-                parseLine(line, from: fd)
-            }
+        let lines = clients[fd]?.framer.append(buf[0 ..< bytesRead]) ?? []
+        for line in lines {
+            parseLine(line, from: fd)
         }
     }
 
