@@ -47,6 +47,7 @@ final class SetupWizardArtifactTests: XCTestCase {
                 outcome: .ready, finishedAt: Date(timeIntervalSince1970: 1_800_000_000)
             ))
         )))
+        cases.append(("microphone-none", wizard(at: .microphone, microphone: nil)))
         cases.append(("permissions-restart", wizard(at: .permissions, permissions: SetupPermissionSnapshot(
             microphone: .granted, accessibilityGranted: true, inputMonitoringGranted: true, hotkeyListenerActive: false
         ))))
@@ -63,7 +64,8 @@ final class SetupWizardArtifactTests: XCTestCase {
         skipping: [SetupWizardStep] = [],
         permissions: SetupPermissionSnapshot = .allGranted,
         f5Key: SetupF5KeyStatus = SetupF5KeyStatus(listenerActive: true, helperInstalled: true),
-        relayRun: SetupRelayRun? = nil
+        relayRun: SetupRelayRun? = nil,
+        microphone: String? = "Studio USB Mic"
     ) -> some View {
         let suite = "SetupWizardArtifactTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -75,7 +77,11 @@ final class SetupWizardArtifactTests: XCTestCase {
         let controller = SetupWizardController(store: SetupWizardCompletionStore(defaults: defaults), model: model)
         return SetupWizardView(
             controller: controller,
-            dependencies: SetupWizardDependencies(permissionSnapshot: { permissions }, f5KeyStatus: { f5Key }),
+            dependencies: SetupWizardDependencies(
+                permissionSnapshot: { permissions },
+                f5KeyStatus: { f5Key },
+                defaultMicrophoneName: { microphone }
+            ),
             initialRelayRun: relayRun
         )
         .frame(width: SetupWizardView.contentSize.width, height: SetupWizardView.contentSize.height)
