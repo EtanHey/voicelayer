@@ -5,7 +5,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
     func testPrimaryStatesUseApprovedVisibleGeometryInsideShadowSafeWindows() {
         let cases: [(VoiceBarNotchVisualState, CGSize)] = [
             (.idle, CGSize(width: 185, height: 32)),
-            (.hoverLauncher, CGSize(width: 306, height: 32)),
+            (.hoverLauncher, CGSize(width: 332, height: 32)), // UXP-2: equal 73.5 pt wings
             (.recording, CGSize(width: 336.5, height: 32)),
             (.compactStatus, CGSize(width: 336.5, height: 32)),
             (.teleprompter, CGSize(width: 465, height: 228)),
