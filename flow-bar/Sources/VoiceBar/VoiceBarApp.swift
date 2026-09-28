@@ -37,13 +37,17 @@ private struct RelaySetupStatus {
         launchAgentInstalled && launchAgentLoaded && dictationMappingActive && f5MappingActive
     }
 
-    var summary: String {
-        if isReady { return "Relay ready: LaunchAgent loaded, F5 + Dictation map to F18." }
+    var missing: [String] {
         var missing: [String] = []
         if !launchAgentInstalled { missing.append("LaunchAgent plist missing") }
         if !launchAgentLoaded { missing.append("LaunchAgent not loaded") }
         if !dictationMappingActive { missing.append("Dictation to F18 mapping missing") }
         if !f5MappingActive { missing.append("F5 to F18 mapping missing") }
+        return missing
+    }
+
+    var summary: String {
+        if isReady { return "Relay ready: LaunchAgent loaded, F5 + Dictation map to F18." }
         return "Relay needs attention: \(missing.joined(separator: ", "))."
     }
 }
@@ -2195,14 +2199,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    private func runRelaySetup() -> (message: String, status: RelaySetupStatus) {
+    private func runRelaySetup() -> (result: SettingsRelaySetupResult, status: RelaySetupStatus) {
         guard let scriptURL = Bundle.main.resourceURL?
             .appendingPathComponent("scripts")
             .appendingPathComponent("install-voicebar-f5-hidutil.sh")
         else {
             NSLog("[VoiceBar] Relay setup script not bundled")
             return (
-                "Relay setup failed: bundled installer script not found.",
+                SettingsRelaySetupResult(outcome: .failed(reason: "bundled installer script not found"),
+                                         finishedAt: Date()),
                 currentRelaySetupStatus()
             )
         }
@@ -2218,7 +2223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } catch {
             NSLog("[VoiceBar] Failed to run relay setup: %@", String(describing: error))
             return (
-                "Relay setup failed: \(error.localizedDescription)",
+                SettingsRelaySetupResult(outcome: .failed(reason: error.localizedDescription), finishedAt: Date()),
                 currentRelaySetupStatus()
             )
         }
@@ -2231,37 +2236,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.summary,
             output
         )
-        guard process.terminationStatus == 0 else {
-            return (
-                "Relay setup failed (exit \(process.terminationStatus)): \(output.trimmingCharacters(in: .whitespacesAndNewlines))",
-                status
-            )
-        }
-        return (status.summary, status)
+        return (
+            SettingsRelaySetupResult.installerRun(
+                exitCode: process.terminationStatus, output: output, missingAfter: status.missing,
+                finishedAt: Date()
+            ),
+            status
+        )
     }
 
-    private func runRelaySetupAsync(completion: @escaping (String) -> Void) {
+    private func runRelaySetupAsync(completion: @escaping (SettingsRelaySetupResult) -> Void) {
         guard !relaySetupInFlight else {
-            completion("Relay setup is already running.")
+            completion(SettingsRelaySetupResult(outcome: .failed(reason: "another setup is already running"),
+                                                finishedAt: Date()))
             return
         }
         relaySetupInFlight = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else {
                 DispatchQueue.main.async {
-                    completion("Relay setup failed: VoiceBar is not available.")
+                    completion(SettingsRelaySetupResult(outcome: .failed(reason: "VoiceBar is not available"),
+                                                        finishedAt: Date()))
                 }
                 return
             }
             let result = runRelaySetup()
             DispatchQueue.main.async { [weak self] in
                 guard let self else {
-                    completion(result.message)
+                    completion(result.result)
                     return
                 }
                 cachedRelaySetupStatus = result.status
                 relaySetupInFlight = false
-                completion(result.message)
+                completion(result.result)
             }
         }
     }
@@ -2632,7 +2639,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             onRunRelaySetup: { [weak self] completion in
                 self?.runRelaySetupAsync(completion: completion)
-                    ?? completion("Relay setup failed: VoiceBar is not available.")
+                    ?? completion(SettingsRelaySetupResult(outcome: .failed(reason: "VoiceBar is not available"),
+                                                           finishedAt: Date()))
             },
             lastDictationEntry: { [weak self] in
                 self?.voiceState.lastDictationCardEntry
