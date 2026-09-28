@@ -57,38 +57,56 @@ private struct ClientConnection {
 struct NDJSONLineFramer {
     struct Frame: Equatable {
         var lines: [String]
+        /// A line passed `maxLineBytes`. Its bytes are dropped; the caller closes that client (UXP-1 r2).
         var overflowed: Bool
     }
 
+    /// Well above the largest legitimate line, measured with the daemon's serializers on synthetic data: a
+    /// 2,000-entry vocab_list is 547,201 B, a 60-minute TTS subtitle event 528,250 B, a 60-minute Hebrew
+    /// transcription 90,219 B. A bound, not a truncation: nothing valid comes near it.
     static let defaultMaxLineBytes = 4 * 1024 * 1024
 
     let maxLineBytes: Int
     private var pending: [UInt8] = []
+    /// Where the next newline search starts: bytes before it are known newline-free, so a long line arriving in many
+    /// reads is scanned once in total, not once per read.
+    private var scanOffset = 0
     private(set) var scannedByteCount = 0
-
-    var pendingByteCount: Int {
-        pending.count
-    }
 
     init(maxLineBytes: Int = defaultMaxLineBytes) {
         self.maxLineBytes = maxLineBytes
     }
 
-    /// Appends bytes and returns every complete, non-empty line they finish, in order.
+    var pendingByteCount: Int {
+        pending.count
+    }
+
+    /// Appends bytes and returns every complete, non-empty line they finish, in order, up to any line past the cap.
     mutating func append(_ bytes: some Sequence<UInt8>) -> Frame {
         pending.append(contentsOf: bytes)
         var lines: [String] = []
-        var lineStart = pending.startIndex
-        while let newline = pending[lineStart...].firstIndex(of: 0x0A) {
-            scannedByteCount += newline - lineStart + 1
+        var lineStart = 0
+        var searchFrom = scanOffset
+        while let newline = pending[searchFrom...].firstIndex(of: 0x0A) {
+            scannedByteCount += newline - searchFrom + 1
+            guard newline - lineStart <= maxLineBytes else { return overflow(lines) }
             if newline > lineStart {
                 lines.append(String(decoding: pending[lineStart ..< newline], as: UTF8.self))
             }
-            lineStart = pending.index(after: newline)
+            lineStart = newline + 1
+            searchFrom = lineStart
         }
-        scannedByteCount += pending.endIndex - lineStart
-        pending.removeSubrange(pending.startIndex ..< lineStart)
+        scannedByteCount += pending.count - searchFrom
+        guard pending.count - lineStart <= maxLineBytes else { return overflow(lines) }
+        pending.removeSubrange(0 ..< lineStart)
+        scanOffset = pending.count
         return Frame(lines: lines, overflowed: false)
+    }
+
+    private mutating func overflow(_ lines: [String]) -> Frame {
+        pending.removeAll()
+        scanOffset = 0
+        return Frame(lines: lines, overflowed: true)
     }
 }
 
@@ -277,9 +295,19 @@ final class SocketServer {
         guard clients[fd] != nil else { return }
 
         totalBytesRead += bytesRead
-        let frame = clients[fd]?.framer.append(buf[0 ..< bytesRead])
-        for line in frame?.lines ?? [] {
+        guard let frame = clients[fd]?.framer.append(buf[0 ..< bytesRead]) else { return }
+        for line in frame.lines {
             parseLine(line, from: fd)
+        }
+        if frame.overflowed {
+            // UXP-1 r2: a line past the cap is never delivered or truncated. Close the peer (its cancel handler
+            // closes the fd and removes the client); the MCP socket client reconnects on close with backoff.
+            NSLog(
+                "[VoiceBar] Client sent a line over %d bytes without a newline; closing it (fd: %d)",
+                maxLineBytes,
+                fd
+            )
+            clients[fd]?.source.cancel()
         }
     }
 
