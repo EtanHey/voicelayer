@@ -30,6 +30,23 @@ final class SetupWizardArtifactTests: XCTestCase {
             microphone: .notRequested, accessibilityGranted: false, inputMonitoringGranted: true,
             hotkeyListenerActive: false
         ))))
+        cases.append(("f5Key-setup", wizard(at: .f5Key, f5Key: SetupF5KeyStatus(
+            listenerActive: true, helperInstalled: false
+        ))))
+        cases.append(("f5Key-off-failed", wizard(
+            at: .f5Key,
+            f5Key: SetupF5KeyStatus(listenerActive: false, helperInstalled: false),
+            relayRun: SetupRelayRun(action: .setUp, result: SettingsRelaySetupResult(
+                outcome: .failed(reason: "installer exited 1: launchctl bootstrap failed"),
+                finishedAt: Date(timeIntervalSince1970: 1_800_000_000)
+            ))
+        )))
+        cases.append(("f5Key-ready", wizard(
+            at: .f5Key,
+            relayRun: SetupRelayRun(action: .reinstall, result: SettingsRelaySetupResult(
+                outcome: .ready, finishedAt: Date(timeIntervalSince1970: 1_800_000_000)
+            ))
+        )))
         cases.append(("permissions-restart", wizard(at: .permissions, permissions: SetupPermissionSnapshot(
             microphone: .granted, accessibilityGranted: true, inputMonitoringGranted: true, hotkeyListenerActive: false
         ))))
@@ -44,7 +61,9 @@ final class SetupWizardArtifactTests: XCTestCase {
     private func wizard(
         at step: SetupWizardStep,
         skipping: [SetupWizardStep] = [],
-        permissions: SetupPermissionSnapshot = .allGranted
+        permissions: SetupPermissionSnapshot = .allGranted,
+        f5Key: SetupF5KeyStatus = SetupF5KeyStatus(listenerActive: true, helperInstalled: true),
+        relayRun: SetupRelayRun? = nil
     ) -> some View {
         let suite = "SetupWizardArtifactTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -56,7 +75,8 @@ final class SetupWizardArtifactTests: XCTestCase {
         let controller = SetupWizardController(store: SetupWizardCompletionStore(defaults: defaults), model: model)
         return SetupWizardView(
             controller: controller,
-            dependencies: SetupWizardDependencies(permissionSnapshot: { permissions })
+            dependencies: SetupWizardDependencies(permissionSnapshot: { permissions }, f5KeyStatus: { f5Key }),
+            initialRelayRun: relayRun
         )
         .frame(width: SetupWizardView.contentSize.width, height: SetupWizardView.contentSize.height)
         .background(Color(nsColor: .windowBackgroundColor))

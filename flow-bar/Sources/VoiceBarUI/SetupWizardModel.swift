@@ -93,6 +93,12 @@ public struct SetupWizardModel: Equatable, Sendable {
         step = previous
     }
 
+    /// A step that points at an earlier one ("fix this in Allow access") jumps there; never forward, never from Done.
+    public mutating func goBack(to target: SetupWizardStep) {
+        guard step != .done, Self.order(target) < Self.order(step) else { return }
+        step = target
+    }
+
     public mutating func skipStep() {
         guard canSkipStep, let next = step.next else { return }
         if !skippedSteps.contains(step) {
@@ -190,6 +196,12 @@ public final class SetupWizardController {
     public func skipStep() {
         guard !isClosed else { return }
         model.skipStep()
+        saveProgress()
+    }
+
+    public func goBack(to step: SetupWizardStep) {
+        guard !isClosed else { return }
+        model.goBack(to: step)
         saveProgress()
     }
 
