@@ -17,6 +17,8 @@ const repoRoot = new URL("../..", import.meta.url).pathname;
 const scriptPath = join(repoRoot, "scripts", "voicelayer-verify.sh");
 
 let tempRoot = "";
+let initialTempRoot = "";
+let pidsDir = "";
 
 function run(command: string[], options: { env?: Record<string, string>; cwd?: string; input?: string } = {}) {
   // AIDEV-NOTE: drop EVERY inherited GIT_* variable, not a denylist. A plain
@@ -90,11 +92,18 @@ function writeFakeExecutable(name: string, body: string) {
 
 beforeEach(() => {
   tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
+  initialTempRoot = tempRoot;
   initFakeRepo();
 });
 
 afterEach(() => {
   if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
+  if (initialTempRoot && initialTempRoot !== tempRoot) {
+    rmSync(initialTempRoot, { recursive: true, force: true });
+  }
+  initialTempRoot = "";
+  if (pidsDir) rmSync(pidsDir, { recursive: true, force: true });
+  pidsDir = "";
 });
 
 describe("the fake-repo helper stays inside its temp repo", () => {
@@ -291,7 +300,7 @@ describe("voicelayer-verify.sh", () => {
     run(["git", "checkout", "-b", "feature/corpus-whisper-pid-hop"]);
     const changed = join(tempRoot, "changed.txt");
     // Kept outside the fake repo so the pid stub cannot dirty the worktree.
-    const pidsDir = mkdtempSync(join(tmpdir(), "voicelayer-verify-whisper-pids-"));
+    pidsDir = mkdtempSync(join(tmpdir(), "voicelayer-verify-whisper-pids-"));
     const pidsCmd = join(pidsDir, "live-whisper-pids.sh");
     const runner = join(tempRoot, "corpus-runner.sh");
     writeFileSync(changed, "src/mcp-server-daemon.ts\n");

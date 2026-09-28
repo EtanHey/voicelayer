@@ -1,9 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
@@ -14,6 +16,18 @@ const script = join(repoRoot, "scripts", "voicelayer-version-check.sh");
 const packageVersion = JSON.parse(
   readFileSync(join(repoRoot, "package.json"), "utf8"),
 ).version;
+const fixtureRoots: string[] = [];
+const pendingFixtureRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of pendingFixtureRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+afterAll(() => {
+  expect(fixtureRoots.every((root) => !existsSync(root))).toBe(true);
+});
 
 function plist(version: string) {
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -36,6 +50,8 @@ function fixture(options: {
   staplerExit?: number;
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), "voicelayer-version-check-"));
+  fixtureRoots.push(root);
+  pendingFixtureRoots.push(root);
   const tapRoot = join(root, "homebrew-layers");
   const appPath = join(root, "VoiceBar.app");
   const binDir = join(root, "bin");

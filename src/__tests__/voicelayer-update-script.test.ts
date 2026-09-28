@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   copyFileSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "fs";
@@ -15,6 +16,20 @@ const repoRoot = join(import.meta.dir, "..", "..");
 const updateScript = join(repoRoot, "scripts", "voicelayer-update.sh");
 const syncLib = join(repoRoot, "scripts", "lib", "brew-cask-sync.sh");
 const cliScript = join(repoRoot, "src", "cli", "voicelayer.sh");
+const fixtureRoots = new Set<string>();
+
+function fixtureRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  fixtureRoots.add(root);
+  return root;
+}
+
+afterEach(() => {
+  for (const root of fixtureRoots) {
+    rmSync(root, { recursive: true, force: true });
+  }
+  fixtureRoots.clear();
+});
 
 // voicelayer-update.sh sources scripts/lib/brew-cask-sync.sh; any relocated copy
 // has to carry it, exactly as the published package does.
@@ -322,7 +337,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("global Bun install path uses the actual global update command", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-global-"));
+    const tempRoot = fixtureRoot("voicelayer-update-global-");
     const scriptsDir = join(tempRoot, "scripts");
     const binDir = join(tempRoot, "bin");
     mkdirSync(binDir, { recursive: true });
@@ -343,7 +358,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("package copy nested inside another git repo still uses global update path", () => {
-    const outerRepo = mkdtempSync(join(tmpdir(), "voicelayer-update-nested-"));
+    const outerRepo = fixtureRoot("voicelayer-update-nested-");
     const packageRoot = join(outerRepo, "node_modules", "voicelayer-mcp");
     const scriptsDir = join(packageRoot, "scripts");
     const binDir = join(outerRepo, "bin");
@@ -492,7 +507,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("live hotkey verification retries until the health probe is ready", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-health-retry-"));
+    const tempRoot = fixtureRoot("voicelayer-health-retry-");
     const scriptsDir = join(tempRoot, "scripts");
     const healthStub = join(scriptsDir, "verify-voicebar-hotkey-health.sh");
     const attemptFile = join(tempRoot, "attempts");
@@ -535,7 +550,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("hotkey verification fails after exhausting its bounded retries", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-health-exhaust-"));
+    const tempRoot = fixtureRoot("voicelayer-health-exhaust-");
     const scriptsDir = join(tempRoot, "scripts");
     const healthStub = join(scriptsDir, "verify-voicebar-hotkey-health.sh");
     const attemptFile = join(tempRoot, "attempts");
@@ -580,7 +595,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("Secure Input held by another app warns and lets the summary run", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-secure-input-"));
+    const tempRoot = fixtureRoot("voicelayer-secure-input-");
     const scriptsDir = join(tempRoot, "scripts");
     mkdirSync(scriptsDir, { recursive: true });
     writeFileSync(join(scriptsDir, "verify-voicebar-hotkey-health.sh"),
@@ -598,7 +613,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("a missing hotkey relay still fails", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-relay-missing-"));
+    const tempRoot = fixtureRoot("voicelayer-relay-missing-");
     const scriptsDir = join(tempRoot, "scripts");
     mkdirSync(scriptsDir, { recursive: true });
     writeFileSync(join(scriptsDir, "verify-voicebar-hotkey-health.sh"),
@@ -800,7 +815,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("the model step uses `hf download`, not the retired huggingface-cli", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-hf-"));
+    const tempRoot = fixtureRoot("voicelayer-update-hf-");
     const venvDir = fakeVenv(tempRoot, "hf", "huggingface-cli");
     const modelDir = join(tempRoot, "models", "qwen3-tts-4bit");
     mkdirSync(modelDir, { recursive: true });
@@ -821,7 +836,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("the model step falls back to huggingface-cli only when hf is absent", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-hf-absent-"));
+    const tempRoot = fixtureRoot("voicelayer-update-hf-absent-");
     const venvDir = fakeVenv(tempRoot, "huggingface-cli");
     const modelDir = join(tempRoot, "models", "qwen3-tts-4bit");
     mkdirSync(modelDir, { recursive: true });
@@ -843,7 +858,7 @@ describe("voicelayer-update.sh", () => {
   });
 
   test("the model step is skipped when the model is already on disk", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-model-present-"));
+    const tempRoot = fixtureRoot("voicelayer-update-model-present-");
     const modelDir = populatedModelDir(tempRoot, "model-present");
 
     const result = run(["bash", updateScript, "--dry-run"], {
@@ -865,7 +880,7 @@ describe("voicelayer-update.sh", () => {
     // The 2026-09-05 rc=1 receipt: ~/.voicelayer/models/qwen3-tts-4bit is a
     // symlink into ~/.cache/huggingface, and `find <symlink>` never descends,
     // so the old presence probe re-downloaded a model that was already there.
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-model-link-"));
+    const tempRoot = fixtureRoot("voicelayer-update-model-link-");
     const cacheDir = populatedModelDir(tempRoot, "hf-cache-snapshot");
     const modelDir = join(tempRoot, "models", "qwen3-tts-4bit");
     mkdirSync(join(tempRoot, "models"), { recursive: true });
