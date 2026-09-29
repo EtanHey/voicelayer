@@ -6,6 +6,7 @@ import {
   addPromptTerm,
   removePromptTerm,
   type STTVocabularyStoreOptions,
+  type STTVocabularyMutationResult,
 } from "../stt-vocabulary-store";
 
 interface VocabularyCliDeps {
@@ -32,14 +33,14 @@ export async function runVocabularyCli(
         if (hasFlag(flags, "--wrong") || hasFlag(flags, "--right")) {
           const wrong = requireFlag(flags, "--wrong");
           const right = requireFlag(flags, "--right");
-          addAlias({ from: wrong, to: right }, options);
+          requireChanged(addAlias({ from: wrong, to: right }, options), "variant");
           stdout(`Added variant: ${wrong.trim()} -> ${right.trim()}\n`);
           return 0;
         }
         const term = requireFlag(flags, "--term");
-        addPromptTerm(term, options);
+        requireChanged(addPromptTerm(term, options), "term");
         for (const variant of flags["--variant"] ?? []) {
-          addAlias({ from: variant, to: term }, options);
+          requireChanged(addAlias({ from: variant, to: term }, options), "variant");
         }
         stdout(`Added term: ${term.trim()}\n`);
         return 0;
@@ -48,7 +49,7 @@ export async function runVocabularyCli(
         const flags = parseFlags(rest);
         const term = requireFlag(flags, "--term");
         const variant = requireFlag(flags, "--variant");
-        addAlias({ from: variant, to: term }, options);
+        requireChanged(addAlias({ from: variant, to: term }, options), "variant");
         stdout(`Added variant: ${variant.trim()} -> ${term.trim()}\n`);
         return 0;
       }
@@ -91,6 +92,18 @@ export async function runVocabularyCli(
     stderr(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
+}
+
+function requireChanged(result: STTVocabularyMutationResult, mode: "term" | "variant"): void {
+  if (result.changed) return;
+  const warning = result.warnings?.[0];
+  const reason = warning?.code === "same_as_canonical" ? "Already the same as the term"
+    : warning?.code === "duplicate_variant" ? "Already listed as a misheard spelling"
+    : warning?.code === "dictionary_variant_collision" || (mode === "term" && warning?.code === "dictionary_alias_collision")
+      ? `Already a misheard spelling of ${warning.existing}`
+      : warning?.code === "dictionary_alias_collision" ? `Already a term: ${warning.existing}`
+      : warning?.code === "near_duplicate_canonical" ? `Near duplicate of ${warning.existing}` : "No change";
+  throw new Error(`${mode === "term" ? "Term" : "Variant"} not added: ${reason}`);
 }
 
 function parseFlags(argv: string[]): ParsedFlags {
