@@ -176,6 +176,21 @@ describe("corpus replay verification", () => {
     );
   });
 
+  test("prints the polish failure reason beside a failed corpus specimen", () => {
+    expect(() =>
+      assertCorpusReplayResult({
+        specimenId: "failed-specimen",
+        reference: "",
+        actual: "",
+        polished: false,
+        polishStatus: "failed",
+        polishReason: "polish health check timed out after 1200ms",
+      }),
+    ).toThrow(
+      'failed-specimen: polish path did not complete (status "failed", reason "polish health check timed out after 1200ms")',
+    );
+  });
+
   test("accepts a non-degenerate cleaned fallback rejected by a safety guard", () => {
     expect(() =>
       assertCorpusReplayResult({
