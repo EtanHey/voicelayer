@@ -58,12 +58,16 @@ export function createVoiceSdkSocketServer(
     socket: {
       open(socket) {
         const target = options.writerFactory?.(socket) ?? socket;
-        const writer = new SocketOutboundQueue(target, "voicesdk");
+        let client!: Client;
+        const writer = new SocketOutboundQueue(target, "voicesdk", undefined, () => {
+          clients.delete(client);
+        });
         socket.data = { framer: new NDJSONByteFramer(), queue: Promise.resolve(), writer };
-        clients.add({
+        client = {
           socket, writer, target,
           bufferedEvents: 0,
-        });
+        };
+        clients.add(client);
       },
       data(socket, raw) {
         const { lines, overflow } = socket.data.framer.append(raw);

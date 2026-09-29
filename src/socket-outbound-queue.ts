@@ -18,6 +18,7 @@ export class SocketOutboundQueue {
     private readonly socket: SocketWriteTarget,
     private readonly label: string,
     private readonly maxBytes = MAX_OUTBOUND_QUEUE_BYTES,
+    private readonly onFailure?: () => void,
   ) {}
 
   get queuedBytes(): number { return this.pendingBytes; }
@@ -56,6 +57,7 @@ export class SocketOutboundQueue {
   private fail(): void {
     this.close();
     try { this.socket.end(); } catch {}
+    this.onFailure?.();
   }
 
   private flush(): void {

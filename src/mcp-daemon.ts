@@ -140,7 +140,12 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           unknownRaw: Buffer.alloc(0), unknownBytes: 0, ndjsonFramer: new NDJSONByteFramer(),
           unknownHadLeadingWhitespace: false,
           oversized: false, pendingResponses: new Set(), disconnected: false,
-          writer: new SocketOutboundQueue(socket, "mcp-daemon"),
+          writer: new SocketOutboundQueue(socket, "mcp-daemon", undefined, () => {
+            if (!socket.data.disconnected) {
+              socket.data.disconnected = true;
+              onDisconnect();
+            }
+          }),
         };
         onConnect();
       },

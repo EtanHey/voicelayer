@@ -1740,7 +1740,9 @@ async function requestPolishOverSocket(
       unix: socketPath,
       socket: {
         open(socket) {
-          socket.data = new SocketOutboundQueue(socket, "stt-polish");
+          socket.data = new SocketOutboundQueue(socket, "stt-polish", undefined, () => {
+            finishReject(new Error("polish socket write failed"));
+          });
           writer = socket.data;
           connection = socket;
           socket.data.enqueue(`${JSON.stringify(request)}\n`);

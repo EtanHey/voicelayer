@@ -47,13 +47,15 @@ it("resumes the exact unwritten bytes after zero and preserves queued order", ()
 
 it("closes a connection when its queued bytes exceed the cap", () => {
   let ended = false;
+  let failed = false;
   const queue = new SocketOutboundQueue({
     write() { return 0; },
     end() { ended = true; },
-  }, "test", 8);
+  }, "test", 8, () => { failed = true; });
   queue.enqueue("12345678");
   queue.enqueue("9");
   expect(ended).toBe(true);
+  expect(failed).toBe(true);
   expect(queue.queuedBytes).toBe(0);
 });
 

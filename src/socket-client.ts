@@ -135,7 +135,14 @@ function startConnection(): void {
       open(socket) {
         socket.data = {
           framer: new NDJSONByteFramer(), pendingResponses: new Set(), overflowed: false,
-          writer: new SocketOutboundQueue(socket, "socket-client"),
+          writer: new SocketOutboundQueue(socket, "socket-client", undefined, () => {
+            if (outbound !== socket.data.writer) return;
+            outbound = null;
+            connected = false;
+            connection = null as any;
+            stopKeepalive();
+            scheduleReconnect();
+          }),
         };
         connection = socket as any;
         outbound = socket.data.writer;
@@ -227,21 +234,26 @@ function startConnection(): void {
 
       close(socket) {
         socket.data.writer.close();
-        if (outbound === socket.data.writer) outbound = null;
-        connected = false;
-        connection = null as any;
-        stopKeepalive();
+        if (outbound === socket.data.writer) {
+          outbound = null;
+          connected = false;
+          connection = null as any;
+          stopKeepalive();
+          scheduleReconnect();
+        }
         console.error("[socket-client] Disconnected from VoiceBar");
-        scheduleReconnect();
       },
 
       error(socket, error) {
         socket.data?.writer?.close();
-        if (outbound === socket.data?.writer) outbound = null;
+        if (outbound === socket.data?.writer) {
+          outbound = null;
+          connected = false;
+          connection = null as any;
+          stopKeepalive();
+          scheduleReconnect();
+        }
         console.error(`[socket-client] Error: ${error.message}`);
-        connected = false;
-        connection = null as any;
-        scheduleReconnect();
       },
 
       drain(socket) { socket.data.writer.drain(); },

@@ -456,7 +456,9 @@ function createVerifyBarServer(socketPath: string): VerifyBarServer {
     unix: socketPath,
     socket: {
       open(socket) {
-        socket.data = { framer: new NDJSONByteFramer(), writer: new SocketOutboundQueue(socket, "verify") };
+        socket.data = { framer: new NDJSONByteFramer(), writer: new SocketOutboundQueue(socket, "verify", undefined, () => {
+          clients.delete(socket.data.writer);
+        }) };
         clients.add(socket.data.writer);
       },
       data(socket, raw) {
