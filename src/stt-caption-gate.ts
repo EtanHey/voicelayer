@@ -5,7 +5,7 @@
  */
 import { createVADSession, VAD_CHUNK_SAMPLES } from "./vad";
 import { parseWavAudioInfo, WAVE_FORMAT_PCM } from "./stt-pause-map";
-import { normalizeOutroKey } from "./stt-outro-gate";
+import { measureSpan, measureWavWindows, normalizeOutroKey, SPEECH_LEVEL_GUARD_DB, SPEECH_OVER_FLOOR_DB } from "./stt-outro-gate";
 import type { TranscriptSegment } from "./stt-sentence-boundaries";
 
 const CAPTION_PREFIXES = [
@@ -27,6 +27,8 @@ const MAX_TRAILING_SEGMENTS = 3;
 const MAX_TRAILING_SECONDS = 8;
 const MAX_TRAILING_WORDS = 20;
 const CLEAR_BEFORE_SECONDS = 0.3;
+/** Whisper can timestamp the caption beyond EOF; the pinned case exceeds EOF by 4.69 s. */
+const MAX_TIMESTAMP_OVERRUN_SECONDS = 5;
 
 export interface CaptionGateOptions {
   segments?: TranscriptSegment[];
@@ -107,6 +109,9 @@ export async function stripHallucinatedCaption(
       info.channels !== 1 || info.bitsPerSample !== 16) return untouched("no-audio");
   const count = Math.floor(info.dataSize / (VAD_CHUNK_SAMPLES * 2));
   const chunkSeconds = VAD_CHUNK_SAMPLES / info.sampleRate;
+  const durationSeconds = info.dataSize / (info.sampleRate * info.channels * 2);
+  if (candidate.startS < CLEAR_BEFORE_SECONDS ||
+      candidate.endS > durationSeconds + MAX_TIMESTAMP_OVERRUN_SECONDS) return untouched("no-audio");
   const first = Math.floor(candidate.startS / chunkSeconds);
   const last = Math.min(count, Math.ceil(candidate.endS / chunkSeconds));
   if (first < 0 || first >= count || last - first < MIN_OBSERVED_CHUNKS) return untouched("no-audio");
@@ -128,6 +133,17 @@ export async function stripHallucinatedCaption(
   const beforeEnd = Math.floor(candidate.startS / chunkSeconds);
   if (probabilities.slice(beforeStart, beforeEnd).some(speech) ||
       probabilities.slice(first, last).filter(speech).length > MAX_SPEECH_CHUNKS) {
+    return untouched("speech-present");
+  }
+  // Silero alone can miss very soft speech. Keep the existing outro gate's
+  // independent sustained-energy and near-recorded-speech-level protections;
+  // neither changes the reverted sparse-speech policy.
+  const windows = measureWavWindows(wavData);
+  const measured = windows && measureSpan(windows, candidate.startS, candidate.endS);
+  if (!windows || !measured) return untouched("no-audio");
+  const flat = windows.speechLevelDbfs - windows.floorDbfs < SPEECH_OVER_FLOOR_DB;
+  if (measured.hasSpeech ||
+      (!flat && measured.peakDbfs >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB)) {
     return untouched("speech-present");
   }
 

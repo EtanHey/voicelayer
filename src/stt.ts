@@ -2170,24 +2170,13 @@ export class WhisperServerBackend implements STTBackend {
             `[voicelayer] outro gate: decision ${gated.reason} on chunked transcript`,
           );
         }
-        const caption = outroGate
-          ? await stripHallucinatedCaption(gated.text, wavData, {
-              segments: chunkedResult.segments,
-              segmentsText: chunkedResult.segmentsText,
-            })
-          : { text: gated.text, removed: null };
-        if (caption.removed) {
-          console.error(`[voicelayer] caption gate: dropped class ${caption.removed.class} at ` +
-            `${caption.removed.startS.toFixed(2)}-${caption.removed.endS.toFixed(2)}s`);
-        }
         const backendParts = [this.name, "chunks"];
         if (chunkedResult.witnessed) backendParts.push("witness");
         if (chunkedResult.headChanged) backendParts.push("head");
         if (chunkedResult.cleaned) backendParts.push("clean");
         if (gated.removed.length > 0) backendParts.push("outro");
-        if (caption.removed) backendParts.push("caption");
         return {
-          text: caption.text,
+          text: gated.text,
           backend: backendParts.join("+"),
           durationMs: Date.now() - start,
           ...(chunkedResult.segments.length > 0
@@ -2283,6 +2272,9 @@ export class WhisperServerBackend implements STTBackend {
             `(${removal.spanDbfs.toFixed(1)} dBFS mean, ${removal.peakDbfs.toFixed(1)} peak)`,
         );
       }
+      // Captions are gated only on this single-pass path. Chunked recordings
+      // need a separate bounded tail-VAD design before paying another full-WAV
+      // pass or trusting stitched segment timing for deletion.
       const caption = outroGate
         ? await stripHallucinatedCaption(gated.text, wavData, {
             segments,

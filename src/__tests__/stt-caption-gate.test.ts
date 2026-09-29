@@ -25,6 +25,15 @@ function silentWav(seconds: number): Uint8Array {
   return wav;
 }
 
+function softSpeechWav(): Uint8Array {
+  const wav = silentWav(2.5);
+  const view = new DataView(wav.buffer);
+  for (let frame = Math.round(1.5 * 16_000); frame < Math.round(2.5 * 16_000); frame++) {
+    view.setInt16(44 + frame * 2, Math.round(30 * Math.sin(frame * 2 * Math.PI * 220 / 16_000)), true);
+  }
+  return wav;
+}
+
 const text = 'Ship it. - The American Pronunciation Guide Presents "How to Pronounce';
 const segments: TranscriptSegment[] = [
   { text: "Ship it.", startS: 0, endS: 1 },
@@ -54,6 +63,14 @@ describe("caption hallucination gate", () => {
       segments,
       segmentsText: text,
       speechProbabilities: probabilities(true),
+    });
+    expect(result.text).toBe(text);
+    expect(result.removed).toBeNull();
+  });
+
+  test("keeps very soft audio even if VAD misses the spoken phrase", async () => {
+    const result = await stripHallucinatedCaption(text, softSpeechWav(), {
+      segments, segmentsText: text, speechProbabilities: probabilities(),
     });
     expect(result.text).toBe(text);
     expect(result.removed).toBeNull();
@@ -114,6 +131,24 @@ describe("caption hallucination gate", () => {
       speechProbabilities: probabilities(),
     });
     expect(result.text).toBe(combined);
+  });
+
+  test("keeps a caption-class phrase at the start of the recording", async () => {
+    const spoken = "How to Pronounce";
+    const result = await stripHallucinatedCaption(spoken, silentWav(1), {
+      segments: [{ text: spoken, startS: 0, endS: 0.7 }],
+      segmentsText: spoken,
+      speechProbabilities: Array(31).fill(0.01),
+    });
+    expect(result.text).toBe(spoken);
+  });
+
+  test("keeps a caption whose claimed timestamp exceeds the bounded WAV overrun", async () => {
+    const stretched = [segments[0]!, segments[1]!, { ...segments[2]!, endS: 8 }];
+    const result = await stripHallucinatedCaption(text, silentWav(2.5), {
+      segments: stretched, segmentsText: text, speechProbabilities: probabilities(),
+    });
+    expect(result.text).toBe(text);
   });
 
   test("stays inert without aligned segment timestamps", async () => {
