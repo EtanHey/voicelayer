@@ -224,8 +224,9 @@ final class NotchHistoryPanelTests: XCTestCase {
     }
 
     func testRowActionsAreLabelledIconButtons() {
+        // UXP-3: Paste shows text going in at a cursor, not a second clipboard glyph beside Copy's.
         XCTAssertEqual(NotchHistoryPresentation.rowActions.map(\.symbol),
-                       ["doc.on.doc", "doc.on.clipboard", "arrow.clockwise"])
+                       ["doc.on.doc", "text.insert", "arrow.clockwise"])
         XCTAssertEqual(NotchHistoryPresentation.rowActions.map(\.label),
                        ["Copy", "Paste into the app you were using", "Re-transcribe"])
         XCTAssertGreaterThanOrEqual(NotchHistoryPresentation.rowActionSize, 24)
