@@ -1,0 +1,175 @@
+import AppKit
+import Observation
+@testable import VoiceBar
+@testable import VoiceBarUI
+import XCTest
+
+/// UXP-4 (UX pass #6): VoiceOver's VO-Space is an accessibility press on the status item. The window-style
+/// MenuBarExtra ignored it on macOS 27, since its button has no action. These drive the status button through its
+/// accessibility press handler, with a fake popover: no synthetic clicks and no real status item.
+@MainActor
+final class MenuBarStatusItemControllerTests: XCTestCase {
+    private final class FakePopover: MenuBarPopoverPresenting {
+        var isShown = false
+        var window: NSWindow?
+        var onClose: (() -> Void)?
+        private(set) var shows = 0
+        private(set) var closes = 0
+
+        func show(relativeTo _: NSButton) {
+            shows += 1
+            isShown = true
+        }
+
+        func close() {
+            closes += 1
+            dismiss()
+        }
+
+        /// What the transient popover does by itself on an outside click or Escape.
+        func dismiss() {
+            guard isShown else { return }
+            isShown = false
+            onClose?()
+        }
+    }
+
+    private var now: TimeInterval = 1000
+    private var mouse = false
+
+    private func controller(_ popover: FakePopover, button: NSButton) -> MenuBarStatusItemController {
+        MenuBarStatusItemController(
+            button: button,
+            presenter: popover,
+            clock: { [unowned self] in now },
+            isMouseEvent: { [unowned self] in mouse }
+        )
+    }
+
+    func testAnAccessibilityPressOpensThePopover() {
+        let popover = FakePopover()
+        let button = NSButton()
+        let item = controller(popover, button: button)
+        XCTAssertTrue(button.target === item)
+        XCTAssertEqual(button.action, #selector(MenuBarStatusItemController.togglePopover(_:)))
+        // A bare NSButton outside a window reports false here but still performs; the menu bar's AXPress returns
+        // success (checked on a scratch status item, macOS 27).
+        _ = button.accessibilityPerformPress()
+        XCTAssertEqual(popover.shows, 1)
+        XCTAssertTrue(item.isPopoverShown)
+    }
+
+    func testASecondAccessibilityPressClosesIt() {
+        let popover = FakePopover()
+        let button = NSButton()
+        let item = controller(popover, button: button)
+        _ = button.accessibilityPerformPress()
+        _ = button.accessibilityPerformPress()
+        XCTAssertEqual(popover.closes, 1)
+        XCTAssertFalse(item.isPopoverShown)
+        _ = button.accessibilityPerformPress()
+        XCTAssertEqual(popover.shows, 2, "open ↔ closed, as many times as it is pressed")
+    }
+
+    func testTheStatusItemIsAnnouncedAsVoiceBar() {
+        let button = NSButton()
+        let item = controller(FakePopover(), button: button)
+        XCTAssertEqual(button.accessibilityTitle(), "VoiceBar")
+        XCTAssertEqual(button.image?.accessibilityDescription, "VoiceBar")
+        item.setAlert(true)
+        XCTAssertEqual(button.accessibilityTitle(), "VoiceBar", "the polish warning icon keeps the name")
+        XCTAssertEqual(button.image?.accessibilityDescription, "VoiceBar")
+    }
+
+    func testThePolishWarningSwapsTheIcon() {
+        let button = NSButton()
+        let item = controller(FakePopover(), button: button)
+        let normal = button.image
+        item.setAlert(true)
+        XCTAssertNotNil(button.image)
+        XCTAssertFalse(button.image === normal)
+        item.setAlert(false)
+        XCTAssertEqual(button.image?.name(), normal?.name())
+    }
+
+    @Observable
+    final class Signal {
+        var pending = false
+    }
+
+    func testTheIconFollowsTheObservedPolishSignal() {
+        let button = NSButton()
+        let item = controller(FakePopover(), button: button)
+        let signal = Signal()
+        item.trackAlert { signal.pending }
+        let normal = button.image
+        signal.pending = true
+        let changed = expectation(description: "icon swapped")
+        Task { @MainActor in
+            while button.image === normal {
+                await Task.yield()
+            }
+            changed.fulfill()
+        }
+        wait(for: [changed], timeout: 2)
+        signal.pending = false
+        let restored = expectation(description: "icon restored")
+        Task { @MainActor in
+            while button.image?.name() != normal?.name() || button.image === normal {
+                await Task.yield()
+            }
+            restored.fulfill()
+        }
+        wait(for: [restored], timeout: 2)
+        XCTAssertEqual(button.image?.accessibilityDescription, "VoiceBar")
+    }
+
+    /// A transient popover closes on the mouse-down outside it, and a click on the status item is outside it: that
+    /// same click must not open it again.
+    func testTheClickThatClosedThePopoverDoesNotReopenIt() {
+        let popover = FakePopover()
+        let button = NSButton()
+        let item = controller(popover, button: button)
+        _ = button.accessibilityPerformPress()
+        mouse = true
+        popover.dismiss()
+        now += 0.05
+        item.togglePopover(nil)
+        XCTAssertFalse(item.isPopoverShown)
+        XCTAssertEqual(popover.shows, 1)
+        now += 1
+        item.togglePopover(nil)
+        XCTAssertTrue(item.isPopoverShown, "a later click opens it")
+    }
+
+    func testAnAccessibilityPressRightAfterAnOutsideCloseStillOpens() {
+        let popover = FakePopover()
+        let button = NSButton()
+        let item = controller(popover, button: button)
+        _ = button.accessibilityPerformPress()
+        popover.dismiss()
+        now += 0.05
+        mouse = false
+        _ = button.accessibilityPerformPress()
+        XCTAssertTrue(item.isPopoverShown)
+    }
+
+    /// "Open Settings…" / "Run setup…" close the popover they were clicked in, through the popover itself so the
+    /// next press opens it again.
+    func testClosingFromTheMenuBarClosesOnlyItsOwnPopover() {
+        let popover = FakePopover()
+        popover.window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
+        let other = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
+        let button = NSButton()
+        let item = controller(popover, button: button)
+        _ = button.accessibilityPerformPress()
+        XCTAssertTrue(item.popoverWindow === popover.window)
+        item.closeIfPresenting(other)
+        XCTAssertTrue(item.isPopoverShown)
+        item.closeIfPresenting(popover.window)
+        XCTAssertFalse(item.isPopoverShown)
+        XCTAssertNil(item.popoverWindow)
+        _ = button.accessibilityPerformPress()
+        XCTAssertTrue(item.isPopoverShown)
+    }
+}
