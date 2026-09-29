@@ -84,12 +84,12 @@ final class MenuBarStatusItemControllerTests: XCTestCase {
     func testThePolishWarningSwapsTheIcon() {
         let button = NSButton()
         let item = controller(FakePopover(), button: button)
-        let normal = button.image
+        XCTAssertEqual(item.iconSymbolName, "waveform.circle.fill")
         item.setAlert(true)
+        XCTAssertEqual(item.iconSymbolName, "exclamationmark.triangle.fill")
         XCTAssertNotNil(button.image)
-        XCTAssertFalse(button.image === normal)
         item.setAlert(false)
-        XCTAssertEqual(button.image?.name(), normal?.name())
+        XCTAssertEqual(item.iconSymbolName, "waveform.circle.fill")
     }
 
     @Observable
@@ -102,26 +102,21 @@ final class MenuBarStatusItemControllerTests: XCTestCase {
         let item = controller(FakePopover(), button: button)
         let signal = Signal()
         item.trackAlert { signal.pending }
-        let normal = button.image
+        XCTAssertEqual(item.iconSymbolName, "waveform.circle.fill")
         signal.pending = true
-        let changed = expectation(description: "icon swapped")
-        Task { @MainActor in
-            while button.image === normal {
-                await Task.yield()
-            }
-            changed.fulfill()
-        }
-        wait(for: [changed], timeout: 2)
+        XCTAssertTrue(waitOnMain { item.iconSymbolName == "exclamationmark.triangle.fill" }, "icon swapped")
         signal.pending = false
-        let restored = expectation(description: "icon restored")
-        Task { @MainActor in
-            while button.image?.name() != normal?.name() || button.image === normal {
-                await Task.yield()
-            }
-            restored.fulfill()
-        }
-        wait(for: [restored], timeout: 2)
+        XCTAssertTrue(waitOnMain { item.iconSymbolName == "waveform.circle.fill" }, "icon restored")
         XCTAssertEqual(button.image?.accessibilityDescription, "VoiceBar")
+    }
+
+    /// Runs the main run loop until `condition` holds or 2 s pass; nothing keeps polling after it returns.
+    private func waitOnMain(_ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(2)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        return condition()
     }
 
     /// A transient popover closes on the mouse-down outside it, and a click on the status item is outside it: that
