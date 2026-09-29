@@ -185,6 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// fresh one on "Restart F5 listener".
     private lazy var hotkeyListener = HotkeyListenerLifecycle { [unowned self] in makeHotkeyManager() }
     private let gestureStateMachine = GestureStateMachine()
+    private var menuBarStatusItem: NSStatusItem?
+    private var menuBarStatusItemController: MenuBarStatusItemController?
     private lazy var wakeRecoveryCoordinator = WakeRecoveryCoordinator(
         modeProvider: { [weak self] in self?.voiceState.mode ?? .idle },
         restartRecordingAudio: { [weak self] in
@@ -493,6 +495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // No Dock icon (LSUIElement equivalent)
         NSApp.setActivationPolicy(.accessory)
+        setupMenuBarStatusItem()
 
         // Register with Launch Services so voicebar:// URL scheme works
         // after rebuilds (Launch Services caches bundle->scheme mappings).
@@ -2550,6 +2553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// "Open Settings…" in the menu-bar popover (R4 UI pass #12): the popover used to stay open over
     /// Settings. Close it first, then open Settings, which activates VoiceBar and makes the window key.
     func openSettingsFromMenuBar(popover: NSWindow?, tab: SettingsTab? = nil, focus: SettingsFocus? = nil) {
+        MainActor.assumeIsolated { menuBarStatusItemController?.closeIfPresenting(popover) }
         Self.dismissMenuBarPopover(popover, keeping: settingsWindow)
         openSettingsWindow(tab: tab, focus: focus)
     }
@@ -2560,10 +2564,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         popover.orderOut(nil)
     }
 
-    /// The MenuBarExtra's window while it is open; `keyWindow` as the fallback.
+    /// The menu-bar popover's window while it is open; `keyWindow` as the fallback.
     static func menuBarPopoverWindow() -> NSWindow? {
-        NSApp.windows.first { $0.isVisible && String(describing: type(of: $0)).contains("MenuBarExtra") }
+        NSApp.windows.first { $0.isVisible && $0.identifier == MenuBarPopoverPresenter.windowIdentifier }
             ?? NSApp.keyWindow
+    }
+
+    /// UXP-4: the status item and its popover (see `MenuBarStatusItemController`).
+    private func setupMenuBarStatusItem() {
+        // AppKit calls this on main; the delegate just isn't annotated @MainActor.
+        MainActor.assumeIsolated {
+            let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            guard let button = statusItem.button else { return }
+            let presenter = MenuBarPopoverPresenter { [unowned self] in
+                AnyView(MenuBarPopoverHost(appDelegate: self))
+            }
+            menuBarStatusItem = statusItem
+            let controller = MenuBarStatusItemController(button: button, presenter: presenter)
+            menuBarStatusItemController = controller
+            // The polish warning replaces the waveform, as the MenuBarExtra label did.
+            let voiceState = voiceState
+            controller.trackAlert { voiceState.polishMenuSignalPending }
+        }
     }
 
     var settingsWindowForTesting: NSWindow? {
@@ -2603,6 +2625,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// "Run setup…" in the menu-bar popover: close the popover first, as Open Settings… does.
     func openSetupWizardFromMenuBar(popover: NSWindow?) {
+        MainActor.assumeIsolated { menuBarStatusItemController?.closeIfPresenting(popover) }
         Self.dismissMenuBarPopover(popover, keeping: nil)
         openSetupWizard()
     }
@@ -3004,50 +3027,14 @@ func shouldIgnoreHotkeyEvent(
 @main
 struct VoiceBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @State private var menuMicrophoneRefresh = 0
 
+    // UXP-4: the status item and its popover are AppKit (`MenuBarStatusItemController`), so an accessibility press
+    // opens it. The app still needs one scene; this empty Settings scene never opens, because the app menu's
+    // Settings… is replaced below and Settings is VoiceBar's own window.
     var body: some Scene {
-        MenuBarExtra {
-            MenuBarPopoverView(
-                footer: .resolve(state: appDelegate.voiceState),
-                hotkeyHint: appDelegate.hotkeyEnabled
-                    ? "Hold F5 to dictate"
-                    : VoiceBarPresentation.hotkeyPermissionHint(
-                        hotkeyEnabled: appDelegate.hotkeyEnabled,
-                        missingPermissions: appDelegate.missingHotkeyPermissions
-                    ),
-                defaultMicrophoneName: menuDefaultMicrophoneName,
-                transcript: appDelegate.voiceState.latestReusableTranscript,
-                degradationHint: appDelegate.voiceState.polishDegradation?.hint,
-                onCopy: { appDelegate.voiceState.copyLastTranscript() },
-                onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
-                onQuit: { appDelegate.quitFromMenuBar() },
-                onRunSetup: { appDelegate.openSetupWizardFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
-                onChangeMicrophone: {
-                    appDelegate.openSettingsFromMenuBar(
-                        popover: AppDelegate.menuBarPopoverWindow(),
-                        tab: .general,
-                        focus: .microphonePriority
-                    )
-                }
-            )
-            .onAppear {
-                appDelegate.voiceState.acknowledgePolishMenuSignal()
-                menuMicrophoneRefresh &+= 1
-            }
-            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
-                menuMicrophoneRefresh &+= 1
-            }
-        } label: {
-            // R4 UI pass #20: VoiceOver read the SF Symbol's name ("Waveform In A Filled Circle").
-            Image(
-                systemName: appDelegate.voiceState.polishMenuSignalPending
-                    ? "exclamationmark.triangle.fill"
-                    : "waveform.circle.fill"
-            )
-            .accessibilityLabel("VoiceBar")
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") {
@@ -3055,6 +3042,45 @@ struct VoiceBarApp: App {
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
+        }
+    }
+}
+
+/// The menu-bar popover's content: the same `MenuBarPopoverView`, callbacks and 1 s refresh the MenuBarExtra had.
+struct MenuBarPopoverHost: View {
+    let appDelegate: AppDelegate
+    @State private var menuMicrophoneRefresh = 0
+
+    var body: some View {
+        MenuBarPopoverView(
+            footer: .resolve(state: appDelegate.voiceState),
+            hotkeyHint: appDelegate.hotkeyEnabled
+                ? "Hold F5 to dictate"
+                : VoiceBarPresentation.hotkeyPermissionHint(
+                    hotkeyEnabled: appDelegate.hotkeyEnabled,
+                    missingPermissions: appDelegate.missingHotkeyPermissions
+                ),
+            defaultMicrophoneName: menuDefaultMicrophoneName,
+            transcript: appDelegate.voiceState.latestReusableTranscript,
+            degradationHint: appDelegate.voiceState.polishDegradation?.hint,
+            onCopy: { appDelegate.voiceState.copyLastTranscript() },
+            onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
+            onQuit: { appDelegate.quitFromMenuBar() },
+            onRunSetup: { appDelegate.openSetupWizardFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
+            onChangeMicrophone: {
+                appDelegate.openSettingsFromMenuBar(
+                    popover: AppDelegate.menuBarPopoverWindow(),
+                    tab: .general,
+                    focus: .microphonePriority
+                )
+            }
+        )
+        .onAppear {
+            appDelegate.voiceState.acknowledgePolishMenuSignal()
+            menuMicrophoneRefresh &+= 1
+        }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+            menuMicrophoneRefresh &+= 1
         }
     }
 
