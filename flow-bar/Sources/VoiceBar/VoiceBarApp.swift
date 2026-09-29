@@ -181,8 +181,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastLoggedNotchHousingWidth: CGFloat?
     private var panelBackingScaleCertificationGeneration: UInt = 0
 
-    /// Hotkey management — CGEventTap + gesture state machine.
-    private var hotkeyManager: HotkeyManager?
+    /// Hotkey management — CGEventTap + gesture state machine. The lifecycle holds the running manager and starts a
+    /// fresh one on "Restart F5 listener".
+    private lazy var hotkeyListener = HotkeyListenerLifecycle { [unowned self] in makeHotkeyManager() }
     private let gestureStateMachine = GestureStateMachine()
     private lazy var wakeRecoveryCoordinator = WakeRecoveryCoordinator(
         modeProvider: { [weak self] in self?.voiceState.mode ?? .idle },
@@ -714,7 +715,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         snoozeTask?.cancel()
         settingsWindow?.close()
-        hotkeyManager?.stop()
+        hotkeyListener.stop()
         audioLevelMonitor.shutdown()
         daemonController.stop()
         socketServer?.stop()
@@ -1220,7 +1221,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Wire gesture callbacks to VoiceState and start the event tap.
     private func setupHotkey() {
         configureHotkeyCallbacks()
+        applyHotkeyListenerOutcome(hotkeyListener.start())
+    }
 
+    /// Settings' and the wizard's "Restart F5 listener": the launch start again, for permissions granted after
+    /// launch. Only the tap's lifecycle: the callbacks below are the launch ones, and a hold or recording refuses.
+    func restartHotkeyListener() -> HotkeyListenerRestartOutcome {
+        let isRecording = voiceState.mode == .recording || gestureStateMachine.state != .idle
+        let outcome = hotkeyListener.restart(isRecording: isRecording)
+        NSLog("[VoiceBar] F5 listener restart: %@", String(describing: outcome))
+        switch outcome {
+        case .started, .failed:
+            applyHotkeyListenerOutcome(outcome)
+            refreshSettingsWindowAnchorState()
+        case .alreadyRunning, .refusedWhileRecording:
+            break
+        }
+        return outcome
+    }
+
+    private func makeHotkeyManager() -> HotkeyManager {
         let manager = HotkeyManager(gesture: gestureStateMachine)
         manager.onKeyDown = { [weak self] in
             self?.handleHotkeyKeyDown(from: .native)
@@ -1244,15 +1264,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         manager.shouldHandleEscape = { [weak self] in
             self?.commandRouter.shouldHandleEscape ?? false
         }
-        if manager.start() {
-            hotkeyManager = manager
-            hotkeyEnabled = true
-            missingHotkeyPermissions = []
-            voiceState.setHotkeyEnabled(true)
-            NSLog("%@", VoiceBarHotkeyContract.activationLogMessage)
-        } else {
+        return manager
+    }
+
+    private func applyHotkeyListenerOutcome(_ outcome: HotkeyListenerRestartOutcome) {
+        if case let .failed(missing) = outcome {
             hotkeyEnabled = false
-            missingHotkeyPermissions = manager.permissionStatus.missingPermissions
+            missingHotkeyPermissions = missing
             voiceState.setHotkeyEnabled(false)
             NSLog(
                 "[VoiceBar] Hotkey system unavailable — missing permissions: %@",
@@ -1264,6 +1282,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }.joined(separator: ", ")
             )
+        } else {
+            hotkeyEnabled = true
+            missingHotkeyPermissions = []
+            voiceState.setHotkeyEnabled(true)
+            NSLog("%@", VoiceBarHotkeyContract.activationLogMessage)
         }
     }
 
