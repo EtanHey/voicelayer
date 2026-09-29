@@ -6,6 +6,7 @@ import { connectToBar, disconnectFromBar, onCommand } from "../socket-client";
 import type { SocketCommand } from "../socket-protocol";
 import { MAX_NDJSON_LINE_BYTES, NDJSONByteFramer } from "../ndjson-byte-framer";
 import { createMcpDaemon } from "../mcp-daemon";
+import { serializeMcpFrame } from "../mcp-framing";
 
 // The preload puts SOCKET_PATH under this worktree's .test-tmp/<pid>/.
 const TEST_SOCKET = join(dirname(SOCKET_PATH), "x.sock");
@@ -238,6 +239,88 @@ it("keeps a split Unicode NDJSON message intact at the MCP daemon socket", async
     const message = await within(second, "daemon split message");
     expect(received.map((item) => item.type)).toEqual(["probe", "sample"]);
     expect(message.text).toBe("אבג — …");
+  } finally {
+    client.end();
+  }
+});
+
+it("keeps consecutive Content-Length tool calls when the second frame splits a Hebrew character", async () => {
+  const handled: string[] = [];
+  let firstHandled!: () => void;
+  let secondHandled!: () => void;
+  const first = new Promise<void>((resolve) => { firstHandled = resolve; });
+  const second = new Promise<void>((resolve) => { secondHandled = resolve; });
+  daemon = await createMcpDaemon({
+    socketPath: TEST_SOCKET,
+    toolExecutor: {
+      async executeTool(_name, args) {
+        handled.push(String(args.message));
+        if (handled.length === 1) firstHandled();
+        if (handled.length === 2) secondHandled();
+        return { content: [{ type: "text", text: "synthetic" }] };
+      },
+    },
+  });
+
+  let writer!: { write: (bytes: Uint8Array) => number };
+  let opened!: () => void;
+  const open = new Promise<void>((resolve) => { opened = resolve; });
+  const client = await Bun.connect({
+    unix: TEST_SOCKET,
+    socket: {
+      open(socket) { writer = socket; opened(); },
+      data() {}, close() {}, error() {}, connectError() {}, drain() {},
+    },
+  });
+  try {
+    await within(open, "Content-Length client open");
+    const call = (id: number, message: string) => Buffer.from(serializeMcpFrame({
+      jsonrpc: "2.0", id, method: "tools/call",
+      params: { name: "voice_speak", arguments: { message } },
+    }));
+    const firstFrame = call(1, "synthetic first call");
+    const secondFrame = call(2, "אבג — … second call");
+    const split = secondFrame.indexOf(0xd7) + 1;
+    expect(split).toBeGreaterThan(1);
+    writer.write(Buffer.concat([firstFrame, secondFrame.subarray(0, split)]));
+    await within(first, "first Content-Length tool call handled");
+    writer.write(secondFrame.subarray(split));
+    await within(second, "split Content-Length tool call handled");
+    expect(handled).toEqual(["synthetic first call", "אבג — … second call"]);
+  } finally {
+    client.end();
+  }
+});
+
+it("bounds an unknown-protocol whitespace prefix sent in many socket reads", async () => {
+  daemon = await createMcpDaemon({ socketPath: TEST_SOCKET });
+  let writer!: { write: (bytes: Uint8Array) => number };
+  let opened!: () => void;
+  let closed!: () => void;
+  let drained!: () => void;
+  const open = new Promise<void>((resolve) => { opened = resolve; });
+  const close = new Promise<void>((resolve) => { closed = resolve; });
+  const client = await Bun.connect({
+    unix: TEST_SOCKET,
+    socket: {
+      open(socket) { writer = socket; opened(); },
+      data() {}, close() { closed(); }, error() {}, connectError() {},
+      drain() { drained?.(); },
+    },
+  });
+  try {
+    await within(open, "unknown-protocol client open");
+    const spaces = Buffer.alloc(64 * 1024, 0x20);
+    let sent = 0;
+    while (sent <= MAX_NDJSON_LINE_BYTES) {
+      const written = writer.write(spaces.subarray(0, Math.min(spaces.length, MAX_NDJSON_LINE_BYTES + 1 - sent)));
+      if (written > 0) {
+        sent += written;
+      } else {
+        await within(new Promise<void>((resolve) => { drained = resolve; }), "unknown-protocol drain", 5_000);
+      }
+    }
+    await within(close, "unknown-protocol byte-limit close", 5_000);
   } finally {
     client.end();
   }
