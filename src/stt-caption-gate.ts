@@ -9,7 +9,7 @@ import { measureSpan, measureWavWindows, normalizeOutroKey, SPEECH_LEVEL_GUARD_D
 import type { TranscriptSegment } from "./stt-sentence-boundaries";
 
 const CAPTION_PREFIXES = [
-  { key: "the american pronunciation guide presents", class: "american-pronunciation-guide", extraWords: 4 },
+  { key: "the american pronunciation guide presents", class: "american-pronunciation-guide", extraWords: 6 },
   { key: "how to pronounce", class: "how-to-pronounce", extraWords: 4 },
   { key: "subtitles by the amara org community", class: "amara-subtitles", extraWords: 0 },
   { key: "thanks for watching", class: "thanks-for-watching", extraWords: 0 },

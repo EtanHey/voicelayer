@@ -116,6 +116,16 @@ describe("caption hallucination gate", () => {
     expect(result.reason).toBe("no-candidate");
   });
 
+  test("retains the pinned American-guide continuation boundary", async () => {
+    const caption = "The American Pronunciation Guide Presents How to Pronounce Example in English";
+    const candidate = `Ship it. ${caption}`;
+    const result = await stripHallucinatedCaption(candidate, silentWav(2.5), {
+      segments: [segments[0]!, { text: ` ${caption}`, startS: 1.5, endS: 2.2 }],
+      segmentsText: candidate, speechProbabilities: probabilities(),
+    });
+    expect(result.text).toBe("Ship it.");
+  });
+
   test.each([
     ["How to Pronounce this", "how-to-pronounce"],
     ["Subtitles by the Amara.org community", "amara-subtitles"],
