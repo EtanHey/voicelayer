@@ -3049,11 +3049,39 @@ struct VoiceBarApp: App {
 /// The menu-bar popover's content: the same `MenuBarPopoverView`, callbacks and 1 s refresh the MenuBarExtra had.
 struct MenuBarPopoverHost: View {
     let appDelegate: AppDelegate
+    /// The app's own state. A parity render passes synthetic state and a fixed microphone name, so nothing saved on
+    /// this Mac (recent dictations, the real input device) can reach an exported image (#224 r1).
+    let voiceState: VoiceState
+    let defaultMicrophoneName: () -> String?
     @State private var menuMicrophoneRefresh = 0
 
+    init(
+        appDelegate: AppDelegate,
+        voiceState: VoiceState? = nil,
+        defaultMicrophoneName: (() -> String?)? = nil
+    ) {
+        self.appDelegate = appDelegate
+        self.voiceState = voiceState ?? appDelegate.voiceState
+        self.defaultMicrophoneName = defaultMicrophoneName ?? { [weak appDelegate] in
+            appDelegate?.defaultMicrophoneName()
+        }
+    }
+
     var body: some View {
+        popover
+            .onAppear {
+                voiceState.acknowledgePolishMenuSignal()
+                menuMicrophoneRefresh &+= 1
+            }
+            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+                menuMicrophoneRefresh &+= 1
+            }
+    }
+
+    /// Exactly what the popover draws, readable in tests.
+    var popover: MenuBarPopoverView {
         MenuBarPopoverView(
-            footer: .resolve(state: appDelegate.voiceState),
+            footer: .resolve(state: voiceState),
             hotkeyHint: appDelegate.hotkeyEnabled
                 ? "Hold F5 to dictate"
                 : VoiceBarPresentation.hotkeyPermissionHint(
@@ -3061,9 +3089,9 @@ struct MenuBarPopoverHost: View {
                     missingPermissions: appDelegate.missingHotkeyPermissions
                 ),
             defaultMicrophoneName: menuDefaultMicrophoneName,
-            transcript: appDelegate.voiceState.latestReusableTranscript,
-            degradationHint: appDelegate.voiceState.polishDegradation?.hint,
-            onCopy: { appDelegate.voiceState.copyLastTranscript() },
+            transcript: voiceState.latestReusableTranscript,
+            degradationHint: voiceState.polishDegradation?.hint,
+            onCopy: { voiceState.copyLastTranscript() },
             onSettings: { appDelegate.openSettingsFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
             onQuit: { appDelegate.quitFromMenuBar() },
             onRunSetup: { appDelegate.openSetupWizardFromMenuBar(popover: AppDelegate.menuBarPopoverWindow()) },
@@ -3075,18 +3103,11 @@ struct MenuBarPopoverHost: View {
                 )
             }
         )
-        .onAppear {
-            appDelegate.voiceState.acknowledgePolishMenuSignal()
-            menuMicrophoneRefresh &+= 1
-        }
-        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
-            menuMicrophoneRefresh &+= 1
-        }
     }
 
     /// Re-read on the popover's 1 s refresh, so a priority change or a plugged-in mic shows up while it is open.
     private var menuDefaultMicrophoneName: String? {
         _ = menuMicrophoneRefresh
-        return appDelegate.defaultMicrophoneName()
+        return defaultMicrophoneName()
     }
 }

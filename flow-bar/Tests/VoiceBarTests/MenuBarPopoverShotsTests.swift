@@ -5,9 +5,34 @@ import SwiftUI
 import XCTest
 
 /// UXP-4 parity: the popover's content as the status item now hosts it (`MenuBarPopoverHost`), light + dark.
-/// Skipped unless VOICEBAR_UXP4_SHOTS_DIR is set.
+/// The export is skipped unless VOICEBAR_UXP4_SHOTS_DIR is set. Its state is synthetic: a fresh VoiceState would
+/// read the recent dictations saved in UserDefaults, and the default microphone is the real device (#224 r1).
 @MainActor
 final class MenuBarPopoverShotsTests: XCTestCase {
+    static let syntheticTranscript = "A synthetic transcript for the popover shot."
+    static let syntheticMicrophone = "Synthetic Test Microphone"
+
+    /// The production host and content, fed synthetic state that never reads or writes UserDefaults.
+    static func syntheticHost(_ app: AppDelegate) -> MenuBarPopoverHost {
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [syntheticTranscript] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in },
+            keepsExpandedInDevState: false
+        )
+        return MenuBarPopoverHost(appDelegate: app, voiceState: state, defaultMicrophoneName: { syntheticMicrophone })
+    }
+
+    /// The parity render cannot pick up a saved dictation or the real microphone: the popover it draws carries only
+    /// the synthetic values.
+    func testTheShotPopoverCarriesOnlySyntheticState() {
+        let popover = Self.syntheticHost(AppDelegate()).popover
+        XCTAssertEqual(popover.transcript, Self.syntheticTranscript)
+        XCTAssertEqual(popover.defaultMicrophoneName, Self.syntheticMicrophone)
+        XCTAssertNil(popover.degradationHint)
+    }
+
     func testRenderMenuBarPopover() throws {
         guard let path = ProcessInfo.processInfo.environment["VOICEBAR_UXP4_SHOTS_DIR"] else {
             throw XCTSkip("Set VOICEBAR_UXP4_SHOTS_DIR to render the menu-bar popover")
@@ -16,7 +41,7 @@ final class MenuBarPopoverShotsTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let app = AppDelegate()
         for (scheme, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-            let host = NSHostingView(rootView: MenuBarPopoverHost(appDelegate: app)
+            let host = NSHostingView(rootView: Self.syntheticHost(app)
                 .background(Color(nsColor: .windowBackgroundColor))
                 .environment(\.colorScheme, scheme == "light" ? .light : .dark))
             host.appearance = NSAppearance(named: appearance)
