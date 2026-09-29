@@ -2224,10 +2224,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func microphonePermissionGranted() -> Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-    }
-
     private func runRelaySetup() -> (result: SettingsRelaySetupResult, status: RelaySetupStatus) {
         guard let scriptURL = Bundle.main.resourceURL?
             .appendingPathComponent("scripts")
@@ -2657,13 +2653,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// The macOS microphone prompt, for the wizard's and Settings' "Allow…". Until the app has asked once, System
+    /// Settings doesn't list VoiceBar in its Microphone pane. Calls back on main whatever the answer.
+    static func requestMicrophoneAccess(completion: @escaping () -> Void) {
+        AVCaptureDevice.requestAccess(for: .audio) { _ in DispatchQueue.main.async(execute: completion) }
+    }
+
     /// Every check and action the wizard shows is the app's existing one.
     func makeSetupWizardDependencies() -> SetupWizardDependencies {
         SetupWizardDependencies(
             permissionSnapshot: { [weak self] in self?.currentSetupPermissionSnapshot() ?? .unknown },
-            onRequestMicrophone: { completion in
-                AVCaptureDevice.requestAccess(for: .audio) { _ in DispatchQueue.main.async(execute: completion) }
-            },
+            onRequestMicrophone: { completion in Self.requestMicrophoneAccess(completion: completion) },
             f5KeyStatus: { [weak self] in
                 SetupF5KeyStatus(
                     listenerActive: self?.hotkeyEnabled ?? false,
@@ -2774,9 +2774,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onRestartHotkeyListener: { [weak self] in
                 self?.restartHotkeyListener() ?? .failed(missing: [])
             },
-            isMicrophonePermissionGranted: { [weak self] in
-                self?.microphonePermissionGranted() ?? false
+            microphoneAuthorization: {
+                Self.setupMicrophoneAuthorization(AVCaptureDevice.authorizationStatus(for: .audio))
             },
+            onRequestMicrophone: { completion in Self.requestMicrophoneAccess(completion: completion) },
             isVoiceBarHidden: { [weak self] in
                 self?.isSnoozed ?? false
             },
@@ -2801,7 +2802,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.voiceState.latestDictationInsertionStatus ?? .unverified
             },
             onCopyLastDictation: { [weak self] text in
-                self?.voiceState.copyTranscript(text)
+                self?.voiceState.copyTranscript(text) ?? false
             },
             historyPage: { limit in await SettingsArchiveIndex.shared.dictationPage(limit: limit) },
             onCopyHistoryTranscript: { [weak self] text in

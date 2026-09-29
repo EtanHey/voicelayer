@@ -14,6 +14,7 @@ import {
 } from "fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
+import { NDJSONByteFramer } from "./ndjson-byte-framer";
 
 const LIVE_VOICEBAR_SOCKET = "/tmp/voicelayer.sock";
 const LIVE_MCP_SOCKET = "/tmp/voicelayer-mcp.sock";
@@ -412,22 +413,24 @@ function createVerifyBarServer(socketPath: string): VerifyBarServer {
     unlinkSync(socketPath);
   } catch {}
 
-  const server = Bun.listen<{ buffer: string }>({
+  const server = Bun.listen<{ framer: NDJSONByteFramer }>({
     unix: socketPath,
     socket: {
       open(socket) {
-        socket.data = { buffer: "" };
+        socket.data = { framer: new NDJSONByteFramer() };
         clients.add(socket);
       },
       data(socket, raw) {
-        socket.data.buffer += raw.toString("utf8");
-        const lines = socket.data.buffer.split("\n");
-        socket.data.buffer = lines.pop() ?? "";
+        const { lines, overflow } = socket.data.framer.append(raw);
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
             events.push(JSON.parse(line));
           } catch {}
+        }
+        if (overflow) {
+          console.error("[verify] NDJSON event exceeded byte limit; closing client");
+          socket.end();
         }
       },
       close(socket) {

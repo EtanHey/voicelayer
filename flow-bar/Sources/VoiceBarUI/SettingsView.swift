@@ -434,7 +434,11 @@ public struct SettingsView: View {
     public let onCheckShortcut: (@escaping (String) -> Void) -> Void
     /// Starts the F5 listener again after permissions were granted post-launch; the app refuses while recording.
     public let onRestartHotkeyListener: () -> HotkeyListenerRestartOutcome
-    public let isMicrophonePermissionGranted: () -> Bool
+    /// Read live, like the wizard's row: a never-asked microphone has to be requested before System Settings lists
+    /// VoiceBar in its Microphone pane.
+    public let microphoneAuthorization: () -> SetupMicrophoneAuthorization
+    /// The wizard's request path (`AVCaptureDevice.requestAccess`); calls back on main once the prompt is answered.
+    public let onRequestMicrophone: (@escaping () -> Void) -> Void
     public let isVoiceBarHidden: () -> Bool
     public let voiceBarHiddenUntil: () -> Date?
     public let onHideVoiceBar: () -> Void
@@ -442,7 +446,7 @@ public struct SettingsView: View {
     public let onRunRelaySetup: (@escaping (SettingsRelaySetupResult) -> Void) -> Void
     public let lastDictationEntry: () -> RecentTranscriptionEntry?
     public let lastDictationInsertionStatus: () -> DictationInsertionStatus
-    public let onCopyLastDictation: (String) -> Void
+    public let onCopyLastDictation: (String) -> Bool
     public let historyPage: @Sendable (Int) async -> SettingsHistoryPage
     public let askHistoryPage: @Sendable (Int) async -> SettingsAskHistoryPage
     /// H1-c: a page of matches for a non-blank query, paged and cached by the index like the unfiltered pages.
@@ -468,6 +472,7 @@ public struct SettingsView: View {
 
     @State private var selectedTab: SettingsTab
     @State private var hotkeyListenerRestartLine: HotkeyListenerRestartLine?
+    @State private var permissionsRefreshTick = 0
     @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
     @State private var localVoiceBarHidden: Bool
     @State private var historyDayGroups: [SettingsHistoryDayGroup]
@@ -559,7 +564,8 @@ public struct SettingsView: View {
         lastMousePressUptime: @escaping () -> TimeInterval? = { nil },
         onCheckShortcut: @escaping (@escaping (String) -> Void) -> Void = { $0("Shortcut check unavailable.") },
         onRestartHotkeyListener: @escaping () -> HotkeyListenerRestartOutcome = { .failed(missing: []) },
-        isMicrophonePermissionGranted: @escaping () -> Bool = { true },
+        microphoneAuthorization: @escaping () -> SetupMicrophoneAuthorization = { .granted },
+        onRequestMicrophone: @escaping (@escaping () -> Void) -> Void = { $0() },
         isVoiceBarHidden: @escaping () -> Bool = { false },
         voiceBarHiddenUntil: @escaping () -> Date? = { nil },
         onHideVoiceBar: @escaping () -> Void = {},
@@ -569,7 +575,7 @@ public struct SettingsView: View {
         },
         lastDictationEntry: @escaping () -> RecentTranscriptionEntry? = { nil },
         lastDictationInsertionStatus: @escaping () -> DictationInsertionStatus = { .unverified },
-        onCopyLastDictation: @escaping (String) -> Void = { _ in },
+        onCopyLastDictation: @escaping (String) -> Bool = { _ in false },
         historyPage: @escaping @Sendable (Int) async -> SettingsHistoryPage = { limit in
             await SettingsArchiveIndex.shared.dictationPage(limit: limit)
         },
@@ -654,7 +660,8 @@ public struct SettingsView: View {
         self.lastMousePressUptime = lastMousePressUptime
         self.onCheckShortcut = onCheckShortcut
         self.onRestartHotkeyListener = onRestartHotkeyListener
-        self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
+        self.microphoneAuthorization = microphoneAuthorization
+        self.onRequestMicrophone = onRequestMicrophone
         self.isVoiceBarHidden = isVoiceBarHidden
         self.voiceBarHiddenUntil = voiceBarHiddenUntil
         self.onHideVoiceBar = onHideVoiceBar
@@ -1537,14 +1544,9 @@ public struct SettingsView: View {
                 ProgressView()
                     .controlSize(.small)
             }
-            Button {
+            SettingsIconButton(spec: .refreshAskHistory) {
                 requestAskHistoryReload(scrollProxy: proxy)
-            } label: {
-                Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
-            .help("Refresh ask history")
-            .accessibilityLabel("Refresh ask history")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
@@ -1571,24 +1573,14 @@ public struct SettingsView: View {
                 ProgressView()
                     .controlSize(.small)
             }
-            Button {
+            SettingsIconButton(spec: .refreshHistory) {
                 requestHistoryReload(scrollProxy: proxy)
-            } label: {
-                Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
-            .help("Refresh history")
-            .accessibilityLabel("Refresh history")
 
-            Button {
+            SettingsIconButton(spec: .jumpToLatest) {
                 scrollToLatest(proxy)
-            } label: {
-                Image(systemName: "arrow.up.to.line")
             }
-            .buttonStyle(.borderless)
             .disabled(historyDayGroups.isEmpty)
-            .help("Jump to latest")
-            .accessibilityLabel("Jump to latest")
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
@@ -1601,15 +1593,11 @@ public struct SettingsView: View {
             TextField(prompt, text: text)
                 .textFieldStyle(.plain)
             if !text.wrappedValue.isEmpty {
-                Button {
+                // Inside the field: the 24 pt target overhangs its 14 pt glyph instead of growing the field.
+                SettingsIconButton(spec: .clearSearch, layoutInset: 5) {
                     text.wrappedValue = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderless)
-                .help("Clear search")
-                .accessibilityLabel("Clear search")
+                .foregroundStyle(.secondary)
             }
         }
         .font(.callout)
@@ -1898,7 +1886,7 @@ public struct SettingsView: View {
                 guard let text = part.actionableText else { return }
                 onPasteHistoryTranscript(text)
             } label: {
-                historyActionLabel("Paste", systemImage: "doc.on.clipboard", isEnabled: !disabled)
+                historyActionLabel("Paste", systemImage: VoiceBarActionSymbol.paste, isEnabled: !disabled)
             }
             .disabled(disabled)
             .help(reason ?? "Paste")
@@ -2495,24 +2483,40 @@ public struct SettingsView: View {
         return "Missing: \(names.joined(separator: ", "))"
     }
 
-    private func permissionRow(_ permission: HotkeyPermission, isGranted: Bool) -> some View {
-        LabeledContent(permission.label) {
+    private func permissionRow(_ row: SetupPermissionRow) -> some View {
+        LabeledContent(row.label) {
             HStack(spacing: 8) {
-                statusBadge(isGranted ? "Granted" : "Missing", isReady: isGranted)
-                if !isGranted {
-                    Button("Open") {
-                        openPermissionSettings(permission)
+                statusBadge(row.status, isReady: row.isGranted)
+                if let action = row.action {
+                    Button(action.title) {
+                        SettingsPermissionActions.perform(
+                            action,
+                            openURL: { NSWorkspace.shared.open($0) },
+                            requestMicrophone: onRequestMicrophone,
+                            refresh: { permissionsRefreshTick &+= 1 }
+                        )
                     }
+                    .accessibilityLabel("\(action.title) \(row.label)")
                 }
             }
         }
     }
 
+    var permissionRowModels: [SetupPermissionRow] {
+        // The wizard's rows (F3 step 1): a never-asked microphone offers "Allow…", a denied one "Open".
+        SetupPermissionsStep(snapshot: SetupPermissionSnapshot(
+            microphone: microphoneAuthorization(),
+            accessibilityGranted: !missingPermissions.contains(.accessibility),
+            inputMonitoringGranted: !missingPermissions.contains(.inputMonitoring),
+            hotkeyListenerActive: hotkeyEnabled
+        )).rows
+    }
+
     private var permissionRows: some View {
-        Group {
-            permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
-            permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
-            permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
+        // Reading the tick re-reads the providers once the microphone prompt is answered.
+        let _ = permissionsRefreshTick
+        return ForEach(permissionRowModels, id: \.permission) { row in
+            permissionRow(row)
         }
     }
 
@@ -2527,12 +2531,6 @@ public struct SettingsView: View {
                 .frame(width: 8, height: 8)
             Text(text)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private func openPermissionSettings(_ permission: HotkeyPermission) {
-        if let url = URL(string: permission.settingsURLString) {
-            NSWorkspace.shared.open(url)
         }
     }
 
@@ -2921,5 +2919,22 @@ private extension View {
             .disabled(!visible)
             .accessibilityHidden(!visible)
             .zIndex(visible ? 1 : 0)
+    }
+}
+
+/// One dispatch for a permission row's button, shared by Settings › General › Permissions and the wizard's step 1.
+enum SettingsPermissionActions {
+    static func perform(
+        _ action: SetupPermissionAction,
+        openURL: (URL) -> Void,
+        requestMicrophone: (@escaping () -> Void) -> Void,
+        refresh: @escaping () -> Void
+    ) {
+        switch action {
+        case let .openSettings(url):
+            if let url = URL(string: url) { openURL(url) }
+        case .requestMicrophone:
+            requestMicrophone(refresh)
+        }
     }
 }

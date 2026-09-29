@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import { appendFile, mkdir } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
+import { NDJSONByteFramer } from "./ndjson-byte-framer";
 import type { PauseSpan } from "./stt-pause-map";
 import {
   applyPauseAwareBoundaries,
@@ -1708,7 +1709,7 @@ async function requestPolishOverSocket(
     let settled = false;
     let connection: { write: (data: string) => void; end?: () => void } | null =
       null;
-    let buffer = "";
+    const framer = new NDJSONByteFramer();
 
     const cleanup = () => {
       if (settled) return;
@@ -1733,18 +1734,16 @@ async function requestPolishOverSocket(
       finishReject(new Error(`polish request timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    Bun.connect<{ buffer: string }>({
+    Bun.connect<{}>({
       unix: socketPath,
       socket: {
         open(socket) {
-          socket.data = { buffer: "" };
+          socket.data = {};
           connection = socket;
           socket.write(`${JSON.stringify(request)}\n`);
         },
         data(_socket, raw) {
-          buffer += raw.toString("utf-8");
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
+          const { lines, overflow } = framer.append(raw);
           for (const line of lines) {
             if (!line.trim()) continue;
             try {
@@ -1767,6 +1766,9 @@ async function requestPolishOverSocket(
               );
               return;
             }
+          }
+          if (overflow) {
+            finishReject(new Error("polish response exceeded byte limit"));
           }
         },
         close() {

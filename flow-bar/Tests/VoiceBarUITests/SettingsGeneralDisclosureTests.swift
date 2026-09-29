@@ -43,8 +43,10 @@ final class SettingsGeneralDisclosureTests: XCTestCase {
                 .components(separatedBy: "private var permissionRows").first
         )
 
-        XCTAssertTrue(row.contains("if !isGranted"))
-        XCTAssertTrue(row.contains("Button(\"Open\")"))
+        // The row's button is the shared model's action, nil once granted; "Open" vs "Allow…" per state is pinned in
+        // SettingsMicrophonePermissionRowTests.
+        XCTAssertTrue(row.contains("if let action = row.action"))
+        XCTAssertTrue(row.contains("Button(action.title)"))
     }
 
     func testAdvancedIsAFullRowDisclosure() throws {
