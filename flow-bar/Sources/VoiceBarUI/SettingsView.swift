@@ -432,7 +432,11 @@ public struct SettingsView: View {
     /// drag session from the next; nil means unknown. VoiceBarUI stays presentation-only, so the app reads it.
     public let lastMousePressUptime: () -> TimeInterval?
     public let onCheckShortcut: (@escaping (String) -> Void) -> Void
-    public let isMicrophonePermissionGranted: () -> Bool
+    /// Read live, like the wizard's row: a never-asked microphone has to be requested before System Settings lists
+    /// VoiceBar in its Microphone pane.
+    public let microphoneAuthorization: () -> SetupMicrophoneAuthorization
+    /// The wizard's request path (`AVCaptureDevice.requestAccess`); calls back on main once the prompt is answered.
+    public let onRequestMicrophone: (@escaping () -> Void) -> Void
     public let isVoiceBarHidden: () -> Bool
     public let voiceBarHiddenUntil: () -> Date?
     public let onHideVoiceBar: () -> Void
@@ -465,6 +469,7 @@ public struct SettingsView: View {
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
 
     @State private var selectedTab: SettingsTab
+    @State private var permissionsRefreshTick = 0
     @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
     @State private var localVoiceBarHidden: Bool
     @State private var historyDayGroups: [SettingsHistoryDayGroup]
@@ -555,7 +560,8 @@ public struct SettingsView: View {
         isHotkeyRemapActive: @escaping () -> Bool = { false },
         lastMousePressUptime: @escaping () -> TimeInterval? = { nil },
         onCheckShortcut: @escaping (@escaping (String) -> Void) -> Void = { $0("Shortcut check unavailable.") },
-        isMicrophonePermissionGranted: @escaping () -> Bool = { true },
+        microphoneAuthorization: @escaping () -> SetupMicrophoneAuthorization = { .granted },
+        onRequestMicrophone: @escaping (@escaping () -> Void) -> Void = { $0() },
         isVoiceBarHidden: @escaping () -> Bool = { false },
         voiceBarHiddenUntil: @escaping () -> Date? = { nil },
         onHideVoiceBar: @escaping () -> Void = {},
@@ -648,7 +654,8 @@ public struct SettingsView: View {
         self.isHotkeyRemapActive = isHotkeyRemapActive
         self.lastMousePressUptime = lastMousePressUptime
         self.onCheckShortcut = onCheckShortcut
-        self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
+        self.microphoneAuthorization = microphoneAuthorization
+        self.onRequestMicrophone = onRequestMicrophone
         self.isVoiceBarHidden = isVoiceBarHidden
         self.voiceBarHiddenUntil = voiceBarHiddenUntil
         self.onHideVoiceBar = onHideVoiceBar
@@ -2474,24 +2481,40 @@ public struct SettingsView: View {
         return "Missing: \(names.joined(separator: ", "))"
     }
 
-    private func permissionRow(_ permission: HotkeyPermission, isGranted: Bool) -> some View {
-        LabeledContent(permission.label) {
+    private func permissionRow(_ row: SetupPermissionRow) -> some View {
+        LabeledContent(row.label) {
             HStack(spacing: 8) {
-                statusBadge(isGranted ? "Granted" : "Missing", isReady: isGranted)
-                if !isGranted {
-                    Button("Open") {
-                        openPermissionSettings(permission)
+                statusBadge(row.status, isReady: row.isGranted)
+                if let action = row.action {
+                    Button(action.title) {
+                        SettingsPermissionActions.perform(
+                            action,
+                            openURL: { NSWorkspace.shared.open($0) },
+                            requestMicrophone: onRequestMicrophone,
+                            refresh: { permissionsRefreshTick &+= 1 }
+                        )
                     }
+                    .accessibilityLabel("\(action.title) \(row.label)")
                 }
             }
         }
     }
 
+    var permissionRowModels: [SetupPermissionRow] {
+        // The wizard's rows (F3 step 1): a never-asked microphone offers "Allow…", a denied one "Open".
+        SetupPermissionsStep(snapshot: SetupPermissionSnapshot(
+            microphone: microphoneAuthorization(),
+            accessibilityGranted: !missingPermissions.contains(.accessibility),
+            inputMonitoringGranted: !missingPermissions.contains(.inputMonitoring),
+            hotkeyListenerActive: hotkeyEnabled
+        )).rows
+    }
+
     private var permissionRows: some View {
-        Group {
-            permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
-            permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
-            permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
+        // Reading the tick re-reads the providers once the microphone prompt is answered.
+        let _ = permissionsRefreshTick
+        return ForEach(permissionRowModels, id: \.permission) { row in
+            permissionRow(row)
         }
     }
 
@@ -2506,12 +2529,6 @@ public struct SettingsView: View {
                 .frame(width: 8, height: 8)
             Text(text)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private func openPermissionSettings(_ permission: HotkeyPermission) {
-        if let url = URL(string: permission.settingsURLString) {
-            NSWorkspace.shared.open(url)
         }
     }
 
@@ -2900,5 +2917,22 @@ private extension View {
             .disabled(!visible)
             .accessibilityHidden(!visible)
             .zIndex(visible ? 1 : 0)
+    }
+}
+
+/// One dispatch for a permission row's button, shared by Settings › General › Permissions and the wizard's step 1.
+enum SettingsPermissionActions {
+    static func perform(
+        _ action: SetupPermissionAction,
+        openURL: (URL) -> Void,
+        requestMicrophone: (@escaping () -> Void) -> Void,
+        refresh: @escaping () -> Void
+    ) {
+        switch action {
+        case let .openSettings(url):
+            if let url = URL(string: url) { openURL(url) }
+        case .requestMicrophone:
+            requestMicrophone(refresh)
+        }
     }
 }
