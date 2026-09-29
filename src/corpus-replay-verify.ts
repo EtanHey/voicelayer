@@ -129,6 +129,43 @@ function hasPunctuationFloor(text: string): boolean {
   return /[.!?…:;](?:["')\]]*)\s*$/u.test(text) || /^\s*\d+\.\s+\S+/mu.test(text);
 }
 
+/** The polish reason can contain a server error or even a fragment of model output. Keep diagnostics closed. */
+function safePolishReason(reason: string | undefined): string {
+  if (!reason) return "missing";
+
+  // These exact templates carry only a numeric timeout, which is useful when the health probe misses its limit.
+  if (/^polish health check timed out after \d+ms$/u.test(reason)) return reason;
+  const requestTimeout = /^polish request timed out after (\d+)ms$/u.exec(reason);
+  if (requestTimeout) return `timeout (${requestTimeout[1]}ms)`;
+
+  const healthHttp = /^polish health check failed: ([1-5]\d{2})(?:\b|$)/u.exec(reason);
+  if (healthHttp) return `health_http_${healthHttp[1]}`;
+  if (reason.startsWith("polish health check failed:")) return "health_error";
+  if (reason.startsWith("polish health check endpoint invalid:")) return "health_endpoint_invalid";
+
+  const endpointHttp = /^polish endpoint failed: ([1-5]\d{2})(?:\b|$)/u.exec(reason);
+  if (endpointHttp) return `endpoint_http_${endpointHttp[1]}`;
+  if (reason.startsWith("polish endpoint error:") || reason.startsWith("polish endpoint failed:")) {
+    return "endpoint_error";
+  }
+  if (reason.startsWith("invalid polish response:")) return "socket_parse_error";
+
+  switch (reason) {
+    case "polish socket closed": return "socket_closed";
+    case "polish response exceeded byte limit": return "socket_byte_limit";
+    case "polish response missing text": return "socket_missing_text";
+    case "polish endpoint response missing message content": return "endpoint_missing_content";
+    case "polish HTTP endpoint unavailable": return "unavailable";
+    case "failed":
+    case "unavailable":
+    case "timeout":
+    case "skipped":
+      return reason;
+    default:
+      return "other_error";
+  }
+}
+
 export function assertCorpusReplayResult(input: {
   specimenId: string;
   reference: string;
@@ -141,7 +178,7 @@ export function assertCorpusReplayResult(input: {
     throw new Error(
       `${input.specimenId}: polish path did not complete ` +
         `(status ${JSON.stringify(input.polishStatus || "missing")}, ` +
-        `reason ${JSON.stringify(input.polishReason || "missing")})`,
+        `reason ${JSON.stringify(safePolishReason(input.polishReason))})`,
     );
   }
   const actual = input.actual.trim();
@@ -157,7 +194,7 @@ export function assertCorpusReplayResult(input: {
       throw new Error(
         `${input.specimenId}: transcription did not report polished=true ` +
           `(status ${JSON.stringify(input.polishStatus)}, ` +
-          `reason ${JSON.stringify(input.polishReason || "missing")})`,
+          `reason ${JSON.stringify(safePolishReason(input.polishReason))})`,
       );
     }
   }
