@@ -589,7 +589,37 @@ final class SocketServerTests: XCTestCase {
 /// releases its temporary VoiceBar server so this test can bind the exact same
 /// isolated socket and exercise production input/UI event dispatch against the
 /// still-running daemon.
+@MainActor
+private final class ModeTransitionWitness {
+    private var modes: [VoiceMode] = []
+    var count: Int {
+        modes.count
+    }
+
+    func record(_ mode: VoiceMode) {
+        modes.append(mode)
+    }
+
+    func saw(_ mode: VoiceMode, after baseline: Int) -> Bool {
+        modes.dropFirst(baseline).contains(mode)
+    }
+}
+
 final class CorpusReplayRuntimeInteractionTests: XCTestCase {
+    @MainActor
+    func testRecordingTransitionRemainsObservableAfterTheModeMovesOn() {
+        let state = VoiceState()
+        let witness = ModeTransitionWitness()
+        state.onModeChange = { witness.record($0) }
+        let baseline = witness.count
+
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.handleEvent(["type": "state", "state": "idle"])
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertTrue(witness.saw(.recording, after: baseline))
+    }
+
     private final class ScratchCmuxApplication: NSRunningApplication, @unchecked Sendable {
         override var bundleIdentifier: String? {
             "com.cmuxterm.app"
@@ -713,9 +743,14 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         let router = VoiceBarCommandRouter(voiceState: state)
         var recordingTransitions = 0
         var idleTransitions = 0
+        let modeWitness = ModeTransitionWitness()
+        let interactionStartedAt = ProcessInfo.processInfo.systemUptime
+        var modeTimeline: [(mode: VoiceMode, elapsed: TimeInterval)] = []
         state.onModeChange = { mode in
             if mode == .recording { recordingTransitions += 1 }
             if mode == .idle { idleTransitions += 1 }
+            modeWitness.record(mode)
+            modeTimeline.append((mode, ProcessInfo.processInfo.systemUptime - interactionStartedAt))
         }
 
         dispatchRuntimeKey(virtualKey: 79, router: router)
@@ -957,6 +992,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
 
         let askReplayPhrase = "Replay this blocking voice ask prompt without entering recording early."
         let askStartEpoch = state.playbackEpoch
+        let askRecordingBaseline = modeWitness.count
         let askClient = try sendMCPToolCall(
             socketPath: mcpSocketPath,
             id: "runtime-active-ask",
@@ -1019,7 +1055,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
                 sawRestartedAsk = true
                 break
             }
-            if state.mode == .recording {
+            if modeWitness.saw(.recording, after: askRecordingBaseline) {
                 enteredRecordingBeforeReplay = true
                 break
             }
@@ -1038,13 +1074,18 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         XCTAssertEqual(state.teleprompterText, askReplayPhrase)
 
         let recordingDeadline = Date().addingTimeInterval(60)
-        while Date() < recordingDeadline, state.mode != .recording {
+        while Date() < recordingDeadline, !modeWitness.saw(.recording, after: askRecordingBaseline) {
             let concurrent = directChildProcessCount(named: "afplay", parentPID: daemonPID)
             maxConcurrentAfplay = max(maxConcurrentAfplay, concurrent)
             XCTAssertLessThanOrEqual(concurrent, 1)
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
-        XCTAssertEqual(state.mode, .recording)
+        if !modeWitness.saw(.recording, after: askRecordingBaseline) {
+            let transitions = modeTimeline.map { "\($0.mode)@\(String(format: "%.3f", $0.elapsed))s" }
+            XCTFail(
+                "voice_ask recording transition missing; final mode=\(state.mode); modes=\(transitions.joined(separator: ","))"
+            )
+        }
         XCTAssertEqual(maxConcurrentAfplay, 1)
         router.handleCancel()
         XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 15))
