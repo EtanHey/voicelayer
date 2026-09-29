@@ -591,16 +591,17 @@ final class SocketServerTests: XCTestCase {
 /// still-running daemon.
 @MainActor
 private final class ModeTransitionWitness {
-    private var latestMode: VoiceMode = .idle
-    private(set) var count = 0
+    private var modes: [VoiceMode] = []
+    var count: Int {
+        modes.count
+    }
 
     func record(_ mode: VoiceMode) {
-        latestMode = mode
-        count += 1
+        modes.append(mode)
     }
 
     func saw(_ mode: VoiceMode, after baseline: Int) -> Bool {
-        latestMode == mode && count > baseline
+        modes.dropFirst(baseline).contains(mode)
     }
 }
 
@@ -742,11 +743,13 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         let router = VoiceBarCommandRouter(voiceState: state)
         var recordingTransitions = 0
         var idleTransitions = 0
+        let modeWitness = ModeTransitionWitness()
         let interactionStartedAt = ProcessInfo.processInfo.systemUptime
         var modeTimeline: [(mode: VoiceMode, elapsed: TimeInterval)] = []
         state.onModeChange = { mode in
             if mode == .recording { recordingTransitions += 1 }
             if mode == .idle { idleTransitions += 1 }
+            modeWitness.record(mode)
             modeTimeline.append((mode, ProcessInfo.processInfo.systemUptime - interactionStartedAt))
         }
 
@@ -989,6 +992,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
 
         let askReplayPhrase = "Replay this blocking voice ask prompt without entering recording early."
         let askStartEpoch = state.playbackEpoch
+        let askRecordingBaseline = modeWitness.count
         let askClient = try sendMCPToolCall(
             socketPath: mcpSocketPath,
             id: "runtime-active-ask",
@@ -1051,7 +1055,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
                 sawRestartedAsk = true
                 break
             }
-            if state.mode == .recording {
+            if modeWitness.saw(.recording, after: askRecordingBaseline) {
                 enteredRecordingBeforeReplay = true
                 break
             }
@@ -1070,13 +1074,13 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         XCTAssertEqual(state.teleprompterText, askReplayPhrase)
 
         let recordingDeadline = Date().addingTimeInterval(60)
-        while Date() < recordingDeadline, state.mode != .recording {
+        while Date() < recordingDeadline, !modeWitness.saw(.recording, after: askRecordingBaseline) {
             let concurrent = directChildProcessCount(named: "afplay", parentPID: daemonPID)
             maxConcurrentAfplay = max(maxConcurrentAfplay, concurrent)
             XCTAssertLessThanOrEqual(concurrent, 1)
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
-        if state.mode != .recording {
+        if !modeWitness.saw(.recording, after: askRecordingBaseline) {
             let transitions = modeTimeline.map { "\($0.mode)@\(String(format: "%.3f", $0.elapsed))s" }
             XCTFail(
                 "voice_ask recording transition missing; final mode=\(state.mode); modes=\(transitions.joined(separator: ","))"
