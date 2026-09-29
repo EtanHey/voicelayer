@@ -122,7 +122,7 @@ describe("voicelayer vocab CLI", () => {
       { env, stdout: () => {}, stderr: (line) => stderr.push(line) },
     );
     expect(code).toBe(1);
-    expect(stderr.join("")).toContain("Term NewTerm and accepted variants spoken one remain saved");
+    expect(stderr.join("")).toContain("Term NewTerm and accepted variants spoken one were saved before this rejection; check current vocabulary state");
     expect(listVocabulary({ path: vocabPath }).entries).toEqual([
       { canonical: "NewTerm", variants: ["spoken one"] },
     ]);

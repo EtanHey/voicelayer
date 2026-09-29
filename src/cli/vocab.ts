@@ -45,7 +45,9 @@ export async function runVocabularyCli(
             requireChanged(addAlias({ from: variant, to: term }, options), "variant");
             accepted.push(variant.trim());
           } catch (error) {
-            throw new Error(`${error instanceof Error ? error.message : String(error)}; Term ${term.trim()} and accepted variants ${accepted.join(", ") || "(none)"} remain saved`);
+            throw new Error(
+              `${error instanceof Error ? error.message : String(error)}; Term ${term.trim()} and accepted variants ${accepted.join(", ") || "(none)"} were saved before this rejection; check current vocabulary state`,
+            );
           }
         }
         stdout(`Added term: ${term.trim()}\n`);
