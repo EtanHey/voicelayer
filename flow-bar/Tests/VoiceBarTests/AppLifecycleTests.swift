@@ -926,18 +926,17 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(restored.contentLayoutRect.height, 760)
     }
 
-    /// R4 UI pass #20: VoiceOver announced the status item as the SF Symbol ("Waveform In A Filled Circle").
-    /// Checked on an isolated instance through System Events: the menu bar item now reads "VoiceBar".
-    func testStatusItemAnnouncesVoiceBarNotTheSymbolName() throws {
+    /// UXP-4: on macOS 27 a window-style MenuBarExtra ignores an accessibility press (VoiceOver's VO-Space), so the
+    /// status item is an NSStatusItem (`MenuBarStatusItemController`). Its "VoiceBar" name (R4 UI pass #20) is pinned
+    /// in MenuBarStatusItemControllerTests.
+    func testTheStatusItemIsNotAMenuBarExtra() throws {
         let source = try voiceBarAppSource()
-        let label = try XCTUnwrap(source.range(of: "} label: {"))
-        let end = try XCTUnwrap(source.range(
-            of: ".menuBarExtraStyle(.window)",
-            range: label.upperBound ..< source.endIndex
-        ))
-        let body = source[label.upperBound ..< end.lowerBound]
-        XCTAssertTrue(body.contains(".accessibilityLabel(\"VoiceBar\")"))
-        XCTAssertFalse(body.contains(" Label("), "a Label's title never reached the status item's AX title")
+        XCTAssertFalse(source.contains("MenuBarExtra {"))
+        XCTAssertFalse(source.contains(".menuBarExtraStyle("))
+        XCTAssertTrue(
+            source.contains("MenuBarStatusItemController(button: button, presenter: presenter)"),
+            "the status item is created at launch"
+        )
     }
 
     /// R4 UI pass #12: "Open Settings…" left the menu-bar popover open over Settings.
