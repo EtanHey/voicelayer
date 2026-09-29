@@ -1,13 +1,21 @@
 import AppKit
 import SwiftUI
 
+/// Why the popover closed. Only an outside mouse-down can be the same click that then lands on the status item.
+enum MenuBarPopoverCloseCause: Equatable {
+    /// The transient close on a mouse-down outside the popover (the status item included).
+    case outsideClick
+    /// Escape, a close from the popover's own buttons, or a close the controller asked for.
+    case other
+}
+
 /// The menu-bar popover as the status item sees it: `NSPopover` in the app, a fake in tests.
 @MainActor
 protocol MenuBarPopoverPresenting: AnyObject {
     var isShown: Bool { get }
     var window: NSWindow? { get }
     /// Called whenever the popover closes, including the transient close on an outside click or Escape.
-    var onClose: (() -> Void)? { get set }
+    var onClose: ((MenuBarPopoverCloseCause) -> Void)? { get set }
     func show(relativeTo button: NSButton)
     func close()
 }
@@ -47,9 +55,11 @@ final class MenuBarStatusItemController: NSObject {
         // R4 UI pass #20: VoiceOver reads the name, never the SF Symbol's.
         button.setAccessibilityTitle("VoiceBar")
         setAlert(false)
-        presenter.onClose = { [weak self] in
+        presenter.onClose = { [weak self] cause in
             guard let self else { return }
-            lastClosedAt = self.clock()
+            // #223 r1: only the outside mouse-down can be the click that then lands on the item. Escape, the
+            // popover's own buttons and a close the item asked for never block the next click.
+            lastClosedAt = cause == .outsideClick ? self.clock() : nil
             self.button.highlight(false)
         }
     }
@@ -108,7 +118,9 @@ final class MenuBarPopoverPresenter: NSObject, MenuBarPopoverPresenting, NSPopov
 
     private let popover = NSPopover()
     private let makeContent: () -> AnyView
-    var onClose: (() -> Void)?
+    var onClose: ((MenuBarPopoverCloseCause) -> Void)?
+    private var closeRequested = false
+    private var closeCause = MenuBarPopoverCloseCause.other
 
     init(makeContent: @escaping () -> AnyView) {
         self.makeContent = makeContent
@@ -137,11 +149,24 @@ final class MenuBarPopoverPresenter: NSObject, MenuBarPopoverPresenting, NSPopov
     }
 
     func close() {
+        closeRequested = true
         popover.performClose(nil)
+    }
+
+    /// The transient close runs inside the event that caused it: a mouse-down outside the popover, or Escape.
+    func popoverWillClose(_: Notification) {
+        closeCause = Self.closeCause(requested: closeRequested, during: NSApp.currentEvent?.type)
+        closeRequested = false
+    }
+
+    static func closeCause(requested: Bool, during event: NSEvent.EventType?) -> MenuBarPopoverCloseCause {
+        guard !requested, let event else { return .other }
+        return [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event) ? .outsideClick : .other
     }
 
     func popoverDidClose(_: Notification) {
         popover.contentViewController = nil
-        onClose?()
+        onClose?(closeCause)
+        closeCause = .other
     }
 }

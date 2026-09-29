@@ -12,7 +12,7 @@ final class MenuBarStatusItemControllerTests: XCTestCase {
     private final class FakePopover: MenuBarPopoverPresenting {
         var isShown = false
         var window: NSWindow?
-        var onClose: (() -> Void)?
+        var onClose: ((MenuBarPopoverCloseCause) -> Void)?
         private(set) var shows = 0
         private(set) var closes = 0
 
@@ -23,14 +23,14 @@ final class MenuBarStatusItemControllerTests: XCTestCase {
 
         func close() {
             closes += 1
-            dismiss()
+            dismiss(.other)
         }
 
-        /// What the transient popover does by itself on an outside click or Escape.
-        func dismiss() {
+        /// What the transient popover does by itself: an outside click, or Escape (`.other`).
+        func dismiss(_ cause: MenuBarPopoverCloseCause = .outsideClick) {
             guard isShown else { return }
             isShown = false
-            onClose?()
+            onClose?(cause)
         }
     }
 
@@ -135,6 +135,52 @@ final class MenuBarStatusItemControllerTests: XCTestCase {
         now += 1
         item.togglePopover(nil)
         XCTAssertTrue(item.isPopoverShown, "a later click opens it")
+    }
+
+    /// #223 r1 (RXF3): Escape stamped the outside-click guard too, so a prompt click on the item after Escape was
+    /// dropped. Only the outside mouse-down that closed it can be the same click.
+    func testAClickRightAfterEscapeReopensThePopover() {
+        let popover = FakePopover()
+        let button = NSButton()
+        let item = controller(popover, button: button)
+        _ = button.accessibilityPerformPress()
+        popover.dismiss(.other)
+        now += 0.05
+        mouse = true
+        item.togglePopover(nil)
+        XCTAssertTrue(item.isPopoverShown)
+        XCTAssertEqual(popover.shows, 2)
+    }
+
+    /// Closing it by clicking the item, or through "Open Settings…", is not an outside click either.
+    func testAClickRightAfterAnIntendedCloseReopensThePopover() {
+        let popover = FakePopover()
+        popover.window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
+        let button = NSButton()
+        let item = controller(popover, button: button)
+        mouse = true
+        item.togglePopover(nil)
+        item.togglePopover(nil)
+        XCTAssertFalse(item.isPopoverShown)
+        now += 0.05
+        item.togglePopover(nil)
+        XCTAssertTrue(item.isPopoverShown, "after a close by the item itself")
+        item.closeIfPresenting(popover.window)
+        now += 0.05
+        item.togglePopover(nil)
+        XCTAssertTrue(item.isPopoverShown, "after Open Settings… closed it")
+    }
+
+    /// The real popover classifies its close from the event it closes inside: only an unrequested mouse-down is an
+    /// outside click. Escape (a key event), a requested close and no event at all are not.
+    func testThePopoverReportsOnlyAnUnrequestedMouseDownAsAnOutsideClick() {
+        for event: NSEvent.EventType in [.leftMouseDown, .rightMouseDown, .otherMouseDown] {
+            XCTAssertEqual(MenuBarPopoverPresenter.closeCause(requested: false, during: event), .outsideClick)
+            XCTAssertEqual(MenuBarPopoverPresenter.closeCause(requested: true, during: event), .other)
+        }
+        for event: NSEvent.EventType? in [.keyDown, .leftMouseUp, nil] {
+            XCTAssertEqual(MenuBarPopoverPresenter.closeCause(requested: false, during: event), .other)
+        }
     }
 
     func testAnAccessibilityPressRightAfterAnOutsideCloseStillOpens() {
