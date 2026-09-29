@@ -140,7 +140,8 @@ export function assertCorpusReplayResult(input: {
   if (!HANDLED_POLISH_STATUSES.has(input.polishStatus)) {
     throw new Error(
       `${input.specimenId}: polish path did not complete ` +
-        `(status ${JSON.stringify(input.polishStatus || "missing")})`,
+        `(status ${JSON.stringify(input.polishStatus || "missing")}, ` +
+        `reason ${JSON.stringify(input.polishReason || "missing")})`,
     );
   }
   const actual = input.actual.trim();
