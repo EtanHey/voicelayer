@@ -414,7 +414,7 @@ public struct DictionaryTermEdit: Equatable, Identifiable {
     /// The one rule for "the same term", shared by the Add sheet's match and the save path
     /// (`SettingsDictionaryMutations`): case-insensitive, with leading, trailing and repeated whitespace ignored.
     public static func sameTerm(_ lhs: String, _ rhs: String) -> Bool {
-        collapsedWhitespace(lhs).localizedCaseInsensitiveCompare(collapsedWhitespace(rhs)) == .orderedSame
+        collapsedWhitespace(lhs).lowercased() == collapsedWhitespace(rhs).lowercased()
     }
 
     private static func collapsedWhitespace(_ value: String) -> String {

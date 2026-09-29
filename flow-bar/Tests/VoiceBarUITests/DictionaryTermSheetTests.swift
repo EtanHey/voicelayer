@@ -125,6 +125,14 @@ final class DictionaryTermSheetTests: XCTestCase {
         XCTAssertTrue(calls.removedAliases.isEmpty)
     }
 
+    func testSurfaceIdentityUsesDaemonCaseRulesRatherThanLocalizedEquivalences() {
+        XCTAssertFalse(DictionaryTermEdit.sameTerm("Strasse", "Straße"))
+        XCTAssertFalse(DictionaryTermEdit.sameTerm("A", "Ａ"))
+        XCTAssertFalse(DictionaryTermEdit.sameTerm("I", "ı"))
+        XCTAssertNil(DictionaryTermEdit(correct: "Strasse", wrong: "Straße").variantWarning(in: []))
+        XCTAssertTrue(DictionaryTermEdit.sameTerm(" Cantaloupe   AI ", "cantaloupe ai"))
+    }
+
     func testAddingAMisheardSpellingToAnExistingTermLandsOnItCaseInsensitively() {
         var entries = [STTDictionaryEntry(canonical: "SwiftUI", variants: ["swift you eye"])]
         let (result, _) = apply(DictionaryTermEdit(correct: "swiftui", wrong: "swift you I"), to: &entries)
