@@ -144,6 +144,18 @@ describe("stt-vocabulary-store", () => {
     expect(updated.entries).toEqual([{ canonical: "ReactJS", variants: ["React.js"] }]);
   });
 
+  it("reuses a stored canonical when later commands vary its internal whitespace", () => {
+    addAlias({ from: "FooBar", to: "Foo Bar" }, { path: vocabPath });
+    const term = addPromptTerm("Foo  Bar", { path: vocabPath });
+    expect(term.entries).toEqual([{ canonical: "Foo Bar", variants: ["FooBar"] }]);
+    const alias = addAlias({ from: "foo bahr", to: "Foo  Bar" }, { path: vocabPath });
+    expect(alias.entries).toEqual([{ canonical: "Foo Bar", variants: ["FooBar", "foo bahr"] }]);
+    expect(vocabularyAliasesFromEntries(alias.entries)).toEqual([
+      { from: "FooBar", to: "Foo Bar" },
+      { from: "foo bahr", to: "Foo Bar" },
+    ]);
+  });
+
   it("keeps punctuation and split forms distinct from their canonical", () => {
     const updated = addAlias(
       { from: "React.js", to: "ReactJS" },

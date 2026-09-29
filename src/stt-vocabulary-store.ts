@@ -176,7 +176,7 @@ export function addAlias(
       }]);
     }
     const warnings = nearDuplicateWarnings(snapshot.entries, normalized.to);
-    upsertEntryVariant(snapshot.entries, normalized.to, normalized.from);
+    upsertEntryVariant(snapshot.entries, ownEntry?.canonical ?? normalized.to, normalized.from);
     return withWarnings(
       writeSnapshot(path, stampSnapshot(snapshot, options), true),
       warnings,
@@ -200,7 +200,8 @@ export function addPromptTerm(
       return withWarnings({ ...snapshot, changed: false }, [collision]);
     }
     const warnings = nearDuplicateWarnings(snapshot.entries, normalized);
-    upsertEntry(snapshot.entries, normalized);
+    const storedCanonical = snapshot.entries.find((entry) => sameSurface(entry.canonical, normalized))?.canonical;
+    upsertEntry(snapshot.entries, storedCanonical ?? normalized);
     return withWarnings(
       writeSnapshot(path, stampSnapshot(snapshot, options), true),
       warnings,
@@ -440,7 +441,7 @@ function nearDuplicateWarnings(
 ): STTVocabularyWarning[] {
   const existing = entries.find(
     (entry) =>
-      entry.canonical.toLowerCase() !== canonical.toLowerCase() &&
+      !sameSurface(entry.canonical, canonical) &&
       sameOrNearDuplicate(entry.canonical, canonical),
   );
   return existing
@@ -463,7 +464,7 @@ function canonicalAliasCollisionWarning(
   const existing = entries.find(
     (entry) =>
       aliasKey(entry.canonical) === variantKey &&
-      entry.canonical.toLowerCase() !== canonical.toLowerCase(),
+      !sameSurface(entry.canonical, canonical),
   );
   return existing
     ? {
