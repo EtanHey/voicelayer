@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -10,6 +11,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   allocateFreeLocalhostPort,
+  assertPrivateCaptionExpectation,
   assertCorpusReplayResult,
   assertIsolatedVerifyPaths,
   buildCorpusDaemonEnvironment,
@@ -23,6 +25,20 @@ import {
   waitForInteractionRunner,
   runDaemonInteractionLeg,
 } from "../corpus-replay-verify";
+import { normalizeOutroKey } from "../stt-outro-gate";
+
+test("private caption expectation detects a deliberate over-cut without exposing text", () => {
+  const kept = "Keep every spoken word at the end.";
+  const expected = {
+    forbidden: ["Thanks for watching"],
+    preservedSha256: createHash("sha256").update(normalizeOutroKey(kept)).digest("hex"),
+  };
+  expect(() => assertPrivateCaptionExpectation(kept, expected, 1)).not.toThrow();
+  expect(() => assertPrivateCaptionExpectation(`${kept} Thanks for watching`, expected, 1))
+    .toThrow("retained a forbidden caption");
+  expect(() => assertPrivateCaptionExpectation("Keep every spoken word", expected, 1))
+    .toThrow("lost expected preserved words");
+});
 
 const tempRoots: string[] = [];
 

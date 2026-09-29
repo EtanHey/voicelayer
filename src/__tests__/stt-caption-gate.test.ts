@@ -96,6 +96,26 @@ describe("caption hallucination gate", () => {
     expect(kept.text).toBe(text);
   });
 
+  test("independent fresh-state speech vetoes a continuous-state miss", async () => {
+    const fresh = probabilities();
+    fresh.fill(0.9, 50, 57);
+    const result = await stripHallucinatedCaption(text, silentWav(2.5), {
+      segments, segmentsText: text,
+      speechProbabilities: probabilities(), freshSpeechProbabilities: fresh,
+    });
+    expect(result.text).toBe(text);
+  });
+
+  test("a real clause after a complete caption key is never swept into its run", async () => {
+    const spoken = "Ship it. Thanks for watching, see you tomorrow";
+    const result = await stripHallucinatedCaption(spoken, silentWav(2.5), {
+      segments: [segments[0]!, { text: " Thanks for watching, see you tomorrow", startS: 1.5, endS: 2.2 }],
+      segmentsText: spoken, speechProbabilities: probabilities(),
+    });
+    expect(result.text).toBe(spoken);
+    expect(result.reason).toBe("no-candidate");
+  });
+
   test.each([
     ["How to Pronounce this", "how-to-pronounce"],
     ["Subtitles by the Amara.org community", "amara-subtitles"],
