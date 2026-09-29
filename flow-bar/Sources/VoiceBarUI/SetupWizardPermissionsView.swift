@@ -57,12 +57,12 @@ struct SetupWizardPermissionsBody: View {
     }
 
     private func perform(_ action: SetupPermissionAction) {
-        switch action {
-        case let .openSettings(url):
-            if let url = URL(string: url) { dependencies.openURL(url) }
-        case .requestMicrophone:
-            dependencies.onRequestMicrophone { refresh() }
-        }
+        SettingsPermissionActions.perform(
+            action,
+            openURL: dependencies.openURL,
+            requestMicrophone: dependencies.onRequestMicrophone,
+            refresh: refresh
+        )
     }
 
     private func refresh() {
