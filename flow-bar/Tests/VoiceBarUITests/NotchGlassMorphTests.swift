@@ -176,6 +176,7 @@ final class NotchGlassMorphTests: XCTestCase {
         let deadline = Date().addingTimeInterval(0.8)
         while Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(1.0 / 60.0))
+            Thread.sleep(forTimeInterval: 0.9) // RED: a slow rendered-frame read skips the morph
             if let bounds = glassMaskBounds(in: host), bounds != samples.last ?? before { samples.append(bounds) }
         }
         let after = try XCTUnwrap(samples.last, "\(label): the glass never changed", file: file, line: line)
