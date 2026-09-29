@@ -39,8 +39,14 @@ export async function runVocabularyCli(
         }
         const term = requireFlag(flags, "--term");
         requireChanged(addPromptTerm(term, options), "term");
+        const accepted: string[] = [];
         for (const variant of flags["--variant"] ?? []) {
-          requireChanged(addAlias({ from: variant, to: term }, options), "variant");
+          try {
+            requireChanged(addAlias({ from: variant, to: term }, options), "variant");
+            accepted.push(variant.trim());
+          } catch (error) {
+            throw new Error(`${error instanceof Error ? error.message : String(error)}; Term ${term.trim()} and accepted variants ${accepted.join(", ") || "(none)"} remain saved`);
+          }
         }
         stdout(`Added term: ${term.trim()}\n`);
         return 0;
