@@ -19,6 +19,7 @@ import {
 } from "./socket-protocol";
 import { SOCKET_PATH, getMcpSocketOverridePath } from "./paths";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
+import { SocketOutboundQueue } from "./socket-outbound-queue";
 
 // --- Connection state ---
 
@@ -26,6 +27,7 @@ let connection: ReturnType<typeof Bun.connect> extends Promise<infer T>
   ? T
   : never;
 let connected = false;
+let outbound: SocketOutboundQueue | null = null;
 let intentionallyClosed = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = 1000; // Start at 1s, backoff to 15s max
@@ -79,6 +81,8 @@ export function disconnectFromBar(): void {
     reconnectTimer = null;
   }
   if (connection) {
+    outbound?.close();
+    outbound = null;
     try {
       connection.end();
     } catch {}
@@ -93,13 +97,9 @@ export function disconnectFromBar(): void {
  * No-op if not connected.
  */
 export function broadcast(event: SocketEvent): void {
-  if (!connected || !connection) return;
+  if (!connected || !outbound) return;
   const payload = serializeEvent(event);
-  try {
-    connection.write(payload);
-  } catch {
-    // Connection may have died between check and write
-  }
+  outbound.enqueue(payload);
 }
 
 /**
@@ -128,18 +128,21 @@ function startConnection(): void {
     framer: NDJSONByteFramer;
     pendingResponses: Set<Promise<void>>;
     overflowed: boolean;
+    writer: SocketOutboundQueue;
   }>({
     unix: targetPath,
     socket: {
       open(socket) {
         socket.data = {
           framer: new NDJSONByteFramer(), pendingResponses: new Set(), overflowed: false,
+          writer: new SocketOutboundQueue(socket, "socket-client"),
         };
         connection = socket as any;
+        outbound = socket.data.writer;
         connected = true;
         reconnectDelay = 1000; // Reset backoff on successful connect
         startKeepalive();
-        writeClientHello(socket as any);
+        writeClientHello(socket.data.writer);
         connectionOptions.onConnected?.();
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },
@@ -163,7 +166,7 @@ function startConnection(): void {
               if (reloadsModel && responsePromise instanceof Promise &&
                   connection && connected) {
                 try {
-                  connection.write(JSON.stringify({
+                  socket.data.writer.enqueue(JSON.stringify({
                     type: "ack", command: command.cmd, id: command.id,
                     outcome: "loading",
                   }) + "\n");
@@ -180,7 +183,7 @@ function startConnection(): void {
                     return;
                   }
                   try {
-                    connection.write(JSON.stringify(response) + "\n");
+                    socket.data.writer.enqueue(JSON.stringify(response) + "\n");
                     if (command.cmd === "set_whisper_residency" && response.type === "ack") {
                       console.error(
                         `[socket-client] Residency response ${command.id} written outcome=${response.outcome}`,
@@ -209,23 +212,22 @@ function startConnection(): void {
         if (overflow) {
           socket.data.overflowed = true;
           console.error("[socket-client] NDJSON command exceeded byte limit; closing connection");
-          if (socket.data.pendingResponses.size === 0) {
+          // Allow dispatched replies to enter and leave the queue before closing.
+          let timer: ReturnType<typeof setTimeout>;
+          Promise.race([
+            Promise.allSettled([...socket.data.pendingResponses])
+              .then(() => socket.data.writer.whenEmpty()),
+            new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); }),
+          ]).finally(() => {
+            clearTimeout(timer);
             socket.end(); // close() runs the existing reconnect path
-          } else {
-            // Give already-dispatched commands a bounded chance to write their replies.
-            let timer: ReturnType<typeof setTimeout>;
-            Promise.race([
-              Promise.allSettled([...socket.data.pendingResponses]),
-              new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); }),
-            ]).finally(() => {
-              clearTimeout(timer);
-              socket.end();
-            });
-          }
+          });
         }
       },
 
-      close() {
+      close(socket) {
+        socket.data.writer.close();
+        if (outbound === socket.data.writer) outbound = null;
         connected = false;
         connection = null as any;
         stopKeepalive();
@@ -233,14 +235,16 @@ function startConnection(): void {
         scheduleReconnect();
       },
 
-      error(_socket, error) {
+      error(socket, error) {
+        socket.data?.writer?.close();
+        if (outbound === socket.data?.writer) outbound = null;
         console.error(`[socket-client] Error: ${error.message}`);
         connected = false;
         connection = null as any;
         scheduleReconnect();
       },
 
-      drain() {},
+      drain(socket) { socket.data.writer.drain(); },
 
       connectError(_socket, error) {
         console.error(`[socket-client] Connect failed: ${error.message}`);
@@ -255,7 +259,7 @@ function startConnection(): void {
   });
 }
 
-function writeClientHello(target: { write: (payload: string) => void }): void {
+function writeClientHello(target: SocketOutboundQueue): void {
   const hello = {
     type: "client_hello",
     pid: process.pid,
@@ -265,7 +269,7 @@ function writeClientHello(target: { write: (payload: string) => void }): void {
     voicebar_socket_path: targetPath,
   };
   try {
-    target.write(JSON.stringify(hello) + "\n");
+    target.enqueue(JSON.stringify(hello) + "\n");
   } catch {}
 }
 
@@ -295,13 +299,13 @@ function scheduleReconnect(): void {
 function startKeepalive(): void {
   stopKeepalive();
   keepaliveTimer = setInterval(() => {
-    if (!connected || !connection) {
+    if (!connected || !outbound) {
       stopKeepalive();
       return;
     }
     try {
       // Send lightweight ping event — VoiceBar ignores unknown event types
-      connection.write('{"type":"ping"}\n');
+      outbound.enqueue('{"type":"ping"}\n');
     } catch {
       // Write failed — connection is dead, trigger reconnect
       console.error("[socket-client] Keepalive write failed — connection dead");

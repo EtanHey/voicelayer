@@ -15,6 +15,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
+import { SocketOutboundQueue } from "./socket-outbound-queue";
 
 const LIVE_VOICEBAR_SOCKET = "/tmp/voicelayer.sock";
 const LIVE_MCP_SOCKET = "/tmp/voicelayer-mcp.sock";
@@ -445,18 +446,18 @@ export async function terminateVerifyDaemon(
 
 function createVerifyBarServer(socketPath: string): VerifyBarServer {
   const events: Record<string, unknown>[] = [];
-  const clients = new Set<{ write: (payload: string) => number }>();
+  const clients = new Set<SocketOutboundQueue>();
   let stopped = false;
   try {
     unlinkSync(socketPath);
   } catch {}
 
-  const server = Bun.listen<{ framer: NDJSONByteFramer }>({
+  const server = Bun.listen<{ framer: NDJSONByteFramer; writer: SocketOutboundQueue }>({
     unix: socketPath,
     socket: {
       open(socket) {
-        socket.data = { framer: new NDJSONByteFramer() };
-        clients.add(socket);
+        socket.data = { framer: new NDJSONByteFramer(), writer: new SocketOutboundQueue(socket, "verify") };
+        clients.add(socket.data.writer);
       },
       data(socket, raw) {
         const { lines, overflow } = socket.data.framer.append(raw);
@@ -472,12 +473,14 @@ function createVerifyBarServer(socketPath: string): VerifyBarServer {
         }
       },
       close(socket) {
-        clients.delete(socket);
+        socket.data.writer.close();
+        clients.delete(socket.data.writer);
       },
       error(socket) {
-        clients.delete(socket);
+        socket.data.writer.close();
+        clients.delete(socket.data.writer);
       },
-      drain() {},
+      drain(socket) { socket.data.writer.drain(); },
     },
   });
 
@@ -490,7 +493,7 @@ function createVerifyBarServer(socketPath: string): VerifyBarServer {
         );
       }
       const payload = `${JSON.stringify(message)}\n`;
-      for (const client of clients) client.write(payload);
+      for (const client of clients) client.enqueue(payload);
     },
     stop() {
       if (stopped) return;

@@ -1,5 +1,6 @@
 import { existsSync, unlinkSync } from "fs";
 import { NDJSONByteFramer } from "../ndjson-byte-framer";
+import { SocketOutboundQueue } from "../socket-outbound-queue";
 import {
   parseVoiceSdkCommand,
   serializeVoiceSdkEvent,
@@ -11,10 +12,11 @@ import type { VoiceSdkSessionManager } from "./session";
 interface VoiceSdkClientState {
   framer: NDJSONByteFramer;
   queue: Promise<void>;
+  writer: SocketOutboundQueue;
 }
 
 export interface VoiceSdkSocketWriter {
-  write(payload: string): number;
+  write(payload: string | Uint8Array): number;
   end(): void;
 }
 
@@ -31,7 +33,9 @@ export interface VoiceSdkSocketServer {
 }
 
 interface Client {
-  writer: VoiceSdkSocketWriter;
+  socket: VoiceSdkSocketWriter;
+  writer: SocketOutboundQueue;
+  target: VoiceSdkSocketWriter;
   bufferedEvents: number;
 }
 
@@ -53,9 +57,11 @@ export function createVoiceSdkSocketServer(
     unix: options.socketPath,
     socket: {
       open(socket) {
-        socket.data = { framer: new NDJSONByteFramer(), queue: Promise.resolve() };
+        const target = options.writerFactory?.(socket) ?? socket;
+        const writer = new SocketOutboundQueue(target, "voicesdk");
+        socket.data = { framer: new NDJSONByteFramer(), queue: Promise.resolve(), writer };
         clients.add({
-          writer: options.writerFactory?.(socket) ?? socket,
+          socket, writer, target,
           bufferedEvents: 0,
         });
       },
@@ -84,7 +90,10 @@ export function createVoiceSdkSocketServer(
       },
       drain(socket) {
         const client = clientFor(socket);
-        if (client) client.bufferedEvents = 0;
+        if (client) {
+          client.writer.drain();
+          if (client.writer.queuedBytes === 0) client.bufferedEvents = 0;
+        }
       },
     },
   });
@@ -93,17 +102,19 @@ export function createVoiceSdkSocketServer(
     const payload = serializeVoiceSdkEvent(event);
     for (const client of [...clients]) {
       try {
-        const written = client.writer.write(payload);
-        if (written === 0) {
+        client.writer.enqueue(payload);
+        if (client.writer.queuedBytes > 0) {
           client.bufferedEvents += 1;
           if (client.bufferedEvents > maxBufferedEvents) {
-            client.writer.end();
+            client.writer.close();
+            client.target.end();
             clients.delete(client);
           }
         } else {
           client.bufferedEvents = 0;
         }
       } catch {
+        client.writer.close();
         clients.delete(client);
       }
     }
@@ -111,12 +122,15 @@ export function createVoiceSdkSocketServer(
 
   function removeClient(socket: VoiceSdkSocketWriter): void {
     const client = clientFor(socket);
-    if (client) clients.delete(client);
+    if (client) {
+      client.writer.close();
+      clients.delete(client);
+    }
   }
 
   function clientFor(socket: VoiceSdkSocketWriter): Client | undefined {
     for (const client of clients) {
-      if (client.writer === socket) return client;
+      if (client.socket === socket) return client;
     }
     return undefined;
   }
@@ -179,11 +193,11 @@ async function handleCommand(
 }
 
 function writeError(
-  socket: { write: (payload: string) => number },
+  socket: { data: VoiceSdkClientState },
   error: unknown,
 ): void {
   try {
-    socket.write(
+    socket.data.writer.enqueue(
       JSON.stringify({
         type: "error",
         message: error instanceof Error ? error.message : String(error),
