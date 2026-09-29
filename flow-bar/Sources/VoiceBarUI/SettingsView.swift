@@ -440,7 +440,7 @@ public struct SettingsView: View {
     public let onRunRelaySetup: (@escaping (SettingsRelaySetupResult) -> Void) -> Void
     public let lastDictationEntry: () -> RecentTranscriptionEntry?
     public let lastDictationInsertionStatus: () -> DictationInsertionStatus
-    public let onCopyLastDictation: (String) -> Void
+    public let onCopyLastDictation: (String) -> Bool
     public let historyPage: @Sendable (Int) async -> SettingsHistoryPage
     public let askHistoryPage: @Sendable (Int) async -> SettingsAskHistoryPage
     /// H1-c: a page of matches for a non-blank query, paged and cached by the index like the unfiltered pages.
@@ -565,7 +565,7 @@ public struct SettingsView: View {
         },
         lastDictationEntry: @escaping () -> RecentTranscriptionEntry? = { nil },
         lastDictationInsertionStatus: @escaping () -> DictationInsertionStatus = { .unverified },
-        onCopyLastDictation: @escaping (String) -> Void = { _ in },
+        onCopyLastDictation: @escaping (String) -> Bool = { _ in false },
         historyPage: @escaping @Sendable (Int) async -> SettingsHistoryPage = { limit in
             await SettingsArchiveIndex.shared.dictationPage(limit: limit)
         },

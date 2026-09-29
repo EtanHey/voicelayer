@@ -40,31 +40,28 @@ final class NotchHistoryPopoverTests: XCTestCase {
         XCTAssertEqual(NotchHistoryPresentation.rowHeader(for: entry, now: now), "2 hr ago · 2:15")
     }
 
-    func testCopyFeedbackAndPlainCopy() {
-        XCTAssertEqual(NotchHistoryPresentation.copyTitle(isCopied: false), "Copy")
-        XCTAssertEqual(NotchHistoryPresentation.copyTitle(isCopied: true), "Copied ✓")
+    func testPanelCopy() {
         XCTAssertEqual(NotchHistoryPresentation.openHistoryTitle, "Open History…")
         XCTAssertEqual(NotchHistoryPresentation.pasteHint, "Paste types into the app you were using.")
     }
 
-    /// CodeRabbit (#161, 4100349296): copying the same row twice within 1.5 s let the first timer clear
-    /// "Copied ✓" early. Each copy gets a generation; only the latest one's expiry clears it.
+    /// CodeRabbit (#161, 4100349296): copying the same row twice within 1.5 s let the first timer clear the tick
+    /// early. UXP-3 moved this onto the shared `CopyFeedback`: the tick lasts 1.5 s from the LATEST copy.
     func testASecondCopyKeepsItsOwnFeedbackWindow() {
-        var feedback = NotchHistoryCopyFeedback()
-        let first = feedback.copied(row: "a")
-        let second = feedback.copied(row: "a")
-        XCTAssertTrue(feedback.isCopied(row: "a"))
+        let t0 = Date(timeIntervalSinceReferenceDate: 0)
+        var feedback = CopyFeedback()
+        feedback.copied(key: "a", succeeded: true, byPointer: true, at: t0)
+        feedback.copied(key: "a", succeeded: true, byPointer: true, at: t0.addingTimeInterval(1))
+        XCTAssertTrue(feedback.isCopied(key: "a", at: t0.addingTimeInterval(1)))
 
-        feedback.expire(first)
-        XCTAssertTrue(feedback.isCopied(row: "a"), "the older timer must not clear the newer copy")
-        feedback.expire(second)
-        XCTAssertFalse(feedback.isCopied(row: "a"))
+        feedback.expire(at: t0.addingTimeInterval(1.5)) // the first copy's timer
+        XCTAssertTrue(feedback.isCopied(key: "a", at: t0.addingTimeInterval(1.5)), "the older timer must not clear it")
+        feedback.expire(at: t0.addingTimeInterval(2.5))
+        XCTAssertFalse(feedback.isCopied(key: "a", at: t0.addingTimeInterval(2.5)))
 
-        let other = feedback.copied(row: "b")
-        XCTAssertFalse(feedback.isCopied(row: "a"))
-        XCTAssertTrue(feedback.isCopied(row: "b"))
-        feedback.expire(other)
-        XCTAssertFalse(feedback.isCopied(row: "b"))
+        feedback.copied(key: "b", succeeded: true, byPointer: true, at: t0.addingTimeInterval(3))
+        XCTAssertFalse(feedback.isCopied(key: "a", at: t0.addingTimeInterval(3)))
+        XCTAssertTrue(feedback.isCopied(key: "b", at: t0.addingTimeInterval(3)))
     }
 
     /// CodeRabbit (#161, 4100349275): "Copied ✓" showed even when nothing reached the pasteboard.
@@ -84,7 +81,7 @@ final class NotchHistoryPopoverTests: XCTestCase {
     }
 
     func testCopiedFeedbackLastsLongEnoughToRead() {
-        XCTAssertGreaterThanOrEqual(NotchHistoryPresentation.copiedFeedbackDuration, .milliseconds(1200))
-        XCTAssertLessThanOrEqual(NotchHistoryPresentation.copiedFeedbackDuration, .seconds(3))
+        XCTAssertGreaterThanOrEqual(CopyFeedback.duration, 1.2)
+        XCTAssertLessThanOrEqual(CopyFeedback.duration, 3)
     }
 }

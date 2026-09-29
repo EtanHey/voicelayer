@@ -2772,7 +2772,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.voiceState.latestDictationInsertionStatus ?? .unverified
             },
             onCopyLastDictation: { [weak self] text in
-                self?.voiceState.copyTranscript(text)
+                self?.voiceState.copyTranscript(text) ?? false
             },
             historyPage: { limit in await SettingsArchiveIndex.shared.dictationPage(limit: limit) },
             onCopyHistoryTranscript: { [weak self] text in

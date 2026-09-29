@@ -1210,7 +1210,8 @@ public final class VoiceState {
         settingsHistoryInsertionHandler = captureDictationInsertionHandler()
     }
 
-    public func copyLastTranscript() {
+    @discardableResult
+    public func copyLastTranscript() -> Bool {
         copyTranscript(latestReusableTranscript)
     }
 
