@@ -176,6 +176,87 @@ describe("corpus replay verification", () => {
     );
   });
 
+  test("prints the polish failure reason beside a failed corpus specimen", () => {
+    expect(() =>
+      assertCorpusReplayResult({
+        specimenId: "failed-specimen",
+        reference: "",
+        actual: "",
+        polished: false,
+        polishStatus: "failed",
+        polishReason: "polish health check timed out after 1200ms",
+      }),
+    ).toThrow(
+      'failed-specimen: polish path did not complete (status "failed", reason "polish health check timed out after 1200ms")',
+    );
+  });
+
+  test("prints only closed polish reason codes and safe timing", () => {
+    const cases = [
+      ["polish health check failed: 503 Service Unavailable", "health_http_503"],
+      ["polish health check failed: fetch failed", "health_error"],
+      ["polish health check endpoint invalid: synthetic private URL", "health_endpoint_invalid"],
+      ["polish request timed out after 900ms", "timeout (900ms)"],
+      ["polish endpoint failed: 429 Too Many Requests", "endpoint_http_429"],
+      ["polish endpoint error: synthetic private response", "endpoint_error"],
+      ["polish socket closed", "socket_closed"],
+      ["polish response exceeded byte limit", "socket_byte_limit"],
+      ["polish response missing text", "socket_missing_text"],
+      ["polish endpoint response missing message content", "endpoint_missing_content"],
+      ["polish HTTP endpoint unavailable", "unavailable"],
+      ["unavailable", "unavailable"],
+      ["synthetic private unknown error", "other_error"],
+    ] as const;
+    for (const [polishReason, expected] of cases) {
+      expect(() =>
+        assertCorpusReplayResult({
+          specimenId: "failed-specimen",
+          reference: "",
+          actual: "",
+          polished: false,
+          polishStatus: "failed",
+          polishReason,
+        }),
+      ).toThrow(`reason "${expected}"`);
+    }
+  });
+
+  test("never echoes a transcript word from a malformed socket line", () => {
+    let message = "";
+    try {
+      assertCorpusReplayResult({
+        specimenId: "failed-specimen",
+        reference: "",
+        actual: "",
+        polished: false,
+        polishStatus: "failed",
+        polishReason: 'invalid polish response: JSON Parse error: Unexpected identifier "SyntheticSentinel"',
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('reason "socket_parse_error"');
+    expect(message).not.toContain("SyntheticSentinel");
+  });
+
+  test("redacts the reason when an applied result lacks the polished flag", () => {
+    let message = "";
+    try {
+      assertCorpusReplayResult({
+        specimenId: "failed-specimen",
+        reference: "",
+        actual: "A synthetic output.",
+        polished: false,
+        polishStatus: "applied",
+        polishReason: "polish endpoint error: SyntheticSentinel",
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('reason "endpoint_error"');
+    expect(message).not.toContain("SyntheticSentinel");
+  });
+
   test("accepts a non-degenerate cleaned fallback rejected by a safety guard", () => {
     expect(() =>
       assertCorpusReplayResult({
