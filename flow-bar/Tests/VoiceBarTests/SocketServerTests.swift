@@ -589,7 +589,36 @@ final class SocketServerTests: XCTestCase {
 /// releases its temporary VoiceBar server so this test can bind the exact same
 /// isolated socket and exercise production input/UI event dispatch against the
 /// still-running daemon.
+@MainActor
+private final class ModeTransitionWitness {
+    private var latestMode: VoiceMode = .idle
+    private(set) var count = 0
+
+    func record(_ mode: VoiceMode) {
+        latestMode = mode
+        count += 1
+    }
+
+    func saw(_ mode: VoiceMode, after baseline: Int) -> Bool {
+        latestMode == mode && count > baseline
+    }
+}
+
 final class CorpusReplayRuntimeInteractionTests: XCTestCase {
+    @MainActor
+    func testRecordingTransitionRemainsObservableAfterTheModeMovesOn() {
+        let state = VoiceState()
+        let witness = ModeTransitionWitness()
+        state.onModeChange = { witness.record($0) }
+        let baseline = witness.count
+
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.handleEvent(["type": "state", "state": "idle"])
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertTrue(witness.saw(.recording, after: baseline))
+    }
+
     private final class ScratchCmuxApplication: NSRunningApplication, @unchecked Sendable {
         override var bundleIdentifier: String? {
             "com.cmuxterm.app"
