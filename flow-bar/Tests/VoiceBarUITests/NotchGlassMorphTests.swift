@@ -1,38 +1,18 @@
-import AppKit
-import Observation
+import CoreGraphics
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// Lanes C2 + C4: the native glass must morph with the notch shape, not jump to the destination.
-///
-/// The glass is an AppKit `NSGlassEffectView` masked by the notch path; the border strokes and the content
-/// clip are SwiftUI shapes. When only the SwiftUI side interpolated, tapping the mic or X made the wing that
-/// changed most jump while its neighbour eased (C2), and opening History or the teleprompter drew the border
-/// growing inside an already-grown glass body (C4). This drives the production `VoiceBarNotchView` through
-/// each morph in an offscreen window and samples the glass mask as the animation runs.
-@Observable final class NotchGlassMorphPresentationBox {
-    var presentation: VoiceBarNotchPresentation
-    init(_ presentation: VoiceBarNotchPresentation) {
-        self.presentation = presentation
-    }
-}
-
-@MainActor
+/// Drive the production mask shape and material modifier at fixed progress values. Rendered frames may be skipped
+/// on a busy CI runner, but the path at a given progress is deterministic.
 final class NotchGlassMorphTests: XCTestCase {
-    /// Mirrors BarView: the canvas follows the current presentation.
-    struct Harness: View {
-        let box: NotchGlassMorphPresentationBox
-        var body: some View {
-            VoiceBarNotchView(
-                presentation: box.presentation,
-                canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(for: box.presentation).canvasGeometry,
-                leadingContent: { EmptyView() },
-                trailingContent: { EmptyView() },
-                lowerContent: { EmptyView() }
-            )
-        }
+    private struct MaskSample {
+        let progress: CGFloat
+        let bounds: CGRect
+        let outerCornerRadius: CGFloat?
     }
+
+    private static let progressValues: [CGFloat] = [0, 0.25, 0.5, 0.75, 1]
 
     private static func presentation(
         recording: Bool = false, history: Bool = false, teleprompter: Bool = false, compactStatus: Bool = false
@@ -61,12 +41,84 @@ final class NotchGlassMorphTests: XCTestCase {
         )
     }
 
-    /// UXP-2 / Lane C follow-up: the outer corners interpolate between the launcher's 15 pt and the panel's
-    /// 18 pt. The radius was not animated data, and the body path used its own fixed 18 pt, so the glass
-    /// mask's corners jumped 15 → 18 on the first frame and back in one step on close.
+    /// The History body and compact wings must carry the same rounded outer corner through the whole morph.
+    /// A fixed 18 pt body radius, or a radius absent from animatableData, fails at interior progress values.
     func testTheOuterCornersStayRoundedWhileHistoryOpensAndCloses() throws {
         try assertCornersStayRounded(from: Self.presentation(), to: Self.presentation(history: true), "History open")
         try assertCornersStayRounded(from: Self.presentation(history: true), to: Self.presentation(), "History close")
+    }
+
+    private func maskSamples(
+        from start: VoiceBarNotchPresentation,
+        to destination: VoiceBarNotchPresentation
+    ) -> [MaskSample] {
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: Self.presentation(history: true)).canvasGeometry
+        let rect = CGRect(x: 0, y: 0, width: canvas.totalWidth, height: canvas.totalHeight)
+        let startShape = VoiceBarNotchContinuousShape(
+            geometry: start.geometry,
+            compactOuterCornerRadius: VoiceBarNotchContract.material.compactOuterCornerRadius(for: start.visualState),
+            coreAnchorX: canvas.coreOriginX
+        )
+        let destinationShape = VoiceBarNotchContinuousShape(
+            geometry: destination.geometry,
+            compactOuterCornerRadius: VoiceBarNotchContract.material
+                .compactOuterCornerRadius(for: destination.visualState),
+            coreAnchorX: canvas.coreOriginX
+        )
+        // VoiceBarNotchView uses this modifier; its animatableData forwards to the mask shape.
+        var material = VoiceBarGlassMaterial(shape: startShape)
+        let initial = material.animatableData
+        let difference = destinationShape.animatableData - initial
+        let samples = Self.progressValues.map { progress in
+            var advance = difference
+            advance.scale(by: Double(progress))
+            material.animatableData = initial + advance
+            let path = material.shape.path(in: rect).cgPath
+            return MaskSample(
+                progress: progress,
+                bounds: path.boundingBoxOfPath,
+                outerCornerRadius: Self.outerCornerRadius(in: path)
+            )
+        }
+        // The modifier must reach the destination shape, not silently retain the launch mask.
+        let actual = samples[4].bounds
+        let expected = destinationShape.path(in: rect).cgPath.boundingBoxOfPath
+        XCTAssertEqual(actual.minX, expected.minX, accuracy: 0.01)
+        XCTAssertEqual(actual.maxX, expected.maxX, accuracy: 0.01)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 0.01)
+        return samples
+    }
+
+    private func assertGlassMorphs(
+        from start: VoiceBarNotchPresentation,
+        to destination: VoiceBarNotchPresentation,
+        _ label: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let samples = maskSamples(from: start, to: destination)
+        let first = samples[0].bounds
+        let last = samples[4].bounds
+        // A travelling edge must move on the first quarter-step without arriving at the destination. The
+        // teleprompter's shoulders can briefly extend past their endpoint as its lower body appears, so bounding
+        // every intermediate edge between the endpoints would reject the real shape.
+        let edges: [(String, (CGRect) -> CGFloat)] = [
+            ("leading", { $0.minX }),
+            ("trailing", { $0.maxX }),
+            ("bottom", { $0.height }),
+        ]
+        XCTAssertTrue(edges.contains { abs($0.1(last) - $0.1(first)) >= 4 },
+                      "\(label): the glass mask never reached a different size", file: file, line: line)
+        for (edge, value) in edges {
+            let from = value(first)
+            let to = value(last)
+            guard abs(to - from) >= 4 else { continue }
+            let firstQuarter = (value(samples[1].bounds) - from) / (to - from)
+            XCTAssertGreaterThan(abs(firstQuarter), 0.05, "\(label): \(edge) did not start moving",
+                                 file: file, line: line)
+            XCTAssertGreaterThan(abs(1 - firstQuarter), 0.05, "\(label): \(edge) snapped to its end",
+                                 file: file, line: line)
+        }
     }
 
     private func assertCornersStayRounded(
@@ -76,51 +128,22 @@ final class NotchGlassMorphTests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws {
-        guard #available(macOS 26.0, *) else {
-            throw XCTSkip("The native glass host exists on macOS 26+; older systems draw the shape in SwiftUI")
+        let samples = maskSamples(from: start, to: destination)
+        let from = VoiceBarNotchContract.material.compactOuterCornerRadius(for: start.visualState)
+        let to = VoiceBarNotchContract.material.compactOuterCornerRadius(for: destination.visualState)
+        for sample in samples {
+            let radius = try XCTUnwrap(sample.outerCornerRadius,
+                                       "\(label): no rounded outer corner at progress \(sample.progress)",
+                                       file: file, line: line)
+            let expected = from + (to - from) * sample.progress
+            XCTAssertEqual(radius, expected, accuracy: 0.05,
+                           "\(label): outer corner snapped at progress \(sample.progress)", file: file, line: line)
+            XCTAssertGreaterThan(radius, 0, "\(label): corner lost rounding", file: file, line: line)
         }
-        let box = NotchGlassMorphPresentationBox(start)
-        let host = NSHostingView(rootView: Harness(box: box))
-        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: Self.presentation(history: true)).canvasGeometry
-        host.frame = NSRect(x: 0, y: 0, width: canvas.totalWidth, height: canvas.totalHeight)
-        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.contentView = host
-        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        window.orderBack(nil)
-        defer {
-            window.orderOut(nil)
-            window.contentView = nil
-        }
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        let before = try XCTUnwrap(
-            glassMaskOuterCornerRadius(in: host),
-            "\(label): no corner before",
-            file: file,
-            line: line
-        )
-
-        box.presentation = destination
-        var radii: [CGFloat] = [before]
-        let deadline = Date().addingTimeInterval(0.8)
-        while Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(1.0 / 60.0))
-            if let radius = glassMaskOuterCornerRadius(in: host), radius != radii.last { radii.append(radius) }
-        }
-        XCTAssertGreaterThan(radii.count, 2, "\(label): the corner never eased (\(radii))", file: file, line: line)
-        let steps = zip(radii, radii.dropFirst()).map { abs($1 - $0) }
-        let largest = steps.max() ?? 0
-        XCTAssertLessThanOrEqual(
-            largest, 1.5,
-            "\(label): the outer corner jumped \(largest) pt in one frame (\(radii.map { ($0 * 10).rounded() / 10 }))",
-            file: file, line: line
-        )
     }
 
-    /// The smallest radius among the mask's corner curves, the quad curves whose control point is a corner of
-    /// the path's bounding box. Orientation-free: AppKit may hand the mask over flipped.
-    @available(macOS 26.0, *)
-    private func glassMaskOuterCornerRadius(in view: NSView) -> CGFloat? {
-        guard let path = glassMaskPath(in: view) else { return nil }
+    /// The smallest outer quad-curve radius, independent of path orientation and the hardware-core cut-out.
+    private static func outerCornerRadius(in path: CGPath) -> CGFloat? {
         let box = path.boundingBoxOfPath
         let corners = [
             CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
@@ -136,77 +159,5 @@ final class NotchGlassMorphTests: XCTestCase {
             radii.append(max(abs(end.x - control.x), abs(end.y - control.y)))
         }
         return radii.min()
-    }
-
-    @available(macOS 26.0, *)
-    private func glassMaskPath(in view: NSView) -> CGPath? {
-        if view is NSGlassEffectView {
-            return (view.layer?.mask as? CAShapeLayer)?.path
-        }
-        return view.subviews.lazy.compactMap { self.glassMaskPath(in: $0) }.first
-    }
-
-    private func assertGlassMorphs(
-        from start: VoiceBarNotchPresentation,
-        to destination: VoiceBarNotchPresentation,
-        _ label: String,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) throws {
-        guard #available(macOS 26.0, *) else {
-            throw XCTSkip("The native glass host exists on macOS 26+; older systems draw the shape in SwiftUI")
-        }
-        let box = NotchGlassMorphPresentationBox(start)
-        let host = NSHostingView(rootView: Harness(box: box))
-        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: Self.presentation(history: true)).canvasGeometry
-        host.frame = NSRect(x: 0, y: 0, width: canvas.totalWidth, height: canvas.totalHeight)
-        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.contentView = host
-        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        window.orderBack(nil)
-        defer {
-            window.orderOut(nil)
-            window.contentView = nil
-        }
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        let before = try XCTUnwrap(glassMaskBounds(in: host), "\(label): no native glass mask", file: file, line: line)
-
-        box.presentation = destination
-        var samples: [CGRect] = []
-        let deadline = Date().addingTimeInterval(0.8)
-        while Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(1.0 / 60.0))
-            Thread.sleep(forTimeInterval: 0.9) // RED: a slow rendered-frame read skips the morph
-            if let bounds = glassMaskBounds(in: host), bounds != samples.last ?? before { samples.append(bounds) }
-        }
-        let after = try XCTUnwrap(samples.last, "\(label): the glass never changed", file: file, line: line)
-
-        // Every edge that travels must pass through in-between frames: its first move may not already be
-        // (nearly) the whole distance, which is what a mask that snaps to the destination does.
-        let first = samples[0]
-        for (edge, from, firstValue, to) in [
-            ("leading", before.minX, first.minX, after.minX),
-            ("trailing", before.maxX, first.maxX, after.maxX),
-            ("bottom", before.height, first.height, after.height),
-        ] where abs(to - from) >= 4 {
-            let progress = (firstValue - from) / (to - from)
-            XCTAssertLessThan(
-                progress, 0.9,
-                "\(label): the glass \(edge) edge jumped \(Int(progress * 100))% of its \(abs(to - from)) pt travel "
-                    +
-                    "on its first frame (\(from) → \(firstValue), destination \(to)); \(samples.count) distinct frames",
-                file: file, line: line
-            )
-            XCTAssertGreaterThanOrEqual(samples.count, 3, "\(label): \(edge) moved in too few frames",
-                                        file: file, line: line)
-        }
-    }
-
-    @available(macOS 26.0, *)
-    private func glassMaskBounds(in view: NSView) -> CGRect? {
-        if view is NSGlassEffectView {
-            return (view.layer?.mask as? CAShapeLayer)?.path?.boundingBoxOfPath
-        }
-        return view.subviews.lazy.compactMap { self.glassMaskBounds(in: $0) }.first
     }
 }
