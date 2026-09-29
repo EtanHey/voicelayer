@@ -115,6 +115,19 @@ describe("voicelayer vocab CLI", () => {
       .toEqual(["domekin"]);
   });
 
+  it("names accepted additions when a later bulk variant is rejected", async () => {
+    const stderr: string[] = [];
+    const code = await runVocabularyCli(
+      ["add", "--term", "NewTerm", "--variant", "spoken one", "--variant", "newterm"],
+      { env, stdout: () => {}, stderr: (line) => stderr.push(line) },
+    );
+    expect(code).toBe(1);
+    expect(stderr.join("")).toContain("Term NewTerm and accepted variants spoken one were saved before this rejection; check current vocabulary state");
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "NewTerm", variants: ["spoken one"] },
+    ]);
+  });
+
   it("returns a usage error when required flags are missing", async () => {
     const stderr: string[] = [];
     const code = await runVocabularyCli(["add-variant", "--term", "Domica"], {
