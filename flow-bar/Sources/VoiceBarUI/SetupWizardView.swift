@@ -13,6 +13,8 @@ public struct SetupWizardDependencies {
     public var f5KeyStatus: () -> SetupF5KeyStatus
     /// Settings' Set up / Reinstall of the F5 key helper, with its #193 result.
     public var onRunRelaySetup: (@escaping (SettingsRelaySetupResult) -> Void) -> Void
+    /// Settings' "Restart F5 listener", offered while the listener is off.
+    public var onRestartHotkeyListener: () -> HotkeyListenerRestartOutcome
     /// The microphone-priority default every read-only row shows (the app's `defaultMicrophoneName()`).
     public var defaultMicrophoneName: () -> String?
     /// Settings › General scrolled to Microphone priority, as "Change…" does from the menu and popover.
@@ -29,6 +31,7 @@ public struct SetupWizardDependencies {
         onRunRelaySetup: @escaping (@escaping (SettingsRelaySetupResult) -> Void) -> Void = { completion in
             completion(SettingsRelaySetupResult(outcome: .failed(reason: "not available here"), finishedAt: Date()))
         },
+        onRestartHotkeyListener: @escaping () -> HotkeyListenerRestartOutcome = { .failed(missing: []) },
         defaultMicrophoneName: @escaping () -> String? = { nil },
         onChangeMicrophone: @escaping () -> Void = {},
         tryItObservation: @escaping () -> SetupTryItObservation = { .none }
@@ -38,6 +41,7 @@ public struct SetupWizardDependencies {
         self.openURL = openURL
         self.f5KeyStatus = f5KeyStatus
         self.onRunRelaySetup = onRunRelaySetup
+        self.onRestartHotkeyListener = onRestartHotkeyListener
         self.defaultMicrophoneName = defaultMicrophoneName
         self.onChangeMicrophone = onChangeMicrophone
         self.tryItObservation = tryItObservation
