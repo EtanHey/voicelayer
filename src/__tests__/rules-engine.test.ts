@@ -602,6 +602,14 @@ describe("rules-engine", () => {
 
   // --- Stage 7: Custom aliases ---
   describe("custom aliases", () => {
+    it("does not rewrite a longer alias's replacement with a shorter source", () => {
+      expect(applyRules("apple pie", {
+        aliases: { apple: "Application", "apple pie": "Apple Inc" },
+      })).toBe("Apple Inc");
+      expect(applyRules("apple pie and apple", {
+        aliases: { apple: "Application", "apple pie": "Apple Inc" },
+      })).toBe("Apple Inc and Application");
+    });
     it("applies custom aliases", () => {
       const config: RulesConfig = {
         aliases: {

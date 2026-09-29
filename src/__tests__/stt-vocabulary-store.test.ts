@@ -136,6 +136,14 @@ describe("stt-vocabulary-store", () => {
     expect(updated.entries).toEqual([{ canonical: "Domica", variants: [] }]);
   });
 
+  it("does not treat a term's own retained split variant as a prompt-term collision", () => {
+    addAlias({ from: "React.js", to: "ReactJS" }, { path: vocabPath });
+    const updated = addPromptTerm("ReactJS", { path: vocabPath });
+    expect(updated.changed).toBe(true);
+    expect(updated.warnings?.some((warning) => warning.code === "dictionary_alias_collision")).toBeFalsy();
+    expect(updated.entries).toEqual([{ canonical: "ReactJS", variants: ["React.js"] }]);
+  });
+
   it("keeps punctuation and split forms distinct from their canonical", () => {
     const updated = addAlias(
       { from: "React.js", to: "ReactJS" },

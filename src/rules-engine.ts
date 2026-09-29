@@ -1259,6 +1259,9 @@ function applyAliases(
   }
 
   const lowerResult = result.toLowerCase();
+  // Once a spoken span has been rewritten, later (shorter) aliases must not
+  // rewrite words in its replacement. Offsets refer to the current result.
+  const rewrittenSpans: Array<[number, number]> = [];
   for (const [fromLower, pattern, to, prefixMode] of cached.patterns) {
     if (!lowerResult.includes(fromLower)) continue;
     // Gate on what the speaker said as well as the rewritten text: an
@@ -1268,12 +1271,29 @@ function applyAliases(
       !shouldApplyAlias(fromLower, text) &&
       !shouldApplyAlias(fromLower, result)
     ) continue;
-    result = result.replace(pattern, (_match, prefix?: string) => {
-      if (!prefix || prefixMode === "plain") return to;
-      return prefixMode === "separate-prefix"
-        ? `${prefix} ${to}`
-        : `${prefix}-${to}`;
-    });
+    pattern.lastIndex = 0;
+    const matches = [...result.matchAll(pattern)];
+    for (let index = matches.length - 1; index >= 0; index--) {
+      const match = matches[index];
+      const start = match.index;
+      const end = start + match[0].length;
+      if (rewrittenSpans.some(([left, right]) => start < right && end > left)) continue;
+      const prefix = match[1];
+      const replacement = !prefix || prefixMode === "plain"
+        ? to
+        : prefixMode === "separate-prefix"
+          ? `${prefix} ${to}`
+          : `${prefix}-${to}`;
+      result = result.slice(0, start) + replacement + result.slice(end);
+      const shift = replacement.length - (end - start);
+      for (const span of rewrittenSpans) {
+        if (span[0] >= end) {
+          span[0] += shift;
+          span[1] += shift;
+        }
+      }
+      rewrittenSpans.push([start, start + replacement.length]);
+    }
   }
   return result;
 }

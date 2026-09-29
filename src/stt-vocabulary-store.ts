@@ -480,6 +480,7 @@ function variantAliasCollisionWarning(
 ): STTVocabularyWarning | null {
   const canonicalKey = aliasKey(canonical);
   const existing = entries.find((entry) =>
+    !sameSurface(entry.canonical, canonical) &&
     entry.variants.some((variant) => aliasKey(variant) === canonicalKey),
   );
   return existing
