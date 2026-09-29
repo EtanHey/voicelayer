@@ -77,11 +77,12 @@ final class MenuBarStatusItemController: NSObject {
 
     /// The polish-degradation warning replaces the waveform, as the MenuBarExtra label did.
     func setAlert(_ alert: Bool) {
-        button.image = NSImage(
-            systemSymbolName: alert ? "exclamationmark.triangle.fill" : "waveform.circle.fill",
-            accessibilityDescription: "VoiceBar"
-        )
+        iconSymbolName = alert ? "exclamationmark.triangle.fill" : "waveform.circle.fill"
+        button.image = NSImage(systemSymbolName: iconSymbolName, accessibilityDescription: "VoiceBar")
     }
+
+    /// The SF Symbol on the button now (a symbol image has no `name()` to read back).
+    private(set) var iconSymbolName = ""
 
     /// The warning icon follows `alert` (the polish signal) for as long as the item exists.
     func trackAlert(_ alert: @escaping @MainActor () -> Bool) {
