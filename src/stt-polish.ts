@@ -5,6 +5,7 @@ import { appendFile, mkdir } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
+import { SocketOutboundQueue } from "./socket-outbound-queue";
 import type { PauseSpan } from "./stt-pause-map";
 import {
   applyPauseAwareBoundaries,
@@ -1707,14 +1708,15 @@ async function requestPolishOverSocket(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    let connection: { write: (data: string) => void; end?: () => void } | null =
-      null;
+    let connection: { end: () => void } | null = null;
+    let writer: SocketOutboundQueue | null = null;
     const framer = new NDJSONByteFramer();
 
     const cleanup = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      writer?.close();
       try {
         connection?.end?.();
       } catch {}
@@ -1734,13 +1736,16 @@ async function requestPolishOverSocket(
       finishReject(new Error(`polish request timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    Bun.connect<{}>({
+    Bun.connect<SocketOutboundQueue>({
       unix: socketPath,
       socket: {
         open(socket) {
-          socket.data = {};
+          socket.data = new SocketOutboundQueue(socket, "stt-polish", undefined, () => {
+            finishReject(new Error("polish socket write failed"));
+          });
+          writer = socket.data;
           connection = socket;
-          socket.write(`${JSON.stringify(request)}\n`);
+          socket.data.enqueue(`${JSON.stringify(request)}\n`);
         },
         data(_socket, raw) {
           const { lines, overflow } = framer.append(raw);
@@ -1772,15 +1777,17 @@ async function requestPolishOverSocket(
           }
         },
         close() {
+          writer?.close();
           if (!settled) finishReject(new Error("polish socket closed"));
         },
         error(_socket, error) {
+          writer?.close();
           finishReject(error);
         },
         connectError(_socket, error) {
           finishReject(error);
         },
-        drain() {},
+        drain(socket) { socket.data.drain(); },
       },
     }).catch((err) => {
       finishReject(err instanceof Error ? err : new Error(String(err)));

@@ -34,6 +34,7 @@ import {
   buildPongResponse,
 } from "./daemon-health";
 import { MAX_NDJSON_LINE_BYTES, NDJSONByteFramer } from "./ndjson-byte-framer";
+import { SocketOutboundQueue } from "./socket-outbound-queue";
 
 export interface McpDaemonOptions {
   /** Unix socket path to listen on. */
@@ -56,6 +57,7 @@ interface ClientState {
   pendingResponses: Set<Promise<void>>;
   disconnected: boolean;
   loggingLevel?: McpLoggingLevel;
+  writer: SocketOutboundQueue;
 }
 
 /**
@@ -138,6 +140,12 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           unknownRaw: Buffer.alloc(0), unknownBytes: 0, ndjsonFramer: new NDJSONByteFramer(),
           unknownHadLeadingWhitespace: false,
           oversized: false, pendingResponses: new Set(), disconnected: false,
+          writer: new SocketOutboundQueue(socket, "mcp-daemon", undefined, () => {
+            if (!socket.data.disconnected) {
+              socket.data.disconnected = true;
+              onDisconnect();
+            }
+          }),
         };
         onConnect();
       },
@@ -202,18 +210,20 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
       },
 
       close(socket) {
+        socket.data.writer.close();
         if (!socket.data.disconnected) {
           socket.data.disconnected = true;
           onDisconnect();
         }
       },
       error(socket) {
+        socket.data.writer.close();
         if (!socket.data.disconnected) {
           socket.data.disconnected = true;
           onDisconnect();
         }
       },
-      drain() {},
+      drain(socket) { socket.data.writer.drain(); },
     },
   });
 
@@ -279,7 +289,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
               jsonrpc: "2.0",
               ...notification,
             });
-            socket.write(frame);
+            socket.data.writer.enqueue(frame);
           },
           setLoggingLevel(level: McpLoggingLevel) {
             socket.data.loggingLevel = level;
@@ -292,7 +302,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
               response as unknown as Record<string, unknown>,
             );
             try {
-              socket.write(frame);
+              socket.data.writer.enqueue(frame);
             } catch {
               // Client may have disconnected
             }
@@ -309,7 +319,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
                 message: `Internal error: ${err instanceof Error ? err.message : String(err)}`,
               },
             });
-            socket.write(errResponse);
+            socket.data.writer.enqueue(errResponse);
           } catch {
             // Client already gone
           }
@@ -333,7 +343,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         if (isPingRequest(msg)) {
           const pong = buildPongResponse();
           try {
-            socket.write(JSON.stringify(pong) + "\n");
+            socket.data.writer.enqueue(JSON.stringify(pong) + "\n");
           } catch {}
           continue;
         }
@@ -365,7 +375,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
                 ) {
                   return;
                 }
-                socket.write(
+                socket.data.writer.enqueue(
                   `${JSON.stringify({ jsonrpc: "2.0", ...notification })}\n`,
                 );
               },
@@ -377,14 +387,14 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
             .then((response) => {
               if (response) {
                 try {
-                  socket.write(JSON.stringify(response) + "\n");
+                  socket.data.writer.enqueue(JSON.stringify(response) + "\n");
                 } catch {}
               }
             })
             .catch((err) => {
               console.error(`[mcp-daemon] MCP-over-NDJSON error: ${err}`);
               try {
-                socket.write(
+                socket.data.writer.enqueue(
                   JSON.stringify({
                     jsonrpc: "2.0",
                     id: msg.id ?? null,
@@ -415,18 +425,15 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     socket.data.unknownRaw = Buffer.alloc(0);
     socket.data.unknownBytes = 0;
     console.error("[mcp-daemon] NDJSON message exceeded byte limit; closing client");
-    if (socket.data.pendingResponses.size === 0) {
+    let timer: ReturnType<typeof setTimeout>;
+    Promise.race([
+      Promise.allSettled([...socket.data.pendingResponses])
+        .then(() => socket.data.writer.whenEmpty()),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); }),
+    ]).finally(() => {
+      clearTimeout(timer);
       socket.end();
-    } else {
-      let timer: ReturnType<typeof setTimeout>;
-      Promise.race([
-        Promise.allSettled([...socket.data.pendingResponses]),
-        new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); }),
-      ]).finally(() => {
-        clearTimeout(timer);
-        socket.end();
-      });
-    }
+    });
   }
 
   return {
