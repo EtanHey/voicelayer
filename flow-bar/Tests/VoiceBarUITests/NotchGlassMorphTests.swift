@@ -1,11 +1,39 @@
-import CoreGraphics
+import AppKit
+import Observation
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
 /// Drive the production mask shape and material modifier at fixed progress values. Rendered frames may be skipped
 /// on a busy CI runner, but the path at a given progress is deterministic.
+@Observable private final class NotchGlassMorphPresentationBox {
+    var presentation: VoiceBarNotchPresentation
+
+    init(_ presentation: VoiceBarNotchPresentation) {
+        self.presentation = presentation
+    }
+}
+
+@MainActor
 final class NotchGlassMorphTests: XCTestCase {
+    private struct NativeGlassHarness: View {
+        let box: NotchGlassMorphPresentationBox
+
+        var body: some View {
+            VoiceBarNotchView(
+                presentation: box.presentation,
+                canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(for: box.presentation).canvasGeometry,
+                leadingContent: { EmptyView() },
+                trailingContent: { EmptyView() },
+                lowerContent: { EmptyView() }
+            )
+            .transaction { transaction in
+                transaction.disablesAnimations = true
+                transaction.animation = nil
+            }
+        }
+    }
+
     private struct MaskSample {
         let progress: CGFloat
         let bounds: CGRect
@@ -39,6 +67,16 @@ final class NotchGlassMorphTests: XCTestCase {
         try assertGlassMorphs(
             from: Self.presentation(compactStatus: true), to: Self.presentation(teleprompter: true), "teleprompter"
         )
+    }
+
+    func testNativeGlassMaskReachesRecordingShape() throws {
+        try assertNativeGlassMaskTracks(
+            from: Self.presentation(), to: Self.presentation(recording: true), "mic → recording"
+        )
+    }
+
+    func testNativeGlassMaskReachesHistoryShape() throws {
+        try assertNativeGlassMaskTracks(from: Self.presentation(), to: Self.presentation(history: true), "History open")
     }
 
     /// The History body and compact wings must carry the same rounded outer corner through the whole morph.
@@ -140,6 +178,77 @@ final class NotchGlassMorphTests: XCTestCase {
                            "\(label): outer corner snapped at progress \(sample.progress)", file: file, line: line)
             XCTAssertGreaterThan(radius, 0, "\(label): corner lost rounding", file: file, line: line)
         }
+    }
+
+    /// The production AppKit host must update its native mask after a presentation swap. This checks the settled
+    /// destination path, not the number or timing of animation frames the runner happened to render.
+    private func assertNativeGlassMaskTracks(
+        from start: VoiceBarNotchPresentation,
+        to destination: VoiceBarNotchPresentation,
+        _ label: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        guard #available(macOS 26.0, *) else {
+            throw XCTSkip("The native glass host exists on macOS 26+; older systems draw the shape in SwiftUI")
+        }
+        let box = NotchGlassMorphPresentationBox(start)
+        let host = NSHostingView(rootView: NativeGlassHarness(box: box))
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: Self.presentation(history: true)).canvasGeometry
+        host.frame = NSRect(x: 0, y: 0, width: canvas.totalWidth, height: canvas.totalHeight)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderBack(nil)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        try assertSettledNativeMask(in: host, matches: start, canvas: canvas, "\(label) start", file: file, line: line)
+        box.presentation = destination
+        try assertSettledNativeMask(
+            in: host, matches: destination, canvas: canvas, "\(label) destination", file: file, line: line
+        )
+    }
+
+    @available(macOS 26.0, *)
+    private func assertSettledNativeMask(
+        in host: NSView,
+        matches presentation: VoiceBarNotchPresentation,
+        canvas: VoiceBarNotchGeometry,
+        _ label: String,
+        file: StaticString,
+        line: UInt
+    ) throws {
+        let shape = VoiceBarNotchContinuousShape(
+            geometry: presentation.geometry,
+            compactOuterCornerRadius: VoiceBarNotchContract.material
+                .compactOuterCornerRadius(for: presentation.visualState),
+            coreAnchorX: canvas.coreOriginX
+        )
+        // Fixed, bounded main-run-loop turns let SwiftUI update the representable and AppKit lay out its mask.
+        // There is no requirement to observe any intermediate frame.
+        for _ in 0 ..< 20 {
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        host.layoutSubtreeIfNeeded()
+        let glass = try XCTUnwrap(nativeGlass(in: host), "\(label): no native glass", file: file, line: line)
+        glass.layoutSubtreeIfNeeded()
+        let target = shape.path(in: glass.bounds).cgPath.boundingBoxOfPath.size
+        let actual = try XCTUnwrap(
+            (glass.layer?.mask as? CAShapeLayer)?.path?.boundingBoxOfPath.size,
+            "\(label): no native glass mask", file: file, line: line
+        )
+        XCTAssertEqual(actual.width, target.width, accuracy: 0.05, "\(label): mask width", file: file, line: line)
+        XCTAssertEqual(actual.height, target.height, accuracy: 0.05, "\(label): mask height", file: file, line: line)
+    }
+
+    @available(macOS 26.0, *)
+    private func nativeGlass(in view: NSView) -> NSGlassEffectView? {
+        if let glass = view as? NSGlassEffectView { return glass }
+        return view.subviews.lazy.compactMap { self.nativeGlass(in: $0) }.first
     }
 
     /// The smallest outer quad-curve radius, independent of path orientation and the hardware-core cut-out.
