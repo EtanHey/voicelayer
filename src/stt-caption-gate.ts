@@ -141,7 +141,8 @@ export async function stripHallucinatedCaption(
   const windows = measureWavWindows(wavData);
   const measured = windows && measureSpan(windows, candidate.startS, candidate.endS);
   if (!windows || !measured) return untouched("no-audio");
-  const flat = windows.speechLevelDbfs - windows.floorDbfs < SPEECH_OVER_FLOOR_DB;
+  const flat = windows.speechLevelDbfs - windows.floorDbfs < SPEECH_OVER_FLOOR_DB &&
+    probabilities.filter(speech).length <= MAX_SPEECH_CHUNKS;
   if (measured.hasSpeech ||
       (!flat && measured.peakDbfs >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB)) {
     return untouched("speech-present");

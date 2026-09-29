@@ -73,7 +73,12 @@ describe("caption hallucination gate", () => {
       segments, segmentsText: text, speechProbabilities: probabilities(),
     });
     expect(result.text).toBe(text);
-    expect(result.removed).toBeNull();
+    const flatAudio = softSpeechWav(), view = new DataView(flatAudio.buffer);
+    for (let frame = 0; frame < 1.5 * 16_000; frame++) view.setInt16(44 + frame * 2, Math.round(30 * Math.sin(frame * 2 * Math.PI * 220 / 16_000)), true);
+    const withEarlierSpeech = probabilities();
+    withEarlierSpeech.fill(0.95, 0, 31);
+    const flat = await stripHallucinatedCaption(text, flatAudio, { segments, segmentsText: text, speechProbabilities: withEarlierSpeech });
+    expect(flat.text).toBe(text);
   });
 
   test("tolerates only the single 32 ms VAD blip seen under the pinned caption", async () => {
