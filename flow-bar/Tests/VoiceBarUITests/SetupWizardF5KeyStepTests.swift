@@ -28,7 +28,10 @@ final class SetupWizardF5KeyStepTests: XCTestCase {
         let step = SetupF5KeyStep(status: SetupF5KeyStatus(listenerActive: false, helperInstalled: true))
         XCTAssertFalse(step.isReady)
         XCTAssertEqual(step.listenerStatus, "Off")
-        XCTAssertEqual(step.listenerProblem, "F5 needs Accessibility and Input Monitoring, then a restart of VoiceBar.")
+        XCTAssertEqual(
+            step.listenerProblem,
+            "F5 needs Accessibility and Input Monitoring. Once both are allowed, press Restart listener."
+        )
         XCTAssertEqual(step.listenerFixStep, .permissions)
     }
 

@@ -32,10 +32,16 @@ public struct SetupF5KeyResultLine: Equatable, Sendable {
 public struct SetupF5KeyStep: Equatable {
     private let status: SetupF5KeyStatus
     private let run: SetupRelayRun?
+    private let listenerRestart: HotkeyListenerRestartOutcome?
 
-    public init(status: SetupF5KeyStatus, run: SetupRelayRun? = nil) {
+    public init(
+        status: SetupF5KeyStatus,
+        run: SetupRelayRun? = nil,
+        listenerRestart: HotkeyListenerRestartOutcome? = nil
+    ) {
         self.status = status
         self.run = run
+        self.listenerRestart = listenerRestart
     }
 
     public var isReady: Bool {
@@ -47,12 +53,21 @@ public struct SetupF5KeyStep: Equatable {
     }
 
     public var listenerProblem: String? {
-        status.listenerActive ? nil : "F5 needs Accessibility and Input Monitoring, then a restart of VoiceBar."
+        status.listenerActive ? nil : "F5 needs Accessibility and Input Monitoring. Once both are allowed, press Restart listener."
     }
 
     /// Where an off listener is fixed.
     public var listenerFixStep: SetupWizardStep? {
         status.listenerActive ? nil : .permissions
+    }
+
+    /// "Restart listener" shows only while the listener is off: permissions granted after launch need it.
+    public var showsListenerRestart: Bool {
+        HotkeyListenerRestartLine.showsRestart(listenerActive: status.listenerActive)
+    }
+
+    public var listenerRestartLine: HotkeyListenerRestartLine? {
+        listenerRestart.map(HotkeyListenerRestartLine.init(outcome:))
     }
 
     public var helperStatus: String {

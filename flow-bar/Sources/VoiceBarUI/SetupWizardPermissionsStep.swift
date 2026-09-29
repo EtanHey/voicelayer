@@ -93,7 +93,7 @@ public struct SetupPermissionsStep: Equatable {
         guard snapshot.accessibilityGranted, snapshot.inputMonitoringGranted, !snapshot.hotkeyListenerActive else {
             return nil
         }
-        return "Restart VoiceBar to turn on F5: quit it from the menu bar, then open it again. Setup picks up where you left off."
+        return "F5 is still off. Press Restart listener on the next step to turn it on."
     }
 
     private static func row(_ permission: HotkeyPermission, granted: Bool) -> SetupPermissionRow {

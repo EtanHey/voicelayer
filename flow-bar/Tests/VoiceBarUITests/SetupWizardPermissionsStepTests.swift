@@ -52,7 +52,7 @@ final class SetupWizardPermissionsStepTests: XCTestCase {
         XCTAssertTrue(step.allGranted)
         XCTAssertEqual(
             step.restartNote,
-            "Restart VoiceBar to turn on F5: quit it from the menu bar, then open it again. Setup picks up where you left off."
+            "F5 is still off. Press Restart listener on the next step to turn it on."
         )
     }
 

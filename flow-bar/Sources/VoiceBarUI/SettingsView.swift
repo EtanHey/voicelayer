@@ -432,6 +432,8 @@ public struct SettingsView: View {
     /// drag session from the next; nil means unknown. VoiceBarUI stays presentation-only, so the app reads it.
     public let lastMousePressUptime: () -> TimeInterval?
     public let onCheckShortcut: (@escaping (String) -> Void) -> Void
+    /// Starts the F5 listener again after permissions were granted post-launch; the app refuses while recording.
+    public let onRestartHotkeyListener: () -> HotkeyListenerRestartOutcome
     /// Read live, like the wizard's row: a never-asked microphone has to be requested before System Settings lists
     /// VoiceBar in its Microphone pane.
     public let microphoneAuthorization: () -> SetupMicrophoneAuthorization
@@ -469,6 +471,7 @@ public struct SettingsView: View {
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
 
     @State private var selectedTab: SettingsTab
+    @State private var hotkeyListenerRestartLine: HotkeyListenerRestartLine?
     @State private var permissionsRefreshTick = 0
     @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
     @State private var localVoiceBarHidden: Bool
@@ -560,6 +563,7 @@ public struct SettingsView: View {
         isHotkeyRemapActive: @escaping () -> Bool = { false },
         lastMousePressUptime: @escaping () -> TimeInterval? = { nil },
         onCheckShortcut: @escaping (@escaping (String) -> Void) -> Void = { $0("Shortcut check unavailable.") },
+        onRestartHotkeyListener: @escaping () -> HotkeyListenerRestartOutcome = { .failed(missing: []) },
         microphoneAuthorization: @escaping () -> SetupMicrophoneAuthorization = { .granted },
         onRequestMicrophone: @escaping (@escaping () -> Void) -> Void = { $0() },
         isVoiceBarHidden: @escaping () -> Bool = { false },
@@ -618,6 +622,7 @@ public struct SettingsView: View {
         initialRelaySetupFeedback: (action: SettingsRelaySetupFeedback.Action,
                                     result: SettingsRelaySetupResult?)? = nil,
         initialMicrophoneDrag: MicrophoneDragState = MicrophoneDragState(),
+        initialHotkeyListenerRestart: HotkeyListenerRestartOutcome? = nil,
         initialDictionaryPreview: STTVocabularyPreview? = nil,
         initialIncludedTermsExpanded: Bool = false,
         initialYourTermsExpanded: Bool = true,
@@ -654,6 +659,7 @@ public struct SettingsView: View {
         self.isHotkeyRemapActive = isHotkeyRemapActive
         self.lastMousePressUptime = lastMousePressUptime
         self.onCheckShortcut = onCheckShortcut
+        self.onRestartHotkeyListener = onRestartHotkeyListener
         self.microphoneAuthorization = microphoneAuthorization
         self.onRequestMicrophone = onRequestMicrophone
         self.isVoiceBarHidden = isVoiceBarHidden
@@ -700,6 +706,8 @@ public struct SettingsView: View {
         _askHistorySearch = State(initialValue: initialAskHistorySearch)
         _isAdvancedExpanded = State(initialValue: initialAdvancedExpanded)
         _relaySetupFeedback = State(initialValue: initialRelaySetupFeedback)
+        _hotkeyListenerRestartLine = State(initialValue: initialHotkeyListenerRestart
+            .map(HotkeyListenerRestartLine.init))
         _microphoneDrag = State(initialValue: initialMicrophoneDrag)
         _includedTermsExpanded = State(initialValue: initialIncludedTermsExpanded)
         _yourTermsExpanded = State(initialValue: initialYourTermsExpanded)
@@ -858,6 +866,15 @@ public struct SettingsView: View {
                         "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
                     )
                     .font(.caption).foregroundStyle(.secondary)
+                }
+                // Permissions granted after launch leave the listener off until it starts again.
+                if showsHotkeyListenerRestart {
+                    Button("Restart F5 listener") {
+                        hotkeyListenerRestartLine = HotkeyListenerRestartLine(outcome: onRestartHotkeyListener())
+                    }
+                }
+                if let hotkeyListenerRestartLine {
+                    HotkeyListenerRestartLineView(line: hotkeyListenerRestartLine)
                 }
                 Button("Check shortcut") {
                     shortcutCheckRunning = true
@@ -2448,6 +2465,10 @@ public struct SettingsView: View {
             remaining -= entries.count
         }
         return limitedGroups
+    }
+
+    var showsHotkeyListenerRestart: Bool {
+        HotkeyListenerRestartLine.showsRestart(listenerActive: hotkeyEnabled)
     }
 
     private var hotkeyStatusText: String {

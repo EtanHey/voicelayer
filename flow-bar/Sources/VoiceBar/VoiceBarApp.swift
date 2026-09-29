@@ -2675,6 +2675,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     ?? completion(SettingsRelaySetupResult(outcome: .failed(reason: "VoiceBar is not available"),
                                                            finishedAt: Date()))
             },
+            onRestartHotkeyListener: { [weak self] in
+                self?.restartHotkeyListener() ?? .failed(missing: [])
+            },
             defaultMicrophoneName: { [weak self] in self?.defaultMicrophoneName() },
             onChangeMicrophone: { [weak self] in self?.openMicrophonePrioritySettings() },
             tryItObservation: { [weak self] in
@@ -2767,6 +2770,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onCheckShortcut: { [weak self] completion in
                 self?.checkShortcutAsync(completion: completion)
                     ?? completion("Shortcut check unavailable.")
+            },
+            onRestartHotkeyListener: { [weak self] in
+                self?.restartHotkeyListener() ?? .failed(missing: [])
             },
             microphoneAuthorization: {
                 Self.setupMicrophoneAuthorization(AVCaptureDevice.authorizationStatus(for: .audio))

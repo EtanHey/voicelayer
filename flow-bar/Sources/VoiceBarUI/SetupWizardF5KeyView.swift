@@ -8,14 +8,26 @@ struct SetupWizardF5KeyBody: View {
     let onRunHelper: (SettingsRelaySetupFeedback.Action) -> Void
     let onFix: (SetupWizardStep) -> Void
     @State private var status: SetupF5KeyStatus?
+    @State private var listenerRestart: HotkeyListenerRestartOutcome?
 
     var body: some View {
-        let step = SetupF5KeyStep(status: status ?? dependencies.f5KeyStatus(), run: run)
+        let step = SetupF5KeyStep(
+            status: status ?? dependencies.f5KeyStatus(),
+            run: run,
+            listenerRestart: listenerRestart
+        )
         VStack(alignment: .leading, spacing: 14) {
             VStack(spacing: 0) {
                 row("F5 listener", status: step.listenerStatus, isReady: step.listenerProblem == nil) {
                     if let fixStep = step.listenerFixStep {
                         Button("Allow access…") { onFix(fixStep) }
+                    }
+                    if step.showsListenerRestart {
+                        Button("Restart listener") {
+                            listenerRestart = dependencies.onRestartHotkeyListener()
+                            refresh()
+                        }
+                        .accessibilityLabel("Restart F5 listener")
                     }
                 }
                 Divider()
@@ -33,6 +45,9 @@ struct SetupWizardF5KeyBody: View {
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }
+            }
+            if let line = step.listenerRestartLine {
+                HotkeyListenerRestartLineView(line: line)
             }
             if let line = step.resultLine {
                 resultLabel(line)
