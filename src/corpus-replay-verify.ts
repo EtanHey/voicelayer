@@ -806,6 +806,20 @@ async function runCorpusReplay(options: {
     options.count,
     pinnedIds,
   );
+  // Optional private assertions accompany local pinned specimens without
+  // putting personal transcript text or recording IDs in the repository.
+  const expectationPath = process.env.VOICELAYER_VERIFY_CORPUS_EXPECTATIONS_PATH?.trim();
+  const forbiddenById: Record<string, string[]> = expectationPath
+    ? JSON.parse(readFileSync(expectationPath, "utf8"))
+    : {};
+  for (const [id, phrases] of Object.entries(forbiddenById)) {
+    if (!selected.some((specimen) => specimen.id === id) ||
+        !Array.isArray(phrases) ||
+        phrases.length === 0 ||
+        phrases.some((phrase) => typeof phrase !== "string" || phrase.trim() === "")) {
+      throw new Error("invalid private corpus expectation");
+    }
+  }
   if (options.manifestPath) {
     console.log(`[corpus-replay] pinned manifest: ${options.manifestPath}`);
   }
@@ -914,6 +928,12 @@ async function runCorpusReplay(options: {
             ? transcription.polish_reason
             : undefined,
       });
+      const actualText = typeof transcription.text === "string" ? transcription.text : "";
+      if (forbiddenById[specimen.id]?.some((phrase) =>
+        actualText.toLowerCase().includes(phrase.toLowerCase())
+      )) {
+        throw new Error(`corpus specimen ${index + 1} retained a forbidden caption`);
+      }
       console.log(
         `[corpus-replay] ${index + 1}/${staged.length} ` +
           `${specimen.id}: ${String(transcription.polish_status)}`,
