@@ -101,6 +101,13 @@ public struct DictionaryAddSheetView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let warning = edit.variantWarning(in: existingEntries) {
+                Text(warning)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel(warning)
+            }
+
             if edit.isEditing, !edit.keptVariants.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Also heard as")
@@ -140,7 +147,8 @@ public struct DictionaryAddSheetView: View {
                     submit()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!edit.canSave || (requiresMisheard && edit.trimmedWrong.isEmpty))
+                .disabled(!edit.canSave || (requiresMisheard && edit.trimmedWrong.isEmpty)
+                    || edit.variantWarning(in: existingEntries) != nil)
             }
         }
         .padding(18)

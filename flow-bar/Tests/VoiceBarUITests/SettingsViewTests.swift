@@ -431,7 +431,7 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertFalse(sheet.contains("transcribed text"))
     }
 
-    func testAddVariantMatchingCanonicalAliasKeyIsNoOp() {
+    func testAddVariantWithDifferentSurfaceIsKeptDespiteSameAliasKey() {
         var localEntries = [
             STTDictionaryEntry(canonical: "La La", variants: ["la law"]),
         ]
@@ -447,8 +447,8 @@ final class SettingsViewTests: XCTestCase {
             onAddVocabularyAlias: { correct, wrong in addedAliases.append((correct, wrong)) }
         )
 
-        XCTAssertTrue(addedAliases.isEmpty)
-        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "La La", variants: ["la law"])])
+        XCTAssertEqual(addedAliases.map(\.wrong), ["lala"])
+        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "La La", variants: ["la law", "lala"])])
         XCTAssertEqual(variantText, "")
         XCTAssertNil(addingVariantFor)
     }

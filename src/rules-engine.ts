@@ -1222,34 +1222,38 @@ function applyAliases(
   const prefixKey = [...hebrewLatinAliasSources].sort().join("\0");
   let cached = ALIAS_PATTERN_CACHE.get(aliases);
   if (!cached || cached.prefixKey !== prefixKey) {
-    const patterns: AliasPattern[] = Object.entries(aliases).map(([from, to]) => {
-      // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
-      const escaped = escapeRegex(from);
-      const isHebrewToLatin = hebrewLatinAliasSources.has(from) &&
-        /\p{Script=Hebrew}/u.test(from) &&
-        /\p{Script=Latin}/u.test(to);
-      const sourceWords = aliasWordCount(from);
-      const targetWords = aliasWordCount(to);
-      const prefixMode = isHebrewToLatin && sourceWords === targetWords
-        ? "attached-prefix"
-        : isHebrewToLatin && sourceWords === targetWords + 1
-          ? "separate-prefix"
-          : "plain";
-      const source = prefixMode === "attached-prefix"
-        ? `(${HEBREW_PROCLITIC})?${escaped}`
-        : prefixMode === "separate-prefix"
-          ? `(${HEBREW_PROCLITIC})${escaped}`
-          : escaped;
-      return [
-        from.toLowerCase(),
-        new RegExp(
-          `(?<=^|\\s|[^\\p{L}])${source}(?=$|\\s|[^\\p{L}])`,
-          "giu",
-        ),
-        to,
-        prefixMode,
-      ];
-    });
+    // A shorter spelling can be a prefix of a fuller mishearing. Rewrite the
+    // fuller spoken form first so it cannot leave a duplicate trailing word.
+    const patterns: AliasPattern[] = Object.entries(aliases)
+      .sort(([left], [right]) => right.length - left.length)
+      .map(([from, to]) => {
+        // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
+        const escaped = escapeRegex(from);
+        const isHebrewToLatin = hebrewLatinAliasSources.has(from) &&
+          /\p{Script=Hebrew}/u.test(from) &&
+          /\p{Script=Latin}/u.test(to);
+        const sourceWords = aliasWordCount(from);
+        const targetWords = aliasWordCount(to);
+        const prefixMode = isHebrewToLatin && sourceWords === targetWords
+          ? "attached-prefix"
+          : isHebrewToLatin && sourceWords === targetWords + 1
+            ? "separate-prefix"
+            : "plain";
+        const source = prefixMode === "attached-prefix"
+          ? `(${HEBREW_PROCLITIC})?${escaped}`
+          : prefixMode === "separate-prefix"
+            ? `(${HEBREW_PROCLITIC})${escaped}`
+            : escaped;
+        return [
+          from.toLowerCase(),
+          new RegExp(
+            `(?<=^|\\s|[^\\p{L}])${source}(?=$|\\s|[^\\p{L}])`,
+            "giu",
+          ),
+          to,
+          prefixMode,
+        ];
+      });
     cached = { prefixKey, patterns };
     ALIAS_PATTERN_CACHE.set(aliases, cached);
   }

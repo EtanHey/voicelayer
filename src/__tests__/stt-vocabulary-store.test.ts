@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { applyRules } from "../rules-engine";
 import {
   addAlias,
   addPromptTerm,
@@ -95,31 +96,37 @@ describe("stt-vocabulary-store", () => {
     });
   });
 
-  it("adds variants, stamps updated_at, and dedupes by alias key without changing casing", () => {
+  it("warns on a cross-entry alias-key collision without moving an existing variant", () => {
     addAlias({ from: "domekin", to: "Domica" }, { path: vocabPath });
     const updated = addAlias(
       { from: "dome-kin", to: "Domica Labs" },
       { path: vocabPath },
     );
 
-    expect(updated.entries).toEqual([
-      { canonical: "Domica", variants: [] },
-      { canonical: "Domica Labs", variants: ["domekin"] },
-    ]);
-    expect(typeof updated.updated_at).toBe("string");
-    expect(Number.isNaN(Date.parse(updated.updated_at!))).toBe(false);
+    expect(updated.changed).toBe(false);
+    expect(updated.warnings).toContainEqual({
+      code: "dictionary_variant_collision", canonical: "Domica Labs", existing: "Domica",
+    });
+    expect(updated.entries).toEqual([{ canonical: "Domica", variants: ["domekin"] }]);
 
     const raw = JSON.parse(readFileSync(vocabPath, "utf8"));
     expect(raw).toMatchObject({
-      entries: [
-        { canonical: "Domica", variants: [] },
-        { canonical: "Domica Labs", variants: ["domekin"] },
-      ],
+      entries: [{ canonical: "Domica", variants: ["domekin"] }],
     });
     expect(raw.prompt_terms).toBeUndefined();
     expect(raw.aliases).toBeUndefined();
     expect(typeof raw.updated_at).toBe("string");
     expect(existsSync(`${vocabPath}.lock`)).toBe(false);
+  });
+
+  it("keeps distinct non-Latin variants from colliding through an empty key", () => {
+    addAlias({ from: "שלום", to: "Greeting" }, { path: vocabPath });
+    const result = addAlias({ from: "עולם", to: "World" }, { path: vocabPath });
+    expect(result.changed).toBe(true);
+    expect(result.entries).toEqual([
+      { canonical: "Greeting", variants: ["שלום"] },
+      { canonical: "World", variants: ["עולם"] },
+    ]);
   });
 
   it("adds prompt terms with case-insensitive dedupe while preserving existing casing", () => {
@@ -129,13 +136,33 @@ describe("stt-vocabulary-store", () => {
     expect(updated.entries).toEqual([{ canonical: "Domica", variants: [] }]);
   });
 
-  it("ignores variants that normalize to the same alias key as their canonical", () => {
+  it("keeps punctuation and split forms distinct from their canonical", () => {
     const updated = addAlias(
       { from: "React.js", to: "ReactJS" },
       { path: vocabPath },
     );
 
-    expect(updated.entries).toEqual([{ canonical: "ReactJS", variants: [] }]);
+    expect(updated.entries).toEqual([{ canonical: "ReactJS", variants: ["React.js"] }]);
+    addAlias({ from: "Cant Aloupe", to: "Cantaloupe AI" }, { path: vocabPath });
+    const split = addAlias({ from: "Cant Aloupe AI", to: "Cantaloupe AI" }, { path: vocabPath });
+    expect(split.entries).toContainEqual({ canonical: "Cantaloupe AI", variants: ["Cant Aloupe", "Cant Aloupe AI"] });
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual(split.entries);
+    const aliases = Object.fromEntries(vocabularyAliasesFromEntries(split.entries).map(({ from, to }) => [from, to]));
+    expect(applyRules("Cant Aloupe AI.", { aliases })).toBe("Cantaloupe AI.");
+  });
+
+  it("warns without changing the store when a variant has the same surface as its term", () => {
+    addAlias({ from: "Cant Aloupe", to: "Cantaloupe AI" }, { path: vocabPath });
+    const redundant = addAlias({ from: "  cantaloupe   ai ", to: "Cantaloupe AI" }, { path: vocabPath });
+    expect(redundant.changed).toBe(false);
+    expect(redundant.warnings).toContainEqual({ code: "same_as_canonical", canonical: "Cantaloupe AI", existing: "Cantaloupe AI" });
+    expect(redundant.entries).toEqual([{ canonical: "Cantaloupe AI", variants: ["Cant Aloupe"] }]);
+  });
+
+  it("removes one surface variant without removing another with the same alias key", () => {
+    writeFileSync(vocabPath, JSON.stringify({ entries: [{ canonical: "SongScript", variants: ["song strip", "song-strip"] }] }));
+    const updated = removeAlias("song strip", { path: vocabPath });
+    expect(updated.entries).toEqual([{ canonical: "SongScript", variants: ["song-strip"] }]);
   });
 
   it("rejects variants that normalize to an existing canonical term", () => {

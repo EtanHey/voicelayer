@@ -2618,6 +2618,7 @@ public struct SettingsView: View {
     }
 
     private func saveTermSheet(_ edit: DictionaryTermEdit) {
+        guard edit.variantWarning(in: localEntries) == nil else { return }
         let entriesBefore = localEntries
         let saved = SettingsDictionaryMutations.apply(
             edit,
@@ -2727,6 +2728,8 @@ enum SettingsDictionaryMutations {
     ) -> String? {
         let correct = edit.trimmedCorrect
         guard !correct.isEmpty else { return nil }
+        // Reject the whole edit before removing any old spelling.
+        guard edit.variantWarning(in: localEntries) == nil else { return nil }
         var canonical = correct
         if let original = edit.original {
             canonical = original.canonical
@@ -2741,8 +2744,7 @@ enum SettingsDictionaryMutations {
                            onAddVocabularyAlias: onAddVocabularyAlias)
             }
         } else if !localEntries.contains(where: { sameCanonical($0.canonical, correct) }) {
-            // A new term is always persisted as a term, even when its misheard spelling is dropped below
-            // (equal to it by alias key), or it would vanish on the next reload (#144 CodeRabbit).
+            // Persist a new term before adding its distinct misheard spelling.
             var newTermText = correct
             commitNewTerm(newTermText: &newTermText, localEntries: &localEntries, onAddPromptTerm: onAddPromptTerm)
         }
@@ -2846,8 +2848,8 @@ enum SettingsDictionaryMutations {
         // Same case-insensitive match as upsertEntry, so "swiftui" lands on an existing "SwiftUI".
         guard let index = localEntries.firstIndex(where: { sameCanonical($0.canonical, canonical) }) else { return }
         let existingCanonical = localEntries[index].canonical
-        guard aliasKey(trimmed) != aliasKey(existingCanonical) else { return }
-        if !localEntries[index].variants.contains(where: { aliasKey($0) == aliasKey(trimmed) }) {
+        guard !DictionaryTermEdit.sameTerm(trimmed, existingCanonical) else { return }
+        if !localEntries[index].variants.contains(where: { DictionaryTermEdit.sameTerm($0, trimmed) }) {
             localEntries[index].variants.append(trimmed)
             onAddVocabularyAlias(existingCanonical, trimmed)
         }
@@ -2871,17 +2873,6 @@ enum SettingsDictionaryMutations {
 
     private static func sameCanonical(_ lhs: String, _ rhs: String) -> Bool {
         DictionaryTermEdit.sameTerm(lhs, rhs)
-    }
-
-    private static func aliasKey(_ value: String) -> String {
-        value.lowercased().unicodeScalars.reduce(into: "") { result, scalar in
-            switch scalar.value {
-            case 48 ... 57, 97 ... 122:
-                result.unicodeScalars.append(scalar)
-            default:
-                break
-            }
-        }
     }
 }
 

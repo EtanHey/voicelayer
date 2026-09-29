@@ -186,7 +186,6 @@ public struct STTVocabularyPreview: Codable, Equatable, Sendable {
     private struct EntryAccumulator {
         private(set) var entries: [STTDictionaryEntry] = []
         private var canonicalIndexes: [String: Int] = [:]
-        private var variantKeys: [Set<String>] = []
 
         mutating func upsertEntry(canonical: String) {
             _ = index(for: canonical)
@@ -195,9 +194,9 @@ public struct STTVocabularyPreview: Codable, Equatable, Sendable {
         mutating func upsertVariant(_ variant: String, canonical: String) {
             let trimmedVariant = variant.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedVariant.isEmpty, let entryIndex = index(for: canonical) else { return }
-            let key = aliasKey(trimmedVariant)
-            guard key != aliasKey(entries[entryIndex].canonical) else { return }
-            guard variantKeys[entryIndex].insert(key).inserted else { return }
+            guard !DictionaryTermEdit.sameTerm(trimmedVariant, entries[entryIndex].canonical) else { return }
+            guard !entries[entryIndex].variants.contains(where: { DictionaryTermEdit.sameTerm($0, trimmedVariant) })
+            else { return }
             entries[entryIndex].variants.append(trimmedVariant)
         }
 
@@ -211,7 +210,6 @@ public struct STTVocabularyPreview: Codable, Equatable, Sendable {
             let index = entries.count
             entries.append(STTDictionaryEntry(canonical: trimmed, variants: []))
             canonicalIndexes[key] = index
-            variantKeys.append([])
             return index
         }
 
@@ -380,12 +378,6 @@ public extension STTVocabularyPreview {
     }
 }
 
-private func aliasKey(_ value: String) -> String {
-    value
-        .lowercased()
-        .filter { ($0.isASCII && $0.isLetter) || $0.isNumber }
-}
-
 /// One Add/Edit sheet for a Dictionary term (Etan's 2.2.24 review #3: no inline box, no "+ misheard as…" row
 /// under every term). `original` is nil when adding.
 public struct DictionaryTermEdit: Equatable, Identifiable {
@@ -451,6 +443,41 @@ public struct DictionaryTermEdit: Equatable, Identifiable {
 
     public var canSave: Bool {
         !trimmedCorrect.isEmpty
+    }
+
+    /// Surface equality is the rewrite identity rule. A spelling that differs
+    /// by a space or punctuation can still change the transcription.
+    public func variantWarning(in entries: [STTDictionaryEntry]) -> String? {
+        guard !trimmedWrong.isEmpty else { return nil }
+        let canonical = entries.first(where: { Self.sameTerm($0.canonical, trimmedCorrect) })?
+            .canonical ?? trimmedCorrect
+        if Self.sameTerm(trimmedWrong, canonical) { return "Already the same as the term" }
+        let existing = entries.first(where: { Self.sameTerm($0.canonical, canonical) })?.variants ?? []
+        if (existing + keptVariants)
+            .contains(where: { Self.sameTerm($0, trimmedWrong) && !removedVariants.contains($0) }) {
+            return "Already listed as a misheard spelling"
+        }
+        if let term = entries.first(where: { entry in
+            if Self.sameTerm(entry.canonical, canonical) { return false }
+            if let original, Self.sameTerm(entry.canonical, original.canonical) { return false }
+            return Self.collisionKey(entry.canonical) == Self.collisionKey(trimmedWrong)
+        }) {
+            return "Already a term: \(term.canonical)"
+        }
+        if let owner = entries.first(where: { entry in
+            if Self.sameTerm(entry.canonical, canonical) { return false }
+            if let original, Self.sameTerm(entry.canonical, original.canonical) { return false }
+            return entry.variants.contains(where: { Self.collisionKey($0) == Self.collisionKey(trimmedWrong) })
+        }) {
+            return "Already a misheard spelling of \(owner.canonical)"
+        }
+        return nil
+    }
+
+    private static func collisionKey(_ value: String) -> String {
+        value.lowercased().unicodeScalars.reduce(into: "") { result, scalar in
+            if CharacterSet.alphanumerics.contains(scalar) { result.unicodeScalars.append(scalar) }
+        }
     }
 }
 

@@ -48,13 +48,81 @@ final class DictionaryTermSheetTests: XCTestCase {
 
     /// #144 CodeRabbit (Major): a new term whose misheard spelling equals it by alias key ("voice layer" for
     /// VoiceLayer) used to be added only locally; no daemon call ran, so it vanished on the next reload.
-    func testANewTermIsPersistedEvenWhenItsMisheardSpellingIsDropped() {
+    func testANewTermPersistsItsDistinctSplitSpelling() {
         var entries: [STTDictionaryEntry] = []
         let (result, calls) = apply(DictionaryTermEdit(correct: "VoiceLayer", wrong: "voice layer"), to: &entries)
 
         XCTAssertEqual(result, "VoiceLayer")
         XCTAssertEqual(calls.addedTerms, ["VoiceLayer"])
-        XCTAssertEqual(calls.addedAliases, [])
+        XCTAssertEqual(calls.addedAliases, ["voice layer→VoiceLayer"])
+        XCTAssertEqual(entries, [STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice layer"])])
+    }
+
+    func testReplacingOnlyVariantWithSplitSpellingKeepsTheReplacement() {
+        let original = STTDictionaryEntry(canonical: "Cantaloupe AI", variants: ["Cant Aloupe"])
+        var entries = [original]
+        var edit = DictionaryTermEdit(original: original, wrong: "Cant Aloupe AI")
+        edit.removedVariants = ["Cant Aloupe"]
+        let (result, calls) = apply(edit, to: &entries)
+        XCTAssertEqual(result, "Cantaloupe AI")
+        XCTAssertEqual(entries, [STTDictionaryEntry(canonical: "Cantaloupe AI", variants: ["Cant Aloupe AI"])])
+        XCTAssertEqual(calls.removedAliases, ["Cant Aloupe→Cantaloupe AI"])
+        XCTAssertEqual(calls.addedAliases, ["Cant Aloupe AI→Cantaloupe AI"])
+    }
+
+    func testIdenticalSpellingWarnsAndDoesNotDeleteExistingVariant() {
+        let original = STTDictionaryEntry(canonical: "Cantaloupe AI", variants: ["Cant Aloupe"])
+        var entries = [original]
+        var edit = DictionaryTermEdit(original: original, wrong: " cantaloupe   ai ")
+        edit.removedVariants = ["Cant Aloupe"]
+        XCTAssertEqual(edit.variantWarning(in: entries), "Already the same as the term")
+        let (result, calls) = apply(edit, to: &entries)
+        XCTAssertNil(result)
+        XCTAssertEqual(entries, [original])
+        XCTAssertTrue(calls.removedAliases.isEmpty && calls.addedAliases.isEmpty)
+    }
+
+    func testCrossEntryCollisionWarnsBeforeRemovingAReplacement() {
+        let original = STTDictionaryEntry(canonical: "Domica Labs", variants: ["dome labs"])
+        var entries = [STTDictionaryEntry(canonical: "Domica", variants: ["domekin"]), original]
+        var edit = DictionaryTermEdit(original: original, wrong: "dome-kin")
+        edit.removedVariants = ["dome labs"]
+        XCTAssertEqual(edit.variantWarning(in: entries), "Already a misheard spelling of Domica")
+        let (result, calls) = apply(edit, to: &entries)
+        XCTAssertNil(result)
+        XCTAssertEqual(entries.last, original)
+        XCTAssertTrue(calls.removedAliases.isEmpty)
+    }
+
+    func testOtherCanonicalCollisionWarnsBeforeRemovingAReplacement() {
+        let original = STTDictionaryEntry(canonical: "VoiceBar", variants: ["voice bahr"])
+        var entries = [STTDictionaryEntry(canonical: "VoiceLayer", variants: []), original]
+        var edit = DictionaryTermEdit(original: original, wrong: "voice layer")
+        edit.removedVariants = ["voice bahr"]
+        XCTAssertEqual(edit.variantWarning(in: entries), "Already a term: VoiceLayer")
+        let (result, calls) = apply(edit, to: &entries)
+        XCTAssertNil(result)
+        XCTAssertEqual(entries.last, original)
+        XCTAssertTrue(calls.removedAliases.isEmpty)
+    }
+
+    func testDistinctNonLatinVariantsDoNotCollide() {
+        let entries = [STTDictionaryEntry(canonical: "Greeting", variants: ["שלום"])]
+        let edit = DictionaryTermEdit(correct: "World", wrong: "עולם")
+        XCTAssertNil(edit.variantWarning(in: entries))
+    }
+
+    func testRenamedTermChecksRedundantSpellingAgainstNewName() {
+        let original = STTDictionaryEntry(canonical: "Cantaloupe", variants: ["Cant Aloupe"])
+        var entries = [original]
+        var edit = DictionaryTermEdit(original: original, wrong: "cantaloupe   ai")
+        edit.correct = "Cantaloupe AI"
+        edit.removedVariants = ["Cant Aloupe"]
+        XCTAssertEqual(edit.variantWarning(in: entries), "Already the same as the term")
+        let (result, calls) = apply(edit, to: &entries)
+        XCTAssertNil(result)
+        XCTAssertEqual(entries, [original])
+        XCTAssertTrue(calls.removedAliases.isEmpty)
     }
 
     func testAddingAMisheardSpellingToAnExistingTermLandsOnItCaseInsensitively() {
