@@ -79,6 +79,29 @@ describe("socket vocabulary commands", () => {
     });
   });
 
+  it("rejects a redundant spelling with a reason instead of acknowledging a silent drop", () => {
+    addAlias({ from: "Cant Aloupe", to: "Cantaloupe AI" }, { path: vocabPath });
+    expect(handleSocketCommand({
+      cmd: "vocab_add", id: "vocab-add-same", from: "cantaloupe   ai", to: "Cantaloupe AI",
+    })).toEqual({
+      type: "ack", command: "vocab_add", outcome: "reject", id: "vocab-add-same",
+      reason: "Already the same as the term",
+    });
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "Cantaloupe AI", variants: ["Cant Aloupe"] },
+    ]);
+  });
+
+  it("rejects a spelling already owned by another term without moving it", () => {
+    addAlias({ from: "domekin", to: "Domica" }, { path: vocabPath });
+    expect(handleSocketCommand({
+      cmd: "vocab_add", id: "vocab-cross-entry", from: "dome-kin", to: "Domica Labs",
+    })).toMatchObject({ outcome: "reject", reason: "dome-kin is already a variant of Domica" });
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "Domica", variants: ["domekin"] },
+    ]);
+  });
+
   it("rejects aliases that collide with an existing canonical and explains why", () => {
     addPromptTerm("VoiceLayer", { path: vocabPath });
 

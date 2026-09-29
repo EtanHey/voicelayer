@@ -90,6 +90,31 @@ describe("voicelayer vocab CLI", () => {
     ]);
   });
 
+  it("reports rejected variants across every add path instead of claiming success", async () => {
+    await runVocabularyCli(
+      ["add", "--term", "Domica", "--variant", "domekin"],
+      { env, stdout: () => {}, stderr: () => {} },
+    );
+    const commands: Array<[string[], string]> = [
+      [["add-variant", "--term", "Domica Labs", "--variant", "dome-kin"], "Already a misheard spelling of Domica"],
+      [["add", "--wrong", "dome-kin", "--right", "Domica Labs"], "Already a misheard spelling of Domica"],
+      [["add", "--term", "Domica Labs", "--variant", "dome-kin"], "Already a misheard spelling of Domica"],
+      [["add-variant", "--term", "Cantaloupe AI", "--variant", "cantaloupe   ai"], "Already the same as the term"],
+    ];
+    for (const [command, reason] of commands) {
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const code = await runVocabularyCli(command, {
+        env, stdout: (line) => stdout.push(line), stderr: (line) => stderr.push(line),
+      });
+      expect(code).toBe(1);
+      expect(stdout.join("")).not.toContain("Added");
+      expect(stderr.join("")).toContain(reason);
+    }
+    expect(listVocabulary({ path: vocabPath }).entries.find((entry) => entry.canonical === "Domica")?.variants)
+      .toEqual(["domekin"]);
+  });
+
   it("returns a usage error when required flags are missing", async () => {
     const stderr: string[] = [];
     const code = await runVocabularyCli(["add-variant", "--term", "Domica"], {

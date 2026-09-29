@@ -66,7 +66,7 @@ export interface STTVocabularySnapshot {
 }
 
 export interface STTVocabularyWarning {
-  code: "near_duplicate_canonical" | "dictionary_alias_collision";
+  code: "near_duplicate_canonical" | "dictionary_alias_collision" | "dictionary_variant_collision" | "same_as_canonical" | "duplicate_variant";
   canonical: string;
   existing: string;
 }
@@ -154,8 +154,29 @@ export function addAlias(
     if (collision) {
       return withWarnings({ ...snapshot, changed: false }, [collision]);
     }
+    const ownEntry = snapshot.entries.find((entry) => sameSurface(entry.canonical, normalized.to));
+    if (sameSurface(normalized.from, ownEntry?.canonical ?? normalized.to)) {
+      return withWarnings({ ...snapshot, changed: false }, [{
+        code: "same_as_canonical", canonical: normalized.to, existing: ownEntry?.canonical ?? normalized.to,
+      }]);
+    }
+    const existingVariant = ownEntry?.variants.find((variant) => sameSurface(variant, normalized.from));
+    if (existingVariant) {
+      return withWarnings({ ...snapshot, changed: false }, [{
+        code: "duplicate_variant", canonical: normalized.to, existing: existingVariant,
+      }]);
+    }
+    const otherOwner = snapshot.entries.find((entry) =>
+      !sameSurface(entry.canonical, normalized.to) &&
+      entry.variants.some((variant) => aliasKey(variant) === aliasKey(normalized.from)),
+    );
+    if (otherOwner) {
+      return withWarnings({ ...snapshot, changed: false }, [{
+        code: "dictionary_variant_collision", canonical: normalized.to, existing: otherOwner.canonical,
+      }]);
+    }
     const warnings = nearDuplicateWarnings(snapshot.entries, normalized.to);
-    upsertEntryVariant(snapshot.entries, normalized.to, normalized.from);
+    upsertEntryVariant(snapshot.entries, ownEntry?.canonical ?? normalized.to, normalized.from);
     return withWarnings(
       writeSnapshot(path, stampSnapshot(snapshot, options), true),
       warnings,
@@ -179,7 +200,8 @@ export function addPromptTerm(
       return withWarnings({ ...snapshot, changed: false }, [collision]);
     }
     const warnings = nearDuplicateWarnings(snapshot.entries, normalized);
-    upsertEntry(snapshot.entries, normalized);
+    const storedCanonical = snapshot.entries.find((entry) => sameSurface(entry.canonical, normalized))?.canonical;
+    upsertEntry(snapshot.entries, storedCanonical ?? normalized);
     return withWarnings(
       writeSnapshot(path, stampSnapshot(snapshot, options), true),
       warnings,
@@ -218,11 +240,10 @@ export function removeAlias(
   const path = getSTTVocabularyPath(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
-    const normalizedKey = aliasKey(normalizedFrom);
     let removed = false;
     for (const entry of snapshot.entries) {
       const nextVariants = entry.variants.filter(
-        (variant) => aliasKey(variant) !== normalizedKey,
+        (variant) => !sameSurface(variant, normalizedFrom),
       );
       if (nextVariants.length !== entry.variants.length) {
         removed = true;
@@ -346,23 +367,8 @@ function upsertEntryVariant(
   );
   if (!entry) return;
 
-  const variantKey = aliasKey(variant);
-  if (variantKey === aliasKey(entry.canonical)) return;
-
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const candidate = entries[index];
-    const existingVariant = candidate.variants.find(
-      (item) => aliasKey(item) === variantKey,
-    );
-    if (!existingVariant) continue;
-    candidate.variants = candidate.variants.filter(
-      (item) => aliasKey(item) !== variantKey,
-    );
-    if (!entry.variants.some((item) => aliasKey(item) === variantKey)) {
-      entry.variants.push(existingVariant);
-    }
-    return;
-  }
+  if (sameSurface(variant, entry.canonical)) return;
+  if (entry.variants.some((item) => sameSurface(item, variant))) return;
   entry.variants.push(variant);
 }
 
@@ -376,18 +382,27 @@ function appendEntryVariant(
     (candidate) => candidate.canonical.toLowerCase() === canonical.toLowerCase(),
   );
   if (!entry) return;
-  if (aliasKey(variant) === aliasKey(entry.canonical)) return;
-  if (entry.variants.includes(variant)) return;
+  if (sameSurface(variant, entry.canonical)) return;
+  if (entry.variants.some((item) => sameSurface(item, variant))) return;
   entry.variants.push(variant);
 }
 
 export function vocabularyAliasesFromEntries(
   entries: readonly STTDictionaryEntry[],
 ): STTVocabularyAlias[] {
-  const canonicalKeys = new Set(entries.map((entry) => aliasKey(entry.canonical)));
+  const canonicalKeyCounts = new Map<string, number>();
+  for (const entry of entries) {
+    const key = aliasKey(entry.canonical);
+    canonicalKeyCounts.set(key, (canonicalKeyCounts.get(key) ?? 0) + 1);
+  }
   return entries.flatMap((entry) =>
     entry.variants
-      .filter((variant) => !canonicalKeys.has(aliasKey(variant)))
+      .filter((variant) => {
+        if (sameSurface(entry.canonical, variant)) return false;
+        const key = aliasKey(variant);
+        return !canonicalKeyCounts.has(key) ||
+          (key === aliasKey(entry.canonical) && canonicalKeyCounts.get(key) === 1);
+      })
       .map((variant) => ({
         from: variant,
         to: entry.canonical,
@@ -402,7 +417,12 @@ export function canonicalTermsFromEntries(
 }
 
 export function aliasKey(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function sameSurface(left: string, right: string): boolean {
+  const normalize = (value: string) => value.trim().replace(/\s+/gu, " ").toLowerCase();
+  return normalize(left) === normalize(right);
 }
 
 export function sameOrNearDuplicate(left: string, right: string): boolean {
@@ -421,7 +441,7 @@ function nearDuplicateWarnings(
 ): STTVocabularyWarning[] {
   const existing = entries.find(
     (entry) =>
-      entry.canonical.toLowerCase() !== canonical.toLowerCase() &&
+      !sameSurface(entry.canonical, canonical) &&
       sameOrNearDuplicate(entry.canonical, canonical),
   );
   return existing
@@ -444,7 +464,7 @@ function canonicalAliasCollisionWarning(
   const existing = entries.find(
     (entry) =>
       aliasKey(entry.canonical) === variantKey &&
-      entry.canonical.toLowerCase() !== canonical.toLowerCase(),
+      !sameSurface(entry.canonical, canonical),
   );
   return existing
     ? {
@@ -461,6 +481,7 @@ function variantAliasCollisionWarning(
 ): STTVocabularyWarning | null {
   const canonicalKey = aliasKey(canonical);
   const existing = entries.find((entry) =>
+    !sameSurface(entry.canonical, canonical) &&
     entry.variants.some((variant) => aliasKey(variant) === canonicalKey),
   );
   return existing

@@ -2,6 +2,16 @@
 import XCTest
 
 final class STTVocabularyPreviewSearchTests: XCTestCase {
+    func testExistingStoreEntriesKeepSplitAndPunctuationVariants() throws {
+        let data = Data("""
+        {"entries":[{"canonical":"Cantaloupe AI","variants":["Cant Aloupe AI","Cantaloupe-AI"]}]}
+        """.utf8)
+        let preview = try JSONDecoder().decode(STTVocabularyPreview.self, from: data)
+        XCTAssertEqual(preview.entries, [STTDictionaryEntry(
+            canonical: "Cantaloupe AI", variants: ["Cant Aloupe AI", "Cantaloupe-AI"]
+        )])
+    }
+
     func testSourceQualifiedRowsKeepSameNameSeparateAndBoundSearch() {
         let state = VoiceState()
         state.handleEvent([
@@ -93,7 +103,7 @@ final class STTVocabularyPreviewSearchTests: XCTestCase {
         XCTAssertEqual(tailSearch.entries.map(\.canonical), ["Term 4095"])
     }
 
-    func testIndexedMergePreservesFirstCanonicalAndVariantSemantics() {
+    func testIndexedMergePreservesFirstCanonicalAndDistinctSurfaceVariants() {
         let preview = STTVocabularyPreview(
             updatedAt: nil,
             promptTerms: [" VoiceLayer ", "voicelayer", "La La"],
@@ -107,8 +117,8 @@ final class STTVocabularyPreviewSearchTests: XCTestCase {
         XCTAssertEqual(
             preview.entries,
             [
-                STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"]),
-                STTDictionaryEntry(canonical: "La La", variants: []),
+                STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair", "Voice-Lair"]),
+                STTDictionaryEntry(canonical: "La La", variants: ["la-la"]),
             ]
         )
     }

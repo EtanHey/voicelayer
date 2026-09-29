@@ -1222,39 +1222,46 @@ function applyAliases(
   const prefixKey = [...hebrewLatinAliasSources].sort().join("\0");
   let cached = ALIAS_PATTERN_CACHE.get(aliases);
   if (!cached || cached.prefixKey !== prefixKey) {
-    const patterns: AliasPattern[] = Object.entries(aliases).map(([from, to]) => {
-      // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
-      const escaped = escapeRegex(from);
-      const isHebrewToLatin = hebrewLatinAliasSources.has(from) &&
-        /\p{Script=Hebrew}/u.test(from) &&
-        /\p{Script=Latin}/u.test(to);
-      const sourceWords = aliasWordCount(from);
-      const targetWords = aliasWordCount(to);
-      const prefixMode = isHebrewToLatin && sourceWords === targetWords
-        ? "attached-prefix"
-        : isHebrewToLatin && sourceWords === targetWords + 1
-          ? "separate-prefix"
-          : "plain";
-      const source = prefixMode === "attached-prefix"
-        ? `(${HEBREW_PROCLITIC})?${escaped}`
-        : prefixMode === "separate-prefix"
-          ? `(${HEBREW_PROCLITIC})${escaped}`
-          : escaped;
-      return [
-        from.toLowerCase(),
-        new RegExp(
-          `(?<=^|\\s|[^\\p{L}])${source}(?=$|\\s|[^\\p{L}])`,
-          "giu",
-        ),
-        to,
-        prefixMode,
-      ];
-    });
+    // A shorter spelling can be a prefix of a fuller mishearing. Rewrite the
+    // fuller spoken form first so it cannot leave a duplicate trailing word.
+    const patterns: AliasPattern[] = Object.entries(aliases)
+      .sort(([left], [right]) => right.length - left.length)
+      .map(([from, to]) => {
+        // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
+        const escaped = escapeRegex(from);
+        const isHebrewToLatin = hebrewLatinAliasSources.has(from) &&
+          /\p{Script=Hebrew}/u.test(from) &&
+          /\p{Script=Latin}/u.test(to);
+        const sourceWords = aliasWordCount(from);
+        const targetWords = aliasWordCount(to);
+        const prefixMode = isHebrewToLatin && sourceWords === targetWords
+          ? "attached-prefix"
+          : isHebrewToLatin && sourceWords === targetWords + 1
+            ? "separate-prefix"
+            : "plain";
+        const source = prefixMode === "attached-prefix"
+          ? `(${HEBREW_PROCLITIC})?${escaped}`
+          : prefixMode === "separate-prefix"
+            ? `(${HEBREW_PROCLITIC})${escaped}`
+            : escaped;
+        return [
+          from.toLowerCase(),
+          new RegExp(
+            `(?<=^|\\s|[^\\p{L}])${source}(?=$|\\s|[^\\p{L}])`,
+            "giu",
+          ),
+          to,
+          prefixMode,
+        ];
+      });
     cached = { prefixKey, patterns };
     ALIAS_PATTERN_CACHE.set(aliases, cached);
   }
 
   const lowerResult = result.toLowerCase();
+  // Once a spoken span has been rewritten, later (shorter) aliases must not
+  // rewrite words in its replacement. Offsets refer to the current result.
+  const rewrittenSpans: Array<[number, number]> = [];
   for (const [fromLower, pattern, to, prefixMode] of cached.patterns) {
     if (!lowerResult.includes(fromLower)) continue;
     // Gate on what the speaker said as well as the rewritten text: an
@@ -1264,12 +1271,29 @@ function applyAliases(
       !shouldApplyAlias(fromLower, text) &&
       !shouldApplyAlias(fromLower, result)
     ) continue;
-    result = result.replace(pattern, (_match, prefix?: string) => {
-      if (!prefix || prefixMode === "plain") return to;
-      return prefixMode === "separate-prefix"
-        ? `${prefix} ${to}`
-        : `${prefix}-${to}`;
-    });
+    pattern.lastIndex = 0;
+    const matches = [...result.matchAll(pattern)];
+    for (let index = matches.length - 1; index >= 0; index--) {
+      const match = matches[index];
+      const start = match.index;
+      const end = start + match[0].length;
+      if (rewrittenSpans.some(([left, right]) => start < right && end > left)) continue;
+      const prefix = match[1];
+      const replacement = !prefix || prefixMode === "plain"
+        ? to
+        : prefixMode === "separate-prefix"
+          ? `${prefix} ${to}`
+          : `${prefix}-${to}`;
+      result = result.slice(0, start) + replacement + result.slice(end);
+      const shift = replacement.length - (end - start);
+      for (const span of rewrittenSpans) {
+        if (span[0] >= end) {
+          span[0] += shift;
+          span[1] += shift;
+        }
+      }
+      rewrittenSpans.push([start, start + replacement.length]);
+    }
   }
   return result;
 }

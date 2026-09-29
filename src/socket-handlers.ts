@@ -636,6 +636,16 @@ function vocabularyCollisionReason(
   submitted: string,
   mode: "alias" | "term",
 ): string | null {
+  if (mode === "alias") {
+    if (warnings?.some((warning) => warning.code === "same_as_canonical")) {
+      return "Already the same as the term";
+    }
+    if (warnings?.some((warning) => warning.code === "duplicate_variant")) {
+      return "Already listed as a misheard spelling";
+    }
+    const variantOwner = warnings?.find((warning) => warning.code === "dictionary_variant_collision");
+    if (variantOwner) return `${submitted.trim()} is already a variant of ${variantOwner.existing}`;
+  }
   const collision = warnings?.find(
     (warning) => warning.code === "dictionary_alias_collision",
   );
