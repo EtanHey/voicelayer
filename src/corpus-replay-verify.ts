@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -17,6 +18,25 @@ import { fileURLToPath } from "url";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
 import { normalizeOutroKey } from "./stt-outro-gate";
+
+export interface PrivateCaptionExpectation {
+  forbidden: string[];
+  preservedSha256: string;
+}
+
+export function assertPrivateCaptionExpectation(
+  actual: string,
+  expected: PrivateCaptionExpectation,
+  specimenNumber: number,
+): void {
+  const normalized = normalizeOutroKey(actual);
+  if (expected.forbidden.some((phrase) => normalized.includes(normalizeOutroKey(phrase)))) {
+    throw new Error(`corpus specimen ${specimenNumber} retained a forbidden caption`);
+  }
+  if (createHash("sha256").update(normalized).digest("hex") !== expected.preservedSha256) {
+    throw new Error(`corpus specimen ${specimenNumber} lost expected preserved words`);
+  }
+}
 
 const LIVE_VOICEBAR_SOCKET = "/tmp/voicelayer.sock";
 const LIVE_MCP_SOCKET = "/tmp/voicelayer-mcp.sock";
@@ -816,12 +836,14 @@ async function runCorpusReplay(options: {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("invalid private corpus expectations shape");
   }
-  const forbiddenById = parsed as Record<string, string[]>;
-  for (const [id, phrases] of Object.entries(forbiddenById)) {
+  const expectationsById = parsed as Record<string, PrivateCaptionExpectation>;
+  for (const [id, expected] of Object.entries(expectationsById)) {
     if (!selected.some((specimen) => specimen.id === id) ||
-        !Array.isArray(phrases) ||
-        phrases.length === 0 ||
-        phrases.some((phrase) => typeof phrase !== "string" || phrase.trim() === "")) {
+        !expected || typeof expected !== "object" || Array.isArray(expected) ||
+        !Array.isArray(expected.forbidden) || expected.forbidden.length === 0 ||
+        expected.forbidden.some((phrase) => typeof phrase !== "string" || normalizeOutroKey(phrase) === "") ||
+        typeof expected.preservedSha256 !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(expected.preservedSha256)) {
       throw new Error("invalid private corpus expectation");
     }
   }
@@ -933,13 +955,12 @@ async function runCorpusReplay(options: {
             ? transcription.polish_reason
             : undefined,
       });
-      const actualText = typeof transcription.text === "string" ? transcription.text : "";
-      const normalizedActual = normalizeOutroKey(actualText);
-      if (forbiddenById[specimen.id]?.some((phrase) =>
-        normalizeOutroKey(phrase) !== "" && normalizedActual.includes(normalizeOutroKey(phrase))
-      )) {
-        throw new Error(`corpus specimen ${index + 1} retained a forbidden caption`);
-      }
+      const expected = expectationsById[specimen.id];
+      if (expected) assertPrivateCaptionExpectation(
+        typeof transcription.text === "string" ? transcription.text : "",
+        expected,
+        index + 1,
+      );
       console.log(
         `[corpus-replay] ${index + 1}/${staged.length} ` +
           `${specimen.id}: ${String(transcription.polish_status)}`,

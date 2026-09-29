@@ -9,25 +9,24 @@ import { measureSpan, measureWavWindows, normalizeOutroKey, SPEECH_LEVEL_GUARD_D
 import type { TranscriptSegment } from "./stt-sentence-boundaries";
 
 const CAPTION_PREFIXES = [
-  { key: "the american pronunciation guide presents", class: "american-pronunciation-guide" },
-  { key: "how to pronounce", class: "how-to-pronounce" },
-  { key: "subtitles by the amara org community", class: "amara-subtitles" },
-  { key: "thanks for watching", class: "thanks-for-watching" },
-  { key: "please subscribe", class: "please-subscribe" },
-  { key: "transcribed by", class: "transcribed-by" },
-  { key: "subtitles by rev com", class: "rev-subtitles" },
+  { key: "the american pronunciation guide presents", class: "american-pronunciation-guide", extraWords: 6 },
+  { key: "how to pronounce", class: "how-to-pronounce", extraWords: 4 },
+  { key: "subtitles by the amara org community", class: "amara-subtitles", extraWords: 0 },
+  { key: "thanks for watching", class: "thanks-for-watching", extraWords: 0 },
+  { key: "please subscribe", class: "please-subscribe", extraWords: 0 },
+  { key: "transcribed by", class: "transcribed-by", extraWords: 3 },
+  { key: "subtitles by rev com", class: "rev-subtitles", extraWords: 0 },
 ] as const;
 
-/** One 32 ms VAD-positive blip is tolerated; two may already be a spoken word. */
+/** The pinned caption has one blip; two may be a word. Both VAD states must agree. */
 const MAX_SPEECH_CHUNKS = 1;
-/** Require measurable audio under the claimed span; no extrapolation from timestamps alone. */
+/** Eight chunks fit inside the pinned ten; never extrapolate from timestamps alone. */
 const MIN_OBSERVED_CHUNKS = 8;
 /** Keep captions within a short trailing run, not a long untrusted continuation. */
 const MAX_TRAILING_SEGMENTS = 3;
 const MAX_TRAILING_SECONDS = 8;
-const MAX_TRAILING_WORDS = 20;
 const CLEAR_BEFORE_SECONDS = 0.3;
-/** Whisper can timestamp the caption beyond EOF; the pinned case exceeds EOF by 4.69 s. */
+/** Whisper can timestamp beyond EOF; 5 s bounds the pinned 4.69 s overrun. */
 const MAX_TIMESTAMP_OVERRUN_SECONDS = 5;
 
 export interface CaptionGateOptions {
@@ -35,6 +34,8 @@ export interface CaptionGateOptions {
   segmentsText?: string;
   /** Deterministic VAD evidence for tests; production computes it from the WAV. */
   speechProbabilities?: number[];
+  /** Test evidence for the independent fresh-state pass. */
+  freshSpeechProbabilities?: number[];
 }
 
 export interface CaptionGateDecision {
@@ -47,12 +48,12 @@ function words(text: string): string[] {
   return normalizeOutroKey(text).split(" ").filter(Boolean);
 }
 
-async function probabilitiesForWav(wav: Uint8Array, dataOffset: number, dataSize: number): Promise<number[]> {
+async function probabilitiesForWav(wav: Uint8Array, dataOffset: number, dataSize: number, fromChunk = 0): Promise<number[]> {
   const chunkBytes = VAD_CHUNK_SAMPLES * 2;
   const count = Math.floor(dataSize / chunkBytes);
   const vad = await createVADSession();
   const probabilities: number[] = [];
-  for (let index = 0; index < count; index++) {
+  for (let index = fromChunk; index < count; index++) {
     const start = dataOffset + index * chunkBytes;
     probabilities.push(await vad.process(wav.subarray(start, start + chunkBytes)));
   }
@@ -88,13 +89,15 @@ export async function stripHallucinatedCaption(
   for (let index = 0; index < segments.length; index++) {
     const run = segments.slice(index);
     const runWords = segmentWords.slice(index).flat();
-    if (run.length > MAX_TRAILING_SEGMENTS || runWords.length > MAX_TRAILING_WORDS ||
+    if (run.length > MAX_TRAILING_SEGMENTS ||
         run[run.length - 1]!.endS - run[0]!.startS > MAX_TRAILING_SECONDS) {
       wordOffset += segmentWords[index]!.length;
       continue;
     }
     const key = runWords.join(" ");
-    const phrase = CAPTION_PREFIXES.find((entry) => key === entry.key || key.startsWith(`${entry.key} `));
+    const phrase = CAPTION_PREFIXES.find((entry) =>
+      runWords.length <= words(entry.key).length + entry.extraWords &&
+      (key === entry.key || key.startsWith(`${entry.key} `)));
     if (phrase) {
       candidate = { index, class: phrase.class, startS: run[0]!.startS,
         endS: run[run.length - 1]!.endS, wordOffset };
@@ -133,6 +136,22 @@ export async function stripHallucinatedCaption(
   const beforeEnd = Math.floor(candidate.startS / chunkSeconds);
   if (probabilities.slice(beforeStart, beforeEnd).some(speech) ||
       probabilities.slice(first, last).filter(speech).length > MAX_SPEECH_CHUNKS) {
+    return untouched("speech-present");
+  }
+  // Whole-file Silero state can miss a quiet real tail after loud speech. A
+  // second state starts at the clearance margin; both must call the tail quiet.
+  const freshFrom = options.speechProbabilities ? 0 : beforeStart;
+  let fresh: number[];
+  try {
+    fresh = options.freshSpeechProbabilities ??
+      (options.speechProbabilities ?? await probabilitiesForWav(wavData, info.dataOffset, info.dataSize, freshFrom));
+  } catch {
+    return untouched("no-audio");
+  }
+  if (fresh.length < count - freshFrom ||
+      fresh.some((value) => !Number.isFinite(value) || value < 0 || value > 1)) return untouched("no-audio");
+  if (fresh.slice(beforeStart - freshFrom, beforeEnd - freshFrom).some(speech) ||
+      fresh.slice(first - freshFrom, last - freshFrom).filter(speech).length > MAX_SPEECH_CHUNKS) {
     return untouched("speech-present");
   }
   // Silero alone can miss very soft speech. Keep the existing outro gate's
