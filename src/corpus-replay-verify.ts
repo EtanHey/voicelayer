@@ -16,6 +16,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
+import { normalizeOutroKey } from "./stt-outro-gate";
 
 const LIVE_VOICEBAR_SOCKET = "/tmp/voicelayer.sock";
 const LIVE_MCP_SOCKET = "/tmp/voicelayer-mcp.sock";
@@ -806,6 +807,24 @@ async function runCorpusReplay(options: {
     options.count,
     pinnedIds,
   );
+  // Optional private assertions accompany local pinned specimens without
+  // putting personal transcript text or recording IDs in the repository.
+  const expectationPath = process.env.VOICELAYER_VERIFY_CORPUS_EXPECTATIONS_PATH?.trim();
+  const parsed: unknown = expectationPath
+    ? JSON.parse(readFileSync(expectationPath, "utf8"))
+    : {};
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("invalid private corpus expectations shape");
+  }
+  const forbiddenById = parsed as Record<string, string[]>;
+  for (const [id, phrases] of Object.entries(forbiddenById)) {
+    if (!selected.some((specimen) => specimen.id === id) ||
+        !Array.isArray(phrases) ||
+        phrases.length === 0 ||
+        phrases.some((phrase) => typeof phrase !== "string" || phrase.trim() === "")) {
+      throw new Error("invalid private corpus expectation");
+    }
+  }
   if (options.manifestPath) {
     console.log(`[corpus-replay] pinned manifest: ${options.manifestPath}`);
   }
@@ -914,6 +933,13 @@ async function runCorpusReplay(options: {
             ? transcription.polish_reason
             : undefined,
       });
+      const actualText = typeof transcription.text === "string" ? transcription.text : "";
+      const normalizedActual = normalizeOutroKey(actualText);
+      if (forbiddenById[specimen.id]?.some((phrase) =>
+        normalizeOutroKey(phrase) !== "" && normalizedActual.includes(normalizeOutroKey(phrase))
+      )) {
+        throw new Error(`corpus specimen ${index + 1} retained a forbidden caption`);
+      }
       console.log(
         `[corpus-replay] ${index + 1}/${staged.length} ` +
           `${specimen.id}: ${String(transcription.polish_status)}`,

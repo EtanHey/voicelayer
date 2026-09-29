@@ -57,7 +57,7 @@ import type { TranscriptSegment } from "./stt-sentence-boundaries";
  * the four: the loudest window inside a silence run sits about +14 dB over its
  * clip's floor, the quietest real speech at least +22 dB. +16 dB splits them.
  */
-const SPEECH_OVER_FLOOR_DB = 16;
+export const SPEECH_OVER_FLOOR_DB = 16;
 
 /**
  * Floor on the relative threshold, for a recording whose measured floor is
@@ -87,7 +87,7 @@ const SPEECH_THRESHOLD_MIN_DBFS = -50;
  * as loud as this speaker's speech". On the RED specimens the invented spans
  * sit 15-30 dB under their clip's speech level, so 6 dB is a wide moat.
  */
-const SPEECH_LEVEL_GUARD_DB = 6;
+export const SPEECH_LEVEL_GUARD_DB = 6;
 
 /** Consecutive over-threshold audio that counts as a word rather than a click. */
 const MIN_SPEECH_RUN_SECONDS = 0.06;
@@ -605,7 +605,7 @@ function containsSustainedSpeech(
  * Mean and peak dBFS across `[startS, endS)`, plus whether it carries a word.
  * Null when the span falls outside the audio entirely.
  */
-function measureSpan(
+export function measureSpan(
   windows: WavWindows,
   startS: number,
   endS: number,
