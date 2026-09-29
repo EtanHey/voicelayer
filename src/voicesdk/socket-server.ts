@@ -1,4 +1,5 @@
 import { existsSync, unlinkSync } from "fs";
+import { NDJSONByteFramer } from "../ndjson-byte-framer";
 import {
   parseVoiceSdkCommand,
   serializeVoiceSdkEvent,
@@ -8,7 +9,7 @@ import {
 import type { VoiceSdkSessionManager } from "./session";
 
 interface VoiceSdkClientState {
-  buffer: string;
+  framer: NDJSONByteFramer;
   queue: Promise<void>;
 }
 
@@ -52,16 +53,14 @@ export function createVoiceSdkSocketServer(
     unix: options.socketPath,
     socket: {
       open(socket) {
-        socket.data = { buffer: "", queue: Promise.resolve() };
+        socket.data = { framer: new NDJSONByteFramer(), queue: Promise.resolve() };
         clients.add({
           writer: options.writerFactory?.(socket) ?? socket,
           bufferedEvents: 0,
         });
       },
       data(socket, raw) {
-        socket.data.buffer += raw.toString("utf-8");
-        const lines = socket.data.buffer.split("\n");
-        socket.data.buffer = lines.pop() ?? "";
+        const { lines, overflow } = socket.data.framer.append(raw);
         for (const line of lines) {
           if (!line.trim()) continue;
           const command = parseVoiceSdkCommand(line);
@@ -71,6 +70,10 @@ export function createVoiceSdkSocketServer(
             .catch((error) => {
               writeError(socket, error);
             });
+        }
+        if (overflow) {
+          console.error("[voicesdk] NDJSON command exceeded byte limit; closing client");
+          socket.end();
         }
       },
       close(socket) {

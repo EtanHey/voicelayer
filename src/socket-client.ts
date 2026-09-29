@@ -18,6 +18,7 @@ import {
   type SocketResponse,
 } from "./socket-protocol";
 import { SOCKET_PATH, getMcpSocketOverridePath } from "./paths";
+import { NDJSONByteFramer } from "./ndjson-byte-framer";
 
 // --- Connection state ---
 
@@ -26,7 +27,6 @@ let connection: ReturnType<typeof Bun.connect> extends Promise<infer T>
   : never;
 let connected = false;
 let intentionallyClosed = false;
-let buffer = "";
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = 1000; // Start at 1s, backoff to 15s max
 const MAX_RECONNECT_DELAY = 15000;
@@ -85,7 +85,6 @@ export function disconnectFromBar(): void {
     connection = null as any;
   }
   connected = false;
-  buffer = "";
   reconnectDelay = 1000;
 }
 
@@ -125,14 +124,19 @@ export function isConnected(): boolean {
 // --- Internal: establish connection ---
 
 function startConnection(): void {
-  Bun.connect<{ buffer: string }>({
+  Bun.connect<{
+    framer: NDJSONByteFramer;
+    pendingResponses: Set<Promise<void>>;
+    overflowed: boolean;
+  }>({
     unix: targetPath,
     socket: {
       open(socket) {
-        socket.data = { buffer: "" };
+        socket.data = {
+          framer: new NDJSONByteFramer(), pendingResponses: new Set(), overflowed: false,
+        };
         connection = socket as any;
         connected = true;
-        buffer = "";
         reconnectDelay = 1000; // Reset backoff on successful connect
         startKeepalive();
         writeClientHello(socket as any);
@@ -140,10 +144,9 @@ function startConnection(): void {
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },
 
-      data(_socket, raw) {
-        buffer += raw.toString("utf-8");
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+      data(socket, raw) {
+        if (socket.data.overflowed) return;
+        const { lines, overflow } = socket.data.framer.append(raw);
 
         for (const line of lines) {
           if (line.trim().length === 0) continue;
@@ -168,7 +171,7 @@ function startConnection(): void {
                   console.error(`[socket-client] Residency loading ack failed: ${String(error)}`);
                 }
               }
-              Promise.resolve(responsePromise)
+              const pending = Promise.resolve(responsePromise)
                 .then((response) => {
                   if (!response || !connection || !connected) {
                     if (command.cmd === "set_whisper_residency") {
@@ -195,10 +198,29 @@ function startConnection(): void {
                       error instanceof Error ? error.message : String(error)
                     }`,
                   );
-                });
+                })
+                .finally(() => socket.data.pendingResponses.delete(pending));
+              socket.data.pendingResponses.add(pending);
             }
           } else {
             console.error(`[socket-client] Invalid command: ${line}`);
+          }
+        }
+        if (overflow) {
+          socket.data.overflowed = true;
+          console.error("[socket-client] NDJSON command exceeded byte limit; closing connection");
+          if (socket.data.pendingResponses.size === 0) {
+            socket.end(); // close() runs the existing reconnect path
+          } else {
+            // Give already-dispatched commands a bounded chance to write their replies.
+            let timer: ReturnType<typeof setTimeout>;
+            Promise.race([
+              Promise.allSettled([...socket.data.pendingResponses]),
+              new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); }),
+            ]).finally(() => {
+              clearTimeout(timer);
+              socket.end();
+            });
           }
         }
       },
@@ -206,7 +228,6 @@ function startConnection(): void {
       close() {
         connected = false;
         connection = null as any;
-        buffer = "";
         stopKeepalive();
         console.error("[socket-client] Disconnected from VoiceBar");
         scheduleReconnect();
@@ -216,7 +237,6 @@ function startConnection(): void {
         console.error(`[socket-client] Error: ${error.message}`);
         connected = false;
         connection = null as any;
-        buffer = "";
         scheduleReconnect();
       },
 

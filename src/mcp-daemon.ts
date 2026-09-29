@@ -33,6 +33,7 @@ import {
   isPingRequest,
   buildPongResponse,
 } from "./daemon-health";
+import { MAX_NDJSON_LINE_BYTES, NDJSONByteFramer } from "./ndjson-byte-framer";
 
 export interface McpDaemonOptions {
   /** Unix socket path to listen on. */
@@ -46,6 +47,13 @@ export interface McpDaemonOptions {
 interface ClientState {
   protocol: "mcp" | "ndjson" | "unknown";
   buffer: string;
+  decoder: TextDecoder;
+  unknownRaw: Buffer;
+  unknownBytes: number;
+  unknownHadLeadingWhitespace: boolean;
+  ndjsonFramer: NDJSONByteFramer;
+  oversized: boolean;
+  pendingResponses: Set<Promise<void>>;
   disconnected: boolean;
   loggingLevel?: McpLoggingLevel;
 }
@@ -125,27 +133,72 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     unix: socketPath,
     socket: {
       open(socket) {
-        socket.data = { protocol: "unknown", buffer: "", disconnected: false };
+        socket.data = {
+          protocol: "unknown", buffer: "", decoder: new TextDecoder(),
+          unknownRaw: Buffer.alloc(0), unknownBytes: 0, ndjsonFramer: new NDJSONByteFramer(),
+          unknownHadLeadingWhitespace: false,
+          oversized: false, pendingResponses: new Set(), disconnected: false,
+        };
         onConnect();
       },
 
       data(socket, raw) {
-        const chunk = raw.toString("utf-8");
-        socket.data.buffer += chunk;
-
-        // Detect protocol on first data
-        if (socket.data.protocol === "unknown") {
-          socket.data.protocol = detectProtocol(socket.data.buffer);
-          if (socket.data.protocol === "unknown") {
-            return; // Need more data
-          }
-        }
-
+        if (socket.data.oversized) return;
         if (socket.data.protocol === "mcp") {
+          // Content-Length counts body bytes after streaming UTF-8 decoding.
+          socket.data.buffer += socket.data.decoder.decode(raw, { stream: true });
           handleMcpData(socket);
-        } else if (socket.data.protocol === "ndjson") {
-          handleNdjsonData(socket);
+          return;
         }
+        if (socket.data.protocol === "ndjson") {
+          handleNdjsonBytes(socket, raw);
+          return;
+        }
+
+        // Keep raw bytes until detection: the first read can also contain part of a
+        // UTF-8 NDJSON line. The decoded probe is used only for protocol selection.
+        socket.data.buffer += socket.data.decoder.decode(raw, { stream: true });
+        // Whitespace-only reads carry no protocol information. Discard their
+        // decoded probe text so detection does not rescan a growing prefix.
+        if (socket.data.buffer.length > 0 && socket.data.buffer.trimStart().length === 0) {
+          socket.data.unknownHadLeadingWhitespace = true;
+          socket.data.buffer = "";
+        }
+        socket.data.protocol = detectProtocol(socket.data.buffer);
+        // Content-Length framing requires the header at byte zero. A prior
+        // whitespace-only read cannot make a later header valid.
+        if (socket.data.unknownHadLeadingWhitespace && socket.data.protocol === "mcp") {
+          socket.data.protocol = "unknown";
+        }
+        if (socket.data.protocol === "unknown") {
+          const needed = socket.data.unknownBytes + raw.byteLength;
+          if (needed > MAX_NDJSON_LINE_BYTES) {
+            closeOversizedClient(socket);
+            return;
+          }
+          if (needed > socket.data.unknownRaw.length) {
+            const capacity = Math.min(MAX_NDJSON_LINE_BYTES, Math.max(4096, needed, socket.data.unknownRaw.length * 2));
+            const next = Buffer.allocUnsafe(capacity);
+            socket.data.unknownRaw.copy(next, 0, 0, socket.data.unknownBytes);
+            socket.data.unknownRaw = next;
+          }
+          socket.data.unknownRaw.set(raw, socket.data.unknownBytes);
+          socket.data.unknownBytes = needed;
+          return;
+        }
+        if (socket.data.protocol === "mcp") {
+          socket.data.unknownRaw = Buffer.alloc(0);
+          socket.data.unknownBytes = 0;
+          handleMcpData(socket);
+          return;
+        }
+
+        const prior = socket.data.unknownRaw.subarray(0, socket.data.unknownBytes);
+        socket.data.unknownRaw = Buffer.alloc(0);
+        socket.data.unknownBytes = 0;
+        socket.data.buffer = "";
+        if (prior.length > 0) handleNdjsonBytes(socket, prior);
+        if (!socket.data.oversized) handleNdjsonBytes(socket, raw);
       },
 
       close(socket) {
@@ -264,13 +317,12 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     }
   }
 
-  function handleNdjsonData(socket: {
+  function handleNdjsonBytes(socket: {
     data: ClientState;
     write: (data: string) => number;
     end: () => void;
-  }) {
-    const lines = socket.data.buffer.split("\n");
-    socket.data.buffer = lines.pop() ?? "";
+  }, raw: Uint8Array) {
+    const { lines, overflow } = socket.data.ndjsonFramer.append(raw);
 
     for (const line of lines) {
       if (!line.trim()) continue;
@@ -295,7 +347,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           console.error(
             `[mcp-daemon] MCP-over-NDJSON request (method: ${msg.method})`,
           );
-          handleMcpRequest(
+          const pending = handleMcpRequest(
             msg as {
               jsonrpc: string;
               id?: number | string;
@@ -343,7 +395,9 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
                   }) + "\n",
                 );
               } catch {}
-            });
+            })
+            .finally(() => socket.data.pendingResponses.delete(pending));
+          socket.data.pendingResponses.add(pending);
           continue;
         }
 
@@ -351,6 +405,27 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
       } catch {
         // Invalid JSON line — skip
       }
+    }
+    if (overflow) closeOversizedClient(socket);
+  }
+
+  function closeOversizedClient(socket: { data: ClientState; end: () => void }) {
+    socket.data.oversized = true;
+    socket.data.buffer = "";
+    socket.data.unknownRaw = Buffer.alloc(0);
+    socket.data.unknownBytes = 0;
+    console.error("[mcp-daemon] NDJSON message exceeded byte limit; closing client");
+    if (socket.data.pendingResponses.size === 0) {
+      socket.end();
+    } else {
+      let timer: ReturnType<typeof setTimeout>;
+      Promise.race([
+        Promise.allSettled([...socket.data.pendingResponses]),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); }),
+      ]).finally(() => {
+        clearTimeout(timer);
+        socket.end();
+      });
     }
   }
 
