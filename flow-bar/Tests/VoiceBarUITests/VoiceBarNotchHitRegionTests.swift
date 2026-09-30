@@ -12,8 +12,8 @@ final class VoiceBarNotchHitRegionTests: XCTestCase {
             )
         )
 
-        // Relative to the core, which the panel pins to the housing, so these are the on-screen targets. UXP-2
-        // widened the mic's wing outward (its local origin moved 26 pt) but left every target where it was.
+        // Relative to the core, which the panel pins to the housing, so these are the on-screen targets: the
+        // mic's wing width (73.5 pt in 2.2.28–29, 47.5 pt fitted) never moves them.
         let core = geometry.coreOriginX
         XCTAssertEqual(region.rects, [
             CGRect(x: core - 33.5, y: 6, width: 20, height: 20),

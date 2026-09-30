@@ -42,13 +42,18 @@ final class NotchHistoryPanelTests: XCTestCase {
                     geometry.trailingWingWidth,
                     "\(state) @\(core)"
                 )
-                XCTAssertEqual(geometry.bodyLeadingExtent, geometry.bodyTrailingExtent, "symmetric about the core")
+                if state == .teleprompter {
+                    XCTAssertEqual(geometry.bodyLeadingExtent, geometry.bodyTrailingExtent, "symmetric about the core")
+                }
             }
         }
         // UXP-2: the History body is flush with the launcher wings, and a flush side is drawn straight down (the
         // old S-hook came from a shoulder curve drawn at the wing's own x; a flush shoulder now has no depth).
+        // The mic's wing is narrower than the History + Settings wing, so the body is flush on each side
+        // separately rather than symmetric about the core.
         for core in [CGFloat(185), 200, 220] {
             let history = VoiceBarNotchContract.geometry(for: .history, coreWidth: core)
+            XCTAssertEqual(history.bodyLeadingExtent, history.leadingWingWidth, "flush @\(core)")
             XCTAssertEqual(history.bodyTrailingExtent, history.trailingWingWidth, "flush @\(core)")
             let path = VoiceBarNotchContinuousShape(
                 geometry: history,

@@ -3,8 +3,8 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// UXP-2 visual receipt (opt-in): the notch shell at rest (the flat-display virtual core), on hover, and with
-/// History open, light and dark. Synthetic History rows only.
+/// UXP-2 visual receipt (opt-in): the notch shell at rest (the flat-display virtual core), on hover, with History
+/// open, recording, and showing a transcript status, light and dark. Synthetic state and History rows only.
 @MainActor
 final class NotchShellShotsTests: XCTestCase {
     private final class NoopRouter: BarCommandRouting {
@@ -44,13 +44,39 @@ final class NotchShellShotsTests: XCTestCase {
             ("rest", false, false),
             ("hover", true, false),
             ("history", true, true),
+            ("recording", true, false),
+            ("transcript", false, false),
         ] {
-            let model = VoiceBarNotchPresentationModel()
-            model.updateOperationalEnvelope(
-                hasTeleprompter: false, isRecording: false, hasCompactStatus: false,
-                virtualNotchIdleCoreHeight: hovered ? nil : VoiceBarNotchContract.topHeight
-            )
+            // Synthetic state only. W11: recording and the transcript-shown status, so every wing state is on film.
+            state.mode = stateName == "recording" ? .recording : .idle
+            state.recordingMode = stateName == "recording" ? "vad" : nil
+            state.confirmationText = stateName == "transcript" ? "Pasted" : nil
+            state.transcript = stateName == "transcript" ? "A synthetic transcript." : ""
             state.isHovering = hovered // BarView pushes this into the model
+            let model = VoiceBarNotchPresentationModel()
+            // The same mapping VoiceBarApp uses: the operational widths come from the resolved presentation.
+            let resolved = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
+                mode: state.mode,
+                showsRecordingHold: state.mode == .recording,
+                confirmationText: state.confirmationText,
+                statusText: VoiceBarPresentation.liveStatusText(
+                    mode: state.mode, transcript: state.transcript, confirmationText: state.confirmationText,
+                    hotkeyPhase: .idle, hotkeyEnabled: true, errorMessage: nil,
+                    commandModeState: nil, activeClipMarker: nil
+                ),
+                isHovered: hovered,
+                isCollapsed: false
+            ))
+            let isStatus = resolved.visualState == .compactStatus
+            let isRecording = resolved.visualState == .recording
+            model.updateOperationalEnvelope(
+                hasTeleprompter: false, isRecording: isRecording, hasCompactStatus: isStatus,
+                compactStatusLeadingWingWidth: isStatus ? resolved.geometry.leadingWingWidth : nil,
+                compactStatusTrailingWingWidth: isStatus ? resolved.geometry.trailingWingWidth : nil,
+                recordingLeadingWingWidth: isRecording ? resolved.geometry.leadingWingWidth : nil,
+                recordingTrailingWingWidth: isRecording ? resolved.geometry.trailingWingWidth : nil,
+                virtualNotchIdleCoreHeight: stateName == "rest" ? VoiceBarNotchContract.topHeight : nil
+            )
             model.setHovered(hovered)
             model.setHistoryPanelOpen(historyOpen)
             let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation).canvasGeometry

@@ -3,8 +3,9 @@ import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
-/// UXP-2 (UX pass #3 + #4, Lane C follow-up): the notch shell is centred on the housing, reads as one silhouette,
-/// keeps red for recording only, and its outer corner radius interpolates instead of snapping.
+/// UXP-2 (UX pass #3, Lane C follow-up): the notch shell reads as one silhouette, keeps red for recording only,
+/// and its outer corner radius interpolates instead of snapping. UX pass #4's equal wings were withdrawn by Etan
+/// (2026-09-30): every leading wing fits its own content.
 final class NotchShellCentredTests: XCTestCase {
     private func presentation(history: Bool = false) -> VoiceBarNotchPresentation {
         VoiceBarNotchPresentation.resolve(
@@ -80,32 +81,119 @@ final class NotchShellCentredTests: XCTestCase {
         )
     }
 
-    // MARK: - #4 centred, one silhouette
+    // MARK: - fitted wings, one silhouette
 
-    func testTheLauncherWingsAreEqualSoTheShellIsCentredOnTheHousing() {
+    /// Etan, 2026-09-30: "the left wing fit width on where the mic icon was. Now it's two identical-width wings."
+    /// His call overrides UX pass #4 (equal wings): the mic's wing is exactly as wide as the mic needs.
+    func testTheMicWingHugsTheMicInTheLauncherAndWithHistoryOpen() {
+        let micFit = VoiceBarNotchContract.compactContentFitWingWidth(
+            contentWidth: VoiceBarNotchContract.material.compactControlSize
+        )
+        XCTAssertEqual(micFit, 47.5)
+        XCTAssertEqual(VoiceBarNotchContract.compactIndicatorLaneWidth, micFit)
         for (name, presentation) in [("hover", presentation()), ("History", presentation(history: true))] {
             let geometry = presentation.geometry
-            XCTAssertEqual(geometry.leadingWingWidth, geometry.trailingWingWidth, "\(name): unequal wings")
-            let layout = VoiceBarNotchShapeLayout(geometry: geometry)
+            XCTAssertEqual(geometry.leadingWingWidth, micFit, "\(name): the mic's wing is wider than the mic needs")
             XCTAssertEqual(
-                layout.coreRect.minX - layout.leadingWingRect.minX,
-                layout.trailingWingRect.maxX - layout.coreRect.maxX,
-                "\(name): the shell is not centred on the housing"
+                geometry.trailingWingWidth, VoiceBarNotchContract.hoverLauncherTrailingWingWidth,
+                "\(name): the History + Settings wing must not change"
             )
+            XCTAssertEqual(geometry.trailingWingWidth, 73.5, "\(name)")
         }
     }
 
-    func testTheMicKeepsItsHitTargetAndSitsAtTheCoreSideOfItsWing() {
+    func testTheLeadingWingFitsItsContentInEveryCompactState() {
+        let material = VoiceBarNotchContract.material
+        let oneControl = VoiceBarNotchContract.compactContentFitWingWidth(contentWidth: material.compactControlSize)
+        let twoControls = VoiceBarNotchContract.compactContentFitWingWidth(
+            contentWidth: 2 * material.compactControlSize + material.compactControlSpacing
+        )
+        let expected: [(VoiceBarNotchVisualState, CGFloat)] = [
+            (.hoverLauncher, oneControl), // the mic
+            (.history, oneControl), // the mic
+            (.compactStatus, oneControl), // the status indicator (transcribing, transcript shown)
+            (.recording, twoControls), // cancel + stop
+        ]
+        for (state, width) in expected {
+            XCTAssertEqual(VoiceBarNotchContract.geometry(for: state).leadingWingWidth, width, "\(state)")
+        }
+    }
+
+    /// Where the view draws the leading wing's core-side control, relative to the core's left edge. Mirrors
+    /// `VoiceBarNotchView.wingSlot`: the content row sits in the wing, inset 14 pt outside and 13.5 pt core-side.
+    private func drawnCoreSideLeadingControlMidX(
+        _ presentation: VoiceBarNotchPresentation, controlCount: Int
+    ) -> CGFloat {
+        let material = VoiceBarNotchContract.material
+        let slot = material.wingContentLayout(for: .leading, state: presentation.visualState)
+        let wing = VoiceBarNotchShapeLayout(geometry: presentation.geometry).leadingWingRect
+        let rowWidth = CGFloat(controlCount) * material.compactControlSize
+            + CGFloat(controlCount - 1) * material.compactControlSpacing
+        let lane = CGRect(
+            x: wing.minX + slot.outerInset, y: 0, width: wing.width - slot.outerInset - slot.coreInset, height: 1
+        )
+        let rowMaxX: CGFloat = switch slot.alignment {
+        case .center: lane.midX + rowWidth / 2
+        case .core: lane.maxX
+        case .screenLeading: lane.minX + rowWidth
+        }
+        return rowMaxX - material.compactControlSize / 2 - presentation.geometry.coreOriginX
+    }
+
+    func testTheMicKeepsItsHitTargetAndIsDrawnOnIt() {
         let hover = presentation()
         let geometry = hover.geometry
         let micRect = VoiceBarNotchHitRegion(geometry: geometry, configuration: .fallback(for: hover)).rects[0]
-        // Unchanged from before UXP-2: 13.5 pt off the core, one 20 pt control.
+        // Unchanged since before UXP-2: 13.5 pt off the core, one 20 pt control.
         XCTAssertEqual(micRect.maxX, geometry.coreOriginX - VoiceBarNotchContract.compactCoreContentInset)
         XCTAssertEqual(micRect.width, VoiceBarNotchContract.material.compactControlSize)
-        for state in [VoiceBarNotchVisualState.hoverLauncher, .history] {
+        for (name, presentation) in [("hover", hover), ("History", presentation(history: true))] {
+            let target = VoiceBarNotchHitRegion(
+                geometry: presentation.geometry, configuration: .fallback(for: presentation)
+            ).rects[0]
             XCTAssertEqual(
-                VoiceBarNotchContract.material.wingContentLayout(for: .leading, state: state).alignment, .core,
-                "\(state): the mic must be drawn where its hit target is"
+                drawnCoreSideLeadingControlMidX(presentation, controlCount: 1),
+                target.midX - presentation.geometry.coreOriginX,
+                accuracy: 0.001, "\(name): the mic must be drawn where its hit target is"
+            )
+            // Fitted, the mic has the same glass on both sides as in the status states: 14 pt out, 13.5 pt in.
+            let wing = VoiceBarNotchShapeLayout(geometry: presentation.geometry).leadingWingRect
+            XCTAssertEqual(target.minX - wing.minX, VoiceBarNotchContract.material.compactContentInset, "\(name)")
+        }
+    }
+
+    /// The core is pinned to the housing, so an x relative to the core is an on-screen x. The control next to the
+    /// housing (the mic; cancel or the hold lock while recording; the status indicator) must not move between states.
+    func testTheCoreSideLeadingControlKeepsItsScreenXAcrossStates() {
+        func resolve(_ input: VoiceBarNotchOperationalInput) -> VoiceBarNotchPresentation {
+            VoiceBarPresentation.notchPresentation(from: input)
+        }
+        let states: [(String, VoiceBarNotchPresentation, Int)] = [
+            ("hover", resolve(VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)), 1),
+            ("History", presentation(history: true), 1),
+            ("recording", resolve(VoiceBarNotchOperationalInput(mode: .recording)), 2),
+            ("recording + hold lock",
+             resolve(VoiceBarNotchOperationalInput(mode: .recording, showsRecordingHold: true)), 3),
+            ("transcribing", resolve(VoiceBarNotchOperationalInput(mode: .transcribing)), 1),
+            ("transcript shown",
+             resolve(VoiceBarNotchOperationalInput(mode: .idle, confirmationText: "Pasted", statusText: "Pasted")), 1),
+        ]
+        let expected = -(VoiceBarNotchContract.compactCoreContentInset
+            + VoiceBarNotchContract.material.compactControlSize / 2)
+        XCTAssertEqual(expected, -23.5)
+        for (name, presentation, controlCount) in states {
+            XCTAssertEqual(
+                drawnCoreSideLeadingControlMidX(presentation, controlCount: controlCount), expected,
+                accuracy: 0.001, "\(name): the core-side control moved"
+            )
+            // And the wing is exactly as wide as its controls need: no dead glass on either side.
+            XCTAssertEqual(
+                presentation.geometry.leadingWingWidth,
+                VoiceBarNotchContract.compactContentFitWingWidth(
+                    contentWidth: CGFloat(controlCount) * VoiceBarNotchContract.material.compactControlSize
+                        + CGFloat(controlCount - 1) * VoiceBarNotchContract.material.compactControlSpacing
+                ),
+                "\(name): the leading wing does not fit its \(controlCount) control(s)"
             )
         }
     }
