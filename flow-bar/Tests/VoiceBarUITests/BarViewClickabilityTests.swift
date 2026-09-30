@@ -123,7 +123,7 @@ final class BarViewClickabilityTests: XCTestCase {
         idle.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 332, height: 32),
+            NSSize(width: 306, height: 32),
             "visible idle must hold the launcher envelope through its collapse grace window"
         )
 
@@ -140,7 +140,7 @@ final class BarViewClickabilityTests: XCTestCase {
         hover.isHovering = true
         XCTAssertEqual(
             makeHost(state: hover, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 332, height: 32)
+            NSSize(width: 306, height: 32)
         )
 
         let recording = VoiceState()

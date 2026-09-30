@@ -95,11 +95,9 @@ final class VoiceBarPresentationTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(mode: .transcribing)
         )
 
-        for presentation in [quickTap, processing] {
+        for presentation in [launcher, quickTap, processing] {
             XCTAssertEqual(presentation.geometry.leadingWingWidth, 47.5)
         }
-        // UXP-2: the launcher's wings are equal, so the shell is centred on the housing.
-        XCTAssertEqual(launcher.geometry.leadingWingWidth, 73.5)
         XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(recording.geometry.leadingWingWidth, 73.5)
         XCTAssertEqual(recording.geometry.trailingWingWidth, 78)

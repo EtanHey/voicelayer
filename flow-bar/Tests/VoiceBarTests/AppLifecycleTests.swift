@@ -221,7 +221,7 @@ final class AppLifecycleTests: XCTestCase {
         let panel = FloatingPillPanel(content: NSView(frame: CGRect(origin: .zero, size: layout.panelSize)))
         panel.activeHitTestProvider = { layout.containsInteractiveContent($0) }
         panel.contextMenuHitTestProvider = { layout.containsVisibleSurface($0) }
-        // The mic's centre, 23.5 pt left of the core it is anchored to (UXP-2 widened its wing outward only).
+        // The mic's centre, 23.5 pt left of the core it is anchored to.
         let mic = CGPoint(
             x: layout.visibleContentRect.minX + layout.presentation.geometry.coreOriginX - 23.5,
             y: layout.visibleContentRect.minY + 16

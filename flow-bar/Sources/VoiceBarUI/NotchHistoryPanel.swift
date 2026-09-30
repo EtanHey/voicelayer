@@ -34,15 +34,19 @@ struct NotchHistoryPanel: View {
             Rectangle()
                 .fill(palette.tertiary.color.opacity(0.35))
                 .frame(height: 1)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: NotchHistoryPresentation.footerSpacing) {
                 Text(NotchHistoryPresentation.pasteHint)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(.system(
+                        size: NotchHistoryPresentation.footerHintFontSize, weight: .medium, design: .rounded
+                    ))
                     .foregroundStyle(palette.secondary.color)
                     .lineLimit(2)
-                Spacer(minLength: 6)
+                Spacer(minLength: NotchHistoryPresentation.footerMinimumGap)
                 Button(NotchHistoryPresentation.openHistoryTitle, action: onOpenHistory)
                     .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(.system(
+                        size: NotchHistoryPresentation.footerButtonFontSize, weight: .semibold, design: .rounded
+                    ))
                     .foregroundStyle(palette.primary.color)
                     .accessibilityHint("Opens Settings on History")
             }
