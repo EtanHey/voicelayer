@@ -388,39 +388,69 @@ public struct VoiceBarNotchContinuousShape: Shape {
     private typealias SideSegment = (end: CGPoint, control: CGPoint?)
 
     private func sideProfile(
+        layout: VoiceBarNotchShapeLayout, wingWidth: CGFloat, step: CGFloat
+    ) -> [SideSegment] {
+        // Zero-length pieces (a flush side's shoulder, History's absent join) are dropped: a degenerate curve
+        // in the outline made `Path.contains` misjudge points near it by over a point.
+        var previous = CGPoint.zero
+        return sideSegments(layout: layout, wingWidth: wingWidth, step: step).filter { segment in
+            defer { previous = segment.end }
+            return abs(segment.end.x - previous.x) > 1e-9 || abs(segment.end.y - previous.y) > 1e-9
+        }
+    }
+
+    private func sideSegments(
         layout: VoiceBarNotchShapeLayout, wingWidth: CGFloat, step rawStep: CGFloat
     ) -> [SideSegment] {
         let body = layout.bodyRect
         let step = max(0, rawStep)
         let bodyCorner = min(compactOuterCornerRadius, body.width / 2)
-        // The concave join under the wing and the convex corner of the step-out. Neither can be deeper than
-        // the step, and a side with no wing has no shoulder at all.
-        let join = min(layout.inverseJoinRadius, wingWidth, layout.geometry.topHeight, step / 2)
+        // The concave join under the wing (the teleprompter's 5 pt shoulder). A step-out corner larger than
+        // the join takes its place: History steps out with ONE convex corner, from a plain inside corner.
+        let joinTarget = max(0, min(
+            layout.inverseJoinRadius, wingWidth, layout.geometry.topHeight,
+            2 * layout.inverseJoinRadius - bodyShoulderCornerRadius
+        ))
+        // A side with no wing has no shoulder at all.
         let shoulderTarget = bodyShoulderCornerRadius
             * min(1, layout.inverseJoinRadius > 0 ? wingWidth / layout.inverseJoinRadius : 0)
-        // A body flush with its wing (or barely past it) rounds its bottom corner up into the wing, so a panel
-        // one point tall keeps the wing's rounded corner instead of squaring it off.
-        let reachesIntoWing = step < bodyCorner
-        let lower = min(bodyCorner, (reachesIntoWing ? body.maxY : body.height) / 2)
+        // A body flush with its wing rounds its bottom corner up into the wing, so a panel one point tall keeps
+        // the wing's rounded corner instead of squaring it off. That reach fades out as the body steps out.
+        let reach = layout.geometry.topHeight * max(0, 1 - step / max(bodyCorner, .leastNonzeroMagnitude))
+        let lower = min(bodyCorner, (body.height + reach) / 2)
         let cornerTop = body.maxY - lower
+        /// The bottom corner's curve from parameter `from` (0 = its top, on the body's side) to its end.
+        func lowerCorner(from t: CGFloat) -> SideSegment {
+            (CGPoint(x: step - lower, y: body.maxY), CGPoint(x: step - lower * t, y: body.maxY))
+        }
 
-        if reachesIntoWing, cornerTop < body.minY, lower > 0 {
-            // The bottom corner starts above the step, so it swallows it: follow the wing's side down to the
-            // corner's curve and join it there.
-            let t = (step / lower).squareRoot()
+        guard cornerTop < body.minY else {
+            let join = min(joinTarget, step / 2)
+            let shoulder = max(0, min(shoulderTarget, step - join, cornerTop - body.minY))
             return [
-                (CGPoint(x: 0, y: body.maxY - lower * (1 - t) * (1 - t)), nil),
-                (CGPoint(x: step - lower, y: body.maxY), CGPoint(x: step - lower * t, y: body.maxY)),
+                (CGPoint(x: 0, y: body.minY - join), nil),
+                (CGPoint(x: join, y: body.minY), CGPoint(x: 0, y: body.minY)),
+                (CGPoint(x: step - shoulder, y: body.minY), nil),
+                (CGPoint(x: step, y: body.minY + shoulder), CGPoint(x: step, y: body.minY)),
+                (CGPoint(x: step, y: cornerTop), nil),
+                lowerCorner(from: 0),
             ]
         }
-        let shoulder = max(0, min(shoulderTarget, step - join, cornerTop - body.minY))
+        // The bottom corner starts above the body, so only its lower part is outline. Where that curve crosses
+        // the body's top edge decides how much of the step is left as a ledge.
+        let atBodyTop = 1 - (body.height / lower).squareRoot()
+        let ledge = step - lower * atBodyTop * atBodyTop
+        guard ledge > 0 else {
+            // The curve has already cut inside the wing: follow the wing's side down to it.
+            let t = (step / lower).squareRoot()
+            return [(CGPoint(x: 0, y: body.maxY - lower * (1 - t) * (1 - t)), nil), lowerCorner(from: t)]
+        }
+        let join = min(joinTarget, ledge / 2)
         return [
             (CGPoint(x: 0, y: body.minY - join), nil),
             (CGPoint(x: join, y: body.minY), CGPoint(x: 0, y: body.minY)),
-            (CGPoint(x: step - shoulder, y: body.minY), nil),
-            (CGPoint(x: step, y: body.minY + shoulder), CGPoint(x: step, y: body.minY)),
-            (CGPoint(x: step, y: cornerTop), nil),
-            (CGPoint(x: step - lower, y: body.maxY), CGPoint(x: step, y: body.maxY)),
+            (CGPoint(x: ledge, y: body.minY), nil),
+            lowerCorner(from: atBodyTop),
         ]
     }
 }

@@ -269,6 +269,149 @@ final class NotchShellCentredTests: XCTestCase {
         XCTAssertTrue(glass.contains(CGPoint(x: body.minX + 1, y: body.minY + radius)))
     }
 
+    /// X15 r1 (#235): the settled History step-out is ONE convex corner. A concave fillet where the wing meets
+    /// the panel's top edge (the teleprompter's 5 pt inverse join) also passes the no-pocket test above.
+    func testTheHistoryStepOutHasNoConcaveCurve() {
+        let history = presentation(history: true)
+        let layout = VoiceBarNotchShapeLayout(geometry: history.geometry)
+        var current = CGPoint.zero
+        var concave = 0
+        var convex = 0
+        for element in Self.elements(of: shellPath(history)) {
+            switch element {
+            case let .move(to: point), let .line(to: point):
+                current = point
+            case let .quadCurve(to: end, control: control):
+                if current.x <= layout.leadingWingRect.minX + 0.01, current.y > 0,
+                   end.y <= layout.bodyRect.minY + 15 {
+                    let turnA: CGFloat = (control.x - current.x) * (end.y - control.y)
+                    let turnB: CGFloat = (control.y - current.y) * (end.x - control.x)
+                    let turn = turnA - turnB
+                    if turn > 0.01 { concave += 1 }
+                    if turn < -0.01 { convex += 1 }
+                }
+                current = end
+            default:
+                break
+            }
+        }
+        XCTAssertEqual(concave, 0, "History's step-out must not have a concave shoulder")
+        XCTAssertEqual(convex, 1, "History's step-out is one convex corner")
+    }
+
+    /// X15 r1 (#235): the left outline jumped 1.08 pt between two almost identical morph frames, where the body
+    /// outline switched from one construction to another. Sampled densely over the whole morph, the outline must
+    /// never move more than the geometry itself does between neighbouring frames. Closing replays the same
+    /// frames in reverse, so this covers both directions.
+    func testTheOutlineMovesContinuouslyThroughEveryMorphFrame() {
+        let launcher = presentation()
+        let status = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false, isRecording: false, hasCompactStatus: true,
+            isHovered: false, isKeyboardFocused: false
+        )
+        let teleprompter = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: true, isRecording: false, hasCompactStatus: false,
+            isHovered: false, isKeyboardFocused: false
+        )
+        for (name, from, to) in [
+            ("hover → History", launcher, presentation(history: true)),
+            ("status → teleprompter", status, teleprompter),
+        ] {
+            let material = VoiceBarNotchContract.material
+            let start = VoiceBarNotchContinuousShape(
+                geometry: from.geometry,
+                compactOuterCornerRadius: material.compactOuterCornerRadius(for: from.visualState),
+                bodyShoulderCornerRadius: material.bodyShoulderCornerRadius(for: from.visualState)
+            )
+            let travel = VoiceBarNotchContinuousShape(
+                geometry: to.geometry,
+                compactOuterCornerRadius: material.compactOuterCornerRadius(for: to.visualState),
+                bodyShoulderCornerRadius: material.bodyShoulderCornerRadius(for: to.visualState)
+            ).animatableData - start.animatableData
+            /// The leading outline's x relative to the core (which the morph canvas pins), at three heights:
+            /// just under the wing, a point into the body, and a point above the bottom edge. Solved from the
+            /// path's own segments: `Path.contains` flattens curves and is off by over a point near a corner.
+            func edges(_ progress: Double) -> [CGFloat] {
+                var shape = start
+                var advance = travel
+                advance.scale(by: progress)
+                shape.animatableData = start.animatableData + advance
+                let geometry = shape.geometry
+                let layout = VoiceBarNotchShapeLayout(geometry: geometry)
+                let path = shape.path(in: CGRect(x: 0, y: 0, width: geometry.totalWidth, height: geometry.totalHeight))
+                return [geometry.topHeight + 0.05, geometry.topHeight + 1, geometry.totalHeight - 1].map { y in
+                    Self.leftmostCrossing(of: path, atY: y) - geometry.coreOriginX
+                }
+            }
+            // From the frame where the body is 2 pt tall (its three probes are inside it), finely at first.
+            let first = 2 / Double(to.geometry.lowerSurfaceHeight)
+            let samples = Array(stride(from: first, to: 0.15, by: 1.0 / 20000))
+                + Array(stride(from: 0.15, through: 1, by: 1.0 / 2000))
+            var previous = edges(first)
+            for progress in samples.dropFirst() {
+                let current = edges(progress)
+                for (before, after) in zip(previous, current) {
+                    XCTAssertLessThan(abs(after - before), 0.2, "\(name): the outline jumps at progress \(progress)")
+                }
+                previous = current
+            }
+        }
+    }
+
+    private static func elements(of path: Path) -> [Path.Element] {
+        var elements: [Path.Element] = []
+        path.forEach { elements.append($0) }
+        return elements
+    }
+
+    /// The smallest x at which the path's outline crosses the horizontal line at `y`.
+    private static func leftmostCrossing(of path: Path, atY y: CGFloat) -> CGFloat {
+        var leftmost = CGFloat.infinity
+        var start = CGPoint.zero
+        var current = CGPoint.zero
+        func line(to end: CGPoint) {
+            if min(current.y, end.y) <= y, y <= max(current.y, end.y), current.y != end.y {
+                leftmost = min(leftmost, current.x + (end.x - current.x) * (y - current.y) / (end.y - current.y))
+            }
+            current = end
+        }
+        for element in elements(of: path) {
+            switch element {
+            case let .move(to: point):
+                start = point
+                current = point
+            case let .line(to: point):
+                line(to: point)
+            case let .quadCurve(to: end, control: control):
+                // (1 - t)² y0 + 2t(1 - t) yc + t² y1 = y
+                let a = current.y - 2 * control.y + end.y
+                let b = 2 * (control.y - current.y)
+                let c = current.y - y
+                let roots: [CGFloat] = if abs(a) < 1e-12 {
+                    abs(b) < 1e-12 ? [] : [-c / b]
+                } else if b * b - 4 * a * c >= 0 {
+                    [
+                        (-b + (b * b - 4 * a * c).squareRoot()) / (2 * a),
+                        (-b - (b * b - 4 * a * c).squareRoot()) / (2 * a),
+                    ]
+                } else {
+                    []
+                }
+                for t in roots where t >= 0 && t <= 1 {
+                    leftmost = min(
+                        leftmost, (1 - t) * (1 - t) * current.x + 2 * t * (1 - t) * control.x + t * t * end.x
+                    )
+                }
+                current = end
+            case .curve:
+                XCTFail("the shell outline has no cubic curves")
+            case .closeSubpath:
+                line(to: start)
+            }
+        }
+        return leftmost
+    }
+
     // MARK: - Lane C: the outer radius interpolates
 
     func testTheOuterCornerRadiusIsPartOfTheAnimatedData() {
