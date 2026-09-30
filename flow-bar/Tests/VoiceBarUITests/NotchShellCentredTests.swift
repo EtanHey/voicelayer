@@ -19,7 +19,9 @@ final class NotchShellCentredTests: XCTestCase {
         return VoiceBarNotchContinuousShape(
             geometry: geometry,
             compactOuterCornerRadius: VoiceBarNotchContract.material
-                .compactOuterCornerRadius(for: presentation.visualState)
+                .compactOuterCornerRadius(for: presentation.visualState),
+            bodyShoulderCornerRadius: VoiceBarNotchContract.material
+                .bodyShoulderCornerRadius(for: presentation.visualState)
         ).path(in: CGRect(x: 0, y: 0, width: geometry.totalWidth, height: geometry.totalHeight))
     }
 
@@ -223,21 +225,48 @@ final class NotchShellCentredTests: XCTestCase {
         }
     }
 
-    func testTheHistoryPanelMeetsTheWingsWithNoShoulders() {
+    /// The right side is flush (UXP-2). The left steps out from the mic's fitted wing to the panel's unchanged
+    /// edge with one convex corner: the outline only ever moves outward on the way down, so there is no pocket.
+    func testTheHistoryPanelIsFlushOnTheRightAndStepsOutConvexlyOnTheLeft() {
         let history = presentation(history: true)
         let layout = VoiceBarNotchShapeLayout(geometry: history.geometry)
-        XCTAssertEqual(layout.bodyRect.minX, layout.leadingWingRect.minX, "the panel's left edge meets the wing's")
-        XCTAssertEqual(layout.bodyRect.maxX, layout.trailingWingRect.maxX, "the panel's right edge meets the wing's")
+        let wing = layout.leadingWingRect
+        let body = layout.bodyRect
+        XCTAssertEqual(body.maxX, layout.trailingWingRect.maxX, "the panel's right edge meets the wing's")
+        XCTAssertEqual(wing.minX - body.minX, 26, "the panel steps out past the mic's wing")
 
         let glass = shellPath(history)
-        let bounds = glass.boundingRect
-        XCTAssertEqual(bounds.minX, layout.leadingWingRect.minX, accuracy: 0.001, "no shoulder sticks out")
-        XCTAssertEqual(bounds.maxX, layout.trailingWingRect.maxX, accuracy: 0.001, "no shoulder sticks out")
-        // A straight outer side from the wing into the panel: no concave nick at the join.
-        for y in stride(from: CGFloat(1), to: layout.bodyRect.minY + 20, by: 1) {
-            XCTAssertTrue(glass.contains(CGPoint(x: layout.leadingWingRect.minX + 0.5, y: y)), "left side at y \(y)")
-            XCTAssertTrue(glass.contains(CGPoint(x: layout.trailingWingRect.maxX - 0.5, y: y)), "right side at y \(y)")
+        var subpaths = 0
+        glass.forEach { if case .move = $0 { subpaths += 1 } }
+        XCTAssertEqual(subpaths, 1, "one continuous shell path")
+        XCTAssertEqual(glass.boundingRect.minX, body.minX, accuracy: 0.001)
+        XCTAssertEqual(glass.boundingRect.maxX, body.maxX, accuracy: 0.001, "no shoulder sticks out")
+        for y in stride(from: CGFloat(1), to: body.minY + 40, by: 1) {
+            XCTAssertTrue(glass.contains(CGPoint(x: body.maxX - 0.5, y: y)), "right side at y \(y)")
         }
+
+        /// The left outline: the leftmost covered x at each height.
+        func leftEdge(_ y: CGFloat) -> CGFloat {
+            var x = body.minX
+            while x < wing.maxX, !glass.contains(CGPoint(x: x, y: y)) {
+                x += 0.25
+            }
+            return x
+        }
+        var previous = leftEdge(0.5)
+        XCTAssertEqual(previous, wing.minX, accuracy: 0.25, "the wing fits the mic above the panel")
+        for y in stride(from: CGFloat(1.5), to: body.minY + 60, by: 1) {
+            let edge = leftEdge(y)
+            XCTAssertLessThanOrEqual(edge, previous + 0.25, "the outline turns back inward at y \(y): a pocket")
+            previous = edge
+        }
+        XCTAssertEqual(previous, body.minX, accuracy: 0.25, "the step-out reaches the panel's edge")
+        // A rounded, convex outer corner rather than a square ledge.
+        let radius = VoiceBarNotchContract.material.bodyShoulderCornerRadius(for: .history)
+        XCTAssertEqual(radius, 15)
+        XCTAssertFalse(glass.contains(CGPoint(x: body.minX + 1, y: body.minY + 1)), "the step-out corner is square")
+        XCTAssertTrue(glass.contains(CGPoint(x: body.minX + radius, y: body.minY + 1)))
+        XCTAssertTrue(glass.contains(CGPoint(x: body.minX + 1, y: body.minY + radius)))
     }
 
     // MARK: - Lane C: the outer radius interpolates
@@ -259,16 +288,16 @@ final class NotchShellCentredTests: XCTestCase {
     func testAPanelThatHasJustStartedToGrowKeepsTheWingsRoundedCorners() {
         // Hover → History, one frame in: the body is 1 pt tall. The old body path drew its bottom corners at
         // min(18, body height / 2) = 0.5 pt, so the 15 pt wing corners snapped square on the first frame.
-        let hover = VoiceBarNotchContract.geometry(for: .hoverLauncher)
-        let history = VoiceBarNotchContract.geometry(for: .history)
-        let frameOne = VoiceBarNotchGeometry(
-            coreWidth: hover.coreWidth, topHeight: hover.topHeight,
-            leadingWingWidth: hover.leadingWingWidth, trailingWingWidth: hover.trailingWingWidth,
-            bodyLeadingExtent: history.bodyLeadingExtent, bodyTrailingExtent: history.bodyTrailingExtent,
-            lowerSurfaceHeight: 1
-        )
-        let path = VoiceBarNotchContinuousShape(geometry: frameOne, compactOuterCornerRadius: 15)
-            .path(in: CGRect(x: 0, y: 0, width: frameOne.totalWidth, height: frameOne.totalHeight))
+        // A real first frame: every value has moved 1/360 of its way, so the left step-out is 0.07 pt deep.
+        let hover = VoiceBarNotchGeometryAnimatableData(geometry: VoiceBarNotchContract.geometry(for: .hoverLauncher))
+        var travel = VoiceBarNotchGeometryAnimatableData(geometry: VoiceBarNotchContract.geometry(for: .history))
+        travel -= hover
+        travel.scale(by: 1.0 / 360)
+        let frameOne = (hover + travel).geometry
+        XCTAssertEqual(frameOne.lowerSurfaceHeight, 1, accuracy: 0.001)
+        let path = VoiceBarNotchContinuousShape(
+            geometry: frameOne, compactOuterCornerRadius: 15, bodyShoulderCornerRadius: 15
+        ).path(in: CGRect(x: 0, y: 0, width: frameOne.totalWidth, height: frameOne.totalHeight))
         let layout = VoiceBarNotchShapeLayout(geometry: frameOne)
         let cornerProbe = CGPoint(x: layout.leadingWingRect.minX + 1, y: frameOne.totalHeight - 1)
 

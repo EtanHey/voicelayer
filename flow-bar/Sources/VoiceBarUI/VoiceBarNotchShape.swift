@@ -252,25 +252,37 @@ public struct VoiceBarNotchGeometryAnimatableData: VectorArithmetic, Sendable {
 public struct VoiceBarNotchContinuousShape: Shape {
     public var geometry: VoiceBarNotchGeometry
     public var compactOuterCornerRadius: CGFloat
+    /// The convex corner where a lower body steps out past its wing (`bodyShoulderCornerRadius(for:)`).
+    public var bodyShoulderCornerRadius: CGFloat
     public var coreAnchorX: CGFloat?
 
     public init(
         geometry: VoiceBarNotchGeometry,
         compactOuterCornerRadius: CGFloat = 11,
+        bodyShoulderCornerRadius: CGFloat = VoiceBarNotchContract.material.inverseJoinRadius,
         coreAnchorX: CGFloat? = nil
     ) {
         self.geometry = geometry
         self.compactOuterCornerRadius = compactOuterCornerRadius
+        self.bodyShoulderCornerRadius = bodyShoulderCornerRadius
         self.coreAnchorX = coreAnchorX
     }
 
-    /// The outer radius is animated with the geometry (Lane C follow-up): as a plain stored value it jumped to
-    /// the destination state's radius on the first frame of every morph.
-    public var animatableData: AnimatablePair<VoiceBarNotchGeometryAnimatableData, CGFloat> {
-        get { AnimatablePair(VoiceBarNotchGeometryAnimatableData(geometry: geometry), compactOuterCornerRadius) }
+    /// The radii are animated with the geometry (Lane C follow-up): as plain stored values they jumped to the
+    /// destination state's radius on the first frame of every morph.
+    public var animatableData: AnimatablePair<
+        VoiceBarNotchGeometryAnimatableData, AnimatablePair<CGFloat, CGFloat>
+    > {
+        get {
+            AnimatablePair(
+                VoiceBarNotchGeometryAnimatableData(geometry: geometry),
+                AnimatablePair(compactOuterCornerRadius, bodyShoulderCornerRadius)
+            )
+        }
         set {
             geometry = newValue.first.geometry
-            compactOuterCornerRadius = newValue.second
+            compactOuterCornerRadius = newValue.second.first
+            bodyShoulderCornerRadius = newValue.second.second
         }
     }
 
@@ -333,67 +345,82 @@ public struct VoiceBarNotchContinuousShape: Shape {
         let leadingWing = layout.leadingWingRect
         let trailingWing = layout.trailingWingRect
         let core = layout.housingCutout
-        // A shoulder can only be as deep as the body sticks out past its wing: a body flush with the wing
-        // (History, UXP-2) continues the wing's side straight down.
-        let leadingShoulderRadius = min(
-            layout.inverseJoinRadius,
-            leadingWing.width,
-            layout.geometry.topHeight,
-            max(0, leadingWing.minX - body.minX)
+        let leading = sideProfile(
+            layout: layout, wingWidth: leadingWing.width, step: leadingWing.minX - body.minX
         )
-        let trailingShoulderRadius = min(
-            layout.inverseJoinRadius,
-            trailingWing.width,
-            layout.geometry.topHeight,
-            max(0, body.maxX - trailingWing.maxX)
-        )
-        // With both sides flush the corner may reach up into the wings, so a panel one point tall keeps the
-        // wings' rounded corners instead of squaring them off.
-        let isFlush = leadingShoulderRadius == 0 && trailingShoulderRadius == 0
-        let lowerRadius = min(
-            compactOuterCornerRadius,
-            body.width / 2,
-            isFlush ? (body.maxY / 2) : (body.height / 2)
+        let trailing = sideProfile(
+            layout: layout, wingWidth: trailingWing.width, step: body.maxX - trailingWing.maxX
         )
         var path = Path()
 
+        // One closed outline: down the leading side, along the bottom, back up the trailing side, then around
+        // the housing cut-out. `d` is how far a point sits outside its wing's outer side.
         path.move(to: CGPoint(x: core.minX, y: 0))
         path.addLine(to: CGPoint(x: leadingWing.minX, y: 0))
-        path.addLine(to: CGPoint(x: leadingWing.minX, y: body.minY - leadingShoulderRadius))
-        path.addQuadCurve(
-            to: CGPoint(x: leadingWing.minX - leadingShoulderRadius, y: body.minY),
-            control: CGPoint(x: leadingWing.minX, y: body.minY)
-        )
-        path.addLine(to: CGPoint(x: body.minX + leadingShoulderRadius, y: body.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: body.minX, y: body.minY + leadingShoulderRadius),
-            control: CGPoint(x: body.minX, y: body.minY)
-        )
-        path.addLine(to: CGPoint(x: body.minX, y: body.maxY - lowerRadius))
-        path.addQuadCurve(
-            to: CGPoint(x: body.minX + lowerRadius, y: body.maxY),
-            control: CGPoint(x: body.minX, y: body.maxY)
-        )
-        path.addLine(to: CGPoint(x: body.maxX - lowerRadius, y: body.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: body.maxX, y: body.maxY - lowerRadius),
-            control: CGPoint(x: body.maxX, y: body.maxY)
-        )
-        path.addLine(to: CGPoint(x: body.maxX, y: body.minY + trailingShoulderRadius))
-        path.addQuadCurve(
-            to: CGPoint(x: body.maxX - trailingShoulderRadius, y: body.minY),
-            control: CGPoint(x: body.maxX, y: body.minY)
-        )
-        path.addLine(to: CGPoint(x: trailingWing.maxX + trailingShoulderRadius, y: body.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: trailingWing.maxX, y: body.minY - trailingShoulderRadius),
-            control: CGPoint(x: trailingWing.maxX, y: body.minY)
-        )
-        path.addLine(to: CGPoint(x: trailingWing.maxX, y: 0))
+        for segment in leading {
+            let end = CGPoint(x: leadingWing.minX - segment.end.x, y: segment.end.y)
+            if let control = segment.control {
+                path.addQuadCurve(to: end, control: CGPoint(x: leadingWing.minX - control.x, y: control.y))
+            } else {
+                path.addLine(to: end)
+            }
+        }
+        var ends = [CGPoint(x: 0, y: 0)] + trailing.map(\.end)
+        ends.removeLast()
+        path.addLine(to: CGPoint(x: trailingWing.maxX + (trailing.last?.end.x ?? 0), y: body.maxY))
+        for (segment, start) in zip(trailing, ends).reversed() {
+            let end = CGPoint(x: trailingWing.maxX + start.x, y: start.y)
+            if let control = segment.control {
+                path.addQuadCurve(to: end, control: CGPoint(x: trailingWing.maxX + control.x, y: control.y))
+            } else {
+                path.addLine(to: end)
+            }
+        }
         path.addLine(to: CGPoint(x: core.maxX, y: 0))
         path.addLine(to: CGPoint(x: core.maxX, y: body.minY))
         path.addLine(to: CGPoint(x: core.minX, y: body.minY))
         path.closeSubpath()
         return path
+    }
+
+    /// One outer side of the shell, top to bottom, as (d, y) points: d = 0 is the wing's outer side and d = `step`
+    /// the body's. A straight line when `control` is nil, else a quad curve.
+    private typealias SideSegment = (end: CGPoint, control: CGPoint?)
+
+    private func sideProfile(
+        layout: VoiceBarNotchShapeLayout, wingWidth: CGFloat, step rawStep: CGFloat
+    ) -> [SideSegment] {
+        let body = layout.bodyRect
+        let step = max(0, rawStep)
+        let bodyCorner = min(compactOuterCornerRadius, body.width / 2)
+        // The concave join under the wing and the convex corner of the step-out. Neither can be deeper than
+        // the step, and a side with no wing has no shoulder at all.
+        let join = min(layout.inverseJoinRadius, wingWidth, layout.geometry.topHeight, step / 2)
+        let shoulderTarget = bodyShoulderCornerRadius
+            * min(1, layout.inverseJoinRadius > 0 ? wingWidth / layout.inverseJoinRadius : 0)
+        // A body flush with its wing (or barely past it) rounds its bottom corner up into the wing, so a panel
+        // one point tall keeps the wing's rounded corner instead of squaring it off.
+        let reachesIntoWing = step < bodyCorner
+        let lower = min(bodyCorner, (reachesIntoWing ? body.maxY : body.height) / 2)
+        let cornerTop = body.maxY - lower
+
+        if reachesIntoWing, cornerTop < body.minY, lower > 0 {
+            // The bottom corner starts above the step, so it swallows it: follow the wing's side down to the
+            // corner's curve and join it there.
+            let t = (step / lower).squareRoot()
+            return [
+                (CGPoint(x: 0, y: body.maxY - lower * (1 - t) * (1 - t)), nil),
+                (CGPoint(x: step - lower, y: body.maxY), CGPoint(x: step - lower * t, y: body.maxY)),
+            ]
+        }
+        let shoulder = max(0, min(shoulderTarget, step - join, cornerTop - body.minY))
+        return [
+            (CGPoint(x: 0, y: body.minY - join), nil),
+            (CGPoint(x: join, y: body.minY), CGPoint(x: 0, y: body.minY)),
+            (CGPoint(x: step - shoulder, y: body.minY), nil),
+            (CGPoint(x: step, y: body.minY + shoulder), CGPoint(x: step, y: body.minY)),
+            (CGPoint(x: step, y: cornerTop), nil),
+            (CGPoint(x: step - lower, y: body.maxY), CGPoint(x: step, y: body.maxY)),
+        ]
     }
 }

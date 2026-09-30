@@ -189,7 +189,9 @@ public struct VoiceBarNotchVisibleRegion: Equatable {
         return VoiceBarNotchContinuousShape(
             geometry: geometry,
             compactOuterCornerRadius: VoiceBarNotchContract.material
-                .compactOuterCornerRadius(for: presentation.visualState)
+                .compactOuterCornerRadius(for: presentation.visualState),
+            bodyShoulderCornerRadius: VoiceBarNotchContract.material
+                .bodyShoulderCornerRadius(for: presentation.visualState)
         )
         .path(in: CGRect(origin: .zero, size: layout.totalSize))
         .contains(renderedPoint)

@@ -48,7 +48,7 @@ final class IconButtonsShotsTests: XCTestCase {
                 )
                 .padding(14)
                 .background(scheme == "light" ? Color.white : Color(white: 0.09)),
-                appearance: appearance, size: CGSize(width: 306, height: 220),
+                appearance: appearance, size: CGSize(width: 332, height: 220),
                 to: directory.appendingPathComponent("notch-history-rows-\(scheme).png")
             )
             try render(

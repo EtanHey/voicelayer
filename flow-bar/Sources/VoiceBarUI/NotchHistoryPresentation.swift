@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -7,6 +8,22 @@ public enum NotchHistoryPresentation {
     public static let openHistoryTitle = "Open History…"
     /// Paste from the popover types into the app behind it, which is easy to miss, so it's said once.
     public static let pasteHint = "Paste types into the app you were using."
+    public static let footerHintFontSize: CGFloat = 10
+    public static let footerButtonFontSize: CGFloat = 11
+    public static let footerSpacing: CGFloat = 8
+    public static let footerMinimumGap: CGFloat = 6
+
+    /// The narrowest footer that keeps the paste hint on one line beside "Open History…".
+    public static var footerOneLineWidth: CGFloat {
+        func width(_ text: String, size: CGFloat, weight: NSFont.Weight) -> CGFloat {
+            let system = NSFont.systemFont(ofSize: size, weight: weight)
+            let font = system.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: size) }
+            return ceil((text as NSString).size(withAttributes: [.font: font ?? system]).width)
+        }
+        return width(pasteHint, size: footerHintFontSize, weight: .medium)
+            + 2 * footerSpacing + footerMinimumGap
+            + width(openHistoryTitle, size: footerButtonFontSize, weight: .semibold)
+    }
 
     public static let firstWordsLimit = 90
     /// Spec §4: 24 pt hit targets (R4 UI pass #19 found 10–12 pt ones in Settings).

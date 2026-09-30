@@ -42,28 +42,42 @@ final class NotchHistoryPanelTests: XCTestCase {
                     geometry.trailingWingWidth,
                     "\(state) @\(core)"
                 )
-                if state == .teleprompter {
-                    XCTAssertEqual(geometry.bodyLeadingExtent, geometry.bodyTrailingExtent, "symmetric about the core")
-                }
+                XCTAssertEqual(geometry.bodyLeadingExtent, geometry.bodyTrailingExtent, "symmetric about the core")
             }
         }
         // UXP-2: the History body is flush with the launcher wings, and a flush side is drawn straight down (the
         // old S-hook came from a shoulder curve drawn at the wing's own x; a flush shoulder now has no depth).
-        // The mic's wing is narrower than the History + Settings wing, so the body is flush on each side
-        // separately rather than symmetric about the core.
+        // The mic's fitted wing is narrower, so on that side the body steps out past it (W11); the step is a
+        // convex corner inside the body's own bounds, so still nothing sticks out.
         for core in [CGFloat(185), 200, 220] {
             let history = VoiceBarNotchContract.geometry(for: .history, coreWidth: core)
-            XCTAssertEqual(history.bodyLeadingExtent, history.leadingWingWidth, "flush @\(core)")
             XCTAssertEqual(history.bodyTrailingExtent, history.trailingWingWidth, "flush @\(core)")
             let path = VoiceBarNotchContinuousShape(
                 geometry: history,
-                compactOuterCornerRadius: VoiceBarNotchContract.material.compactOuterCornerRadius(for: .history)
+                compactOuterCornerRadius: VoiceBarNotchContract.material.compactOuterCornerRadius(for: .history),
+                bodyShoulderCornerRadius: VoiceBarNotchContract.material.bodyShoulderCornerRadius(for: .history)
             ).path(in: CGRect(x: 0, y: 0, width: history.totalWidth, height: history.totalHeight))
             XCTAssertEqual(path.boundingRect.minX, 0, accuracy: 0.001, "no hook sticks out @\(core)")
             XCTAssertEqual(path.boundingRect.maxX, history.totalWidth, accuracy: 0.001, "no hook sticks out @\(core)")
         }
         XCTAssertLessThan(VoiceBarNotchContract.geometry(for: .history).bodyWidth,
                           VoiceBarNotchContract.geometry(for: .teleprompter).bodyWidth, "still narrower")
+    }
+
+    /// W11 lead call: fitting the mic's wing must not shrink or shift the panel. 332 pt, centred on the housing,
+    /// is what 2.2.28 shipped; at 306 pt the footer's paste hint wrapped to a second line.
+    func testTheHistoryPanelKeepsItsWidthAndCentringAndItsFooterFitsOnOneLine() {
+        let history = VoiceBarNotchContract.geometry(for: .history)
+        let layout = VoiceBarNotchShapeLayout(geometry: history)
+        XCTAssertEqual(history.bodyWidth, 332)
+        XCTAssertEqual(layout.bodyRect.midX, layout.coreRect.midX, "centred on the housing")
+        XCTAssertEqual(history.bodyLeadingExtent, 73.5)
+        XCTAssertEqual(history.bodyTrailingExtent, 73.5)
+
+        let inset = VoiceBarNotchContract.material.teleprompterBodyHorizontalInset
+        let footer = NotchHistoryPresentation.footerOneLineWidth
+        XCTAssertLessThanOrEqual(footer, history.bodyWidth - 2 * inset, "the paste hint wraps")
+        XCTAssertGreaterThan(footer, 306 - 2 * inset, "a panel as narrow as the fitted launcher would wrap it")
     }
 
     private func key(_ code: UInt16, _ characters: String, in window: NSWindow?) throws -> NSEvent {
