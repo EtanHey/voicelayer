@@ -48,7 +48,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
             XCTAssertEqual(commands.last, "cancel")
             XCTAssertEqual(state.mode, .idle)
             XCTAssertEqual(state.confirmationText,
-                           "Transcription cancelled — audio saved. Re-transcribe it from History.")
+                           "Transcription cancelled — audio saved. Re-transcribe it from History once processing finishes.")
             XCTAssertTrue(state.latestReusableTranscript.isEmpty)
             XCTAssertNil(state.lastDictationCardEntry)
         }

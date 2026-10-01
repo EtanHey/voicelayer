@@ -30,7 +30,7 @@ final class CancelledTranscriptionTests: XCTestCase {
         XCTAssertEqual(commands, ["cancel"])
         XCTAssertEqual(state.mode, .idle)
         XCTAssertEqual(state.confirmationText,
-                       "Transcription cancelled — audio saved. Re-transcribe it from History.")
+                       "Transcription cancelled — audio saved. Re-transcribe it from History once processing finishes.")
         state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
         XCTAssertTrue(state.latestReusableTranscript.isEmpty)
         XCTAssertNil(state.lastDictationCardEntry)
@@ -56,6 +56,6 @@ final class CancelledTranscriptionTests: XCTestCase {
         XCTAssertNil(state.lastDictationCardEntry)
         XCTAssertTrue(pasted.isEmpty)
         XCTAssertEqual(state.confirmationText,
-                       "Transcription cancelled — audio saved. Re-transcribe it from History.")
+                       "Transcription cancelled — audio saved. Re-transcribe it from History once processing finishes.")
     }
 }
