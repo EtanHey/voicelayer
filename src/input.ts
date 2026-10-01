@@ -3311,7 +3311,10 @@ export async function waitForInput(
         ...transcriptionPolishMetadata(finalized),
         ...(cancelledAfterStop ? { paste_suppressed: true } : {}),
         ...(archivedRecordingPath
-          ? { recording_path: join(archivedRecordingPath, "audio.wav") }
+          ? {
+              recording_path: join(archivedRecordingPath, "audio.wav"),
+              recording_created_at: archivedRecordingCreatedAt(join(archivedRecordingPath, "audio.wav")),
+            }
           : {}),
         ...(options.archiveSource === "voicebar" &&
         archivedRecordingPath &&
@@ -3483,6 +3486,17 @@ export function updateArchivedTranscript(
 
 function archivedAudioSha256(audioPath: string): string {
   return createHash("sha256").update(readFileSync(audioPath)).digest("hex");
+}
+
+/** Timestamp identity for recents: a re-decode must keep the archive's original time. */
+function archivedRecordingCreatedAt(audioPath: string): string | undefined {
+  try {
+    const metadata = JSON.parse(readFileSync(join(dirname(audioPath), "metadata.json"), "utf8"));
+    const value = metadata.created_at;
+    return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function updateArchivedRecordingMetadata(
@@ -3918,6 +3932,7 @@ export async function retranscribeVoiceAskArchive(
         type: "transcription",
         text,
         recording_path: snapshot.audioPath,
+        recording_created_at: archivedRecordingCreatedAt(snapshot.audioPath),
       });
     }
     return text;
@@ -4069,6 +4084,7 @@ export async function retranscribeRecordingCapture(
           type: "transcription",
           text,
           recording_path: eventAudioPath,
+          recording_created_at: archivedRecordingCreatedAt(wavPath),
           ...transcriptionPolishMetadata(finalized),
         });
       }
@@ -4169,7 +4185,10 @@ export async function retranscribeLastCapture(): Promise<string | null> {
         broadcast({
           type: "transcription",
           text,
-          ...(archivedAudioPath ? { recording_path: archivedAudioPath } : {}),
+          ...(archivedAudioPath ? {
+            recording_path: archivedAudioPath,
+            recording_created_at: archivedRecordingCreatedAt(archivedAudioPath),
+          } : {}),
           ...transcriptionPolishMetadata(finalized),
         });
       }

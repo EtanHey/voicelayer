@@ -1366,6 +1366,12 @@ describe("input recording durability", () => {
         expectCaptureLinked(capturePath);
       },
     })).resolves.toBe("Retained transcript.");
+    const originalTime = JSON.parse(readFileSync(capturePath!.replace("audio.wav", "metadata.json"), "utf8")).created_at;
+    expect(broadcasts.find(event => event.type === "transcription")?.recording_created_at).toBe(originalTime);
+    broadcasts = [];
+    const { retranscribeRecordingCapture } = await import("../input");
+    await retranscribeRecordingCapture(capturePath!);
+    expect(broadcasts.find(event => event.type === "transcription")?.recording_created_at).toBe(originalTime);
     expect(capturedVoiceBarAudio()).toEqual([capturePath]);
     if (!capturePath) throw new Error("no pre-STT archive");
     expect(JSON.parse(readFileSync(capturePath.replace("audio.wav", "metadata.json"), "utf8")))
