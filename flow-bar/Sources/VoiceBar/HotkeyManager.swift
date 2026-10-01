@@ -78,6 +78,14 @@ final class GestureStateMachine {
     private var doubleTapDeadline: TimeInterval?
     private var doubleTapExpiryBehavior: DoubleTapExpiryBehavior?
 
+    // Only a release that STOPPED capture arms this guard; ordinary double-taps are unchanged.
+    // 150 ms covers relay bounce while staying below the 160 ms deliberate hold threshold.
+    static let stopReleaseDebounceMs = 150
+    var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    private var stoppedOnKeyDown = false
+    private var lastStopRelease: TimeInterval?
+    private var ignoringStopBounce = false
+
     static let doubleTapWindowMs: Int = 400
     static let holdThresholdMs: Int = 160
 
@@ -90,7 +98,15 @@ final class GestureStateMachine {
     var onPreviewPhaseChange: (HotkeyPhase) -> Void = { _ in }
 
     func handleKeyDown() {
-        let now = CFAbsoluteTimeGetCurrent()
+        // A new press also resolves a previous release dropped by modifier filtering.
+        stoppedOnKeyDown = false
+        ignoringStopBounce = false
+        let now = clock()
+        if let lastStopRelease, (0 ... Double(Self.stopReleaseDebounceMs) / 1000).contains(now - lastStopRelease) {
+            ignoringStopBounce = true
+            return
+        }
+        lastStopRelease = nil
         switch state {
         case .idle:
             startPressing(now: now)
@@ -112,22 +128,35 @@ final class GestureStateMachine {
             state = .idle
             onPreviewPhaseChange(.idle)
             onHoldEnd()
+            // The production stop callback resets this model. Arm only after it returns.
+            stoppedOnKeyDown = true
         default:
             break
         }
     }
 
     func handleKeyUp() {
+        if ignoringStopBounce {
+            ignoringStopBounce = false
+            return
+        }
+        if stoppedOnKeyDown {
+            stoppedOnKeyDown = false
+            lastStopRelease = clock()
+            return
+        }
         switch state {
         case .pressing:
             clearHoldTimer()
             keyDownTime = nil
             startDoubleTapWindow(expiryBehavior: .singleTap)
         case .holding:
+            let releasedAt = clock()
             keyDownTime = nil
             state = .idle
             onPreviewPhaseChange(.idle)
             onHoldEnd()
+            lastStopRelease = releasedAt
         case .locked:
             break
         default:
@@ -136,7 +165,7 @@ final class GestureStateMachine {
     }
 
     func handleMouseButtonDown() {
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = clock()
         switch state {
         case .idle:
             startPressing(now: now)
@@ -181,6 +210,9 @@ final class GestureStateMachine {
 
     /// Reset state (e.g., on permission changes).
     func reset() {
+        lastStopRelease = nil
+        stoppedOnKeyDown = false
+        ignoringStopBounce = false
         clearHoldTimer()
         clearDoubleTapTimer()
         doubleTapDeadline = nil
@@ -216,7 +248,7 @@ final class GestureStateMachine {
         doubleTapTimerGeneration += 1
         let generation = doubleTapTimerGeneration
         state = .waitingForDoubleTap
-        doubleTapDeadline = CFAbsoluteTimeGetCurrent() + Double(Self.doubleTapWindowMs) / 1000
+        doubleTapDeadline = clock() + Double(Self.doubleTapWindowMs) / 1000
         doubleTapExpiryBehavior = expiryBehavior
         onPreviewPhaseChange(.awaitingSecondTap)
         let timer = DispatchWorkItem { [weak self] in

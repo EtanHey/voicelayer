@@ -1329,7 +1329,13 @@ describe("input recording durability", () => {
         finishHangingTranscription?.();
         const result = await settled;
         if (termination === "abort") expect(result).toBeInstanceOf(Error);
-        else expect(result).toBeNull();
+        else {
+          expect(result).toBeNull();
+          expect(broadcasts.some(event => event.type === "transcription")).toBe(false);
+          expect(existsSync(archives[0].replace("audio.wav", "voicelayer-transcript.txt"))).toBe(false);
+          expect(JSON.parse(readFileSync(archives[0].replace("audio.wav", "metadata.json"), "utf8")))
+            .toMatchObject({ transcription_status: "cancelled", voicelayer_transcript_chars: 0 });
+        }
         expect(broadcasts.some((event) => event.dictation_receipt)).toBe(false);
         expect(capturedVoiceBarAudio()).toEqual(archives);
         expectCaptureLinked(archives[0]);

@@ -865,6 +865,137 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
+    func testBackwardClockStepAfterStopDoesNotSwallowLaterPress() {
+        let gesture = GestureStateMachine()
+        defer { gesture.reset() }
+        var now: TimeInterval = 1000
+        gesture.clock = { now }
+        var holdStarts = 0
+        gesture.onHoldStart = { holdStarts += 1 }
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown()
+        gesture.handleKeyUp() // locked
+        XCTAssertEqual(holdStarts, 1)
+        gesture.handleKeyDown() // stop
+        now += 0.02
+        gesture.handleKeyUp()
+        now += 30 // user waits 30 seconds
+        now -= 60 // a wall-clock provider steps backward
+        gesture.handleKeyDown()
+        XCTAssertEqual(gesture.state, .pressing,
+                       "a deliberate press after a backward clock step must not count as bounce")
+        gesture.handleKeyUp()
+    }
+
+    func testGestureDefaultClockUsesMonotonicSystemUptime() {
+        let gesture = GestureStateMachine()
+        let before = ProcessInfo.processInfo.systemUptime
+        let sampled = gesture.clock()
+        let after = ProcessInfo.processInfo.systemUptime
+        XCTAssertGreaterThanOrEqual(sampled, before)
+        XCTAssertLessThanOrEqual(sampled, after)
+    }
+
+    func testStopReleaseBounceDoesNotBecomeACancelTap() {
+        let gesture = GestureStateMachine()
+        var now: TimeInterval = 100
+        gesture.clock = { now }
+        var stops = 0
+        var cancelTaps = 0
+        gesture.onHoldEnd = { stops += 1 }
+        gesture.onSingleTap = { cancelTaps += 1 }
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown() // lock recording
+        gesture.handleKeyUp()
+        gesture.handleKeyDown() // stop recording, at .026
+        now += 0.025
+        gesture.handleKeyUp() // .051
+        now += 0.002
+        gesture.handleKeyDown() // relay bounce at .053
+        now += 0.052
+        gesture.handleKeyUp() // .105
+        XCTAssertEqual(stops, 1)
+        XCTAssertEqual(gesture.state, .idle, "bounce must not arm a delayed cancel")
+        XCTAssertEqual(cancelTaps, 0)
+        now += 0.2
+        gesture.handleKeyDown() // deliberate later tap still works
+        gesture.handleKeyUp()
+        XCTAssertEqual(gesture.state, .waitingForDoubleTap)
+        gesture.reset()
+    }
+
+    func testHoldStopReleaseIgnoresBounceButLeavesMouseGestureWorking() {
+        let gesture = GestureStateMachine()
+        var now: TimeInterval = 100
+        gesture.clock = { now }
+        let started = expectation(description: "hold started")
+        gesture.onHoldEnd = { gesture.reset() }
+        gesture.onHoldStart = { started.fulfill() }
+        gesture.handleKeyDown()
+        wait(for: [started], timeout: 5)
+        now += 353.1
+        gesture.handleKeyUp()
+        now += 0.002
+        gesture.handleKeyDown()
+        now += 0.052
+        gesture.handleKeyUp()
+        XCTAssertEqual(gesture.state, .idle)
+        gesture.onHoldStart = {}
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+        XCTAssertEqual(gesture.state, .locked)
+        gesture.reset()
+    }
+
+    func testLostLockedStopReleaseDoesNotSwallowTheNextTapRelease() {
+        let gesture = GestureStateMachine()
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown() // locked stop; modified release never reaches this model
+        gesture.handleKeyDown() // new ordinary tap
+        gesture.handleKeyUp()
+        XCTAssertEqual(gesture.state, .waitingForDoubleTap)
+        gesture.reset()
+    }
+
+    func testStopCallbackResetDoesNotEraseTheReleaseBounceGuard() {
+        let gesture = GestureStateMachine()
+        var now: TimeInterval = 100
+        gesture.clock = { now }
+        let voice = VoiceState(
+            recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+        )
+        voice.frontmostAppProvider = { nil }
+        voice.isConnected = true
+        var commands: [String] = []
+        voice.sendCommand = { commands.append($0["cmd"] as? String ?? "") }
+        voice.record(pressToTalk: true)
+        let router = VoiceBarCommandRouter(voiceState: voice, resetHotkeyState: { gesture.reset() })
+        gesture.onHoldEnd = { router.handleStop() }
+        gesture.onSingleTap = { router.handleHotkeySingleTap() }
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown()
+        now += 0.025
+        gesture.handleKeyUp()
+        now += 0.002
+        gesture.handleKeyDown()
+        now += 0.052
+        gesture.handleKeyUp()
+        XCTAssertEqual(gesture.state, .idle)
+        XCTAssertEqual(voice.mode, .transcribing)
+        XCTAssertEqual(commands.filter { $0 == "stop" }.count, 1)
+        XCTAssertFalse(commands.contains("cancel"))
+        gesture.reset()
+    }
+
     func testGestureShowsPressingPreviewBeforeHoldStartsRecording() {
         let gesture = GestureStateMachine()
         var holdStartCount = 0

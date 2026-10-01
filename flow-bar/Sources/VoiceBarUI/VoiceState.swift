@@ -960,6 +960,7 @@ public final class VoiceState {
     }
 
     public func cancel() {
+        let cancelledTranscription = mode == .transcribing
         barInitiatedRecording = false
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         barInitiatedTimeout?.cancel()
@@ -991,6 +992,13 @@ public final class VoiceState {
                 collapseTimer?.cancel()
                 isCollapsed = false
             }
+        }
+        if cancelledTranscription {
+            showConfirmation(
+                "Transcription cancelled — audio saved. Re-transcribe it from History once processing finishes.",
+                duration: 5.0
+            )
+            expandFromCollapse()
         }
     }
 
