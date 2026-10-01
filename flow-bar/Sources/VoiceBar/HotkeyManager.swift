@@ -124,10 +124,11 @@ final class GestureStateMachine {
             onHoldStart()
             onDoubleTap()
         case .locked:
-            stoppedOnKeyDown = true
             state = .idle
             onPreviewPhaseChange(.idle)
             onHoldEnd()
+            // The production stop callback resets this model. Arm only after it returns.
+            stoppedOnKeyDown = true
         default:
             break
         }
@@ -149,11 +150,12 @@ final class GestureStateMachine {
             keyDownTime = nil
             startDoubleTapWindow(expiryBehavior: .singleTap)
         case .holding:
-            lastStopRelease = clock()
+            let releasedAt = clock()
             keyDownTime = nil
             state = .idle
             onPreviewPhaseChange(.idle)
             onHoldEnd()
+            lastStopRelease = releasedAt
         case .locked:
             break
         default:
