@@ -899,6 +899,7 @@ final class HotkeyManagerTests: XCTestCase {
         var now: TimeInterval = 100
         gesture.clock = { now }
         let started = expectation(description: "hold started")
+        gesture.onHoldEnd = { gesture.reset() }
         gesture.onHoldStart = { started.fulfill() }
         gesture.handleKeyDown()
         wait(for: [started], timeout: 5)
@@ -926,6 +927,40 @@ final class HotkeyManagerTests: XCTestCase {
         gesture.handleKeyDown() // new ordinary tap
         gesture.handleKeyUp()
         XCTAssertEqual(gesture.state, .waitingForDoubleTap)
+        gesture.reset()
+    }
+
+    func testStopCallbackResetDoesNotEraseTheReleaseBounceGuard() {
+        let gesture = GestureStateMachine()
+        var now: TimeInterval = 100
+        gesture.clock = { now }
+        let voice = VoiceState(
+            recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+        )
+        voice.frontmostAppProvider = { nil }
+        voice.isConnected = true
+        var commands: [String] = []
+        voice.sendCommand = { commands.append($0["cmd"] as? String ?? "") }
+        voice.record(pressToTalk: true)
+        let router = VoiceBarCommandRouter(voiceState: voice, resetHotkeyState: { gesture.reset() })
+        gesture.onHoldEnd = { router.handleStop() }
+        gesture.onSingleTap = { router.handleHotkeySingleTap() }
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown()
+        now += 0.025
+        gesture.handleKeyUp()
+        now += 0.002
+        gesture.handleKeyDown()
+        now += 0.052
+        gesture.handleKeyUp()
+        XCTAssertEqual(gesture.state, .idle)
+        XCTAssertEqual(voice.mode, .transcribing)
+        XCTAssertEqual(commands.filter { $0 == "stop" }.count, 1)
+        XCTAssertFalse(commands.contains("cancel"))
         gesture.reset()
     }
 
