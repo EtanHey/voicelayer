@@ -72,8 +72,6 @@ export interface TranscriptionEvent {
   partial?: boolean;
   /** Archived VoiceBar recording audio used to produce this transcript. */
   recording_path?: string;
-  /** A post-stop cancel kept the words but revoked automatic insertion. */
-  paste_suppressed?: boolean;
   /** Durations for a newly completed, archived VoiceBar dictation. */
   dictation_receipt?: DictationReceiptMetadata;
   /** Whether the optional LLM polish layer produced the final candidate. */

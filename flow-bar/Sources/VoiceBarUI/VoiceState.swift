@@ -579,7 +579,6 @@ public final class VoiceState {
     private var pendingRecordingIdleAfterFinal = false
     private var pendingIdleAfterAutoPasteCompletion = false
     private var pendingRecoveredTranscriptionPaste = false
-    private var cancelledTranscriptionPaste = false
     private var historyRetranscriptionRequest = HistoryRetranscriptionRequest()
     private var canRecoverLateRecordStart = false
 
@@ -930,7 +929,6 @@ public final class VoiceState {
     }
 
     public func dismissError() {
-        cancelledTranscriptionPaste = false
         pendingIntent = nil
         errorMessage = nil
         cancelDeferredFinalTranscription()
@@ -962,17 +960,7 @@ public final class VoiceState {
     }
 
     public func cancel() {
-        if mode == .transcribing, barInitiatedRecording, !remoteOwnedRecording,
-           !isHistoryRetranscriptionPending {
-            // A post-stop cancel revokes insertion, never the already captured words.
-            cancelledTranscriptionPaste = true
-            frontmostAppOnRecordStart = nil
-            recordStartInsertionHandler = nil
-            pendingRecoveredTranscriptionPaste = false
-            sendIntent(command: .cancel, payload: ["cmd": "cancel"])
-            return
-        }
-        cancelledTranscriptionPaste = false
+        let cancelledTranscription = mode == .transcribing
         barInitiatedRecording = false
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         barInitiatedTimeout?.cancel()
@@ -1004,6 +992,13 @@ public final class VoiceState {
                 collapseTimer?.cancel()
                 isCollapsed = false
             }
+        }
+        if cancelledTranscription {
+            showConfirmation(
+                "Transcription cancelled — audio saved. Re-transcribe it from History.",
+                duration: 5.0
+            )
+            expandFromCollapse()
         }
     }
 
@@ -1041,7 +1036,6 @@ public final class VoiceState {
 
     public func retranscribeLastCapture() {
         guard !pendingRecoveredTranscriptionPaste else { return }
-        cancelledTranscriptionPaste = false
         pendingRecoveredTranscriptionPaste = true
         sendIntent(
             command: .retranscribeLast,
@@ -1068,7 +1062,6 @@ public final class VoiceState {
     public private(set) var hiddenUntil: Date?
 
     public func snooze(until: Date? = nil) {
-        cancelledTranscriptionPaste = false
         isHidden = true
         hiddenUntil = until
         switch mode {
@@ -1317,7 +1310,6 @@ public final class VoiceState {
         transcribingStartedAt = nil
         transcribingStatusText = nil
         confirmationText = nil
-        cancelledTranscriptionPaste = false
         errorMessage = nil
         let front = frontmostAppProvider()
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
@@ -1607,9 +1599,6 @@ public final class VoiceState {
                 let isHistoryRetranscription = normalizedRecordingPath.map {
                     historyRetranscriptionRequest.suppressesPaste(for: $0)
                 } ?? false
-                if !isHistoryRetranscription, event["paste_suppressed"] as? Bool == true {
-                    cancelledTranscriptionPaste = true
-                }
                 let dictationReceipt = normalizedRecordingPath != nil && !isHistoryRetranscription
                     ? DictationReceipt.parse(event["dictation_receipt"])
                     : nil
@@ -1828,7 +1817,6 @@ public final class VoiceState {
             return
         }
 
-        cancelledTranscriptionPaste = false
         modelsSettingsState = .disconnected
         pendingResidencyID = nil
         timedOutResidencyID = nil
@@ -2465,16 +2453,13 @@ public final class VoiceState {
         // and strands the caller forever. Never remove this even if classification looks correct.
         let remoteCaptureBlocksPaste =
             remoteOwnedRecording || supersededRemoteTranscriptPending
-        let pasteWasCancelled = cancelledTranscriptionPaste && !rewritesArchivedRecording
         let shouldAutoPaste =
             barInitiatedRecording
-                && !pasteWasCancelled
                 && !remoteOwnedRecording
                 && !supersededRemoteTranscriptPending
                 && !rewritesArchivedRecording
         let shouldPasteRecoveredTranscription =
             pendingRecoveredTranscriptionPaste
-                && !pasteWasCancelled
                 && !remoteCaptureBlocksPaste
                 && !rewritesArchivedRecording
         let normalizedRecordingPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2522,16 +2507,6 @@ public final class VoiceState {
             enterIdleState(clearQueue: false)
         }
 
-        if pasteWasCancelled {
-            cancelledTranscriptionPaste = false
-            barInitiatedRecording = false
-            barInitiatedTimeout?.cancel()
-            recordingIdleCleanupTask?.cancel()
-            enterIdleState(clearQueue: false)
-            confirmationText = "Transcription cancelled — not pasted"
-            expandFromCollapse()
-        }
-
         // The remote caller's transcript has been delivered; release the ownership gate so a
         // following F5 dictation pastes normally.
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
@@ -2552,7 +2527,6 @@ public final class VoiceState {
     }
 
     private func failTranscription() {
-        cancelledTranscriptionPaste = false
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()

@@ -796,7 +796,6 @@ interface VoiceBarRecordingMetadata {
   language_mode: string;
   voicelayer_transcript_chars: number;
   transcription_status: "transcribed" | "cancelled" | "captured";
-  paste_suppressed?: boolean;
   audio_sha256: string;
   app_version: string | null;
   provenance: RecordingProvenance;
@@ -3233,15 +3232,21 @@ export async function waitForInput(
       linkRetainedCaptureToArchive(join(voiceBarArchivePath, "audio.wav"));
     }
 
-    let cancelledAfterStop = false;
     if (consumeCancelSignalForRecording()) {
-      cancelledAfterStop = true;
-      if (options.archiveSource !== "voicebar") {
-        console.error("[voicelayer] Remote input cancelled during transcription");
-        setRecordingState("idle");
-        broadcast({ type: "state", state: "idle", source: "recording" });
-        return null;
+      if (voiceBarArchivePath) {
+        updateArchivedRecordingMetadata(
+          join(voiceBarArchivePath, "audio.wav"),
+          (metadata) => {
+            metadata.transcription_status = "cancelled";
+          },
+        );
       }
+      console.error(
+        "[voicelayer] Recording cancelled during transcription — discarding transcript",
+      );
+      setRecordingState("idle");
+      broadcast({ type: "state", state: "idle", source: "recording" });
+      return null;
     }
 
     throwIfWaitForInputAborted(options.signal);
@@ -3256,7 +3261,6 @@ export async function waitForInput(
             processingDurationMs: dictationReceipt?.processing_duration_ms,
             polishStatus: finalized.polishStatus,
             requireMetadataUpdate: true,
-            pasteSuppressed: cancelledAfterStop,
           });
           archivedRecordingPath = voiceBarArchivePath;
         } else {
@@ -3305,7 +3309,6 @@ export async function waitForInput(
         type: "transcription",
         text,
         ...transcriptionPolishMetadata(finalized),
-        ...(cancelledAfterStop ? { paste_suppressed: true } : {}),
         ...(archivedRecordingPath
           ? { recording_path: join(archivedRecordingPath, "audio.wav") }
           : {}),
@@ -3437,7 +3440,6 @@ export function updateArchivedTranscript(
     polishStatus?: STTPolishStatus | null;
     provenanceProbe?: RecordingProvenanceProbe;
     requireMetadataUpdate?: boolean;
-    pasteSuppressed?: boolean;
   },
 ): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
@@ -3447,9 +3449,6 @@ export function updateArchivedTranscript(
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
-    if (transcription.pasteSuppressed !== undefined) {
-      metadata.paste_suppressed = transcription.pasteSuppressed;
-    }
     if (transcription.transcribedDurationMs !== undefined) {
       metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
     }
