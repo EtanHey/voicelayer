@@ -995,7 +995,7 @@ public final class VoiceState {
         }
         if cancelledTranscription {
             showConfirmation(
-                "Transcription cancelled — audio saved. Re-transcribe it from History.",
+                "Transcription cancelled — audio saved. Re-transcribe it from History once processing finishes.",
                 duration: 5.0
             )
             expandFromCollapse()
