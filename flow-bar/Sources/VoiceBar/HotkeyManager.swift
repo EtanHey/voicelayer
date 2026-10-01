@@ -81,7 +81,7 @@ final class GestureStateMachine {
     // Only a release that STOPPED capture arms this guard; ordinary double-taps are unchanged.
     // 150 ms covers relay bounce while staying below the 160 ms deliberate hold threshold.
     static let stopReleaseDebounceMs = 150
-    var clock: () -> TimeInterval = { CFAbsoluteTimeGetCurrent() }
+    var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     private var stoppedOnKeyDown = false
     private var lastStopRelease: TimeInterval?
     private var ignoringStopBounce = false
@@ -102,10 +102,11 @@ final class GestureStateMachine {
         stoppedOnKeyDown = false
         ignoringStopBounce = false
         let now = clock()
-        if let lastStopRelease, now - lastStopRelease <= Double(Self.stopReleaseDebounceMs) / 1000 {
+        if let lastStopRelease, (0 ... Double(Self.stopReleaseDebounceMs) / 1000).contains(now - lastStopRelease) {
             ignoringStopBounce = true
             return
         }
+        lastStopRelease = nil
         switch state {
         case .idle:
             startPressing(now: now)
@@ -164,7 +165,7 @@ final class GestureStateMachine {
     }
 
     func handleMouseButtonDown() {
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = clock()
         switch state {
         case .idle:
             startPressing(now: now)
