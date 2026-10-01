@@ -1908,21 +1908,33 @@ describe("input recording durability", () => {
       }));
       return join(dir, "audio.wav");
     };
-    const old = capture("2026-06-25", "2026-06-25T10-00-00-000Z-old");
-    const newest = capture("2026-06-28", "2026-06-28T10-00-00-000Z-new");
-    capture("2026-06-29", "2026-06-29T10-00-00-000Z-ask", "voice_ask");
+    const old = capture("2026-06-25", "2026-06-25T10-00-00-000Z-00000001");
+    const newest = capture("2026-06-28", "2026-06-28T10-00-00-000Z-00000002");
+    capture("2026-06-29", "2026-06-29T10-00-00-000Z-00000003", "voice_ask");
     capture("2026-06-30", ".tmp-unpublished");
+    const backup = capture("2026-06-28", "backup-old");
     await retranscribeRecordingCapture(old);
     expect(broadcasts.find(event => event.type === "transcription")?.recording_is_latest).toBe(false);
     broadcasts = [];
     await retranscribeRecordingCapture(newest);
     expect(broadcasts.find(event => event.type === "transcription")?.recording_is_latest).toBe(true);
+    broadcasts = [];
+    await retranscribeRecordingCapture(backup);
+    expect(broadcasts.find(event => event.type === "transcription")?.recording_is_latest).toBe(false);
     // Unknown newer archive metadata cannot authorize promotion over an undated legacy row.
-    const unknown = capture("2026-07-01", "2026-07-01T10-00-00-000Z-unknown");
+    const unknown = capture("2026-07-01", "2026-07-01T10-00-00-000Z-00000004");
     writeFileSync(unknown.replace("audio.wav", "metadata.json"), "invalid synthetic metadata");
     broadcasts = [];
     await retranscribeRecordingCapture(newest);
     expect(broadcasts.find(event => event.type === "transcription")?.recording_is_latest).toBe(false);
+    for (const source of ["unknown", undefined]) {
+      writeFileSync(unknown.replace("audio.wav", "metadata.json"), JSON.stringify({
+        created_at: "2026-07-01T10:00:00.000Z", source, transcription_status: "cancelled",
+      }));
+      broadcasts = [];
+      await retranscribeRecordingCapture(unknown);
+      expect(broadcasts.find(event => event.type === "transcription")?.recording_is_latest).toBe(false);
+    }
   });
 
   it("refreshes archived metadata audio checksum after retranscribe repairs a stale WAV header", async () => {

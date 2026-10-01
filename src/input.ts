@@ -3512,13 +3512,14 @@ function archivedRecordingIsLatest(audioPath: string): boolean {
       .map(entry => entry.name).sort().reverse();
     for (const day of days) {
       const captures = readdirSync(join(root, day), { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && !entry.name.startsWith("."))
+        .filter(entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/.test(entry.name))
         .map(entry => entry.name).sort().reverse();
       for (const id of captures) {
         const candidate = join(root, day, id, "audio.wav");
         if (!existsSync(candidate)) continue;
         const metadata = JSON.parse(readFileSync(join(root, day, id, "metadata.json"), "utf8"));
         if (metadata.source === "voice_ask") continue;
+        if (metadata.source !== "voicebar") return false;
         if (!archivedRecordingCreatedAt(candidate)) return false;
         return realpathSync(candidate) === target;
       }
