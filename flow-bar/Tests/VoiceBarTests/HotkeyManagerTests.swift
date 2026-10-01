@@ -916,6 +916,19 @@ final class HotkeyManagerTests: XCTestCase {
         gesture.reset()
     }
 
+    func testLostLockedStopReleaseDoesNotSwallowTheNextTapRelease() {
+        let gesture = GestureStateMachine()
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown() // locked stop; modified release never reaches this model
+        gesture.handleKeyDown() // new ordinary tap
+        gesture.handleKeyUp()
+        XCTAssertEqual(gesture.state, .waitingForDoubleTap)
+        gesture.reset()
+    }
+
     func testGestureShowsPressingPreviewBeforeHoldStartsRecording() {
         let gesture = GestureStateMachine()
         var holdStartCount = 0

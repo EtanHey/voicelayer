@@ -930,6 +930,7 @@ public final class VoiceState {
     }
 
     public func dismissError() {
+        cancelledTranscriptionPaste = false
         pendingIntent = nil
         errorMessage = nil
         cancelDeferredFinalTranscription()
@@ -1040,6 +1041,7 @@ public final class VoiceState {
 
     public func retranscribeLastCapture() {
         guard !pendingRecoveredTranscriptionPaste else { return }
+        cancelledTranscriptionPaste = false
         pendingRecoveredTranscriptionPaste = true
         sendIntent(
             command: .retranscribeLast,
@@ -1066,6 +1068,7 @@ public final class VoiceState {
     public private(set) var hiddenUntil: Date?
 
     public func snooze(until: Date? = nil) {
+        cancelledTranscriptionPaste = false
         isHidden = true
         hiddenUntil = until
         switch mode {
@@ -1834,6 +1837,7 @@ public final class VoiceState {
             return
         }
 
+        cancelledTranscriptionPaste = false
         modelsSettingsState = .disconnected
         pendingResidencyID = nil
         timedOutResidencyID = nil
@@ -2568,6 +2572,7 @@ public final class VoiceState {
     }
 
     private func failTranscription() {
+        cancelledTranscriptionPaste = false
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
