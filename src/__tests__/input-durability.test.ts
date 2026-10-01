@@ -1352,6 +1352,40 @@ describe("input recording durability", () => {
     });
   }
 
+  it("commits cancelled decode status and paste suppression together", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    backendMode = "hang";
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const { waitForInput } = await import("../input");
+    const pending = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+    await waitUntil(() => backendTranscribeCalls === 1, "deferred STT", 4_000);
+    const originalWrite = fsModule.writeFileSync;
+    const writeSpy = spyOn(fsModule, "writeFileSync").mockImplementation(
+      ((path: any, data: any, options?: any) => {
+        if (typeof data === "string" && data.trimStart().startsWith("{")) {
+          const metadata = JSON.parse(data);
+          if (metadata.transcription_status === "transcribed" && metadata.paste_suppressed !== true) {
+            throw new Error("synthetic rejection of inconsistent archive metadata");
+          }
+        }
+        return (originalWrite as any)(path, data, options);
+      }) as typeof fsModule.writeFileSync,
+    );
+    try {
+      setCancelSignal();
+      finishHangingTranscription?.();
+      await expect(pending).resolves.toBe("Retained transcript.");
+      const metadata = JSON.parse(readFileSync(capturedVoiceBarAudio()[0].replace("audio.wav", "metadata.json"), "utf8"));
+      expect(metadata).toMatchObject({ transcription_status: "transcribed", paste_suppressed: true });
+      expect(broadcasts.some(event => event.type === "error")).toBe(false);
+    } finally {
+      writeSpy.mockRestore();
+      finishHangingTranscription?.();
+      await pending.catch(() => null);
+    }
+  });
+
   it("finalizes the pre-STT VoiceBar archive in place without a duplicate row", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);

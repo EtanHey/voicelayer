@@ -98,8 +98,10 @@ final class GestureStateMachine {
     var onPreviewPhaseChange: (HotkeyPhase) -> Void = { _ in }
 
     func handleKeyDown() {
+        // A new press also resolves a previous release dropped by modifier filtering.
+        stoppedOnKeyDown = false
+        ignoringStopBounce = false
         let now = clock()
-        if ignoringStopBounce { return }
         if let lastStopRelease, now - lastStopRelease <= Double(Self.stopReleaseDebounceMs) / 1000 {
             ignoringStopBounce = true
             return

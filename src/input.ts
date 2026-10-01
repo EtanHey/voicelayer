@@ -3256,6 +3256,7 @@ export async function waitForInput(
             processingDurationMs: dictationReceipt?.processing_duration_ms,
             polishStatus: finalized.polishStatus,
             requireMetadataUpdate: true,
+            pasteSuppressed: cancelledAfterStop,
           });
           archivedRecordingPath = voiceBarArchivePath;
         } else {
@@ -3297,11 +3298,6 @@ export async function waitForInput(
       }
     }
 
-    if (cancelledAfterStop && archivedRecordingPath && options.archiveSource === "voicebar") {
-      updateArchivedRecordingMetadata(join(archivedRecordingPath, "audio.wav"), metadata => {
-        metadata.paste_suppressed = true;
-      });
-    }
     throwIfWaitForInputAborted(options.signal);
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {
@@ -3441,6 +3437,7 @@ export function updateArchivedTranscript(
     polishStatus?: STTPolishStatus | null;
     provenanceProbe?: RecordingProvenanceProbe;
     requireMetadataUpdate?: boolean;
+    pasteSuppressed?: boolean;
   },
 ): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
@@ -3450,6 +3447,9 @@ export function updateArchivedTranscript(
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
+    if (transcription.pasteSuppressed !== undefined) {
+      metadata.paste_suppressed = transcription.pasteSuppressed;
+    }
     if (transcription.transcribedDurationMs !== undefined) {
       metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
     }
