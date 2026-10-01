@@ -796,6 +796,7 @@ interface VoiceBarRecordingMetadata {
   language_mode: string;
   voicelayer_transcript_chars: number;
   transcription_status: "transcribed" | "cancelled" | "captured";
+  paste_suppressed?: boolean;
   audio_sha256: string;
   app_version: string | null;
   provenance: RecordingProvenance;
@@ -3232,21 +3233,15 @@ export async function waitForInput(
       linkRetainedCaptureToArchive(join(voiceBarArchivePath, "audio.wav"));
     }
 
+    let cancelledAfterStop = false;
     if (consumeCancelSignalForRecording()) {
-      if (voiceBarArchivePath) {
-        updateArchivedRecordingMetadata(
-          join(voiceBarArchivePath, "audio.wav"),
-          (metadata) => {
-            metadata.transcription_status = "cancelled";
-          },
-        );
+      cancelledAfterStop = true;
+      if (options.archiveSource !== "voicebar") {
+        console.error("[voicelayer] Remote input cancelled during transcription");
+        setRecordingState("idle");
+        broadcast({ type: "state", state: "idle", source: "recording" });
+        return null;
       }
-      console.error(
-        "[voicelayer] Recording cancelled during transcription — discarding transcript",
-      );
-      setRecordingState("idle");
-      broadcast({ type: "state", state: "idle", source: "recording" });
-      return null;
     }
 
     throwIfWaitForInputAborted(options.signal);
@@ -3302,6 +3297,11 @@ export async function waitForInput(
       }
     }
 
+    if (cancelledAfterStop && archivedRecordingPath && options.archiveSource === "voicebar") {
+      updateArchivedRecordingMetadata(join(archivedRecordingPath, "audio.wav"), metadata => {
+        metadata.paste_suppressed = true;
+      });
+    }
     throwIfWaitForInputAborted(options.signal);
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {
@@ -3309,6 +3309,7 @@ export async function waitForInput(
         type: "transcription",
         text,
         ...transcriptionPolishMetadata(finalized),
+        ...(cancelledAfterStop ? { paste_suppressed: true } : {}),
         ...(archivedRecordingPath
           ? { recording_path: join(archivedRecordingPath, "audio.wav") }
           : {}),

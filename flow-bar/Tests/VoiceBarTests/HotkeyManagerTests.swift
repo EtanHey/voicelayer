@@ -865,6 +865,57 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
+    func testStopReleaseBounceDoesNotBecomeACancelTap() {
+        let gesture = GestureStateMachine()
+        var now: TimeInterval = 100
+        gesture.clock = { now }
+        var stops = 0
+        var cancelTaps = 0
+        gesture.onHoldEnd = { stops += 1 }
+        gesture.onSingleTap = { cancelTaps += 1 }
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown() // lock recording
+        gesture.handleKeyUp()
+        gesture.handleKeyDown() // stop recording, at .026
+        now += 0.025
+        gesture.handleKeyUp() // .051
+        now += 0.002
+        gesture.handleKeyDown() // relay bounce at .053
+        now += 0.052
+        gesture.handleKeyUp() // .105
+        XCTAssertEqual(stops, 1)
+        XCTAssertEqual(gesture.state, .idle, "bounce must not arm a delayed cancel")
+        XCTAssertEqual(cancelTaps, 0)
+        now += 0.2
+        gesture.handleKeyDown() // deliberate later tap still works
+        gesture.handleKeyUp()
+        XCTAssertEqual(gesture.state, .waitingForDoubleTap)
+        gesture.reset()
+    }
+
+    func testHoldStopReleaseIgnoresBounceButLeavesMouseGestureWorking() {
+        let gesture = GestureStateMachine()
+        var now: TimeInterval = 100
+        gesture.clock = { now }
+        let started = expectation(description: "hold started")
+        gesture.onHoldStart = { started.fulfill() }
+        gesture.handleKeyDown()
+        wait(for: [started], timeout: 5)
+        now += 353.1
+        gesture.handleKeyUp()
+        now += 0.002
+        gesture.handleKeyDown()
+        now += 0.052
+        gesture.handleKeyUp()
+        XCTAssertEqual(gesture.state, .idle)
+        gesture.onHoldStart = {}
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+        XCTAssertEqual(gesture.state, .locked)
+        gesture.reset()
+    }
+
     func testGestureShowsPressingPreviewBeforeHoldStartsRecording() {
         let gesture = GestureStateMachine()
         var holdStartCount = 0

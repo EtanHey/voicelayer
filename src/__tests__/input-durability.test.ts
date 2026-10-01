@@ -1329,8 +1329,18 @@ describe("input recording durability", () => {
         finishHangingTranscription?.();
         const result = await settled;
         if (termination === "abort") expect(result).toBeInstanceOf(Error);
-        else expect(result).toBeNull();
-        expect(broadcasts.some((event) => event.dictation_receipt)).toBe(false);
+        else {
+          expect(result).toBe("Retained transcript.");
+          expect(readFileSync(archives[0].replace("audio.wav", "voicelayer-transcript.txt"), "utf8"))
+            .toBe("Retained transcript.");
+          expect(JSON.parse(readFileSync(archives[0].replace("audio.wav", "metadata.json"), "utf8")))
+            .toMatchObject({ transcription_status: "transcribed", paste_suppressed: true });
+          expect(broadcasts.find(event => event.type === "transcription"))
+            .toMatchObject({ text: "Retained transcript.", paste_suppressed: true });
+        }
+        if (termination === "abort") {
+          expect(broadcasts.some((event) => event.dictation_receipt)).toBe(false);
+        }
         expect(capturedVoiceBarAudio()).toEqual(archives);
         expectCaptureLinked(archives[0]);
         expectValidRetainedWav(archives[0], 24 * VAD_CHUNK_BYTES);
