@@ -34,6 +34,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   readSync,
   realpathSync,
   renameSync,
@@ -3313,6 +3314,7 @@ export async function waitForInput(
           ? {
               recording_path: join(archivedRecordingPath, "audio.wav"),
               recording_created_at: archivedRecordingCreatedAt(join(archivedRecordingPath, "audio.wav")),
+              recording_is_latest: archivedRecordingIsLatest(join(archivedRecordingPath, "audio.wav")),
             }
           : {}),
         ...(options.archiveSource === "voicebar" &&
@@ -3496,6 +3498,35 @@ function archivedRecordingCreatedAt(audioPath: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Same immutable newest-first folder order as Settings History, excluding ask exchanges.
+ * Unknown metadata is not evidence that a recovery may overtake an undated legacy row.
+ */
+function archivedRecordingIsLatest(audioPath: string): boolean {
+  try {
+    const root = resolvedRecordingsArchiveRoot();
+    const target = realpathSync(audioPath);
+    const days = readdirSync(root, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name))
+      .map(entry => entry.name).sort().reverse();
+    for (const day of days) {
+      const captures = readdirSync(join(root, day), { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && !entry.name.startsWith("."))
+        .map(entry => entry.name).sort().reverse();
+      for (const id of captures) {
+        const candidate = join(root, day, id, "audio.wav");
+        if (!existsSync(candidate)) continue;
+        const metadata = JSON.parse(readFileSync(join(root, day, id, "metadata.json"), "utf8"));
+        if (metadata.source === "voice_ask") continue;
+        if (!archivedRecordingCreatedAt(candidate)) return false;
+        return realpathSync(candidate) === target;
+      }
+    }
+  } catch {
+    // Incomplete/unreadable archives leave legacy age unknown.
+  }
+  return false;
 }
 
 function updateArchivedRecordingMetadata(
@@ -3932,6 +3963,7 @@ export async function retranscribeVoiceAskArchive(
         text,
         recording_path: snapshot.audioPath,
         recording_created_at: archivedRecordingCreatedAt(snapshot.audioPath),
+        recording_is_latest: archivedRecordingIsLatest(snapshot.audioPath),
       });
     }
     return text;
@@ -4084,6 +4116,7 @@ export async function retranscribeRecordingCapture(
           text,
           recording_path: eventAudioPath,
           recording_created_at: archivedRecordingCreatedAt(wavPath),
+          recording_is_latest: archivedRecordingIsLatest(wavPath),
           ...transcriptionPolishMetadata(finalized),
         });
       }
@@ -4187,6 +4220,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
           ...(archivedAudioPath ? {
             recording_path: archivedAudioPath,
             recording_created_at: archivedRecordingCreatedAt(archivedAudioPath),
+            recording_is_latest: archivedRecordingIsLatest(archivedAudioPath),
           } : {}),
           ...transcriptionPolishMetadata(finalized),
         });

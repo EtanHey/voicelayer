@@ -20,10 +20,11 @@ final class ArchiveRecentsTests: XCTestCase {
         return state
     }
 
-    private func retranscribe(_ state: VoiceState, path: String, text: String, date: Date) {
+    private func retranscribe(_ state: VoiceState, path: String, text: String, date: Date, isLatest: Bool = false) {
         state.retranscribeHistoryEntry(recordingPath: path)
         state.handleEvent(["type": "transcription", "text": text, "recording_path": path,
-                           "recording_created_at": ISO8601DateFormatter().string(from: date)])
+                           "recording_created_at": ISO8601DateFormatter().string(from: date),
+                           "recording_is_latest": isLatest])
     }
 
     func testNewestPreviouslyCancelledRecordingBecomesLatestAtItsOriginalTime() {
@@ -61,9 +62,32 @@ final class ArchiveRecentsTests: XCTestCase {
     func testLegacyEntriesKeepWorkingWhenADatedArchiveEntryIsInserted() {
         let state = state(entries: [RecentTranscriptionEntry(text: "Legacy words without an ID")])
         retranscribe(state, path: newPath, text: "Recovered synthetic words", date: newDate)
-        XCTAssertEqual(state.recentTranscriptions, ["Recovered synthetic words", "Legacy words without an ID"])
-        XCTAssertNil(state.recentTranscriptionEntries.last?.recordingPath)
-        XCTAssertNil(state.recentTranscriptionEntries.last?.createdAt)
+        XCTAssertEqual(state.recentTranscriptions, ["Legacy words without an ID", "Recovered synthetic words"])
+        XCTAssertNil(state.recentTranscriptionEntries.first?.recordingPath)
+        XCTAssertNil(state.recentTranscriptionEntries.first?.createdAt)
+    }
+
+    func testArchiveConfirmedNewestRecoveryBecomesLatestAboveUndatedLegacyHead() {
+        let state = state(entries: [RecentTranscriptionEntry(text: "Legacy synthetic words")])
+        retranscribe(state, path: newPath, text: "Newest recovered words", date: newDate, isLatest: true)
+        XCTAssertEqual(state.latestReusableTranscript, "Newest recovered words")
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.createdAt, newDate)
+        XCTAssertEqual(state.recentTranscriptions, ["Newest recovered words", "Legacy synthetic words"])
+    }
+
+    func testLiveDictationStillBecomesLatestAboveUndatedLegacyHead() {
+        let state = state(entries: [RecentTranscriptionEntry(text: "Legacy synthetic words")])
+        state.handleEvent(["type": "transcription", "text": "Live synthetic words",
+                           "recording_path": newPath,
+                           "recording_created_at": ISO8601DateFormatter().string(from: newDate)])
+        XCTAssertEqual(state.latestReusableTranscript, "Live synthetic words")
+    }
+
+    func testConfirmedArchiveHeadDoesNotOvertakeNewerLiveDictation() {
+        let state = state(entries: [RecentTranscriptionEntry(text: "Live newer words",
+                                                             recordingPath: newPath, createdAt: newDate)])
+        retranscribe(state, path: oldPath, text: "Recovered words", date: oldDate, isLatest: true)
+        XCTAssertEqual(state.latestReusableTranscript, "Live newer words")
     }
 
     func testLateDatedHistoryResultDoesNotEndOrPasteOverANewDictation() {

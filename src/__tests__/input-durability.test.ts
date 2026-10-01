@@ -1897,6 +1897,34 @@ describe("input recording durability", () => {
     expect(polishSurfaces).toEqual(["dictation"]);
   });
 
+  it("identifies the newest dictation against the archive, including cancelled audio", async () => {
+    const { retranscribeRecordingCapture } = await import("../input");
+    const capture = (day: string, id: string, source = "voicebar") => {
+      const dir = join(process.env.QA_VOICE_RECORDINGS_DIR!, day, id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "audio.wav"), makeWav(makePcmChunk()));
+      writeFileSync(join(dir, "metadata.json"), JSON.stringify({
+        source, created_at: `${day}T10:00:00.000Z`, transcription_status: "cancelled",
+      }));
+      return join(dir, "audio.wav");
+    };
+    const old = capture("2026-06-25", "2026-06-25T10-00-00-000Z-old");
+    const newest = capture("2026-06-28", "2026-06-28T10-00-00-000Z-new");
+    capture("2026-06-29", "2026-06-29T10-00-00-000Z-ask", "voice_ask");
+    capture("2026-06-30", ".tmp-unpublished");
+    await retranscribeRecordingCapture(old);
+    expect(broadcasts.find(event => event.type === "transcription")?.recording_is_latest).toBe(false);
+    broadcasts = [];
+    await retranscribeRecordingCapture(newest);
+    expect(broadcasts.find(event => event.type === "transcription")?.recording_is_latest).toBe(true);
+    // Unknown newer archive metadata cannot authorize promotion over an undated legacy row.
+    const unknown = capture("2026-07-01", "2026-07-01T10-00-00-000Z-unknown");
+    writeFileSync(unknown.replace("audio.wav", "metadata.json"), "invalid synthetic metadata");
+    broadcasts = [];
+    await retranscribeRecordingCapture(newest);
+    expect(broadcasts.find(event => event.type === "transcription")?.recording_is_latest).toBe(false);
+  });
+
   it("refreshes archived metadata audio checksum after retranscribe repairs a stale WAV header", async () => {
     const archiveDir = join(
       process.env.QA_VOICE_RECORDINGS_DIR!,

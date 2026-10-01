@@ -74,6 +74,8 @@ export interface TranscriptionEvent {
   recording_path?: string;
   /** Original archive creation time (ISO-8601), preserved across re-transcription. */
   recording_created_at?: string;
+  /** True only for the newest published dictation archive, checked at delivery. */
+  recording_is_latest?: boolean;
   /** Durations for a newly completed, archived VoiceBar dictation. */
   dictation_receipt?: DictationReceiptMetadata;
   /** Whether the optional LLM polish layer produced the final candidate. */
