@@ -1567,6 +1567,9 @@ public final class VoiceState {
                 let recordingPath = (event["recording_path"] as? String)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let normalizedRecordingPath = recordingPath?.isEmpty == false ? recordingPath : nil
+                let recordingCreatedAt = (event["recording_created_at"] as? String)
+                    .flatMap(SettingsArchiveScanner.parseISODate)
+                let recordingIsLatest = (event["recording_is_latest"] as? Bool) == true
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 // AIDEV-NOTE: a late History result belongs to no live capture. Classify it before ANY live state:
@@ -1575,7 +1578,13 @@ public final class VoiceState {
                 // overwrite or cancel the current dictation's final, and its words were lost (#186 review round 3,
                 // #188 review round 1: an empty late result failed the new dictation).
                 if let path = normalizedRecordingPath, historyRetranscriptionRequest.isLateArchivedResult(for: path) {
-                    handleLateArchivedTranscription(trimmed, recordingPath: path, isPartial: isPartial)
+                    handleLateArchivedTranscription(
+                        trimmed,
+                        recordingPath: path,
+                        isPartial: isPartial,
+                        recordingCreatedAt: recordingCreatedAt,
+                        recordingIsLatest: recordingIsLatest
+                    )
                     return
                 }
 
@@ -1606,14 +1615,18 @@ public final class VoiceState {
                 if scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
                     trimmed,
                     recordingPath: normalizedRecordingPath,
-                    dictationReceipt: dictationReceipt
+                    dictationReceipt: dictationReceipt,
+                    recordingCreatedAt: recordingCreatedAt,
+                    recordingIsLatest: recordingIsLatest
                 ) {
                     return
                 }
                 handleFinalTranscription(
                     trimmed,
                     recordingPath: normalizedRecordingPath,
-                    dictationReceipt: dictationReceipt
+                    dictationReceipt: dictationReceipt,
+                    recordingCreatedAt: recordingCreatedAt,
+                    recordingIsLatest: recordingIsLatest
                 )
             }
 
@@ -1999,8 +2012,10 @@ public final class VoiceState {
         _ text: String,
         recordingPath: String? = nil,
         dictationReceipt: DictationReceipt? = nil,
-        preservingExistingReceipt: Bool = false,
-        insertingWhenAbsent: Bool = true
+        isArchiveRecovery: Bool = false,
+        insertingWhenAbsent: Bool = true,
+        recordingCreatedAt: Date? = nil,
+        recordingIsLatest: Bool = false
     ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -2009,7 +2024,7 @@ public final class VoiceState {
         let normalizedPath = trimmedPath?.isEmpty == false ? trimmedPath : nil
         if let normalizedPath,
            let existingIndex = recentTranscriptionEntries.firstIndex(where: { $0.recordingPath == normalizedPath }) {
-            let receipt = preservingExistingReceipt
+            let receipt = isArchiveRecovery
                 ? recentTranscriptionEntries[existingIndex].dictationReceipt
                 : dictationReceipt
             // A re-transcription keeps the time the row was dictated.
@@ -2017,19 +2032,18 @@ public final class VoiceState {
                 text: trimmed,
                 recordingPath: normalizedPath,
                 dictationReceipt: receipt,
-                createdAt: recentTranscriptionEntries[existingIndex].createdAt
+                createdAt: recentTranscriptionEntries[existingIndex].createdAt ?? recordingCreatedAt
             )
             recentTranscriptionEntries[existingIndex] = entry
         } else {
-            // AIDEV-NOTE: a History re-transcription rewrites an OLD recording. Inserting it here made a days-old
-            // recording the top "Just now" row, evicted the eighth, and turned it into the "last transcript" that
-            // Paste / Copy Last reuse (QA 2.2.25 C9). Rows already in the list are still updated in place above.
+            // History can restore a missing entry only with its archive time. Never stamp an
+            // old recording "Just now" when an older daemon cannot provide that time.
             guard insertingWhenAbsent else { return }
             let entry = RecentTranscriptionEntry(
                 text: trimmed,
                 recordingPath: normalizedPath,
                 dictationReceipt: dictationReceipt,
-                createdAt: Date()
+                createdAt: recordingCreatedAt ?? currentDateProvider()
             )
             recentTranscriptionEntries.removeAll { existing in
                 if let normalizedPath {
@@ -2037,7 +2051,13 @@ public final class VoiceState {
                 }
                 return existing.text == trimmed
             }
-            recentTranscriptionEntries.insert(entry, at: 0)
+            let index = recentTranscriptionEntries.firstIndex {
+                // Legacy age is unknown. Only a live dictation or archive-confirmed newest
+                // recovery can pass it; an old/unknown History result must not take Paste Last.
+                guard let existingDate = $0.createdAt else { return !isArchiveRecovery || recordingIsLatest }
+                return existingDate < (entry.createdAt ?? .distantPast)
+            } ?? recentTranscriptionEntries.endIndex
+            recentTranscriptionEntries.insert(entry, at: index)
         }
         if recentTranscriptionEntries.count > Self.maxRecentTranscriptions {
             recentTranscriptionEntries = Array(recentTranscriptionEntries.prefix(Self.maxRecentTranscriptions))
@@ -2353,7 +2373,9 @@ public final class VoiceState {
     private func scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
         _ text: String,
         recordingPath: String?,
-        dictationReceipt: DictationReceipt?
+        dictationReceipt: DictationReceipt?,
+        recordingCreatedAt: Date? = nil,
+        recordingIsLatest: Bool = false
     ) -> Bool {
         guard mode == .transcribing, let transcribingStartedAt else { return false }
 
@@ -2371,7 +2393,9 @@ public final class VoiceState {
             handleFinalTranscription(
                 text,
                 recordingPath: recordingPath,
-                dictationReceipt: dictationReceipt
+                dictationReceipt: dictationReceipt,
+                recordingCreatedAt: recordingCreatedAt,
+                recordingIsLatest: recordingIsLatest
             )
         }
         return true
@@ -2379,20 +2403,26 @@ public final class VoiceState {
 
     /// A result for a History request whose live state was already cleaned up. Only a nonempty final touches
     /// anything, and then only its own archive row (via `handleFinalTranscription`'s late-archive branch).
-    private func handleLateArchivedTranscription(_ text: String, recordingPath: String, isPartial: Bool) {
+    private func handleLateArchivedTranscription(
+        _ text: String, recordingPath: String, isPartial: Bool, recordingCreatedAt: Date? = nil,
+        recordingIsLatest: Bool = false
+    ) {
         guard !isPartial else { return }
         guard !text.isEmpty else {
             _ = historyRetranscriptionRequest.takeArchivedOrigin(for: recordingPath)
             logDiagnostic("transcription_final_archived_late_empty", details: ["recordingPath": recordingPath])
             return
         }
-        handleFinalTranscription(text, recordingPath: recordingPath)
+        handleFinalTranscription(text, recordingPath: recordingPath, recordingCreatedAt: recordingCreatedAt,
+                                 recordingIsLatest: recordingIsLatest)
     }
 
     private func handleFinalTranscription(
         _ text: String,
         recordingPath: String? = nil,
-        dictationReceipt: DictationReceipt? = nil
+        dictationReceipt: DictationReceipt? = nil,
+        recordingCreatedAt: Date? = nil,
+        recordingIsLatest: Bool = false
     ) {
         let wasHistoryRetranscription = recordingPath.map { path in
             historyRetranscriptionRequest.suppressesPaste(for: path)
@@ -2411,8 +2441,10 @@ public final class VoiceState {
             rememberRecentTranscription(
                 text,
                 recordingPath: recordingPath,
-                preservingExistingReceipt: true,
-                insertingWhenAbsent: false
+                isArchiveRecovery: true,
+                insertingWhenAbsent: recordingCreatedAt != nil,
+                recordingCreatedAt: recordingCreatedAt,
+                recordingIsLatest: recordingIsLatest
             )
             if let recordingPath { onHistoryArchiveChange?(recordingPath) }
             refreshTranscriptionVocabulary()
@@ -2432,8 +2464,10 @@ public final class VoiceState {
             text,
             recordingPath: recordingPath,
             dictationReceipt: rewritesArchivedRecording ? nil : dictationReceipt,
-            preservingExistingReceipt: rewritesArchivedRecording,
-            insertingWhenAbsent: !rewritesArchivedRecording
+            isArchiveRecovery: rewritesArchivedRecording,
+            insertingWhenAbsent: !rewritesArchivedRecording || recordingCreatedAt != nil,
+            recordingCreatedAt: recordingCreatedAt,
+            recordingIsLatest: recordingIsLatest
         )
         if recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             onHistoryArchiveChange?(recordingPath)

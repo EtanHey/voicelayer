@@ -34,6 +34,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   readSync,
   realpathSync,
   renameSync,
@@ -3310,7 +3311,11 @@ export async function waitForInput(
         text,
         ...transcriptionPolishMetadata(finalized),
         ...(archivedRecordingPath
-          ? { recording_path: join(archivedRecordingPath, "audio.wav") }
+          ? {
+              recording_path: join(archivedRecordingPath, "audio.wav"),
+              recording_created_at: archivedRecordingCreatedAt(join(archivedRecordingPath, "audio.wav")),
+              recording_is_latest: archivedRecordingIsLatest(join(archivedRecordingPath, "audio.wav")),
+            }
           : {}),
         ...(options.archiveSource === "voicebar" &&
         archivedRecordingPath &&
@@ -3482,6 +3487,47 @@ export function updateArchivedTranscript(
 
 function archivedAudioSha256(audioPath: string): string {
   return createHash("sha256").update(readFileSync(audioPath)).digest("hex");
+}
+
+/** Timestamp identity for recents: a re-decode must keep the archive's original time. */
+function archivedRecordingCreatedAt(audioPath: string): string | undefined {
+  try {
+    const metadata = JSON.parse(readFileSync(join(dirname(audioPath), "metadata.json"), "utf8"));
+    const value = metadata.created_at;
+    return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Same immutable newest-first folder order as Settings History, excluding ask exchanges.
+ * Unknown metadata is not evidence that a recovery may overtake an undated legacy row.
+ */
+function archivedRecordingIsLatest(audioPath: string): boolean {
+  try {
+    const root = resolvedRecordingsArchiveRoot();
+    const target = realpathSync(audioPath);
+    const days = readdirSync(root, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name))
+      .map(entry => entry.name).sort().reverse();
+    for (const day of days) {
+      const captures = readdirSync(join(root, day), { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/.test(entry.name))
+        .map(entry => entry.name).sort().reverse();
+      for (const id of captures) {
+        const candidate = join(root, day, id, "audio.wav");
+        if (!existsSync(candidate)) continue;
+        const metadata = JSON.parse(readFileSync(join(root, day, id, "metadata.json"), "utf8"));
+        if (metadata.source === "voice_ask") continue;
+        if (metadata.source !== "voicebar") return false;
+        if (!archivedRecordingCreatedAt(candidate)) return false;
+        return realpathSync(candidate) === target;
+      }
+    }
+  } catch {
+    // Incomplete/unreadable archives leave legacy age unknown.
+  }
+  return false;
 }
 
 function updateArchivedRecordingMetadata(
@@ -3917,6 +3963,8 @@ export async function retranscribeVoiceAskArchive(
         type: "transcription",
         text,
         recording_path: snapshot.audioPath,
+        recording_created_at: archivedRecordingCreatedAt(snapshot.audioPath),
+        recording_is_latest: archivedRecordingIsLatest(snapshot.audioPath),
       });
     }
     return text;
@@ -4068,6 +4116,8 @@ export async function retranscribeRecordingCapture(
           type: "transcription",
           text,
           recording_path: eventAudioPath,
+          recording_created_at: archivedRecordingCreatedAt(wavPath),
+          recording_is_latest: archivedRecordingIsLatest(wavPath),
           ...transcriptionPolishMetadata(finalized),
         });
       }
@@ -4168,7 +4218,11 @@ export async function retranscribeLastCapture(): Promise<string | null> {
         broadcast({
           type: "transcription",
           text,
-          ...(archivedAudioPath ? { recording_path: archivedAudioPath } : {}),
+          ...(archivedAudioPath ? {
+            recording_path: archivedAudioPath,
+            recording_created_at: archivedRecordingCreatedAt(archivedAudioPath),
+            recording_is_latest: archivedRecordingIsLatest(archivedAudioPath),
+          } : {}),
           ...transcriptionPolishMetadata(finalized),
         });
       }
