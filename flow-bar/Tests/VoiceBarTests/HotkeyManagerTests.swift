@@ -865,6 +865,38 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
+    func testBackwardClockStepAfterStopDoesNotSwallowLaterPress() {
+        let gesture = GestureStateMachine()
+        defer { gesture.reset() }
+        var now: TimeInterval = 1000
+        gesture.clock = { now }
+        var holdStarts = 0
+        gesture.onHoldStart = { holdStarts += 1 }
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        gesture.handleKeyDown()
+        gesture.handleKeyUp() // locked
+        XCTAssertEqual(holdStarts, 1)
+        gesture.handleKeyDown() // stop
+        now += 0.02
+        gesture.handleKeyUp()
+        now += 30 // user waits 30 seconds
+        now -= 60 // a wall-clock provider steps backward
+        gesture.handleKeyDown()
+        XCTAssertEqual(gesture.state, .pressing,
+                       "a deliberate press after a backward clock step must not count as bounce")
+        gesture.handleKeyUp()
+    }
+
+    func testGestureDefaultClockUsesMonotonicSystemUptime() {
+        let gesture = GestureStateMachine()
+        let before = ProcessInfo.processInfo.systemUptime
+        let sampled = gesture.clock()
+        let after = ProcessInfo.processInfo.systemUptime
+        XCTAssertGreaterThanOrEqual(sampled, before)
+        XCTAssertLessThanOrEqual(sampled, after)
+    }
+
     func testStopReleaseBounceDoesNotBecomeACancelTap() {
         let gesture = GestureStateMachine()
         var now: TimeInterval = 100
