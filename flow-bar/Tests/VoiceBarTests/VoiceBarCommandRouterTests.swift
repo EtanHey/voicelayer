@@ -30,6 +30,30 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         }
     }
 
+    func testDeliberateSecondPressAndEscapeCancelTranscribingWithRecoveryNotice() {
+        for escape in [false, true] {
+            let state = VoiceState(
+                recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+            )
+            state.frontmostAppProvider = { nil }
+            state.isConnected = true
+            var commands: [String] = []
+            state.sendCommand = { commands.append($0["cmd"] as? String ?? "") }
+            state.record(pressToTalk: true)
+            state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+            state.stop()
+            let router = VoiceBarCommandRouter(voiceState: state)
+            if escape { router.handleEscape() } else { router.handleHotkeySingleTap() }
+            XCTAssertEqual(commands.last, "cancel")
+            XCTAssertEqual(state.mode, .idle)
+            XCTAssertEqual(state.confirmationText,
+                           "Transcription cancelled — audio saved. Re-transcribe it from History.")
+            XCTAssertTrue(state.latestReusableTranscript.isEmpty)
+            XCTAssertNil(state.lastDictationCardEntry)
+        }
+    }
+
     func testToggleStartsRecordingIntentWhenIdle() throws {
         let state = VoiceState()
         var commands: [[String: Any]] = []
