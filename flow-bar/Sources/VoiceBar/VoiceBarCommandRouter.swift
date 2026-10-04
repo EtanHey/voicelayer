@@ -140,6 +140,9 @@ class VoiceBarCommandRouter: BarCommandRouting {
     func handleHotkeyDoubleTap() {
         // The first tap already sent the record intent. Double-tap only locks
         // the gesture state so releasing F5 does not stop the active recording.
+        // For an active VAD ask, also suspend the daemon's automatic stops.
+        // VoiceState gates this command to VAD; PTT remains gesture-only.
+        voiceState.setRecordingHold(true)
     }
 
     func handleHotkeySingleTap() {
