@@ -119,7 +119,7 @@ describe("voice_ask blocking-length guard", () => {
     expect(waitForInputSpy).not.toHaveBeenCalled();
   });
 
-  it("refuses an otherwise valid maximum ask when a shorter timeout cannot fit playback", async () => {
+  it("accepts a maximum-length prompt independently of the listening timeout", async () => {
     const { VOICE_ASK_MESSAGE_MAX_CHARS } = await import("../handlers");
 
     const result = await handleVoiceAsk({
@@ -127,10 +127,10 @@ describe("voice_ask blocking-length guard", () => {
       timeout_seconds: 5,
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("limit");
-    expect(speakSpy).not.toHaveBeenCalled();
-    expect(waitForInputSpy).not.toHaveBeenCalled();
+    expect(result.isError).toBeUndefined();
+    expect(speakSpy).toHaveBeenCalledTimes(1);
+    expect(waitForInputSpy).toHaveBeenCalledTimes(1);
+    expect(waitForInputSpy.mock.calls[0][0]).toBe(5_000);
   });
 
   it("rearms a full capture timeout after prompt playback completes", async () => {
@@ -150,7 +150,7 @@ describe("voice_ask blocking-length guard", () => {
       });
 
       expect(result.isError).toBeUndefined();
-      expect(timeoutDelays.filter((delay) => delay === 20_000)).toHaveLength(2);
+      expect(timeoutDelays.filter((delay) => delay === 20_000)).toHaveLength(1);
       expect(waitForInputSpy).toHaveBeenCalled();
     } finally {
       timeoutSpy.mockRestore();
@@ -194,22 +194,11 @@ describe("voice_ask blocking-length guard", () => {
 
   // --- The gate must not be silently removable (see docs/plans/…-guard-delivery.md) ---
 
-  it("keeps the blocking cap tight enough to fit the default capture timeout", async () => {
+  it("keeps the ratified blocking cap at 600 characters", async () => {
     const { VOICE_ASK_MESSAGE_MAX_CHARS } = await import("../handlers");
 
-    // handleConverse gives playback a hard timeout of (timeout_seconds + 15)s,
-    // and speak(waitForPlayback:true) awaits full playback before capture.
-    // With the default timeout_seconds of 30 that is 45 seconds. At the
-    // conservative rounded measured rate of ~13 chars/sec, 600 chars is about
-    // 46 seconds; the exact 13.9 chars/sec median gives a ~626-character
-    // ceiling. The named cap must stay below that ceiling so playback cannot
-    // time out before the microphone opens.
-    const MEASURED_CHARS_PER_SECOND = 13.9;
-    const DEFAULT_CAPTURE_TIMEOUT_SECONDS = 45;
-
-    expect(VOICE_ASK_MESSAGE_MAX_CHARS).toBeLessThanOrEqual(
-      Math.floor(MEASURED_CHARS_PER_SECOND * DEFAULT_CAPTURE_TIMEOUT_SECONDS),
-    );
+    // Listening time and prompt deadlines are separate; the product cap remains.
+    expect(VOICE_ASK_MESSAGE_MAX_CHARS).toBe(600);
     expect(VOICE_ASK_MESSAGE_MAX_CHARS).toBeLessThan(INCIDENT_2026_08_01_CHARS);
   });
 });

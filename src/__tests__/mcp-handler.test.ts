@@ -208,7 +208,7 @@ describe("mcp-handler", () => {
       );
       expect(voiceAsk.description).toContain("HARD LIMIT: 600 characters");
       expect(voiceAsk.description).toContain(
-        "effective per-request limit may be lower for short timeout_seconds values",
+        "independent of timeout_seconds",
       );
       expect(voiceAsk.inputSchema.properties.message.description).toContain(
         "Short question",
