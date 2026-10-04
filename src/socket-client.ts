@@ -17,6 +17,7 @@ import {
   type SocketCommand,
   type SocketResponse,
 } from "./socket-protocol";
+import { existsSync } from "fs";
 import { SOCKET_PATH, getMcpSocketOverridePath } from "./paths";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
@@ -40,6 +41,61 @@ export interface VoiceBarConnectionOptions {
   role?: "mcp-server" | "mcp-daemon" | "standalone-daemon" | "test";
   acceptsCommands?: boolean;
   onConnected?: () => void;
+}
+
+// A History AVAudioPlayer lives in VoiceBar, outside the daemon queue. Ask must
+// request its synchronous stop receipt, without making Ask depend on the app.
+const historyGates = new Map<string, {
+  busy: boolean; announced?: boolean; ready?: () => void; unavailable?: (reason: string) => void;
+}>();
+
+/** Clear fixture-owned gates only when the test preload isolates this process. */
+export function resetHistoryPlaybackGatesForTests(): void {
+  if (process.env.VOICELAYER_TEST_ISOLATED !== "1") throw new Error("History gate reset requires test isolation");
+  releaseHistoryGateWaiters();
+  historyGates.clear();
+}
+
+export async function withHistoryPlaybackSuspended<T>(work: () => Promise<T>): Promise<T> {
+  const id = crypto.randomUUID();
+  const gate: { busy: boolean; announced?: boolean; ready?: () => void; unavailable?: (reason: string) => void } = { busy: true };
+  historyGates.set(id, gate);
+  try {
+    if (!connected) {
+      console.warn("[socket-client] History stop unavailable: VoiceBar disconnected; proceeding with Ask");
+    } else {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          gate.unavailable?.("VoiceBar did not confirm History playback stopped");
+        }, 1000);
+        const clear = () => {
+          clearTimeout(timer);
+          gate.ready = undefined;
+          gate.unavailable = undefined;
+        };
+        gate.ready = () => { clear(); resolve(); };
+        gate.unavailable = reason => {
+          console.warn(`[socket-client] History stop unavailable: ${reason}; proceeding with Ask`);
+          clear(); resolve();
+        };
+        gate.announced = true;
+        broadcast({ type: "history_playback_gate", id, busy: true });
+      });
+    }
+    return await work();
+  } finally {
+    gate.busy = false;
+    if (!gate.announced) historyGates.delete(id);
+    else if (connected) broadcast({ type: "history_playback_gate", id, busy: false });
+    // Keep releases until acknowledged or one reconnect retry.
+    else if (!existsSync(targetPath)) historyGates.delete(id);
+  }
+}
+
+function releaseHistoryGateWaiters(): void {
+  for (const gate of historyGates.values()) {
+    gate.unavailable?.("VoiceBar disconnected before History playback stopped");
+  }
 }
 
 // --- Command handler callback ---
@@ -89,6 +145,7 @@ export function disconnectFromBar(): void {
     connection = null as any;
   }
   connected = false;
+  releaseHistoryGateWaiters();
   reconnectDelay = 1000;
 }
 
@@ -140,6 +197,7 @@ function startConnection(): void {
             outbound = null;
             connected = false;
             connection = null as any;
+            releaseHistoryGateWaiters();
             stopKeepalive();
             scheduleReconnect();
           }),
@@ -150,6 +208,11 @@ function startConnection(): void {
         reconnectDelay = 1000; // Reset backoff on successful connect
         startKeepalive();
         writeClientHello(socket.data.writer);
+        for (const [id, gate] of historyGates) {
+          gate.announced = true;
+          broadcast({ type: "history_playback_gate", id, busy: gate.busy });
+          if (!gate.busy) historyGates.delete(id);
+        }
         connectionOptions.onConnected?.();
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },
@@ -161,6 +224,12 @@ function startConnection(): void {
         for (const line of lines) {
           if (line.trim().length === 0) continue;
           const command = parseCommand(line);
+          if (command?.cmd === "history_playback_ready") {
+            const gate = historyGates.get(command.id);
+            if (gate?.busy) gate.ready?.();
+            else historyGates.delete(command.id);
+            continue;
+          }
           if (command) {
             console.error(
               `[socket-client] Command from VoiceBar: ${JSON.stringify(command)}`,
@@ -238,6 +307,7 @@ function startConnection(): void {
           outbound = null;
           connected = false;
           connection = null as any;
+          releaseHistoryGateWaiters();
           stopKeepalive();
           scheduleReconnect();
         }
@@ -250,6 +320,7 @@ function startConnection(): void {
           outbound = null;
           connected = false;
           connection = null as any;
+          releaseHistoryGateWaiters();
           stopKeepalive();
           scheduleReconnect();
         }

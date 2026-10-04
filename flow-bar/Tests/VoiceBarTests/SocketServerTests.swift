@@ -252,6 +252,44 @@ final class SocketServerTests: XCTestCase {
     }
 
     @MainActor
+    func testUnregisteredAskGateCannotStrandHistoryBusy() {
+        let state = VoiceState()
+        state.historyPlayback = SettingsAudioPlayback(start: { _ in true }, stop: {})
+        let server = SocketServer(state: state)
+        server.parseLine(#"{"type":"history_playback_gate","id":"missing-owner","busy":true}"#)
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        XCTAssertFalse(state.historyPlayback.isVoiceBusy)
+    }
+
+    @MainActor
+    func testAskGateStopsHistoryBeforeAcknowledgingItsExactClient() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        var stopped = false
+        let url = URL(fileURLWithPath: "/tmp/synthetic-history.wav")
+        fixture.state.historyPlayback = SettingsAudioPlayback(start: { _ in true }, stop: { stopped = true })
+        fixture.state.historyPlayback.toggle(url)
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-server","pid":\#(ProcessInfo.processInfo.processIdentifier),"accepts_commands":false}"#,
+            to: fixture.legacyClient
+        )
+        try writeLine(#"{"type":"history_playback_gate","id":"ask-synthetic","busy":true}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitUntil(timeout: 2) { stopped })
+        let receipt = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 2))
+        XCTAssertTrue(stopped)
+        XCTAssertNil(fixture.state.historyPlayback.playingURL)
+        XCTAssertTrue(fixture.state.historyPlayback.isVoiceBusy)
+        XCTAssertEqual(
+            fixture.state.playbackElapsedMilliseconds(),
+            0,
+            "History never starts a synthetic teleprompter clock"
+        )
+        XCTAssertTrue(receipt.contains(#""cmd":"history_playback_ready""#))
+        XCTAssertTrue(receipt.contains(#""id":"ask-synthetic""#))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.1))
+    }
+
+    @MainActor
     func testReplayDuringVoiceAskRoutesOnlyToTheActivePlaybackOwner() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }

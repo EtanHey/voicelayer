@@ -73,6 +73,16 @@ final class SettingsHistoryAccessibilityTests: XCTestCase {
         XCTAssertEqual(idle.availability(.copy, for: noAudio), .available)
     }
 
+    func testPromptStageHistoryPlaybackSaysVoiceIsBusyWithoutBlockingCopy() {
+        let clip = part(text: "Synthetic transcript", audio: true)
+        let busy = SettingsHistoryActionEnablement(isRetranscribing: false, isRecording: false,
+                                                   isTranscribing: false, isVoiceBusy: true)
+        XCTAssertFalse(busy.isEnabled(.play, for: clip))
+        XCTAssertEqual(busy.availability(.play, for: clip),
+                       .unavailable("Voice is busy — wait for the current voice operation to finish"))
+        XCTAssertEqual(busy.availability(.copy, for: clip), .available)
+    }
+
     func testActionsBlockedForNowSayWhy() {
         let clip = part(text: "hello", audio: true)
         let recording = SettingsHistoryActionEnablement(

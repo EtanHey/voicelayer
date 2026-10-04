@@ -258,7 +258,14 @@ export interface ModelStatusEvent {
   model_status: WhisperModelStatus;
 }
 
+export interface HistoryPlaybackGateEvent {
+  type: "history_playback_gate";
+  id: string;
+  busy: boolean;
+}
+
 export type SocketEvent =
+  | HistoryPlaybackGateEvent
   | StateEvent
   | SpeechEvent
   | TranscriptionEvent
@@ -388,6 +395,7 @@ export interface SetRecordingHoldCommand extends SocketCommandBase {
 }
 
 export type SocketCommand =
+  | { cmd: "history_playback_ready"; id: string }
   | StopCommand
   | CancelCommand
   | ReplayCommand
@@ -556,6 +564,8 @@ export function parseCommand(line: string): SocketCommand | null {
         ? Math.round(parsed.playback_elapsed_ms)
         : undefined;
     switch (parsed.cmd) {
+      case "history_playback_ready":
+        return id ? { cmd: "history_playback_ready", id } : null;
       case "stop":
         return withCommandId<StopCommand>(
           {

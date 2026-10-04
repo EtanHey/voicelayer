@@ -341,6 +341,24 @@ final class SocketServer {
             return
         }
 
+        if dict["type"] as? String == "history_playback_gate" {
+            guard let id = dict["id"] as? String, !id.isEmpty, id.count <= 64,
+                  dict["busy"] is Bool, let fd, let client = clients[fd],
+                  let ownerPID = client.pid.flatMap({ Int32(exactly: $0) }), ownerPID > 0
+            else { return }
+            var gateEvent = dict
+            gateEvent["owner_pid"] = ownerPID
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                state.handleEvent(gateEvent) // Stops AVAudioPlayer synchronously before acknowledging.
+                queue.async { [weak self] in
+                    guard let self, clients[fd]?.pid == client.pid else { return }
+                    sendCommandToOwnerOnQueue(command: ["cmd": "history_playback_ready", "id": id], targetFD: fd)
+                }
+            }
+            return
+        }
+
         if dict["type"] as? String == "state", let stateName = dict["state"] as? String {
             if stateName == "speaking", let fd, clients[fd] != nil {
                 lastPlaybackClientFD = fd
@@ -431,7 +449,7 @@ final class SocketServer {
         }
     }
 
-    private func sendCommandToOwnerOnQueue(command: [String: Any]) {
+    private func sendCommandToOwnerOnQueue(command: [String: Any], targetFD: Int32? = nil) {
         let commandName = command["cmd"] as? String
 
         guard let jsonData = try? JSONSerialization.data(withJSONObject: command),
@@ -449,7 +467,9 @@ final class SocketServer {
         let legacyPlaybackFDs = isInterrupt
             ? clients.filter { $0.value.role == "mcp-server" }.map(\.key)
             : []
-        let targetFDs: [Int32] = if isInterrupt {
+        let targetFDs: [Int32] = if let targetFD {
+            [targetFD]
+        } else if isInterrupt {
             Array(Set(commandFDs + legacyPlaybackFDs)).sorted()
         } else if commandName == "replay",
                   let playbackFD = lastPlaybackClientFD,
