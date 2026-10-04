@@ -2375,6 +2375,40 @@ describe("input recording durability", () => {
   });
 
   describe("ask-safe archive retranscription", () => {
+    it("backfills a cut-off MCP Ask and announces only its durable History update", async () => {
+      backendText = "Recovered synthetic answer, fu… keep keep the retraction.";
+      const target = writeAskArchive({ transcript: null });
+      const newer = writeAskArchive({
+        id: "2026-08-20T10-11-14-000Z-deadbeef",
+        transcript: "Newer synthetic answer.",
+      });
+      const { handleVoiceAsk } = await import("../handlers");
+      broadcastSpy!.mockImplementation((event: any) => {
+        if (event.type === "archive_metadata_updated") {
+          expect(readFileSync(join(target.archiveDir, "voicelayer-transcript.txt"), "utf8"))
+            .toBe(backendText);
+          expect(JSON.parse(readFileSync(join(target.archiveDir, "metadata.json"), "utf8")))
+            .toMatchObject({ transcription_status: "transcribed" });
+        }
+        broadcasts.push(event);
+      });
+
+      const result = await handleVoiceAsk({ retranscribe_archive_id: target.id });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain(backendText);
+      expect(readFileSync(join(target.archiveDir, "voicelayer-transcript.txt"), "utf8"))
+        .toBe(backendText);
+      expect(JSON.parse(readFileSync(join(target.archiveDir, "metadata.json"), "utf8")))
+        .toMatchObject({ id: target.id, source: "voice_ask", transcription_status: "transcribed" });
+      expect(readFileSync(join(newer.archiveDir, "voicelayer-transcript.txt"), "utf8"))
+        .toBe("Newer synthetic answer.");
+      expect(broadcasts.filter((event) => event.type === "archive_metadata_updated"))
+        .toEqual([{ type: "archive_metadata_updated", recording_path: fsModule.realpathSync(join(target.archiveDir, "audio.wav")) }]);
+      expect(broadcasts.some((event) => event.type === "transcription")).toBe(false);
+      expect(polishSurfaces).toEqual([]);
+    });
+
     function writeAskArchive(options: {
       id?: string;
       schemaVersion?: 2 | 3;
@@ -3162,7 +3196,7 @@ describe("input recording durability", () => {
 
       const { retranscribeVoiceAskArchive } = await import("../input");
       try {
-        await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow(
+        await expect(retranscribeVoiceAskArchive(archive.id, { delivery: "return-only" })).rejects.toThrow(
           /injected/,
         );
       } finally {
@@ -3172,6 +3206,7 @@ describe("input recording durability", () => {
       expect(readFileSync(transcriptPath)).toEqual(previousTranscript);
       expect(readFileSync(metadataPath)).toEqual(previousMetadata);
       expect(readFileSync(audioPath)).toEqual(previousAudio);
+      expect(broadcasts.some((event) => event.type === "archive_metadata_updated")).toBe(false);
       expect(
         readdirSync(archive.archiveDir).some((name) =>
           name.startsWith(".retranscribe-"),
