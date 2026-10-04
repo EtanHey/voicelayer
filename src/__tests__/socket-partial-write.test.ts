@@ -1,8 +1,8 @@
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, beforeEach, expect, it } from "bun:test";
 import { unlinkSync } from "fs";
 import { dirname, join } from "path";
 import { SOCKET_PATH } from "../paths";
-import { broadcast, connectToBar, disconnectFromBar } from "../socket-client";
+import { broadcast, connectToBar, disconnectFromBar, resetHistoryPlaybackGatesForTests } from "../socket-client";
 import { serializeEvent, type SocketEvent } from "../socket-protocol";
 import { createMcpDaemon } from "../mcp-daemon";
 import { serializeMcpFrame, parseMcpFrames } from "../mcp-framing";
@@ -15,6 +15,7 @@ if (process.env.VOICELAYER_TEST_ISOLATED !== "1" || !TEST_SOCKET.includes(".test
 
 let server: ReturnType<typeof Bun.listen> | undefined;
 let daemon: Awaited<ReturnType<typeof createMcpDaemon>> | undefined;
+beforeEach(() => { disconnectFromBar(); resetHistoryPlaybackGatesForTests(); });
 afterEach(() => {
   disconnectFromBar();
   server?.stop(true);

@@ -69,7 +69,10 @@ function createMockVoiceBarServer(socketPath: string): MockServer {
 describe("state emission", () => {
   let mockServer: MockServer | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    const client = await import("../socket-client");
+    client.disconnectFromBar();
+    client.resetHistoryPlaybackGatesForTests();
     try {
       unlinkSync(TEST_SOCKET);
     } catch {}

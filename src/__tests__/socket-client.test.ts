@@ -24,7 +24,7 @@ type MockServer = {
   stop: () => void;
 };
 
-function createMockVoiceBarServer(socketPath: string): MockServer {
+function createMockVoiceBarServer(socketPath: string, acknowledgeRelease = true): MockServer {
   const received: string[] = [];
   const clients = new Set<any>();
 
@@ -43,7 +43,7 @@ function createMockVoiceBarServer(socketPath: string): MockServer {
           if (line.trim()) {
             received.push(line);
             const event = JSON.parse(line);
-            if (event.type === "history_playback_gate" && event.busy === false) {
+            if (acknowledgeRelease && event.type === "history_playback_gate" && event.busy === false) {
               socket.write(JSON.stringify({ cmd: "history_playback_ready", id: event.id }) + "\n");
             }
           }
@@ -99,8 +99,11 @@ function parseReceived(mockServer: MockServer): Record<string, unknown>[] {
 describe("socket-client", () => {
   let mockServer: MockServer | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Clean up any stale socket
+    const client = await import("../socket-client");
+    client.disconnectFromBar();
+    client.resetHistoryPlaybackGatesForTests();
     try {
       unlinkSync(TEST_SOCKET);
     } catch {}
@@ -229,6 +232,25 @@ describe("socket-client", () => {
     finish(); await flow;
     expect(await waitFor(() => parseReceived(mockServer!).some(e => e.id === gate.id && e.busy === false))).toBe(true);
   });
+
+  it("retries unacknowledged settled gates only once as releases across reconnects", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET, false);
+    const client = await import("../socket-client");
+    client.connectToBar(TEST_SOCKET);
+    expect(await waitFor(client.isConnected)).toBe(true);
+    for (let i = 0; i < 3; i++) await client.withHistoryPlaybackSuspended(async () => {});
+    expect(await waitFor(() => parseReceived(mockServer!).filter(e => e.busy === false).length === 3)).toBe(true);
+    for (const expectedReleases of [3, 0, 0]) {
+      client.disconnectFromBar();
+      mockServer.received.length = 0;
+      client.connectToBar(TEST_SOCKET);
+      expect(await waitFor(client.isConnected)).toBe(true);
+      await Bun.sleep(20);
+      const gates = parseReceived(mockServer).filter(e => e.type === "history_playback_gate");
+      expect(gates.every(e => e.busy === false)).toBe(true);
+      expect(gates.length).toBe(expectedReleases);
+    }
+  }, 10000);
 
   it("connectToBar connects to a listening Unix socket", async () => {
     mockServer = createMockVoiceBarServer(TEST_SOCKET);

@@ -49,6 +49,13 @@ const historyGates = new Map<string, {
   busy: boolean; announced?: boolean; ready?: () => void; unavailable?: (reason: string) => void;
 }>();
 
+/** Clear fixture-owned gates only when the test preload isolates this process. */
+export function resetHistoryPlaybackGatesForTests(): void {
+  if (process.env.VOICELAYER_TEST_ISOLATED !== "1") throw new Error("History gate reset requires test isolation");
+  releaseHistoryGateWaiters();
+  historyGates.clear();
+}
+
 export async function withHistoryPlaybackSuspended<T>(work: () => Promise<T>): Promise<T> {
   const id = crypto.randomUUID();
   const gate: { busy: boolean; announced?: boolean; ready?: () => void; unavailable?: (reason: string) => void } = { busy: true };
@@ -80,7 +87,7 @@ export async function withHistoryPlaybackSuspended<T>(work: () => Promise<T>): P
     gate.busy = false;
     if (!gate.announced) historyGates.delete(id);
     else if (connected) broadcast({ type: "history_playback_gate", id, busy: false });
-    // Keep release receipts until acknowledged, including across reconnect.
+    // Keep releases until acknowledged or one reconnect retry.
     else if (!existsSync(targetPath)) historyGates.delete(id);
   }
 }
@@ -204,6 +211,7 @@ function startConnection(): void {
         for (const [id, gate] of historyGates) {
           gate.announced = true;
           broadcast({ type: "history_playback_gate", id, busy: gate.busy });
+          if (!gate.busy) historyGates.delete(id);
         }
         connectionOptions.onConnected?.();
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
