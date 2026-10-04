@@ -98,7 +98,7 @@ export function getToolDefinitions() {
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
         "Waits for the user's voice response. BLOCKING: " +
         "the question is spoken before the microphone opens, and the caller blocks for the entire playback plus the response.\n" +
-        "HARD LIMIT: 600 characters maximum; the effective per-request limit may be lower for short timeout_seconds values. " +
+        "HARD LIMIT: 600 characters maximum, independent of timeout_seconds. " +
         "Longer messages are refused, not truncated. " +
         "That is roughly 45 seconds of speech, and it is a question, not a briefing.\n" +
         "If content the user must understand or respond to is longer, split it into two or more sequential voice_ask calls. " +
@@ -141,7 +141,7 @@ export function getToolDefinitions() {
           timeout_seconds: {
             type: "number",
             description:
-              "Max wait time in seconds. Clamped to 5-3600. Default: 30.",
+              "No-speech budget in seconds, starting when capture opens. In VAD mode, first speech cancels it; recording ends on silence or stop, with a 30-minute ceiling after first speech (also while locked). Lock suspends the no-speech budget. Prior playback and prompt synthesis/playback have separate bounds. Clamped to 5-3600. Default: 30.",
             default: 30,
             minimum: 5,
             maximum: 3600,

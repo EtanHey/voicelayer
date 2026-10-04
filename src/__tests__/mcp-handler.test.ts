@@ -208,11 +208,16 @@ describe("mcp-handler", () => {
       );
       expect(voiceAsk.description).toContain("HARD LIMIT: 600 characters");
       expect(voiceAsk.description).toContain(
-        "effective per-request limit may be lower for short timeout_seconds values",
+        "independent of timeout_seconds",
       );
       expect(voiceAsk.inputSchema.properties.message.description).toContain(
         "Short question",
       );
+      const budget = voiceAsk.inputSchema.properties.timeout_seconds.description;
+      expect(budget).toContain("No-speech budget");
+      expect(budget).toContain("first speech cancels it");
+      expect(budget).toContain("30-minute ceiling");
+      expect(budget).toContain("Lock suspends");
     });
 
     it("keeps response-bearing content out of non-blocking voice_speak", async () => {

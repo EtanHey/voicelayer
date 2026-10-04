@@ -504,6 +504,115 @@ describe("handleConverse resilience — P0-2", () => {
     expect(result.content[0].text).toContain("Re-transcribe");
   });
 
+  it("captures after a long prompt outlasts the listening budget plus allowance", async () => {
+    jest.useFakeTimers();
+    let finishPrompt!: (value: ReturnType<typeof capturedPrompt>) => void;
+    try {
+      speakSpy = spyOn(tts, "speak").mockImplementation(
+        () => new Promise((resolve) => { finishPrompt = resolve; }),
+      );
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        async (_timeout, _mode, _ptt, options) => {
+          options?.onCaptureStart?.();
+          return "synthetic captured answer";
+        },
+      );
+      const pending = handleConverse({
+        message: "context ".repeat(60).trim(),
+        timeout_seconds: 60,
+      });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      jest.advanceTimersByTime(76_000);
+      finishPrompt(capturedPrompt());
+      const result = await pending;
+      expect(result.isError).toBeUndefined();
+      expect(waitSpy).toHaveBeenCalledTimes(1);
+      expect(waitSpy.mock.calls[0][0]).toBe(60_000);
+      expect(result.content[0].text).toContain("synthetic captured answer");
+    } finally {
+      finishPrompt?.(capturedPrompt());
+      jest.useRealTimers();
+    }
+  });
+
+  it("gives a maximum prompt a scaled bound beyond the generous floor, then stops stuck TTS", async () => {
+    jest.useFakeTimers();
+    let finishPrompt!: (value: ReturnType<typeof capturedPrompt>) => void;
+    try {
+      speakSpy = spyOn(tts, "speak").mockImplementation(
+        () => new Promise((resolve) => { finishPrompt = resolve; }),
+      );
+      waitSpy = spyOn(input, "waitForInput").mockResolvedValue("answer");
+      let settled = false;
+      const pending = handleConverse({
+        message: "x".repeat(600), timeout_seconds: 5,
+      }).then((result) => { settled = true; return result; });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      jest.advanceTimersByTime(180_000);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(settled).toBe(false);
+      // 44 estimated speech seconds * 3 + 60 synthesis seconds = 192 seconds.
+      jest.advanceTimersByTime(12_000);
+      const result = await pending;
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("prompt stage after 192s");
+      expect(waitSpy).not.toHaveBeenCalled();
+    } finally {
+      finishPrompt?.(capturedPrompt());
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      jest.useRealTimers();
+    }
+  });
+
+  it("starts fresh prompt and capture budgets after waiting for prior playback and recorder startup", async () => {
+    jest.useFakeTimers();
+    let finishPlayback!: () => void;
+    let finishPrompt!: (value: ReturnType<typeof capturedPrompt>) => void;
+    let finishInput!: (value: string) => void;
+    let captureOptions: Parameters<typeof input.waitForInput>[3];
+    try {
+      awaitSpy.mockImplementation(
+        () => new Promise<void>((resolve) => { finishPlayback = resolve; }),
+      );
+      speakSpy = spyOn(tts, "speak").mockImplementation(
+        () => new Promise((resolve) => { finishPrompt = resolve; }),
+      );
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        (_timeout, _mode, _ptt, options) => {
+          captureOptions = options;
+          return new Promise<string>((resolve) => { finishInput = resolve; });
+        },
+      );
+      const pending = handleConverse({
+        message: "Synthetic question", timeout_seconds: 5,
+      });
+      jest.advanceTimersByTime(179_000);
+      finishPlayback();
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(speakSpy).toHaveBeenCalledTimes(1);
+      jest.advanceTimersByTime(179_000);
+      finishPrompt(capturedPrompt());
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(waitSpy).toHaveBeenCalledTimes(1);
+      expect(waitSpy.mock.calls[0][0]).toBe(5_000);
+      jest.advanceTimersByTime(19_000);
+      captureOptions?.onCaptureStart?.();
+      jest.advanceTimersByTime(19_999);
+      expect(captureOptions?.signal?.aborted).toBe(false);
+      jest.advanceTimersByTime(1);
+      expect(captureOptions?.signal?.aborted).toBe(true);
+      finishInput("cleanup after capture deadline");
+      await pending;
+    } finally {
+      finishPlayback?.();
+      finishPrompt?.(capturedPrompt());
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      finishInput?.("cleanup");
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      jest.useRealTimers();
+    }
+  });
+
   it("names the unfinished prompt, not zero recoverable audio, when the prompt stage times out", async () => {
     jest.useFakeTimers();
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
@@ -523,7 +632,10 @@ describe("handleConverse resilience — P0-2", () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      jest.advanceTimersByTime(20_000);
+      jest.advanceTimersByTime(179_999);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      expect(waitSpy).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(1);
       const result = await pending;
 
       expect(result.isError).toBe(true);
@@ -603,7 +715,7 @@ describe("handleConverse resilience — P0-2", () => {
       await Promise.resolve();
 
       expect(speakSpy).toHaveBeenCalledTimes(1);
-      jest.advanceTimersByTime(20_000);
+      jest.advanceTimersByTime(180_000);
       const result = await pending;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Hard timeout");
@@ -647,10 +759,12 @@ describe("handleConverse resilience — P0-2", () => {
       expect(awaitSpy).toHaveBeenCalledTimes(1);
       expect(speakSpy).not.toHaveBeenCalled();
 
-      jest.advanceTimersByTime(20_000);
+      jest.advanceTimersByTime(180_000);
       const result = await pending;
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain("Hard timeout");
+      expect(result.content[0].text).toContain("playback-wait stage");
+      expect(result.content[0].text).toContain("queued or ongoing audio playback");
+      expect(result.content[0].text).not.toContain("spoken prompt did not finish");
 
       finishPlayback();
       await Promise.resolve();

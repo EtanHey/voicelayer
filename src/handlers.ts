@@ -102,7 +102,10 @@ const THINK_FILE =
 const DEFAULT_CONVERSE_SILENCE_MODE: SilenceMode = "thoughtful";
 const VOICE_ASK_RETURN_TIMEOUT_MS = 120_000;
 const VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS = 15;
-const VOICE_ASK_PLAYBACK_MARGIN_SECONDS = 1;
+const VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS = 180_000;
+const VOICE_ASK_PROMPT_TIMEOUT_FLOOR_MS = 180_000;
+const VOICE_ASK_PROMPT_SYNTHESIS_ALLOWANCE_MS = 60_000;
+const VOICE_ASK_PROMPT_SPEECH_MARGIN = 3;
 const VOICE_ASK_ABORT_SETTLE_GRACE_MS = 15_000;
 
 /**
@@ -115,12 +118,9 @@ const SPEECH_CHARS_PER_SECOND = 13.9;
 
 /**
  * Hard maximum for the BLOCKING tool. At the measured ~13 characters/second,
- * 600 characters is about 46 seconds: it lands on the 45-second default
- * playback stage budget, `(timeout_seconds + 15)s`, armed before `speak()`.
- * The principle is that the spoken prompt cannot consume the recording budget
- * it is supposed to precede. At 1,200 characters (about 92 seconds), the prompt
- * is already twice the default budget and can time out before the microphone
- * opens.
+ * 600 characters is about 46 seconds. This product cap keeps questions short;
+ * prompt playback has its own generous deadline independent of the listening
+ * budget, so a short listening window never shortens the accepted question.
  *
  * A second mechanical constraint points the same way: the teleprompter carries
  * its text and the RMS waveform in one 8,191-byte socket frame. Past ~50s of
@@ -145,18 +145,15 @@ export const VOICE_ASK_MESSAGE_MAX_CHARS = 600;
  */
 export const VOICE_SPEAK_MESSAGE_MAX_CHARS = 1_200;
 
-function voiceAskMessageMaxCharsForTimeout(timeoutSeconds: unknown): number {
-  const normalizedTimeoutSeconds =
-    typeof timeoutSeconds === "number" && Number.isFinite(timeoutSeconds)
-      ? Math.min(Math.max(timeoutSeconds, 5), 3_600)
-      : 30;
-  const playbackBudgetSeconds =
-    normalizedTimeoutSeconds +
-    VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS -
-    VOICE_ASK_PLAYBACK_MARGIN_SECONDS;
-  return Math.min(
-    VOICE_ASK_MESSAGE_MAX_CHARS,
-    Math.floor(playbackBudgetSeconds * SPEECH_CHARS_PER_SECOND),
+function voiceAskPromptTimeoutMs(message: string): number {
+  // Allow slow voices and cold synthesis without borrowing time from capture.
+  const estimatedSpeechSeconds = Math.ceil(
+    message.length / SPEECH_CHARS_PER_SECOND,
+  );
+  return Math.max(
+    VOICE_ASK_PROMPT_TIMEOUT_FLOOR_MS,
+    estimatedSpeechSeconds * VOICE_ASK_PROMPT_SPEECH_MARGIN * 1000 +
+      VOICE_ASK_PROMPT_SYNTHESIS_ALLOWANCE_MS,
   );
 }
 
@@ -402,7 +399,6 @@ export async function handleVoiceAsk(
   const refusal = refuseOverlongMessage(
     parsed.data.message,
     "voice_ask",
-    voiceAskMessageMaxCharsForTimeout(parsed.data.timeout_seconds),
   );
   if (refusal) return refusal;
   const reservation = reserveStandardVoiceOperation();
@@ -577,8 +573,8 @@ export async function handleConverse(
     );
   }
 
-  // Outer timeout guard — prevents the entire converse flow from hanging
-  // if speak(), awaitCurrentPlayback(), or waitForInput() gets stuck
+  // Capture's existing watchdog allowance is separate from playback deadlines.
+  // MCP VAD uses timeout_seconds only until first speech; input owns its safety ceiling.
   const outerTimeoutMs =
     (timeoutSeconds + VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS) * 1000;
   const inputAbortController = new AbortController();
@@ -591,6 +587,7 @@ export async function handleConverse(
   let timeoutSettled = false;
   let captureActive = false;
   let captureHeld = false;
+  let captureHasSpeech = false;
   let captureAllowsHold = false;
   let resolveTimeout!: (result: McpResult) => void;
   const timeoutPromise = new Promise<McpResult>((resolve) => {
@@ -605,7 +602,7 @@ export async function handleConverse(
         }
       : undefined;
   const settleTimeout = (
-    stage: "prompt" | "capture-start" | "capture" | "return",
+    stage: "playback-wait" | "prompt" | "capture-start" | "capture" | "return",
     timeoutMs: number,
   ): void => {
     if (timeoutSettled) return;
@@ -617,11 +614,13 @@ export async function handleConverse(
     // "zero recoverable audio" would blame the capture pipeline for a prompt that
     // never finished. Say what actually did not happen, per stage.
     const cause =
-      stage === "prompt"
-        ? "the spoken prompt did not finish within the budget; the microphone never opened"
-        : stage === "capture-start"
-          ? "the recorder did not start after the prompt finished; the microphone never opened"
-          : "the voice pipeline may be stuck with zero recoverable audio";
+      stage === "playback-wait"
+        ? "waiting for queued or ongoing audio playback to finish before the prompt; the microphone never opened"
+        : stage === "prompt"
+          ? "prompt synthesis or playback did not finish within its own budget; the microphone never opened"
+          : stage === "capture-start"
+            ? "the recorder did not start after the prompt finished; the microphone never opened"
+            : "the voice pipeline may be stuck with zero recoverable audio";
     resolveTimeout(
       recovery
         ? textResult(formatAsk(null, { outcome: "captured", recovery }))
@@ -634,13 +633,13 @@ export async function handleConverse(
   };
   const armTimeout = (
     timeoutMs: number,
-    stage: "prompt" | "capture-start" | "capture" | "return",
+    stage: "playback-wait" | "prompt" | "capture-start" | "capture" | "return",
   ): void => {
     if (timeoutSettled) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       if (stage === "capture" && captureAllowsHold &&
-          (captureHeld || isRecordingHoldEngaged())) return;
+          (captureHasSpeech || captureHeld || isRecordingHoldEngaged())) return;
       console.error(
         `[voicelayer] voice_ask ${stage} hard timeout after ${timeoutMs / 1000}s`,
       );
@@ -648,7 +647,7 @@ export async function handleConverse(
       const abortError = new Error(
         `voice_ask ${stage} stage aborted after hard timeout (${timeoutMs}ms)`,
       );
-      if (stage === "prompt" || stage === "capture-start") {
+      if (stage === "playback-wait" || stage === "prompt" || stage === "capture-start") {
         // No mic has opened, so there cannot be captured audio to publish.
         settleTimeout(stage, timeoutMs);
         inputAbortController.abort(abortError);
@@ -663,7 +662,7 @@ export async function handleConverse(
       );
     }, timeoutMs);
   };
-  armTimeout(outerTimeoutMs, "prompt");
+  armTimeout(VOICE_ASK_PLAYBACK_WAIT_TIMEOUT_MS, "playback-wait");
 
   const converseFlow = async (): Promise<McpResult> => {
     // V1 policy: refuse instead of queueing while the user is recording.
@@ -681,6 +680,7 @@ export async function handleConverse(
     }
 
     // Speak the question aloud — BLOCKING for converse
+    armTimeout(voiceAskPromptTimeoutMs(validated.message), "prompt");
     const voiceName = validated.voice;
     const speech = await speak(validated.message, {
       mode: "converse",
@@ -733,6 +733,12 @@ export async function handleConverse(
           armTimeout(outerTimeoutMs, "capture");
         },
         ...(!pushToEnd ? {
+          onSpeechStart: () => {
+            captureHasSpeech = true;
+            if (!captureActive || timeoutSettled || inputAbortController.signal.aborted) return;
+            if (timer) clearTimeout(timer);
+            timer = undefined;
+          },
           onRecordingHoldChange: (held: boolean) => {
             if (!captureActive || timeoutSettled ||
                 inputAbortController.signal.aborted) return;
@@ -740,7 +746,7 @@ export async function handleConverse(
             if (held) {
               if (timer) clearTimeout(timer);
               timer = undefined;
-            } else {
+            } else if (!captureHasSpeech) {
               armTimeout(outerTimeoutMs, "capture");
             }
           },

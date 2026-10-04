@@ -158,6 +158,9 @@ const PRE_ROLL_CHUNKS = Math.ceil(
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
+/** Absolute MCP VAD capture ceiling measured from first speech, even while held. */
+export const VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS = 30 * 60 * 1000;
+
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
 
@@ -622,6 +625,7 @@ export interface NoSpeechGateResult {
 export interface RecordingCaptureState {
   vadSpeechDetected?: boolean;
   onCaptureStart?: () => void;
+  onSpeechStart?: () => void;
   onRecordingHoldChange?: (engaged: boolean) => void;
   /**
    * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
@@ -672,6 +676,7 @@ export interface WaitForInputOptions {
     createdAt?: Date;
   };
   onCaptureStart?: () => void;
+  onSpeechStart?: () => void;
   onRecordingHoldChange?: (engaged: boolean) => void;
   onArchiveCreated?: (archivePath: string) => void;
   onCaptureEnd?: () => void;
@@ -692,7 +697,7 @@ function readReceiptMonotonicNow(clock?: () => number): number | undefined {
 }
 
 function invokeCaptureObserver(
-  observerName: "capture_start" | "recording_hold" | "no_speech" | "phase_change",
+  observerName: "capture_start" | "speech_start" | "recording_hold" | "no_speech" | "phase_change",
   observer: (() => void) | undefined,
 ): void {
   if (!observer) return;
@@ -2263,7 +2268,7 @@ export function isPushToEndStopDrainComplete(
  * - VAD mode (default): Silero VAD detects speech/silence, auto-stops on silence
  * - push-to-end mode (pushToEnd=true): Records until stop signal or timeout, no VAD
  *
- * @param timeoutMs - Maximum recording time in milliseconds
+ * @param timeoutMs - Recording limit; MCP VAD asks use it only before first speech
  * @param silenceMode - VAD silence threshold (ignored in push-to-end mode)
  * @param pushToEnd - If true, skip VAD — only stop on user signal or timeout
  */
@@ -2300,8 +2305,9 @@ export async function recordToBuffer(
     ? Infinity
     : silenceChunksForMode(silenceMode);
 
-  // Pre-speech timeout: max chunks before giving up if no speech detected
-  const preSpeechChunks = pushToEnd
+  const voiceAskVad = !pushToEnd && captureState?.archiveSource === "voice_ask";
+  // MCP asks use the configured mic-open deadline, not the dictation chunk cap.
+  const preSpeechChunks = pushToEnd || voiceAskVad
     ? Infinity
     : Math.ceil(PRE_SPEECH_TIMEOUT_SECONDS * (SAMPLE_RATE / VAD_CHUNK_SAMPLES));
 
@@ -2431,6 +2437,7 @@ export async function recordToBuffer(
         );
       }
       clearTimeout(timer);
+      clearTimeout(speechSafetyTimer);
       if (stopSignalPoll) clearInterval(stopSignalPoll);
       if (abortHandler && signal) {
         signal.removeEventListener("abort", abortHandler);
@@ -2504,7 +2511,8 @@ export async function recordToBuffer(
     // obey the same lock, including when the recorder produces no PCM chunks.
     // PTT's timeout and stop-tail behavior are deliberately unchanged.
     let recordingHeld = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let speechSafetyTimer: ReturnType<typeof setTimeout> | undefined;
     const synchronizeRecordingHold = () => {
       if (pushToEnd || resolved) return false;
       const held = isRecordingHoldEngaged();
@@ -2514,17 +2522,21 @@ export async function recordToBuffer(
         // Preserve speech detection, but discard silence accumulated before
         // either edge, even if no VAD chunk arrived while the lock was held.
         silencePolicy.observe({ speechDetected: false, holdEngaged: true });
-        if (!held) timer = setTimeout(onTimeout, timeoutMs);
+        if (!held && (!voiceAskVad || !hasSpeech)) {
+          timer = setTimeout(onTimeout, timeoutMs);
+        }
         invokeCaptureObserver("recording_hold", () => captureState?.onRecordingHoldChange?.(held));
       }
       return held;
     };
     const onTimeout = () => {
       const previouslyHeld = recordingHeld;
-      if (resolved || synchronizeRecordingHold() || previouslyHeld) return;
+      if (resolved || synchronizeRecordingHold() || previouslyHeld ||
+          (voiceAskVad && hasSpeech)) return;
       finish();
     };
-    timer = setTimeout(onTimeout, timeoutMs);
+    // Preserve dictation/PTT timing; MCP VAD starts only after the recorder opens.
+    if (!voiceAskVad) timer = setTimeout(onTimeout, timeoutMs);
     if (signal) {
       abortHandler = () => finish(waitForInputAbortError(signal));
       if (signal.aborted) {
@@ -2579,6 +2591,7 @@ export async function recordToBuffer(
         return;
       }
 
+      if (voiceAskVad) timer = setTimeout(onTimeout, timeoutMs);
       invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
       if (resolved) return;
 
@@ -2728,6 +2741,18 @@ export async function recordToBuffer(
             if (speechDetected) {
               if (!hadSpeech) {
                 firstSpeechChunkIndex = pcmChunks.length - 1;
+                if (voiceAskVad && !resolved) {
+                  clearTimeout(timer);
+                  timer = undefined;
+                  speechSafetyTimer = setTimeout(() => {
+                    if (resolved) return;
+                    console.error(
+                      `[voicelayer] voice_ask speech safety ceiling reached after ${VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS / 60_000} min — retaining recording`,
+                    );
+                    finish();
+                  }, VOICE_ASK_SPEECH_SAFETY_TIMEOUT_MS);
+                  invokeCaptureObserver("speech_start", captureState?.onSpeechStart);
+                }
                 broadcast({ type: "speech", detected: true });
               }
             }
@@ -2820,6 +2845,7 @@ export async function waitForInput(
   const captureState: RecordingCaptureState = {
     archiveSource: options.archiveSource,
     onCaptureStart: options.onCaptureStart,
+    onSpeechStart: options.onSpeechStart,
     onRecordingHoldChange: options.onRecordingHoldChange,
   };
   const chunkedSession = isChunkedSTTEnabled()
