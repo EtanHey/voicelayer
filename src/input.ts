@@ -3958,6 +3958,14 @@ export async function retranscribeVoiceAskArchive(
       );
     }
     commitVoiceAskTranscriptPair(snapshot, text, metadata);
+    // MCP's return-only retry must evict the original Ask's cached History row
+    // after the pair is durable, without delivering a dictation/paste event.
+    if (options.delivery === "return-only") {
+      broadcast({
+        type: "archive_metadata_updated",
+        recording_path: snapshot.audioPath,
+      });
+    }
     if (options.delivery === "history") {
       broadcast({
         type: "transcription",
