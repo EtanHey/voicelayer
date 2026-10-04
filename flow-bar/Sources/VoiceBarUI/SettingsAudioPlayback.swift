@@ -1,4 +1,5 @@
 import AVFoundation
+import Darwin
 import Foundation
 
 /// Where the playing clip is. A snapshot pulled from the backend on demand, never stored, so a
@@ -75,6 +76,21 @@ public final class SettingsAudioPlayback {
     public static let keyboardSeekStep: TimeInterval = 5
 
     public private(set) var playingURL: URL?
+    public private(set) var failureMessage: String?
+    private var voiceOwners: [String: Int32] = [:]
+    private let canPlay: @MainActor () -> Bool
+    public var isVoiceBusy: Bool {
+        voiceOwners.values.contains { $0 == 0 || kill($0, 0) == 0 || errno == EPERM } || !canPlay()
+    }
+
+    public func setVoiceOwner(_ id: String, busy: Bool, pid: Int32 = 0) {
+        if busy {
+            voiceOwners[id] = pid
+            stop() // The caller acknowledges only after the backend has stopped.
+        } else {
+            voiceOwners.removeValue(forKey: id)
+        }
+    }
 
     private let start: @MainActor (URL) -> Bool
     private let stopBackend: @MainActor () -> Void
@@ -85,8 +101,10 @@ public final class SettingsAudioPlayback {
         start: @escaping @MainActor (URL) -> Bool,
         stop: @escaping @MainActor () -> Void,
         position: @escaping @MainActor () -> SettingsAudioPlaybackPosition? = { nil },
-        seek: @escaping @MainActor (TimeInterval) -> Void = { _ in }
+        seek: @escaping @MainActor (TimeInterval) -> Void = { _ in },
+        canPlay: @escaping @MainActor () -> Bool = { true }
     ) {
+        self.canPlay = canPlay
         self.start = start
         stopBackend = stop
         positionBackend = position
@@ -103,11 +121,16 @@ public final class SettingsAudioPlayback {
             stop()
             return
         }
-        if playingURL != nil {
-            stop()
+        guard !isVoiceBusy else {
+            failureMessage = "Voice is busy — wait for the current voice operation to finish"
+            return
         }
+        failureMessage = nil
+        if playingURL != nil { stop() }
         if start(url) {
             playingURL = url
+        } else {
+            failureMessage = "Audio could not start. Try Play again or reveal the file in Finder."
         }
     }
 
@@ -163,13 +186,14 @@ public final class SettingsAudioPlayback {
 
 public extension SettingsAudioPlayback {
     /// The real AVAudioPlayer-backed playback used by the app.
-    static func system() -> SettingsAudioPlayback {
+    static func system(canPlay: @escaping @MainActor () -> Bool = { true }) -> SettingsAudioPlayback {
         let holder = SystemPlayerHolder()
         let playback = SettingsAudioPlayback(
             start: { url in holder.play(url) },
             stop: { holder.stop() },
             position: { holder.position },
-            seek: { time in holder.seek(to: time) }
+            seek: { time in holder.seek(to: time) },
+            canPlay: canPlay
         )
         holder.onFinish = { [weak playback] url in
             playback?.playbackDidFinish(url)
@@ -188,9 +212,12 @@ private final class SystemPlayerHolder: NSObject, AVAudioPlayerDelegate {
         stop()
         guard let player = try? AVAudioPlayer(contentsOf: url) else { return false }
         player.delegate = self
-        guard player.play() else { return false }
         self.player = player
         currentURL = url
+        guard player.prepareToPlay(), player.play() else {
+            stop()
+            return false
+        }
         return true
     }
 

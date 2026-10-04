@@ -39,7 +39,7 @@ import {
 import type { SilenceMode } from "./vad";
 import { isRecordingHoldEngaged } from "./recording-hold";
 import { ensureVoiceBarRunning } from "./voice-bar-launcher";
-import { broadcast, isConnected } from "./socket-client";
+import { broadcast, isConnected, withHistoryPlaybackSuspended } from "./socket-client";
 import {
   formatSpeak,
   formatAsk,
@@ -792,7 +792,7 @@ export async function handleConverse(
 
   // P0-2: catch pipeline errors cleanly; keep active recording UI intact
   // when v1 refuses voice_ask before question TTS.
-  const flowPromise = converseFlow();
+  const flowPromise = withHistoryPlaybackSuspended(converseFlow);
   operationLifecycle?.deferReleaseUntil(flowPromise);
   try {
     const result = await Promise.race([flowPromise, timeoutPromise]);

@@ -2869,7 +2869,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onRunSetup: { [weak self] in self?.openSetupWizard() },
             initialTab: lastSettingsTab,
             tabRequest: settingsTabRequest,
-            onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab }
+            onSelectedTabChange: { [weak self] tab in self?.lastSettingsTab = tab },
+            historyPlayback: MainActor.assumeIsolated { voiceState.historyPlayback }
         )
     }
 

@@ -245,6 +245,11 @@ public final class VoiceState {
     public private(set) var lastTranscriptionPolishReason: String?
     public var speechDetected: Bool = false
     public var isConnected: Bool = false
+    @MainActor @ObservationIgnored public lazy var historyPlayback = SettingsAudioPlayback
+        .system(canPlay: { [weak self] in
+            guard let self else { return false }
+            return isConnected && mode != .speaking && mode != .recording && mode != .transcribing
+        })
     public var errorMessage: String?
     public private(set) var polishDegradation: STTPolishDegradation?
     public private(set) var polishMenuSignalPending = false
@@ -1379,6 +1384,15 @@ public final class VoiceState {
         guard let type = event["type"] as? String else { return }
 
         switch type {
+        case "history_playback_gate":
+            if let id = event["id"] as? String, let busy = event["busy"] as? Bool {
+                MainActor.assumeIsolated { historyPlayback.setVoiceOwner(
+                    id,
+                    busy: busy,
+                    pid: (event["owner_pid"] as? Int32) ?? 0
+                ) }
+            }
+
         case "state":
             guard let stateStr = event["state"] as? String else { return }
             switch stateStr {

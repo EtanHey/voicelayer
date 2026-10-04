@@ -1,3 +1,4 @@
+import AVFoundation
 @testable import VoiceBarUI
 import XCTest
 
@@ -6,6 +7,59 @@ final class SettingsAudioPlaybackTests: XCTestCase {
     private let recordingURL = URL(fileURLWithPath: "/tmp/voicelayer-recording/audio.wav")
     private let questionURL = URL(fileURLWithPath: "/tmp/voicelayer-ask/agent-audio.mp3")
     private let responseURL = URL(fileURLWithPath: "/tmp/voicelayer-ask/audio.wav")
+
+    func testFirstSystemClickStartsSyntheticSilenceAndItsRealPlaybackClock() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".caf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 32000))
+        buffer.frameLength = 32000
+        buffer.floatChannelData?[0].initialize(repeating: 0, count: 32000)
+        try AVAudioFile(forWriting: url, settings: format.settings).write(from: buffer)
+        let playback = SettingsAudioPlayback.system()
+        defer { playback.stop() }
+        playback.toggle(url)
+        XCTAssertTrue(playback.isPlaying(url))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertGreaterThan(try XCTUnwrap(playback.position(of: url)).currentTime, 0)
+        XCTAssertNil(playback.failureMessage)
+    }
+
+    func testFailedFirstClickIsVisibleAndDoesNotStartAClock() {
+        let recorder = Recorder()
+        recorder.startSucceeds = false
+        let playback = playback(recorder)
+        playback.toggle(questionURL)
+        XCTAssertNotNil(playback.failureMessage)
+        XCTAssertNil(playback.position(of: questionURL))
+    }
+
+    func testAskStopsHistoryBeforeItsReceiptAndRefusesReplayUntilAllOwnersRelease() {
+        let recorder = Recorder()
+        let playback = playback(recorder)
+        playback.toggle(questionURL)
+        playback.setVoiceOwner("ask-a", busy: true)
+        XCTAssertEqual(recorder.stopCount, 1)
+        XCTAssertNil(playback.playingURL)
+        playback.toggle(responseURL)
+        XCTAssertEqual(recorder.started, [questionURL])
+        XCTAssertNotNil(playback.failureMessage)
+        playback.setVoiceOwner("ask-b", busy: true)
+        playback.setVoiceOwner("ask-a", busy: false)
+        XCTAssertTrue(playback.isVoiceBusy)
+        playback.setVoiceOwner("ask-b", busy: false)
+        playback.toggle(responseURL)
+        XCTAssertEqual(recorder.started, [questionURL, responseURL])
+        XCTAssertNil(playback.failureMessage)
+    }
+
+    func testCrashedAskOwnerDoesNotStrandHistoryBusy() {
+        let recorder = Recorder()
+        let playback = playback(recorder)
+        playback.setVoiceOwner("dead-ask", busy: true, pid: Int32.max)
+        playback.toggle(questionURL)
+        XCTAssertTrue(playback.isPlaying(questionURL))
+    }
 
     func testTogglingAClipStartsIt() {
         let recorder = Recorder()

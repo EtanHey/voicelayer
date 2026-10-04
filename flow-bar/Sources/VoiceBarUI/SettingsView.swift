@@ -170,6 +170,7 @@ struct SettingsHistoryActionEnablement: Equatable {
     let isTranscribing: Bool
     /// The recording being re-transcribed, so its own Re-transcribe says so instead of "Another…".
     var retranscribingPath: String?
+    var isVoiceBusy: Bool = false
 
     func isEnabled(
         _ action: SettingsHistoryAction,
@@ -177,7 +178,7 @@ struct SettingsHistoryActionEnablement: Equatable {
     ) -> Bool {
         guard part.isEnabled(action) else { return false }
 
-        if action == .play, isRecording || isTranscribing {
+        if action == .play, isRecording || isTranscribing || isVoiceBusy {
             return false
         }
         if action == .retranscribe, isRetranscribing || isRecording || isTranscribing {
@@ -197,6 +198,8 @@ struct SettingsHistoryActionEnablement: Equatable {
         guard !isEnabled(action, for: part) else { return .available }
         switch action {
         case .play, .retranscribe:
+            if action == .play,
+               isVoiceBusy { return .unavailable("Voice is busy — wait for the current voice operation to finish") }
             if isRecording { return .unavailable("Unavailable while recording") }
             // AIDEV-NOTE: a re-transcription also puts the daemon in "transcribing", so this must be checked first
             // or every blocked button said "Unavailable while transcribing" (QA 2.2.25 C6, 04:52).
@@ -1211,6 +1214,12 @@ public struct SettingsView: View {
     private var historyTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             historyScopePicker
+            if historyPlayback.isVoiceBusy {
+                Text("Voice is busy — wait for the current voice operation to finish")
+                    .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
+            } else if let failure = historyPlayback.failureMessage {
+                Text(failure).font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
+            }
 
             // AIDEV-NOTE: lane E (QA 2.2.25 C10). A `switch` here tore down and rebuilt the whole list on every
             // Dictations ↔ Ask click; on the 11k archive that rebuild was most of the switch's main-thread time.
@@ -1707,7 +1716,8 @@ public struct SettingsView: View {
             isRetranscribing: isAnyHistoryRetranscribing(),
             isRecording: isRecordingActive(),
             isTranscribing: isTranscribingActive(),
-            retranscribingPath: isRetranscribing ? part.audioPath?.path : nil
+            retranscribingPath: isRetranscribing ? part.audioPath?.path : nil,
+            isVoiceBusy: historyPlayback.isVoiceBusy
         )
 
         VStack(alignment: .leading, spacing: 6) {

@@ -7,7 +7,7 @@
  * Each test spins up a mock VoiceBar server (Bun.listen on a temp Unix socket)
  * and tests the client's behavior.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { existsSync, unlinkSync } from "fs";
 import type { SocketEvent, SocketCommand } from "../socket-protocol";
 
@@ -40,7 +40,13 @@ function createMockVoiceBarServer(socketPath: string): MockServer {
         const lines = socket.data.buffer.split("\n");
         socket.data.buffer = lines.pop() ?? "";
         for (const line of lines) {
-          if (line.trim()) received.push(line);
+          if (line.trim()) {
+            received.push(line);
+            const event = JSON.parse(line);
+            if (event.type === "history_playback_gate" && event.busy === false) {
+              socket.write(JSON.stringify({ cmd: "history_playback_ready", id: event.id }) + "\n");
+            }
+          }
         }
       },
       close(socket) {
@@ -112,6 +118,80 @@ describe("socket-client", () => {
     try {
       unlinkSync(TEST_SOCKET);
     } catch {}
+  });
+
+  it("voice_ask waits for History stop acknowledgement before prompt or capture", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const client = await import("../socket-client");
+    const tts = await import("../tts");
+    const input = await import("../input");
+    const booking = await import("../session-booking");
+    const handlers = await import("../handlers");
+    client.connectToBar(TEST_SOCKET);
+    expect(await waitFor(client.isConnected)).toBe(true);
+    const speech = {
+      audioArtifact: { bytes: new Uint8Array([0]), format: "mp3" as const },
+      displayText: "Synthetic prompt", engine: "edge-tts", voice: "synthetic",
+    };
+    const speak = spyOn(tts, "speak").mockResolvedValue(speech);
+    const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+    const booked = spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true });
+    const flow = handlers.handleConverse({ message: "Synthetic prompt", timeout_seconds: 5 });
+    try {
+      await Bun.sleep(50);
+      const gate = parseReceived(mockServer).find(e => e.type === "history_playback_gate" && e.busy === true);
+      expect(gate).toBeDefined();
+      expect(speak).not.toHaveBeenCalled();
+      expect(capture).not.toHaveBeenCalled();
+      mockServer.sendToAll(JSON.stringify({ cmd: "history_playback_ready", id: "stale" }) + "\n");
+      await Bun.sleep(20);
+      expect(speak).not.toHaveBeenCalled();
+      mockServer.sendToAll(JSON.stringify({ cmd: "history_playback_ready", id: gate!.id }) + "\n");
+      await flow;
+      expect(speak).toHaveBeenCalledTimes(1);
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(await waitFor(() => parseReceived(mockServer!).some(e => e.type === "history_playback_gate" && e.busy === false))).toBe(true);
+    } finally {
+      // A RED baseline has no gate; a failed new implementation must not leave a timer hanging.
+      const gate = parseReceived(mockServer).find(e => e.type === "history_playback_gate" && e.busy === true);
+      if (gate) mockServer.sendToAll(JSON.stringify({ cmd: "history_playback_ready", id: gate.id }) + "\n");
+      await flow;
+      speak.mockRestore(); capture.mockRestore(); booked.mockRestore();
+    }
+  });
+
+  it("a lost stop receipt fails closed before any Ask work", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const client = await import("../socket-client");
+    client.connectToBar(TEST_SOCKET);
+    expect(await waitFor(client.isConnected)).toBe(true);
+    let worked = false;
+    const flow = client.withHistoryPlaybackSuspended(async () => { worked = true; });
+    const rejection = flow.catch(error => error);
+    expect(await waitFor(() => parseReceived(mockServer!).some(e => e.type === "history_playback_gate" && e.busy === true))).toBe(true);
+    client.disconnectFromBar();
+    expect((await rejection).message).toContain("disconnected before History playback stopped");
+    expect(worked).toBe(false);
+  });
+
+  it("keeps Ask ownership through reconnect and releases it when work settles", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const client = await import("../socket-client");
+    client.connectToBar(TEST_SOCKET);
+    expect(await waitFor(client.isConnected)).toBe(true);
+    let finish!: () => void;
+    let worked = 0;
+    const flow = client.withHistoryPlaybackSuspended(() => { worked++; return new Promise<void>(resolve => { finish = resolve; }); });
+    expect(await waitFor(() => parseReceived(mockServer!).some(e => e.type === "history_playback_gate" && e.busy === true))).toBe(true);
+    const gate = parseReceived(mockServer).find(e => e.type === "history_playback_gate" && e.busy === true)!;
+    mockServer.sendToAll(JSON.stringify({ cmd: "history_playback_ready", id: gate.id }) + "\n");
+    expect(await waitFor(() => worked === 1)).toBe(true);
+    client.disconnectFromBar();
+    client.connectToBar(TEST_SOCKET);
+    expect(await waitFor(() => parseReceived(mockServer!).filter(e => e.id === gate.id && e.busy === true).length === 2)).toBe(true);
+    expect(worked).toBe(1);
+    finish(); await flow;
+    expect(await waitFor(() => parseReceived(mockServer!).some(e => e.id === gate.id && e.busy === false))).toBe(true);
   });
 
   it("connectToBar connects to a listening Unix socket", async () => {

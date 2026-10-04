@@ -17,6 +17,7 @@ import {
   type SocketCommand,
   type SocketResponse,
 } from "./socket-protocol";
+import { existsSync } from "fs";
 import { SOCKET_PATH, getMcpSocketOverridePath } from "./paths";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
@@ -40,6 +41,53 @@ export interface VoiceBarConnectionOptions {
   role?: "mcp-server" | "mcp-daemon" | "standalone-daemon" | "test";
   acceptsCommands?: boolean;
   onConnected?: () => void;
+}
+
+// A History AVAudioPlayer lives in VoiceBar, outside the daemon queue. Ask must
+// receive its synchronous stop receipt before starting prompt audio or capture.
+const historyGates = new Map<string, {
+  busy: boolean; ready?: () => void; failed?: (error: Error) => void;
+}>();
+
+export async function withHistoryPlaybackSuspended<T>(work: () => Promise<T>): Promise<T> {
+  const id = crypto.randomUUID();
+  const gate: { busy: boolean; ready?: () => void; failed?: (error: Error) => void } = { busy: true };
+  historyGates.set(id, gate);
+  try {
+    if (!connected) {
+      // No app/socket means no History player. An existing but unreachable app
+      // fails closed; it may still be playing audio we cannot stop.
+      if (existsSync(targetPath)) {
+        throw new Error("History playback owner is unavailable; reconnect VoiceBar before asking");
+      }
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          gate.failed?.(new Error("VoiceBar did not confirm History playback stopped"));
+        }, 5000);
+        const clear = () => {
+          clearTimeout(timer);
+          gate.ready = undefined;
+          gate.failed = undefined;
+        };
+        gate.ready = () => { clear(); resolve(); };
+        gate.failed = error => { clear(); reject(error); };
+        broadcast({ type: "history_playback_gate", id, busy: true });
+      });
+    }
+    return await work();
+  } finally {
+    gate.busy = false;
+    if (connected) broadcast({ type: "history_playback_gate", id, busy: false });
+    // Keep release receipts until acknowledged, including across reconnect.
+    else if (!existsSync(targetPath)) historyGates.delete(id);
+  }
+}
+
+function failHistoryGateWaiters(): void {
+  for (const gate of historyGates.values()) {
+    gate.failed?.(new Error("VoiceBar disconnected before History playback stopped"));
+  }
 }
 
 // --- Command handler callback ---
@@ -89,6 +137,7 @@ export function disconnectFromBar(): void {
     connection = null as any;
   }
   connected = false;
+  failHistoryGateWaiters();
   reconnectDelay = 1000;
 }
 
@@ -140,6 +189,7 @@ function startConnection(): void {
             outbound = null;
             connected = false;
             connection = null as any;
+            failHistoryGateWaiters();
             stopKeepalive();
             scheduleReconnect();
           }),
@@ -150,6 +200,7 @@ function startConnection(): void {
         reconnectDelay = 1000; // Reset backoff on successful connect
         startKeepalive();
         writeClientHello(socket.data.writer);
+        for (const [id, gate] of historyGates) broadcast({ type: "history_playback_gate", id, busy: gate.busy });
         connectionOptions.onConnected?.();
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },
@@ -161,6 +212,12 @@ function startConnection(): void {
         for (const line of lines) {
           if (line.trim().length === 0) continue;
           const command = parseCommand(line);
+          if (command?.cmd === "history_playback_ready") {
+            const gate = historyGates.get(command.id);
+            if (gate?.busy) gate.ready?.();
+            else historyGates.delete(command.id);
+            continue;
+          }
           if (command) {
             console.error(
               `[socket-client] Command from VoiceBar: ${JSON.stringify(command)}`,
@@ -238,6 +295,7 @@ function startConnection(): void {
           outbound = null;
           connected = false;
           connection = null as any;
+          failHistoryGateWaiters();
           stopKeepalive();
           scheduleReconnect();
         }
@@ -250,6 +308,7 @@ function startConnection(): void {
           outbound = null;
           connected = false;
           connection = null as any;
+          failHistoryGateWaiters();
           stopKeepalive();
           scheduleReconnect();
         }
