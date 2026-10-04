@@ -732,17 +732,19 @@ export async function handleConverse(
           captureActive = true;
           armTimeout(outerTimeoutMs, "capture");
         },
-        onRecordingHoldChange: (held) => {
-          if (!captureActive || !captureAllowsHold || timeoutSettled ||
-              inputAbortController.signal.aborted) return;
-          captureHeld = held;
-          if (held) {
-            if (timer) clearTimeout(timer);
-            timer = undefined;
-          } else {
-            armTimeout(outerTimeoutMs, "capture");
-          }
-        },
+        ...(!pushToEnd ? {
+          onRecordingHoldChange: (held: boolean) => {
+            if (!captureActive || timeoutSettled ||
+                inputAbortController.signal.aborted) return;
+            captureHeld = held;
+            if (held) {
+              if (timer) clearTimeout(timer);
+              timer = undefined;
+            } else {
+              armTimeout(outerTimeoutMs, "capture");
+            }
+          },
+        } : {}),
         onArchiveCreated: (archivePath) => {
           captureArchivePath = archivePath;
         },
