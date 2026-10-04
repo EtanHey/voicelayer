@@ -574,7 +574,7 @@ export async function handleConverse(
   }
 
   // Capture's existing watchdog allowance is separate from playback deadlines.
-  // timeout_seconds is passed unchanged to input as the listening budget.
+  // MCP VAD uses timeout_seconds only until first speech; input owns its safety ceiling.
   const outerTimeoutMs =
     (timeoutSeconds + VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS) * 1000;
   const inputAbortController = new AbortController();
@@ -587,6 +587,7 @@ export async function handleConverse(
   let timeoutSettled = false;
   let captureActive = false;
   let captureHeld = false;
+  let captureHasSpeech = false;
   let captureAllowsHold = false;
   let resolveTimeout!: (result: McpResult) => void;
   const timeoutPromise = new Promise<McpResult>((resolve) => {
@@ -638,7 +639,7 @@ export async function handleConverse(
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       if (stage === "capture" && captureAllowsHold &&
-          (captureHeld || isRecordingHoldEngaged())) return;
+          (captureHasSpeech || captureHeld || isRecordingHoldEngaged())) return;
       console.error(
         `[voicelayer] voice_ask ${stage} hard timeout after ${timeoutMs / 1000}s`,
       );
@@ -732,6 +733,12 @@ export async function handleConverse(
           armTimeout(outerTimeoutMs, "capture");
         },
         ...(!pushToEnd ? {
+          onSpeechStart: () => {
+            captureHasSpeech = true;
+            if (!captureActive || timeoutSettled || inputAbortController.signal.aborted) return;
+            if (timer) clearTimeout(timer);
+            timer = undefined;
+          },
           onRecordingHoldChange: (held: boolean) => {
             if (!captureActive || timeoutSettled ||
                 inputAbortController.signal.aborted) return;
@@ -739,7 +746,7 @@ export async function handleConverse(
             if (held) {
               if (timer) clearTimeout(timer);
               timer = undefined;
-            } else {
+            } else if (!captureHasSpeech) {
               armTimeout(outerTimeoutMs, "capture");
             }
           },

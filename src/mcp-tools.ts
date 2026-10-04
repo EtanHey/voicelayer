@@ -141,7 +141,7 @@ export function getToolDefinitions() {
           timeout_seconds: {
             type: "number",
             description:
-              "Listening budget in seconds, starting when capture opens. Prior playback and prompt synthesis/playback have separate bounds. Clamped to 5-3600. Default: 30.",
+              "No-speech budget in seconds, starting when capture opens. In VAD mode, first speech cancels it; recording ends on silence or stop, with a 30-minute ceiling after first speech (also while locked). Lock suspends the no-speech budget. Prior playback and prompt synthesis/playback have separate bounds. Clamped to 5-3600. Default: 30.",
             default: 30,
             minimum: 5,
             maximum: 3600,

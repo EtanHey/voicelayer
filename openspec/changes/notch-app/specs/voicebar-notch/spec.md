@@ -36,7 +36,7 @@ The retained content SHALL survive the idle-collapse timer and transient/generic
 
 The recording surface SHALL offer a VAD-only LOCK-RECORDING control. The control SHALL use `lock.fill` when released and selected, with accessibility labels “Lock recording” and “Unlock recording.” Push-to-talk SHALL NOT expose this control because PTT already ignores silence auto-close. LOCK-RECORDING is the control; HOLD is the recording state it engages and releases, and the requirements below name that state.
 
-While HOLD is engaged, both the pre-speech no-voice timeout and post-speech silence timeout SHALL be suppressed and their accumulated silence counters SHALL reset. Releasing HOLD SHALL start the applicable silence countdown from a fresh full window. Explicit stop, explicit cancel, and the overall recording safety timeout SHALL remain effective while held.
+While HOLD is engaged, both the pre-speech no-voice timeout and post-speech silence timeout SHALL be suppressed and their accumulated silence counters SHALL reset. Releasing HOLD SHALL start the applicable silence countdown from a fresh full window. For MCP voice_ask in VAD mode, HOLD SHALL suspend the no-speech timeout; first detected speech SHALL cancel that timeout, including after unlocking. Explicit stop and explicit cancel SHALL remain effective while held. The separate 30-minute absolute safety ceiling measured from first speech SHALL remain effective while held.
 
 #### Scenario: Post-speech thinking pause does not end the turn
 
