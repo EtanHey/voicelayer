@@ -385,6 +385,36 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertTrue(commands.isEmpty)
     }
 
+    func testHotkeyDoubleTapLocksActiveVADRecording() {
+        let state = VoiceState()
+        state.mode = .recording
+        state.recordingMode = "vad"
+        let router = VoiceBarCommandRouter(voiceState: state)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleHotkeyDoubleTap()
+
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "set_recording_hold")
+        XCTAssertEqual(commands.first?["engaged"] as? Bool, true)
+        XCTAssertTrue(state.isRecordingHoldEngaged)
+    }
+
+    func testHotkeyDoubleTapDoesNotSendHoldForPTTRecording() {
+        let state = VoiceState()
+        state.mode = .recording
+        state.recordingMode = "ptt"
+        let router = VoiceBarCommandRouter(voiceState: state)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleHotkeyDoubleTap()
+
+        XCTAssertTrue(commands.isEmpty)
+        XCTAssertFalse(state.isRecordingHoldEngaged)
+    }
+
     func testHotkeySingleTapStopsActiveRecording() {
         let state = VoiceState()
         state.mode = .recording

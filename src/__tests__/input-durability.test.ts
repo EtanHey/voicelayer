@@ -196,9 +196,9 @@ async function waitUntil(
   label: string,
   timeoutMs = 500,
 ): Promise<void> {
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   while (!predicate()) {
-    if (Date.now() - startedAt > timeoutMs) {
+    if (performance.now() - startedAt > timeoutMs) {
       throw new Error(`Timed out waiting for ${label}`);
     }
     await Bun.sleep(1);
@@ -264,6 +264,54 @@ function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean) {
 
   return {
     waitForSpawn: () => waitUntil(() => spawned, "fake recorder spawn"),
+    push: (chunk: Uint8Array) => stdoutController!.enqueue(chunk),
+  };
+}
+
+// Only recording deadlines/polls use the fake clock; stream processing and
+// recorder cleanup keep their real scheduling. No microphone or live paths.
+function installRecordingClock() {
+  let now = 0;
+  let poll = () => {};
+  const deadlines = new Map<ReturnType<typeof setTimeout>, { at: number; run: () => void }>();
+  const realTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const realInterval = globalThis.setInterval;
+  const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+  const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((run: () => void, ms: number) => {
+    if (ms !== 90_000) return realTimeout(run, ms);
+    const handle = realTimeout(() => {}, ms);
+    deadlines.set(handle, { at: now + ms, run });
+    return handle;
+  }) as typeof setTimeout);
+  const clearSpy = spyOn(globalThis, "clearTimeout").mockImplementation((handle) => {
+    deadlines.delete(handle as ReturnType<typeof setTimeout>);
+    realClearTimeout(handle);
+  });
+  const intervalSpy = spyOn(globalThis, "setInterval").mockImplementation(((run: () => void, ms: number) => {
+    if (ms !== 50) return realInterval(run, ms);
+    poll = run;
+    return realInterval(() => {}, 90_000);
+  }) as typeof setInterval);
+  return {
+    advance(ms: number) {
+      now += ms;
+      poll();
+      for (const [handle, deadline] of [...deadlines]) {
+        if (deadline.at <= now && deadlines.has(handle)) {
+          deadlines.delete(handle);
+          realClearTimeout(handle);
+          deadline.run();
+        }
+      }
+    },
+    restore() {
+      for (const handle of deadlines.keys()) realClearTimeout(handle);
+      nowSpy.mockRestore();
+      timeoutSpy.mockRestore();
+      clearSpy.mockRestore();
+      intervalSpy.mockRestore();
+    },
   };
 }
 
@@ -643,6 +691,129 @@ describe("input recording durability", () => {
     } finally {
       writeFileSync(STOP_FILE, "stop");
       await recording.catch(() => null);
+    }
+  });
+
+  for (const ending of ["stop", "cancel", "unlock"] as const) {
+    it(`locked voice_ask survives timeout and thoughtful silence until ${ending}`, async () => {
+      const { waitForInput, getRecordingState } = await import("../input");
+      const { setRecordingHold, isRecordingHoldEngaged } = await import("../recording-hold");
+      const recorder = installFakeRecorder([], true);
+      const clock = installRecordingClock();
+      const abort = new AbortController();
+      let settled = false;
+      const holdEdges: boolean[] = [];
+      const recording = waitForInput(90_000, "thoughtful", false, {
+        archiveSource: "voice_ask",
+        voiceAskArtifacts: {
+          agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+          agentAudioFormat: "mp3",
+          agentTranscript: "Synthetic lock question",
+          agentTtsEngine: "edge-tts",
+          agentTtsVoice: "en-US-JennyNeural",
+        },
+        signal: abort.signal,
+        onRecordingHoldChange: (held) => { holdEdges.push(held); },
+      }).finally(() => { settled = true; });
+      // Avoid an unhandled rejection when a failed assertion triggers cleanup.
+      void recording.catch(() => null);
+      try {
+        await recorder.waitForSpawn();
+        setRecordingHold(true);
+        clock.advance(0);
+        vadProbabilityForCall = (call) => call === 1 ? 0.95 : 0;
+        const chunks = vad.silenceChunksForMode("thoughtful") + 2;
+        for (let i = 0; i < chunks; i++) recorder.push(makePcmChunk());
+        await waitUntil(() => vadCallCount === chunks, "held silence processed");
+        clock.advance(180_000);
+        expect(getRecordingState()).toBe("recording");
+        expect(settled).toBe(false);
+        expect(isRecordingHoldEngaged()).toBe(true);
+        expect(holdEdges).toEqual([true]);
+
+        if (ending === "unlock") {
+          setRecordingHold(false);
+          clock.advance(0);
+          expect(holdEdges).toEqual([true, false]);
+          clock.advance(89_999);
+          expect(getRecordingState()).toBe("recording");
+          expect(settled).toBe(false);
+          clock.advance(1);
+        } else {
+          if (ending === "cancel") setCancelSignal();
+          writeFileSync(STOP_FILE, ending);
+          clock.advance(0);
+        }
+        const result = await recording;
+        expect(ending === "cancel" ? result === null : result !== null).toBe(true);
+        expect(isRecordingHoldEngaged()).toBe(false);
+        expect(existsSync(retainedPath)).toBe(true);
+      } finally {
+        abort.abort();
+        await recording.catch(() => null);
+        clock.restore();
+      }
+    });
+  }
+
+  for (const speechBeforeHold of [false, true]) {
+    it(`unlock after a PCM gap restarts ${speechBeforeHold ? "post" : "pre"}-speech silence`, async () => {
+      const { recordToBuffer, getRecordingState } = await import("../input");
+      const { setRecordingHold } = await import("../recording-hold");
+      const recorder = installFakeRecorder([], true);
+      const clock = installRecordingClock();
+      const abort = new AbortController();
+      const recording = recordToBuffer(90_000, "thoughtful", false, undefined, abort.signal);
+      void recording.catch(() => null);
+      try {
+        await recorder.waitForSpawn();
+        const threshold = speechBeforeHold
+          ? vad.silenceChunksForMode("thoughtful")
+          : Math.ceil(15 * (16_000 / VAD_CHUNK_SAMPLES));
+        vadProbabilityForCall = (call) => speechBeforeHold && call === 1 ? 0.95 : 0;
+        const beforeHold = threshold - 1 + Number(speechBeforeHold);
+        for (let i = 0; i < beforeHold; i++) recorder.push(makePcmChunk());
+        await waitUntil(() => vadCallCount === beforeHold, "pre-lock chunks");
+        setRecordingHold(true);
+        clock.advance(0);
+        // No chunks arrive while locked: neither timeout nor old silence debt
+        // may terminate the session on release.
+        clock.advance(180_000);
+        expect(getRecordingState()).toBe("recording");
+        setRecordingHold(false);
+        clock.advance(0);
+        for (let i = 0; i < threshold - 1; i++) recorder.push(makePcmChunk());
+        await waitUntil(() => vadCallCount === beforeHold + threshold - 1, "fresh silence window");
+        expect(getRecordingState()).toBe("recording");
+        recorder.push(makePcmChunk());
+        await recording;
+        expect(getRecordingState()).toBe("idle");
+      } finally {
+        abort.abort();
+        await recording.catch(() => null);
+        clock.restore();
+      }
+    });
+  }
+
+  it("PTT retains its timeout even if a hold flag is sent", async () => {
+    const { recordToBuffer, getRecordingState } = await import("../input");
+    const { setRecordingHold } = await import("../recording-hold");
+    const recorder = installFakeRecorder([makePcmChunk()], true);
+    const clock = installRecordingClock();
+    const abort = new AbortController();
+    const recording = recordToBuffer(90_000, "thoughtful", true, undefined, abort.signal);
+    void recording.catch(() => null);
+    try {
+      await recorder.waitForSpawn();
+      setRecordingHold(true);
+      clock.advance(90_000);
+      await recording;
+      expect(getRecordingState()).toBe("idle");
+    } finally {
+      abort.abort();
+      await recording.catch(() => null);
+      clock.restore();
     }
   });
 

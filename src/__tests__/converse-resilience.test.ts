@@ -725,6 +725,73 @@ describe("handleConverse resilience — P0-2", () => {
     }
   });
 
+  it("locked voice_ask suspends the outer capture deadline and unlock rearms it", async () => {
+    jest.useFakeTimers();
+    let finishInput!: (text: string) => void;
+    let captureOptions!: input.WaitForInputOptions;
+    let pending: ReturnType<typeof handleVoiceAsk> | undefined;
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      waitSpy = spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+        captureOptions = options!;
+        captureOptions.onCaptureStart?.();
+        return new Promise<string>((resolve) => { finishInput = resolve; });
+      });
+      pending = handleVoiceAsk({ message: "Synthetic lock question", timeout_seconds: 90 });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      captureOptions.onRecordingHoldChange?.(true);
+      jest.advanceTimersByTime(180_000);
+      expect(captureOptions.signal?.aborted).toBe(false);
+      expect(broadcasts).not.toContainEqual({ type: "state", state: "idle", source: "recording" });
+      captureOptions.onRecordingHoldChange?.(false);
+      jest.advanceTimersByTime(104_999);
+      expect(captureOptions.signal?.aborted).toBe(false);
+      jest.advanceTimersByTime(1);
+      expect(captureOptions.signal?.aborted).toBe(true);
+      finishInput("synthetic answer");
+      await pending;
+    } finally {
+      finishInput?.("cleanup");
+      await pending;
+      jest.useRealTimers();
+    }
+  });
+
+  it("stopping a locked ask restores the normal return-stage guard", async () => {
+    jest.useFakeTimers();
+    let finishInput!: (text: string) => void;
+    let captureOptions!: input.WaitForInputOptions;
+    let pending: ReturnType<typeof handleVoiceAsk> | undefined;
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      waitSpy = spyOn(input, "waitForInput").mockImplementation((_timeout, _silence, _ptt, options) => {
+        captureOptions = options!;
+        captureOptions.onCaptureStart?.();
+        return new Promise<string>((resolve) => { finishInput = resolve; });
+      });
+      pending = handleVoiceAsk({ message: "Synthetic stop question", timeout_seconds: 90 });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      captureOptions.onRecordingHoldChange?.(true);
+      jest.advanceTimersByTime(180_000);
+      expect(captureOptions.signal?.aborted).toBe(false);
+      captureOptions.onCaptureEnd?.();
+      // A late unlock notification cannot rearm a capture that has ended.
+      captureOptions.onRecordingHoldChange?.(false);
+      jest.advanceTimersByTime(180_000);
+      expect(captureOptions.signal?.aborted).toBe(true);
+      finishInput("synthetic answer");
+      await pending;
+    } finally {
+      finishInput?.("cleanup");
+      await pending;
+      jest.useRealTimers();
+    }
+  });
+
   it("gives STT and the return pipe a fresh deadline after a long capture ends", async () => {
     jest.useFakeTimers();
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});

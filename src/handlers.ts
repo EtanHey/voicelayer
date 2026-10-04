@@ -37,6 +37,7 @@ import {
   VOICE_DISABLED_FILE,
 } from "./paths";
 import type { SilenceMode } from "./vad";
+import { isRecordingHoldEngaged } from "./recording-hold";
 import { ensureVoiceBarRunning } from "./voice-bar-launcher";
 import { broadcast, isConnected } from "./socket-client";
 import {
@@ -588,6 +589,9 @@ export async function handleConverse(
     : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timeoutSettled = false;
+  let captureActive = false;
+  let captureHeld = false;
+  let captureAllowsHold = false;
   let resolveTimeout!: (result: McpResult) => void;
   const timeoutPromise = new Promise<McpResult>((resolve) => {
     resolveTimeout = resolve;
@@ -635,6 +639,8 @@ export async function handleConverse(
     if (timeoutSettled) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
+      if (stage === "capture" && captureAllowsHold &&
+          (captureHeld || isRecordingHoldEngaged())) return;
       console.error(
         `[voicelayer] voice_ask ${stage} hard timeout after ${timeoutMs / 1000}s`,
       );
@@ -707,6 +713,7 @@ export async function handleConverse(
     const pushToEnd = resolvePushToEnd(validated.push_to_end ?? false, {
       caller: "mcp.voice_ask",
     });
+    captureAllowsHold = !pushToEnd;
     progressHeartbeat?.start("recording");
     const response = await waitForInput(
       timeoutSeconds * 1000,
@@ -722,12 +729,28 @@ export async function handleConverse(
           agentTtsVoice: speech.voice,
         },
         onCaptureStart: () => {
+          captureActive = true;
           armTimeout(outerTimeoutMs, "capture");
         },
+        ...(!pushToEnd ? {
+          onRecordingHoldChange: (held: boolean) => {
+            if (!captureActive || timeoutSettled ||
+                inputAbortController.signal.aborted) return;
+            captureHeld = held;
+            if (held) {
+              if (timer) clearTimeout(timer);
+              timer = undefined;
+            } else {
+              armTimeout(outerTimeoutMs, "capture");
+            }
+          },
+        } : {}),
         onArchiveCreated: (archivePath) => {
           captureArchivePath = archivePath;
         },
         onCaptureEnd: () => {
+          captureActive = false;
+          captureHeld = false;
           armTimeout(VOICE_ASK_RETURN_TIMEOUT_MS, "return");
         },
         onPhaseChange: (phase) => {

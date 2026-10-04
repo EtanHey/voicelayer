@@ -622,6 +622,7 @@ export interface NoSpeechGateResult {
 export interface RecordingCaptureState {
   vadSpeechDetected?: boolean;
   onCaptureStart?: () => void;
+  onRecordingHoldChange?: (engaged: boolean) => void;
   /**
    * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
    * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
@@ -671,6 +672,7 @@ export interface WaitForInputOptions {
     createdAt?: Date;
   };
   onCaptureStart?: () => void;
+  onRecordingHoldChange?: (engaged: boolean) => void;
   onArchiveCreated?: (archivePath: string) => void;
   onCaptureEnd?: () => void;
   onPhaseChange?: (phase: "transcribing") => void;
@@ -690,7 +692,7 @@ function readReceiptMonotonicNow(clock?: () => number): number | undefined {
 }
 
 function invokeCaptureObserver(
-  observerName: "capture_start" | "no_speech" | "phase_change",
+  observerName: "capture_start" | "recording_hold" | "no_speech" | "phase_change",
   observer: (() => void) | undefined,
 ): void {
   if (!observer) return;
@@ -2498,8 +2500,31 @@ export async function recordToBuffer(
       }
     };
 
-    // Timeout handler
-    const timer = setTimeout(() => finish(), timeoutMs);
+    // HOLD already suppresses VAD silence close. The wall-clock deadline must
+    // obey the same lock, including when the recorder produces no PCM chunks.
+    // PTT's timeout and stop-tail behavior are deliberately unchanged.
+    let recordingHeld = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const synchronizeRecordingHold = () => {
+      if (pushToEnd || resolved) return false;
+      const held = isRecordingHoldEngaged();
+      if (held !== recordingHeld) {
+        recordingHeld = held;
+        clearTimeout(timer);
+        // Preserve speech detection, but discard silence accumulated before
+        // either edge, even if no VAD chunk arrived while the lock was held.
+        silencePolicy.observe({ speechDetected: false, holdEngaged: true });
+        if (!held) timer = setTimeout(onTimeout, timeoutMs);
+        invokeCaptureObserver("recording_hold", () => captureState?.onRecordingHoldChange?.(held));
+      }
+      return held;
+    };
+    const onTimeout = () => {
+      const previouslyHeld = recordingHeld;
+      if (resolved || synchronizeRecordingHold() || previouslyHeld) return;
+      finish();
+    };
+    timer = setTimeout(onTimeout, timeoutMs);
     if (signal) {
       abortHandler = () => finish(waitForInputAbortError(signal));
       if (signal.aborted) {
@@ -2509,6 +2534,7 @@ export async function recordToBuffer(
       signal.addEventListener("abort", abortHandler, { once: true });
     }
     stopSignalPoll = setInterval(() => {
+      synchronizeRecordingHold();
       if (pushToEnd && finishIfPushToEndStopDrainComplete()) return;
       if (!hasStopSignal()) return;
       clearStopSignal();
@@ -2695,7 +2721,7 @@ export async function recordToBuffer(
             const hadSpeech = hasSpeech;
             const silenceObservation = silencePolicy.observe({
               speechDetected,
-              holdEngaged: isRecordingHoldEngaged(),
+              holdEngaged: synchronizeRecordingHold(),
             });
             hasSpeech = silenceObservation.hasSpeech;
 
@@ -2794,6 +2820,7 @@ export async function waitForInput(
   const captureState: RecordingCaptureState = {
     archiveSource: options.archiveSource,
     onCaptureStart: options.onCaptureStart,
+    onRecordingHoldChange: options.onRecordingHoldChange,
   };
   const chunkedSession = isChunkedSTTEnabled()
     ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
