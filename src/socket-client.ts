@@ -44,49 +44,50 @@ export interface VoiceBarConnectionOptions {
 }
 
 // A History AVAudioPlayer lives in VoiceBar, outside the daemon queue. Ask must
-// receive its synchronous stop receipt before starting prompt audio or capture.
+// request its synchronous stop receipt, without making Ask depend on the app.
 const historyGates = new Map<string, {
-  busy: boolean; ready?: () => void; failed?: (error: Error) => void;
+  busy: boolean; announced?: boolean; ready?: () => void; unavailable?: (reason: string) => void;
 }>();
 
 export async function withHistoryPlaybackSuspended<T>(work: () => Promise<T>): Promise<T> {
   const id = crypto.randomUUID();
-  const gate: { busy: boolean; ready?: () => void; failed?: (error: Error) => void } = { busy: true };
+  const gate: { busy: boolean; announced?: boolean; ready?: () => void; unavailable?: (reason: string) => void } = { busy: true };
   historyGates.set(id, gate);
   try {
     if (!connected) {
-      // No app/socket means no History player. An existing but unreachable app
-      // fails closed; it may still be playing audio we cannot stop.
-      if (existsSync(targetPath)) {
-        throw new Error("History playback owner is unavailable; reconnect VoiceBar before asking");
-      }
+      console.warn("[socket-client] History stop unavailable: VoiceBar disconnected; proceeding with Ask");
     } else {
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
-          gate.failed?.(new Error("VoiceBar did not confirm History playback stopped"));
-        }, 5000);
+          gate.unavailable?.("VoiceBar did not confirm History playback stopped");
+        }, 1000);
         const clear = () => {
           clearTimeout(timer);
           gate.ready = undefined;
-          gate.failed = undefined;
+          gate.unavailable = undefined;
         };
         gate.ready = () => { clear(); resolve(); };
-        gate.failed = error => { clear(); reject(error); };
+        gate.unavailable = reason => {
+          console.warn(`[socket-client] History stop unavailable: ${reason}; proceeding with Ask`);
+          clear(); resolve();
+        };
+        gate.announced = true;
         broadcast({ type: "history_playback_gate", id, busy: true });
       });
     }
     return await work();
   } finally {
     gate.busy = false;
-    if (connected) broadcast({ type: "history_playback_gate", id, busy: false });
+    if (!gate.announced) historyGates.delete(id);
+    else if (connected) broadcast({ type: "history_playback_gate", id, busy: false });
     // Keep release receipts until acknowledged, including across reconnect.
     else if (!existsSync(targetPath)) historyGates.delete(id);
   }
 }
 
-function failHistoryGateWaiters(): void {
+function releaseHistoryGateWaiters(): void {
   for (const gate of historyGates.values()) {
-    gate.failed?.(new Error("VoiceBar disconnected before History playback stopped"));
+    gate.unavailable?.("VoiceBar disconnected before History playback stopped");
   }
 }
 
@@ -137,7 +138,7 @@ export function disconnectFromBar(): void {
     connection = null as any;
   }
   connected = false;
-  failHistoryGateWaiters();
+  releaseHistoryGateWaiters();
   reconnectDelay = 1000;
 }
 
@@ -189,7 +190,7 @@ function startConnection(): void {
             outbound = null;
             connected = false;
             connection = null as any;
-            failHistoryGateWaiters();
+            releaseHistoryGateWaiters();
             stopKeepalive();
             scheduleReconnect();
           }),
@@ -200,7 +201,10 @@ function startConnection(): void {
         reconnectDelay = 1000; // Reset backoff on successful connect
         startKeepalive();
         writeClientHello(socket.data.writer);
-        for (const [id, gate] of historyGates) broadcast({ type: "history_playback_gate", id, busy: gate.busy });
+        for (const [id, gate] of historyGates) {
+          gate.announced = true;
+          broadcast({ type: "history_playback_gate", id, busy: gate.busy });
+        }
         connectionOptions.onConnected?.();
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },
@@ -295,7 +299,7 @@ function startConnection(): void {
           outbound = null;
           connected = false;
           connection = null as any;
-          failHistoryGateWaiters();
+          releaseHistoryGateWaiters();
           stopKeepalive();
           scheduleReconnect();
         }
@@ -308,7 +312,7 @@ function startConnection(): void {
           outbound = null;
           connected = false;
           connection = null as any;
-          failHistoryGateWaiters();
+          releaseHistoryGateWaiters();
           stopKeepalive();
           scheduleReconnect();
         }

@@ -248,7 +248,7 @@ public final class VoiceState {
     @MainActor @ObservationIgnored public lazy var historyPlayback = SettingsAudioPlayback
         .system(canPlay: { [weak self] in
             guard let self else { return false }
-            return isConnected && mode != .speaking && mode != .recording && mode != .transcribing
+            return mode != .speaking && mode != .recording && mode != .transcribing
         })
     public var errorMessage: String?
     public private(set) var polishDegradation: STTPolishDegradation?

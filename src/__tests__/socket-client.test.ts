@@ -160,18 +160,54 @@ describe("socket-client", () => {
     }
   });
 
-  it("a lost stop receipt fails closed before any Ask work", async () => {
+  for (const connected of [true, false]) {
+    it(connected ? "Ask captures within one second without a History receipt" : "Ask captures immediately with a disconnected existing socket", async () => {
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
+      const client = await import("../socket-client");
+      const tts = await import("../tts");
+      const input = await import("../input");
+      const booking = await import("../session-booking");
+      const handlers = await import("../handlers");
+      client.connectToBar(TEST_SOCKET);
+      expect(await waitFor(client.isConnected)).toBe(true);
+      if (!connected) client.disconnectFromBar();
+      expect(existsSync(TEST_SOCKET)).toBe(true);
+      const speak = spyOn(tts, "speak").mockResolvedValue({
+        audioArtifact: { bytes: new Uint8Array([0]), format: "mp3" as const },
+        displayText: "Synthetic prompt", engine: "edge-tts", voice: "synthetic",
+      });
+      const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+      const booked = spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true });
+      const priorGateIds = new Set(parseReceived(mockServer).filter(e => e.type === "history_playback_gate").map(e => e.id));
+      const started = performance.now();
+      try {
+        await handlers.handleConverse({ message: "Synthetic prompt", timeout_seconds: 10 });
+        expect(capture).toHaveBeenCalledTimes(1);
+        expect(speak).toHaveBeenCalledTimes(1);
+        expect(performance.now() - started).toBeLessThan(connected ? 1200 : 200);
+        if (!connected) {
+          client.connectToBar(TEST_SOCKET);
+          expect(await waitFor(client.isConnected)).toBe(true);
+          expect(parseReceived(mockServer).filter(e => e.type === "history_playback_gate").every(e => priorGateIds.has(e.id))).toBe(true);
+        }
+      } finally {
+        speak.mockRestore(); capture.mockRestore(); booked.mockRestore();
+      }
+    }, 10000);
+  }
+
+  it("a disconnect before the stop receipt still allows Ask work", async () => {
     mockServer = createMockVoiceBarServer(TEST_SOCKET);
     const client = await import("../socket-client");
     client.connectToBar(TEST_SOCKET);
     expect(await waitFor(client.isConnected)).toBe(true);
     let worked = false;
     const flow = client.withHistoryPlaybackSuspended(async () => { worked = true; });
-    const rejection = flow.catch(error => error);
+    const outcome = flow.catch(error => error);
     expect(await waitFor(() => parseReceived(mockServer!).some(e => e.type === "history_playback_gate" && e.busy === true))).toBe(true);
     client.disconnectFromBar();
-    expect((await rejection).message).toContain("disconnected before History playback stopped");
-    expect(worked).toBe(false);
+    expect(await outcome).toBeUndefined();
+    expect(worked).toBe(true);
   });
 
   it("keeps Ask ownership through reconnect and releases it when work settles", async () => {

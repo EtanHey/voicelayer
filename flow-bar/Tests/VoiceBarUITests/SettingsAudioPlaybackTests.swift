@@ -8,14 +8,31 @@ final class SettingsAudioPlaybackTests: XCTestCase {
     private let questionURL = URL(fileURLWithPath: "/tmp/voicelayer-ask/agent-audio.mp3")
     private let responseURL = URL(fileURLWithPath: "/tmp/voicelayer-ask/audio.wav")
 
-    func testFirstSystemClickStartsSyntheticSilenceAndItsRealPlaybackClock() async throws {
+    func testIdleHistoryStartsWithDaemonDisconnected() throws {
+        let state = VoiceState()
+        state.isConnected = false
+        let url = try syntheticSilence()
+        defer { state.historyPlayback.stop()
+            try? FileManager.default.removeItem(at: url)
+        }
+        state.historyPlayback.toggle(url)
+        XCTAssertTrue(state.historyPlayback.isPlaying(url))
+        XCTAssertNil(state.historyPlayback.failureMessage)
+    }
+
+    private func syntheticSilence() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".caf")
-        defer { try? FileManager.default.removeItem(at: url) }
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1))
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 32000))
         buffer.frameLength = 32000
         buffer.floatChannelData?[0].initialize(repeating: 0, count: 32000)
         try AVAudioFile(forWriting: url, settings: format.settings).write(from: buffer)
+        return url
+    }
+
+    func testFirstSystemClickStartsSyntheticSilenceAndItsRealPlaybackClock() async throws {
+        let url = try syntheticSilence()
+        defer { try? FileManager.default.removeItem(at: url) }
         let playback = SettingsAudioPlayback.system()
         defer { playback.stop() }
         playback.toggle(url)
