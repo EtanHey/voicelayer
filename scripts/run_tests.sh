@@ -140,7 +140,10 @@ record_status "hidutil F5 relay plist" "$hidutil_plist_status"
 printf '\n== Bun tests ==\n'
 (
   cd "$ROOT_DIR" || exit 1
-  VOICELAYER_FIXTURE_DIR="$FIXTURE_DIR" bun test
+  # Bun 1.3.9 has no discovery-ignore option. Explicit directories retain all
+  # tracked Bun tests without scanning docs.local (even its nested src/tests).
+  # https://github.com/oven-sh/bun/blob/bun-v1.3.9/docs/test/discovery.mdx
+  VOICELAYER_FIXTURE_DIR="$FIXTURE_DIR" bun test ./src ./tests ./site
 )
 bun_status=$?
 
