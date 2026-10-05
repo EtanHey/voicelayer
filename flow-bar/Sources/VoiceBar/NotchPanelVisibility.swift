@@ -13,22 +13,19 @@ enum NotchPanelVisibility {
     }
 
     static func diagnosticFields(_ panel: NSWindow?, prefix: String = "") -> [String: String] {
-        let fields = [
-            "panelVisible": String(panel?.isVisible ?? false),
-            "panelOnActiveSpace": String(panel?.isOnActiveSpace ?? false),
-            "panelOcclusionVisible": String(panel?.occlusionState.contains(.visible) ?? false),
-            "panelWindowNumber": panel.map { String($0.windowNumber) } ?? "nil",
+        let key = prefix.isEmpty ? "panel" : prefix + "Panel"
+        return [
+            "\(key)Visible": String(panel?.isVisible ?? false),
+            "\(key)OnActiveSpace": String(panel?.isOnActiveSpace ?? false),
+            "\(key)OcclusionVisible": String(panel?.occlusionState.contains(.visible) ?? false),
+            "\(key)WindowNumber": panel.map { String($0.windowNumber) } ?? "nil",
         ]
-        return Dictionary(uniqueKeysWithValues: fields.map { key, value in
-            (prefix.isEmpty ? key : prefix + key.prefix(1).uppercased() + key.dropFirst(), value)
-        })
     }
 
     static func finishHandoffCollapse(isCancelled: Bool, mode: () -> VoiceMode,
                                       refreshLayout: () -> Void, orderOut: () -> Void) {
         guard !isCancelled, mode() == .idle else { return }
-        refreshLayout()
-        // Layout callbacks may re-enter mode handling; do not hide the new activity.
+        refreshLayout() // Callbacks may re-enter mode handling; do not hide the new activity.
         guard mode() == .idle else { return }
         orderOut()
     }
