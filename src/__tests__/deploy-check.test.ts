@@ -6,7 +6,21 @@ import {
   formatDeployReport,
   type DeployProbe,
 } from "../deploy-check";
-import { readRepoGitCommit, readRepoMetadata } from "../deploy-check-cli";
+import { fixtureGitEnv } from "./setup/git-env";
+
+// Run production probes with the same isolated environment as fixture Git.
+function probe(name: string, packageRoot: string, override: string | undefined) {
+  const result = Bun.spawnSync([process.execPath, "-e",
+    `import { ${name} } from ${JSON.stringify(join(import.meta.dir, "../deploy-check-cli.ts"))};
+console.log(JSON.stringify(${name}(${JSON.stringify(packageRoot)}, ${JSON.stringify(override)})));`,
+  ], { env: fixtureGitEnv() });
+  expect(result.exitCode).toBe(0);
+  return JSON.parse(result.stdout.toString());
+}
+const readRepoGitCommit = (root: string, override: string | undefined): string | null =>
+  probe("readRepoGitCommit", root, override);
+const readRepoMetadata = (root: string, override: string | undefined): { version: string; gitCommit: string | null } =>
+  probe("readRepoMetadata", root, override);
 
 // Post-merge deploy freshness gate (Track 5 #1 — "deliver-the-artifact post-merge
 // deploy checklist"). The recurring regression: code merges to main but the
@@ -32,18 +46,18 @@ const FRESH: DeployProbe = {
 
 function initRepo(root: string, packageName: string, message: string): string {
   mkdirSync(root, { recursive: true });
-  expect(Bun.spawnSync(["git", "init", root]).exitCode).toBe(0);
-  writeFileSync(join(root, "package.json"), JSON.stringify({ name: packageName }));
-  expect(Bun.spawnSync(["git", "-C", root, "add", "package.json"]).exitCode).toBe(0);
+  expect(Bun.spawnSync(["git", "init", root], { env: fixtureGitEnv() }).exitCode).toBe(0);
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: packageName, version: "0.0.0" }));
+  expect(Bun.spawnSync(["git", "-C", root, "add", "package.json"], { env: fixtureGitEnv() }).exitCode).toBe(0);
   expect(
     Bun.spawnSync([
       "git", "-C", root,
       "-c", "user.name=VoiceLayer Test",
       "-c", "user.email=voicelayer-test@example.invalid",
       "commit", "-m", message,
-    ]).exitCode,
+    ], { env: fixtureGitEnv() }).exitCode,
   ).toBe(0);
-  return Bun.spawnSync(["git", "-C", root, "rev-parse", "HEAD"])
+  return Bun.spawnSync(["git", "-C", root, "rev-parse", "HEAD"], { env: fixtureGitEnv() })
     .stdout.toString().trim();
 }
 
@@ -62,14 +76,15 @@ describe("readRepoGitCommit", () => {
   });
 
   it("returns HEAD when the package root is the VoiceLayer checkout", () => {
-    const checkoutRoot = join(import.meta.dir, "..", "..");
+    const checkoutRoot = join(process.env.VOICELAYER_STATE_DIR!, "probe-checkout");
+    initRepo(checkoutRoot, "voicelayer-mcp", "probe checkout");
     const expected = Bun.spawnSync([
       "git",
       "-C",
       checkoutRoot,
       "rev-parse",
       "HEAD",
-    ]).stdout
+    ], { env: fixtureGitEnv() }).stdout
       .toString()
       .trim();
 
@@ -77,7 +92,8 @@ describe("readRepoGitCommit", () => {
   });
 
   it("uses a valid VOICELAYER_REPO_ROOT override before the package root", () => {
-    const checkoutRoot = join(import.meta.dir, "..", "..");
+    const checkoutRoot = join(process.env.VOICELAYER_STATE_DIR!, "override-checkout");
+    initRepo(checkoutRoot, "voicelayer-mcp", "probe checkout");
     const testRoot = process.env.VOICELAYER_STATE_DIR;
     expect(testRoot).toBeTruthy();
     if (!testRoot) throw new Error("test preload did not set VOICELAYER_STATE_DIR");
@@ -93,7 +109,7 @@ describe("readRepoGitCommit", () => {
       checkoutRoot,
       "rev-parse",
       "HEAD",
-    ]).stdout
+    ], { env: fixtureGitEnv() }).stdout
       .toString()
       .trim();
     const checkoutVersion = (
