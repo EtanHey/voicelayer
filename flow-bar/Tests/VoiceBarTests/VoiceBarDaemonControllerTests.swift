@@ -12,6 +12,30 @@ private let testBundledDaemonPath = "/Applications/VoiceBar.app/Contents/Resourc
 private let testInstalledInfoPlistPath = "/Applications/VoiceBar.app/Contents/Info.plist"
 
 final class VoiceBarDaemonControllerTests: XCTestCase {
+    func testDefaultSocketsAreRefusedBeforeSpawningFromNonResidentBundle() {
+        let keys = ["VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "QA_VOICE_SOCKET_PATH",
+                    "QA_VOICE_MCP_SOCKET_PATH", "DISABLE_VOICELAYER", "QA_VOICE_DISABLE_FLAG_PATH"]
+        let previous = keys.map { ($0, ProcessInfo.processInfo.environment[$0]) }
+        for key in keys {
+            unsetenv(key)
+        }
+        setenv("QA_VOICE_DISABLE_FLAG_PATH", "/tmp/iso-no-disable-" + UUID().uuidString, 1)
+        defer {
+            for (key, value) in previous {
+                if let value { setenv(key, value, 1) } else { unsetenv(key) }
+            }
+        }
+        let process = ProcessSpy()
+        let owner = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/QA/VoiceBar.app/Contents/MacOS/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            processFactory: { process }
+        )
+        let result = owner.activateIfNeeded()
+        XCTAssertEqual(result, .unavailable)
+        XCTAssertFalse(process.didRun)
+    }
+
     func testDaemonControllerSkipsSpawnWhenDisableEnvSet() {
         setenv("DISABLE_VOICELAYER", "1", 1)
         defer { unsetenv("DISABLE_VOICELAYER") }
@@ -25,6 +49,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 livenessProbeCalls += 1
                 return false
             },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process }
         )
 
@@ -54,6 +79,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 livenessProbeCalls += 1
                 return true
             },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process }
         )
 
@@ -71,6 +97,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { true },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process }
         )
 
@@ -87,6 +114,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process }
         )
 
@@ -132,6 +160,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process }
         )
 
@@ -200,6 +229,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -231,6 +261,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -255,6 +286,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { true },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -275,6 +307,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -300,6 +333,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 VoiceBarDaemonHeartbeat(pid: process.processIdentifier, sequence: sequence)
             },
             dateProvider: { now },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -334,6 +368,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 loggedGaps.append((previous, current, elapsed))
             },
             dateProvider: { now },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -372,6 +407,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 loggedGaps.append((previous, current, elapsed))
             },
             dateProvider: { now },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) },
             processExitWaiter: { _, _ in false },
@@ -419,6 +455,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 VoiceBarDaemonHeartbeat(pid: firstProcess.processIdentifier, sequence: 7)
             },
             dateProvider: { now },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) },
             processExitWaiter: { _, _ in false },
@@ -456,6 +493,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             livenessProbe: { false },
             heartbeatReader: { nil },
             dateProvider: { now },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -486,6 +524,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) },
             microphonePermissionPrompter: { message in promptedMessages.append(message) }
@@ -520,6 +559,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -546,6 +586,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in launchConfiguration },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -571,6 +612,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { externalDaemonIsLive },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -596,6 +638,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -623,6 +666,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -648,6 +692,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
@@ -666,6 +711,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in nil },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process }
         )
 
@@ -682,6 +728,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { ownedProcess }
         )
         _ = ownedController.activateIfNeeded()
@@ -703,6 +750,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { ownedProcess },
             processExitWaiter: { _, timeout in
                 waitedTimeouts.append(timeout)

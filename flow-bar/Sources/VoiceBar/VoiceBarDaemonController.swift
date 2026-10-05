@@ -353,6 +353,7 @@ final class VoiceBarDaemonController {
     private let executableURLProvider: () -> URL?
     private let configurationProvider: (URL) -> VoiceBarDaemonLaunchConfiguration?
     private let processFactory: () -> Process
+    private let socketBindingAllowed: ([String: String]) -> Bool
     private let restartScheduler: RestartScheduler
     private let processExitWaiter: ProcessExitWaiter
     private let forceKillProcess: ForceKillProcess
@@ -402,6 +403,7 @@ final class VoiceBarDaemonController {
                   previousSequence, currentSequence, elapsed)
         },
         dateProvider: @escaping DateProvider = { Date() },
+        socketBindingAllowed: @escaping ([String: String]) -> Bool = { SocketBindingPolicy.allowsEnvironment($0) },
         processFactory: @escaping () -> Process = { Process() },
         restartScheduler: @escaping RestartScheduler = { delay, block in
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
@@ -415,6 +417,7 @@ final class VoiceBarDaemonController {
     ) {
         self.executableURLProvider = executableURLProvider
         self.configurationProvider = configurationProvider
+        self.socketBindingAllowed = socketBindingAllowed
         self.processFactory = processFactory
         self.restartScheduler = restartScheduler
         self.processExitWaiter = processExitWaiter
@@ -497,6 +500,11 @@ final class VoiceBarDaemonController {
         // Set environment with enriched PATH — critical for sox/whisper/python3 resolution
         var daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
         daemonEnvironment["VOICEBAR_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        guard socketBindingAllowed(daemonEnvironment) else {
+            NSLog("[VoiceBar] SOCKET_ISOLATION_REFUSED: refusing MCP child with resident socket paths")
+            ownsLaunchedProcess = false
+            return .unavailable
+        }
         proc.environment = daemonEnvironment
         // Watch the path the child will publish after env sanitization, not
         // leftover QA overrides on the VoiceBar process itself.

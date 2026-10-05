@@ -7,6 +7,7 @@ final class VoiceBarDaemonLauncher {
     private let executableURLProvider: () -> URL?
     private let configurationProvider: (URL) -> VoiceBarDaemonLaunchConfiguration?
     private let processFactory: () -> Process
+    private let socketBindingAllowed: ([String: String]) -> Bool
     private var process: Process?
 
     init(
@@ -16,10 +17,12 @@ final class VoiceBarDaemonLauncher {
         configurationProvider: @escaping (URL) -> VoiceBarDaemonLaunchConfiguration? = {
             VoiceBarDaemonLaunchConfiguration.configuration(for: $0)
         },
+        socketBindingAllowed: @escaping ([String: String]) -> Bool = { SocketBindingPolicy.allowsEnvironment($0) },
         processFactory: @escaping () -> Process = { Process() }
     ) {
         self.executableURLProvider = executableURLProvider
         self.configurationProvider = configurationProvider
+        self.socketBindingAllowed = socketBindingAllowed
         self.processFactory = processFactory
     }
 
@@ -39,9 +42,14 @@ final class VoiceBarDaemonLauncher {
         process.executableURL = URL(fileURLWithPath: configuration.launchPath)
         process.arguments = configuration.arguments
         process.currentDirectoryURL = URL(fileURLWithPath: configuration.workingDirectory)
-        process.environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
+        let daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
             path: VoiceBarDaemonController.daemonPATH
         )
+        guard socketBindingAllowed(daemonEnvironment) else {
+            NSLog("[VoiceBar] SOCKET_ISOLATION_REFUSED: refusing MCP child with resident socket paths")
+            return
+        }
+        process.environment = daemonEnvironment
 
         do {
             try process.run()

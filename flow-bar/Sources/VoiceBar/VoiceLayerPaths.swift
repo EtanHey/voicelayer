@@ -41,11 +41,34 @@ enum VoiceLayerPaths {
     }
 
     static var socketPath: String {
-        environmentValue(socketOverrideEnvironmentVariable) ?? tmpPath("voicelayer.sock")
+        socketPath(environment: ProcessInfo.processInfo.environment)
     }
 
     static var mcpSocketPath: String {
-        environmentValue(mcpSocketOverrideEnvironmentVariable) ?? tmpPath("voicelayer-mcp.sock")
+        mcpSocketPath(environment: ProcessInfo.processInfo.environment)
+    }
+
+    static func socketPath(environment: [String: String]) -> String {
+        socketOverride(environment, canonical: "VOICELAYER_SOCKET_PATH", legacy: socketOverrideEnvironmentVariable) ??
+            tmpPath("voicelayer.sock")
+    }
+
+    static func mcpSocketPath(environment: [String: String]) -> String {
+        socketOverride(
+            environment,
+            canonical: "VOICELAYER_MCP_SOCKET_PATH",
+            legacy: mcpSocketOverrideEnvironmentVariable
+        ) ??
+            tmpPath("voicelayer-mcp.sock")
+    }
+
+    private static func socketOverride(_ environment: [String: String], canonical: String, legacy: String) -> String? {
+        for key in [canonical, legacy] {
+            if let value = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
     }
 
     static var daemonPIDPath: String {
@@ -77,8 +100,7 @@ enum VoiceLayerPaths {
             return heartbeatPath(besidePidPath: pidOverride)
         }
         if let socketOverride = value("VOICELAYER_MCP_SOCKET_PATH") ??
-            value(mcpSocketOverrideEnvironmentVariable)
-        {
+            value(mcpSocketOverrideEnvironmentVariable) {
             return socketOverride + ".heartbeat"
         }
         return (value(stateDirectoryOverrideEnvironmentVariable) ??
@@ -97,6 +119,7 @@ enum VoiceLayerPaths {
     }
 
     static var enforcesSingletonInstance: Bool {
-        environmentValue(socketOverrideEnvironmentVariable) == nil
+        socketOverride(ProcessInfo.processInfo.environment, canonical: "VOICELAYER_SOCKET_PATH",
+                       legacy: socketOverrideEnvironmentVariable) == nil
     }
 }

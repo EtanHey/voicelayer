@@ -12,11 +12,36 @@ private let launcherTestBundledDaemonPath = "/Applications/VoiceBar.app/Contents
 private let launcherTestInstalledInfoPlistPath = "/Applications/VoiceBar.app/Contents/Info.plist"
 
 final class VoiceBarDaemonLauncherTests: XCTestCase {
+    func testDefaultSocketsAreRefusedBeforeSpawningFromNonResidentBundle() {
+        let keys = ["VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "QA_VOICE_SOCKET_PATH",
+                    "QA_VOICE_MCP_SOCKET_PATH", "DISABLE_VOICELAYER", "QA_VOICE_DISABLE_FLAG_PATH"]
+        let previous = keys.map { ($0, ProcessInfo.processInfo.environment[$0]) }
+        for key in keys {
+            unsetenv(key)
+        }
+        setenv("QA_VOICE_DISABLE_FLAG_PATH", "/tmp/iso-no-disable-" + UUID().uuidString, 1)
+        defer {
+            for (key, value) in previous {
+                if let value { setenv(key, value, 1) } else { unsetenv(key) }
+            }
+        }
+        let process = ProcessSpy()
+        let owner = VoiceBarDaemonLauncher(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/QA/VoiceBar.app/Contents/MacOS/VoiceBar") },
+            configurationProvider: { _ in launcherTestLaunchConfiguration() },
+            processFactory: { process }
+        )
+        owner.startIfNeeded()
+
+        XCTAssertFalse(process.didRun)
+    }
+
     func testLauncherStartsDaemonProcessFromResolvedConfiguration() {
         let process = ProcessSpy()
         let launcher = VoiceBarDaemonLauncher(
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in launcherTestLaunchConfiguration() },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process }
         )
 
@@ -56,6 +81,7 @@ final class VoiceBarDaemonLauncherTests: XCTestCase {
         let launcher = VoiceBarDaemonLauncher(
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in launcherTestLaunchConfiguration() },
+            socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { process }
         )
 
