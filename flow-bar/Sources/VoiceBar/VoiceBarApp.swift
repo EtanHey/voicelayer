@@ -158,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
     private var settingsWindow: NSWindow?
+    private var settingsSceneObservers: [Any] = []
     private lazy var setupWizard = SetupWizardWindowController(defaults: defaults) { [weak self] in
         self?.makeSetupWizardDependencies() ?? SetupWizardDependencies()
     }
@@ -253,6 +254,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.voiceState.refreshModelsSettingsStatus()
             self?.voiceState.requestVocabularySnapshot()
         }
+    }
+
+    deinit {
+        for observer in settingsSceneObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Install before SwiftUI can restore its placeholder Settings scene.
+        guard settingsSceneObservers.isEmpty else { return }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification,
+                     NSWindow.didChangeOcclusionStateNotification, NSWindow.didUpdateNotification] {
+            settingsSceneObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] notification in
+                guard let window = notification.object as? NSWindow else { return }
+                self?.closeStraySettingsScene(window, trigger: notification.name.rawValue)
+            })
+        }
+        settingsSceneObservers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didUpdateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.closeStraySettingsScenes(trigger: "application_update")
+        })
+        closeStraySettingsScenes(trigger: "early_launch_restoration")
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        closeStraySettingsScenes(trigger: "reopen")
+        // Reopening a menu-bar app must not ask SwiftUI to show its only scene.
+        // Explicit Settings requests still open the owned AppKit window.
+        return false
+    }
+
+    @objc func showSettingsWindow(_ sender: Any?) {
+        openSettingsWindow()
+    }
+
+    @objc func showSettings(_ sender: Any?) {
+        openSettingsWindow()
+    }
+
+    @objc func showPreferencesWindow(_ sender: Any?) {
+        openSettingsWindow()
+    }
+
+    @objc func orderFrontPreferencesPanel(_ sender: Any?) {
+        openSettingsWindow()
+    }
+
+    func closeStraySettingsScenes(trigger: String) {
+        for window in NSApp.windows {
+            closeStraySettingsScene(window, trigger: trigger)
+        }
+    }
+
+    private func closeStraySettingsScene(_ window: NSWindow, trigger: String) {
+        guard window !== settingsWindow,
+              window.identifier?.rawValue.hasPrefix("com_apple_SwiftUI_Settings") == true,
+              window.isVisible
+        else { return }
+        // Suppress restoration too; never match the shared window title.
+        window.isRestorable = false
+        window.orderOut(nil)
+        window.close()
+        logDiagnostic(event: "stray_settings_scene_closed", details: ["trigger": trigger])
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -723,6 +791,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         snoozeTask?.cancel()
         playbackEdgeLayoutTask?.cancel()
         settingsWindow?.close()
+        for observer in settingsSceneObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        settingsSceneObservers.removeAll()
         hotkeyListener.stop()
         audioLevelMonitor.shutdown()
         daemonController.stop()
@@ -3075,11 +3147,13 @@ struct VoiceBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     // UXP-4: the status item and its popover are AppKit (`MenuBarStatusItemController`), so an accessibility press
-    // opens it. The app still needs one scene; this empty Settings scene never opens, because the app menu's
-    // Settings… is replaced below and Settings is VoiceBar's own window.
+    // opens it. SwiftUI still needs a scene, but its placeholder can be requested by system actions or
+    // restoration. AppDelegate suppresses reopening and closes that scene; Settings is our AppKit window.
     var body: some Scene {
         Settings {
-            EmptyView()
+            EmptyView().onAppear {
+                appDelegate.closeStraySettingsScenes(trigger: "swiftui_scene_appeared")
+            }
         }
         .commands {
             CommandGroup(replacing: .appSettings) {
