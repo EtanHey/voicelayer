@@ -28,7 +28,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "test": "bun test",
+    "test": "bun test ./src ./tests ./site",
     "start": "bun run src/mcp-server.ts",
     "typecheck": "tsc --noEmit"
   },
