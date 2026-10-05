@@ -32,10 +32,16 @@ enum SocketBindingPolicy {
 
     /// Check both the supplied name and its filesystem aliases before any unlink/bind.
     static func allowsRuntimeBind(
-        bundlePath: String, socketPath: String, environment: [String: String], qaBuild: Bool = isQABuild
+        bundlePath: String, socketPath: String, environment: [String: String], qaBuild: Bool = isQABuild,
+        protectedPaths: Set<String> = livePaths
     ) -> Bool {
-        [socketPath, URL(fileURLWithPath: socketPath).resolvingSymlinksInPath().path].allSatisfy {
-            allowsBind(bundlePath: bundlePath, socketPath: $0, environment: environment, qaBuild: qaBuild)
+        let url = URL(fileURLWithPath: socketPath)
+        // The socket need not exist yet. Resolve its existing parent before reattaching the filename.
+        let resolvedParentPath = url.deletingLastPathComponent().resolvingSymlinksInPath()
+            .appendingPathComponent(url.lastPathComponent).path
+        return [socketPath, resolvedParentPath, url.resolvingSymlinksInPath().path].allSatisfy {
+            allowsBind(bundlePath: bundlePath, socketPath: $0, environment: environment,
+                       qaBuild: qaBuild, protectedPaths: protectedPaths)
         }
     }
 

@@ -22,13 +22,33 @@ final class SocketBindingPolicyTests: XCTestCase {
     }
 
     func testSymlinkAliasCannotMakeResidentSocketLookIsolated() throws {
-        let alias = "/tmp/iso-alias-" + UUID().uuidString
-        try FileManager.default.createSymbolicLink(atPath: alias, withDestinationPath: "/tmp")
-        defer { try? FileManager.default.removeItem(atPath: alias) }
+        // Both protected targets are private stand-ins, independent of resident socket state.
+        let directory = URL(fileURLWithPath: "/tmp/iso-alias-" + UUID().uuidString)
+        let targetDirectory = directory.appendingPathComponent("protected")
+        let aliasDirectory = directory.appendingPathComponent("alias")
+        try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createSymbolicLink(at: aliasDirectory, withDestinationURL: targetDirectory)
         for file in ["voicelayer.sock", "voicelayer-mcp.sock"] {
-            XCTAssertFalse(SocketBindingPolicy.allowsRuntimeBind(
-                bundlePath: "/tmp/QA/VoiceBar.app", socketPath: alias + "/" + file, environment: [:]
-            ))
+            let target = targetDirectory.appendingPathComponent(file)
+            let alias = aliasDirectory.appendingPathComponent(file)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+            for targetExists in [false, true] {
+                if targetExists { try Data().write(to: target) }
+                XCTAssertFalse(SocketBindingPolicy.allowsRuntimeBind(
+                    bundlePath: "/tmp/QA/VoiceBar.app", socketPath: alias.path, environment: [:],
+                    qaBuild: false, protectedPaths: [target.path]
+                ), "alias must be refused when target exists=\(targetExists)")
+                XCTAssertTrue(SocketBindingPolicy.allowsRuntimeBind(
+                    bundlePath: "/Applications/VoiceBar.app", socketPath: alias.path, environment: [:],
+                    qaBuild: false, protectedPaths: [target.path]
+                ))
+                XCTAssertTrue(SocketBindingPolicy.allowsRuntimeBind(
+                    bundlePath: "/tmp/QA/VoiceBar.app",
+                    socketPath: aliasDirectory.appendingPathComponent("isolated.sock").path, environment: [:],
+                    qaBuild: false, protectedPaths: [target.path]
+                ))
+            }
         }
     }
 
