@@ -1,3 +1,4 @@
+import { fixtureGitEnv } from "./setup/git-env";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
@@ -150,7 +151,7 @@ function runInLib(box: Sandbox, body: string, env: Record<string, string> = {}) 
     stdout: "pipe",
     stderr: "pipe",
     env: {
-      ...process.env,
+      ...fixtureGitEnv(),
       BREW_CASK_SYNC_BREW_BIN: box.brewStub,
       BREW_STUB_LOG: box.brewLog,
       BREW_STUB_PREFIX: box.prefix,
@@ -412,7 +413,7 @@ describe("brew-cask-sync environment contract", () => {
 
   test("the tap is refreshed with an explicit remote and branch", () => {
     const box = sandbox({});
-    Bun.spawnSync(["git", "init", "-q", box.tapRepo], { stderr: "ignore" });
+    Bun.spawnSync(["git", "init", "-q", box.tapRepo], { stderr: "ignore", env: fixtureGitEnv() });
     const result = runInLib(box, "bcs_tap_update etanhey/layers main");
 
     // There is no `origin` in the sandbox; the shape of the call is the point.
@@ -450,7 +451,7 @@ describe("brew-cask-sync environment contract", () => {
         stdout: "pipe",
         stderr: "pipe",
         env: {
-          ...process.env,
+          ...fixtureGitEnv(),
           BREW_CASK_SYNC_BREW_BIN: box.brewStub,
           BREW_STUB_LOG: box.brewLog,
           BREW_STUB_PREFIX: box.prefix,
@@ -481,7 +482,7 @@ describe("brew-cask-sync environment contract", () => {
           body,
         ].join("\n"),
       ],
-      { cwd: repoRoot, stdout: "pipe", stderr: "pipe", env: { ...process.env } },
+      { cwd: repoRoot, stdout: "pipe", stderr: "pipe", env: { ...fixtureGitEnv() } },
     );
   }
 

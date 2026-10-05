@@ -18,6 +18,14 @@
 
 set -uo pipefail
 
+# Git exports repository-local state to hooks. Clear it before any child can
+# operate on a fixture repository; retain a fallback if discovery is unavailable.
+git_local_env="$(git rev-parse --local-env-vars 2>/dev/null || true)"
+# Intentional word splitting: rev-parse prints one variable name per line.
+unset $git_local_env GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_COMMON_DIR GIT_NAMESPACE \
+  GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
+
 # Guard 1 — no tracked docs.local/ (personal data; see scripts/guard-no-docslocal.sh)
 if [ -f scripts/guard-no-docslocal.sh ]; then
   bash scripts/guard-no-docslocal.sh || exit 1
