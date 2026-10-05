@@ -1070,7 +1070,18 @@ function formatNumbersInLine(text: string): string {
   };
 
   for (const word of words) {
-    if (NUMBER_WORDS.has(word.toLowerCase())) {
+    const lower = word.toLowerCase();
+    if (NUMBER_WORDS.has(lower)) {
+      const previous = numBuffer.at(-1)?.toLowerCase();
+      if (previous && previous in WORD_TO_NUMBER && lower in WORD_TO_NUMBER) {
+        // Only a tens word followed by a nonzero unit forms one cardinal.
+        // Adjacent values in a list, repetition, or retraction are separate
+        // speech: "two three" must stay "2 3", never their sum "5".
+        const before = WORD_TO_NUMBER[previous];
+        const after = WORD_TO_NUMBER[lower];
+        const tensThenUnit = before >= 20 && before % 10 === 0 && after >= 1 && after <= 9;
+        if (!tensThenUnit) flushBuffer();
+      }
       numBuffer.push(word);
     } else {
       flushBuffer();
