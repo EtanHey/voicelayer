@@ -3144,7 +3144,7 @@ struct VoiceBarApp {
         let application = NSApplication.shared
         let appDelegate = AppDelegate()
         application.delegate = appDelegate
-        application.mainMenu = VoiceBarMainMenu.make(appDelegate: appDelegate)
+        VoiceBarMainMenu.install(appDelegate: appDelegate)
         // NSApplication's delegate is weak. Keep the owner alive through the run loop.
         withExtendedLifetime(appDelegate) {
             application.run()
