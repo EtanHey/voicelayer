@@ -3141,6 +3141,18 @@ func shouldIgnoreHotkeyEvent(
 struct VoiceBarApp {
     @MainActor
     static func main() {
+        let environment = ProcessInfo.processInfo.environment
+        let daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
+            from: environment, path: VoiceBarDaemonController.daemonPATH
+        )
+        // Refuse before AppDelegate initialization, singleton election, or any socket cleanup.
+        guard SocketBindingPolicy.allowsEnvironment(environment),
+              SocketBindingPolicy.allowsEnvironment(daemonEnvironment) else {
+            NSLog(
+                "[VoiceBar] SOCKET_ISOLATION_REFUSED: non-resident/QA build requires isolated VoiceBar and MCP socket paths"
+            )
+            exit(EXIT_FAILURE)
+        }
         let application = NSApplication.shared
         let appDelegate = AppDelegate()
         application.delegate = appDelegate

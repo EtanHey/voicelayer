@@ -112,6 +112,8 @@ struct NDJSONLineFramer {
 
 final class SocketServer {
     private let socketPath: String
+    private let bindAllowed: () -> Bool
+    private let onBindRefused: () -> Void
     private let maxLineBytes: Int
     private var totalBytesRead = 0
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
@@ -143,11 +145,20 @@ final class SocketServer {
     init(
         state: VoiceState,
         socketPath: String = VoiceLayerPaths.socketPath,
-        maxLineBytes: Int = NDJSONLineFramer.defaultMaxLineBytes
+        maxLineBytes: Int = NDJSONLineFramer.defaultMaxLineBytes,
+        bindAllowed: (() -> Bool)? = nil,
+        onBindRefused: @escaping () -> Void = { exit(EXIT_FAILURE) }
     ) {
         self.maxLineBytes = maxLineBytes
         self.state = state
         self.socketPath = socketPath
+        self.bindAllowed = bindAllowed ?? {
+            SocketBindingPolicy.allowsRuntimeBind(
+                bundlePath: Bundle.main.bundlePath, socketPath: socketPath,
+                environment: ProcessInfo.processInfo.environment
+            )
+        }
+        self.onBindRefused = onBindRefused
     }
 
     /// Start the server: bind, listen, accept loop.
@@ -167,6 +178,11 @@ final class SocketServer {
     // MARK: - Server setup (runs on queue)
 
     private func startOnQueue() {
+        guard bindAllowed() else {
+            NSLog("[VoiceBar] SOCKET_ISOLATION_REFUSED: non-resident/QA build cannot bind %@", socketPath)
+            onBindRefused()
+            return
+        }
         // Clean up stale socket from previous crash
         unlink(socketPath)
 
