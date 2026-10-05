@@ -263,7 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        // Install before SwiftUI can restore its placeholder Settings scene.
+        // Backstop for legacy restored windows; the AppKit entry point declares no scene.
         // Appearance events suffice; didUpdate would poll on every animation/event-loop pass.
         guard settingsSceneObservers.isEmpty else { return }
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification,
@@ -280,7 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         closeStraySettingsScenes(trigger: "reopen")
-        // Reopening a menu-bar app must not ask SwiftUI to show its only scene.
+        // Reopening the menu-bar app must not show a restored placeholder.
         // Explicit Settings requests still open the owned AppKit window.
         return false
     }
@@ -543,8 +543,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.terminationSignalSource = terminationSignalSource
 
         // Register Apple Event handler for voicebar:// URL scheme.
-        // Must happen after SwiftUI scene setup completes, so we defer
-        // registration to the next run loop iteration.
+        // Defer registration until the next run loop iteration after launch setup.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             NSAppleEventManager.shared().setEventHandler(
@@ -2603,7 +2602,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApplication.shared.terminate(nil)
     }
 
-    func quitFromMenuBar() {
+    @objc func quitFromMenuBar() {
         requestTermination(.menuBar)
     }
 
@@ -3136,28 +3135,19 @@ func shouldIgnoreHotkeyEvent(
     return false
 }
 
-// MARK: - SwiftUI App entry point
+// MARK: - AppKit entry point
 
 @main
-struct VoiceBarApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
-    // UXP-4: the status item and its popover are AppKit (`MenuBarStatusItemController`), so an accessibility press
-    // opens it. SwiftUI still needs a scene, but its placeholder can be requested by system actions or
-    // restoration. AppDelegate suppresses reopening and closes that scene; Settings is our AppKit window.
-    var body: some Scene {
-        Settings {
-            EmptyView().onAppear {
-                appDelegate.closeStraySettingsScenes(trigger: "swiftui_scene_appeared")
-            }
-        }
-        .commands {
-            CommandGroup(replacing: .appSettings) {
-                Button("Settings…") {
-                    appDelegate.openSettingsWindow()
-                }
-                .keyboardShortcut(",", modifiers: .command)
-            }
+struct VoiceBarApp {
+    @MainActor
+    static func main() {
+        let application = NSApplication.shared
+        let appDelegate = AppDelegate()
+        application.delegate = appDelegate
+        VoiceBarMainMenu.install(appDelegate: appDelegate)
+        // NSApplication's delegate is weak. Keep the owner alive through the run loop.
+        withExtendedLifetime(appDelegate) {
+            application.run()
         }
     }
 }
