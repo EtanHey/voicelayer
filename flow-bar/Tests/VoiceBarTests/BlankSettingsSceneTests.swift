@@ -108,17 +108,22 @@ final class BlankSettingsSceneTests: XCTestCase {
     }
 
     @MainActor
-    func testLateIdentifierAndNonKeySceneAreCaughtOnApplicationUpdate() {
+    func testLateIdentifierIsCaughtOnOcclusionChangeWithoutPollingUpdates() {
         let app = AppDelegate()
         startGuard(app)
-        let window = sceneWindow(identifier: "pending")
-        defer { window.close() }
-        window.orderFront(nil)
-        XCTAssertTrue(window.isVisible)
-        window.identifier = NSUserInterfaceItemIdentifier("com_apple_SwiftUI_Settings_window")
-        NotificationCenter.default.post(name: NSApplication.didUpdateNotification, object: NSApplication.shared)
-        XCTAssertFalse(window.isVisible)
-        XCTAssertFalse(window.isRestorable)
+        for name in [NSWindow.didUpdateNotification, NSApplication.didUpdateNotification] {
+            let window = sceneWindow(identifier: "pending")
+            defer { window.close() }
+            window.orderFront(nil)
+            XCTAssertTrue(window.isVisible)
+            window.identifier = NSUserInterfaceItemIdentifier("com_apple_SwiftUI_Settings_window")
+            let object: Any = name == NSWindow.didUpdateNotification ? window : NSApplication.shared
+            NotificationCenter.default.post(name: name, object: object)
+            XCTAssertTrue(window.isVisible, "Routine updates must not scan windows in a resident app")
+            NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+            XCTAssertFalse(window.isVisible)
+            XCTAssertFalse(window.isRestorable)
+        }
     }
 
     @MainActor

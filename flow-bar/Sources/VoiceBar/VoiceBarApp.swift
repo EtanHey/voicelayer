@@ -264,9 +264,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Install before SwiftUI can restore its placeholder Settings scene.
+        // Appearance events suffice; didUpdate would poll on every animation/event-loop pass.
         guard settingsSceneObservers.isEmpty else { return }
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification,
-                     NSWindow.didChangeOcclusionStateNotification, NSWindow.didUpdateNotification] {
+                     NSWindow.didChangeOcclusionStateNotification] {
             settingsSceneObservers.append(NotificationCenter.default.addObserver(
                 forName: name, object: nil, queue: .main
             ) { [weak self] notification in
@@ -274,11 +275,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.closeStraySettingsScene(window, trigger: notification.name.rawValue)
             })
         }
-        settingsSceneObservers.append(NotificationCenter.default.addObserver(
-            forName: NSApplication.didUpdateNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.closeStraySettingsScenes(trigger: "application_update")
-        })
         closeStraySettingsScenes(trigger: "early_launch_restoration")
     }
 
