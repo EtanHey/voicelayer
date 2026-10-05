@@ -9,7 +9,7 @@ const bash = Bun.which("bash")!;
 const python = Bun.which("python3")!;
 const helperPath = "Gits/golems/.worktrees/hooks-live/scripts/hooks/heavy-suite.py";
 
-type Availability = "installed" | "missing-helper" | "missing-python";
+type Availability = "installed" | "missing-helper" | "missing-python" | "unset-home";
 
 function runHook(availability: Availability, status: number, guardStatus = 0) {
   const root = mkdtempSync(join(tmpdir(), "voicelayer-heavy-hook-"));
@@ -43,7 +43,8 @@ raise SystemExit(subprocess.call(sys.argv[2:]))
       'printf "suite\\n" >> "$HOOK_RECORD"\nexit "$SUITE_STATUS"\n');
     const result = spawnSync(bash, [join(root, "hook")], {
       cwd: root,
-      env: { HOME: home, PATH: bin, HOOK_RECORD: record,
+      env: { ...(availability === "unset-home" ? {} : { HOME: home }),
+        PATH: bin, HOOK_RECORD: record,
         SUITE_STATUS: String(status), GUARD_STATUS: String(guardStatus) },
       encoding: "utf8", timeout: 5000,
     });
@@ -57,13 +58,14 @@ raise SystemExit(subprocess.call(sys.argv[2:]))
 
 describe("pre-push heavy-suite opt-in", () => {
   test("references only the pinned installed helper", () => {
-    expect(hook).toContain(`$HOME/${helperPath}`);
+    expect(hook).toContain("${HOME:-}/" + helperPath);
     expect(hook).not.toContain("$HOME/Gits/golems/scripts/hooks/heavy-suite.py");
   });
-  for (const availability of ["installed", "missing-helper", "missing-python"] as const) {
+  for (const availability of ["installed", "missing-helper", "missing-python", "unset-home"] as const) {
     for (const status of [0, 7]) {
       test(`${availability}: preserves suite exit ${status} and guard order`, () => {
         const result = runHook(availability, status);
+        expect(result.stderr).not.toContain("unbound variable");
         expect(result.status).toBe(status);
         expect(result.events).toBe(availability === "installed" ? "guard\nhelper\nsuite\n" : "guard\nsuite\n");
         if (availability === "installed") expect(result.stderr).toBe("");
