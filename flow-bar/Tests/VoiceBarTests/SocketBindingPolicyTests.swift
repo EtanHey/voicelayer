@@ -4,6 +4,47 @@ import Darwin
 import XCTest
 
 final class SocketBindingPolicyTests: XCTestCase {
+    func testMixedCaseResidentPathsRemainProtected() {
+        for path in ["/tmp/VOICELAYER.SOCK", "/private/tmp/VoiceLayer-MCP.sock"] {
+            XCTAssertFalse(allowed("/tmp/QA/VoiceBar.app", path))
+            XCTAssertTrue(allowed("/Applications/VoiceBar.app", path))
+            XCTAssertFalse(allowed("/Applications/VoiceBar.app", path, qa: true))
+            XCTAssertFalse(allowed("/Applications/VoiceBar.app", path, env: ["VOICEBAR_QA_BUILD": "1"]))
+        }
+        XCTAssertTrue(allowed("/tmp/QA/VoiceBar.app", "/tmp/isolated/VOICELAYER.SOCK"))
+    }
+
+    func testMixedCaseParentSymlinkAliasRemainsProtected() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("iso-case-" + UUID().uuidString)
+        let targetDirectory = directory.appendingPathComponent("protected")
+        let aliasDirectory = directory.appendingPathComponent("alias")
+        try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createSymbolicLink(at: aliasDirectory, withDestinationURL: targetDirectory)
+        for file in ["voicelayer.sock", "voicelayer-mcp.sock"] {
+            let target = targetDirectory.appendingPathComponent(file)
+            let alias = aliasDirectory.appendingPathComponent(file.uppercased())
+            for targetExists in [false, true] {
+                if targetExists { try Data().write(to: target) }
+                for (bundle, qa, expected) in [
+                    ("/tmp/QA/VoiceBar.app", false, false),
+                    ("/Applications/VoiceBar.app", false, true),
+                    ("/Applications/VoiceBar.app", true, false),
+                ] {
+                    XCTAssertEqual(SocketBindingPolicy.allowsRuntimeBind(
+                        bundlePath: bundle, socketPath: alias.path, environment: [:],
+                        qaBuild: qa, protectedPaths: [target.path]
+                    ), expected, "mixed-case alias with target exists=\(targetExists)")
+                }
+                XCTAssertTrue(SocketBindingPolicy.allowsRuntimeBind(
+                    bundlePath: "/tmp/QA/VoiceBar.app",
+                    socketPath: aliasDirectory.appendingPathComponent("isolated.sock").path,
+                    environment: [:], qaBuild: false, protectedPaths: [target.path]
+                ))
+            }
+        }
+    }
+
     func testBindingMatrixForBothResidentSockets() {
         for path in SocketBindingPolicy.livePaths {
             XCTAssertTrue(allowed("/Applications/VoiceBar.app", path))

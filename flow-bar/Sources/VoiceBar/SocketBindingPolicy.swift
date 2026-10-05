@@ -19,7 +19,11 @@ enum SocketBindingPolicy {
         protectedPaths: Set<String> = livePaths
     ) -> Bool {
         let path = normalizedSocketPath(socketPath)
-        guard protectedPaths.contains(where: { normalizedSocketPath($0) == path }) else { return true }
+        // Reserve resident names regardless of volume case sensitivity. A case-only spelling
+        // is not an isolation override, even before the socket exists or through a parent alias.
+        guard protectedPaths.contains(where: {
+            normalizedSocketPath($0).caseInsensitiveCompare(path) == .orderedSame
+        }) else { return true }
         return bundlePath == "/Applications/VoiceBar.app" && !qaBuild &&
             environment["VOICEBAR_QA_BUILD"]?.trimmingCharacters(in: .whitespacesAndNewlines) != "1"
     }
