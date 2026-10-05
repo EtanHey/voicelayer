@@ -25,7 +25,7 @@ fi
 
 # Guard 2 — regression harness
 [ ! -f scripts/run_tests.sh ] && { echo "⚠️  no scripts/run_tests.sh — skipping"; exit 0; }
-bash scripts/run_tests.sh
+HS="${HOME:-}/Gits/golems/.worktrees/hooks-live/scripts/hooks/heavy-suite.py"; if [ -f "$HS" ] && command -v python3 >/dev/null; then python3 "$HS" -- bash scripts/run_tests.sh; else echo "heavy-suite: helper missing; running unqueued" >&2; bash scripts/run_tests.sh; fi
 exit_status=$?
 
 if [ $exit_status -ne 0 ]; then
