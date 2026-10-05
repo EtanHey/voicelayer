@@ -147,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panelPointerMovementHandler: ((NSPoint) -> Void)?
     private var moveObserver: Any?
     private var displayObserver: Any?
+    private var panelDiagnosticObservers: [Any] = []
     private var workspaceNotificationObservers: [Any] = []
     private var snoozeTask: Task<Void, Never>?
     private var playbackEdgeLayoutTask: Task<Void, Never>?
@@ -660,6 +661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pill.alphaValue = 0
         pill.delegate = self
         panel = pill
+        configurePanelDiagnostics(pill)
         positionPanel(pill, on: nil)
         pill.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
@@ -669,6 +671,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             forceRerasterization: true
         )
         pill.orderFront(nil)
+        logDiagnostic(event: "panel_order_front", details: ["reason": "launch"])
         completePanelFirstRender()
         voiceState.beginIdleCollapseCountdown()
         if let panelScreen = pill.screen {
@@ -695,6 +698,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            self?.logDiagnostic(event: "notch_screen_parameters_changed")
             self?.reapplyAnchoredPanelPosition()
         }
         if VoiceLayerPaths.enforcesSingletonInstance {
@@ -717,6 +721,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.isolatedInstanceMarkerPID = nil
         }
         snoozeTask?.cancel()
+        playbackEdgeLayoutTask?.cancel()
         settingsWindow?.close()
         hotkeyListener.stop()
         audioLevelMonitor.shutdown()
@@ -735,6 +740,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NotificationCenter.default.removeObserver(observer)
             displayObserver = nil
         }
+        for observer in panelDiagnosticObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        panelDiagnosticObservers.removeAll()
         for observer in workspaceNotificationObservers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
@@ -1073,6 +1082,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         snoozedUntil = Date().addingTimeInterval(3600)
         voiceState.snooze(until: snoozedUntil)
         panel?.orderOut(nil)
+        logDiagnostic(event: "panel_order_out", details: ["reason": "snooze"])
 
         snoozeTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(3600))
@@ -1087,6 +1097,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         snoozedUntil = nil
         voiceState.unsnooze()
         panel?.orderFront(nil)
+        logDiagnostic(event: "panel_order_front", details: ["reason": "unsnooze"])
         reapplyAnchoredPanelPosition()
     }
 
@@ -1372,9 +1383,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } catch {
                     return
                 }
-                guard !Task.isCancelled, currentVoiceMode == .idle else { return }
-                refreshNotchPresentationAndPanelLayout(animated: true)
-                panel?.orderOut(nil)
+                NotchPanelVisibility.finishHandoffCollapse(
+                    isCancelled: Task.isCancelled, mode: { self.currentVoiceMode },
+                    refreshLayout: { self.refreshNotchPresentationAndPanelLayout(animated: true) },
+                    orderOut: {
+                        self.panel?.orderOut(nil)
+                        self.logDiagnostic(event: "panel_order_out", details: ["reason": "handoff-collapse"])
+                    }
+                )
             }
         } else {
             refreshNotchPresentationAndPanelLayout(animated: true)
@@ -1382,8 +1398,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !collapsesConverseHandoff {
             if VoiceBarIsolatedCapturePlacement.isEnabled() {
                 panel?.orderFrontRegardless()
+                logDiagnostic(event: "panel_order_front", details: ["reason": "mode-change-isolated"])
             } else if mode != .idle, panel?.isVisible == false {
                 panel?.orderFront(nil)
+                logDiagnostic(event: "panel_order_front", details: ["reason": "mode-change"])
+            } else if let panel {
+                NotchPanelVisibility.selfHeal(panel, mode: mode, isHidden: isSnoozed || voiceState.isHidden) {
+                    logDiagnostic(event: "notch_reorder_selfheal", details:
+                        $0.merging(["reason": "mode-change"]) { _, new in new })
+                }
             }
         }
         synchronizeRetainedReadbackLifecycle()
@@ -1839,20 +1862,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func configurePanelDiagnostics(_ panel: NSWindow) {
+        panelDiagnosticObservers = [
+            (NSWindow.didChangeOcclusionStateNotification, "notch_occlusion_changed"),
+            (NSApplication.didHideNotification, "app_did_hide"),
+            (NSApplication.didUnhideNotification, "app_did_unhide"),
+        ].map { name, event in
+            NotificationCenter.default.addObserver(
+                forName: name, object: name == NSWindow.didChangeOcclusionStateNotification ? panel : nil,
+                queue: .main
+            ) { [weak self] _ in self?.logDiagnostic(event: event) }
+        }
+        workspaceNotificationObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.logDiagnostic(event: "notch_active_space_changed") })
+    }
+
     private func logDiagnostic(event: String, details: [String: String] = [:]) {
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let panelFrameDescription = panel.map { NSStringFromRect($0.frame) } ?? "nil"
         let appKeyWindowTitle = NSApp.keyWindow?.title ?? "nil"
         let mergedDetails = [
             "appActive": boolString(NSApp.isActive),
-            "panelVisible": boolString(panel?.isVisible ?? false),
             "panelKey": boolString(panel?.isKeyWindow ?? false),
             "panelMain": boolString(panel?.isMainWindow ?? false),
             "panelFrame": panelFrameDescription,
             "frontmostApp": frontmostApp?.bundleIdentifier ?? frontmostApp?.localizedName ?? "nil",
             "voiceMode": voiceState.mode.rawValue,
             "appKeyWindowTitle": appKeyWindowTitle,
-        ].merging(details) { _, new in new }
+        ].merging(NotchPanelVisibility.diagnosticFields(panel)) { _, new in new }
+            .merging(details) { _, new in new }
 
         let payload = mergedDetails
             .sorted { $0.key < $1.key }

@@ -1468,9 +1468,12 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
-    func testPlaybackEdgeFlushesEmptyContentBeforeCollapsingTheGlassHost() throws {
+    func testPlaybackEdgeAndVisibilityGuardsAreWiredIntoTheApp() throws {
         let source = try voiceBarAppSource()
-
+        for call in ["NotchPanelVisibility.selfHeal(panel", "NotchPanelVisibility.finishHandoffCollapse(",
+                     "NotchPanelVisibility.diagnosticFields(panel)"] {
+            XCTAssertTrue(source.contains(call), "Missing production call: \(call)")
+        }
         XCTAssertTrue(source.contains(".stagesContentBeforeGlass(from: previousVoiceMode, to: mode)"))
         XCTAssertTrue(source.contains("await Task.yield()"))
         XCTAssertTrue(source.contains("contentView?.displayIfNeeded()"))
