@@ -1,0 +1,367 @@
+#!/usr/bin/env python3
+"""Real app/daemon regressions. Scratch overlays only observe or remap paths."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import tempfile
+import threading
+import time
+import wave
+
+REPO = Path(__file__).resolve().parents[1]
+ROWS = {
+    "ndjson-partial-write": ("78a43fbb^1", "78a43fbb"),
+    "socket-isolation": ("39a673b1^1", "313a959e"),
+    "retranscribe-history-refresh": ("a2e25844^1", "a2e25844"),
+}
+
+
+def command(args, **kwargs):
+    return subprocess.check_output(args, **kwargs).decode().strip()
+
+
+def sha(ref):
+    return command(["git", "-C", str(REPO), "rev-parse", ref + "^{commit}"])
+
+
+def wait(predicate, timeout=30):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return
+        time.sleep(.05)
+    raise RuntimeError("deadline expired; missing binary/socket/event is FAIL")
+
+
+def connect(path):
+    client = socket.socket(socket.AF_UNIX)
+    client.settimeout(30)
+    client.connect(str(path))
+    return client
+
+
+class Run:
+    def __init__(self, ref, output):
+        self.ref, self.output = sha(ref), output
+        output.write_text("")
+        self.root = Path(tempfile.mkdtemp(prefix="vlr-", dir="/tmp"))
+        self.procs, self.files = [], []
+        self.source = self.root / "source"
+        subprocess.run(["git", "-C", str(REPO), "worktree", "add", "--detach", "--quiet",
+                        str(self.source), self.ref], check=True,
+                       env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+        # Dependencies belong to the target checkout, not an injected module mock.
+        subprocess.run(["bun", "install", "--frozen-lockfile"], cwd=self.source, check=True,
+                       stdout=output.open("a"), stderr=subprocess.STDOUT)
+        self.env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH") if k in os.environ}
+        for name in ("state", "tmp", "recordings", "bin"):
+            (self.root / name).mkdir()
+        self.env.update({
+            "SHELL": "/bin/sh", "VOICELAYER_SOCKET_PATH": str(self.root / "v.sock"),
+            "VOICELAYER_MCP_SOCKET_PATH": str(self.root / "m.sock"),
+            "QA_VOICE_SOCKET_PATH": str(self.root / "v.sock"),
+            "QA_VOICE_MCP_SOCKET_PATH": str(self.root / "m.sock"),
+            "VOICELAYER_STATE_DIR": str(self.root / "state"),
+            "VOICELAYER_TMP_ROOT": str(self.root / "tmp"),
+            "VOICELAYER_CONTROL_LAYER_BASE": str(self.root / "state/control"),
+            "VOICELAYER_PROCESSING_SETTINGS_PATH": str(self.root / "state/processing.json"),
+            "QA_VOICE_RECORDINGS_DIR": str(self.root / "recordings"),
+            "QA_VOICE_STT_VOCABULARY_PATH": str(self.root / "vocab.json"),
+            "QA_VOICE_MCP_PID_PATH": str(self.root / "m.pid"),
+            "QA_VOICE_MCP_HEARTBEAT_PATH": str(self.root / "m.heartbeat"),
+            "QA_VOICE_RECORDING_STATE_PATH": str(self.root / "state/recording.json"),
+            "QA_VOICE_RETAINED_RECORDING_PATH": str(self.root / "tmp/retained.wav"),
+            "QA_VOICE_DISABLE_FLAG_PATH": str(self.root / "tmp/disabled"),
+            "QA_VOICE_STT_POLISH": "off", "QA_VOICE_STT_BACKEND": "whisper",
+            "QA_VOICE_WHISPER_MODEL": str(self.root / "model.bin"),
+            "VOICELAYER_ALLOW_ORPHAN_DAEMON": "1", "VOICEBAR_QA_PRESERVE_OVERRIDES": "1",
+            "VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE": "1", "VOICEBAR_QA_SKIP_HOTKEY": "1",
+            "VOICEBAR_QA_SKIP_PERMISSION_PROMPTS": "1", "VOICEBAR_QA_SKIP_LS_REGISTER": "1",
+            "QA_VOICEBAR_CAPTURE_OFFSCREEN": "1",
+            "VOICEBAR_USER_DEFAULTS_SUITE": "ratchet." + self.root.name,
+            "RATCHET_RESIDENT": str(self.root / "resident.sock"),
+        })
+        (self.root / "model.bin").touch()
+        stub = self.root / "bin/whisper-cli"
+        stub.write_text("#!/bin/sh\nprintf 'Recovered synthetic answer.\\n'\n")
+        stub.chmod(0o700)
+        self.env["PATH"] = str(self.root / "bin") + ":" + self.env["PATH"]
+        self.overlay_hash = None
+
+    def instrument(self):
+        policy = self.source / "flow-bar/Sources/VoiceBar/SocketBindingPolicy.swift"
+        patch = ""
+        if policy.exists():
+            original = policy.read_text()
+            needle = '["/tmp/voicelayer.sock", "/tmp/voicelayer-mcp.sock"]'
+            assert original.count(needle) == 1, "protected-path seam drifted"
+            updated = original.replace(needle, needle[:-1] + ', ProcessInfo.processInfo.environment["RATCHET_RESIDENT"]!]')
+            policy.write_text(updated)
+            import difflib
+            patch = "".join(difflib.unified_diff(original.splitlines(True), updated.splitlines(True),
+                              fromfile="a/" + str(policy.relative_to(self.source)),
+                              tofile="b/" + str(policy.relative_to(self.source))))
+        self.output.with_suffix(".overlay.patch").write_text(patch)
+        self.overlay_hash = hashlib.sha256(patch.encode()).hexdigest()
+
+    def build(self):
+        with self.output.open("a") as log:
+            subprocess.run(["swift", "build", "--package-path", "flow-bar", "--product", "VoiceBar", "-j", "2"],
+                           cwd=self.source, stdout=log, stderr=log, check=True)
+        path = command(["swift", "build", "--package-path", "flow-bar", "--show-bin-path"], cwd=self.source)
+        # Outside a repo/bundle: app cannot autolaunch a second, sanitized daemon.
+        self.binary = self.root / "VoiceBar"
+        shutil.copy2(Path(path) / "VoiceBar", self.binary)
+        self.binary_hash = hashlib.sha256(self.binary.read_bytes()).hexdigest()
+
+    def launch(self, argv, env=None, logname="app"):
+        env = env or self.env
+        for key in ("VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "VOICELAYER_STATE_DIR", "VOICELAYER_TMP_ROOT",
+                    "QA_VOICE_SOCKET_PATH", "QA_VOICE_MCP_SOCKET_PATH", "RATCHET_RESIDENT"):
+            path = Path(env[key]).resolve()
+            if not path.is_relative_to(self.root.resolve()) or len(str(path).encode()) >= 100:
+                raise RuntimeError("refusing unsafe/oversized isolation path")
+        log = (self.root / (logname + ".log")).open("w")
+        self.files.append(log)
+        proc = subprocess.Popen(argv, env=env, cwd=self.source, stdout=log, stderr=log)
+        self.procs.append(proc)
+        return proc
+
+    def app(self, env=None):
+        return self.launch([str(self.binary)], env)
+
+    def daemon(self, socket_path, pressure=False):
+        argv = ["bun", "run", "src/mcp-server-daemon.ts"]
+        if pressure:
+            argv = ["bun", "run", "--preload", str(self.root / "pressure.ts"), "src/mcp-server-daemon.ts"]
+        return self.launch(argv,
+                           dict(self.env, VOICELAYER_SOCKET_PATH=str(socket_path), QA_VOICE_SOCKET_PATH=str(socket_path)), "daemon")
+
+    def log(self, name="app"):
+        path = self.root / (name + ".log")
+        return path.read_text(errors="replace") if path.exists() else ""
+
+    def transport_log(self, name="app"):
+        return "\n".join(line for line in self.log(name).splitlines() if name != "app" or any(
+            token in line for token in ("Bad JSON", "Client hello", "Server listening", "SOCKET_ISOLATION_REFUSED"))) + "\n"
+
+    def close(self):
+        for proc in reversed(self.procs):
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+        for name in ("app", "daemon"):
+            self.output.with_suffix("." + name + ".log").write_text(self.transport_log(name))
+        for log in self.files:
+            log.close()
+        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(self.source)], check=True,
+                       env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+        shutil.rmtree(self.root)
+
+
+def isolation(run):
+    failures, cases = 0, []
+    for case in ("plain", "case", "parent-symlink", "socket-symlink"):
+        base = run.root / "resident.sock"
+        candidate = base
+        if case == "case":
+            candidate = run.root / "RESIDENT.SOCK"
+        if case == "parent-symlink":
+            alias = run.root / "alias"
+            alias.symlink_to(run.root, target_is_directory=True)
+            candidate = alias / base.name
+        listener_path = candidate if case == "case" else base
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(str(listener_path))
+        listener.listen()
+        listener.settimeout(5)
+        if case == "socket-symlink":
+            candidate = run.root / "linked.sock"
+            candidate.symlink_to(base)
+        inode = candidate.lstat().st_ino
+        proc = run.app(dict(run.env, VOICELAYER_SOCKET_PATH=str(candidate), QA_VOICE_SOCKET_PATH=str(candidate)))
+        try:
+            wait(lambda: proc.poll() is not None or "Server listening" in run.log())
+            refused = proc.poll() == 1 and "SOCKET_ISOLATION_REFUSED" in run.log()
+            intact = candidate.exists() and candidate.lstat().st_ino == inode
+            failures += int(not (refused and intact))
+            cases.append(dict(case=case, refused=refused, intact=intact, exit_code=proc.poll()))
+            run.output.with_suffix("." + case + ".app.log").write_text(run.transport_log())
+            if intact:
+                with connect(candidate):
+                    accepted, _ = listener.accept()
+                    accepted.close()
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(5)
+            listener.close()
+            for path in set((candidate, listener_path, base)):
+                if path.exists() or path.is_symlink():
+                    path.unlink()
+    assert "ratchet." in run.env["VOICEBAR_USER_DEFAULTS_SUITE"]
+    run.output.with_suffix(".isolation.json").write_text(json.dumps(cases, indent=2))
+    return failures
+
+
+def wire_row(run, row):
+    (run.root / "vocab.json").write_text(json.dumps({"entries": []}))
+    run.app()
+    app_path = run.root / "v.sock"
+    wait(lambda: app_path.exists())
+    bridge = run.root / "bridge.sock"
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(str(bridge))
+    listener.listen()
+    if row == "ndjson-partial-write":
+        (run.root / "pressure.ts").write_text(
+            'import {broadcast,isConnected} from ' + json.dumps(str(run.source / 'src/socket-client')) + ';\n'
+            'const timer=setInterval(()=>{if(!isConnected()) return; clearInterval(timer);\n'
+            'for(let i=0;i<2;i++) broadcast({type:"client_hello",role:"ratchet-"+i,pid:process.pid,\n'
+            'accepts_commands:true,payload:"אבג — …".repeat(80000)} as any);\n'
+            'setTimeout(()=>{broadcast({type:"client_hello",role:"ratchet-2",pid:process.pid,accepts_commands:true} as any);\n'
+            'console.error("[ratchet] sent=3");},1000);},100);\n')
+    listener.settimeout(30)
+    run.daemon(bridge, row == "ndjson-partial-write")
+    upstream, _ = listener.accept()
+    upstream.settimeout(20)
+    downstream = connect(app_path)
+    captured, errors = [], []
+
+    def forward():
+        try:
+            # Real daemon serializer and socket.write meet a stalled kernel buffer.
+            time.sleep(.5)
+            while True:
+                raw = upstream.recv(4093)
+                if not raw:
+                    break
+                captured.append(raw)
+                downstream.sendall(raw)
+        except Exception as error:
+            errors.append(str(error))
+
+    def reverse():
+        try:
+            while True:
+                raw = downstream.recv(4096)
+                if not raw:
+                    break
+                upstream.sendall(raw)
+        except Exception:
+            pass  # teardown; forward and row deadlines detect missing traffic
+
+    thread = threading.Thread(target=forward, daemon=True)
+    reverse_thread = threading.Thread(target=reverse, daemon=True)
+    thread.start()
+    reverse_thread.start()
+    try:
+        wait(lambda: (run.root / "m.sock").exists())
+        if row == "ndjson-partial-write":
+            try:
+                wait(lambda: all("role: ratchet-" + str(i) + "," in run.log() for i in range(3)), 10)
+            except RuntimeError:
+                pass  # evaluate the real Bad JSON and missing handled-frame counts below
+            assert "[ratchet] sent=3" in run.log("daemon"), "pressure fixture did not emit frames"
+            bad_json = run.log().count("[VoiceBar] Bad JSON from client")
+            missing = sum("role: ratchet-" + str(i) + "," not in run.log() for i in range(3))
+            run.output.with_suffix(".wire.json").write_text(json.dumps({
+                "sent_frames": 3, "handled_frames": 3 - missing, "bad_json": bad_json,
+                "wire_bytes": sum(map(len, captured)), "errors": errors}))
+            return bad_json + missing
+        archive_id = "2026-08-20T10-11-12-000Z-abcd1234"
+        directory = run.root / "recordings" / archive_id[:10] / archive_id
+        directory.mkdir(parents=True)
+        audio = directory / "audio.wav"
+        with wave.open(str(audio), "wb") as wav:
+            wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            wav.writeframes(b"\x10\x27\xf0\xd8" * 8000)
+        audio_hash = hashlib.sha256(audio.read_bytes()).hexdigest()
+        agent = b"ID3\x01\x02\x03"
+        (directory / "agent-audio.mp3").write_bytes(agent)
+        (directory / "agent-transcript.txt").write_text("Synthetic question?")
+        metadata = dict(id=archive_id, created_at="2026-08-20T10:11:12.000Z", source="voice_ask",
+                        mode="ptt", silence_mode="thoughtful", duration_ms=1000, raw_duration_ms=1000,
+                        transcribed_duration_ms=1000, sample_rate=16000, channels=1, schema_version=3,
+                        transcription_status="captured", retention_policy="indefinite", backend=None,
+                        audio_sha256=audio_hash, user_audio_sha256=audio_hash,
+                        agent_audio_sha256=hashlib.sha256(agent).hexdigest(),
+                        artifacts={"agent_audio": "agent-audio.mp3", "agent_transcript": "agent-transcript.txt",
+                                   "user_audio": "audio.wav", "user_transcript": "voicelayer-transcript.txt"})
+        (directory / "metadata.json").write_text(json.dumps(metadata))
+        payload = json.dumps(dict(jsonrpc="2.0", id=42, method="tools/call", params={
+            "name": "voice_ask", "arguments": {"retranscribe_archive_id": archive_id}})).encode()
+        with connect(run.root / "m.sock") as mcp:
+            mcp.sendall(b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload)
+            with mcp.makefile("rb") as stream:
+                header = stream.readline()
+                length = int(header.decode().strip().removeprefix("Content-Length: "))
+                if stream.readline() != b"\r\n":
+                    raise RuntimeError("missing MCP header delimiter")
+                response = json.loads(stream.read(length))
+            assert not response["result"].get("isError"), response
+        wait(lambda: (directory / "voicelayer-transcript.txt").exists())
+        time.sleep(.5)
+        lines = b"".join(captured).split(b"\n")[:-1]
+        matches = [line for line in lines if json.loads(line).get("type") == "archive_metadata_updated"
+                   and json.loads(line).get("recording_path") == str(audio.resolve())]
+        assert (directory / "voicelayer-transcript.txt").read_text() == "Recovered synthetic answer."
+        assert json.loads((directory / "metadata.json").read_text())["transcription_status"] == "transcribed"
+        run.output.with_suffix(".wire.json").write_text(json.dumps({
+            "archive_updates": len(matches), "durable_transcript": True, "durable_metadata": True,
+            "transcription_events": sum(json.loads(line).get("type") == "transcription" for line in lines)}))
+        return int(len(matches) != 1 or any(json.loads(line).get("type") == "transcription" for line in lines))
+    finally:
+        upstream.close()
+        downstream.close()
+        listener.close()
+        thread.join(2)
+        reverse_thread.join(2)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ref", default="HEAD")
+    parser.add_argument("--row", choices=ROWS)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    args.output.mkdir(parents=True, exist_ok=True)
+    results = []
+    for row in ([args.row] if args.row else ROWS):
+        run, value, error = None, 1, None
+        try:
+            run = Run(args.ref, args.output / (row + ".build.log"))
+            if row == "socket-isolation":
+                run.instrument()
+            run.build()
+            value = isolation(run) if row == "socket-isolation" else wire_row(run, row)
+        except Exception as failure:
+            error = str(failure)
+        finally:
+            if run:
+                try:
+                    run.close()
+                except Exception as failure:
+                    value, error = 1, "cleanup failed: " + str(failure)
+        result = dict(row=row, kind="behavior", value=value, ceiling=0,
+                      status="PASS" if value == 0 else "FAIL", bug_sha=sha(ROWS[row][0]),
+                      fix_sha=sha(ROWS[row][1]), measured_sha=sha(args.ref), error=error,
+                      overlay_sha256=run.overlay_hash if run else None,
+                      app_binary_sha256=getattr(run, "binary_hash", None))
+        print(json.dumps(result), flush=True)
+        results.append(result)
+        (args.output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
+    return int(any(row["status"] != "PASS" for row in results))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

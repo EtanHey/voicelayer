@@ -1,0 +1,35 @@
+{
+  "execution": {
+    "argv": [
+      "python3",
+      "ratchet/run.py",
+      "--row",
+      "ndjson-partial-write",
+      "--ref",
+      "78a43fbb^1",
+      "--output",
+      "docs.local/ratchet/R1-bug"
+    ],
+    "exit_code": 1
+  },
+  "result": {
+    "row": "ndjson-partial-write",
+    "kind": "behavior",
+    "value": 3,
+    "ceiling": 0,
+    "status": "FAIL",
+    "bug_sha": "70ff5e99fefafda8fb0da876cfbb9e17130093dd",
+    "fix_sha": "78a43fbbeba78906955a92ccb4fb075d023cc866",
+    "measured_sha": "70ff5e99fefafda8fb0da876cfbb9e17130093dd",
+    "error": null,
+    "overlay_sha256": null,
+    "app_binary_sha256": "d3c5ca04c3e803d8c9d242fdef2dca83cb2666c9e4cbc7da7a09530d5467f4c2"
+  },
+  "wire": {
+    "sent_frames": 3,
+    "handled_frames": 1,
+    "bad_json": 1,
+    "wire_bytes": 10008,
+    "errors": []
+  }
+}
