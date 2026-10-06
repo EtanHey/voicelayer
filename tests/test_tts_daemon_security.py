@@ -15,6 +15,7 @@ from tts_daemon import (  # noqa: E402
     create_app,
     enforce_local_request,
     ensure_bearer_token_file,
+    model_pin_matches,
     validate_reference_wav_path,
 )
 
@@ -47,7 +48,20 @@ def install_fake_mlx_audio(
 @pytest.fixture
 def daemon_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     fake_model = FakeModel()
-    install_fake_mlx_audio(monkeypatch, fake_model)
+    generation_calls = []
+    model_load_paths = []
+
+    def generate_audio(**kwargs):
+        generation_calls.append(kwargs)
+        output = Path(kwargs["output_path"]) / f"{kwargs['file_prefix']}.mp3"
+        output.write_bytes(b"fake-mp3")
+
+    def load_model(path):
+        model_load_paths.append(path)
+        return fake_model
+
+    install_fake_mlx_audio(monkeypatch, fake_model, generate_audio)
+    monkeypatch.setattr(sys.modules["mlx_audio.tts.utils"], "load", load_model)
 
     secret_file = tmp_path / "daemon.secret"
     voices_root = tmp_path / "voices"
@@ -67,6 +81,8 @@ def daemon_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
             "secret": secret_file.read_text(encoding="utf-8").strip(),
             "sample": sample,
             "model": fake_model,
+            "generation_calls": generation_calls,
+            "model_load_paths": model_load_paths,
         }
 
 
@@ -183,3 +199,118 @@ def test_synthesize_accepts_valid_authenticated_request(daemon_client):
 
     assert response.status_code == 200
     assert response.json()["audio_b64"]
+
+
+@pytest.mark.parametrize("path_kind", ["traversal", "absolute", "symlink", "nul", "prefix"])
+def test_synthesize_rejects_unsafe_reference_paths(daemon_client, tmp_path, path_kind):
+    sample = daemon_client["sample"]
+    voices_root = sample.parents[2]
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"RIFF" + b"\x00" * 128)
+    linked = sample.parent / "linked.wav"
+    linked.symlink_to(outside)
+    prefix = tmp_path / "voices-other" / "clip.wav"
+    prefix.parent.mkdir()
+    prefix.write_bytes(outside.read_bytes())
+    paths = {
+        "traversal": str(voices_root / ".." / "outside.wav"),
+        "absolute": str(outside),
+        "symlink": str(linked),
+        "nul": str(sample) + "\x00.wav",
+        "prefix": str(prefix),
+    }
+
+    response = daemon_client["client"].post(
+        "/synthesize",
+        headers=synthesize_headers(daemon_client["secret"]),
+        json=synthesize_payload(paths[path_kind]),
+    )
+
+    assert response.status_code == (400 if path_kind == "nul" else 403)
+    assert daemon_client["generation_calls"] == []
+    assert daemon_client["model_load_paths"] == ["fake-model"]
+
+
+@pytest.mark.parametrize("path_kind", ["absolute", "tilde", "symlink", "root-symlink"])
+def test_reference_path_preserves_profile_layout(monkeypatch, tmp_path, path_kind):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    voices_root = tmp_path / ".voicelayer" / "voices"
+    profile = voices_root / "fixture-speaker_2"
+    sample = profile / "samples" / "clip 01.wav"
+    sample.parent.mkdir(parents=True)
+    (profile / "profile.yaml").write_text("name: fixture-speaker_2\n")
+    sample.write_bytes(b"RIFF" + b"\x00" * 128)
+    alias = sample.parent / "alias.wav"
+    alias.symlink_to(sample)
+    root_alias = tmp_path / "voices-alias"
+    root_alias.symlink_to(voices_root, target_is_directory=True)
+    paths = {
+        "absolute": str(sample),
+        "tilde": "~/.voicelayer/voices/fixture-speaker_2/samples/clip 01.wav",
+        "symlink": str(alias),
+        "root-symlink": str(root_alias / sample.relative_to(voices_root)),
+    }
+
+    assert validate_reference_wav_path(paths[path_kind], voices_root) == sample.resolve()
+
+
+@pytest.mark.parametrize("model_pin", ["../other-model", "/outside/other-model", "fake-model\x00", "symlink"])
+def test_synthesize_rejects_unsafe_model_pins(daemon_client, tmp_path, model_pin):
+    if model_pin == "symlink":
+        outside = tmp_path / "outside-model"
+        outside.mkdir()
+        alias = tmp_path / "model-alias"
+        alias.symlink_to(outside, target_is_directory=True)
+        model_pin = str(alias)
+    payload = synthesize_payload(str(daemon_client["sample"]))
+    payload["model"] = model_pin
+
+    response = daemon_client["client"].post(
+        "/synthesize",
+        headers=synthesize_headers(daemon_client["secret"]),
+        json=payload,
+    )
+
+    assert response.status_code == 409
+    assert daemon_client["generation_calls"] == []
+    assert daemon_client["model_load_paths"] == ["fake-model"]
+
+
+@pytest.mark.parametrize("pin_kind", ["unset", "blank", "name", "path", "tilde", "symlink"])
+def test_model_pin_preserves_loaded_model_identities(monkeypatch, tmp_path, pin_kind):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    model = tmp_path / "models" / "fixture-model"
+    model.mkdir(parents=True)
+    alias = tmp_path / "model-alias"
+    alias.symlink_to(model, target_is_directory=True)
+    pins = {
+        "unset": None,
+        "blank": "  ",
+        "name": "fixture-model",
+        "path": str(model),
+        "tilde": "~/models/fixture-model",
+        "symlink": str(alias),
+    }
+
+    assert model_pin_matches(pins[pin_kind], str(model))
+
+
+@pytest.mark.parametrize("model_pin", ["fake-model", "canonical", "symlink"])
+def test_synthesize_model_pin_only_selects_loaded_model(daemon_client, tmp_path, model_pin):
+    loaded_path = (ROOT / "fake-model").resolve()
+    alias = tmp_path / "model-alias"
+    alias.symlink_to(loaded_path, target_is_directory=True)
+    pins = {"fake-model": "fake-model", "canonical": str(loaded_path), "symlink": str(alias)}
+    payload = synthesize_payload(str(daemon_client["sample"]))
+    payload["model"] = pins[model_pin]
+
+    response = daemon_client["client"].post(
+        "/synthesize",
+        headers=synthesize_headers(daemon_client["secret"]),
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    assert daemon_client["model_load_paths"] == ["fake-model"]
+    assert len(daemon_client["generation_calls"]) == 1
+    assert daemon_client["generation_calls"][0]["model"] is daemon_client["model"]

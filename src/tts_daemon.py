@@ -132,16 +132,19 @@ def validate_reference_wav_path(
     reference_wav: str, voices_root: Path = DEFAULT_VOICES_DIR
 ) -> Path:
     """Allow only reference audio that resolves inside ~/.voicelayer/voices."""
-    requested = Path(reference_wav).expanduser()
-    resolved = requested.resolve(strict=False)
-    voices_root_resolved = voices_root.expanduser().resolve(strict=False)
+    if "\x00" in reference_wav:
+        raise ValueError("Reference audio path must not contain NUL.")
+    requested = os.path.expanduser(reference_wav)
+    resolved_path = os.path.realpath(requested)
+    voices_root_resolved = os.path.realpath(voices_root.expanduser())
 
-    if not resolved.is_relative_to(voices_root_resolved):
+    if os.path.commonpath([voices_root_resolved, resolved_path]) != voices_root_resolved:
         raise PermissionError(
             f"Reference audio must live under {voices_root_resolved}."
         )
 
-    if requested.suffix.lower() != ".wav":
+    resolved = Path(resolved_path)
+    if os.path.splitext(requested.rstrip(os.sep))[1].lower() != ".wav":
         raise ValueError("Reference audio must be a .wav file.")
 
     if not resolved.exists():
@@ -202,19 +205,24 @@ def model_pin_matches(requested_model: str | None, loaded_model_path: str) -> bo
     raw_requested = requested_model.strip()
     if not raw_requested:
         return True
+    if "\x00" in raw_requested:
+        return False
 
     loaded = Path(loaded_model_path).expanduser()
-    requested = Path(raw_requested).expanduser()
     loaded_candidates = {
         str(loaded),
         str(loaded.resolve(strict=False)),
         loaded.name,
     }
-    requested_candidates = {
-        raw_requested,
-        str(requested),
-        str(requested.resolve(strict=False)),
-    }
+    try:
+        requested = Path(raw_requested).expanduser()
+        requested_candidates = {
+            raw_requested,
+            str(requested),
+            str(requested.resolve(strict=False)),
+        }
+    except (ValueError, RuntimeError):
+        return False
     return not loaded_candidates.isdisjoint(requested_candidates)
 
 
