@@ -276,31 +276,27 @@ def test_synthesize_rejects_unsafe_model_pins(daemon_client, tmp_path, model_pin
     assert daemon_client["model_load_paths"] == ["fake-model"]
 
 
-@pytest.mark.parametrize("pin_kind", ["unset", "blank", "name", "path", "tilde", "symlink"])
+@pytest.mark.parametrize("pin_kind", ["unset", "blank", "name", "path", "tilde", "normalized"])
 def test_model_pin_preserves_loaded_model_identities(monkeypatch, tmp_path, pin_kind):
     monkeypatch.setenv("HOME", str(tmp_path))
     model = tmp_path / "models" / "fixture-model"
     model.mkdir(parents=True)
-    alias = tmp_path / "model-alias"
-    alias.symlink_to(model, target_is_directory=True)
     pins = {
         "unset": None,
         "blank": "  ",
         "name": "fixture-model",
         "path": str(model),
         "tilde": "~/models/fixture-model",
-        "symlink": str(alias),
+        "normalized": str(model.parent / "unused" / ".." / model.name),
     }
 
     assert model_pin_matches(pins[pin_kind], str(model))
 
 
-@pytest.mark.parametrize("model_pin", ["fake-model", "canonical", "symlink"])
+@pytest.mark.parametrize("model_pin", ["fake-model", "canonical"])
 def test_synthesize_model_pin_only_selects_loaded_model(daemon_client, tmp_path, model_pin):
     loaded_path = (ROOT / "fake-model").resolve()
-    alias = tmp_path / "model-alias"
-    alias.symlink_to(loaded_path, target_is_directory=True)
-    pins = {"fake-model": "fake-model", "canonical": str(loaded_path), "symlink": str(alias)}
+    pins = {"fake-model": "fake-model", "canonical": str(loaded_path)}
     payload = synthesize_payload(str(daemon_client["sample"]))
     payload["model"] = pins[model_pin]
 
@@ -314,3 +310,30 @@ def test_synthesize_model_pin_only_selects_loaded_model(daemon_client, tmp_path,
     assert daemon_client["model_load_paths"] == ["fake-model"]
     assert len(daemon_client["generation_calls"]) == 1
     assert daemon_client["generation_calls"][0]["model"] is daemon_client["model"]
+
+
+def test_model_pin_never_resolves_requested_path(monkeypatch, tmp_path):
+    loaded = tmp_path / "models" / "fixture-model"
+    requested = str(loaded.parent / "unused" / ".." / loaded.name)
+    original_resolve = Path.resolve
+    resolved_paths = []
+
+    def configured_path_only(path, *args, **kwargs):
+        resolved_paths.append(str(path))
+        assert str(path) == str(loaded), "request pin reached filesystem resolution"
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", configured_path_only)
+
+    assert model_pin_matches(requested, str(loaded))
+    assert resolved_paths == [str(loaded)]
+
+
+def test_model_pin_rejects_requested_symlink_alias(tmp_path):
+    loaded = tmp_path / "models" / "fixture-model"
+    loaded.mkdir(parents=True)
+    alias = tmp_path / "model-alias"
+    alias.symlink_to(loaded, target_is_directory=True)
+
+    assert not model_pin_matches(str(alias), str(loaded))
+    assert model_pin_matches(str(loaded), str(alias))

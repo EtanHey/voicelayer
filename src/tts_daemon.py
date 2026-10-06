@@ -215,11 +215,12 @@ def model_pin_matches(requested_model: str | None, loaded_model_path: str) -> bo
         loaded.name,
     }
     try:
-        requested = Path(raw_requested).expanduser()
+        # Request pins are identities: normalize lexically without filesystem access.
+        requested = os.path.expanduser(raw_requested)
         requested_candidates = {
             raw_requested,
-            str(requested),
-            str(requested.resolve(strict=False)),
+            requested,
+            os.path.normpath(requested),
         }
     except (ValueError, RuntimeError):
         return False
