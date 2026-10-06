@@ -214,9 +214,9 @@ describe("stt-cleanup", () => {
   it("cleans path-token spacing in a synthetic path fixture", () => {
     expect(
       cleanupTranscriptionText(
-        "Fixture path is ~ /.Golems - brain / zigon, ready.",
+        "Fixture directory is under -, is it ~ /.Golems - brain / zigon, ready.",
       ),
-    ).toBe("Fixture path is ~/.golems-brain/zikaron, ready.");
+    ).toBe("Fixture directory is under ~/.golems-brain/zikaron, ready.");
     expect(cleanupTranscriptionText("keep the and/or wording")).toBe(
       "Keep the and/or wording",
     );
@@ -224,8 +224,8 @@ describe("stt-cleanup", () => {
 
   it("preserves leading-dot filename tokens as separate tokens", () => {
     expect(
-      cleanupTranscriptionText("Fixture loads the .at file. Ready."),
-    ).toBe("Fixture loads the .at file. Ready.");
+      cleanupTranscriptionText("Fixture loads the .at file. Thank you."),
+    ).toBe("Fixture loads the .at file. Thank you.");
     expect(cleanupTranscriptionText("Use the .env file next.")).toBe(
       "Use the .env file next.",
     );
