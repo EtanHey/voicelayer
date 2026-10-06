@@ -16,12 +16,13 @@ class RunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             run = runner.Run.__new__(runner.Run)
             run.root = Path(directory)
+            run.files, run.procs, run.source = [], [], run.root
             names = ("VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "VOICELAYER_STATE_DIR",
                      "VOICELAYER_TMP_ROOT", "QA_VOICE_SOCKET_PATH", "QA_VOICE_MCP_SOCKET_PATH", "RATCHET_RESIDENT")
             safe = {key: str(run.root / str(i)) for i, key in enumerate(names)}
             for key in names:
                 env = dict(safe, **{key: "/tmp/voicelayer.sock"})
-                with self.subTest(key=key), patch.object(runner.subprocess, "Popen") as spawn:
+                with self.subTest(key=key), patch.object(runner.Path, "open"), patch.object(runner.subprocess, "Popen") as spawn:
                     with self.assertRaises(RuntimeError):
                         run.launch(["never-run"], env)
                     spawn.assert_not_called()
