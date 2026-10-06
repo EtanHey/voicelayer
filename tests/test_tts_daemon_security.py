@@ -147,6 +147,24 @@ def test_validate_reference_wav_path_rejects_symlink_escape(tmp_path: Path):
         validate_reference_wav_path(str(escaped), voices_root)
 
 
+@pytest.mark.parametrize("regular_file", [False, True])
+def test_reference_path_equal_to_root_preserves_file_validation(tmp_path, regular_file):
+    root = tmp_path / "root.wav"
+    if regular_file:
+        root.write_bytes(b"RIFF" + b"\x00" * 128)
+        assert validate_reference_wav_path(str(root), root) == root.resolve()
+    else:
+        root.mkdir()
+        with pytest.raises(ValueError, match="regular file"):
+            validate_reference_wav_path(str(root), root)
+
+
+def test_reference_path_with_filesystem_root(tmp_path):
+    sample = tmp_path / "clip.wav"
+    sample.write_bytes(b"RIFF" + b"\x00" * 128)
+    assert validate_reference_wav_path(str(sample), Path("/")) == sample.resolve()
+
+
 def test_synthesize_missing_auth_returns_401(daemon_client):
     response = daemon_client["client"].post(
         "/synthesize",

@@ -1,5 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { TEST_TMP } from "./setup/test-tmp";
@@ -154,6 +154,43 @@ describe("CodeQL TypeScript regressions", () => {
       expect(data).toBeDefined();
       expect(data).not.toContain("<");
       expect(JSON.parse(data!)).toEqual([payload, 'quote" onmouseover="synthetic']);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("#7 escapes names read from stored clone directories at both option boundaries", async () => {
+    const root = await mkdtemp(join(TEST_TMP, "codeql-stored-clone-"));
+    const payload = 'fixture&&""<<img src=x onerror="synthetic">>';
+    const escaped = 'fixture&amp;&amp;&quot;&quot;&lt;&lt;img src=x onerror=&quot;synthetic&quot;&gt;&gt;';
+    try {
+      const profileDir = join(root, ".voicelayer", "voices", payload);
+      await mkdir(profileDir, { recursive: true });
+      await writeFile(join(profileDir, "profile.yaml"), "name: synthetic-clone\n");
+      // Separate process ensures qwen3 captures only this synthetic HOME at import.
+      const script = `
+        const { listClonedVoiceProfiles } = await import('./src/tts/qwen3.ts');
+        const { createVoiceReviewApp } = await import('./src/voicereview-web/server.ts');
+        const names = listClonedVoiceProfiles();
+        const app = createVoiceReviewApp({
+          config: { batchPath: ${JSON.stringify(join(root, "missing.json"))}, enableClonedTts: true },
+          ttsEngines: { listClonedProfiles: listClonedVoiceProfiles, hasClonedProfile: () => false, synthesizeCloned: async () => null },
+        });
+        const html = await (await app.fetch(new Request('http://localhost/'))).text();
+        console.log(JSON.stringify({ names, html }));
+      `;
+      const child = Bun.spawn([process.execPath, "--eval", script], {
+        env: { ...process.env, HOME: root }, stdout: "pipe", stderr: "pipe",
+      });
+      const [code, stdout, stderr] = await Promise.all([
+        child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
+      ]);
+      expect(stderr).toBe("");
+      expect(code).toBe(0);
+      const { names, html } = JSON.parse(stdout);
+      expect(names).toEqual([payload]);
+      expect(html).toContain(`value="${escaped}">${escaped}</option>`);
+      expect(html).not.toContain(payload);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -83,7 +83,7 @@ interface FooterProps {
 export function Footer({ product }: FooterProps) {
   const links = PRODUCT_LINKS[product];
   const siblings = ECOSYSTEM.filter(
-    (e) => e.name.toLowerCase().replace("layer", "layer") !== product,
+    (e) => e.name.toLowerCase() !== product,
   );
 
   return (
