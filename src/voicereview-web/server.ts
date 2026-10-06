@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { stripMarkupForSpeech } from "../sanitize";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
 import {
   hasClonedProfile,
@@ -628,11 +629,12 @@ export function splitInterruptedSpeech(
 }
 
 export function humanizeSpokenText(input: string): string {
-  const tableNarration = humanizeMembersTable(input);
+  const plainText = stripMarkupForSpeech(String(input || ""));
+  const tableNarration = humanizeMembersTable(plainText);
   if (tableNarration) return tableNarration;
 
   const normalized = dedupeSpokenLines(
-    String(input || "")
+    plainText
       .replace(/\bas\s+[a-z0-9_-]+\s+with\s+\d+\s+chunks?\.?\s*/gi, " ")
       .replace(
         /\s*\((?:context|evidence|metadata|snippet|chunk)[^)]*\d+\s+chunks?\)/gi,
@@ -642,7 +644,6 @@ export function humanizeSpokenText(input: string): string {
   )
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`([^`]+)`/g, "$1")
-    .replace(/<\/?[^>]+>/g, "")
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/^\s*[-*]\s+/gm, "")
     .replace(/\brt-[a-z0-9-]{6,}\b/gi, "")
@@ -1257,7 +1258,8 @@ export function createVoiceReviewApp(options?: {
         if (isAbortError(error)) {
           return jsonResponse({ error: "request aborted" }, 499);
         }
-        return jsonResponse({ error: errorMessage(error) }, 500);
+        console.error("[voicereview] request failed", error);
+        return jsonResponse({ error: "Internal server error" }, 500);
       }
     },
   };
@@ -2805,7 +2807,9 @@ function renderNaturalConversationPage(
   const clonedVoices = config.enableClonedTts
     ? ttsEngines.listClonedProfiles()
     : [];
-  const clonedVoiceSetJson = JSON.stringify(clonedVoices);
+  // JSON is embedded in a script element, whose HTML parser recognizes </script>
+  // even inside JS strings. Encode '<' after serialization, preserving the values.
+  const clonedVoiceSetJson = JSON.stringify(clonedVoices).replace(/</g, "\\u003c");
   const edgeFallbackVoice = ttsVoices.includes(config.ttsVoice)
     ? config.ttsVoice
     : DEFAULT_CONFIG.ttsVoice;
@@ -4129,9 +4133,9 @@ function renderNaturalConversationPage(
       };
     }
 
+    const stripMarkupForSpeech = ${stripMarkupForSpeech.toString()};
     function humanizeSpokenText(input) {
-      return String(input || "")
-        .replace(/<\\/?[^>]+>/g, "")
+      return stripMarkupForSpeech(String(input || ""))
         .replace(/^#{1,6}\\s*/gm, "")
         .replace(/^\\s*[-*]\\s+/gm, "")
         .replace(/\\brt-[a-z0-9-]{6,}\\b/gi, "")
