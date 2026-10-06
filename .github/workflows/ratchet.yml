@@ -1,0 +1,45 @@
+name: Ratchet
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  ratchet:
+    name: ratchet
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          bun --version
+      - name: Harness safety and comment validation
+        run: python3 -m unittest discover -s ratchet -p 'test_*.py'
+      - name: Main baseline
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 ratchet/run.py --ref "$BASE_SHA" --output .verified/ratchet/baseline
+      - name: PR head
+        if: ${{ !cancelled() }}
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 ratchet/run.py --ref "$HEAD_SHA" --output .verified/ratchet/head
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: ratchet
+          path: .verified/ratchet/
+          include-hidden-files: true
+          if-no-files-found: error
