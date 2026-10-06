@@ -1,0 +1,103 @@
+{
+  "execution": {
+    "argv": [
+      "python3",
+      "ratchet/run.py",
+      "--ref",
+      "db1a8027780cd3a1f9e244b7f54acaaa51ddb821",
+      "--output",
+      "docs.local/lane-j/main-final"
+    ],
+    "exit_code": 0,
+    "harness_sha256": "92ac363b127ead6254b965617561ebaf033ffd1688de392c2d4c81347f1b9c74",
+    "files_sha256": {
+      "run.py": "92ac363b127ead6254b965617561ebaf033ffd1688de392c2d4c81347f1b9c74",
+      "fixture-rec.py": "99ed50a1ee9e9c9a0e916fc99f2949a23a9531d48ad01ef3e2afe4ef6c96dc02",
+      "fixture-tts.py": "d370c5772b91490ceec6088fed093c8c30ad84f73d6d17f232417c6be8d977b8",
+      "lock-client.ts": "1ce13c64d2f9aaf311ee16b4ae6e2e90dc5a3467ad02c89a33124b49985b77cf"
+    }
+  },
+  "result": {
+    "row": "voice-ask-lock-suspends-timeout",
+    "kind": "behavior",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "bug_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+    "fix_sha": "7677d52e5045970485f0dd5c141f8c069f66e9d9",
+    "measured_sha": "db1a8027780cd3a1f9e244b7f54acaaa51ddb821",
+    "error": null,
+    "overlay_sha256": null,
+    "app_binary_sha256": "6ecda2ffa2973899767882aae53b603e6d39a397d3da89c1a7d25fc2552650a7"
+  },
+  "cases": [
+    {
+      "ending": "stop",
+      "lock_ack": true,
+      "held_seconds": 21.05085949995555,
+      "ended_before_release": false,
+      "completed": true,
+      "pcm_seconds": 18.976,
+      "recorder_seconds": 21.12330187484622,
+      "ending_ack": true,
+      "accepted_lock": {
+        "type": "ack",
+        "command": "set_recording_hold",
+        "outcome": "accept",
+        "id": "lock-stop"
+      },
+      "accepted_ending": {
+        "type": "ack",
+        "command": "stop",
+        "outcome": "accept",
+        "id": "end-stop"
+      },
+      "early_end_seconds": null
+    },
+    {
+      "ending": "unlock",
+      "lock_ack": true,
+      "held_seconds": 21.026799791958183,
+      "ended_before_release": false,
+      "completed": true,
+      "pcm_seconds": 23.232,
+      "recorder_seconds": 26.106136209098622,
+      "ending_ack": true,
+      "accepted_lock": {
+        "type": "ack",
+        "command": "set_recording_hold",
+        "outcome": "accept",
+        "id": "lock-unlock"
+      },
+      "accepted_ending": {
+        "type": "ack",
+        "command": "set_recording_hold",
+        "outcome": "accept",
+        "id": "end-unlock"
+      },
+      "early_end_seconds": null
+    }
+  ],
+  "baseline_rows": {
+    "voice-ask-lock-suspends-timeout": {
+      "value": 0,
+      "status": "PASS",
+      "error": null
+    },
+    "ndjson-partial-write": {
+      "value": 0,
+      "status": "PASS",
+      "error": null
+    },
+    "socket-isolation": {
+      "value": 0,
+      "status": "PASS",
+      "error": null
+    },
+    "retranscribe-history-refresh": {
+      "value": 0,
+      "status": "PASS",
+      "error": null
+    }
+  }
+}

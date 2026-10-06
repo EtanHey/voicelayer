@@ -1,0 +1,33 @@
+[voicelayer-daemon] PATH enriched (38 dirs)
+[voicelayer-daemon] python3: <scratch>/bin/python3
+[voicelayer-daemon] MCP daemon listening on <scratch>/m.sock
+[voicelayer-daemon] socat config: socat STDIO UNIX-CONNECT:<scratch>/m.sock
+[socket-client] Connected to VoiceBar at <scratch>/v.sock
+[mcp-daemon] MCP-over-NDJSON request (method: initialize)
+[mcp-daemon] MCP-over-NDJSON request (method: notifications/initialized)
+[mcp-daemon] MCP-over-NDJSON request (method: tools/call)
+[socket-client] History stop unavailable: VoiceBar did not confirm History playback stopped; proceeding with Ask
+[voicelayer] Listening... speak now (Silero VAD active)
+[voicelayer] Silero VAD model loaded
+[socket-client] Command from VoiceBar: {"cmd":"set_recording_hold","engaged":true,"id":"lock-stop"}
+[voicelayer] VAD chunk #1: prob=0.0017 rms=0
+[voicelayer] VAD chunk #2: prob=0.0069 rms=0
+[voicelayer] VAD chunk #3: prob=0.0089 rms=0
+[socket-client] Command from VoiceBar: {"cmd":"stop","id":"end-stop"}
+[voicelayer] Stop signal received — ending recording
+[voicelayer] Recording gate: duration=18976ms, rms=0, dbfs=-inf, vad_speech=false, allowed=false
+[voicelayer] Dropping recording before STT: vad-no-speech (duration=18976ms, rms=0, dbfs=-inf)
+[mcp-daemon] MCP-over-NDJSON request (method: initialize)
+[mcp-daemon] MCP-over-NDJSON request (method: notifications/initialized)
+[mcp-daemon] MCP-over-NDJSON request (method: tools/call)
+[socket-client] History stop unavailable: VoiceBar did not confirm History playback stopped; proceeding with Ask
+[voicelayer] Listening... speak now (Silero VAD active)
+[voicelayer] VAD chunk #1: prob=0.0017 rms=0
+[socket-client] Command from VoiceBar: {"cmd":"set_recording_hold","engaged":true,"id":"lock-unlock"}
+[voicelayer] VAD chunk #2: prob=0.0069 rms=0
+[voicelayer] VAD chunk #3: prob=0.0089 rms=0
+[socket-client] Command from VoiceBar: {"cmd":"set_recording_hold","engaged":false,"id":"end-unlock"}
+[voicelayer] Recording gate: duration=23232ms, rms=0, dbfs=-inf, vad_speech=false, allowed=false
+[voicelayer] Dropping recording before STT: vad-no-speech (duration=23232ms, rms=0, dbfs=-inf)
+[socket-client] Reconnecting in 1000ms (next: 2000ms)
+[socket-client] Disconnected from VoiceBar

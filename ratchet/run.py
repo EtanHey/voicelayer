@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import termios
 import threading
@@ -18,6 +19,8 @@ import wave
 
 REPO = Path(__file__).resolve().parents[1]
 ROWS = {
+    "voice-ask-lock-suspends-timeout": ("a2e25844fd98be78293ff3133122a6df0b0a50c8",
+                                         "7677d52e5045970485f0dd5c141f8c069f66e9d9"),
     "ndjson-partial-write": ("78a43fbb^1", "78a43fbb"),
     "socket-isolation": ("39a673b1^1", "313a959e"),
     "retranscribe-history-refresh": ("a2e25844^1", "a2e25844"),
@@ -101,7 +104,11 @@ class Run:
     def __init__(self, ref, output):
         self.ref, self.output = sha(ref), output
         output.write_text("")
-        self.root = Path(tempfile.mkdtemp(prefix="vlr-", dir="/tmp"))
+        parent = Path.home() / ".vlv"
+        parent.mkdir(mode=0o700, exist_ok=True)
+        if parent.is_symlink() or parent.resolve() != parent:
+            raise RuntimeError("scratch parent must be a physical absolute path")
+        self.root = Path(tempfile.mkdtemp(prefix="pdv-", dir=parent))
         self.procs, self.files = [], []
         self.source = self.root / "source"
         self.overlay_hash = None
@@ -120,10 +127,10 @@ class Run:
             subprocess.run(["bun", "install", "--frozen-lockfile"], cwd=self.source, check=True,
                            stdout=log, stderr=subprocess.STDOUT)
         self.env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH") if k in os.environ}
-        for name in ("state", "tmp", "recordings", "bin"):
+        for name in ("state", "tmp", "recordings", "bin", "home"):
             (self.root / name).mkdir()
         self.env.update({
-            "SHELL": "/bin/sh", "VOICELAYER_SOCKET_PATH": str(self.root / "v.sock"),
+            "HOME": str(self.root / "home"), "SHELL": "/bin/sh", "VOICELAYER_SOCKET_PATH": str(self.root / "v.sock"),
             "VOICELAYER_MCP_SOCKET_PATH": str(self.root / "m.sock"),
             "QA_VOICE_SOCKET_PATH": str(self.root / "v.sock"),
             "QA_VOICE_MCP_SOCKET_PATH": str(self.root / "m.sock"),
@@ -411,6 +418,128 @@ def wire_row(run, row):
         reverse_thread.join(2)
 
 
+def lock_violations(case):
+    if (not case['lock_ack'] or case['pcm_seconds'] <= 0 or case['held_seconds'] < 21
+            or not case['completed'] or case['ending'] not in ('stop', 'unlock')):
+        raise RuntimeError('lock evidence missing or incomplete')
+    if not case['ended_before_release'] and (case['pcm_seconds'] < 15 or not case['ending_ack']):
+        raise RuntimeError('lock evidence did not exercise pre-speech silence')
+    return int(case['ended_before_release'])
+
+
+def lock_row(run):
+    # Device/TTS executable fixtures only; product source and VAD remain untouched.
+    for name, fixture in [('rec', 'fixture-rec.py'), ('python3', 'fixture-tts.py')]:
+        path = run.root / 'bin' / name
+        path.write_text('#!' + sys.executable + '\n' + (REPO / 'ratchet' / fixture).read_text())
+        path.chmod(0o700)
+    player = run.root / 'bin/afplay'
+    player.write_text('#!/bin/sh\nexit 0\n')
+    player.chmod(0o700)
+    run.env.update(VOICELAYER_TEST_FAKE_REC='1',
+                   VOICELAYER_TEST_FAKE_REC_BIN=str(run.root / 'bin/rec'),
+                   RATCHET_PYTHON=sys.executable,
+                   RATCHET_REC_RECEIPT=str(run.root / 'rec.json'))
+    (run.root / 'vocab.json').write_text('{"entries": []}')
+    fixture_names = ('fixture-rec.py', 'fixture-tts.py', 'lock-client.ts')
+    run.output.with_suffix('.fixtures.json').write_text(json.dumps({
+        name: hashlib.sha256((REPO / 'ratchet' / name).read_bytes()).hexdigest()
+        for name in fixture_names}, indent=2) + '\n')
+    client_script = run.source / 'ratchet-lock-client.ts'
+    shutil.copy2(REPO / 'ratchet/lock-client.ts', client_script)
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(run.env['VOICELAYER_SOCKET_PATH'])
+    listener.listen()
+    listener.settimeout(30)
+    run.daemon(run.root / 'v.sock')
+    bar, _ = listener.accept()
+    bar.settimeout(.1)
+    frames, faults, done = [], [], threading.Event()
+
+    def receive():
+        pending = b''
+        try:
+            while not done.is_set():
+                try:
+                    raw = bar.recv(65536)
+                except socket.timeout:
+                    continue
+                if not raw:
+                    raise RuntimeError('daemon disconnected')
+                pending += raw
+                while b'\n' in pending:
+                    line, pending = pending.split(b'\n', 1)
+                    if line:
+                        frames.append((time.monotonic(), json.loads(line)))
+        except Exception as error:
+            if not done.is_set():
+                faults.append(str(error))
+
+    reader = threading.Thread(target=receive, daemon=True)
+    reader.start()
+    cases = []
+    try:
+        wait(lambda: (run.root / 'm.sock').exists())
+        for ending in ('stop', 'unlock'):
+            frames.clear()
+            result_path = run.root / ('sdk-' + ending + '.json')
+            rec_path = run.root / 'rec.json'
+            rec_path.unlink(missing_ok=True)
+            client = run.launch(['bun', str(client_script), str(result_path)], logname='sdk-' + ending)
+            def has_frame(predicate):
+                if faults or client.poll() not in (None, 0):
+                    raise RuntimeError('missing lock boundary: ' + repr(faults) + run.log('sdk-' + ending))
+                return any(predicate(frame) for _, frame in frames)
+            wait(lambda: has_frame(lambda f: f.get('type') == 'state' and f.get('state') == 'recording'))
+            command_id = 'lock-' + ending
+            bar.sendall((json.dumps(dict(cmd='set_recording_hold', engaged=True, id=command_id)) + '\n').encode())
+            wait(lambda: has_frame(lambda f: f.get('type') == 'ack' and f.get('id') == command_id))
+            ack = next(f for _, f in frames if f.get('type') == 'ack' and f.get('id') == command_id)
+            if ack.get('outcome') != 'accept':
+                raise RuntimeError('lock evidence: command not accepted: ' + repr(ack))
+            locked = time.monotonic()
+            # Exceed input deadline (5), outer watchdog (20), and pre-speech silence (15).
+            while time.monotonic() - locked < 21:
+                if faults:
+                    raise RuntimeError('lock evidence: disconnected boundary')
+                time.sleep(.05)
+            release = time.monotonic()
+            ended = [(when, frame) for when, frame in frames if when < release
+                     and frame.get('type') == 'state' and frame.get('state') in ('idle', 'transcribing')
+                     and frame.get('source') != 'playback']
+            before_release = json.loads(rec_path.read_text())
+            early = bool(ended or result_path.exists() or before_release['stopped'])
+            end_ack = None
+            if not early:
+                cmd = dict(cmd='stop' if ending == 'stop' else 'set_recording_hold', id='end-' + ending)
+                if ending == 'unlock':
+                    cmd['engaged'] = False
+                bar.sendall((json.dumps(cmd) + '\n').encode())
+                wait(lambda: has_frame(lambda f: f.get('type') == 'ack' and f.get('id') == cmd['id']), 5)
+                end_ack = next(f for _, f in frames if f.get('type') == 'ack' and f.get('id') == cmd['id'])
+                if end_ack.get('outcome') != 'accept':
+                    raise RuntimeError('lock evidence: ending not accepted')
+            wait(lambda: result_path.exists(), 12)
+            client.wait(5)
+            result = json.loads(result_path.read_text())
+            if client.returncode or result.get('isError'):
+                raise RuntimeError('lock evidence: SDK request failed')
+            pcm = json.loads(rec_path.read_text())
+            case = dict(ending=ending, lock_ack=True, held_seconds=release - locked,
+                        ended_before_release=early, completed=result['completed'],
+                        pcm_seconds=pcm['pcm_seconds'], recorder_seconds=pcm['elapsed_seconds'],
+                        ending_ack=end_ack is not None, accepted_lock=ack, accepted_ending=end_ack,
+                        early_end_seconds=ended[0][0] - locked if ended else None)
+            cases.append(case)
+            run.output.with_suffix('.lock.json').write_text(json.dumps(cases, indent=2) + '\n')
+        return sum(lock_violations(case) for case in cases)
+    finally:
+        done.set()
+        reader.join(2)
+        bar.close()
+        listener.close()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ref", default="HEAD")
@@ -426,7 +555,8 @@ def main():
             if row == "socket-isolation":
                 run.instrument()
             run.build()
-            value = isolation(run) if row == "socket-isolation" else wire_row(run, row)
+            value = (isolation(run) if row == "socket-isolation" else
+                     lock_row(run) if row == "voice-ask-lock-suspends-timeout" else wire_row(run, row))
         except Exception as failure:
             error = str(failure)
         finally:
