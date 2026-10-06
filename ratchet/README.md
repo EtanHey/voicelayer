@@ -9,7 +9,7 @@ The [fleet brief](../../orchestrator/docs.local/handoffs/2026-10-06/ratchet-tabl
 5. Tighten/add only; loosening or removing requires a lead ruling in the PR body.
 6. Mocks are `unit` evidence and do not count as rows.
 
-Run on macOS with the Swift CI toolchain, Python 3.12+, and Bun:
+Run on macOS with the Swift CI toolchain, Python 3.12+, Bun, and socat:
 
 ```sh
 python3 ratchet/run.py --ref HEAD --output .verified/ratchet/head
@@ -17,12 +17,13 @@ python3 ratchet/run.py --row ndjson-partial-write --ref '78a43fbb^1' --output .v
 python3 ratchet/run.py --row ndjson-partial-write --ref 78a43fbb --output .verified/ratchet/R1-fix
 ```
 
-The runner builds clean detached commit worktrees and launches the real debug app/full MCP daemon on throwaway sockets, state, and temp roots. Both canonical and legacy overrides are required for older commits. Cleanup targets only its own processes/worktrees. No resident sockets, microphone, installed app, or port 8178 are used. R3's deterministic STT executable fixture tests archive durability/notification, not recognition quality.
+The runner builds clean detached commit worktrees and launches the real debug app/full MCP daemon on throwaway sockets, state, and physical `~/.vlv/pdv-*` roots. Each child gets a synthetic HOME. Both canonical and legacy overrides are required for older commits. Cleanup targets only its own processes/worktrees. No resident sockets, microphone, installed app, or port 8178 are used. R3's deterministic STT executable fixture tests archive durability/notification, not recognition quality.
 
 | Row | Boundary | Ceiling |
 |---|---|---|
 | ndjson-partial-write | Real daemon queue, stalled Unix reader, app's existing Bad JSON and client-registration logs | 0 Bad JSON + missing handled frames; absent pressure evidence is FAIL |
 | socket-isolation | **behavior (overlay: protected-path test seam)**: fake resident survives plain, case, parent-symlink, socket-symlink launches | 0 takeovers/missing refusals |
+| voice-ask-lock-suspends-timeout | Real daemon via MCP SDK; accepted app HOLD command keeps silent capture alive beyond 5 s input deadline, 20 s outer watchdog and 15 s pre-speech silence; stop and unlock finish it | 0 early terminations |
 | retranscribe-history-refresh | MCP voice_ask retry durably writes the original synthetic Ask and sends exactly one archive_metadata_updated to the app connection | 0 missing/extra updates |
 
 R1 requires harness evidence: a small receive buffer held unread for at least 0.5 s, queued bytes filling that buffer, a sent frame larger than the buffer and maximum recv chunk, and at least one NDJSON frame spanning multiple recv calls. The wire receipt records these values; absent evidence is `pressure not exercised` (FAIL). This proves the exercised pressure/fragmentation seam without observing or modifying product write-return values. R3 waits up to 10 s for a complete update matching the original Ask, then requires 1 s without further received bytes (12 s total bound including margin); missing events, late duplicates, and incomplete frames fail. Setup exceptions clean up the registered worktree and temp root.
@@ -38,3 +39,5 @@ python3 ratchet/comment.py --baseline .verified/ratchet/baseline/result.json --h
 ```
 
 Add `--pr <number> --repo EtanHey/voicelayer` to upsert the marker-delimited bot comment. Manual human/agent comments are never overwritten. The writer rejects stale SHAs, changed row sets, loosened ceilings, and missing overlay hashes. Run `python3 -m unittest discover -s ratchet -p 'test_*.py'` for unit safety/ingestion checks; these are not real rows.
+
+R4 pins `a2e25844fd98be78293ff3133122a6df0b0a50c8` (main immediately before #247) and `7677d52e5045970485f0dd5c141f8c069f66e9d9` (merge). The fix branch parent predates the intervening #246 merge. `lock-client.ts` uses the target checkout MCP SDK Client over socat/NDJSON. A synthetic app-side socket sends the actual `set_recording_hold` and `stop` commands and requires accepted ACKs. Product daemon/capture/VAD code is unmodified. Executable recorder and prompt fixtures provide silence; afplay is replaced with an inert executable. The boundary proves deadline/lock mechanics, not recognition, installed UI, or real microphone behavior. Both stop and unlock cases observe 21 s locked, then require SDK completion. Missing ACKs, PCM, replies or endings are harness FAILs, not historical bug receipts.

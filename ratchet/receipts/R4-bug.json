@@ -1,0 +1,73 @@
+{
+  "execution": {
+    "argv": [
+      "python3",
+      "ratchet/run.py",
+      "--ref",
+      "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+      "--output",
+      "docs.local/lane-j/bug-final",
+      "--row",
+      "voice-ask-lock-suspends-timeout"
+    ],
+    "exit_code": 1,
+    "harness_sha256": "92ac363b127ead6254b965617561ebaf033ffd1688de392c2d4c81347f1b9c74",
+    "files_sha256": {
+      "run.py": "92ac363b127ead6254b965617561ebaf033ffd1688de392c2d4c81347f1b9c74",
+      "fixture-rec.py": "99ed50a1ee9e9c9a0e916fc99f2949a23a9531d48ad01ef3e2afe4ef6c96dc02",
+      "fixture-tts.py": "d370c5772b91490ceec6088fed093c8c30ad84f73d6d17f232417c6be8d977b8",
+      "lock-client.ts": "1ce13c64d2f9aaf311ee16b4ae6e2e90dc5a3467ad02c89a33124b49985b77cf"
+    }
+  },
+  "result": {
+    "row": "voice-ask-lock-suspends-timeout",
+    "kind": "behavior",
+    "value": 2,
+    "ceiling": 0,
+    "status": "FAIL",
+    "bug_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+    "fix_sha": "7677d52e5045970485f0dd5c141f8c069f66e9d9",
+    "measured_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+    "error": null,
+    "overlay_sha256": null,
+    "app_binary_sha256": "d56f717633fa5f3d71693b81f934aaae43c2fb2343b52bd68ec4549cb78cf4b5"
+  },
+  "cases": [
+    {
+      "ending": "stop",
+      "lock_ack": true,
+      "held_seconds": 21.010307209100574,
+      "ended_before_release": true,
+      "completed": true,
+      "pcm_seconds": 4.448,
+      "recorder_seconds": 4.979026667075232,
+      "ending_ack": false,
+      "accepted_lock": {
+        "type": "ack",
+        "command": "set_recording_hold",
+        "outcome": "accept",
+        "id": "lock-stop"
+      },
+      "accepted_ending": null,
+      "early_end_seconds": 4.910744125023484
+    },
+    {
+      "ending": "unlock",
+      "lock_ack": true,
+      "held_seconds": 21.005384207936004,
+      "ended_before_release": true,
+      "completed": true,
+      "pcm_seconds": 4.416,
+      "recorder_seconds": 4.972354208119214,
+      "ending_ack": false,
+      "accepted_lock": {
+        "type": "ack",
+        "command": "set_recording_hold",
+        "outcome": "accept",
+        "id": "lock-unlock"
+      },
+      "accepted_ending": null,
+      "early_end_seconds": 4.909989000065252
+    }
+  ]
+}

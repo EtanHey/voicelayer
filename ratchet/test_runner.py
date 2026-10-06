@@ -36,7 +36,7 @@ class RunnerTests(unittest.TestCase):
                     patch("builtins.print"):
                 self.assertEqual(runner.main(), 1)
             rows = json.loads((output / "result.json").read_text())
-            self.assertEqual(len(rows), 3)
+            self.assertEqual(len(rows), len(runner.ROWS))
             self.assertTrue(all(row["status"] == "FAIL" and row["error"] for row in rows))
 
 

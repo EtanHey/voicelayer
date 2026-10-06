@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 
 MARKER = "<!-- voicelayer-ratchet:v1 -->"
-ROWS = ("ndjson-partial-write", "socket-isolation", "retranscribe-history-refresh")
+ROWS = ("ndjson-partial-write", "socket-isolation", "retranscribe-history-refresh", "voice-ask-lock-suspends-timeout")
 
 
 def read(path, expected_sha):
