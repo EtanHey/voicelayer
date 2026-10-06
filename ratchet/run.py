@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Real app/daemon regressions. Scratch overlays only observe or remap paths."""
 import argparse
+import array
+import fcntl
 import hashlib
 import json
 import os
@@ -9,6 +11,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import termios
 import threading
 import time
 import wave
@@ -45,6 +48,55 @@ def connect(path):
     return client
 
 
+class Wire:
+    def __init__(self):
+        self.chunks, self.changed = [], threading.Condition()
+        self.last = time.monotonic()
+
+    def feed(self, raw):
+        with self.changed:
+            self.chunks.append(raw)
+            self.last = time.monotonic()
+            self.changed.notify_all()
+
+    def archive(self, path, timeout=10, quiet=1):
+        deadline, cap = time.monotonic() + timeout, time.monotonic() + timeout + quiet + 1
+        with self.changed:
+            while True:
+                complete = b"".join(self.chunks).split(b"\n")[:-1]
+                frames = [json.loads(line) for line in complete if line]
+                observed = any(f.get("type") == "archive_metadata_updated" and f.get("recording_path") == path for f in frames)
+                now = time.monotonic()
+                if observed and now - self.last >= quiet:
+                    return frames, True, not b"".join(self.chunks).split(b"\n")[-1]
+                if now >= cap or (not observed and now >= deadline):
+                    return frames, observed, False
+                self.changed.wait(min(.05, max(0, cap - now)))
+
+
+def pressure_evidence(chunks, frame_bytes, queued, stall, buffer):
+    ends, offset = [], 0
+    for chunk in chunks:
+        offset += len(chunk)
+        ends.append(offset)
+    split, start = 0, 0
+    for line in b"".join(chunks).splitlines(keepends=True):
+        end = start + len(line)
+        split += int(any(start < edge < end for edge in ends))
+        start = end
+    maximum = max(map(len, chunks), default=0)
+    exercised = bool(frame_bytes and split and 0 < maximum < max(frame_bytes)
+                     and queued >= buffer and stall >= .5 and 0 < buffer < max(frame_bytes))
+    return dict(exercised=exercised, expected_frame_bytes=frame_bytes, recv_chunks=len(chunks),
+                max_recv_chunk=maximum, split_frames=split, queued_bytes_before_read=queued,
+                reader_stall_seconds=stall, receive_buffer_bytes=buffer)
+
+
+def require_pressure(evidence):
+    if not evidence["exercised"]:
+        raise RuntimeError("pressure not exercised")
+
+
 class Run:
     def __init__(self, ref, output):
         self.ref, self.output = sha(ref), output
@@ -52,12 +104,21 @@ class Run:
         self.root = Path(tempfile.mkdtemp(prefix="vlr-", dir="/tmp"))
         self.procs, self.files = [], []
         self.source = self.root / "source"
+        self.overlay_hash = None
+        try:
+            self.setup(output)
+        except BaseException:
+            self.close()
+            raise
+
+    def setup(self, output):
         subprocess.run(["git", "-C", str(REPO), "worktree", "add", "--detach", "--quiet",
                         str(self.source), self.ref], check=True,
                        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
         # Dependencies belong to the target checkout, not an injected module mock.
-        subprocess.run(["bun", "install", "--frozen-lockfile"], cwd=self.source, check=True,
-                       stdout=output.open("a"), stderr=subprocess.STDOUT)
+        with output.open("a") as log:
+            subprocess.run(["bun", "install", "--frozen-lockfile"], cwd=self.source, check=True,
+                           stdout=log, stderr=subprocess.STDOUT)
         self.env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH") if k in os.environ}
         for name in ("state", "tmp", "recordings", "bin"):
             (self.root / name).mkdir()
@@ -91,7 +152,6 @@ class Run:
         stub.write_text("#!/bin/sh\nprintf 'Recovered synthetic answer.\\n'\n")
         stub.chmod(0o700)
         self.env["PATH"] = str(self.root / "bin") + ":" + self.env["PATH"]
-        self.overlay_hash = None
 
     def instrument(self):
         policy = self.source / "flow-bar/Sources/VoiceBar/SocketBindingPolicy.swift"
@@ -163,9 +223,14 @@ class Run:
             self.output.with_suffix("." + name + ".log").write_text(self.transport_log(name))
         for log in self.files:
             log.close()
-        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(self.source)], check=True,
-                       env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
-        shutil.rmtree(self.root)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        try:
+            listing = command(["git", "-C", str(REPO), "worktree", "list", "--porcelain"], env=env)
+            if any(Path(line[9:]).resolve() == self.source.resolve() for line in listing.splitlines()
+                   if line.startswith("worktree ")):
+                subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(self.source)], check=True, env=env)
+        finally:
+            shutil.rmtree(self.root)
 
 
 def isolation(run):
@@ -221,32 +286,45 @@ def wire_row(run, row):
     bridge = run.root / "bridge.sock"
     listener = socket.socket(socket.AF_UNIX)
     listener.bind(str(bridge))
+    pressure = row == "ndjson-partial-write"
+    if pressure:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
     listener.listen()
-    if row == "ndjson-partial-write":
+    if pressure:
         (run.root / "pressure.ts").write_text(
             'import {broadcast,isConnected} from ' + json.dumps(str(run.source / 'src/socket-client')) + ';\n'
             'const timer=setInterval(()=>{if(!isConnected()) return; clearInterval(timer);\n'
-            'for(let i=0;i<2;i++) broadcast({type:"client_hello",role:"ratchet-"+i,pid:process.pid,\n'
-            'accepts_commands:true,payload:"אבג — …".repeat(80000)} as any);\n'
+            'for(let i=0;i<2;i++) {const frame={type:"client_hello",role:"ratchet-"+i,pid:process.pid,\n'
+            'accepts_commands:true,payload:"אבג — …".repeat(80000)};\n'
+            'console.error("[ratchet] frame_bytes="+Buffer.byteLength(JSON.stringify(frame)+"\\n")); broadcast(frame as any);}\n'
             'setTimeout(()=>{broadcast({type:"client_hello",role:"ratchet-2",pid:process.pid,accepts_commands:true} as any);\n'
             'console.error("[ratchet] sent=3");},1000);},100);\n')
     listener.settimeout(30)
     run.daemon(bridge, row == "ndjson-partial-write")
     upstream, _ = listener.accept()
+    if pressure:
+        upstream.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
     upstream.settimeout(20)
     downstream = connect(app_path)
-    captured, errors = [], []
+    captured, errors, pressure_state = Wire(), [], {}
 
     def forward():
         try:
             # Real daemon serializer and socket.write meet a stalled kernel buffer.
-            time.sleep(.5)
+            if pressure:
+                # Observe the full kernel queue while the sender cannot drain it.
+                start = time.monotonic()
+                time.sleep(.5)
+                queued = array.array("i", [0])
+                fcntl.ioctl(upstream, termios.FIONREAD, queued, True)
+                pressure_state.update(queued=queued[0], stall=time.monotonic() - start,
+                                      buffer=upstream.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF))
             while True:
                 raw = upstream.recv(4093)
                 if not raw:
                     break
-                captured.append(raw)
                 downstream.sendall(raw)
+                captured.feed(raw)
         except Exception as error:
             errors.append(str(error))
 
@@ -274,9 +352,14 @@ def wire_row(run, row):
             assert "[ratchet] sent=3" in run.log("daemon"), "pressure fixture did not emit frames"
             bad_json = run.log().count("[VoiceBar] Bad JSON from client")
             missing = sum("role: ratchet-" + str(i) + "," not in run.log() for i in range(3))
+            sizes = [int(line.split("frame_bytes=", 1)[1]) for line in run.log("daemon").splitlines()
+                     if line.startswith("[ratchet] frame_bytes=")]
+            evidence = pressure_evidence(captured.chunks, sizes, pressure_state.get("queued", 0),
+                                        pressure_state.get("stall", 0), pressure_state.get("buffer", 0))
             run.output.with_suffix(".wire.json").write_text(json.dumps({
                 "sent_frames": 3, "handled_frames": 3 - missing, "bad_json": bad_json,
-                "wire_bytes": sum(map(len, captured)), "errors": errors}))
+                "wire_bytes": sum(map(len, captured.chunks)), "errors": errors, "pressure": evidence}))
+            require_pressure(evidence)
             return bad_json + missing
         archive_id = "2026-08-20T10-11-12-000Z-abcd1234"
         directory = run.root / "recordings" / archive_id[:10] / archive_id
@@ -310,16 +393,16 @@ def wire_row(run, row):
                 response = json.loads(stream.read(length))
             assert not response["result"].get("isError"), response
         wait(lambda: (directory / "voicelayer-transcript.txt").exists())
-        time.sleep(.5)
-        lines = b"".join(captured).split(b"\n")[:-1]
-        matches = [line for line in lines if json.loads(line).get("type") == "archive_metadata_updated"
-                   and json.loads(line).get("recording_path") == str(audio.resolve())]
+        frames, observed, quiet = captured.archive(str(audio.resolve()))
+        matches = [f for f in frames if f.get("type") == "archive_metadata_updated"
+                   and f.get("recording_path") == str(audio.resolve())]
         assert (directory / "voicelayer-transcript.txt").read_text() == "Recovered synthetic answer."
         assert json.loads((directory / "metadata.json").read_text())["transcription_status"] == "transcribed"
         run.output.with_suffix(".wire.json").write_text(json.dumps({
             "archive_updates": len(matches), "durable_transcript": True, "durable_metadata": True,
-            "transcription_events": sum(json.loads(line).get("type") == "transcription" for line in lines)}))
-        return int(len(matches) != 1 or any(json.loads(line).get("type") == "transcription" for line in lines))
+            "transcription_events": sum(f.get("type") == "transcription" for f in frames),
+            "event_observed": observed, "quiet_period_complete": quiet, "quiet_seconds": 1}))
+        return int(not observed or not quiet or len(matches) != 1 or any(f.get("type") == "transcription" for f in frames))
     finally:
         upstream.close()
         downstream.close()

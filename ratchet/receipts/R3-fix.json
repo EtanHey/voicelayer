@@ -8,9 +8,10 @@
       "--ref",
       "a2e25844",
       "--output",
-      "docs.local/ratchet/R3-fix"
+      "docs.local/ratchet/r2/R3-fix"
     ],
-    "exit_code": 0
+    "exit_code": 0,
+    "harness_sha256": "946ef63136a5d0f8af32a23cfe648c1b5154bdce8405cc4d2dfd4e143619a85a"
   },
   "result": {
     "row": "retranscribe-history-refresh",
@@ -23,12 +24,15 @@
     "measured_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
     "error": null,
     "overlay_sha256": null,
-    "app_binary_sha256": "e0b36bc907021f539bc522b1c9340b75499b3356997e718ecf85d6c7ac7663e0"
+    "app_binary_sha256": "f7331b9fd541b6a8147ee2c46e212a6f71eef4d9bf1637517bf4fe3897a43152"
   },
   "wire": {
     "archive_updates": 1,
     "durable_transcript": true,
     "durable_metadata": true,
-    "transcription_events": 0
+    "transcription_events": 0,
+    "event_observed": true,
+    "quiet_period_complete": true,
+    "quiet_seconds": 1
   }
 }
