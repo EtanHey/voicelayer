@@ -317,7 +317,7 @@ describe("ack protocol", () => {
     queueDepthSpy.mockReturnValue(0);
     recordingStateSpy.mockReturnValue("idle");
     const audioPath =
-      "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
+      "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
 
     const response = handleSocketCommand({
       cmd: "retranscribe_recording",
@@ -340,7 +340,7 @@ describe("ack protocol", () => {
     recordingStateSpy.mockReturnValue("idle");
     retranscribeRecordingCaptureSpy.mockRejectedValueOnce(new Error("boom"));
     const audioPath =
-      "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
+      "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
 
     const response = handleSocketCommand({
       cmd: "retranscribe_recording",

@@ -948,8 +948,8 @@ describe("stt-polish", () => {
         polishedText: "Run large-v3-turbo after setup.",
       },
       {
-        cleanedText: "Read /Users/etan/project/src/input.ts before editing.",
-        polishedText: "Read Users etan project src input.ts before editing.",
+        cleanedText: "Read /Users/fixture-user/project/src/input.ts before editing.",
+        polishedText: "Read Users fixture-user project src input.ts before editing.",
       },
       {
         cleanedText: "Call `handleSocketCommand(socket)` after setup.",

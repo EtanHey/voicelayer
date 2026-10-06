@@ -733,7 +733,7 @@ final class VoiceStateTests: XCTestCase {
     }
 
     func testTranscriptionEventStoresArchivedRecordingPathForHistoryEntry() {
-        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let audioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -743,17 +743,17 @@ final class VoiceStateTests: XCTestCase {
 
         state.handleEvent([
             "type": "transcription",
-            "text": "Etan confirmed the correction",
+            "text": "Alex confirmed the correction",
             "recording_path": audioPath,
         ])
 
-        XCTAssertEqual(state.recentTranscriptionEntries.first?.text, "Etan confirmed the correction")
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.text, "Alex confirmed the correction")
         XCTAssertEqual(state.recentTranscriptionEntries.first?.recordingPath, audioPath)
-        XCTAssertEqual(state.recentTranscriptions, ["Etan confirmed the correction"])
+        XCTAssertEqual(state.recentTranscriptions, ["Alex confirmed the correction"])
     }
 
     func testTranscriptionEventWithRecordingPathNotifiesHistoryArchiveChange() {
-        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let audioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -767,7 +767,7 @@ final class VoiceStateTests: XCTestCase {
 
         state.handleEvent([
             "type": "transcription",
-            "text": "Etan confirmed the correction",
+            "text": "Alex confirmed the correction",
             "recording_path": audioPath,
         ])
 
@@ -777,15 +777,15 @@ final class VoiceStateTests: XCTestCase {
     }
 
     func testHistoryRetranscribeUpdatesOlderEntryInPlaceWithoutReordering() {
-        let latestPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-latest/audio.wav"
-        let olderPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-older/audio.wav"
+        let latestPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-latest/audio.wav"
+        let olderPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-older/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: {
                 [
                     RecentTranscriptionEntry(text: "Latest untouched transcript", recordingPath: latestPath),
-                    RecentTranscriptionEntry(text: "Ethan old transcript", recordingPath: olderPath),
+                    RecentTranscriptionEntry(text: "Alix old transcript", recordingPath: olderPath),
                 ]
             },
             recentTranscriptionEntriesSaver: { _ in }
@@ -793,13 +793,13 @@ final class VoiceStateTests: XCTestCase {
 
         state.handleEvent([
             "type": "transcription",
-            "text": "Etan corrected older transcript",
+            "text": "Alex corrected older transcript",
             "recording_path": olderPath,
         ])
 
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
             "Latest untouched transcript",
-            "Etan corrected older transcript",
+            "Alex corrected older transcript",
         ])
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.recordingPath), [
             latestPath,
@@ -808,7 +808,7 @@ final class VoiceStateTests: XCTestCase {
     }
 
     func testHistoryEntryRetranscribeSendsArchivedAudioPathAndUpdatesEntryWithoutPaste() throws {
-        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let audioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -827,7 +827,7 @@ final class VoiceStateTests: XCTestCase {
         }
         state.handleEvent([
             "type": "transcription",
-            "text": "Ethan confirmed the old transcript",
+            "text": "Alix confirmed the old transcript",
             "recording_path": audioPath,
         ])
 
@@ -852,16 +852,16 @@ final class VoiceStateTests: XCTestCase {
         ])
         state.handleEvent([
             "type": "transcription",
-            "text": "Etan confirmed the corrected transcript",
+            "text": "Alex confirmed the corrected transcript",
             "recording_path": audioPath,
         ])
 
         XCTAssertNil(state.activeHistoryRetranscriptionPath)
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
-            "Etan confirmed the corrected transcript",
+            "Alex confirmed the corrected transcript",
         ])
         XCTAssertEqual(state.recentTranscriptionEntries.first?.recordingPath, audioPath)
-        XCTAssertEqual(state.recentTranscriptions, ["Etan confirmed the corrected transcript"])
+        XCTAssertEqual(state.recentTranscriptions, ["Alex confirmed the corrected transcript"])
         XCTAssertEqual(pastedTexts, [])
     }
 
@@ -1025,8 +1025,8 @@ final class VoiceStateTests: XCTestCase {
     }
 
     func testHistoryRetranscribeAckStillClearsAfterReplayOverwritesPendingIntent() throws {
-        let firstAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-first/audio.wav"
-        let secondAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-second/audio.wav"
+        let firstAudioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-first/audio.wav"
+        let secondAudioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-second/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -1059,7 +1059,7 @@ final class VoiceStateTests: XCTestCase {
     }
 
     func testDeferredHistoryRetranscribeFinalSurvivesNewRecordingState() async throws {
-        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let audioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -1073,7 +1073,7 @@ final class VoiceStateTests: XCTestCase {
         }
         state.handleEvent([
             "type": "transcription",
-            "text": "Ethan confirmed the old transcript",
+            "text": "Alix confirmed the old transcript",
             "recording_path": audioPath,
         ])
 
@@ -1091,23 +1091,23 @@ final class VoiceStateTests: XCTestCase {
         ])
         state.handleEvent([
             "type": "transcription",
-            "text": "Etan confirmed the corrected transcript",
+            "text": "Alex confirmed the corrected transcript",
             "recording_path": audioPath,
         ])
         state.handleEvent([
             "type": "state",
             "state": "recording",
         ])
-        await waitForDeferredFinal(in: state, text: "Etan confirmed the corrected transcript")
+        await waitForDeferredFinal(in: state, text: "Alex confirmed the corrected transcript")
 
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
-            "Etan confirmed the corrected transcript",
+            "Alex confirmed the corrected transcript",
         ])
         XCTAssertEqual(state.recentTranscriptionEntries.first?.recordingPath, audioPath)
     }
 
     func testDeferredHistoryRetranscribeFinalSurvivesUserRecordStart() async throws {
-        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let audioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -1126,7 +1126,7 @@ final class VoiceStateTests: XCTestCase {
         }
         state.handleEvent([
             "type": "transcription",
-            "text": "Ethan confirmed the old transcript",
+            "text": "Alix confirmed the old transcript",
             "recording_path": audioPath,
         ])
 
@@ -1144,7 +1144,7 @@ final class VoiceStateTests: XCTestCase {
         ])
         state.handleEvent([
             "type": "transcription",
-            "text": "Etan confirmed the corrected transcript",
+            "text": "Alex confirmed the corrected transcript",
             "recording_path": audioPath,
         ])
         state.handleEvent([
@@ -1154,17 +1154,17 @@ final class VoiceStateTests: XCTestCase {
         ])
 
         state.record()
-        await waitForDeferredFinal(in: state, text: "Etan confirmed the corrected transcript")
+        await waitForDeferredFinal(in: state, text: "Alex confirmed the corrected transcript")
 
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
-            "Etan confirmed the corrected transcript",
+            "Alex confirmed the corrected transcript",
         ])
         XCTAssertEqual(pastedTexts, [])
     }
 
     func testRecordClearsHistoryRetranscribeIntentLatchAfterRejectedRecordStart() throws {
-        let firstAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-first/audio.wav"
-        let secondAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-second/audio.wav"
+        let firstAudioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-first/audio.wav"
+        let secondAudioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-second/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -1194,8 +1194,8 @@ final class VoiceStateTests: XCTestCase {
     }
 
     func testHistoryEntryRetranscribeDebouncesWhilePending() {
-        let firstAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-first/audio.wav"
-        let secondAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-second/audio.wav"
+        let firstAudioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-first/audio.wav"
+        let secondAudioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-second/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -1215,7 +1215,7 @@ final class VoiceStateTests: XCTestCase {
     }
 
     func testLateHistoryRetranscribeFinalDoesNotPasteIntoNewBarRecording() throws {
-        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let audioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -1234,7 +1234,7 @@ final class VoiceStateTests: XCTestCase {
         }
         state.handleEvent([
             "type": "transcription",
-            "text": "Ethan confirmed the old transcript",
+            "text": "Alix confirmed the old transcript",
             "recording_path": audioPath,
         ])
 
@@ -1267,18 +1267,18 @@ final class VoiceStateTests: XCTestCase {
         ])
         state.handleEvent([
             "type": "transcription",
-            "text": "Etan confirmed the corrected transcript",
+            "text": "Alex confirmed the corrected transcript",
             "recording_path": audioPath,
         ])
 
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
-            "Etan confirmed the corrected transcript",
+            "Alex confirmed the corrected transcript",
         ])
         XCTAssertEqual(pastedTexts, [])
     }
 
     func testHistoryRetranscribePendingClearsWhenDaemonReturnsIdleWithoutTranscript() throws {
-        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let audioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -1314,7 +1314,7 @@ final class VoiceStateTests: XCTestCase {
     }
 
     func testHistoryRetranscribeUsesExtendedTranscriptionTimeout() async throws {
-        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let audioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -1348,7 +1348,7 @@ final class VoiceStateTests: XCTestCase {
     }
 
     func testHistoryRetranscribeValidationErrorSurvivesImmediateRecordingIdle() throws {
-        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-missing/audio.wav"
+        let audioPath = "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-missing/audio.wav"
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
@@ -1481,7 +1481,7 @@ final class VoiceStateTests: XCTestCase {
         state.handleEvent([
             "type": "state",
             "state": "speaking",
-            "text": "Etan runs supabase",
+            "text": "Alex runs supabase",
         ])
 
         state.dismissTeleprompter()
@@ -1529,7 +1529,7 @@ final class VoiceStateTests: XCTestCase {
         state.handleEvent([
             "type": "state",
             "state": "speaking",
-            "text": "Original Etan spelling",
+            "text": "Original Alex spelling",
         ])
         state.handleEvent([
             "type": "subtitle",
@@ -1546,7 +1546,7 @@ final class VoiceStateTests: XCTestCase {
         ])
 
         XCTAssertEqual(state.mode, .idle)
-        XCTAssertEqual(state.teleprompterText, "Original Etan spelling")
+        XCTAssertEqual(state.teleprompterText, "Original Alex spelling")
         XCTAssertEqual(state.teleprompterWordBoundaries.map(\.text), ["Eh tahn", "spelling"])
         XCTAssertTrue(state.isTeleprompterReadback)
     }
