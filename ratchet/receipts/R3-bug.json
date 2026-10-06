@@ -1,0 +1,38 @@
+{
+  "execution": {
+    "argv": [
+      "python3",
+      "ratchet/run.py",
+      "--row",
+      "retranscribe-history-refresh",
+      "--ref",
+      "a2e25844^1",
+      "--output",
+      "docs.local/ratchet/r2/R3-bug"
+    ],
+    "exit_code": 1,
+    "harness_sha256": "946ef63136a5d0f8af32a23cfe648c1b5154bdce8405cc4d2dfd4e143619a85a"
+  },
+  "result": {
+    "row": "retranscribe-history-refresh",
+    "kind": "behavior",
+    "value": 1,
+    "ceiling": 0,
+    "status": "FAIL",
+    "bug_sha": "49e2333a722e1dec3cb49da4cdf631552fa200b0",
+    "fix_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+    "measured_sha": "49e2333a722e1dec3cb49da4cdf631552fa200b0",
+    "error": null,
+    "overlay_sha256": null,
+    "app_binary_sha256": "a78bed4cd0853c7d5ab150323a1e97dcad52787688beadf24c78a365b250c0b9"
+  },
+  "wire": {
+    "archive_updates": 0,
+    "durable_transcript": true,
+    "durable_metadata": true,
+    "transcription_events": 0,
+    "event_observed": false,
+    "quiet_period_complete": false,
+    "quiet_seconds": 1
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "execution": {
+    "argv": [
+      "python3",
+      "ratchet/run.py",
+      "--row",
+      "ndjson-partial-write",
+      "--ref",
+      "78a43fbb^1",
+      "--output",
+      "docs.local/ratchet/r2/R1-bug"
+    ],
+    "exit_code": 1,
+    "harness_sha256": "946ef63136a5d0f8af32a23cfe648c1b5154bdce8405cc4d2dfd4e143619a85a"
+  },
+  "result": {
+    "row": "ndjson-partial-write",
+    "kind": "behavior",
+    "value": 3,
+    "ceiling": 0,
+    "status": "FAIL",
+    "bug_sha": "70ff5e99fefafda8fb0da876cfbb9e17130093dd",
+    "fix_sha": "78a43fbbeba78906955a92ccb4fb075d023cc866",
+    "measured_sha": "70ff5e99fefafda8fb0da876cfbb9e17130093dd",
+    "error": null,
+    "overlay_sha256": null,
+    "app_binary_sha256": "0662bd561dd73cb803983e9d05d2fbb13c8913c27fabb6ca4f7a4895011b317f"
+  },
+  "wire": {
+    "sent_frames": 3,
+    "handled_frames": 1,
+    "bad_json": 1,
+    "wire_bytes": 10008,
+    "errors": [],
+    "pressure": {
+      "exercised": true,
+      "expected_frame_bytes": [
+        1120092,
+        1120092
+      ],
+      "recv_chunks": 6,
+      "max_recv_chunk": 4093,
+      "split_frames": 1,
+      "queued_bytes_before_read": 8192,
+      "reader_stall_seconds": 0.5028842920437455,
+      "receive_buffer_bytes": 4096
+    }
+  }
+}

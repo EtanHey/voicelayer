@@ -1,0 +1,54 @@
+{
+  "execution": {
+    "argv": [
+      "python3",
+      "ratchet/run.py",
+      "--row",
+      "socket-isolation",
+      "--ref",
+      "313a959e",
+      "--output",
+      "docs.local/ratchet/R2-fix"
+    ],
+    "exit_code": 0
+  },
+  "result": {
+    "row": "socket-isolation",
+    "kind": "behavior",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "bug_sha": "d7800bd1a6918f1a9ee2a4bf18cd03be674536f3",
+    "fix_sha": "313a959edf41c50a4e86e36e5b4fb98f6a08e13c",
+    "measured_sha": "313a959edf41c50a4e86e36e5b4fb98f6a08e13c",
+    "error": null,
+    "overlay_sha256": "8f1a03336026eb11d7f20eab8c475136ca81e04238c01baf8c33d095db999dce",
+    "app_binary_sha256": "9da020f13173f79fc8ef46326f76bbb28409995a3cb2bef51d8a50854164dd39"
+  },
+  "cases": [
+    {
+      "case": "plain",
+      "refused": true,
+      "intact": true,
+      "exit_code": 1
+    },
+    {
+      "case": "case",
+      "refused": true,
+      "intact": true,
+      "exit_code": 1
+    },
+    {
+      "case": "parent-symlink",
+      "refused": true,
+      "intact": true,
+      "exit_code": 1
+    },
+    {
+      "case": "socket-symlink",
+      "refused": true,
+      "intact": true,
+      "exit_code": 1
+    }
+  ]
+}

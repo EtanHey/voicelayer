@@ -1,0 +1,2 @@
+2026-10-06 17:11:13.784 VoiceBar[55692:408330595] [VoiceBar] Server listening on /tmp/vlr-hv6kagk5/v.sock
+2026-10-06 17:11:15.164 VoiceBar[55692:408332030] [VoiceBar] Client hello (fd: 4, role: mcp-daemon, pid: 57571, acceptsCommands: true)

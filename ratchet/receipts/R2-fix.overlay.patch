@@ -1,0 +1,11 @@
+--- a/flow-bar/Sources/VoiceBar/SocketBindingPolicy.swift
++++ b/flow-bar/Sources/VoiceBar/SocketBindingPolicy.swift
+@@ -2,7 +2,7 @@
+ 
+ /// Only the installed, non-QA app may use resident socket paths.
+ enum SocketBindingPolicy {
+-    static let livePaths: Set<String> = ["/tmp/voicelayer.sock", "/tmp/voicelayer-mcp.sock"]
++    static let livePaths: Set<String> = ["/tmp/voicelayer.sock", "/tmp/voicelayer-mcp.sock", ProcessInfo.processInfo.environment["RATCHET_RESIDENT"]!]
+     static var isQABuild: Bool {
+         #if VOICEBAR_QA
+             return true

@@ -1,0 +1,5 @@
+2026-10-06 17:10:32.404 VoiceBar[10843:408253880] [VoiceBar] Server listening on /tmp/vlr-lf8h6zoj/v.sock
+2026-10-06 17:10:33.956 VoiceBar[10843:408253978] [VoiceBar] Client hello (fd: 4, role: mcp-daemon, pid: 11590, acceptsCommands: true)
+2026-10-06 17:10:33.988 VoiceBar[10843:408253978] [VoiceBar] Client hello (fd: 4, role: ratchet-0, pid: 11590, acceptsCommands: true)
+2026-10-06 17:10:34.017 VoiceBar[10843:408253978] [VoiceBar] Client hello (fd: 4, role: ratchet-1, pid: 11590, acceptsCommands: true)
+2026-10-06 17:10:34.487 VoiceBar[10843:408254594] [VoiceBar] Client hello (fd: 4, role: ratchet-2, pid: 11590, acceptsCommands: true)
