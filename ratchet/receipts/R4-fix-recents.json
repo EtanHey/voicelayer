@@ -1,0 +1,186 @@
+{
+  "execution": {
+    "argv": [
+      "python3",
+      "ratchet/run.py",
+      "--row",
+      "recents-newest-after-retranscribe",
+      "--ref",
+      "2f2de18c",
+      "--output",
+      "docs.local/lane-k/final/R4-fix"
+    ],
+    "exit_code": 0,
+    "harness_sha256": "3052c9cbc71eea383b16acef12578e0625193423bc1f461635f06207eee0ffb3"
+  },
+  "result": {
+    "row": "recents-newest-after-retranscribe",
+    "kind": "behavior",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "bug_sha": "575ca6ce7950b3e1c5ebe0edd9d97b3958e56c25",
+    "fix_sha": "2f2de18c1c19339379375df7b9475c99704f2eed",
+    "measured_sha": "2f2de18c1c19339379375df7b9475c99704f2eed",
+    "error": null,
+    "overlay_sha256": "8c7dc373c81b9eb2fae969b1d29a826a56f029a32c987034f3f6acc96ce0f02f",
+    "app_binary_sha256": "a7c488a72e7ed3afc70feb01d29b9b05a38c645cea110bd30b63765486b1438c"
+  },
+  "cases": [
+    {
+      "case": "newest-cancelled-recovery",
+      "expected": [
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-21T10:00:00.000Z"
+        },
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-20T10:00:00.000Z"
+        },
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-19T10:00:00.000Z"
+        }
+      ],
+      "actual": [
+        {
+          "created_at": "2026-08-21T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav"
+        },
+        {
+          "created_at": "2026-08-20T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+        },
+        {
+          "created_at": "2026-08-19T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+        }
+      ],
+      "violations": 0,
+      "original_transcription_status": "cancelled",
+      "final_recording_created_at": "2026-08-21T10:00:00.000Z",
+      "final_recording_is_latest": true,
+      "durable_transcript": true,
+      "durable_metadata": true
+    },
+    {
+      "case": "older-missing-recovery",
+      "expected": [
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-21T10:00:00.000Z"
+        },
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-20T10:00:00.000Z"
+        },
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-19T10:00:00.000Z"
+        },
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-18T10:00:00.000Z"
+        }
+      ],
+      "actual": [
+        {
+          "created_at": "2026-08-21T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav"
+        },
+        {
+          "created_at": "2026-08-20T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+        },
+        {
+          "created_at": "2026-08-19T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+        },
+        {
+          "created_at": "2026-08-18T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav"
+        }
+      ],
+      "violations": 0,
+      "original_transcription_status": "captured",
+      "final_recording_created_at": "2026-08-18T10:00:00.000Z",
+      "final_recording_is_latest": false,
+      "durable_transcript": true,
+      "durable_metadata": true
+    },
+    {
+      "case": "older-existing-retranscribe",
+      "expected": [
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-21T10:00:00.000Z"
+        },
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-20T10:00:00.000Z"
+        },
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-19T10:00:00.000Z"
+        },
+        {
+          "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav",
+          "created_at": "2026-08-18T10:00:00.000Z"
+        }
+      ],
+      "actual": [
+        {
+          "created_at": "2026-08-21T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav"
+        },
+        {
+          "created_at": "2026-08-20T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-20/2026-08-20T10-00-00-000Z-abcd1234/audio.wav"
+        },
+        {
+          "created_at": "2026-08-19T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav"
+        },
+        {
+          "created_at": "2026-08-18T10:00:00.000Z",
+          "path": "$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav"
+        }
+      ],
+      "violations": 0,
+      "original_transcription_status": "transcribed",
+      "final_recording_created_at": "2026-08-19T10:00:00.000Z",
+      "final_recording_is_latest": false,
+      "durable_transcript": true,
+      "durable_metadata": true
+    }
+  ],
+  "defaults": {
+    "resident_bundle": "com.voicelayer.voicebar",
+    "before": {
+      "exit_code": 0,
+      "sha256": "a47087cae005ec41bcdeb7c77aa27888fab353d8714ac17072e5d32ffa6b7770"
+    },
+    "after": {
+      "exit_code": 0,
+      "sha256": "a47087cae005ec41bcdeb7c77aa27888fab353d8714ac17072e5d32ffa6b7770"
+    },
+    "resident_defaults_unchanged": true,
+    "plist_inside_root": true,
+    "seeded_read_verified": true,
+    "app_write_verified": true,
+    "plist_sha256": "d92e24783d7afc52e79429df21683b434b8371977a6104e87b618c3ad381703e"
+  },
+  "seams": {
+    "decision_code_unchanged": true,
+    "defaults_references_remapped": 4,
+    "daemon_source_unchanged": true,
+    "trigger_method": "VoiceState.retranscribeHistoryEntry"
+  },
+  "cleanup": {
+    "root_removed": true,
+    "detached_worktree_removed": true,
+    "owned_pids_absent": true
+  },
+  "normalization": "Synthetic isolated root replaced with $ISOLATED_ROOT; JSON slash escapes normalized in exported logs. No preference contents exported."
+}
