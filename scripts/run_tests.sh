@@ -121,6 +121,12 @@ for _ in $(seq 1 150); do
 done
 record_status "bun MCP daemon boot" "$daemon_status"
 
+# Boot smoke is complete; do not leave its daemon alive during the test suites.
+# Its periodic log rotator still targets production /tmp logs.
+kill "$daemon_pid" 2>/dev/null
+wait "$daemon_pid" 2>/dev/null
+daemon_pid=""
+
 printf '\n== F5 hidutil LaunchAgent smoke ==\n'
 hidutil_plist_status=0
 HIDUTIL_PLIST="$ROOT_DIR/launchd/com.voicelayer.f5-to-f18-hidutil.plist"
