@@ -136,11 +136,17 @@ def validate_reference_wav_path(
         raise ValueError("Reference audio path must not contain NUL.")
     requested = os.path.expanduser(reference_wav)
     resolved_path = os.path.realpath(requested)
-    voices_root_resolved = os.path.realpath(voices_root.expanduser())
+    root = os.path.realpath(voices_root.expanduser())
 
-    if os.path.commonpath([voices_root_resolved, resolved_path]) != voices_root_resolved:
+    # Include the separator so a sibling such as voices-other is never allowed.
+    # The filesystem root already ends with a separator.
+    if not (
+        resolved_path == root
+        or resolved_path.startswith(root + os.sep)
+        or (root == os.sep and resolved_path.startswith(os.sep))
+    ):
         raise PermissionError(
-            f"Reference audio must live under {voices_root_resolved}."
+            f"Reference audio must live under {root}."
         )
 
     resolved = Path(resolved_path)
