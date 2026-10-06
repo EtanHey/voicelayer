@@ -946,6 +946,17 @@ function formatCategoryLabel(category: STTQualityFindingCategory): string {
   return category.replace(/_/g, " ");
 }
 
+/** Entities keep arbitrary text inside a single Markdown table cell. Encode
+ * backslashes too: an even run before an escaped pipe can reopen the column.
+ * Keep these cells outside code spans so renderers decode the entities.
+ */
+function markdownTableCell(text: string): string {
+  return text.replace(/[&<>\\|`*_()[\]!#~\r\n]/g, (char) => {
+    if (char === "\r" || char === "\n") return " ";
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[char] ?? `&#${char.charCodeAt(0)};`;
+  });
+}
+
 export function formatSTTQualityMiningMarkdown(
   report: STTQualityMiningReport,
 ): string {
@@ -986,7 +997,7 @@ export function formatSTTQualityMiningMarkdown(
     lines.push("| Category | Pattern | Count | Severity |", "| --- | --- | ---: | --- |");
     for (const pattern of report.recurringPatterns) {
       lines.push(
-        `| ${formatCategoryLabel(pattern.category)} | \`${pattern.pattern.replace(/\|/g, "\\|")}\` | ${pattern.count} | ${pattern.severity} |`,
+        `| ${formatCategoryLabel(pattern.category)} | ${markdownTableCell(pattern.pattern)} | ${pattern.count} | ${pattern.severity} |`,
       );
     }
   }
@@ -1007,7 +1018,7 @@ export function formatSTTQualityMiningMarkdown(
         ? `${finding.source}:${finding.variant}`
         : finding.source;
       lines.push(
-        `| ${formatCategoryLabel(finding.category)} | \`${finding.pattern.replace(/\|/g, "\\|")}\` | \`${finding.recordingId ?? finding.candidateId}\` | ${source} | ${finding.severity} | ${finding.detail.replace(/\|/g, "\\|")} |`,
+        `| ${formatCategoryLabel(finding.category)} | ${markdownTableCell(finding.pattern)} | ${markdownTableCell(finding.recordingId ?? finding.candidateId)} | ${markdownTableCell(source)} | ${finding.severity} | ${markdownTableCell(finding.detail)} |`,
       );
     }
     if (pass.findings.length > 200) {

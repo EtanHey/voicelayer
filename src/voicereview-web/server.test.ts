@@ -810,7 +810,7 @@ describe("VoiceReview web server helpers", () => {
       );
 
       expect(response.status).toBe(500);
-      expect(body.error).toContain("Invalid EBML header");
+      expect(body.error).toBe("Internal server error");
       expect(failedFiles).toHaveLength(20);
       expect(
         preservedContents.some((content) => content.includes("broken webm")),
@@ -2119,9 +2119,7 @@ describe("VoiceReview web server helpers", () => {
       const body = await response.json();
 
       expect(response.status).toBe(500);
-      expect(body.error).toBe(
-        "edge-tts aborted internally before writing audio",
-      );
+      expect(body.error).toBe("Internal server error");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
