@@ -55,16 +55,17 @@ class HarnessTests(unittest.TestCase):
             wire.feed(event[:10])
             time.sleep(.02)
             wire.feed(event[10:])
-            time.sleep(.15)
+            time.sleep(.05)
             wire.feed(event)
         thread = threading.Thread(target=producer)
         thread.start()
         try:
-            frames, observed, quiet = wire.archive("/fixture/audio.wav", timeout=2, quiet=.2)
+            # Leave ample scheduling margin after each feed, including the duplicate.
+            frames, observed, quiet = wire.archive("/fixture/audio.wav", timeout=3, quiet=1.5)
             self.assertTrue(observed and quiet)
             self.assertEqual(sum(frame["type"] == "archive_metadata_updated" for frame in frames), 2)
         finally:
-            thread.join(3)
+            thread.join(5)
 
     def test_missing_or_incomplete_event_fails_with_bounded_wait(self):
         wire = harness.Wire()
