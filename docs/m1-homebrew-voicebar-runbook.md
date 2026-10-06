@@ -196,7 +196,7 @@ Expected:
 Preferred one-command path from the M1, pulling from this Mac:
 
 ```bash
-voicelayer update --data-mode direct --data-source etanheyman@<this-mac-tailscale-name-or-ip>:/Users/etanheyman
+voicelayer update --data-mode direct --data-source etanheyman@<this-mac-tailscale-name-or-ip>:~
 ```
 
 That syncs:
@@ -214,7 +214,7 @@ VoiceBar app from the installed package, and restarts the VoiceBar stack.
 If direct mode cannot reach this Mac, use explicit `rsync` from the M1:
 
 ```bash
-SRC='etanheyman@<this-mac-tailscale-name-or-ip>:/Users/etanheyman'
+SRC='etanheyman@<this-mac-tailscale-name-or-ip>:~'
 mkdir -p "$HOME/.voicelayer" "$HOME/.local/state/voicelayer"
 rsync -a --delete "$SRC/.voicelayer/voices/" "$HOME/.voicelayer/voices/"
 rsync -a "$SRC/.voicelayer/voices.json" "$HOME/.voicelayer/voices.json"

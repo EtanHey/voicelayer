@@ -38,7 +38,7 @@
 ## Task 3: Verify release acceptance and publish the worker PR
 
 **Files:**
-- Modify: `/Users/etanheyman/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
+- Modify: `~/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
 - Generate: `.verified/verified-runtime-fix-notch-363c-rightclick-<short-sha>.txt`
 
 1. Run the full Swift and Bun suites and the notch event-handling corpus/harness.

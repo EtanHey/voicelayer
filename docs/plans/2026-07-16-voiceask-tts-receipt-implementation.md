@@ -41,7 +41,7 @@
 
 **Files:**
 - Modify: PR #345 body
-- Modify: `/Users/etanheyman/Gits/orchestrator/docs.local/handoffs/2026-07-16-lane1-b16-REPORT.md`
+- Modify: `~/Gits/orchestrator/docs.local/handoffs/2026-07-16-lane1-b16-REPORT.md`
 
 1. Run the targeted B16 suite and `bun run typecheck`.
 2. Run `git diff --check` and prove `src/socket-handlers.ts` and `flow-bar/` remain unchanged.

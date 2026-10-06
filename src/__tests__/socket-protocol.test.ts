@@ -187,21 +187,21 @@ describe("socket-protocol", () => {
     it("serializes transcription events with archived recording audio path", () => {
       const event: SocketEvent = {
         type: "transcription",
-        text: "Etan confirmed the fix.",
+        text: "Alex confirmed the fix.",
         recording_path:
-          "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav",
+          "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav",
       };
       const result = serializeEvent(event);
       const parsed = JSON.parse(result.trim());
       expect(parsed.type).toBe("transcription");
-      expect(parsed.text).toBe("Etan confirmed the fix.");
+      expect(parsed.text).toBe("Alex confirmed the fix.");
       expect(parsed.recording_path).toEndWith("/audio.wav");
     });
 
     it("serializes completed dictation receipt durations additively", () => {
       const event: SocketEvent = {
         type: "transcription",
-        text: "Etan confirmed the fix.",
+        text: "Alex confirmed the fix.",
         recording_path: "/recordings/dictation/audio.wav",
         dictation_receipt: {
           audio_duration_ms: 1_234,
@@ -404,7 +404,7 @@ describe("socket-protocol", () => {
 
     it("parses history-entry retranscribe command with archived audio path", () => {
       const audioPath =
-        "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
+        "/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
 
       const result = parseCommand(
         JSON.stringify({

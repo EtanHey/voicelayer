@@ -85,7 +85,7 @@ Commit only the two plan files, production geometry files, and layout tests. The
 
 **Step 4: Push and update the existing PR**
 
-Push `fix/voice-ask-path-reliability`, repin the PR body to the new `Verified-Runtime` SHA, request exact-head bot reviews, disposition findings, and append the evidence to `/Users/etanheyman/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`.
+Push `fix/voice-ask-path-reliability`, repin the PR body to the new `Verified-Runtime` SHA, request exact-head bot reviews, disposition findings, and append the evidence to `~/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`.
 
 **Step 5: Stop without merge or resident changes**
 

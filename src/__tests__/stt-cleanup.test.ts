@@ -80,9 +80,9 @@ describe("stt-cleanup", () => {
     );
   });
 
-  it("covers the strict-score spoken-form misses", () => {
+  it("normalizes synthetic spoken-form alias combinations", () => {
     const cleaned = cleanupTranscriptionText(
-      "whisperflow orc clawed orcclawed skill creator clawed seamux cee mux karabiner",
+      "fixture whisperflow orc clawed orcclawed skill creator clawed seamux cee mux karabiner example",
     );
 
     expect(cleaned).toContain("Wispr Flow");
@@ -95,41 +95,41 @@ describe("stt-cleanup", () => {
     expect(cleaned).not.toContain("Seamux");
   });
 
-  it("normalizes the Constitution-gated Phase-0 mined aliases", () => {
+  it("normalizes aliases in synthetic command fixtures", () => {
     const cases: Array<[input: string, expected: string]> = [
-      ["use brain lair now", "Use BrainLayer now"],
-      ["use brain lear now", "Use BrainLayer now"],
-      ["use bearing layer now", "Use BrainLayer now"],
-      ["use narration layer now", "Use NarrationLayer now"],
-      ["use tailscale now", "Use Tailscale now"],
-      ["use olama now", "Use Ollama now"],
-      ["use comfy ui now", "Use ComfyUI now"],
-      ["use notebook lm now", "Use NotebookLM now"],
-      ["use notebook l m now", "Use NotebookLM now"],
-      ["use notebook-lm now", "Use NotebookLM now"],
-      ["use chroma db now", "Use ChromaDB now"],
-      ["use carpathy now", "Use Karpathy now"],
-      ["use fts5 now", "Use FTS5 now"],
-      ["use fts 5 now", "Use FTS5 now"],
-      ["use rrf now", "Use RRF now"],
-      ["use esculite now", "Use SQLite now"],
-      ["use sq lite now", "Use SQLite now"],
-      ["use quen 3 now", "Use Qwen3 now"],
-      ["use qwen 3 now", "Use Qwen3 now"],
-      ["use quen 3 tts now", "Use Qwen3 TTS now"],
-      ["use qwen 3 tts now", "Use Qwen3 TTS now"],
-      ["use gwen engine now", "Use Qwen engine now"],
-      ["use claw.md now", "Use CLAUDE.md now"],
-      ["use claw dot md now", "Use CLAUDE.md now"],
-      ["use clawed desktop now", "Use Claude Desktop now"],
-      ["use claw desktop now", "Use Claude Desktop now"],
-      ["use orkclaud now", "Use orcClaude now"],
-      ["use cmuxs now", "Use cmux now"],
-      ["use bnaya now", "Use Benaya now"],
-      ["use sagitt now", "Use Sagit now"],
+      ["fixture uses brain lair now", "Fixture uses BrainLayer now"],
+      ["fixture uses brain lear now", "Fixture uses BrainLayer now"],
+      ["fixture uses bearing layer now", "Fixture uses BrainLayer now"],
+      ["fixture uses narration layer now", "Fixture uses NarrationLayer now"],
+      ["fixture uses tailscale now", "Fixture uses Tailscale now"],
+      ["fixture uses olama now", "Fixture uses Ollama now"],
+      ["fixture uses comfy ui now", "Fixture uses ComfyUI now"],
+      ["fixture uses notebook lm now", "Fixture uses NotebookLM now"],
+      ["fixture uses notebook l m now", "Fixture uses NotebookLM now"],
+      ["fixture uses notebook-lm now", "Fixture uses NotebookLM now"],
+      ["fixture uses chroma db now", "Fixture uses ChromaDB now"],
+      ["fixture uses carpathy now", "Fixture uses Karpathy now"],
+      ["fixture uses fts5 now", "Fixture uses FTS5 now"],
+      ["fixture uses fts 5 now", "Fixture uses FTS5 now"],
+      ["fixture uses rrf now", "Fixture uses RRF now"],
+      ["fixture uses esculite now", "Fixture uses SQLite now"],
+      ["fixture uses sq lite now", "Fixture uses SQLite now"],
+      ["fixture uses quen 3 now", "Fixture uses Qwen3 now"],
+      ["fixture uses qwen 3 now", "Fixture uses Qwen3 now"],
+      ["fixture uses quen 3 tts now", "Fixture uses Qwen3 TTS now"],
+      ["fixture uses qwen 3 tts now", "Fixture uses Qwen3 TTS now"],
+      ["fixture uses gwen engine now", "Fixture uses Qwen engine now"],
+      ["fixture uses claw.md now", "Fixture uses CLAUDE.md now"],
+      ["fixture uses claw dot md now", "Fixture uses CLAUDE.md now"],
+      ["fixture uses clawed desktop now", "Fixture uses Claude Desktop now"],
+      ["fixture uses claw desktop now", "Fixture uses Claude Desktop now"],
+      ["fixture uses orkclaud now", "Fixture uses orcClaude now"],
+      ["fixture uses cmuxs now", "Fixture uses cmux now"],
+      ["fixture uses bnaya now", "Fixture uses Benaya now"],
+      ["fixture uses sagitt now", "Fixture uses Sagit now"],
       [
-        "use if they eyes bg large now",
-        "Use Ivrit AI's BG Large now",
+        "fixture uses if they eyes bg large now",
+        "Fixture uses Ivrit AI's BG Large now",
       ],
     ];
 
@@ -149,18 +149,18 @@ describe("stt-cleanup", () => {
 
   it("normalizes repoGolem spawn flags glued onto an agent token", () => {
     // Whisper renders dictated "-s -c" as an upper-cased, space-less suffix
-    // ("-S-C") glued to the camelCase agent identifier. Recovered verbatim from
-    // ~/.local/share/voicelayer/recordings/2026-06-15 (ab7eaf75, e6aba757).
+    // ("-S-C") glued to the camelCase agent identifier. Synthetic fixtures
+    // exercise both the glued suffix and canonicalization before splitting.
     expect(cleanupTranscriptionText("voicelayerCodex-S")).toBe(
       "voicelayerCodex -s",
     );
     expect(cleanupTranscriptionText("voicelayerCodex-S-C")).toBe(
       "voicelayerCodex -s -c",
     );
-    // Recovered verbatim ends "Let's try one more. Happy Camper Orc Claude-S-C."
+    // A synthetic sentence preserves surrounding prose while splitting flags.
     expect(
-      cleanupTranscriptionText("Let's try one more. happycampr orcClaude-S-C"),
-    ).toBe("Let's try one more. Happycampr orcClaude -s -c");
+      cleanupTranscriptionText("Fixture ready. sampleproject orcClaude-S-C"),
+    ).toBe("Fixture ready. Sampleproject orcClaude -s -c");
     // The agent-name canonicalizer first folds "voice layer Codex" ->
     // "voicelayerCodex"; the glued flag suffix must still be split off.
     expect(cleanupTranscriptionText("voice layer Codex-S-C")).toBe(
@@ -211,12 +211,12 @@ describe("stt-cleanup", () => {
     );
   });
 
-  it("cleans path-token spacing and preserved path terms from live dictation", () => {
+  it("cleans path-token spacing in a synthetic path fixture", () => {
     expect(
       cleanupTranscriptionText(
-        "Wait, what? Obsidian Vault is in -, is it ~ /.Golems - brain / zigon, what?",
+        "Fixture directory is under -, is it ~ /.Golems - brain / zigon, ready.",
       ),
-    ).toBe("Wait, what? Obsidian Vault is in ~/.golems-brain/zikaron, what?");
+    ).toBe("Fixture directory is under ~/.golems-brain/zikaron, ready.");
     expect(cleanupTranscriptionText("keep the and/or wording")).toBe(
       "Keep the and/or wording",
     );
@@ -224,8 +224,8 @@ describe("stt-cleanup", () => {
 
   it("preserves leading-dot filename tokens as separate tokens", () => {
     expect(
-      cleanupTranscriptionText("Also, if I say the .at file. Thank you."),
-    ).toBe("Also, if I say the .at file. Thank you.");
+      cleanupTranscriptionText("Fixture loads the .at file. Thank you."),
+    ).toBe("Fixture loads the .at file. Thank you.");
     expect(cleanupTranscriptionText("Use the .env file next.")).toBe(
       "Use the .env file next.",
     );

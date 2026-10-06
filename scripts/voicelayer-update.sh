@@ -65,8 +65,8 @@ usage() {
 Usage: voicelayer update [--dry-run] [--data-mode skip|direct|brain-drive] [--data-source SOURCE_HOME] [--no-stop] [--no-relaunch]
 
 Runs on the target Mac. SOURCE_HOME is optional personal runtime data, either:
-  direct:      main-mac.local:/Users/etanheyman
-  brain-drive: /Volumes/BrainDrive/VoiceLayerBackup/etanheyman
+  direct:      <host>:<home>
+  brain-drive: /Volumes/BrainDrive/VoiceLayerBackup/<user>
 
 Environment overrides:
   VOICELAYER_UPDATE_DATA_SOURCE

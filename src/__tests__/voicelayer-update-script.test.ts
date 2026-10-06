@@ -273,7 +273,7 @@ describe("voicelayer-update.sh", () => {
       "--data-mode",
       "direct",
       "--data-source",
-      "etan-main.local:/Users/etanheyman",
+      "fixture-host:/Users/fixture-user",
     ]);
     const brainDrive = run([
       "bash",
@@ -282,18 +282,18 @@ describe("voicelayer-update.sh", () => {
       "--data-mode",
       "brain-drive",
       "--data-source",
-      "/Volumes/BrainDrive/VoiceLayerBackup/etanheyman",
+      "/Volumes/BrainDrive/VoiceLayerBackup/fixture-user",
     ]);
 
     expect(direct.exitCode).toBe(0);
     expect(text(direct.stdout)).toContain("DATA MODE: direct");
     expect(text(direct.stdout)).toContain(
-      "etan-main.local:/Users/etanheyman/.voicelayer/voices/",
+      "fixture-host:/Users/fixture-user/.voicelayer/voices/",
     );
     expect(brainDrive.exitCode).toBe(0);
     expect(text(brainDrive.stdout)).toContain("DATA MODE: brain-drive");
     expect(text(brainDrive.stdout)).toContain(
-      "/Volumes/BrainDrive/VoiceLayerBackup/etanheyman/.voicelayer/voices/",
+      "/Volumes/BrainDrive/VoiceLayerBackup/fixture-user/.voicelayer/voices/",
     );
   });
 

@@ -48,7 +48,7 @@
 
 **Files:**
 - Modify: PR #351 body
-- Modify: `/Users/etanheyman/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
+- Modify: `~/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
 
 1. Run focused Swift tests, full Swift tests, isolated serialized Bun tests, typecheck, verifier syntax, and `git diff --check`.
 2. Confirm protected amplitude, geometry, archive, timeout, and input files remain byte-identical.

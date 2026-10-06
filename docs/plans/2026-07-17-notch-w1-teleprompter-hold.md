@@ -235,7 +235,7 @@ Run `rg -n 'Teleprompter persistence|Hold-recording|fresh|original|analyzer' ope
 
 **Files:**
 - Create: `.verified/` artifact via verification script (gitignored)
-- Create: `/Users/etanheyman/Gits/orchestrator/docs.local/handoffs/2026-07-17-notch-w1-REPORT.md`
+- Create: `~/Gits/orchestrator/docs.local/handoffs/2026-07-17-notch-w1-REPORT.md`
 
 **Step 1: Run full automated verification**
 

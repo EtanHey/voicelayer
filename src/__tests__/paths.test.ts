@@ -125,7 +125,7 @@ describe("VOICELAYER_SOCKET_PATH dev-socket isolation", () => {
 });
 
 describe("mcpHeartbeatFilePath isolation", () => {
-  const liveStateDir = "/Users/etan/.local/state/voicelayer";
+  const liveStateDir = "/Users/fixture-user/.local/state/voicelayer";
   const liveHeartbeat = `${liveStateDir}/voicelayer-mcp.heartbeat`;
 
   it("keeps the live heartbeat under the state directory by default", () => {

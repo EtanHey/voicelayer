@@ -242,7 +242,7 @@ Build to a temporary non-resident path with `VOICEBAR_NOTARY_PROFILE=notary-laye
 ### Task 7: Ready PR, review loop, and collab seam
 
 **Files:**
-- Modify: `/Users/etanheyman/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
+- Modify: `~/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
 
 **Step 1: Push and create a ready-for-review PR against `main`**
 
