@@ -21,9 +21,11 @@ The runner builds clean detached commit worktrees and launches the real debug ap
 
 | Row | Boundary | Ceiling |
 |---|---|---|
-| ndjson-partial-write | Real daemon queue, stalled Unix reader, app's existing Bad JSON and client-registration logs | 0 Bad JSON + missing handled frames |
+| ndjson-partial-write | Real daemon queue, stalled Unix reader, app's existing Bad JSON and client-registration logs | 0 Bad JSON + missing handled frames; absent pressure evidence is FAIL |
 | socket-isolation | **behavior (overlay: protected-path test seam)**: fake resident survives plain, case, parent-symlink, socket-symlink launches | 0 takeovers/missing refusals |
 | retranscribe-history-refresh | MCP voice_ask retry durably writes the original synthetic Ask and sends exactly one archive_metadata_updated to the app connection | 0 missing/extra updates |
+
+R1 requires harness evidence: a small receive buffer held unread for at least 0.5 s, queued bytes filling that buffer, a sent frame larger than the buffer and maximum recv chunk, and at least one NDJSON frame spanning multiple recv calls. The wire receipt records these values; absent evidence is `pressure not exercised` (FAIL). This proves the exercised pressure/fragmentation seam without observing or modifying product write-return values. R3 waits up to 10 s for a complete update matching the original Ask, then requires 1 s without further received bytes (12 s total bound including margin); missing events, late duplicates, and incomplete frames fail. Setup exceptions clean up the registered worktree and temp root.
 
 R1/R3 app sources are unmodified. R2 adds exactly one isolated fixture path to `SocketBindingPolicy.livePaths`; decision code is byte-identical. The saved patch and SHA-256 accompany every result. Before the policy existed, the patch is empty and FAIL demonstrates actual listener takeover. The lead approved this seam in the 2026-10-06 collab ruling.
 
