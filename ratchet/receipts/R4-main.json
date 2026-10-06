@@ -6,15 +6,15 @@
       "--ref",
       "db1a8027780cd3a1f9e244b7f54acaaa51ddb821",
       "--output",
-      "docs.local/lane-j/main-final"
+      "docs.local/lane-j/r2/main-final"
     ],
     "exit_code": 0,
-    "harness_sha256": "92ac363b127ead6254b965617561ebaf033ffd1688de392c2d4c81347f1b9c74",
+    "harness_sha256": "7cbc3d923cf1b2d035492be53bb68e1b5dcac0468b6a4f93d4568d249fb08958",
     "files_sha256": {
-      "run.py": "92ac363b127ead6254b965617561ebaf033ffd1688de392c2d4c81347f1b9c74",
+      "run.py": "7cbc3d923cf1b2d035492be53bb68e1b5dcac0468b6a4f93d4568d249fb08958",
       "fixture-rec.py": "99ed50a1ee9e9c9a0e916fc99f2949a23a9531d48ad01ef3e2afe4ef6c96dc02",
       "fixture-tts.py": "d370c5772b91490ceec6088fed093c8c30ad84f73d6d17f232417c6be8d977b8",
-      "lock-client.ts": "1ce13c64d2f9aaf311ee16b4ae6e2e90dc5a3467ad02c89a33124b49985b77cf"
+      "lock-client.ts": "c05faddde3c4ce9e13007ebba28355d573c449518cb2de6bc86b49bd3b5d647e"
     }
   },
   "result": {
@@ -28,17 +28,17 @@
     "measured_sha": "db1a8027780cd3a1f9e244b7f54acaaa51ddb821",
     "error": null,
     "overlay_sha256": null,
-    "app_binary_sha256": "6ecda2ffa2973899767882aae53b603e6d39a397d3da89c1a7d25fc2552650a7"
+    "app_binary_sha256": "05d630a9b63a92efb8c2a58d369521dc22a021a9b8a60b5e75f0157f3702feee"
   },
   "cases": [
     {
       "ending": "stop",
       "lock_ack": true,
-      "held_seconds": 21.05085949995555,
+      "held_seconds": 21.03147508413531,
       "ended_before_release": false,
       "completed": true,
-      "pcm_seconds": 18.976,
-      "recorder_seconds": 21.12330187484622,
+      "pcm_seconds": 18.912,
+      "recorder_seconds": 21.113844458013773,
       "ending_ack": true,
       "accepted_lock": {
         "type": "ack",
@@ -52,16 +52,19 @@
         "outcome": "accept",
         "id": "end-stop"
       },
-      "early_end_seconds": null
+      "early_end_seconds": null,
+      "daemon_lifetime_seconds": 24.35985608305782,
+      "daemon_cap_seconds": 45,
+      "daemon_cap_expired": false
     },
     {
       "ending": "unlock",
       "lock_ack": true,
-      "held_seconds": 21.026799791958183,
+      "held_seconds": 21.00134408310987,
       "ended_before_release": false,
       "completed": true,
-      "pcm_seconds": 23.232,
-      "recorder_seconds": 26.106136209098622,
+      "pcm_seconds": 23.168,
+      "recorder_seconds": 26.081627917010337,
       "ending_ack": true,
       "accepted_lock": {
         "type": "ack",
@@ -75,7 +78,10 @@
         "outcome": "accept",
         "id": "end-unlock"
       },
-      "early_end_seconds": null
+      "early_end_seconds": null,
+      "daemon_lifetime_seconds": 27.491791374981403,
+      "daemon_cap_seconds": 45,
+      "daemon_cap_expired": false
     }
   ],
   "baseline_rows": {
