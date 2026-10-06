@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { homedir } from "os";
+import { findDefaultAudio } from "./benchmark-stt-decode";
 import { WhisperServerBackend } from "../src/stt";
 import { transcribeViaServer } from "../src/whisper-server";
 import {
@@ -70,8 +71,11 @@ function parseArgs(argv: string[]): CliOptions {
   }
 
   if (!options.audio) {
-    printUsage();
-    throw new Error("--audio PATH is required.");
+    options.audio = findDefaultAudio()[0] ?? "";
+    if (!options.audio) {
+      printUsage();
+      throw new Error("No audio recordings found. Pass --audio PATH.");
+    }
   }
 
   return options;
@@ -84,10 +88,11 @@ function requiredValue(argv: string[], index: number, flag: string): string {
 }
 
 function printUsage(): void {
-  console.log(`Usage: bun run scripts/stt-long-dictation-ab.ts --audio PATH [options]
+  console.log(`Usage: bun run scripts/stt-long-dictation-ab.ts [options]
 
 Options:
-  --audio PATH       Long WAV to test. Required.
+  --audio PATH       Long WAV to test. Defaults to the newest recording in
+                     ~/.local/share/voicelayer/recordings.
   --output-dir DIR   Local receipt directory. Default: .verified/stt-long-dictation.
   --port PORT        Temporary whisper-server port. Default: ${DEFAULT_PORT}.
   --expected TEXT    Expected phrase to score. Repeatable.

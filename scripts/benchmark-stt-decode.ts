@@ -2,6 +2,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  statSync,
   writeFileSync,
 } from "fs";
 import { basename, dirname, join } from "path";
@@ -68,8 +70,11 @@ function parseArgs(argv: string[]): CliOptions {
   }
 
   if (options.audio.length === 0) {
-    printUsage();
-    throw new Error("At least one --audio PATH is required.");
+    options.audio = findDefaultAudio();
+    if (options.audio.length === 0) {
+      printUsage();
+      throw new Error("No audio recordings found. Pass --audio PATH.");
+    }
   }
 
   return options;
@@ -82,10 +87,11 @@ function requiredValue(argv: string[], index: number, flag: string): string {
 }
 
 function printUsage(): void {
-  console.log(`Usage: bun run scripts/benchmark-stt-decode.ts --audio PATH [options]
+  console.log(`Usage: bun run scripts/benchmark-stt-decode.ts [options]
 
 Options:
-  --audio PATH       WAV file to benchmark. Required and repeatable.
+  --audio PATH       WAV file to benchmark. Repeatable.
+                     Defaults to the 3 newest recordings in ~/.local/share/voicelayer/recordings.
   --language LANG    Whisper language argument. Default: auto.
   --plans IDS        Comma-separated plan ids. Default: all.
   --port-base PORT   First temporary whisper-server port. Default: 18892.
@@ -95,6 +101,33 @@ Options:
 This script is local-only. It does not touch production Wispr data and does not
 reuse VoiceBar's resident port 8178.`);
 }
+
+export function findDefaultAudio(
+  root = join(homedir(), ".local/share/voicelayer/recordings"),
+): string[] {
+  const audio = new Set<string>();
+  if (!existsSync(root)) return [...audio];
+
+  const candidates: Array<{ path: string; mtimeMs: number }> = [];
+  for (const dateDir of readdirSync(root)) {
+    const fullDateDir = join(root, dateDir);
+    if (!statSync(fullDateDir).isDirectory()) continue;
+    for (const recordingDir of readdirSync(fullDateDir)) {
+      const wav = join(fullDateDir, recordingDir, "audio.wav");
+      if (!existsSync(wav)) continue;
+      const stat = statSync(wav);
+      candidates.push({ path: wav, mtimeMs: stat.mtimeMs });
+    }
+  }
+
+  candidates
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, 3)
+    .forEach((candidate) => audio.add(candidate.path));
+
+  return [...audio];
+}
+
 
 function resolveBinary(name: string, candidates: string[]): string {
   const which = Bun.spawnSync(["which", name]);
