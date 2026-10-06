@@ -1,7 +1,8 @@
 /**
  * Tests for log rotation — rotates at 10MB, keeps one backup.
  */
-import { describe, it, expect, afterEach } from "bun:test";
+import { describe, it, expect, afterEach, spyOn } from "bun:test";
+import * as fs from "fs";
 import { TEST_TMP } from "./setup/test-tmp";
 import { writeFileSync, existsSync, readFileSync, unlinkSync } from "fs";
 import {
@@ -75,5 +76,75 @@ describe("log-rotation", () => {
     startLogRotation([TEST_LOG], 60000);
     startLogRotation([TEST_LOG], 60000); // Should not create duplicate timer
     stopLogRotation();
+  });
+});
+
+// Capture the real interval callback and mock all filesystem operations so even
+// a regression selecting production paths cannot access the resident logs.
+const isolationKeys = [
+  "VOICELAYER_TMP_ROOT", "VOICELAYER_STATE_DIR",
+  "VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH",
+  "QA_VOICE_SOCKET_PATH", "QA_VOICE_MCP_SOCKET_PATH",
+  "QA_VOICE_MCP_PID_PATH", "QA_VOICE_MCP_HEARTBEAT_PATH",
+];
+
+function rotationProbe(env: Record<string, string>, paths?: string[]) {
+  const saved = isolationKeys.map((key) => process.env[key]);
+  for (const key of isolationKeys) delete process.env[key];
+  Object.assign(process.env, env);
+  let tick: (() => void) | undefined;
+  const timer = spyOn(globalThis, "setInterval").mockImplementation((callback: any) => {
+    tick = callback;
+    return { unref() {} } as any;
+  });
+  const clear = spyOn(globalThis, "clearInterval").mockImplementation(() => {});
+  const exists = spyOn(fs, "existsSync").mockReturnValue(true);
+  const stat = spyOn(fs, "statSync").mockReturnValue({ size: 11 * 1024 * 1024 } as any);
+  const rename = spyOn(fs, "renameSync").mockImplementation(() => {});
+  try {
+    startLogRotation(paths);
+    tick?.();
+    return {
+      exists: exists.mock.calls.map(([path]) => path),
+      stat: stat.mock.calls.map(([path]) => path),
+      rename: rename.mock.calls.map(([from, to]) => [from, to]),
+    };
+  } finally {
+    stopLogRotation();
+    rename.mockRestore(); stat.mockRestore(); exists.mockRestore();
+    clear.mockRestore(); timer.mockRestore();
+    isolationKeys.forEach((key, i) => {
+      if (saved[i] === undefined) delete process.env[key];
+      else process.env[key] = saved[i];
+    });
+  }
+}
+
+describe("log rotation isolation", () => {
+  for (const key of isolationKeys) {
+    it(`does not access implicit resident logs with ${key}`, () => {
+      expect(rotationProbe({ [key]: `${TEST_TMP}/isolated` })).toEqual({
+        exists: [], stat: [], rename: [],
+      });
+    });
+  }
+
+  it("retains byte-identical resident defaults without isolation overrides", () => {
+    const paths = [
+      "/tmp/voicelayer-mcp-daemon.stdout.log",
+      "/tmp/voicelayer-mcp-daemon.stderr.log",
+    ];
+    const result = rotationProbe({});
+    expect(result.exists).toEqual(paths);
+    expect(result.stat).toEqual(paths);
+    expect(result.rename).toEqual(paths.map((path) => [path, `${path}.1`]));
+  });
+
+  it("rotates only explicitly supplied isolated output files", () => {
+    const paths = [`${TEST_TMP}/stdout.log`, `${TEST_TMP}/stderr.log`];
+    const result = rotationProbe({ VOICELAYER_TMP_ROOT: TEST_TMP }, paths);
+    expect(result.exists).toEqual(paths);
+    expect(result.stat).toEqual(paths);
+    expect(result.rename).toEqual(paths.map((path) => [path, `${path}.1`]));
   });
 });
