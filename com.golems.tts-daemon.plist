@@ -22,13 +22,14 @@
     <key>Label</key>
     <string>com.golems.tts-daemon</string>
 
+    <!-- Substitute __VOICELAYER_REPO__ with the absolute repository path before installing. -->
     <key>ProgramArguments</key>
     <array>
         <string>python3</string>
         <string>-m</string>
         <string>uvicorn</string>
         <string>--app-dir</string>
-        <string>/Users/etanheyman/Gits/voicelayer/src</string>
+        <string>__VOICELAYER_REPO__/src</string>
         <string>tts_daemon:create_app</string>
         <string>--factory</string>
         <string>--host</string>

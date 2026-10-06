@@ -278,8 +278,8 @@ Terminate only the captured isolated PID and remove only `/tmp/VoiceBar-notch-v1
 
 **Files:**
 - Update: `openspec/changes/notch-app/tasks.md`
-- Create: `/Users/etanheyman/Gits/orchestrator/docs.local/handoffs/2026-07-17-notch-w1-native-port-REPORT.md`
-- Append: `/Users/etanheyman/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
+- Create: `~/Gits/orchestrator/docs.local/handoffs/2026-07-17-notch-w1-native-port-REPORT.md`
+- Append: `~/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
 
 **Step 1: Record verified implementation receipts**
 

@@ -121,4 +121,4 @@ Push `fix/virtual-notch-external-display`, create the PR, and request `@codex re
 
 **Step 5: Post the seam and store the decision**
 
-Update `/Users/etanheyman/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md` with the PR URL, detection rule, collapsed-cap rationale, AppKit coordinate mechanics, hit-region preservation, and hardware-path regression statement. Store the verified WHAT + WHY in BrainLayer.
+Update `~/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md` with the PR URL, detection rule, collapsed-cap rationale, AppKit coordinate mechanics, hit-region preservation, and hardware-path regression statement. Store the verified WHAT + WHY in BrainLayer.

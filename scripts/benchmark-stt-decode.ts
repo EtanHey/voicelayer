@@ -2,11 +2,10 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
-  statSync,
   writeFileSync,
 } from "fs";
 import { basename, dirname, join } from "path";
+import { homedir } from "os";
 import {
   DEFAULT_DECODE_BENCHMARK_PLANS,
   type DecodeBenchmarkPlan,
@@ -27,9 +26,6 @@ interface CliOptions {
   outputDir: string;
   expected: string[];
 }
-
-const KNOWN_REGRESSION_AUDIO =
-  "/Users/etanheyman/.local/share/voicelayer/recordings/2026-05-17/2026-05-17T06-44-55-073Z-91104263/audio.wav";
 
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
@@ -72,7 +68,8 @@ function parseArgs(argv: string[]): CliOptions {
   }
 
   if (options.audio.length === 0) {
-    options.audio = findDefaultAudio();
+    printUsage();
+    throw new Error("At least one --audio PATH is required.");
   }
 
   return options;
@@ -85,11 +82,10 @@ function requiredValue(argv: string[], index: number, flag: string): string {
 }
 
 function printUsage(): void {
-  console.log(`Usage: bun run scripts/benchmark-stt-decode.ts [options]
+  console.log(`Usage: bun run scripts/benchmark-stt-decode.ts --audio PATH [options]
 
 Options:
-  --audio PATH       WAV file to benchmark. Repeatable. Defaults to the known
-                     91s regression audio plus recent VoiceLayer archives.
+  --audio PATH       WAV file to benchmark. Required and repeatable.
   --language LANG    Whisper language argument. Default: auto.
   --plans IDS        Comma-separated plan ids. Default: all.
   --port-base PORT   First temporary whisper-server port. Default: 18892.
@@ -98,33 +94,6 @@ Options:
 
 This script is local-only. It does not touch production Wispr data and does not
 reuse VoiceBar's resident port 8178.`);
-}
-
-function findDefaultAudio(): string[] {
-  const audio = new Set<string>();
-  if (existsSync(KNOWN_REGRESSION_AUDIO)) audio.add(KNOWN_REGRESSION_AUDIO);
-
-  const root = "/Users/etanheyman/.local/share/voicelayer/recordings";
-  if (!existsSync(root)) return [...audio];
-
-  const candidates: Array<{ path: string; mtimeMs: number }> = [];
-  for (const dateDir of readdirSync(root)) {
-    const fullDateDir = join(root, dateDir);
-    if (!statSync(fullDateDir).isDirectory()) continue;
-    for (const recordingDir of readdirSync(fullDateDir)) {
-      const wav = join(fullDateDir, recordingDir, "audio.wav");
-      if (!existsSync(wav)) continue;
-      const stat = statSync(wav);
-      candidates.push({ path: wav, mtimeMs: stat.mtimeMs });
-    }
-  }
-
-  candidates
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)
-    .slice(0, 3)
-    .forEach((candidate) => audio.add(candidate.path));
-
-  return [...audio];
 }
 
 function resolveBinary(name: string, candidates: string[]): string {
@@ -145,7 +114,7 @@ function resolveModel(): string {
   const envModel = process.env.QA_VOICE_WHISPER_MODEL;
   if (envModel && existsSync(envModel)) return envModel;
 
-  const home = process.env.HOME || "/Users/etanheyman";
+  const home = homedir();
   const candidates = [
     join(home, ".cache/whisper/ggml-large-v3-turbo.bin"),
     join(home, ".cache/whisper/ggml-large-v3-turbo-q5_0.bin"),

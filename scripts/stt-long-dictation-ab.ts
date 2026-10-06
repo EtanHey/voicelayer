@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { basename, join } from "path";
+import { homedir } from "os";
 import { WhisperServerBackend } from "../src/stt";
 import { transcribeViaServer } from "../src/whisper-server";
 import {
@@ -29,14 +30,12 @@ interface AbReport {
   results: AbResult[];
 }
 
-const DEFAULT_INCIDENT_AUDIO =
-  "/Users/etanheyman/.local/share/voicelayer/recordings/2026-06-06/2026-06-06T20-05-08-789Z-009828e5/audio.wav";
 const DEFAULT_PORT = 18893;
 
 function parseArgs(argv: string[]): CliOptions {
   let expectedOverridden = false;
   const options: CliOptions = {
-    audio: DEFAULT_INCIDENT_AUDIO,
+    audio: "",
     outputDir: ".verified/stt-long-dictation",
     port: DEFAULT_PORT,
     expected: [
@@ -70,6 +69,11 @@ function parseArgs(argv: string[]): CliOptions {
     }
   }
 
+  if (!options.audio) {
+    printUsage();
+    throw new Error("--audio PATH is required.");
+  }
+
   return options;
 }
 
@@ -80,10 +84,10 @@ function requiredValue(argv: string[], index: number, flag: string): string {
 }
 
 function printUsage(): void {
-  console.log(`Usage: bun run scripts/stt-long-dictation-ab.ts [options]
+  console.log(`Usage: bun run scripts/stt-long-dictation-ab.ts --audio PATH [options]
 
 Options:
-  --audio PATH       Long WAV to test. Defaults to the preserved 2026-06-06 incident.
+  --audio PATH       Long WAV to test. Required.
   --output-dir DIR   Local receipt directory. Default: .verified/stt-long-dictation.
   --port PORT        Temporary whisper-server port. Default: ${DEFAULT_PORT}.
   --expected TEXT    Expected phrase to score. Repeatable.
@@ -110,7 +114,7 @@ function resolveModel(): string {
   const envModel = process.env.QA_VOICE_WHISPER_MODEL;
   if (envModel && existsSync(envModel)) return envModel;
 
-  const home = process.env.HOME || "/Users/etanheyman";
+  const home = homedir();
   const candidates = [
     join(home, ".cache/whisper/ggml-large-v3-turbo.bin"),
     join(home, ".cache/whisper/ggml-large-v3-turbo-q5_0.bin"),

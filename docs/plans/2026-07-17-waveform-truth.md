@@ -395,7 +395,7 @@ flat. Record an R7 visual verification receipt.
 ### Task 7: Publish the ready PR and report without merging
 
 **Files:**
-- Create: `/Users/etanheyman/Gits/orchestrator/docs.local/handoffs/2026-07-17-notch-w2-REPORT.md`
+- Create: `~/Gits/orchestrator/docs.local/handoffs/2026-07-17-notch-w2-REPORT.md`
 - Modify only if review fixes require code/test changes.
 
 **Step 1: Re-run fresh completion verification**

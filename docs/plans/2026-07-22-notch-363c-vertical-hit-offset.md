@@ -46,7 +46,7 @@
 ### Task 4: Publish the worker seam
 
 **Files:**
-- Modify: `/Users/etanheyman/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
+- Modify: `~/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
 
 1. Run bounded local CodeRabbit review, then commit and push the scoped change.
 2. Open a ready PR against `main`, include `Verified-Runtime: <head>`, and invoke Codex plus Cursor/Bugbot (and available reviewers).

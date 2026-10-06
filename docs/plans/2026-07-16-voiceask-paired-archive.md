@@ -61,7 +61,7 @@
 ### Task 5: Publish for review without merging
 
 **Files:**
-- Create outside repo: `/Users/etanheyman/Gits/orchestrator/docs.local/handoffs/2026-07-16-lane1-b16-REPORT.md`
+- Create outside repo: `~/Gits/orchestrator/docs.local/handoffs/2026-07-16-lane1-b16-REPORT.md`
 
 1. Run a bounded local CodeRabbit review and address actionable findings.
 2. Commit scoped files, push `fix/b16-voiceask-archive`, and open a ready-for-review PR against `main`.
