@@ -100,6 +100,58 @@ def require_pressure(evidence):
         raise RuntimeError("pressure not exercised")
 
 
+class DaemonLifetime:
+    """Parent-side SIGKILL deadline, armed through child teardown."""
+    def __init__(self, proc, seconds=45, started=None):
+        if not 0 < seconds <= 45:
+            raise ValueError('daemon lifetime cap must be at most 45 seconds')
+        self.proc, self.started = proc, started if started is not None else time.monotonic()
+        self.deadline = self.started + seconds
+        self.expired = threading.Event()
+        self.elapsed = None
+        self.timer = threading.Timer(max(0, self.deadline - time.monotonic()), self._expire)
+        self.timer.daemon = True
+        self.timer.start()
+
+    def _expire(self):
+        if self.proc.poll() is None:
+            self.expired.set()
+            self.proc.kill()
+
+    def check(self):
+        if time.monotonic() >= self.deadline:
+            self._expire()
+        if self.expired.is_set():
+            raise RuntimeError('daemon lifetime cap exhausted')
+
+    def budget(self, seconds):
+        self.check()
+        return max(.001, min(seconds, self.deadline - time.monotonic()))
+
+    def wait(self, predicate, timeout):
+        end = time.monotonic() + self.budget(timeout)
+        while time.monotonic() < end:
+            self.check()
+            if predicate():
+                return
+            time.sleep(min(.05, self.budget(.05)))
+        self.check()
+        raise RuntimeError('deadline expired; missing binary/socket/event is FAIL')
+
+    def finish(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=max(.001, min(2, self.deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                self._expire() if time.monotonic() >= self.deadline else self.proc.kill()
+                self.proc.wait(1)
+        if self.elapsed is None:
+            self.elapsed = time.monotonic() - self.started
+        self.timer.cancel()
+        self.timer.join(1)
+
+
 class Run:
     def __init__(self, ref, output):
         self.ref, self.output = sha(ref), output
@@ -109,7 +161,7 @@ class Run:
         if parent.is_symlink() or parent.resolve() != parent:
             raise RuntimeError("scratch parent must be a physical absolute path")
         self.root = Path(tempfile.mkdtemp(prefix="pdv-", dir=parent))
-        self.procs, self.files = [], []
+        self.procs, self.files, self.caps = [], [], []
         self.source = self.root / "source"
         self.overlay_hash = None
         try:
@@ -202,12 +254,16 @@ class Run:
     def app(self, env=None):
         return self.launch([str(self.binary)], env)
 
-    def daemon(self, socket_path, pressure=False):
+    def daemon(self, socket_path, pressure=False, logname="daemon"):
         argv = ["bun", "run", "src/mcp-server-daemon.ts"]
         if pressure:
             argv = ["bun", "run", "--preload", str(self.root / "pressure.ts"), "src/mcp-server-daemon.ts"]
-        return self.launch(argv,
-                           dict(self.env, VOICELAYER_SOCKET_PATH=str(socket_path), QA_VOICE_SOCKET_PATH=str(socket_path)), "daemon")
+        started = time.monotonic()
+        proc = self.launch(argv, dict(self.env, VOICELAYER_SOCKET_PATH=str(socket_path),
+                                     QA_VOICE_SOCKET_PATH=str(socket_path)), logname)
+        cap = DaemonLifetime(proc, started=started)
+        self.caps.append(cap)
+        return cap
 
     def log(self, name="app"):
         path = self.root / (name + ".log")
@@ -218,6 +274,8 @@ class Run:
             token in line for token in ("Bad JSON", "Client hello", "Server listening", "SOCKET_ISOLATION_REFUSED"))) + "\n"
 
     def close(self):
+        for cap in self.caps:
+            cap.finish()
         for proc in reversed(self.procs):
             if proc.poll() is None:
                 proc.terminate()
@@ -226,7 +284,7 @@ class Run:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait()
-        for name in ("app", "daemon"):
+        for name in ("app", "daemon", "daemon-stop", "daemon-unlock"):
             self.output.with_suffix("." + name + ".log").write_text(self.transport_log(name))
         for log in self.files:
             log.close()
@@ -447,12 +505,33 @@ def lock_row(run):
         for name in fixture_names}, indent=2) + '\n')
     client_script = run.source / 'ratchet-lock-client.ts'
     shutil.copy2(REPO / 'ratchet/lock-client.ts', client_script)
+    cases = []
+    for ending in ('stop', 'unlock'):
+        case = lock_case(run, ending, client_script)
+        cap = run.caps[-1]
+        cap.check()
+        case.update(daemon_lifetime_seconds=cap.elapsed, daemon_cap_seconds=45, daemon_cap_expired=cap.expired.is_set())
+        cases.append(case)
+        run.output.with_suffix('.lock.json').write_text(json.dumps(cases, indent=2) + '\n')
+    return sum(lock_violations(case) for case in cases)
+
+
+def lock_case(run, ending, client_script):
+    # Only this case's daemon is alive; the watchdog includes startup and teardown.
+    for path in (run.root / 'v.sock', run.root / 'm.sock'):
+        path.unlink(missing_ok=True)
     listener = socket.socket(socket.AF_UNIX)
     listener.bind(run.env['VOICELAYER_SOCKET_PATH'])
     listener.listen()
-    listener.settimeout(30)
-    run.daemon(run.root / 'v.sock')
-    bar, _ = listener.accept()
+    cap = run.daemon(run.root / 'v.sock', logname='daemon-' + ending)
+    listener.settimeout(cap.budget(5))
+    bar = None
+    try:
+        bar, _ = listener.accept()
+    except BaseException:
+        cap.finish()
+        listener.close()
+        raise
     bar.settimeout(.1)
     frames, faults, done = [], [], threading.Event()
 
@@ -477,65 +556,63 @@ def lock_row(run):
 
     reader = threading.Thread(target=receive, daemon=True)
     reader.start()
-    cases = []
     try:
-        wait(lambda: (run.root / 'm.sock').exists())
-        for ending in ('stop', 'unlock'):
-            frames.clear()
-            result_path = run.root / ('sdk-' + ending + '.json')
-            rec_path = run.root / 'rec.json'
-            rec_path.unlink(missing_ok=True)
-            client = run.launch(['bun', str(client_script), str(result_path)], logname='sdk-' + ending)
-            def has_frame(predicate):
-                if faults or client.poll() not in (None, 0):
-                    raise RuntimeError('missing lock boundary: ' + repr(faults) + run.log('sdk-' + ending))
-                return any(predicate(frame) for _, frame in frames)
-            wait(lambda: has_frame(lambda f: f.get('type') == 'state' and f.get('state') == 'recording'))
-            command_id = 'lock-' + ending
-            bar.sendall((json.dumps(dict(cmd='set_recording_hold', engaged=True, id=command_id)) + '\n').encode())
-            wait(lambda: has_frame(lambda f: f.get('type') == 'ack' and f.get('id') == command_id))
-            ack = next(f for _, f in frames if f.get('type') == 'ack' and f.get('id') == command_id)
-            if ack.get('outcome') != 'accept':
-                raise RuntimeError('lock evidence: command not accepted: ' + repr(ack))
-            locked = time.monotonic()
-            # Exceed input deadline (5), outer watchdog (20), and pre-speech silence (15).
-            while time.monotonic() - locked < 21:
-                if faults:
-                    raise RuntimeError('lock evidence: disconnected boundary')
-                time.sleep(.05)
-            release = time.monotonic()
-            ended = [(when, frame) for when, frame in frames if when < release
-                     and frame.get('type') == 'state' and frame.get('state') in ('idle', 'transcribing')
-                     and frame.get('source') != 'playback']
-            before_release = json.loads(rec_path.read_text())
-            early = bool(ended or result_path.exists() or before_release['stopped'])
-            end_ack = None
-            if not early:
-                cmd = dict(cmd='stop' if ending == 'stop' else 'set_recording_hold', id='end-' + ending)
-                if ending == 'unlock':
-                    cmd['engaged'] = False
-                bar.sendall((json.dumps(cmd) + '\n').encode())
-                wait(lambda: has_frame(lambda f: f.get('type') == 'ack' and f.get('id') == cmd['id']), 5)
-                end_ack = next(f for _, f in frames if f.get('type') == 'ack' and f.get('id') == cmd['id'])
-                if end_ack.get('outcome') != 'accept':
-                    raise RuntimeError('lock evidence: ending not accepted')
-            wait(lambda: result_path.exists(), 12)
-            client.wait(5)
-            result = json.loads(result_path.read_text())
-            if client.returncode or result.get('isError'):
-                raise RuntimeError('lock evidence: SDK request failed')
-            pcm = json.loads(rec_path.read_text())
-            case = dict(ending=ending, lock_ack=True, held_seconds=release - locked,
-                        ended_before_release=early, completed=result['completed'],
-                        pcm_seconds=pcm['pcm_seconds'], recorder_seconds=pcm['elapsed_seconds'],
-                        ending_ack=end_ack is not None, accepted_lock=ack, accepted_ending=end_ack,
-                        early_end_seconds=ended[0][0] - locked if ended else None)
-            cases.append(case)
-            run.output.with_suffix('.lock.json').write_text(json.dumps(cases, indent=2) + '\n')
-        return sum(lock_violations(case) for case in cases)
+        cap.wait(lambda: (run.root / 'm.sock').exists(), 3)
+        result_path = run.root / ('sdk-' + ending + '.json')
+        rec_path = run.root / 'rec.json'
+        rec_path.unlink(missing_ok=True)
+        client = run.launch(['bun', str(client_script), str(result_path)], logname='sdk-' + ending)
+        def has_frame(predicate):
+            if faults or client.poll() not in (None, 0):
+                raise RuntimeError('missing lock boundary: ' + repr(faults) + run.log('sdk-' + ending))
+            return any(predicate(frame) for _, frame in frames)
+        cap.wait(lambda: has_frame(lambda f: f.get('type') == 'state' and f.get('state') == 'recording'), 6)
+        command_id = 'lock-' + ending
+        bar.sendall((json.dumps(dict(cmd='set_recording_hold', engaged=True, id=command_id)) + '\n').encode())
+        cap.wait(lambda: has_frame(lambda f: f.get('type') == 'ack' and f.get('id') == command_id), 2)
+        ack = next(f for _, f in frames if f.get('type') == 'ack' and f.get('id') == command_id)
+        if ack.get('outcome') != 'accept':
+            raise RuntimeError('lock evidence: command not accepted: ' + repr(ack))
+        locked = time.monotonic()
+        # Exceed input deadline (5), outer watchdog (20), and pre-speech silence (15).
+        while time.monotonic() - locked < 21:
+            cap.check()
+            if faults:
+                raise RuntimeError('lock evidence: disconnected boundary')
+            time.sleep(.05)
+        release = time.monotonic()
+        ended = [(when, frame) for when, frame in frames if when < release
+                 and frame.get('type') == 'state' and frame.get('state') in ('idle', 'transcribing')
+                 and frame.get('source') != 'playback']
+        before_release = json.loads(rec_path.read_text())
+        early = bool(ended or result_path.exists() or before_release['stopped'])
+        end_ack = None
+        if not early:
+            cmd = dict(cmd='stop' if ending == 'stop' else 'set_recording_hold', id='end-' + ending)
+            if ending == 'unlock':
+                cmd['engaged'] = False
+            bar.sendall((json.dumps(cmd) + '\n').encode())
+            cap.wait(lambda: has_frame(lambda f: f.get('type') == 'ack' and f.get('id') == cmd['id']), 5)
+            end_ack = next(f for _, f in frames if f.get('type') == 'ack' and f.get('id') == cmd['id'])
+            if end_ack.get('outcome') != 'accept':
+                raise RuntimeError('lock evidence: ending not accepted')
+        cap.wait(lambda: result_path.exists(), 12)
+        client.wait(cap.budget(1))
+        cap.check()
+        result = json.loads(result_path.read_text())
+        if client.returncode or result.get('isError'):
+            raise RuntimeError('lock evidence: SDK request failed')
+        pcm = json.loads(rec_path.read_text())
+        case = dict(ending=ending, lock_ack=True, held_seconds=release - locked,
+                    ended_before_release=early, completed=result['completed'],
+                    pcm_seconds=pcm['pcm_seconds'], recorder_seconds=pcm['elapsed_seconds'],
+                    ending_ack=end_ack is not None, accepted_lock=ack, accepted_ending=end_ack,
+                    early_end_seconds=ended[0][0] - locked if ended else None)
+        return case
     finally:
         done.set()
-        reader.join(2)
+        cap.finish()
+        reader.join(.2)
         bar.close()
         listener.close()
 
@@ -563,6 +640,8 @@ def main():
             if run:
                 try:
                     run.close()
+                    for cap in run.caps:
+                        cap.check()
                 except Exception as failure:
                     value, error = 1, "cleanup failed: " + str(failure)
         result = dict(row=row, kind="behavior", value=value, ceiling=0,

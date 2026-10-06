@@ -9,7 +9,7 @@ The [fleet brief](../../orchestrator/docs.local/handoffs/2026-10-06/ratchet-tabl
 5. Tighten/add only; loosening or removing requires a lead ruling in the PR body.
 6. Mocks are `unit` evidence and do not count as rows.
 
-Run on macOS with the Swift CI toolchain, Python 3.12+, Bun, and socat:
+Run on macOS with the Swift CI toolchain, Python 3.12+, and Bun:
 
 ```sh
 python3 ratchet/run.py --ref HEAD --output .verified/ratchet/head
@@ -40,4 +40,6 @@ python3 ratchet/comment.py --baseline .verified/ratchet/baseline/result.json --h
 
 Add `--pr <number> --repo EtanHey/voicelayer` to upsert the marker-delimited bot comment. Manual human/agent comments are never overwritten. The writer rejects stale SHAs, changed row sets, loosened ceilings, and missing overlay hashes. Run `python3 -m unittest discover -s ratchet -p 'test_*.py'` for unit safety/ingestion checks; these are not real rows.
 
-R4 pins `a2e25844fd98be78293ff3133122a6df0b0a50c8` (main immediately before #247) and `7677d52e5045970485f0dd5c141f8c069f66e9d9` (merge). The fix branch parent predates the intervening #246 merge. `lock-client.ts` uses the target checkout MCP SDK Client over socat/NDJSON. A synthetic app-side socket sends the actual `set_recording_hold` and `stop` commands and requires accepted ACKs. Product daemon/capture/VAD code is unmodified. Executable recorder and prompt fixtures provide silence; afplay is replaced with an inert executable. The boundary proves deadline/lock mechanics, not recognition, installed UI, or real microphone behavior. Both stop and unlock cases observe 21 s locked, then require SDK completion. Missing ACKs, PCM, replies or endings are harness FAILs, not historical bug receipts.
+R4 pins `a2e25844fd98be78293ff3133122a6df0b0a50c8` (main immediately before #247) and `7677d52e5045970485f0dd5c141f8c069f66e9d9` (merge). The fix branch parent predates the intervening #246 merge. `lock-client.ts` uses the target checkout MCP SDK Client over a pure Bun `node:net` Unix socket with SDK NDJSON framing. A synthetic app-side socket sends the actual `set_recording_hold` and `stop` commands and requires accepted ACKs. Product daemon/capture/VAD code is unmodified. Executable recorder and prompt fixtures provide silence; afplay is replaced with an inert executable. The boundary proves deadline/lock mechanics, not recognition, installed UI, or real microphone behavior. Both stop and unlock cases observe 21 s locked, then require SDK completion. Missing ACKs, PCM, replies or endings are harness FAILs, not historical bug receipts.
+
+Every ratchet daemon has a parent-side 45 s SIGKILL watchdog, armed from spawn through teardown. Expiration is a harness FAIL. R4 starts a fresh daemon for each ending and clamps its socket/event/SDK waits to the remaining budget; each lifetime is recorded in the case receipt. This keeps unmodified historical daemons below their first 60 s production-log rotation tick. No socat or other bridge executable is required.

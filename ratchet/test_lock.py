@@ -8,6 +8,10 @@ import subprocess
 import sys
 import tempfile
 import wave
+import shutil
+import socket
+import threading
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('runner', Path(__file__).with_name('run.py'))
 runner = importlib.util.module_from_spec(spec)
@@ -59,3 +63,116 @@ class ExecutableFixtureTests(unittest.TestCase):
             with wave.open(str(audio)) as wav:
                 self.assertEqual(wav.readframes(wav.getnframes()), b'\0' * 3200)
             self.assertEqual(metadata.read_text(), '')
+
+
+class DaemonLifetimeTests(unittest.TestCase):
+    def test_delayed_case_is_killed_and_fails_before_its_outer_wait(self):
+        proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(5)'])
+        try:
+            cap = runner.DaemonLifetime(proc, seconds=.15)
+            with self.assertRaisesRegex(RuntimeError, 'daemon lifetime cap'):
+                cap.wait(lambda: False, timeout=2)
+            proc.wait(1)
+            self.assertEqual(proc.returncode, -9)
+            self.assertTrue(cap.expired.is_set())
+            cap.finish()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+    def test_watchdog_kills_child_while_case_thread_is_blocked(self):
+        proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(5)'])
+        cap = runner.DaemonLifetime(proc, seconds=.15)
+        try:
+            proc.wait(1)  # No check/wait polling: only the independent watchdog can kill it.
+            self.assertEqual(proc.returncode, -9)
+            self.assertTrue(cap.expired.is_set())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            cap.finish()
+
+    def test_expired_cap_cannot_be_reported_as_a_pass(self):
+        class ExpiredCap:
+            def check(self):
+                raise RuntimeError('daemon lifetime cap exhausted')
+        class RunFixture:
+            caps = [ExpiredCap()]
+            overlay_hash = None
+            def __init__(self, *args): pass
+            def build(self): pass
+            def close(self): pass
+        with tempfile.TemporaryDirectory() as directory:
+            argv = ['run.py', '--row', 'voice-ask-lock-suspends-timeout', '--output', directory]
+            with patch.object(runner, 'Run', RunFixture), patch.object(runner, 'lock_row', return_value=0), \
+                    patch.object(runner, 'sha', return_value='a' * 40), patch('sys.argv', argv), patch('builtins.print'):
+                self.assertEqual(runner.main(), 1)
+            result = json.loads((Path(directory) / 'result.json').read_text())[0]
+            self.assertEqual(result['status'], 'FAIL')
+            self.assertIn('daemon lifetime cap', result['error'])
+
+    def test_cleanup_keeps_watchdog_armed_for_unresponsive_child(self):
+        proc = subprocess.Popen([sys.executable, '-c',
+                                 'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print("ready",flush=True); time.sleep(5)'],
+                                stdout=subprocess.PIPE)
+        try:
+            self.assertEqual(proc.stdout.readline(), b'ready\n')
+            cap = runner.DaemonLifetime(proc, seconds=.15)
+            cap.finish()
+            self.assertEqual(proc.returncode, -9)
+            with self.assertRaisesRegex(RuntimeError, 'daemon lifetime cap'):
+                cap.check()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            proc.stdout.close()
+
+
+class SdkSocketTests(unittest.TestCase):
+    def test_sdk_works_with_split_unicode_frames_and_no_executables_on_path(self):
+        parent = Path.home() / '.vlv'
+        parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='pdv-', dir=parent) as directory:
+            root = Path(directory)
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(root / 'm.sock'))
+            listener.listen()
+            listener.settimeout(5)
+            errors = []
+            def server():
+                try:
+                    peer, _ = listener.accept()
+                    with peer, peer.makefile('rb') as stream:
+                        peer.settimeout(5)
+                        for line in stream:
+                            request = json.loads(line)
+                            if 'id' not in request:
+                                continue
+                            if request['method'] == 'initialize':
+                                result = dict(protocolVersion=request['params']['protocolVersion'],
+                                              capabilities={'tools': {}}, serverInfo={'name': 'fixture', 'version': '1'})
+                            else:
+                                self.assertEqual(request['method'], 'tools/call')
+                                self.assertEqual(request['params']['name'], 'voice_ask')
+                                result = {'content': [{'type': 'text', 'text': 'Synthetic אבג'}]}
+                            frame = (json.dumps(dict(jsonrpc='2.0', id=request['id'], result=result), ensure_ascii=False) + '\n').encode()
+                            for i in range(0, len(frame), 3):
+                                peer.sendall(frame[i:i + 3])
+                except Exception as error:
+                    errors.append(error)
+            thread = threading.Thread(target=server)
+            thread.start()
+            try:
+                env = dict(os.environ, PATH=str(root), VOICELAYER_MCP_SOCKET_PATH=str(root / 'm.sock'))
+                output = root / 'sdk.json'
+                subprocess.run([shutil.which('bun'), str(Path(__file__).with_name('lock-client.ts')), str(output)],
+                               env=env, timeout=8, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self.assertEqual(json.loads(output.read_text()), {'completed': True, 'isError': False})
+            finally:
+                listener.close()
+                thread.join(6)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(errors, [])
