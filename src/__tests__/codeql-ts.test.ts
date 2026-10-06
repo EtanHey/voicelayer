@@ -1,13 +1,92 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { TEST_TMP } from "./setup/test-tmp";
 import { normalizePathTokens } from "../stt-cleanup";
-import { sanitizeTtsText } from "../sanitize";
+import { sanitizeTtsText, stripMarkupForSpeech } from "../sanitize";
 import { buildSTTQualityMiningReport, formatSTTQualityMiningMarkdown } from "../stt-quality-mining";
 import { createVoiceReviewApp, humanizeSpokenText } from "../voicereview-web/server";
 
+// Frozen pre-fix oracle: exercised only on short synthetic strings (<= 28 chars).
+// Never use this backtracking pattern on caller data or the 50k regression.
+function legacyPathTokens(text: string): string {
+  if (text.length > 28) throw new Error("legacy oracle only accepts bounded synthetic inputs");
+  let result = text.replace(
+    /\b(in|at|under|inside)\s+-\s*,\s+is it\s+(?=~\s*\/)/giu,
+    (_match, preposition: string) => `${preposition} `,
+  );
+  result = result.replace(/~\s*\/[^,;!?]*/gu, (match) =>
+    match.replace(/\s*\/\s*/g, "/").replace(/\s*-\s*/g, "-").toLowerCase(),
+  );
+  return result.replace(
+    /(?<!\S)(?=[A-Za-z0-9._~-]*\s*\/)[A-Za-z0-9._~-]+(?:\s*[/-]\s*[A-Za-z0-9._~-]+)+(?!\S)/gu,
+    (match) => {
+      if (/^\/[A-Za-z0-9-]+$/u.test(match.trim())) return match;
+      if (/^[A-Za-z]+\s+\/\s*[A-Za-z0-9-]+$/u.test(match.trim())) return match;
+      return match.replace(/\s*\/\s*/g, "/").replace(/\s*-\s*/g, "-").toLowerCase();
+    },
+  );
+}
+
+function seededRandom(seed: number): () => number {
+  return () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed;
+  };
+}
+
 describe("CodeQL TypeScript regressions", () => {
+  it("r2 preserves comparisons and incomplete markup in shared and server speech helpers", () => {
+    for (const text of ["latency > 2s", "a < b", "x > 5 and y < 3", "שלום > 2 < עוד"]) {
+      expect(stripMarkupForSpeech(text)).toBe(text);
+      expect(sanitizeTtsText(text)).toBe(text);
+      expect(humanizeSpokenText(text)).toBe(text);
+    }
+    expect(stripMarkupForSpeech("<scr<script>ipt>alert(1)</script>")).toBe("alert(1)");
+    expect(stripMarkupForSpeech("before <outer <inner> unfinished")).toBe("before <outer  unfinished");
+  });
+
+  it("r2 preserves comparisons in the generated browser speech helper", async () => {
+    const root = await mkdtemp(join(TEST_TMP, "codeql-browser-"));
+    try {
+      const app = createVoiceReviewApp({ config: { batchPath: join(root, "missing.json"), enableClonedTts: false } });
+      const html = await (await app.fetch(new Request("http://localhost/"))).text();
+      const source = html.match(/const stripMarkupForSpeech = ([^]*?);\s*function humanizeSpokenText/u)?.[1];
+      expect(source).toBeDefined();
+      const strip: (text: string) => string = runInNewContext(`(${source})`);
+      for (const text of ["latency > 2s", "a < b", "x > 5 and y < 3"]) expect(strip(text)).toBe(text);
+      expect(strip("<scr<script>ipt>alert(1)</script>")).toBe("alert(1)");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("r2 seeded markup output never leaves an opening bracket followed by a closing bracket", () => {
+    const random = seededRandom(0x53504545);
+    const alphabet = Array.from("abc019 <>/\tשלוםé");
+    for (let sample = 0; sample < 20000; sample++) {
+      let text = "";
+      const size = random() % 40;
+      for (let i = 0; i < size; i++) text += alphabet[random() % alphabet.length];
+      expect(stripMarkupForSpeech(text)).not.toMatch(/<[^]*>/u);
+    }
+  });
+
+  it("r2 matches the frozen legacy path oracle on 20000 fixed-seed short strings", () => {
+    const random = seededRandom(0x004c514c);
+    const alphabet = Array.from("abcdefghijklmnopqrstuvwxyz0123456789._~/- \téא中");
+    expect(() => legacyPathTokens("x".repeat(29))).toThrow("bounded synthetic inputs");
+    const started = performance.now();
+    for (let sample = 0; sample < 20000; sample++) {
+      let text = sample % 2 === 0 ? "aA/" : "";
+      const size = random() % 24;
+      for (let i = 0; i < size; i++) text += alphabet[random() % alphabet.length];
+      expect(normalizePathTokens(text)).toBe(legacyPathTokens(text));
+    }
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
   it("#5 path normalization finishes a 50k-character hyphen near-miss within 100ms without losing text", async () => {
     const script = `
       import { normalizePathTokens } from './src/stt-cleanup.ts';
@@ -48,8 +127,8 @@ describe("CodeQL TypeScript regressions", () => {
   it("#8 strips tags reintroduced by nested removal and handles repeated tags", () => {
     expect(sanitizeTtsText("<scrip<script>t>hello</scrip</script>t>")).toBe("hello");
     expect(sanitizeTtsText("<speak>one</speak> <speak>two</speak>")).toBe("one two");
-    expect(sanitizeTtsText("<script incomplete")).toBe("script incomplete");
-    expect(sanitizeTtsText("plain text < unfinished words")).toBe("plain text unfinished words");
+    expect(sanitizeTtsText("<script incomplete")).toBe("<script incomplete");
+    expect(sanitizeTtsText("plain text < unfinished words")).toBe("plain text < unfinished words");
     expect(sanitizeTtsText("שלום <b>one</b> fu… two")).toBe("שלום one fu… two");
   });
 

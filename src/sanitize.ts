@@ -23,31 +23,22 @@ export function sanitizeTtsText(text: string): string {
 }
 
 /** Remove balanced tag spans, including nested malformed tags, in one pass.
- * An unmatched bracket is removed without discarding the following words.
+ * Keep stray closing brackets and unmatched opening brackets verbatim.
+ * Closed inner spans are still removed when their outer opening is unmatched.
  * This produces plain speech text; HTML sinks still need contextual escaping.
  */
 export function stripMarkupForSpeech(text: string): string {
-  const parts: string[] = [];
-  let depth = 0;
-  let cursor = 0;
-  let tagStart = 0;
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === "<") {
-      if (depth === 0) {
-        parts.push(text.slice(cursor, i));
-        tagStart = i;
-      }
-      depth++;
-    } else if (text[i] === ">") {
-      if (depth > 0) {
-        depth--;
-        if (depth === 0) cursor = i + 1;
-      } else {
-        parts.push(text.slice(cursor, i));
-        cursor = i + 1;
-      }
+  const output: string[] = [];
+  const openings: number[] = [];
+  for (const char of text) {
+    if (char === "<") openings.push(output.length);
+    if (char === ">" && openings.length > 0) {
+      // Removing a closed span is amortized linear: each output character is
+      // appended once and can be discarded only once, even with nested tags.
+      output.length = openings.pop()!;
+    } else {
+      output.push(char);
     }
   }
-  parts.push(depth > 0 ? text.slice(tagStart).replace(/[<>]/g, "") : text.slice(cursor));
-  return parts.join("");
+  return output.join("");
 }
