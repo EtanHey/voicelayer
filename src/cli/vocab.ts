@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 import {
   addAlias,
+  setPromptPolicy,
+  type STTDictionaryEntry,
   listVocabulary,
   removeAlias,
   addPromptTerm,
@@ -30,15 +32,16 @@ export async function runVocabularyCli(
     switch (command) {
       case "add": {
         const flags = parseFlags(rest);
+        const policy = parsePromptPolicy(flags);
         if (hasFlag(flags, "--wrong") || hasFlag(flags, "--right")) {
           const wrong = requireFlag(flags, "--wrong");
           const right = requireFlag(flags, "--right");
-          requireChanged(addAlias({ from: wrong, to: right }, options), "variant");
+          requireChanged(addAlias({ from: wrong, to: right }, { ...options, promptPolicy: policy }), "variant");
           stdout(`Added variant: ${wrong.trim()} -> ${right.trim()}\n`);
           return 0;
         }
         const term = requireFlag(flags, "--term");
-        requireChanged(addPromptTerm(term, options), "term");
+        requireChanged(addPromptTerm(term, { ...options, promptPolicy: policy }), "term");
         const accepted: string[] = [];
         for (const variant of flags["--variant"] ?? []) {
           try {
@@ -59,6 +62,15 @@ export async function runVocabularyCli(
         const variant = requireFlag(flags, "--variant");
         requireChanged(addAlias({ from: variant, to: term }, options), "variant");
         stdout(`Added variant: ${variant.trim()} -> ${term.trim()}\n`);
+        return 0;
+      }
+      case "set-prompt": {
+        const flags = parseFlags(rest);
+        const policy = parsePromptPolicy(flags);
+        if (!policy) throw new Error("--prompt is required");
+        const term = requireFlag(flags, "--term");
+        setPromptPolicy(term, policy, options);
+        stdout(`Prompt policy: ${term.trim()} -> ${policy.prompt}\n`);
         return 0;
       }
       case "list": {
@@ -102,6 +114,22 @@ export async function runVocabularyCli(
   }
 }
 
+function parsePromptPolicy(flags: ParsedFlags): Pick<STTDictionaryEntry, "prompt" | "prompt_after" | "prompt_user" | "prompt_order"> | undefined {
+  if (!hasFlag(flags, "--prompt")) {
+    if (hasFlag(flags, "--prompt-after") || hasFlag(flags, "--prompt-user") || hasFlag(flags, "--prompt-order")) throw new Error("--prompt is required");
+    return undefined;
+  }
+  const prompt = requireFlag(flags, "--prompt");
+  if (prompt !== "include" && prompt !== "exclude" && prompt !== "reserve") throw new Error("invalid prompt policy");
+  const after = flags["--prompt-after"]?.[0];
+  const user = flags["--prompt-user"]?.[0];
+  const order = flags["--prompt-order"]?.[0];
+  if ((after !== undefined || user !== undefined || order !== undefined) && prompt !== "reserve") throw new Error("reserve options require --prompt reserve");
+  if (user !== undefined && user !== "true" && user !== "false") throw new Error("--prompt-user must be true or false");
+  if (order !== undefined && (!/^\d+$/.test(order) || !Number.isSafeInteger(Number(order)))) throw new Error("--prompt-order must be a nonnegative safe integer");
+  return { prompt, ...(order !== undefined ? { prompt_order: Number(order) } : {}), ...(after !== undefined ? { prompt_after: after.trim() } : {}), ...(user !== undefined ? { prompt_user: user === "true" } : {}) };
+}
+
 function requireChanged(result: STTVocabularyMutationResult, mode: "term" | "variant"): void {
   if (result.changed) return;
   const warning = result.warnings?.[0];
@@ -143,7 +171,7 @@ function hasFlag(flags: ParsedFlags, flag: string): boolean {
 }
 
 function formatVocabularyList(snapshot: {
-  entries: Array<{ canonical: string; variants: string[] }>;
+  entries: STTDictionaryEntry[];
 }): string {
   if (snapshot.entries.length === 0) {
     return "No STT vocabulary entries.\n";
@@ -152,6 +180,9 @@ function formatVocabularyList(snapshot: {
   const lines: string[] = [];
   for (const entry of snapshot.entries) {
     lines.push(`- ${entry.canonical}`);
+    if (entry.prompt) {
+      lines.push(`  prompt: ${entry.prompt}${entry.prompt_after ? ` after ${entry.prompt_after}` : ""}${entry.prompt_order !== undefined ? ` order ${entry.prompt_order}` : ""}${entry.prompt_user ? " (user tier too)" : ""}`);
+    }
     if (entry.variants.length > 0) {
       lines.push(`  variants: ${entry.variants.join(", ")}`);
     }
@@ -166,8 +197,15 @@ Commands:
   add --term X [--variant V...]      Add a canonical STT term
   add --wrong X --right Y            Back-compat alias add
   add-variant --term X --variant V   Add a misheard variant
+  set-prompt --term X --prompt P      Set include (default), exclude, or reserve
   list                               List STT vocabulary entries
   remove --term X                    Remove a canonical STT term
+
+add also accepts --prompt include|exclude|reserve.
+Reserve options: --prompt-after TERM places its builtin priority slot;
+--prompt-order N orders slots at that anchor (default 0, stable store order);
+--prompt-user true|false also retains an existing user-tier position.
+Absent or unknown stored policy uses legacy include behavior.
 `;
 }
 

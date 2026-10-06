@@ -29,9 +29,34 @@ export interface STTVocabularyAlias {
   to: string;
 }
 
+export type STTPromptPolicy = "include" | "exclude" | "reserve";
+
 export interface STTDictionaryEntry {
   canonical: string;
   variants: string[];
+  prompt?: STTPromptPolicy;
+  /** Builtin priority term after which this reserve slot is inserted. */
+  prompt_after?: string;
+  /** Retain an existing user-tier position as well as a reserve fallback. */
+  prompt_user?: boolean;
+  /** Stable order among reserve slots sharing the same anchor. */
+  prompt_order?: number;
+}
+
+/** Unknown policy fields retain the legacy include behavior. */
+export function promptPolicyFields(value: unknown): Pick<STTDictionaryEntry, "prompt" | "prompt_after" | "prompt_user" | "prompt_order"> {
+  if (!value || typeof value !== "object") return {};
+  const raw = value as STTDictionaryEntry;
+  if (!["include", "exclude", "reserve"].includes(raw.prompt ?? "")) return {};
+  return {
+    prompt: raw.prompt,
+    ...(raw.prompt === "reserve" && typeof raw.prompt_after === "string" && raw.prompt_after.trim()
+      ? { prompt_after: raw.prompt_after.trim() } : {}),
+    ...(raw.prompt === "reserve" && Number.isSafeInteger(raw.prompt_order) && raw.prompt_order! >= 0
+      ? { prompt_order: raw.prompt_order } : {}),
+    ...(raw.prompt === "reserve" && typeof raw.prompt_user === "boolean"
+      ? { prompt_user: raw.prompt_user } : {}),
+  };
 }
 
 export type STTDictionaryEntrySource = "bundled" | "personal";
@@ -77,6 +102,7 @@ export interface STTVocabularyStoreOptions {
   now?: () => Date;
   lockTimeoutMs?: number;
   staleLockMs?: number;
+  promptPolicy?: Pick<STTDictionaryEntry, "prompt" | "prompt_after" | "prompt_user" | "prompt_order">;
 }
 
 export type STTVocabularyMutationResult = STTVocabularySnapshot & {
@@ -130,6 +156,7 @@ export function buildDictionaryDisplayEntries(
     source,
     canonical: entry.canonical,
     variants: [...entry.variants],
+    ...promptPolicyFields(entry),
   }));
 
   return [
@@ -177,6 +204,7 @@ export function addAlias(
     }
     const warnings = nearDuplicateWarnings(snapshot.entries, normalized.to);
     upsertEntryVariant(snapshot.entries, ownEntry?.canonical ?? normalized.to, normalized.from);
+    if (options.promptPolicy) applyPromptPolicy(snapshot.entries.find((entry) => sameSurface(entry.canonical, normalized.to))!, options.promptPolicy);
     return withWarnings(
       writeSnapshot(path, stampSnapshot(snapshot, options), true),
       warnings,
@@ -202,10 +230,39 @@ export function addPromptTerm(
     const warnings = nearDuplicateWarnings(snapshot.entries, normalized);
     const storedCanonical = snapshot.entries.find((entry) => sameSurface(entry.canonical, normalized))?.canonical;
     upsertEntry(snapshot.entries, storedCanonical ?? normalized);
+    if (options.promptPolicy) applyPromptPolicy(snapshot.entries.find((entry) => sameSurface(entry.canonical, normalized))!, options.promptPolicy);
     return withWarnings(
       writeSnapshot(path, stampSnapshot(snapshot, options), true),
       warnings,
     );
+  });
+}
+
+function applyPromptPolicy(entry: STTDictionaryEntry, policy: STTVocabularyStoreOptions["promptPolicy"]): void {
+  if (!policy || !["include", "exclude", "reserve"].includes(policy.prompt ?? "")) throw new Error("invalid prompt policy");
+  delete entry.prompt;
+  delete entry.prompt_after;
+  delete entry.prompt_user;
+  delete entry.prompt_order;
+  Object.assign(entry, promptPolicyFields(policy));
+}
+
+export function setPromptPolicy(
+  term: string,
+  policy: Pick<STTDictionaryEntry, "prompt" | "prompt_after" | "prompt_user" | "prompt_order">,
+  options: STTVocabularyStoreOptions = {},
+): STTVocabularyMutationResult {
+  const canonical = validateText(term, "term");
+  if (!["include", "exclude", "reserve"].includes(policy.prompt ?? "")) throw new Error("invalid prompt policy");
+  const fields = promptPolicyFields(policy);
+  const path = getSTTVocabularyPath(options);
+  return withVocabularyLock(path, options, () => {
+    const snapshot = readSnapshot(path);
+    const entry = snapshot.entries.find((entry) => sameSurface(entry.canonical, canonical));
+    if (!entry) throw new Error("prompt policy term not found");
+    if (JSON.stringify(promptPolicyFields(entry)) === JSON.stringify(fields)) return { ...snapshot, changed: false };
+    applyPromptPolicy(entry, fields);
+    return writeSnapshot(path, stampSnapshot(snapshot, options), true);
   });
 }
 
@@ -337,6 +394,8 @@ function normalizeEntries(values: unknown[]): STTDictionaryEntry[] {
     const { canonical, variants } = value as Partial<STTDictionaryEntry>;
     if (!isNonEmptyString(canonical)) continue;
     upsertEntry(entries, canonical.trim());
+    const entry = entries.find((entry) => entry.canonical.toLowerCase() === canonical.trim().toLowerCase())!;
+    if (!entry.prompt) Object.assign(entry, promptPolicyFields(value));
     if (!Array.isArray(variants)) continue;
     for (const variant of variants) {
       if (!isNonEmptyString(variant)) continue;

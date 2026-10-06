@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { promptPolicyFields } from "../stt-vocabulary-store";
 import { stripMarkupForSpeech } from "../sanitize";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
 import {
@@ -2288,6 +2289,8 @@ function vocabularyPromptTerms(parsed: unknown): string[] {
   if (!isRecord(parsed)) return [];
   if (Array.isArray(parsed.entries)) {
     return parsed.entries
+      .filter((entry) => promptPolicyFields(entry).prompt !== "exclude")
+      .sort((left, right) => Number(promptPolicyFields(right).prompt === "reserve") - Number(promptPolicyFields(left).prompt === "reserve"))
       .map((entry) =>
         isRecord(entry) && typeof entry.canonical === "string"
           ? entry.canonical
