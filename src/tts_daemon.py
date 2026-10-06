@@ -138,18 +138,16 @@ def validate_reference_wav_path(
     resolved_path = os.path.realpath(requested)
     root = os.path.realpath(voices_root.expanduser())
 
-    # Include the separator so a sibling such as voices-other is never allowed.
+    # Keep the equal-root branch separate: only the prefix branch uses caller data.
     # The filesystem root already ends with a separator.
-    if not (
-        resolved_path == root
-        or resolved_path.startswith(root + os.sep)
-        or (root == os.sep and resolved_path.startswith(os.sep))
-    ):
-        raise PermissionError(
-            f"Reference audio must live under {root}."
-        )
+    prefix = root if root == os.sep else root + os.sep
+    if resolved_path == root:
+        resolved = Path(root)
+    elif resolved_path.startswith(prefix):
+        resolved = Path(resolved_path)
+    else:
+        raise PermissionError(f"Reference audio must live under {root}.")
 
-    resolved = Path(resolved_path)
     if os.path.splitext(requested.rstrip(os.sep))[1].lower() != ".wav":
         raise ValueError("Reference audio must be a .wav file.")
 
