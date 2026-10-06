@@ -18,6 +18,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Test merge-base change detection
+        run: bash tests/test_daemon_verification_gate.sh
+
       - name: Check runtime verification marker
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -27,7 +30,7 @@ jobs:
           set -euo pipefail
 
           changed_files="$(mktemp)"
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$changed_files"
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$changed_files"
 
           daemon_files="$(mktemp)"
           grep -E '^(flow-bar/|launchd/|src/whisper-server\.ts$|src/mcp-server[^/]*\.ts$|src/mcp-daemon\.ts$|src/mcp-framing\.ts$|src/mcp-handler\.ts$|src/mcp-socket-owner\.ts$|src/mcp-tools\.ts$|src/daemon\.ts$|src/daemon-health\.ts$|src/log-rotation\.ts$|src/paths\.ts$|src/process-lock\.ts$|src/resolve-binary\.ts$|src/socket-[^/]*\.ts$|src/socket-client\.ts$|src/socket-handlers\.ts$|src/socket-protocol\.ts$|src/cli/voicelayer\.sh$)' "$changed_files" > "$daemon_files" || true

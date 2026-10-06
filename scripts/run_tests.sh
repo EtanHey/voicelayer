@@ -88,7 +88,16 @@ record_status "swift test" "$swift_test_status"
 printf '\n== Bun MCP daemon boot ==\n'
 (
   cd "$ROOT_DIR" || exit 1
-  QA_VOICE_MCP_SOCKET_PATH="$MCP_SOCKET" \
+  # Keep HOME-derived logs/caches and all runtime state inside this smoke run.
+  HOME="$RUN_DIR" \
+    VOICELAYER_STATE_DIR="$RUN_DIR/state" \
+    VOICELAYER_TMP_ROOT="$RUN_DIR" \
+    VOICELAYER_CONTROL_LAYER_BASE="$RUN_DIR/journal" \
+    VOICELAYER_MCP_SOCKET_PATH="$MCP_SOCKET" \
+    VOICELAYER_SOCKET_PATH="$VOICEBAR_SOCKET" \
+    QA_VOICE_STT_BACKEND=wispr \
+    QA_VOICE_STT_POLISH=off \
+    QA_VOICE_MCP_SOCKET_PATH="$MCP_SOCKET" \
     QA_VOICE_SOCKET_PATH="$VOICEBAR_SOCKET" \
     QA_VOICE_MCP_PID_PATH="$MCP_PID_FILE" \
     QA_VOICE_MCP_HEARTBEAT_PATH="$RUN_DIR/voicelayer-mcp.heartbeat" \
@@ -111,6 +120,12 @@ for _ in $(seq 1 150); do
   sleep 0.1
 done
 record_status "bun MCP daemon boot" "$daemon_status"
+
+# Boot smoke is complete; do not leave its daemon alive during the test suites.
+# Its periodic log rotator still targets production /tmp logs.
+kill "$daemon_pid" 2>/dev/null
+wait "$daemon_pid" 2>/dev/null
+daemon_pid=""
 
 printf '\n== F5 hidutil LaunchAgent smoke ==\n'
 hidutil_plist_status=0
