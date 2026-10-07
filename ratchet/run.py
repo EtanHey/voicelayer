@@ -480,7 +480,8 @@ def lock_violations(case):
     if (not case['lock_ack'] or case['pcm_seconds'] <= 0 or case['held_seconds'] < 21
             or not case['completed'] or case['ending'] not in ('stop', 'unlock')):
         raise RuntimeError('lock evidence missing or incomplete')
-    if not case['ended_before_release'] and (case['pcm_seconds'] < 15 or not case['ending_ack']):
+    if not case['ended_before_release'] and (case['pcm_seconds'] < 15
+            or case.get('pcm_seconds_before_release', 0) < 15 or not case['ending_ack']):
         raise RuntimeError('lock evidence did not exercise pre-speech silence')
     return int(case['ended_before_release'])
 
@@ -605,6 +606,7 @@ def lock_case(run, ending, client_script):
         pcm = json.loads(rec_path.read_text())
         case = dict(ending=ending, lock_ack=True, held_seconds=release - locked,
                     ended_before_release=early, completed=result['completed'],
+                    pcm_seconds_before_release=before_release['pcm_seconds'],
                     pcm_seconds=pcm['pcm_seconds'], recorder_seconds=pcm['elapsed_seconds'],
                     ending_ack=end_ack is not None, accepted_lock=ack, accepted_ending=end_ack,
                     early_end_seconds=ended[0][0] - locked if ended else None)

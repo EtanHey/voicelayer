@@ -15,11 +15,11 @@
 [voicelayer] VAD chunk #3: prob=0.0089 rms=0
 [socket-client] Command from VoiceBar: {"cmd":"stop","id":"end-stop"}
 [voicelayer] Stop signal received — ending recording
-[voicelayer] Recording gate: duration=18848ms, rms=0, dbfs=-inf, vad_speech=false, allowed=false
-[voicelayer] Dropping recording before STT: vad-no-speech (duration=18848ms, rms=0, dbfs=-inf)
+[voicelayer] Recording gate: duration=21088ms, rms=0, dbfs=-inf, vad_speech=false, allowed=false
+[voicelayer] Dropping recording before STT: vad-no-speech (duration=21088ms, rms=0, dbfs=-inf)
 === unlock daemon ===
 [voicelayer-daemon] PATH enriched (38 dirs)
-[voicelayer] Cleaned up stale PID file (PID 84810 is dead)
+[voicelayer] Cleaned up stale PID file (PID 88213 is dead)
 [voicelayer-daemon] python3: <scratch>/bin/python3
 [voicelayer-daemon] MCP daemon listening on <scratch>/m.sock
 [voicelayer-daemon] socat config: socat STDIO UNIX-CONNECT:<scratch>/m.sock
@@ -34,5 +34,5 @@
 [voicelayer] VAD chunk #2: prob=0.0069 rms=0
 [voicelayer] VAD chunk #3: prob=0.0089 rms=0
 [socket-client] Command from VoiceBar: {"cmd":"set_recording_hold","engaged":false,"id":"end-unlock"}
-[voicelayer] Recording gate: duration=23104ms, rms=0, dbfs=-inf, vad_speech=false, allowed=false
-[voicelayer] Dropping recording before STT: vad-no-speech (duration=23104ms, rms=0, dbfs=-inf)
+[voicelayer] Recording gate: duration=26144ms, rms=0, dbfs=-inf, vad_speech=false, allowed=false
+[voicelayer] Dropping recording before STT: vad-no-speech (duration=26144ms, rms=0, dbfs=-inf)

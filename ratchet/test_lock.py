@@ -11,6 +11,7 @@ import wave
 import shutil
 import socket
 import threading
+import time
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('runner', Path(__file__).with_name('run.py'))
@@ -25,17 +26,68 @@ class LockTests(unittest.TestCase):
                           '7677d52e5045970485f0dd5c141f8c069f66e9d9'))
 
     def test_missing_deadline_ack_pcm_or_ending_is_not_a_bug_receipt(self):
-        good = dict(lock_ack=True, pcm_seconds=21, held_seconds=21,
+        good = dict(lock_ack=True, pcm_seconds=21, pcm_seconds_before_release=21, held_seconds=21,
                     ended_before_release=False, completed=True, ending='stop', ending_ack=True)
         self.assertEqual(runner.lock_violations(good), 0)
         self.assertEqual(runner.lock_violations(dict(good, ended_before_release=True)), 1)
         for key, value in [('lock_ack', False), ('pcm_seconds', 0),
-                           ('held_seconds', 4), ('completed', False), ('ending_ack', False), ('ending', 'cancel')]:
+                           ('pcm_seconds_before_release', 14), ('held_seconds', 4),
+                           ('completed', False), ('ending_ack', False), ('ending', 'cancel')]:
             with self.subTest(key=key), self.assertRaisesRegex(RuntimeError, 'lock evidence'):
                 runner.lock_violations(dict(good, **{key: value}))
+        without_silence_phase = dict(good)
+        del without_silence_phase['pcm_seconds_before_release']
+        with self.assertRaisesRegex(RuntimeError, 'pre-speech silence'):
+            runner.lock_violations(without_silence_phase)
 
 
 class ExecutableFixtureTests(unittest.TestCase):
+    def test_recorder_keeps_pcm_pace_when_receipt_io_is_slow(self):
+        fixture = str(Path(__file__).with_name('fixture-rec.py'))
+        delayed = '''import runpy, sys, time
+from pathlib import Path
+original = Path.write_text
+def slow_receipt(self, *args, **kwargs):
+    time.sleep(.12)
+    return original(self, *args, **kwargs)
+Path.write_text = slow_receipt
+runpy.run_path(sys.argv[1], run_name='__main__')
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / 'rec.json'
+            proc = subprocess.Popen([sys.executable, '-c', delayed, fixture],
+                                    env=dict(os.environ, RATCHET_REC_RECEIPT=str(receipt)),
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            audio = bytearray()
+            reader = threading.Thread(target=lambda: audio.extend(proc.stdout.read()))
+            reader.start()
+            try:
+                deadline = time.monotonic() + 3
+                while not receipt.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(receipt.exists(), 'recorder startup receipt missing')
+                time.sleep(1.2)
+                proc.terminate()
+                self.assertEqual(proc.wait(3), 0, proc.stderr.read().decode())
+                reader.join(1)
+                self.assertFalse(reader.is_alive())
+                evidence = json.loads(receipt.read_text())
+                self.assertTrue(evidence['stopped'])
+                actual_pcm = len(audio) / 32000
+                self.assertEqual(audio, b'\0' * len(audio))
+                self.assertAlmostEqual(evidence['pcm_seconds'], actual_pcm, places=6)
+                self.assertGreaterEqual(actual_pcm, evidence['elapsed_seconds'] * .9,
+                                        'receipt latency must not accumulate into PCM drift')
+                self.assertLessEqual(actual_pcm, evidence['elapsed_seconds'] + .1,
+                                     'silence must not be emitted ahead of the recording clock')
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                reader.join(1)
+                proc.stdout.close()
+                proc.stderr.close()
+
     def test_recorder_emits_silence_and_records_termination(self):
         with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / 'rec.json'
