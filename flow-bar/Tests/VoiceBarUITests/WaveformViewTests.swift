@@ -523,23 +523,33 @@ final class WaveformViewTests: XCTestCase {
                 currentLevel: { 1 }
             )
         )
-        let transcribing = try render(
-            WaveformView(processingColor: Theme.stateColor(for: .transcribing))
-        )
         let speaking = try render(
             WaveformView(color: Theme.speakingColor, currentLevel: { 1 })
         )
+        // The processing pulse legitimately passes through nearly equal bar heights.
+        // Census its maximum spread across frames, rather than one random phase.
+        let transcribing = try render(
+            WaveformView(processingColor: Theme.stateColor(for: .transcribing)),
+            until: { frames in
+                VoiceBarNotchCaptureAudit.waveformCensus(
+                    recordingFrames: recording,
+                    transcribingFrames: frames,
+                    speakingFrames: speaking
+                ).transcribingMaximumBottomSpread >= 2
+            }
+        )
 
         let result = VoiceBarNotchCaptureAudit.waveformCensus(
-            recordingFrames: [recording],
-            transcribingFrames: [transcribing],
-            speakingFrames: [speaking]
+            recordingFrames: recording,
+            transcribingFrames: transcribing,
+            speakingFrames: speaking
         )
 
         XCTAssertTrue(result.passed, "\(result)")
         XCTAssertEqual(result.minimumRecordingBarCount, 7)
         XCTAssertEqual(result.minimumTranscribingBarCount, 7)
         XCTAssertEqual(result.minimumSpeakingBarCount, 7)
+        XCTAssertEqual(result.transcribingCompleteFraction, 1)
         XCTAssertGreaterThanOrEqual(result.recordingToSpeakingPeakRatio, 0.8)
         XCTAssertLessThanOrEqual(result.recordingMaximumCenterDeviation, 2)
         XCTAssertLessThanOrEqual(result.transcribingMaximumCenterDeviation, 2)
@@ -730,37 +740,73 @@ final class WaveformViewTests: XCTestCase {
     }
 
     @MainActor
-    private func render(_ waveform: WaveformView) throws -> VoiceBarRGBImage {
+    private func render(
+        _ waveform: WaveformView,
+        until condition: ([VoiceBarRGBImage]) -> Bool = { _ in true }
+    ) throws -> [VoiceBarRGBImage] {
         let size = CGSize(
             width: WaveformLayout.viewportWidth,
             height: WaveformLayout.viewportHeight
         )
-        let host = NSHostingView(
-            rootView: waveform
+        let makeRootView = { (sample: Int) in
+            waveform
                 .frame(width: size.width, height: size.height)
                 .background(Color(red: 0.08, green: 0.08, blue: 0.10))
-        )
+                .id(sample)
+        }
+        let host = NSHostingView(rootView: makeRootView(0))
         host.frame = CGRect(origin: .zero, size: size)
         host.layerContentsRedrawPolicy = .onSetNeedsDisplay
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.12))
 
-        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+        // Use the same one-pixel-per-point census on Retina and non-Retina hosts.
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width),
+            pixelsHigh: Int(size.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
             throw NSError(domain: "WaveformViewTests", code: 1)
         }
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let pixels = (0 ..< bitmap.pixelsHigh).flatMap { y in
-            (0 ..< bitmap.pixelsWide).map { x -> VoiceBarRGB in
-                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
-                    return VoiceBarRGB(red: 0, green: 0, blue: 0)
+        // Bound the wait beyond one full processing cycle (2π / 2.4 seconds).
+        // Keep every captured frame: missing, off-center, or displaced bars must
+        // still fail the final census even if a later frame has sufficient spread.
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        var frames: [VoiceBarRGBImage] = []
+        repeat {
+            host.layoutSubtreeIfNeeded()
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let pixels = (0 ..< bitmap.pixelsHigh).flatMap { y in
+                (0 ..< bitmap.pixelsWide).map { x -> VoiceBarRGB in
+                    guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
+                        return VoiceBarRGB(red: 0, green: 0, blue: 0)
+                    }
+                    return VoiceBarRGB(
+                        red: color.redComponent,
+                        green: color.greenComponent,
+                        blue: color.blueComponent
+                    )
                 }
-                return VoiceBarRGB(
-                    red: color.redComponent,
-                    green: color.greenComponent,
-                    blue: color.blueComponent
-                )
             }
-        }
-        return VoiceBarRGBImage(width: bitmap.pixelsWide, height: bitmap.pixelsHigh, pixels: pixels)
+            frames.append(VoiceBarRGBImage(
+                width: bitmap.pixelsWide,
+                height: bitmap.pixelsHigh,
+                pixels: pixels
+            ))
+            if condition(frames) { break }
+            // An unattached hosting view has no display-link ticks. Explicitly
+            // remount the timeline for the next phase instead of recapturing
+            // its frozen initial frame. Production rendering stays untouched.
+            host.rootView = makeRootView(frames.count)
+            RunLoop.main.run(until: Date().addingTimeInterval(1.0 / 60.0))
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return frames
     }
 }
