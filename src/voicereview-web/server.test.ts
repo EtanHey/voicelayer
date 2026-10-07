@@ -868,7 +868,12 @@ describe("VoiceReview web server helpers", () => {
     }
   });
 
-  it("builds the transcription prompt from canonical vocabulary entries", async () => {
+  it.each([
+    { policy: undefined, expected: "BrainLayer VoiceLayer Zerina" },
+    { policy: "exclude", expected: "BrainLayer VoiceLayer" },
+    { policy: "reserve", expected: "Zerina BrainLayer VoiceLayer" },
+    { policy: "unknown", expected: "BrainLayer VoiceLayer Zerina" },
+  ])("builds the transcription prompt from canonical entries ($policy)", async ({ policy, expected }) => {
     const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
     const calls: CommandCall[] = [];
     const vocabPath = join(root, "stt-vocabulary.json");
@@ -881,6 +886,7 @@ describe("VoiceReview web server helpers", () => {
         entries: [
           { canonical: "BrainLayer", variants: ["brain layer"] },
           { canonical: "VoiceLayer", variants: [] },
+          { canonical: "Zerina", variants: [], prompt: policy },
         ],
       }),
     );
@@ -917,7 +923,7 @@ describe("VoiceReview web server helpers", () => {
 
       expect(response.status).toBe(200);
       expect(promptIndex).toBeGreaterThan(-1);
-      expect(whisperCall?.args[promptIndex + 1]).toBe("BrainLayer VoiceLayer");
+      expect(whisperCall?.args[promptIndex + 1]).toBe(expected);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
