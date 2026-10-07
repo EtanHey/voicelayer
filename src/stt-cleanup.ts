@@ -7,6 +7,7 @@ import {
   canonicalTermsFromEntries,
   getSTTVocabularyPath,
   isUnsafeDynamicAliasSource,
+  promptPolicyFields,
   vocabularyAliasesFromEntries,
   type STTDictionaryEntry,
 } from "./stt-vocabulary-store";
@@ -271,6 +272,7 @@ interface LoadedVocabularySnapshot {
   path: string;
   mtimeMs: number;
   promptTerms: string[];
+  entries?: STTDictionaryEntry[];
   aliases: Record<string, string>;
 }
 
@@ -286,7 +288,7 @@ function getVocabularySnapshotPath(env: STTCleanupEnv): string | null {
 
 function parseVocabularySnapshot(
   snapshot: STTVocabularySnapshot,
-): Pick<LoadedVocabularySnapshot, "promptTerms" | "aliases"> {
+): Pick<LoadedVocabularySnapshot, "promptTerms" | "aliases" | "entries"> {
   if (Array.isArray(snapshot.entries)) {
     const entries = parseDictionaryEntries(snapshot.entries);
     const aliases = Object.fromEntries(
@@ -295,6 +297,7 @@ function parseVocabularySnapshot(
         .map((alias) => [alias.from, alias.to]),
     );
     return {
+      entries,
       promptTerms: canonicalTermsFromEntries(entries),
       aliases,
     };
@@ -341,6 +344,7 @@ function parseDictionaryEntries(values: unknown[]): STTDictionaryEntry[] {
     if (typeof canonical !== "string" || canonical.trim() === "") continue;
     entries.push({
       canonical: canonical.trim(),
+      ...promptPolicyFields(value),
       variants: Array.isArray(variants)
         ? variants
             .filter(
@@ -357,7 +361,7 @@ function parseDictionaryEntries(values: unknown[]): STTDictionaryEntry[] {
 function buildLoadedVocabularySnapshot(
   path: string,
   mtimeMs: number,
-  snapshot: Pick<LoadedVocabularySnapshot, "promptTerms" | "aliases">,
+  snapshot: Pick<LoadedVocabularySnapshot, "promptTerms" | "aliases" | "entries">,
 ): LoadedVocabularySnapshot {
   return {
     path,
@@ -669,14 +673,39 @@ function appendCappedVocabularyTerms(
   }
 }
 
+function priorityTermsWithPolicy(entries: STTDictionaryEntry[], excluded: Set<string>): string[] {
+  const reserved = entries.filter((entry) => entry.prompt === "reserve")
+    .sort((left, right) => (left.prompt_order ?? 0) - (right.prompt_order ?? 0));
+  const replaced = new Set(reserved.map((entry) => entry.canonical.toLowerCase()));
+  const terms: string[] = [];
+  const inserted = new Set<STTDictionaryEntry>();
+  for (const term of STT_VOCABULARY_PRIORITY_TERMS) {
+    if (!excluded.has(term.toLowerCase()) && !replaced.has(term.toLowerCase())) terms.push(term);
+    for (const entry of reserved) {
+      if (entry.prompt_after?.toLowerCase() === term.toLowerCase()) {
+        terms.push(entry.canonical);
+        inserted.add(entry);
+      }
+    }
+  }
+  for (const entry of reserved) if (!inserted.has(entry)) terms.push(entry.canonical);
+  return terms;
+}
+
 export function getSTTVocabularyPrompt(
   env: STTCleanupEnv = process.env,
 ): string {
   const snapshot = loadVocabularySnapshot(env);
+  const entries = snapshot?.entries ?? [];
+  const excluded = new Set(entries.filter((entry) => entry.prompt === "exclude").map((entry) => entry.canonical.toLowerCase()));
+  const allowed = (term: string) => !excluded.has(term.toLowerCase());
+  const userTerms = snapshot?.entries
+    ? entries.filter((entry) => entry.prompt !== "exclude" && (entry.prompt !== "reserve" || entry.prompt_user)).map((entry) => entry.canonical)
+    : snapshot?.promptTerms ?? [];
   // The remaining builtin canonical VALUES (the seed set), minus the cleanup-
   // only phrases. Lowest priority — dropped first when over budget.
   const seedTerms = Object.values(ORDERED_BUILTIN_STT_ALIASES).filter(
-    (term) => !CLEANUP_ONLY_ALIAS_VALUES.has(term),
+    (term) => !CLEANUP_ONLY_ALIAS_VALUES.has(term) && allowed(term),
   );
 
   const state = { kept: [] as string[], seen: new Set<string>(), length: 0 };
@@ -686,7 +715,7 @@ export function getSTTVocabularyPrompt(
   // entries are dropped from the prompt entirely (they stay cleanup aliases).
   appendCappedVocabularyTerms(
     state,
-    snapshot?.promptTerms ?? [],
+    userTerms,
     STT_VOCABULARY_PROMPT_MAX_CHARS - STT_VOCABULARY_PRIORITY_RESERVE_CHARS,
   );
   // Tier 2 — high-value proper nouns / system terms whisper mishears (agent
@@ -694,7 +723,7 @@ export function getSTTVocabularyPrompt(
   // within the reserved headroom.
   appendCappedVocabularyTerms(
     state,
-    STT_VOCABULARY_PRIORITY_TERMS,
+    priorityTermsWithPolicy(entries, excluded).filter(allowed),
     STT_VOCABULARY_PROMPT_MAX_CHARS,
   );
   // Tier 3 — remaining builtin canonical seed set, fills whatever budget is
