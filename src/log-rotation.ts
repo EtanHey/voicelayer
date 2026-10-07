@@ -6,6 +6,10 @@
  */
 
 import { existsSync, statSync, renameSync } from "fs";
+import {
+  isDefaultTmpRoot, isDefaultStateDir,
+  isDefaultVoiceBarSocketPath, isDefaultMcpSocketPath,
+} from "./paths";
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 const CHECK_INTERVAL_MS = 60_000; // Check every 60 seconds
@@ -42,12 +46,21 @@ let rotationTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Start periodic log rotation checks. */
 export function startLogRotation(
-  paths: string[] = LOG_PATHS,
+  paths?: string[],
   intervalMs: number = CHECK_INTERVAL_MS,
 ): void {
   if (rotationTimer) return; // Already running
+  // Child output may be inherited handles, pipes, or arbitrary redirects; an
+  // isolated root does not tell us the actual log filenames. Only the resident
+  // defaults are known. Isolated callers must supply their output paths.
+  const isolated = !isDefaultTmpRoot() || !isDefaultStateDir() ||
+    !isDefaultVoiceBarSocketPath() || !isDefaultMcpSocketPath() ||
+    !!process.env.QA_VOICE_MCP_PID_PATH?.trim() ||
+    !!process.env.QA_VOICE_MCP_HEARTBEAT_PATH?.trim();
+  const logPaths = paths ?? (isolated ? [] : LOG_PATHS);
+  if (logPaths.length === 0) return;
   rotationTimer = setInterval(() => {
-    for (const path of paths) {
+    for (const path of logPaths) {
       if (rotateIfNeeded(path)) {
         console.error(`[voicelayer-daemon] Rotated log: ${path}`);
       }
