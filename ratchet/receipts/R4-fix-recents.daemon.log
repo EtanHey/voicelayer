@@ -1,0 +1,19 @@
+[voicelayer-daemon] PATH enriched (38 dirs)
+[voicelayer-daemon] python3: /Library/Frameworks/Python.framework/Versions/3.13/bin/python3
+[voicelayer-daemon] MCP daemon listening on $ISOLATED_ROOT/m.sock
+[voicelayer-daemon] socat config: socat STDIO UNIX-CONNECT:$ISOLATED_ROOT/m.sock
+[socket-client] Connected to VoiceBar at $ISOLATED_ROOT/bridge.sock
+[socket-client] Command from VoiceBar: {"cmd":"health"}
+[socket-client] Command from VoiceBar: {"cmd":"vocab_list"}
+[socket-client] Command from VoiceBar: {"cmd":"retranscribe_recording","audio_path":"$ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav","id":"8E9A305E-B289-408A-AD9D-614BE85D1D1D"}
+[voicelayer] Retranscribing archived recording with whisper.cpp: $ISOLATED_ROOT/recordings/2026-08-21/2026-08-21T10-00-00-000Z-abcd1234/audio.wav
+[voicelayer] Archived retranscription: Recovered synthetic answer.
+[socket-client] Command from VoiceBar: {"cmd":"health"}
+[socket-client] Command from VoiceBar: {"cmd":"retranscribe_recording","audio_path":"$ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav","id":"A82FE802-0B81-4DB7-B30F-A59B3A758F6B"}
+[voicelayer] Retranscribing archived recording with whisper.cpp: $ISOLATED_ROOT/recordings/2026-08-18/2026-08-18T10-00-00-000Z-abcd1234/audio.wav
+[voicelayer] Archived retranscription: Recovered synthetic answer.
+[socket-client] Command from VoiceBar: {"cmd":"health"}
+[socket-client] Command from VoiceBar: {"cmd":"retranscribe_recording","audio_path":"$ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav","id":"03E6ACAB-336E-49A0-BE37-BCB459BE9B0A"}
+[voicelayer] Retranscribing archived recording with whisper.cpp: $ISOLATED_ROOT/recordings/2026-08-19/2026-08-19T10-00-00-000Z-abcd1234/audio.wav
+[voicelayer] Archived retranscription: Recovered synthetic answer.
+[socket-client] Command from VoiceBar: {"cmd":"health"}

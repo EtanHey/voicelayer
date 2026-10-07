@@ -16,6 +16,17 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_recents_row_pins_first_parent_and_counts_order_age_and_missing_rows(self):
+        self.assertEqual(harness.ROWS["recents-newest-after-retranscribe"], ("2f2de18c^1", "2f2de18c"))
+        expected = [{"path": "/synthetic/new.wav", "created_at": "2026-08-21T10:00:00.000Z"},
+                    {"path": "/synthetic/old.wav", "created_at": "2026-08-20T10:00:00.000Z"}]
+        self.assertEqual(harness.recents_violations(expected, expected), 0)
+        for actual in (expected[::-1], expected[:1], [],
+                       [dict(expected[0], created_at="2026-08-22T10:00:00.000Z"), expected[1]],
+                       expected + [expected[0]]):
+            with self.subTest(actual=actual):
+                self.assertGreater(harness.recents_violations(actual, expected), 0)
+
     def test_failed_install_removes_real_registered_worktree_and_temp_root(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)

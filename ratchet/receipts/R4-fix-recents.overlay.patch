@@ -1,0 +1,70 @@
+--- a/flow-bar/Sources/VoiceBarUI/VoiceState.swift
++++ b/flow-bar/Sources/VoiceBarUI/VoiceState.swift
+@@ -362,6 +362,18 @@
+     /// Whether the last completed action was TTS playback (replay is valid).
+     /// Set true when speaking state arrives, false when recording starts.
+     public var canReplay: Bool = false
++
++    public func ratchetLogRecents(token: String) {
++        let formatter = ISO8601DateFormatter()
++        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
++        let entries = recentTranscriptionEntries.map { entry in
++            ["path": entry.recordingPath ?? "", "created_at": entry.createdAt.map(formatter.string) ?? ""]
++        }
++        let payload: [String: Any] = ["token": token, "entries": entries,
++            "pending": isHistoryRetranscriptionPending, "mode": mode.rawValue]
++        let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
++        NSLog("[ratchet-recents] %@", String(data: data, encoding: .utf8)!)
++    }
+ 
+     /// Recent transcription history with the newest item first.
+     public var recentTranscriptionEntries: [RecentTranscriptionEntry] = [] {
+@@ -2200,15 +2212,15 @@
+     }
+ 
+     public static func loadRecentTranscriptions() -> [String] {
+-        UserDefaults.standard.stringArray(forKey: recentTranscriptionsDefaultsKey) ?? []
++        UserDefaults(suiteName: ProcessInfo.processInfo.environment["RATCHET_RECENTS_DEFAULTS"]!)!.stringArray(forKey: recentTranscriptionsDefaultsKey) ?? []
+     }
+ 
+     public static func saveRecentTranscriptions(_ items: [String]) {
+-        UserDefaults.standard.set(items, forKey: recentTranscriptionsDefaultsKey)
++        UserDefaults(suiteName: ProcessInfo.processInfo.environment["RATCHET_RECENTS_DEFAULTS"]!)!.set(items, forKey: recentTranscriptionsDefaultsKey)
+     }
+ 
+     public static func loadRecentTranscriptionEntries() -> [RecentTranscriptionEntry] {
+-        guard let data = UserDefaults.standard.data(forKey: recentTranscriptionEntriesDefaultsKey),
++        guard let data = UserDefaults(suiteName: ProcessInfo.processInfo.environment["RATCHET_RECENTS_DEFAULTS"]!)!.data(forKey: recentTranscriptionEntriesDefaultsKey),
+               let decoded = try? JSONDecoder().decode([RecentTranscriptionEntry].self, from: data)
+         else {
+             return []
+@@ -2220,7 +2232,7 @@
+         guard let data = try? JSONEncoder().encode(normalizeRecentTranscriptionEntries(items)) else {
+             return
+         }
+-        UserDefaults.standard.set(data, forKey: recentTranscriptionEntriesDefaultsKey)
++        UserDefaults(suiteName: ProcessInfo.processInfo.environment["RATCHET_RECENTS_DEFAULTS"]!)!.set(data, forKey: recentTranscriptionEntriesDefaultsKey)
+     }
+ 
+     private func startTranscriptionTimeout() {
+--- a/flow-bar/Sources/VoiceBar/SocketServer.swift
++++ b/flow-bar/Sources/VoiceBar/SocketServer.swift
+@@ -316,6 +316,18 @@
+               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+         else {
+             NSLog("[VoiceBar] Bad JSON from client: %@", json)
++            return
++        }
++
++        if let type = dict["type"] as? String, type == "ratchet_history_retry" || type == "ratchet_recents_snapshot" {
++            DispatchQueue.main.async { [weak self] in
++                guard let self else { return }
++                if type == "ratchet_history_retry", let path = dict["audio_path"] as? String {
++                    state.retranscribeHistoryEntry(recordingPath: path)
++                } else if let token = dict["token"] as? String {
++                    state.ratchetLogRecents(token: token)
++                }
++            }
+             return
+         }
+ 

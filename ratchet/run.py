@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import shutil
 import socket
@@ -21,6 +22,7 @@ ROWS = {
     "ndjson-partial-write": ("78a43fbb^1", "78a43fbb"),
     "socket-isolation": ("39a673b1^1", "313a959e"),
     "retranscribe-history-refresh": ("a2e25844^1", "a2e25844"),
+    "recents-newest-after-retranscribe": ("2f2de18c^1", "2f2de18c"),
 }
 
 
@@ -58,6 +60,10 @@ class Wire:
             self.chunks.append(raw)
             self.last = time.monotonic()
             self.changed.notify_all()
+
+    def frames(self):
+        with self.changed:
+            return [json.loads(line) for line in b"".join(self.chunks).split(b"\n")[:-1] if line]
 
     def archive(self, path, timeout=10, quiet=1):
         deadline, cap = time.monotonic() + timeout, time.monotonic() + timeout + quiet + 1
@@ -98,11 +104,18 @@ def require_pressure(evidence):
 
 
 class Run:
-    def __init__(self, ref, output):
+    def __init__(self, ref, output, physical_root=False):
         self.ref, self.output = sha(ref), output
         output.write_text("")
-        self.root = Path(tempfile.mkdtemp(prefix="vlr-", dir="/tmp"))
-        self.procs, self.files = [], []
+        if physical_root:
+            base = Path.home() / ".vlv"
+            base.mkdir(exist_ok=True)
+            if base.is_symlink() or base.resolve() != base:
+                raise RuntimeError("ratchet requires a physical ~/.vlv root")
+            self.root = Path(tempfile.mkdtemp(prefix="pdv-k-", dir=base))
+        else:
+            self.root = Path(tempfile.mkdtemp(prefix="vlr-", dir="/tmp"))
+        self.procs, self.files, self.timers = [], [], []
         self.source = self.root / "source"
         self.overlay_hash = None
         try:
@@ -181,8 +194,9 @@ class Run:
 
     def launch(self, argv, env=None, logname="app"):
         env = env or self.env
-        for key in ("VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "VOICELAYER_STATE_DIR", "VOICELAYER_TMP_ROOT",
-                    "QA_VOICE_SOCKET_PATH", "QA_VOICE_MCP_SOCKET_PATH", "RATCHET_RESIDENT"):
+        keys = ("VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "VOICELAYER_STATE_DIR", "VOICELAYER_TMP_ROOT",
+                "QA_VOICE_SOCKET_PATH", "QA_VOICE_MCP_SOCKET_PATH", "RATCHET_RESIDENT")
+        for key in keys + (("RATCHET_RECENTS_DEFAULTS",) if "RATCHET_RECENTS_DEFAULTS" in env else ()):
             path = Path(env[key]).resolve()
             if not path.is_relative_to(self.root.resolve()) or len(str(path).encode()) >= 100:
                 raise RuntimeError("refusing unsafe/oversized isolation path")
@@ -208,9 +222,11 @@ class Run:
 
     def transport_log(self, name="app"):
         return "\n".join(line for line in self.log(name).splitlines() if name != "app" or any(
-            token in line for token in ("Bad JSON", "Client hello", "Server listening", "SOCKET_ISOLATION_REFUSED"))) + "\n"
+            token in line for token in ("Bad JSON", "Client hello", "Server listening", "SOCKET_ISOLATION_REFUSED", "[ratchet-recents]"))) + "\n"
 
     def close(self):
+        for timer in self.timers:
+            timer.cancel()
         for proc in reversed(self.procs):
             if proc.poll() is None:
                 proc.terminate()
@@ -280,6 +296,7 @@ def isolation(run):
 
 def wire_row(run, row):
     (run.root / "vocab.json").write_text(json.dumps({"entries": []}))
+    fixtures = prepare_recents(run) if row == "recents-newest-after-retranscribe" else None
     run.app()
     app_path = run.root / "v.sock"
     wait(lambda: app_path.exists())
@@ -300,7 +317,14 @@ def wire_row(run, row):
             'setTimeout(()=>{broadcast({type:"client_hello",role:"ratchet-2",pid:process.pid,accepts_commands:true} as any);\n'
             'console.error("[ratchet] sent=3");},1000);},100);\n')
     listener.settimeout(30)
-    run.daemon(bridge, row == "ndjson-partial-write")
+    daemon = run.daemon(bridge, row == "ndjson-partial-write")
+    # This daemon's unchanged rotator targets production logs after 60 s.
+    # Keep the new row's daemon lifetime strictly below that first tick, even on failure.
+    timer = threading.Timer(45, daemon.kill) if fixtures is not None else None
+    if timer:
+        run.timers.append(timer)
+        timer.daemon = True
+        timer.start()
     upstream, _ = listener.accept()
     if pressure:
         upstream.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
@@ -361,6 +385,8 @@ def wire_row(run, row):
                 "wire_bytes": sum(map(len, captured.chunks)), "errors": errors, "pressure": evidence}))
             require_pressure(evidence)
             return bad_json + missing
+        if fixtures is not None:
+            return recents_scenario(run, captured, fixtures)
         archive_id = "2026-08-20T10-11-12-000Z-abcd1234"
         directory = run.root / "recordings" / archive_id[:10] / archive_id
         directory.mkdir(parents=True)
@@ -404,11 +430,198 @@ def wire_row(run, row):
             "event_observed": observed, "quiet_period_complete": quiet, "quiet_seconds": 1}))
         return int(not observed or not quiet or len(matches) != 1 or any(f.get("type") == "transcription" for f in frames))
     finally:
+        if timer:
+            timer.cancel()
+            if daemon.poll() is None:
+                daemon.terminate()
+                daemon.wait(5)
         upstream.close()
         downstream.close()
         listener.close()
         thread.join(2)
         reverse_thread.join(2)
+
+
+def instrument_recents(run):
+    """Scratch-only input/observation/path seams; leave reducers byte-identical."""
+    import difflib
+    patches = []
+    state = run.source / "flow-bar/Sources/VoiceBarUI/VoiceState.swift"
+    original = state.read_text()
+    needle = "    /// Recent transcription history with the newest item first."
+    logger = '''    public func ratchetLogRecents(token: String) {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let entries = recentTranscriptionEntries.map { entry in
+            ["path": entry.recordingPath ?? "", "created_at": entry.createdAt.map(formatter.string) ?? ""]
+        }
+        let payload: [String: Any] = ["token": token, "entries": entries,
+            "pending": isHistoryRetranscriptionPending, "mode": mode.rawValue]
+        let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        NSLog("[ratchet-recents] %@", String(data: data, encoding: .utf8)!)
+    }
+
+'''
+    assert original.count(needle) == 1, "Recents observation seam drifted"
+    updated = original.replace(needle, logger + needle)
+    start = updated.index("    public static func loadRecentTranscriptions()")
+    end = updated.index("    private func startTranscriptionTimeout()", start)
+    storage = updated[start:end]
+    assert storage.count("UserDefaults.standard") == 4, "Recents path seam drifted"
+    storage = storage.replace("UserDefaults.standard",
+        'UserDefaults(suiteName: ProcessInfo.processInfo.environment["RATCHET_RECENTS_DEFAULTS"]!)!')
+    updated = updated[:start] + storage + updated[end:]
+    remap = 'UserDefaults(suiteName: ProcessInfo.processInfo.environment["RATCHET_RECENTS_DEFAULTS"]!)!'
+    assert updated.replace(logger, "", 1).replace(remap, "UserDefaults.standard") == original
+    server = run.source / "flow-bar/Sources/VoiceBar/SocketServer.swift"
+    trigger = '''        if let type = dict["type"] as? String, type == "ratchet_history_retry" || type == "ratchet_recents_snapshot" {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if type == "ratchet_history_retry", let path = dict["audio_path"] as? String {
+                    state.retranscribeHistoryEntry(recordingPath: path)
+                } else if let token = dict["token"] as? String {
+                    state.ratchetLogRecents(token: token)
+                }
+            }
+            return
+        }
+
+'''
+    before_server = server.read_text()
+    server_needle = '        if let controlCommand = VoiceBarLocalControlCommand(payload: dict) {'
+    assert before_server.count(server_needle) == 1, "History input seam drifted"
+    run.output.with_suffix(".seams.json").write_text(json.dumps(dict(
+        decision_code_unchanged=True, defaults_references_remapped=4,
+        daemon_source_unchanged=True, trigger_method="VoiceState.retranscribeHistoryEntry")))
+    for path, before, after in ((state, original, updated),
+                               (server, before_server, before_server.replace(server_needle, trigger + server_needle))):
+        path.write_text(after)
+        patches.extend(difflib.unified_diff(before.splitlines(True), after.splitlines(True),
+            fromfile="a/" + str(path.relative_to(run.source)), tofile="b/" + str(path.relative_to(run.source))))
+    patch = "".join(patches)
+    run.output.with_suffix(".overlay.patch").write_text(patch)
+    run.overlay_hash = hashlib.sha256(patch.encode()).hexdigest()
+    run.env["RATCHET_RECENTS_DEFAULTS"] = str(run.root / "state/recents")
+    run.env["VOICEBAR_USER_DEFAULTS_SUITE"] = str(run.root / "state/app-defaults")
+
+
+def prepare_recents(run):
+    from datetime import datetime, timezone
+    fixtures = []
+    # Older missing recovery, existing older entry, existing head, newest cancelled capture.
+    for day, status in ((18, "captured"), (19, "transcribed"), (20, "transcribed"), (21, "cancelled")):
+        archive_id = f"2026-08-{day}T10-00-00-000Z-abcd1234"
+        created = f"2026-08-{day}T10:00:00.000Z"
+        directory = run.root / "recordings" / archive_id[:10] / archive_id
+        directory.mkdir(parents=True)
+        audio = directory / "audio.wav"
+        with wave.open(str(audio), "wb") as wav:
+            wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            wav.writeframes(b"\x10\x27\xf0\xd8" * 8000)
+        metadata = dict(id=archive_id, created_at=created, source="voicebar", mode="ptt",
+                        duration_ms=1000, raw_duration_ms=1000, transcribed_duration_ms=1000,
+                        sample_rate=16000, channels=1, schema_version=3,
+                        transcription_status=status, retention_policy="indefinite",
+                        audio_sha256=hashlib.sha256(audio.read_bytes()).hexdigest())
+        (directory / "metadata.json").write_text(json.dumps(metadata))
+        fixtures.append(dict(path=str(audio), created_at=created))
+    seeded = [fixtures[2], fixtures[1]]
+    epoch = datetime(2001, 1, 1, tzinfo=timezone.utc).timestamp()
+    entries = [dict(text="Synthetic seeded words " + str(i), recordingPath=item["path"],
+                    createdAt=datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")).timestamp() - epoch)
+               for i, item in enumerate(seeded)]
+    domain = Path(run.env["RATCHET_RECENTS_DEFAULTS"] + ".plist")
+    domain.write_bytes(plistlib.dumps({"VoiceBar.recentTranscriptionEntries.v1": json.dumps(entries).encode()}))
+    return fixtures
+
+
+def recents_scenario(run, captured, fixtures):
+    def send(payload):
+        with connect(run.root / "v.sock") as client:
+            client.sendall(json.dumps(payload).encode() + b"\n")
+
+    def snapshot(token):
+        send(dict(type="ratchet_recents_snapshot", token=token))
+        found = []
+        def observed():
+            for line in run.log().splitlines():
+                if "[ratchet-recents] " in line:
+                    payload = json.loads(line.split("[ratchet-recents] ", 1)[1])
+                    if payload["token"] == token:
+                        found.append(payload)
+                        return True
+            return False
+        wait(observed, 10)
+        return found[-1]
+
+    seed = snapshot("seed")
+    assert seed["entries"] == [fixtures[2], fixtures[1]], "isolated synthetic Recents seed was not loaded"
+    cases, failures = [], 0
+    for index, (name, target, expected) in enumerate((
+        ("newest-cancelled-recovery", fixtures[3], [fixtures[3], fixtures[2], fixtures[1]]),
+        ("older-missing-recovery", fixtures[0], fixtures[::-1]),
+        ("older-existing-retranscribe", fixtures[1], fixtures[::-1]))):
+        directory = Path(target["path"]).parent
+        original_status = json.loads((directory / "metadata.json").read_text())["transcription_status"]
+        start = len(captured.frames())
+        send(dict(type="ratchet_history_retry", audio_path=target["path"]))
+        delivered = []
+        def response_complete():
+            frames = captured.frames()[start:]
+            finals = [f for f in frames if f.get("type") == "transcription" and f.get("recording_path") == target["path"]]
+            if finals and any(f.get("type") == "state" and f.get("state") == "idle" for f in frames):
+                delivered[:] = finals
+                return True
+            return False
+        wait(response_complete, 15)
+        assert len(delivered) == 1, "missing/duplicate real-daemon History final"
+        assert (directory / "voicelayer-transcript.txt").read_text() == "Recovered synthetic answer."
+        assert json.loads((directory / "metadata.json").read_text())["transcription_status"] == "transcribed"
+        current, attempts = [], 0
+        def settled():
+            nonlocal attempts
+            attempts += 1
+            current[:] = [snapshot(f"{index}-{attempts}")]
+            return current[0]["mode"] == "idle" and not current[0]["pending"]
+        wait(settled, 10)
+        violations = recents_violations(current[0]["entries"], expected)
+        failures += violations
+        cases.append(dict(case=name, expected=expected, actual=current[0]["entries"], violations=violations,
+                          original_transcription_status=original_status,
+                          final_recording_created_at=delivered[0].get("recording_created_at"),
+                          final_recording_is_latest=delivered[0].get("recording_is_latest"),
+                          durable_transcript=True, durable_metadata=True))
+    run.output.with_suffix(".recents.json").write_text(json.dumps(cases, indent=2) + "\n")
+    domain = Path(run.env["RATCHET_RECENTS_DEFAULTS"] + ".plist")
+    def persisted():
+        try:
+            entries = json.loads(plistlib.loads(domain.read_bytes())["VoiceBar.recentTranscriptionEntries.v1"])
+            return any(entry["text"] == "Recovered synthetic answer." for entry in entries)
+        except (OSError, ValueError, KeyError):
+            return False
+    wait(persisted, 10)
+    run.defaults_plist_evidence = dict(plist_inside_root=domain.resolve().is_relative_to(run.root),
+                                     seeded_read_verified=True, app_write_verified=True,
+                                     plist_sha256=hashlib.sha256(domain.read_bytes()).hexdigest())
+    return failures
+
+
+def recents_violations(actual, expected):
+    """Count missing/extra rows and position/age mismatches, never silently sort."""
+    return abs(len(actual) - len(expected)) + sum(
+        found != wanted for found, wanted in zip(actual, expected))
+
+
+def resident_defaults_fingerprint():
+    # Never save or print personal preference contents; preserve only comparison evidence.
+    result = subprocess.run(["defaults", "read", "com.voicelayer.voicebar"], capture_output=True)
+    if result.returncode != 0:
+        if (result.returncode == 1 and not result.stdout and b"com.voicelayer.voicebar" in result.stderr
+                and any(message in result.stderr for message in (b"not found", b"does not exist"))):
+            return dict(exit_code=1, absent=True)
+        raise RuntimeError("resident defaults probe failed; isolation evidence is missing")
+    return dict(exit_code=result.returncode,
+                sha256=hashlib.sha256(result.stdout + b"\0" + result.stderr).hexdigest())
 
 
 def main():
@@ -420,13 +633,20 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     results = []
     for row in ([args.row] if args.row else ROWS):
-        run, value, error = None, 1, None
+        run, value, error, defaults_before = None, 1, None, None
         try:
-            run = Run(args.ref, args.output / (row + ".build.log"))
+            run = Run(args.ref, args.output / (row + ".build.log"),
+                      physical_root=row == "recents-newest-after-retranscribe")
             if row == "socket-isolation":
                 run.instrument()
+            if row == "recents-newest-after-retranscribe":
+                instrument_recents(run)
             run.build()
-            value = isolation(run) if row == "socket-isolation" else wire_row(run, row)
+            if row == "recents-newest-after-retranscribe":
+                defaults_before = resident_defaults_fingerprint()
+                value = wire_row(run, row)
+            else:
+                value = isolation(run) if row == "socket-isolation" else wire_row(run, row)
         except Exception as failure:
             error = str(failure)
         finally:
@@ -435,6 +655,18 @@ def main():
                     run.close()
                 except Exception as failure:
                     value, error = 1, "cleanup failed: " + str(failure)
+            if defaults_before is not None:
+                try:
+                    defaults_after = resident_defaults_fingerprint()
+                except Exception:
+                    defaults_after = dict(error="resident defaults probe failed")
+                unchanged = defaults_before == defaults_after
+                evidence = dict(resident_bundle="com.voicelayer.voicebar", before=defaults_before,
+                                after=defaults_after, resident_defaults_unchanged=unchanged,
+                                **getattr(run, "defaults_plist_evidence", {}))
+                run.output.with_suffix(".defaults.json").write_text(json.dumps(evidence, indent=2) + "\n")
+                if not unchanged:
+                    value, error = 1, "resident bundle defaults changed during the isolated run"
         result = dict(row=row, kind="behavior", value=value, ceiling=0,
                       status="PASS" if value == 0 else "FAIL", bug_sha=sha(ROWS[row][0]),
                       fix_sha=sha(ROWS[row][1]), measured_sha=sha(args.ref), error=error,

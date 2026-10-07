@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 
 MARKER = "<!-- voicelayer-ratchet:v1 -->"
-ROWS = ("ndjson-partial-write", "socket-isolation", "retranscribe-history-refresh")
+ROWS = ("ndjson-partial-write", "socket-isolation", "retranscribe-history-refresh", "recents-newest-after-retranscribe")
 
 
 def read(path, expected_sha):
@@ -23,7 +23,7 @@ def read(path, expected_sha):
             assert re.fullmatch(r"[0-9a-f]{40}", item[key]), "invalid commit"
         assert type(item["value"]) is int and item["value"] >= 0, "invalid value"
         assert item["status"] == ("PASS" if item["value"] == 0 else "FAIL"), "status mismatch"
-        if item["row"] == "socket-isolation":
+        if item["row"] in ("socket-isolation", "recents-newest-after-retranscribe"):
             assert re.fullmatch(r"[0-9a-f]{64}", item["overlay_sha256"]), "overlay receipt missing"
     return {item["row"]: item for item in data}
 
@@ -34,14 +34,16 @@ def render(baseline, head, base_sha, head_sha):
     for row in ROWS:
         before, after = baseline[row], head[row]
         assert (before["bug_sha"], before["fix_sha"]) == (after["bug_sha"], after["fix_sha"])
-        label = row + ("<br>behavior (overlay: protected-path test seam)" if row == "socket-isolation" else "")
+        seams = {"socket-isolation": "protected-path test seam",
+                 "recents-newest-after-retranscribe": "trigger + snapshot + defaults-domain test seams"}
+        label = row + ("<br>behavior (overlay: " + seams[row] + ")" if row in seams else "")
         lines.append(f'| {label} | {before["value"]} | {after["value"]} | {after["value"]-before["value"]:+d} | 0 | {after["status"]} |')
     lines += ["", f"Baseline: `{base_sha}` · PR: `{head_sha}`", "",
               "Values count violations, including missing events/sockets/binaries; 0 is PASS."]
     for row in ROWS:
         item = head[row]
         lines.append(f'- `{row}`: bug `{item["bug_sha"]}`, fix `{item["fix_sha"]}`' +
-                     (f', overlay SHA-256 `{item["overlay_sha256"]}`' if row == "socket-isolation" else ""))
+                     (f', overlay SHA-256 `{item["overlay_sha256"]}`' if row in ("socket-isolation", "recents-newest-after-retranscribe") else ""))
     lines += ["", "<!-- /voicelayer-ratchet:v1 -->", "",
               "— ratchet (worker) · github-actions/automation",
               '<!-- golem-id v1 {"seat":"ratchet","role":"worker","harness":"github-actions","model":"unknown","model_source":"unavailable","ts":"' + datetime.now(timezone.utc).isoformat() + '"} -->']

@@ -15,7 +15,7 @@ class CommentTests(unittest.TestCase):
     def setUp(self):
         self.data = [dict(row=row, kind="behavior", value=0, ceiling=0, status="PASS",
                           measured_sha="a" * 40, bug_sha="b" * 40, fix_sha="c" * 40,
-                          overlay_sha256="d" * 64 if row == "socket-isolation" else None)
+                          overlay_sha256="d" * 64 if row in ("socket-isolation", "recents-newest-after-retranscribe") else None)
                      for row in comment.ROWS]
 
     def read(self, data, sha="a" * 40):
@@ -33,6 +33,17 @@ class CommentTests(unittest.TestCase):
         self.assertIn("| ndjson-partial-write | 0 | 1 | +1 | 0 | FAIL |", table)
         self.assertIn("behavior (overlay: protected-path test seam)", table)
         self.assertIn("a" * 40, table)
+
+    def test_recents_requires_and_labels_overlay_receipt(self):
+        self.assertIn("recents-newest-after-retranscribe", comment.ROWS)
+        data = copy.deepcopy(self.data)
+        row = next(item for item in data if item["row"] == "recents-newest-after-retranscribe")
+        row["overlay_sha256"] = "d" * 64
+        table = comment.render(self.read(data), self.read(data), "a" * 40, "a" * 40)
+        self.assertIn("behavior (overlay: trigger + snapshot + defaults-domain test seams)", table)
+        row["overlay_sha256"] = None
+        with self.assertRaises((AssertionError, TypeError)):
+            self.read(data)
 
     def test_rejects_stale_missing_and_forged_results(self):
         cases = [self.data[:-1], self.data + [self.data[0]]]
