@@ -7,7 +7,11 @@ import {
   cleanupTranscriptionText,
   getSTTVocabularyPrompt,
 } from "../stt-cleanup";
-import { addAlias } from "../stt-vocabulary-store";
+import {
+  addAlias,
+  setPromptPolicy,
+  type STTDictionaryEntry,
+} from "../stt-vocabulary-store";
 
 describe("stt-cleanup", () => {
   // Tests that assert deterministic BUILTIN_STT_ALIASES behavior call
@@ -125,8 +129,6 @@ describe("stt-cleanup", () => {
       ["fixture uses claw desktop now", "Fixture uses Claude Desktop now"],
       ["fixture uses orkclaud now", "Fixture uses orcClaude now"],
       ["fixture uses cmuxs now", "Fixture uses cmux now"],
-      ["fixture uses bnaya now", "Fixture uses Benaya now"],
-      ["fixture uses sagitt now", "Fixture uses Sagit now"],
       [
         "fixture uses if they eyes bg large now",
         "Fixture uses Ivrit AI's BG Large now",
@@ -258,21 +260,96 @@ describe("stt-cleanup", () => {
     expect(cleanupTranscriptionText("אהבה לכל")).toBe("אהבה לכל");
   });
 
-  it("keeps Meytal and MaiLinh as distinct contacts", () => {
-    const cleaned = cleanupTranscriptionText(
-      "meital maital may tall maytal mailing mylan myelin mai linh mailinh",
+  describe("personal contact aliases from the vocabulary store", () => {
+    const entries: STTDictionaryEntry[] = [
+      { canonical: "Vela", variants: ["vella"], prompt: "exclude" },
+      { canonical: "Noria", variants: ["noriya"], prompt: "exclude" },
+      {
+        canonical: "Zerina",
+        variants: ["zerena", "zarina", "zee rina", "zerinah"],
+        prompt: "reserve",
+        prompt_after: "CLAUDE.md",
+        prompt_order: 0,
+        prompt_user: false,
+      },
+      {
+        canonical: "TalVyn",
+        variants: ["sending", "talvin", "talvine", "tal vyn"],
+        prompt: "reserve",
+        prompt_after: "CLAUDE.md",
+        prompt_order: 1,
+        prompt_user: false,
+      },
+    ];
+    // One case per migrated alias shape, including the case-only self alias.
+    const cases = entries.flatMap(({ canonical, variants }) =>
+      variants.map((variant) => [variant, canonical] as const),
     );
+    cases.push(["talvyn", "TalVyn"]);
+    let directory: string;
+    let env: { QA_VOICE_STT_VOCABULARY_PATH: string; QA_VOICE_STT_COMMANDS_DIR: string };
+    beforeAll(() => {
+      directory = mkdtempSync(join(tmpdir(), "voicelayer-contact-aliases-"));
+      env = {
+        QA_VOICE_STT_VOCABULARY_PATH: join(directory, "vocabulary.json"),
+        QA_VOICE_STT_COMMANDS_DIR: "",
+      };
+      for (const entry of entries) {
+        const { canonical, variants } = entry;
+        for (const variant of variants) {
+          addAlias({ from: variant, to: canonical }, { path: env.QA_VOICE_STT_VOCABULARY_PATH });
+        }
+        setPromptPolicy(canonical, entry, { path: env.QA_VOICE_STT_VOCABULARY_PATH });
+      }
+    });
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
 
-    expect(cleaned).toBe(
-      "Meytal Meytal Meytal Meytal MaiLinh MaiLinh MaiLinh MaiLinh MaiLinh",
-    );
-    expect(cleaned).not.toContain("Meital");
-    expect(cleaned).not.toContain("Maital");
-    expect(cleaned).not.toContain("mailing");
-    expect(cleaned).not.toContain("Mylan");
-    expect(cleaned).not.toContain("myelin");
-    expect(cleaned).toContain("MaiLinh");
-    expect(cleaned).not.toContain("maytal");
+    for (const [variant, canonical] of cases) {
+      it(`corrects stored variant ${variant} without losing surrounding words`, () => {
+        const contexts = [
+          [`${variant} called today`, `${canonical} called today`],
+          [`please call ${variant} today`, `Please call ${canonical} today`],
+          [`please call ${variant}`, `Please call ${canonical}`],
+          [`please call ${variant}.`, `Please call ${canonical}.`],
+          [`please call ${variant}, then wait`, `Please call ${canonical}, then wait`],
+          [`${variant}'s message`, `${canonical}'s message`],
+          [`please check ${variant}’s message`, `Please check ${canonical}’s message`],
+          [`שלום ${variant} עכשיו`, `שלום ${canonical} עכשיו`],
+          [`please call ${variant.toUpperCase()}`, `Please call ${canonical}`],
+        ];
+        for (const [input, expected] of contexts) {
+          expect(cleanupTranscriptionText(input, env), input).toBe(expected);
+        }
+        expect(cleanupTranscriptionText(`please call ${variant}`, {
+          QA_VOICE_STT_VOCABULARY_PATH: "",
+          QA_VOICE_STT_COMMANDS_DIR: "",
+        })).toBe(`Please call ${variant}`);
+        expect(cleanupTranscriptionText(`שלום${variant}`, env)).toBe(`שלום${variant}`);
+        expect(cleanupTranscriptionText(`${variant}שלום`, env)).toBe(
+          `${variant[0].toUpperCase()}${variant.slice(1)}שלום`,
+        );
+      });
+    }
+
+    it("keeps synthetic contacts distinct when variants occur together", () => {
+      expect(cleanupTranscriptionText(cases.map(([variant]) => variant).join(" "), env))
+        .toBe(cases.map(([, canonical]) => canonical).join(" "));
+    });
+
+    it("keeps cleanup-only contacts excluded and reserved contacts in their prompt slots", () => {
+      const prompt = getSTTVocabularyPrompt(env).split(", ");
+      const bundled = getSTTVocabularyPrompt({
+        QA_VOICE_STT_VOCABULARY_PATH: "",
+        QA_VOICE_STT_COMMANDS_DIR: "",
+      }).split(", ");
+      for (const { canonical, prompt: policy } of entries) {
+        if (policy === "exclude") expect(prompt).not.toContain(canonical);
+        else expect(prompt).toContain(canonical);
+        expect(bundled).not.toContain(canonical);
+      }
+      const anchor = prompt.indexOf("CLAUDE.md");
+      expect(prompt.slice(anchor + 1, anchor + 3)).toEqual(["Zerina", "TalVyn"]);
+    });
   });
 
   it("biases STT toward project and domain vocabulary", () => {

@@ -250,7 +250,7 @@ src/__tests__/stt-cleanup.test.ts:
 ✓ preserves intentional short syntax dictation
 ✓ preserves exact canonical casing for product and agent aliases
 ✓ covers the strict-score spoken-form misses
-✓ keeps Meytal and MaiLinh as distinct contacts
+✓ keeps stored vocabulary contacts distinct
 ```
 
 Integration test for chunked STT pipeline also passes:
