@@ -33,6 +33,7 @@ class CommentTests(unittest.TestCase):
         self.assertIn("| ndjson-partial-write | 0 | 1 | +1 | 0 | FAIL |", table)
         self.assertIn("behavior (overlay: protected-path test seam)", table)
         self.assertIn("a" * 40, table)
+        self.assertIn("| voice-ask-lock-suspends-timeout | 0 | 0 | +0 | 0 | PASS |", table)
 
     def test_recents_requires_and_labels_overlay_receipt(self):
         self.assertIn("recents-newest-after-retranscribe", comment.ROWS)

@@ -1,0 +1,91 @@
+{
+  "execution": {
+    "argv": [
+      "python3",
+      "ratchet/run.py",
+      "--ref",
+      "7677d52e5045970485f0dd5c141f8c069f66e9d9",
+      "--output",
+      "docs.local/lane-j-ci/fix-final",
+      "--row",
+      "voice-ask-lock-suspends-timeout"
+    ],
+    "exit_code": 0,
+    "harness_sha256": "2d908ac051d53d68a0cba751a1b91ce6440dd57cf8d187ac66d7ec86c97644e1",
+    "files_sha256": {
+      "run.py": "2d908ac051d53d68a0cba751a1b91ce6440dd57cf8d187ac66d7ec86c97644e1",
+      "fixture-rec.py": "088e55abd788afae02ef6a39bdd68e8047d7b4b78e064e89ad162c7b1ec18d88",
+      "fixture-tts.py": "d370c5772b91490ceec6088fed093c8c30ad84f73d6d17f232417c6be8d977b8",
+      "lock-client.ts": "c05faddde3c4ce9e13007ebba28355d573c449518cb2de6bc86b49bd3b5d647e"
+    }
+  },
+  "result": {
+    "row": "voice-ask-lock-suspends-timeout",
+    "kind": "behavior",
+    "value": 0,
+    "ceiling": 0,
+    "status": "PASS",
+    "bug_sha": "a2e25844fd98be78293ff3133122a6df0b0a50c8",
+    "fix_sha": "7677d52e5045970485f0dd5c141f8c069f66e9d9",
+    "measured_sha": "7677d52e5045970485f0dd5c141f8c069f66e9d9",
+    "error": null,
+    "overlay_sha256": null,
+    "app_binary_sha256": "c4bc8b0c73652cb9f7b95accdc1367ac24dac4f842ea3d06bb660ad2b32e53cc"
+  },
+  "cases": [
+    {
+      "ending": "stop",
+      "lock_ack": true,
+      "held_seconds": 21.007013499969617,
+      "ended_before_release": false,
+      "completed": true,
+      "pcm_seconds_before_release": 21.024,
+      "pcm_seconds": 21.088,
+      "recorder_seconds": 21.091222541872412,
+      "ending_ack": true,
+      "accepted_lock": {
+        "type": "ack",
+        "command": "set_recording_hold",
+        "outcome": "accept",
+        "id": "lock-stop"
+      },
+      "accepted_ending": {
+        "type": "ack",
+        "command": "stop",
+        "outcome": "accept",
+        "id": "end-stop"
+      },
+      "early_end_seconds": null,
+      "daemon_lifetime_seconds": 22.34129420807585,
+      "daemon_cap_seconds": 45,
+      "daemon_cap_expired": false
+    },
+    {
+      "ending": "unlock",
+      "lock_ack": true,
+      "held_seconds": 21.04874466592446,
+      "ended_before_release": false,
+      "completed": true,
+      "pcm_seconds_before_release": 21.024,
+      "pcm_seconds": 26.144,
+      "recorder_seconds": 26.146339833037928,
+      "ending_ack": true,
+      "accepted_lock": {
+        "type": "ack",
+        "command": "set_recording_hold",
+        "outcome": "accept",
+        "id": "lock-unlock"
+      },
+      "accepted_ending": {
+        "type": "ack",
+        "command": "set_recording_hold",
+        "outcome": "accept",
+        "id": "end-unlock"
+      },
+      "early_end_seconds": null,
+      "daemon_lifetime_seconds": 26.569593749940395,
+      "daemon_cap_seconds": 45,
+      "daemon_cap_expired": false
+    }
+  ]
+}
