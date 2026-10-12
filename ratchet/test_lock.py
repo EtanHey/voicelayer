@@ -1,5 +1,6 @@
 """Lock row evidence must fail closed; unit evidence only."""
 import importlib.util
+import ast
 from pathlib import Path
 import unittest
 import json
@@ -42,21 +43,68 @@ class LockTests(unittest.TestCase):
 
 
 class ExecutableFixtureTests(unittest.TestCase):
+    # At 3 s, the unchanged 10% slack covers one 250 ms receipt-write stall.
+    PACE_OBSERVATION_SECONDS = 3.0
+
     def test_recorder_keeps_pcm_pace_when_receipt_io_is_slow(self):
-        fixture = str(Path(__file__).with_name('fixture-rec.py'))
-        delayed = '''import runpy, sys, time
+        self.assert_recorder_pace()
+
+    def test_recorder_keeps_pcm_pace_with_late_sigterm_during_receipt_write(self):
+        self.assert_recorder_pace(late_sigterm=True)
+
+    def test_lagging_283_style_fixture_fails_pcm_pace_assertion(self):
+        source = Path(__file__).with_name('fixture-rec.py').read_text()
+        loop = next(node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.While))
+        # #283 accumulated receipt latency before every fixed 32 ms sleep.
+        # Retain the head's corrected terminal clock, so that alone cannot hide drift.
+        lines = source.splitlines(keepends=True)
+        lines[loop.lineno - 1:loop.end_lineno] = ['''    while not stopping:
+        if os.getppid() != parent:
+            break
+        written = os.write(1, b'\\0' * chunk_bytes)
+        emitted += written
+        receipt()
+        time.sleep(.032)
+''']
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / 'lagging-fixture.py'
+            fixture.write_text(''.join(lines))
+            with self.assertRaisesRegex(AssertionError, 'receipt latency must not accumulate into PCM drift'):
+                self.assert_recorder_pace(fixture=fixture)
+
+    def assert_recorder_pace(self, fixture=None, late_sigterm=False):
+        fixture = str(fixture or Path(__file__).with_name('fixture-rec.py'))
+        delayed = '''import json, os, runpy, sys, time
 from pathlib import Path
 original = Path.write_text
-def slow_receipt(self, *args, **kwargs):
-    time.sleep(.12)
-    return original(self, *args, **kwargs)
+started, injected = None, False
+def slow_receipt(self, text, *args, **kwargs):
+    global started, injected
+    evidence = json.loads(text)
+    if started is None:
+        started = time.monotonic() - evidence['elapsed_seconds']
+    if os.environ['RATCHET_LATE_SIGTERM'] == '1':
+        if not injected and not evidence['stopped'] and evidence['elapsed_seconds'] >= float(os.environ['RATCHET_OBSERVATION']):
+            injected = True
+            now = time.monotonic()
+            marker = Path(os.environ['RATCHET_WRITING'])
+            temporary = marker.with_suffix('.new')
+            original(temporary, json.dumps(dict(clock=now, elapsed=now-started)))
+            temporary.replace(marker)
+            time.sleep(.25)
+    else:
+        time.sleep(.12)
+    return original(self, text, *args, **kwargs)
 Path.write_text = slow_receipt
 runpy.run_path(sys.argv[1], run_name='__main__')
 '''
         with tempfile.TemporaryDirectory() as directory:
-            receipt = Path(directory) / 'rec.json'
+            receipt, writing = (Path(directory) / name for name in ('rec.json', 'writing'))
             proc = subprocess.Popen([sys.executable, '-c', delayed, fixture],
-                                    env=dict(os.environ, RATCHET_REC_RECEIPT=str(receipt)),
+                                    env=dict(os.environ, RATCHET_REC_RECEIPT=str(receipt),
+                                             RATCHET_LATE_SIGTERM=str(int(late_sigterm)),
+                                             RATCHET_OBSERVATION=str(self.PACE_OBSERVATION_SECONDS),
+                                             RATCHET_WRITING=str(writing)),
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             audio = bytearray()
             reader = threading.Thread(target=lambda: audio.extend(proc.stdout.read()))
@@ -66,7 +114,15 @@ runpy.run_path(sys.argv[1], run_name='__main__')
                 while not receipt.exists() and time.monotonic() < deadline:
                     time.sleep(.01)
                 self.assertTrue(receipt.exists(), 'recorder startup receipt missing')
-                time.sleep(1.2)
+                if late_sigterm:
+                    deadline = time.monotonic() + self.PACE_OBSERVATION_SECONDS + 3
+                    while not writing.exists() and time.monotonic() < deadline:
+                        time.sleep(.001)
+                    self.assertTrue(writing.exists(), 'late-SIGTERM receipt stall was not exercised')
+                    stall = json.loads(writing.read_text())
+                    time.sleep(max(0, stall['clock'] + .20 - time.monotonic()))
+                else:
+                    time.sleep(self.PACE_OBSERVATION_SECONDS)
                 proc.terminate()
                 self.assertEqual(proc.wait(3), 0, proc.stderr.read().decode())
                 reader.join(1)
@@ -76,6 +132,13 @@ runpy.run_path(sys.argv[1], run_name='__main__')
                 actual_pcm = len(audio) / 32000
                 self.assertEqual(audio, b'\0' * len(audio))
                 self.assertAlmostEqual(evidence['pcm_seconds'], actual_pcm, places=6)
+                if late_sigterm:
+                    phase = evidence['elapsed_seconds'] - stall['elapsed']
+                    self.assertGreaterEqual(phase, .19, 'SIGTERM must arrive late in the receipt write')
+                    self.assertLess(phase, .25, 'SIGTERM must arrive before the receipt write finishes')
+                print(f"pace late_sigterm={late_sigterm} pcm={actual_pcm:.6f} "
+                      f"elapsed={evidence['elapsed_seconds']:.6f} "
+                      f"ratio={actual_pcm / evidence['elapsed_seconds']:.6f}", flush=True)
                 self.assertGreaterEqual(actual_pcm, evidence['elapsed_seconds'] * .9,
                                         'receipt latency must not accumulate into PCM drift')
                 self.assertLessEqual(actual_pcm, evidence['elapsed_seconds'] + .1,
