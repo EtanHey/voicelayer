@@ -10,17 +10,22 @@ if 'trim' in sys.argv:
     sys.exit(0)
 path = Path(os.environ['RATCHET_REC_RECEIPT'])
 started, emitted, parent = time.monotonic(), 0, os.getppid()
-stopping = False
+stopping, stopped_at = False, None
 bytes_per_second, chunk_bytes = 32000, 1024
 
 def receipt(stopped=False):
     temporary = path.with_suffix('.new')
+    # A receipt may finish writing after SIGTERM. That is teardown latency,
+    # not recording time: compare PCM with the clock when capture stopped.
+    ended = stopped_at if stopped and stopped_at is not None else time.monotonic()
     temporary.write_text(json.dumps(dict(pcm_seconds=emitted / bytes_per_second, stopped=stopped,
-                                        elapsed_seconds=time.monotonic() - started)))
+                                        elapsed_seconds=ended - started)))
     temporary.replace(path)
 
 def stop(*_):
-    global stopping
+    global stopping, stopped_at
+    if stopped_at is None:
+        stopped_at = time.monotonic()
     stopping = True
 
 signal.signal(signal.SIGTERM, stop)
