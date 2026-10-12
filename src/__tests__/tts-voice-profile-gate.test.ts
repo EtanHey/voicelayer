@@ -69,6 +69,28 @@ describe("speak fail-closed gate", () => {
     delete process.env.QA_VOICE_TTS_REQUIRE_CLONE;
   });
 
+  it.each([false, true])("surfaces model conflicts with requireClonedVoice=%s", async (requireClonedVoice) => {
+    const error = new qwen3.DaemonModelError(
+      "voice cloning needs qwen3-tts-base-4bit; start with voicelayer daemon --model ~/.voicelayer/models/qwen3-tts-base-4bit",
+    );
+    const spies = [
+      spyOn(qwen3, "hasClonedProfile").mockReturnValue(true),
+      spyOn(qwen3, "loadProfile").mockReturnValue({
+        name: "fixture", engine: "qwen3-tts", fallback: "en-US-AndrewNeural",
+      } as never),
+      spyOn(qwen3, "synthesizeCloned").mockRejectedValue(error),
+      spyOn(xtts, "isXTTSAvailable").mockReturnValue(false),
+      spyOn(f5tts, "isF5TTSAvailable").mockReturnValue(false),
+    ];
+    try {
+      await expect(speak("hello there", {
+        voice: "fixture", requireClonedVoice,
+      })).rejects.toBe(error);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
   it("fails closed (throws) when a mandated clone has no registered profile — no silent edge-tts fallback", async () => {
     await expect(
       speak("hello there", {

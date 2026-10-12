@@ -242,6 +242,7 @@ def create_app(
     try:
         from fastapi import FastAPI, HTTPException, Request
         from fastapi.middleware.cors import CORSMiddleware
+        from fastapi.responses import JSONResponse
         from pydantic import BaseModel
     except ImportError:
         logger.error("FastAPI not installed. Run: pip install fastapi uvicorn")
@@ -354,6 +355,24 @@ def create_app(
 
         if not req.text.strip():
             raise HTTPException(400, "text must not be empty")
+
+        # Model directory names are user-controlled; MLX's loaded config is
+        # authoritative. Never load a second model in response to a request.
+        model_type = getattr(getattr(model, "config", None), "tts_model_type", None)
+        if model_type is not None and model_type != "base":
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "code": "clone_model_incompatible",
+                    "detail": (
+                        f"Daemon loaded {model_path!r} (type {model_type!r}); "
+                        "voice cloning needs qwen3-tts-base-4bit. "
+                        "Start with `voicelayer daemon --model "
+                        "~/.voicelayer/models/qwen3-tts-base-4bit` "
+                        "and set the profile's model_path to the same model."
+                    ),
+                },
+            )
 
         if not model_pin_matches(req.model, model_path):
             logger.error(
