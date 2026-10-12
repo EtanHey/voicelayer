@@ -59,7 +59,7 @@ function text(bytes: Uint8Array) {
   return new TextDecoder().decode(bytes);
 }
 
-const QWEN3_MODEL_REPO = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit";
+const QWEN3_MODEL_REPO = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit";
 
 // A venv whose bin/ holds only the named CLIs, each a no-op stub.
 function fakeVenv(root: string, ...binaries: string[]) {
@@ -77,7 +77,7 @@ function fakeVenv(root: string, ...binaries: string[]) {
 function populatedModelDir(root: string, name: string) {
   const dir = join(root, name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "config.json"), "{}\n");
+  writeFileSync(join(dir, "config.json"), '{"tts_model_type":"base"}\n');
   writeFileSync(join(dir, "model.safetensors"), "weights\n");
   return dir;
 }
@@ -899,6 +899,47 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).not.toContain("hf download");
     expect(stdout).not.toContain("--local-dir");
   });
+
+
+  test.each(["custom_voice", "voice_design", "unknown", "malformed", "missing"])(
+    "re-fetches a regular model directory with type %s using Base 0.6B",
+    (modelType) => {
+      const root = fixtureRoot("voicelayer-update-model-type-");
+      const modelDir = populatedModelDir(root, "model");
+      if (modelType === "missing") rmSync(join(modelDir, "config.json"));
+      else writeFileSync(join(modelDir, "config.json"), modelType === "malformed" ? "{" : JSON.stringify({ tts_model_type: modelType }));
+      const result = run(["bash", "-c", 'source "$1"; run_cmd() { print_command "$@"; }; install_qwen3_model', "_", updateScript], {
+        HOME: root, VOICELAYER_UPDATE_MODEL_DIR: modelDir,
+        VOICELAYER_UPDATE_VENV_DIR: fakeVenv(root, "hf", "python"),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(text(result.stdout)).toContain(`hf download ${QWEN3_MODEL_REPO} --local-dir ${modelDir}`);
+      expect(text(result.stdout)).not.toContain("CustomVoice-4bit");
+    },
+  );
+
+  test.each(["base", "base-no-weights", "linked-custom", "linked-base", "dangling-link"])(
+    "never modifies a protected model path: %s",
+    (kind) => {
+      const root = fixtureRoot("voicelayer-update-model-protected-");
+      const targetDir = populatedModelDir(root, "target");
+      const originalConfig = JSON.stringify({ tts_model_type: kind === "linked-custom" ? "custom_voice" : "base", tts_model_size: "1b7", quantization: { bits: 4 } });
+      writeFileSync(join(targetDir, "config.json"), originalConfig);
+      const modelDir = kind.startsWith("linked") || kind === "dangling-link" ? join(root, "model-link") : targetDir;
+      if (kind === "base-no-weights") rmSync(join(targetDir, "model.safetensors"));
+      if (modelDir !== targetDir) symlinkSync(kind === "dangling-link" ? join(root, "absent") : targetDir, modelDir);
+      const result = run(["bash", "-c", 'source "$1"; run_cmd() { print_command "$@"; }; install_qwen3_model', "_", updateScript], {
+        HOME: root, VOICELAYER_UPDATE_MODEL_DIR: modelDir,
+        VOICELAYER_UPDATE_VENV_DIR: fakeVenv(root, "hf", "python"),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(text(result.stdout)).toContain("skipping the fetch");
+      expect(text(result.stdout)).not.toContain("hf download");
+      expect(text(result.stdout)).not.toContain("pip install");
+      expect(text(result.stdout)).not.toContain("mkdir");
+      expect(readFileSync(join(targetDir, "config.json"), "utf8")).toBe(originalConfig);
+    },
+  );
 
   test("a failed model fetch is a red summary row, not an aborted restore", () => {
     const body = readFileSync(updateScript, "utf8");

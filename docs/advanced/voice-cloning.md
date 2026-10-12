@@ -81,6 +81,7 @@ This command:
 ```yaml
 name: speaker-name
 engine: qwen3-tts
+# This directory must contain a Base model (tts_model_type=base).
 model_path: ~/.voicelayer/models/qwen3-tts-4bit
 reference_clips:
   - path: ~/.voicelayer/voices/speaker-name/samples/clip_007.wav
@@ -105,10 +106,12 @@ voicelayer daemon --port 8880
 
 The daemon:
 
-- Loads the Qwen3-TTS 4-bit quantized model into Metal/MPS memory
+- Loads a Qwen3-TTS **Base** 4-bit model (`tts_model_type=base`) into Metal/MPS memory
 - Serves a `/synthesize` HTTP endpoint
 - Inference latency: 200-500ms per call on Apple Silicon
-- Model location: `~/.voicelayer/models/qwen3-tts-4bit/`
+- Default model location: `~/.voicelayer/models/qwen3-tts-4bit/`
+- `voicelayer update` provisions [`mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit`](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit) there
+- The updater re-fetches regular directories whose config is missing, invalid, or not `tts_model_type=base`; it preserves existing Base directories and user-managed symlinks, including incomplete or dangling ones. Preservation does not verify model completeness
 - Creates or reuses `~/.voicelayer/daemon.secret` with mode `0600`
 
 The TypeScript bridge and the Python daemon both default to the same token
@@ -152,10 +155,12 @@ voice_speak("Your cloned voice speaks this text")
 
 If the daemon is unavailable, VoiceLayer falls back to edge-tts using the `fallback` voice from the profile.
 
+Model configuration conflicts (HTTP 409) raise an error instead of substituting another voice. This includes a loaded CustomVoice/VoiceDesign model or a profile pin that does not match the daemon. A cloned `voice_ask` aborts on this error before recording. The directory name does not identify the model type: cloning needs a Base model, and the profile's `model_path` must match the daemon's loaded model.
+
 ## File Locations
 
 | Path | Purpose |
 |------|---------|
 | `~/.voicelayer/voices/{name}/samples/` | Extracted voice clips |
 | `~/.voicelayer/voices/{name}/profile.yaml` | Voice profile |
-| `~/.voicelayer/models/qwen3-tts-4bit/` | Quantized model weights |
+| `~/.voicelayer/models/qwen3-tts-4bit/` | Qwen3-TTS Base quantized model weights (default provisioned size: 0.6B) |

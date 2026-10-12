@@ -12,10 +12,9 @@ VOICELAYER_HOME="$HOME_DIR/.voicelayer"
 STATE_HOME="$HOME_DIR/.local/state/voicelayer"
 VENV_DIR="${VOICELAYER_UPDATE_VENV_DIR:-$VOICELAYER_HOME/venv}"
 MODEL_DIR="${VOICELAYER_UPDATE_MODEL_DIR:-$VOICELAYER_HOME/models/qwen3-tts-4bit}"
-QWEN3_MODEL_REPO="${VOICELAYER_UPDATE_QWEN3_MODEL_REPO:-mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit}"
+QWEN3_MODEL_REPO="${VOICELAYER_UPDATE_QWEN3_MODEL_REPO:-mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit}"
 MLX_AUDIO_VERSION_SPEC="${VOICELAYER_UPDATE_MLX_AUDIO_VERSION_SPEC:-mlx-audio>=0.4,<0.5}"
-# What mlx-audio's load_tts_model() opens first (src/tts_daemon.py); its
-# presence next to the safetensors weights is how we know the model is here.
+# Model compatibility comes from metadata, not the directory name.
 QWEN3_MODEL_SENTINEL="config.json"
 QWEN3_MODEL_STEP_OK=0
 QWEN3_MODEL_STEP_DETAIL="not run"
@@ -395,18 +394,23 @@ warn_if_dirty() {
     fi
 }
 
-# AIDEV-NOTE: -f/-d follow symlinks but `find <symlink>` does not descend into
-# one, so the old `find "$MODEL_DIR" -mindepth 1` probe read an already-populated
-# model as empty whenever ~/.voicelayer/models/qwen3-tts-4bit was a symlink into
-# ~/.cache/huggingface -- which is how the 2026-09-05 restore reached the
-# download at all. Test the sentinel file directly instead.
-qwen3_model_present() {
-    local weights
-    [[ -f "$MODEL_DIR/$QWEN3_MODEL_SENTINEL" ]] || return 1
-    for weights in "$MODEL_DIR"/*.safetensors; do
-        [[ -f "$weights" ]] && return 0
-    done
-    return 1
+# Preserve user-managed links (including dangling ones) and every Base model,
+# even an incomplete one. This is an ownership/compatibility check, not proof
+# that weights are complete or that the daemon can serve a request.
+qwen3_model_preserved() {
+    [[ -L "$MODEL_DIR" ]] && return 0
+    python3 - "$MODEL_DIR/$QWEN3_MODEL_SENTINEL" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    is_base = isinstance(config, dict) and config.get("tts_model_type") == "base"
+except (OSError, ValueError):
+    is_base = False
+sys.exit(0 if is_base else 1)
+PY
 }
 
 # `huggingface-cli` was retired upstream: it now only prints "huggingface-cli is
@@ -427,11 +431,11 @@ qwen3_download_bin() {
 }
 
 qwen3_model_skip_reason() {
-    printf '%s\n' "Qwen3 model already present at $MODEL_DIR ($QWEN3_MODEL_SENTINEL + weights); skipping the fetch."
+    printf '%s\n' "Preserving Qwen3 model at $MODEL_DIR (user-managed symlink or tts_model_type=base); skipping the fetch. Completeness is not verified."
 }
 
 qwen3_model_step_plan() {
-    if qwen3_model_present; then
+    if qwen3_model_preserved; then
         qwen3_model_skip_reason
     else
         printf 'will run: %s' "$(print_command "$(qwen3_download_bin)" download "$QWEN3_MODEL_REPO" --local-dir "$MODEL_DIR")"
@@ -439,9 +443,9 @@ qwen3_model_step_plan() {
 }
 
 install_qwen3_model() {
-    if qwen3_model_present; then
+    if qwen3_model_preserved; then
         log "$(qwen3_model_skip_reason)"
-        QWEN3_MODEL_STEP_DETAIL="already present at $MODEL_DIR"
+        QWEN3_MODEL_STEP_DETAIL="preserved symlink/Base model at $MODEL_DIR; completeness not verified"
         return 0
     fi
 
