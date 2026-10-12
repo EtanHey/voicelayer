@@ -25,7 +25,7 @@ VoiceLayer is configured entirely via environment variables. All settings have s
 6. `ggml-small.bin`
 7. Any other `ggml-*.bin` file
 
-Pause paragraphs also accept the boolean `pause_paragraphs` key in the processing settings file. Precedence is environment > file > default. The VoiceBar Settings row is planned separately. This step preserves every non-whitespace character and keeps existing paragraphs. It needs audio-bound segment times: providers without them, the live streaming path, and decodes with both segment-producing controls disabled keep their existing output. Breaks require at least 240 characters on both sides and a pause at least 1.5 seconds and at or above the recording's upper quartile.
+Pause paragraphs also accept the boolean `pause_paragraphs` key in the processing settings file. Precedence is environment > file > default. The VoiceBar Settings row is planned separately. This step preserves every non-whitespace character and keeps existing paragraphs. It needs audio-bound segment times: providers without them, the live streaming path, and decodes with both segment-producing controls disabled keep their existing output. The longest sentence-end pauses are ranked toward one break per 450 characters, with at least 200 characters per paragraph and a 0.6-second pause floor.
 
 Paragraph breaks follow the same delivery path as spoken “new paragraph”. VoiceBar sends newlines as Shift+Return; a bare shell can treat these as submit, just as it does for explicitly spoken line breaks.
 

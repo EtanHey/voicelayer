@@ -1,14 +1,15 @@
 import {
   endsWithAbbreviation,
-  BOUNDARY_PAUSE_TOLERANCE_SECONDS,
+  alignTranscriptWordIndices,
+  pauseSupportedWordIndices,
   type TranscriptSegment,
 } from "./stt-sentence-boundaries";
 import type { PauseSpan } from "./stt-pause-map";
 
 // Archive measurement (10 long recordings, Oct 6–11): typical medians .672–1.28s,
-// p75 .96–3.648s. The floor excludes ordinary breaths; p75 adapts to the speaker.
-export const MIN_PARAGRAPH_PAUSE_SECONDS = 1.5;
-export const MIN_PARAGRAPH_CHARS = 240;
+// p75 .96–3.648s. Rank sentence-end pauses; the floor excludes tiny gaps.
+export const MIN_PARAGRAPH_PAUSE_SECONDS = 0.6;
+export const MIN_PARAGRAPH_CHARS = 200;
 
 export function pauseParagraphsEnabled(env: Record<string, string | undefined>): boolean {
   const raw = env.VOICELAYER_STT_PAUSE_PARAGRAPHS?.trim().toLowerCase();
@@ -24,8 +25,10 @@ function words(text: string): Array<{ value: string; end: number }> {
 
 /**
  * Only replaces inter-sentence whitespace. Missing or ambiguous evidence is a no-op.
- * Segment-end anchors use four words on each side, uniquely matched in final text;
- * no internal word timing is guessed. Existing paragraphs are kept.
+ * Sentence-end anchors use the shared bounded word alignment; repeated final
+ * context is skipped rather than assigning the same pause twice.
+ * Pause support reuses the boundary stage's speech-run allocation and error bar.
+ * Existing paragraphs are kept.
  * Chunk segments already use absolute times.
  */
 export function applyPauseParagraphs(
@@ -49,45 +52,46 @@ export function applyPauseParagraphs(
     p.startS > segments[0].startS && p.endS <= segments.at(-1)!.endS
   );
   if (!evidence.length) return text;
-  const durations = evidence.map((p) => p.endS - p.startS).sort((a, b) => a - b);
-  const threshold = Math.max(
-    MIN_PARAGRAPH_PAUSE_SECONDS,
-    durations[Math.ceil(durations.length * .75) - 1],
-  );
-  const raw = segments.flatMap((s) => words(s.text));
+  const targetBreaks = Math.round(text.length / 450);
   const final = words(text);
-  const edits: Array<{ start: number; end: number }> = [];
-  let rawOffset = 0;
-  let paragraphStart = 0;
-  for (let i = 0; i < segments.length - 1; i++) {
-    rawOffset += words(segments[i].text).length;
-    if (!evidence.some((p) =>
-      p.endS - p.startS >= threshold - 1e-9 &&
-      Math.abs(p.startS - segments[i].endS) <= BOUNDARY_PAUSE_TOLERANCE_SECONDS + 1e-9
-    )) continue;
-    const anchorStart = Math.max(0, rawOffset - 4);
-    const anchor = raw.slice(anchorStart, rawOffset + 4);
-    const leftWords = rawOffset - anchorStart;
-    if (leftWords < 2 || anchor.length - leftWords < 2) continue;
-    let matchIndex = -1;
-    let matches = 0;
-    for (let f = 0; f + anchor.length <= final.length; f++) {
-      if (anchor.every((w, j) => w.value === final[f + j].value)) {
-        matchIndex = f;
-        matches++;
-      }
-    }
-    if (matches !== 1) continue;
-    const end = final[matchIndex + leftWords - 1].end;
-    // Keep closing quotes/brackets in the left paragraph and every mark byte.
+  const alignment = alignTranscriptWordIndices(text, segments);
+  const candidates: Array<{ start: number; end: number; pauseS: number }> = [];
+  // Reuse the sentence-boundary stage's speech-run allocation (including its
+  // one-word error bar), so pauses inside a verbose segment remain usable.
+  const supports = evidence.filter(p => p.endS - p.startS >= MIN_PARAGRAPH_PAUSE_SECONDS - 1e-9)
+    .map(p => ({ pauseS: p.endS - p.startS, indices: pauseSupportedWordIndices(
+      segments, pauses.length ? pauses : gaps, { minPauseSeconds: p.endS - p.startS },
+    ) }));
+  for (let i = 0; i < final.length - 1; i++) {
+    const end = final[i].end;
     const terminal = /^[.!?]["'”’»\)\]]*(\s+)(?=\S)/u.exec(text.slice(end));
     if (!terminal || (text[end] === "." && endsWithAbbreviation(text, end))) continue;
+    const anchorStart = Math.max(0, i - 3);
+    const anchor = final.slice(anchorStart, i + 5);
+    const leftWords = i - anchorStart + 1;
+    if (leftWords < 2 || anchor.length - leftWords < 2) continue;
+    // Repeated final context is ambiguous even if the decoder emitted it once.
+    let matches = 0;
+    for (let f = 0; f + anchor.length <= final.length; f++) {
+      if (anchor.every((w, j) => w.value === final[f + j].value)) matches++;
+    }
+    const rawIndex = alignment.get(i);
+    if (matches !== 1 || rawIndex === undefined) continue;
+    const pauseS = Math.max(0, ...supports.filter(s => s.indices.has(rawIndex)).map(s => s.pauseS));
+    if (!pauseS) continue;
     const start = end + terminal[0].length - terminal[1].length;
     const next = end + terminal[0].length;
-    if (start - paragraphStart < MIN_PARAGRAPH_CHARS || text.length - next < MIN_PARAGRAPH_CHARS) continue;
-    edits.push({ start, end: next });
-    paragraphStart = next;
+    candidates.push({ start, end: next, pauseS });
   }
+  const edits: Array<{ start: number; end: number }> = [];
+  for (const candidate of candidates.sort((a, b) => b.pauseS - a.pauseS || a.start - b.start)) {
+    if (edits.length >= targetBreaks) break;
+    const before = Math.max(0, ...edits.filter(e => e.end <= candidate.start).map(e => e.end));
+    const after = Math.min(text.length, ...edits.filter(e => e.start >= candidate.end).map(e => e.start));
+    if (candidate.start - before < MIN_PARAGRAPH_CHARS || after - candidate.end < MIN_PARAGRAPH_CHARS) continue;
+    edits.push(candidate);
+  }
+  edits.sort((a, b) => a.start - b.start);
   for (const edit of edits.reverse()) {
     text = text.slice(0, edit.start) + "\n\n" + text.slice(edit.end);
   }

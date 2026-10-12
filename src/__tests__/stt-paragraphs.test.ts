@@ -53,9 +53,16 @@ describe('pause paragraphs', () => {
     const input = text.replace(`${a} `, `${a}” `);
     expect(applyPauseParagraphs(input, segments.map(s=>({...s,startS:s.startS+90,endS:s.endS+90})), pauses.map(p=>({startS:p.startS+90,endS:p.endS+90})))).toBe(`${a}”\n\n${b} ${c}`);
   });
-  test('only pauses in the upper quartile of this recording qualify', () => {
-    const distribution = [0.4,0.5,0.6,0.7,0.8,2,3,4].map((d,i)=>({startS:2+i*2,endS:2+i*2+d}));
-    expect(applyPauseParagraphs(text, segments, [...distribution,{startS:20,endS:21.6}])).toBe(text);
+  test('ranks longest sentence-end pauses toward one break per 450 chars', () => {
+    const parts = Array.from({length:7}, (_,i) => (`Section ${i} describes a different concern and preserves every spoken detail for section number ${i}. `.repeat(4)).trim());
+    const lengths = [.7,3,1,2,4,.8];
+    const evidence = parts.map((text,i)=>({text,startS:i*10,endS:i*10+5}));
+    const stops = lengths.map((length,i)=>({startS:i*10+5,endS:i*10+5+length}));
+    const input = parts.join(' ');
+    const output = applyPauseParagraphs(input,evidence,stops);
+    expect(output.split('\n\n').length-1).toBe(Math.round(input.length/450));
+    expect(output).toContain(`${parts[4]}\n\n${parts[5]}`);
+    expect(output.split('\n\n').every(p=>p.length>=200)).toBe(true);
   });
   test('unbound, stale or cancelled audio cannot supply paragraph timing', async () => {
     expect(await buildBoundaryContext('missing.wav', segments, undefined, {})).toBeUndefined();
