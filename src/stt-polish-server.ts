@@ -9,6 +9,7 @@ import {
   getSTTPolishEndpoint,
   getSTTPolishMode,
   type STTPolishEnv,
+  type STTPolishFailureKind,
 } from "./stt-polish";
 
 type ManagedPolishProcess = {
@@ -46,6 +47,8 @@ export interface EnsureSTTPolishServerOptions {
   isResidentStack?: () => boolean;
   env?: STTPolishEnv;
   forceRestart?: boolean;
+  isProcessAlive?: (pid: number) => boolean;
+  stopExitTimeoutMs?: number;
   findBinary?: () => string | null;
   findPortOwnerPids?: () => number[];
   findStalePortOwnerPids?: () => number[];
@@ -70,6 +73,7 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 
 let polishProcess: ManagedPolishProcess | null = null;
 let polishLaunch: Promise<STTPolishServerStatus> | null = null;
+let ownerWatch: { pid: number; timer: ReturnType<typeof setTimeout> } | null = null;
 /**
  * Bumped by every stop. A launch captures it at start and re-checks it after
  * each await: a stale launch spawns nothing more, terminates what it spawned,
@@ -95,6 +99,8 @@ function publishSTTPolishServerStatus(
 
 export function resetSTTPolishServerManagerForTests(): void {
   polishGeneration++;
+  if (ownerWatch) clearTimeout(ownerWatch.timer);
+  ownerWatch = null;
   polishLaunch = null;
   if (polishProcess?.kill) {
     try {
@@ -116,16 +122,7 @@ export function stopSTTPolishServer(): void {
 export async function stopSTTPolishServerAndWait(): Promise<void> {
   const proc = polishProcess;
   resetSTTPolishServerManagerForTests();
-  if (!proc?.exited) return;
-  const exited = (ms: number) => Promise.race([
-    proc.exited!.then(() => true, () => true),
-    Bun.sleep(ms).then(() => false),
-  ]);
-  if (await exited(POLISH_STOP_EXIT_TIMEOUT_MS)) return;
-  try {
-    proc.kill?.("SIGKILL");
-  } catch {}
-  await exited(POLISH_STOP_EXIT_TIMEOUT_MS);
+  if (proc) await escalatePolishProcessExit(proc, POLISH_STOP_EXIT_TIMEOUT_MS);
 }
 
 export async function ensureSTTPolishServer(
@@ -140,19 +137,34 @@ export async function ensureSTTPolishServer(
     return publishSTTPolishServerStatus({ status: "external" });
   }
 
-  if (!options.forceRestart && await isReady(endpoint, options)) {
+  const generation = polishGeneration;
+  if (polishLaunch) return polishLaunch;
+  const ready = await isReady(endpoint, options);
+  if (generation !== polishGeneration) return { status: "disabled" };
+  // Explicit user recovery reaps only an unready filtered MLX owner.
+  if (ready) {
+    if (ownerWatch) clearTimeout(ownerWatch.timer);
+    ownerWatch = null;
     return publishSTTPolishServerStatus({
       status: "already-ready",
       pid: polishProcess?.pid,
     });
   }
 
-  const generation = polishGeneration;
+  // A slow health probe is not proof of death. Preserve an existing owner,
+  // including a managed child still loading before it binds the port.
+  if (!options.forceRestart && !polishLaunch) {
+    const pid = existingPolishOwner(options);
+    if (pid) return publishSTTPolishServerStatus(watchPolishOwner(endpoint, pid, options, generation));
+  }
+
   const publishIfCurrent = (status: STTPolishServerStatus) =>
     generation === polishGeneration ? publishSTTPolishServerStatus(status) : status;
-  if (polishLaunch) return polishLaunch.then(publishIfCurrent);
+  // Another caller may have launched while the health probe awaited.
+  const pending = polishLaunch as Promise<STTPolishServerStatus> | null;
+  if (pending) return pending.then(publishIfCurrent);
   // Compare against the TRACKED promise: a settled launch must be cleared, or a
-  // later forceRestart (failure recovery) would reuse its stale result and never
+  // later explicit forceRestart would reuse its stale result and never
   // relaunch (#146 round 3).
   const tracked: Promise<STTPolishServerStatus> = startAndWaitForPolishServer(
     endpoint,
@@ -167,11 +179,14 @@ export async function ensureSTTPolishServer(
 
 export function recoverDefaultSTTPolishServerAfterFailure(
   env: STTPolishEnv = processingEnv(),
-  options: Omit<EnsureSTTPolishServerOptions, "env" | "forceRestart"> = {},
+  options: Omit<EnsureSTTPolishServerOptions, "env" | "forceRestart"> & {
+    failureKind?: STTPolishFailureKind;
+  } = {},
 ): void {
+  if (!options.failureKind || options.failureKind === "timeout" || options.failureKind === "endpoint-error") return;
   if (getSTTPolishMode(env) === "off") return;
   if (getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return;
-  void ensureSTTPolishServer({ ...options, env, forceRestart: true }).catch((error: unknown) => {
+  void ensureSTTPolishServer({ ...options, env }).catch((error: unknown) => {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(
       `[voicelayer] STT polish server recovery failed: ${detail}`,
@@ -201,8 +216,12 @@ async function startAndWaitForPolishServer(
     return { status: "missing-binary" };
   }
 
-  await reapStaleDefaultPolishPortOwners(options, appendEvent);
+  if (options.forceRestart) await reapStaleDefaultPolishPortOwners(options, appendEvent);
   if (cancelled()) return { status: "disabled" };
+
+  // Even an explicit restart must wait for the previous owner to exit.
+  const existingPid = existingPolishOwner(options);
+  if (existingPid) return watchPolishOwner(endpoint, existingPid, options, generation);
 
   const args = [
     binary,
@@ -229,8 +248,15 @@ async function startAndWaitForPolishServer(
     `[voicelayer] Starting STT polish server on ${DEFAULT_POLISH_HOST}:${DEFAULT_POLISH_PORT} with model ${DEFAULT_POLISH_MODEL}`,
   );
 
+  if (ownerWatch) clearTimeout(ownerWatch.timer);
+  ownerWatch = null;
   const proc = spawnPolishServer(args, options);
   polishProcess = proc;
+  // Retain custody until exit is observed, including after a startup timeout.
+  void proc.exited?.then(
+    () => { if (polishProcess === proc) polishProcess = null; },
+    () => {},
+  );
   const abandon = (): STTPolishServerStatus => {
     terminatePolishProcess(proc);
     if (polishProcess === proc) polishProcess = null;
@@ -284,9 +310,7 @@ async function startAndWaitForPolishServer(
     { topic: "voice.transcription" },
   );
   terminatePolishProcess(proc);
-  if (polishProcess === proc) {
-    polishProcess = null;
-  }
+  await escalatePolishProcessExit(proc, options.stopExitTimeoutMs ?? POLISH_STOP_EXIT_TIMEOUT_MS, options);
   return { status: "timeout" };
 }
 
@@ -309,7 +333,6 @@ async function reapStaleDefaultPolishPortOwners(
   if (!(options.isResidentStack ?? isDefaultVoiceBarSocketPath)()) return;
 
   const pids = getStaleDefaultPolishPortOwnerPids(options);
-  const currentManagedPid = polishProcess?.pid;
   const reapablePids = [...new Set(pids)].filter(
     (pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid,
   );
@@ -321,7 +344,6 @@ async function reapStaleDefaultPolishPortOwners(
     try {
       killProcess(pid, "SIGTERM");
       killed.push(pid);
-      if (pid === currentManagedPid) polishProcess = null;
     } catch {}
   }
   if (killed.length === 0) return;
@@ -403,6 +425,47 @@ function getDefaultPolishPortOwnerPids(
   if (hasTestHooks) return polishProcess?.pid ? [polishProcess.pid] : [];
 
   return findDefaultPolishPortOwnerPidsUnfiltered();
+}
+
+function existingPolishOwner(options: EnsureSTTPolishServerOptions): number | undefined {
+  if (polishProcess) {
+    if (isPolishProcessAlive(polishProcess.pid, options)) return polishProcess.pid;
+    polishProcess = null;
+  }
+  return getDefaultPolishPortOwnerPids(options)[0];
+}
+
+function isPolishProcessAlive(pid: number, options: EnsureSTTPolishServerOptions = {}): boolean {
+  if (options.isProcessAlive) return options.isProcessAlive(pid);
+  try { process.kill(pid, 0); return true; } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function watchPolishOwner(endpoint: string, pid: number, options: EnsureSTTPolishServerOptions, generation: number): STTPolishServerStatus {
+  if (ownerWatch && ownerWatch.pid !== pid) { clearTimeout(ownerWatch.timer); ownerWatch = null; }
+  if (!ownerWatch) {
+    const watch = { pid, timer: setTimeout(async () => {
+      const ready = await isReady(endpoint, options).catch(() => false);
+      if (generation !== polishGeneration || ownerWatch !== watch) return;
+      ownerWatch = null;
+      publishSTTPolishServerStatus(ready ? { status: "already-ready", pid } : { status: "timeout" });
+    }, options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS) };
+    ownerWatch = watch;
+    watch.timer.unref?.();
+  }
+  return { status: "starting", pid };
+}
+
+async function escalatePolishProcessExit(proc: ManagedPolishProcess, timeoutMs: number, options: EnsureSTTPolishServerOptions = {}): Promise<void> {
+  const wait = () => new Promise<boolean>((resolve) => {
+    if (!proc.exited && !isPolishProcessAlive(proc.pid, options)) return resolve(true);
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    void proc.exited?.then(() => { clearTimeout(timer); resolve(true); }, () => { clearTimeout(timer); resolve(false); });
+  });
+  if (await wait()) return;
+  try { proc.kill?.("SIGKILL"); } catch {}
+  await wait();
 }
 
 function findPolishServerBinary(): string | null {

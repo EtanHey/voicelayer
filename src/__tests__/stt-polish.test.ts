@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
+import { createServer } from "net";
 import { join } from "path";
 import {
   getSTTPolishHealthTimeoutMs,
@@ -10,6 +11,8 @@ import {
   polishTranscriptionText,
 } from "../stt-polish";
 import * as sttPolish from "../stt-polish";
+import * as polishServerManager from "../stt-polish-server";
+import { finalizeTranscriptionResultForSurface } from "../input";
 
 let TEST_DIR = "";
 let TEST_SOCKET = "";
@@ -104,6 +107,161 @@ describe("stt-polish", () => {
       TEST_SOCKET = "";
       TEST_LOG = "";
     }
+  });
+
+  it("scales long polish budgets while preserving short latency and explicit overrides", () => {
+    expect(getSTTPolishTimeoutMs({}, "x".repeat(900))).toBe(18_000);
+    expect(getSTTPolishTimeoutMs({}, "x".repeat(1_793))).toBe(35_860);
+    expect(getSTTPolishTimeoutMs({}, "x".repeat(20_000))).toBe(120_000);
+    expect(getSTTPolishTimeoutMs({ QA_VOICE_STT_POLISH_TIMEOUT_MS: "100" }, "x".repeat(1_793))).toBe(100);
+  });
+
+  it("distinguishes a refused connection from a request timeout and a busy HTTP server", async () => {
+    const probe = Bun.serve({ port: 0, fetch: () => Response.json({}) });
+    const endpoint = `http://127.0.0.1:${probe.port}/v1/chat/completions`;
+    probe.stop(true);
+    const env = { QA_VOICE_STT_POLISH_ENDPOINT: endpoint, QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG };
+    const refused = await polishTranscriptionText({ rawText: "keep every word", cleanedText: "keep every word", env });
+    expect(refused).toMatchObject({ status: "failed", failureKind: "connection-refused", text: "keep every word" });
+
+    for (const busy of [false, true]) {
+      const http = Bun.serve({ port: 0, fetch: async (request) => {
+        if (request.method === "GET") return Response.json({ data: [] });
+        if (busy) return new Response("busy", { status: 503 });
+        await Bun.sleep(150);
+        return Response.json({ choices: [{ message: { content: "Keep every word." } }] });
+      } });
+      try {
+        const result = await polishTranscriptionText({ rawText: "keep every word", cleanedText: "keep every word", env: {
+          ...env, QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`, QA_VOICE_STT_POLISH_TIMEOUT_MS: "50",
+        } });
+        expect(result).toMatchObject({ status: "failed", failureKind: busy ? "endpoint-error" : "timeout", text: "keep every word" });
+      } finally { http.stop(true); }
+    }
+  });
+
+  it("uses the scaled budget on the HTTP request without trimming the transcript", async () => {
+    const text = "keep these spoken words ".repeat(75).trim();
+    const timers: number[] = [];
+    const originalTimeout = globalThis.setTimeout;
+    const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(((handler: TimerHandler, ms?: number, ...args: unknown[]) => {
+      if (ms && ms >= 18_000) timers.push(ms);
+      return originalTimeout(handler, ms, ...args);
+    }) as typeof setTimeout);
+    const http = Bun.serve({ port: 0, fetch: async (request) => {
+      if (request.method === "GET") return Response.json({ data: [] });
+      await Bun.sleep(25);
+      return Response.json({ choices: [{ message: { content: text } }] });
+    } });
+    try {
+      const result = await polishTranscriptionText({ rawText: text, cleanedText: text, env: {
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      } });
+      expect(result.status).toBe("applied");
+      expect(timers).toHaveLength(3);
+      expect(timers[0]).toBeLessThanOrEqual(text.length * 20);
+      expect(timers[0]).toBeGreaterThan(text.length * 20 - 2_000);
+      expect(timers[1]).toBeLessThan(timers[0]);
+      expect(timers[2]).toBeLessThan(timers[1]);
+      expect(result.text.toLowerCase().match(/[a-z]+/g)).toEqual(text.match(/[a-z]+/g));
+    } finally { timerSpy.mockRestore(); http.stop(true); }
+  });
+
+  it.each(["dictation", "voice_ask"] as const)("only requests recovery from the %s finalizer on connection refusal", async (surface) => {
+    const recovery = spyOn(polishServerManager, "recoverDefaultSTTPolishServerAfterFailure").mockImplementation(() => {});
+    const probe = Bun.serve({ port: 0, fetch: () => Response.json({}) });
+    const refusedEndpoint = `http://127.0.0.1:${probe.port}/v1/chat/completions`;
+    probe.stop(true);
+    try {
+      const env = { QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG, QA_VOICE_STT_CORRECTIONS: "off" };
+      const refused = await finalizeTranscriptionResultForSurface("keep every word", surface, { ...env, QA_VOICE_STT_POLISH_ENDPOINT: refusedEndpoint });
+      expect(refused.text).toBe("Keep every word.");
+      expect(recovery).toHaveBeenCalledTimes(1);
+      expect(recovery.mock.calls[0][1]).toEqual({ failureKind: "connection-refused" });
+      for (const scenario of ["health-timeout", "request-timeout", "busy"]) {
+        const http = Bun.serve({ port: 0, fetch: async (request) => {
+          if (scenario === "busy") return new Response("busy", { status: 503 });
+          if (scenario === "health-timeout" || request.method === "POST") await Bun.sleep(150);
+          return Response.json({ data: [] });
+        } });
+        try {
+          const result = await finalizeTranscriptionResultForSurface("keep every word", surface, {
+            ...env, QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`,
+            QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "50", QA_VOICE_STT_POLISH_TIMEOUT_MS: "50",
+          });
+          expect(result.polishStatus).toBe("failed");
+          expect(result.text).toBe("Keep every word.");
+          expect(recovery).toHaveBeenCalledTimes(1);
+        } finally { http.stop(true); }
+      }
+    } finally { recovery.mockRestore(); }
+  });
+
+  it("R1 F2 requests non-destructive recovery when a peer resets mid-POST", async () => {
+    let posts = 0;
+    const peer = createServer((socket) => socket.once("data", (data) => {
+      if (data.toString().startsWith("GET ")) socket.end("HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":[]}");
+      else { posts++; socket.resetAndDestroy(); }
+    }));
+    await new Promise<void>((resolve) => peer.listen(0, "127.0.0.1", resolve));
+    const recovery = spyOn(polishServerManager, "recoverDefaultSTTPolishServerAfterFailure").mockImplementation(() => {});
+    try {
+      const result = await finalizeTranscriptionResultForSurface("keep every word", "dictation", {
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${(peer.address() as { port: number }).port}/v1/chat/completions`,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      });
+      expect(posts).toBe(1);
+      expect(result).toMatchObject({ polishStatus: "failed", text: "Keep every word." });
+      expect(recovery).toHaveBeenCalledTimes(1);
+      expect(recovery.mock.calls[0][1]).toEqual({ failureKind: "transport-error" });
+    } finally { recovery.mockRestore(); await new Promise<void>((resolve) => peer.close(() => resolve())); }
+  });
+
+  it.each(["noop", "rejected"])("R1 F3 shares one overall deadline across %s retries", async (scenario) => {
+    const text = "keep these spoken words ".repeat(75).trim();
+    const budget = text.length * 20;
+    let clock = 0, posts = 0;
+    const clockSpy = spyOn(performance, "now").mockImplementation(() => clock);
+    const http = Bun.serve({ port: 0, fetch: (request) => {
+      if (request.method === "GET") return Response.json({ data: [] });
+      posts++; clock += scenario === "noop" ? Math.ceil(budget / 2) : budget - 1_000;
+      return Response.json({ choices: [{ message: { content: scenario === "noop" ? text : "keep these" } }] });
+    } });
+    try {
+      const result = await polishTranscriptionText({ rawText: text, cleanedText: text, env: {
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`, QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      } });
+      expect(posts).toBe(scenario === "noop" ? 2 : 1);
+      expect(result.text.toLowerCase().match(/[a-z]+/g)).toEqual(text.match(/[a-z]+/g));
+    } finally { clockSpy.mockRestore(); http.stop(true); }
+  });
+
+  it("R1 F3 aborts a slow retry at the shared deadline and preserves all words", async () => {
+    const text = "keep these spoken words ".repeat(20).trim();
+    let posts = 0;
+    const http = Bun.serve({ port: 0, fetch: async (request) => {
+      if (request.method === "GET") return Response.json({ data: [] });
+      posts++; await Bun.sleep(posts === 1 ? 1_500 : 5_000);
+      return Response.json({ choices: [{ message: { content: text } }] });
+    } });
+    try {
+      const start = performance.now();
+      const result = await polishTranscriptionText({ rawText: text, cleanedText: text, env: {
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`,
+        QA_VOICE_STT_POLISH_TIMEOUT_MS: "4500", QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      } });
+      expect(posts).toBe(2);
+      expect(performance.now() - start).toBeLessThan(5_300);
+      expect(result).toMatchObject({ status: "failed", failureKind: "timeout" });
+      expect(result.error).toMatch(/^polish request timed out after \d+ms$/);
+      expect(result.text.toLowerCase().match(/[a-z]+/g)).toEqual(text.match(/[a-z]+/g));
+    } finally { http.stop(true); }
+  });
+
+  it("R1 F4 permits explicit budgets through the 120-second cap", () => {
+    expect(getSTTPolishTimeoutMs({ QA_VOICE_STT_POLISH_TIMEOUT_MS: "90000" })).toBe(90_000);
+    expect(getSTTPolishTimeoutMs({ QA_VOICE_STT_POLISH_TIMEOUT_MS: "150000" })).toBe(120_000);
   });
 
   it("defaults to on for production dictation", () => {
