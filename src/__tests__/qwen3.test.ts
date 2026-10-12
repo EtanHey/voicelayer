@@ -245,7 +245,7 @@ reference_text: hello
     try {
       const result = Bun.spawnSync({
         cmd: ["bun", "-e", `
-const detail = "voice cloning needs qwen3-tts-base-4bit — start with voicelayer daemon --model ~/.voicelayer/models/qwen3-tts-base-4bit";
+const detail = "voice cloning needs a Qwen3-TTS Base model (tts_model_type=base). Run hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit --local-dir <base-model-directory>, then start voicelayer daemon --model <base-model-directory>";
 globalThis.fetch = async () => new Response(${jsonBody ? "JSON.stringify({ detail })" : "detail"}, { status: ${status} });
 const { synthesizeCloned } = await import("./src/tts/qwen3.ts");
 try {
@@ -261,7 +261,7 @@ try {
       const output = JSON.parse(result.stdout.toString());
       if (status === 409) {
         expect(output.error).toContain("voicelayer daemon --model");
-        expect(output.error).toContain("qwen3-tts-base-4bit");
+        expect(output.error).toContain("tts_model_type=base");
         expect(output.error).not.toContain('{"detail":');
       } else {
         expect(output.result).toBeNull();

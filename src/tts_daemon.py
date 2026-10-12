@@ -367,7 +367,7 @@ def create_app(
                     "detail": (
                         f"Daemon loaded {model_path!r} (type {model_type!r}); "
                         "voice cloning needs a Qwen3-TTS Base model (tts_model_type=base). "
-                        "Download `hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit "
+                        "Run `hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit "
                         "--local-dir <base-model-directory>`, then start "
                         "`voicelayer daemon --model <base-model-directory>` "
                         "and set the profile's model_path to the same model."

@@ -71,7 +71,7 @@ describe("speak fail-closed gate", () => {
 
   it.each([false, true])("surfaces model conflicts with requireClonedVoice=%s", async (requireClonedVoice) => {
     const error = new qwen3.DaemonModelError(
-      "voice cloning needs qwen3-tts-base-4bit; start with voicelayer daemon --model ~/.voicelayer/models/qwen3-tts-base-4bit",
+      "voice cloning needs a Qwen3-TTS Base model (tts_model_type=base); start with voicelayer daemon --model <base-model-directory>",
     );
     const spies = [
       spyOn(qwen3, "hasClonedProfile").mockReturnValue(true),
