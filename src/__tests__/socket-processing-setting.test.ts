@@ -82,6 +82,7 @@ describe("set_processing_setting (P1)", () => {
     await polishTransitionsSettled();
     expect(stop).toHaveBeenCalledTimes(1);
     expect(ensure).toHaveBeenCalledTimes(2);
+    expect(ensure.mock.calls[1][0]).toEqual({ forceRestart: true });
   });
 
   test("a rapid off then on starts the server only after the old one has stopped (#146 round 2)", async () => {

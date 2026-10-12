@@ -618,7 +618,7 @@ function handleProcessingSettingCommand(
     polishTransitions = polishTransitions
       .then(async () => {
         if (!turnOn) await stopSTTPolishServerAndWait();
-        await ensureSTTPolishServer();
+        await ensureSTTPolishServer(turnOn ? { forceRestart: true } : {});
       })
       .catch((error: unknown) => {
         console.error(`[voicelayer] polish server after toggle: ${vocabularyErrorReason(error)}`);

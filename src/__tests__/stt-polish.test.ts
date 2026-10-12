@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
+import { createServer } from "net";
 import { join } from "path";
 import {
   getSTTPolishHealthTimeoutMs,
@@ -158,7 +159,11 @@ describe("stt-polish", () => {
         QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
       } });
       expect(result.status).toBe("applied");
-      expect(timers).toEqual([text.length * 20, text.length * 20, text.length * 20]);
+      expect(timers).toHaveLength(3);
+      expect(timers[0]).toBeLessThanOrEqual(text.length * 20);
+      expect(timers[0]).toBeGreaterThan(text.length * 20 - 2_000);
+      expect(timers[1]).toBeLessThan(timers[0]);
+      expect(timers[2]).toBeLessThan(timers[1]);
       expect(result.text.toLowerCase().match(/[a-z]+/g)).toEqual(text.match(/[a-z]+/g));
     } finally { timerSpy.mockRestore(); http.stop(true); }
   });
@@ -191,6 +196,72 @@ describe("stt-polish", () => {
         } finally { http.stop(true); }
       }
     } finally { recovery.mockRestore(); }
+  });
+
+  it("R1 F2 requests non-destructive recovery when a peer resets mid-POST", async () => {
+    let posts = 0;
+    const peer = createServer((socket) => socket.once("data", (data) => {
+      if (data.toString().startsWith("GET ")) socket.end("HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":[]}");
+      else { posts++; socket.resetAndDestroy(); }
+    }));
+    await new Promise<void>((resolve) => peer.listen(0, "127.0.0.1", resolve));
+    const recovery = spyOn(polishServerManager, "recoverDefaultSTTPolishServerAfterFailure").mockImplementation(() => {});
+    try {
+      const result = await finalizeTranscriptionResultForSurface("keep every word", "dictation", {
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${(peer.address() as { port: number }).port}/v1/chat/completions`,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      });
+      expect(posts).toBe(1);
+      expect(result).toMatchObject({ polishStatus: "failed", text: "Keep every word." });
+      expect(recovery).toHaveBeenCalledTimes(1);
+      expect(recovery.mock.calls[0][1]).toEqual({ failureKind: "transport-error" });
+    } finally { recovery.mockRestore(); await new Promise<void>((resolve) => peer.close(() => resolve())); }
+  });
+
+  it.each(["noop", "rejected"])("R1 F3 shares one overall deadline across %s retries", async (scenario) => {
+    const text = "keep these spoken words ".repeat(75).trim();
+    const budget = text.length * 20;
+    let clock = 0, posts = 0;
+    const clockSpy = spyOn(performance, "now").mockImplementation(() => clock);
+    const http = Bun.serve({ port: 0, fetch: (request) => {
+      if (request.method === "GET") return Response.json({ data: [] });
+      posts++; clock += scenario === "noop" ? Math.ceil(budget / 2) : budget - 1_000;
+      return Response.json({ choices: [{ message: { content: scenario === "noop" ? text : "keep these" } }] });
+    } });
+    try {
+      const result = await polishTranscriptionText({ rawText: text, cleanedText: text, env: {
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`, QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      } });
+      expect(posts).toBe(scenario === "noop" ? 2 : 1);
+      expect(result.text.toLowerCase().match(/[a-z]+/g)).toEqual(text.match(/[a-z]+/g));
+    } finally { clockSpy.mockRestore(); http.stop(true); }
+  });
+
+  it("R1 F3 aborts a slow retry at the shared deadline and preserves all words", async () => {
+    const text = "keep these spoken words ".repeat(20).trim();
+    let posts = 0;
+    const http = Bun.serve({ port: 0, fetch: async (request) => {
+      if (request.method === "GET") return Response.json({ data: [] });
+      posts++; await Bun.sleep(posts === 1 ? 1_500 : 5_000);
+      return Response.json({ choices: [{ message: { content: text } }] });
+    } });
+    try {
+      const start = performance.now();
+      const result = await polishTranscriptionText({ rawText: text, cleanedText: text, env: {
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${http.port}/v1/chat/completions`,
+        QA_VOICE_STT_POLISH_TIMEOUT_MS: "4500", QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      } });
+      expect(posts).toBe(2);
+      expect(performance.now() - start).toBeLessThan(5_300);
+      expect(result).toMatchObject({ status: "failed", failureKind: "timeout" });
+      expect(result.error).toMatch(/^polish request timed out after \d+ms$/);
+      expect(result.text.toLowerCase().match(/[a-z]+/g)).toEqual(text.match(/[a-z]+/g));
+    } finally { http.stop(true); }
+  });
+
+  it("R1 F4 permits explicit budgets through the 120-second cap", () => {
+    expect(getSTTPolishTimeoutMs({ QA_VOICE_STT_POLISH_TIMEOUT_MS: "90000" })).toBe(90_000);
+    expect(getSTTPolishTimeoutMs({ QA_VOICE_STT_POLISH_TIMEOUT_MS: "150000" })).toBe(120_000);
   });
 
   it("defaults to on for production dictation", () => {

@@ -74,7 +74,7 @@ export interface STTPolishResult {
   latencyMs: number;
   polished: boolean;
   reason?: string;
-  /** Structured transport failure; only a refusal can trigger automatic recovery. */
+  /** Structured transport failure; timeouts/HTTP errors never trigger recovery. */
   failureKind?: STTPolishFailureKind;
   error?: string;
   /** Terminal marks the pause-aware stage turned into commas. Flag-gated. */
@@ -243,7 +243,7 @@ export function getSTTPolishTimeoutMs(
   if (!Number.isFinite(raw) || raw <= 0) {
     return Math.min(120_000, Math.max(DEFAULT_POLISH_TIMEOUT_MS, inputText.length * 20));
   }
-  return Math.min(Math.max(raw, 50), 60_000);
+  return Math.min(Math.max(raw, 50), 120_000);
 }
 
 export function getSTTPolishHealthTimeoutMs(
@@ -1955,9 +1955,11 @@ export async function polishTranscriptionText(
       env,
       input.rawText.length > input.cleanedText.length ? input.rawText : input.cleanedText,
     );
+    const deadline = performance.now() + timeoutMs;
+    const remainingMs = () => Math.max(1, Math.floor(deadline - performance.now()));
     const health = await checkPolishEndpointHealth(
       endpoint,
-      getSTTPolishHealthTimeoutMs(env),
+      Math.min(getSTTPolishHealthTimeoutMs(env), remainingMs()),
     );
     if (!health.ok) {
       const result = buildResult(
@@ -1978,7 +1980,7 @@ export async function polishTranscriptionText(
         input.rawText,
         input.cleanedText,
         env,
-        timeoutMs,
+        remainingMs(),
       );
       const result = applyPolishCandidate(
         input.cleanedText,
@@ -1996,6 +1998,11 @@ export async function polishTranscriptionText(
           : shouldRetryRejectedPolish(input.cleanedText, result)
             ? "rejected"
             : null;
+      if (retryReason && remainingMs() < 2_000) {
+        const exhausted = buildResult(buildFallbackText(result.polishedText ?? undefined), result.polishedText, result.status, result.error);
+        writePolishLog(exhausted, input.rawText, input.cleanedText, env);
+        return exhausted;
+      }
       if (retryReason) {
         if (retryReason === "noop") {
           let latestResult = result;
@@ -2004,13 +2011,14 @@ export async function polishTranscriptionText(
             attempt <= MAX_HTTP_NOOP_POLISH_ATTEMPTS;
             attempt += 1
           ) {
+            if (remainingMs() < 2_000) break;
             try {
               const retryPolishedText = await requestPolishOverHttp(
                 endpoint,
                 input.rawText,
                 input.cleanedText,
                 env,
-                timeoutMs,
+                remainingMs(),
                 { retryReason },
               );
               latestResult = applyPolishCandidate(
@@ -2075,7 +2083,7 @@ export async function polishTranscriptionText(
             input.rawText,
             input.cleanedText,
             env,
-            timeoutMs,
+            remainingMs(),
             { retryReason },
           );
           const retryResult = applyPolishCandidate(

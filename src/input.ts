@@ -545,7 +545,8 @@ export async function finalizeTranscriptionResultForSurface(
     },
     { topic: "voice.transcription" },
   );
-  if (polished.status === "failed" && polished.failureKind === "connection-refused") {
+  if (polished.status === "failed" && polished.failureKind &&
+      polished.failureKind !== "timeout" && polished.failureKind !== "endpoint-error") {
     recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
   }
   return {
