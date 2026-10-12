@@ -539,13 +539,14 @@ export async function finalizeTranscriptionResultForSurface(
       final_chars: polished.text.length,
       polished: polished.polished,
       reason: polished.reason ?? null,
+      failure_kind: polished.failureKind ?? null,
       error: polished.error ?? null,
       boundary_demotions: polished.boundaryDemotions?.length ?? 0,
     },
     { topic: "voice.transcription" },
   );
-  if (polished.status === "failed") {
-    recoverDefaultSTTPolishServerAfterFailure(env);
+  if (polished.status === "failed" && polished.failureKind === "connection-refused") {
+    recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
   }
   return {
     text: polished.text,

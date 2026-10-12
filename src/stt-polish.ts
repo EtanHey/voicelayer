@@ -22,6 +22,11 @@ export type STTPolishStatus =
   | "applied"
   | "rejected"
   | "failed";
+export type STTPolishFailureKind =
+  | "connection-refused"
+  | "timeout"
+  | "endpoint-error"
+  | "transport-error";
 export type STTPolishSurface = "dictation" | "voice_ask";
 
 export interface STTPolishEnv {
@@ -69,6 +74,8 @@ export interface STTPolishResult {
   latencyMs: number;
   polished: boolean;
   reason?: string;
+  /** Structured transport failure; only a refusal can trigger automatic recovery. */
+  failureKind?: STTPolishFailureKind;
   error?: string;
   /** Terminal marks the pause-aware stage turned into commas. Flag-gated. */
   boundaryDemotions?: BoundaryDemotion[];
@@ -228,9 +235,14 @@ function getSTTPolishModel(env: STTPolishEnv = process.env): string {
 
 export function getSTTPolishTimeoutMs(
   env: STTPolishEnv = process.env,
+  inputText = "",
 ): number {
   const raw = Number(env.QA_VOICE_STT_POLISH_TIMEOUT_MS);
-  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_POLISH_TIMEOUT_MS;
+  // Keep <=900 characters at 18s; budget 20ms/character for longer inputs.
+  // Whole-text polishing retains context/retractions; cap each attempt at 2min.
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return Math.min(120_000, Math.max(DEFAULT_POLISH_TIMEOUT_MS, inputText.length * 20));
+  }
   return Math.min(Math.max(raw, 50), 60_000);
 }
 
@@ -1507,16 +1519,35 @@ function getPolishHealthEndpoint(endpoint: string): string {
   return url.toString();
 }
 
+class PolishTransportError extends Error {
+  constructor(message: string, readonly failureKind: STTPolishFailureKind) {
+    super(message);
+  }
+}
+
+function polishFailureKind(error: unknown): STTPolishFailureKind {
+  if (error instanceof PolishTransportError) return error.failureKind;
+  if (error instanceof Error && error.name === "AbortError") return "timeout";
+  if (error && typeof error === "object") {
+    const coded = error as { code?: string; cause?: { code?: string } };
+    if ([coded.code, coded.cause?.code].some((code) => code === "ECONNREFUSED" || code === "ConnectionRefused")) {
+      return "connection-refused";
+    }
+  }
+  return "transport-error";
+}
+
 async function checkPolishEndpointHealth(
   endpoint: string,
   timeoutMs: number,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true } | { ok: false; error: string; failureKind: STTPolishFailureKind }> {
   let healthEndpoint: string;
   try {
     healthEndpoint = getPolishHealthEndpoint(endpoint);
   } catch (err) {
     return {
       ok: false,
+      failureKind: "endpoint-error",
       error: `polish health check endpoint invalid: ${
         err instanceof Error ? err.message : String(err)
       }`,
@@ -1533,6 +1564,7 @@ async function checkPolishEndpointHealth(
     if (!response.ok) {
       return {
         ok: false,
+        failureKind: "endpoint-error",
         error: `polish health check failed: ${response.status} ${response.statusText}`,
       };
     }
@@ -1541,11 +1573,13 @@ async function checkPolishEndpointHealth(
     if (err instanceof Error && err.name === "AbortError") {
       return {
         ok: false,
+        failureKind: "timeout",
         error: `polish health check timed out after ${timeoutMs}ms`,
       };
     }
     return {
       ok: false,
+      failureKind: polishFailureKind(err),
       error: `polish health check failed: ${
         err instanceof Error ? err.message : String(err)
       }`,
@@ -1588,7 +1622,7 @@ async function requestPolishOverHttp(
       }),
     });
     if (!response.ok) {
-      throw new Error(`polish endpoint failed: ${response.status} ${response.statusText}`);
+      throw new PolishTransportError(`polish endpoint failed: ${response.status} ${response.statusText}`, "endpoint-error");
     }
     const payload = (await response.json()) as OpenAIChatCompletionResponse;
     if (payload.error) {
@@ -1601,7 +1635,7 @@ async function requestPolishOverHttp(
     return extractPolishResponseText(payload);
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`polish request timed out after ${timeoutMs}ms`);
+      throw new PolishTransportError(`polish request timed out after ${timeoutMs}ms`, "timeout");
     }
     throw err;
   } finally {
@@ -1733,7 +1767,7 @@ async function requestPolishOverSocket(
     };
 
     const timer = setTimeout(() => {
-      finishReject(new Error(`polish request timed out after ${timeoutMs}ms`));
+      finishReject(new PolishTransportError(`polish request timed out after ${timeoutMs}ms`, "timeout"));
     }, timeoutMs);
 
     Bun.connect<SocketOutboundQueue>({
@@ -1816,6 +1850,7 @@ function writePolishLog(
     latency_ms: result.latencyMs,
     polished: result.polished,
     reason: result.reason,
+    failure_kind: result.failureKind,
     error: result.error,
     boundary_demotions: result.boundaryDemotions ?? null,
   })}\n`;
@@ -1878,6 +1913,7 @@ export async function polishTranscriptionText(
     status: STTPolishStatus,
     error?: string,
     retried = false,
+    failureKind?: STTPolishFailureKind,
   ): STTPolishResult => {
     const polished = status === "applied";
     const validated = validateBoundaries(text);
@@ -1899,6 +1935,7 @@ export async function polishTranscriptionText(
       polished,
       reason: polished ? undefined : error ?? status,
       error,
+      ...(failureKind ? { failureKind } : {}),
       ...(validated.demotions ? { boundaryDemotions: validated.demotions } : {}),
     };
   };
@@ -1914,6 +1951,10 @@ export async function polishTranscriptionText(
 
   const endpoint = getSTTPolishEndpoint(env);
   if (endpoint) {
+    const timeoutMs = getSTTPolishTimeoutMs(
+      env,
+      input.rawText.length > input.cleanedText.length ? input.rawText : input.cleanedText,
+    );
     const health = await checkPolishEndpointHealth(
       endpoint,
       getSTTPolishHealthTimeoutMs(env),
@@ -1924,6 +1965,8 @@ export async function polishTranscriptionText(
         null,
         "failed",
         health.error,
+        false,
+        health.failureKind,
       );
       writePolishLog(result, input.rawText, input.cleanedText, env);
       return result;
@@ -1935,7 +1978,7 @@ export async function polishTranscriptionText(
         input.rawText,
         input.cleanedText,
         env,
-        getSTTPolishTimeoutMs(env),
+        timeoutMs,
       );
       const result = applyPolishCandidate(
         input.cleanedText,
@@ -1967,7 +2010,7 @@ export async function polishTranscriptionText(
                 input.rawText,
                 input.cleanedText,
                 env,
-                getSTTPolishTimeoutMs(env),
+                timeoutMs,
                 { retryReason },
               );
               latestResult = applyPolishCandidate(
@@ -1999,6 +2042,7 @@ export async function polishTranscriptionText(
                 "failed",
                 retryErr instanceof Error ? retryErr.message : String(retryErr),
                 true,
+                polishFailureKind(retryErr),
               );
               writePolishLog(
                 retryFailedResult,
@@ -2031,7 +2075,7 @@ export async function polishTranscriptionText(
             input.rawText,
             input.cleanedText,
             env,
-            getSTTPolishTimeoutMs(env),
+            timeoutMs,
             { retryReason },
           );
           const retryResult = applyPolishCandidate(
@@ -2052,6 +2096,7 @@ export async function polishTranscriptionText(
             result.status,
             retryErr instanceof Error ? retryErr.message : String(retryErr),
             true,
+            polishFailureKind(retryErr),
           );
           writePolishLog(
             retryFailedResult,
@@ -2070,6 +2115,8 @@ export async function polishTranscriptionText(
         null,
         "failed",
         err instanceof Error ? err.message : String(err),
+        false,
+        polishFailureKind(err),
       );
       writePolishLog(result, input.rawText, input.cleanedText, env);
       return result;
@@ -2110,6 +2157,8 @@ export async function polishTranscriptionText(
       null,
       "failed",
       err instanceof Error ? err.message : String(err),
+      false,
+      polishFailureKind(err),
     );
     writePolishLog(result, input.rawText, input.cleanedText, env);
     return result;

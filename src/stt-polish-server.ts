@@ -9,6 +9,7 @@ import {
   getSTTPolishEndpoint,
   getSTTPolishMode,
   type STTPolishEnv,
+  type STTPolishFailureKind,
 } from "./stt-polish";
 
 type ManagedPolishProcess = {
@@ -46,6 +47,7 @@ export interface EnsureSTTPolishServerOptions {
   isResidentStack?: () => boolean;
   env?: STTPolishEnv;
   forceRestart?: boolean;
+  isProcessAlive?: (pid: number) => boolean;
   findBinary?: () => string | null;
   findPortOwnerPids?: () => number[];
   findStalePortOwnerPids?: () => number[];
@@ -147,12 +149,19 @@ export async function ensureSTTPolishServer(
     });
   }
 
+  // A slow health probe is not proof of death. Preserve an existing owner,
+  // including a managed child still loading before it binds the port.
+  if (!options.forceRestart && !polishLaunch) {
+    const pid = existingPolishOwner(options);
+    if (pid) return publishSTTPolishServerStatus({ status: "starting", pid });
+  }
+
   const generation = polishGeneration;
   const publishIfCurrent = (status: STTPolishServerStatus) =>
     generation === polishGeneration ? publishSTTPolishServerStatus(status) : status;
   if (polishLaunch) return polishLaunch.then(publishIfCurrent);
   // Compare against the TRACKED promise: a settled launch must be cleared, or a
-  // later forceRestart (failure recovery) would reuse its stale result and never
+  // later explicit forceRestart would reuse its stale result and never
   // relaunch (#146 round 3).
   const tracked: Promise<STTPolishServerStatus> = startAndWaitForPolishServer(
     endpoint,
@@ -167,11 +176,14 @@ export async function ensureSTTPolishServer(
 
 export function recoverDefaultSTTPolishServerAfterFailure(
   env: STTPolishEnv = processingEnv(),
-  options: Omit<EnsureSTTPolishServerOptions, "env" | "forceRestart"> = {},
+  options: Omit<EnsureSTTPolishServerOptions, "env" | "forceRestart"> & {
+    failureKind?: STTPolishFailureKind;
+  } = {},
 ): void {
+  if (options.failureKind !== "connection-refused") return;
   if (getSTTPolishMode(env) === "off") return;
   if (getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return;
-  void ensureSTTPolishServer({ ...options, env, forceRestart: true }).catch((error: unknown) => {
+  void ensureSTTPolishServer({ ...options, env }).catch((error: unknown) => {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(
       `[voicelayer] STT polish server recovery failed: ${detail}`,
@@ -201,8 +213,12 @@ async function startAndWaitForPolishServer(
     return { status: "missing-binary" };
   }
 
-  await reapStaleDefaultPolishPortOwners(options, appendEvent);
+  if (options.forceRestart) await reapStaleDefaultPolishPortOwners(options, appendEvent);
   if (cancelled()) return { status: "disabled" };
+
+  // Even an explicit restart must wait for the previous owner to exit.
+  const existingPid = existingPolishOwner(options);
+  if (existingPid) return { status: "starting", pid: existingPid };
 
   const args = [
     binary,
@@ -231,6 +247,11 @@ async function startAndWaitForPolishServer(
 
   const proc = spawnPolishServer(args, options);
   polishProcess = proc;
+  // Retain custody until exit is observed, including after a startup timeout.
+  void proc.exited?.then(
+    () => { if (polishProcess === proc) polishProcess = null; },
+    () => {},
+  );
   const abandon = (): STTPolishServerStatus => {
     terminatePolishProcess(proc);
     if (polishProcess === proc) polishProcess = null;
@@ -284,9 +305,6 @@ async function startAndWaitForPolishServer(
     { topic: "voice.transcription" },
   );
   terminatePolishProcess(proc);
-  if (polishProcess === proc) {
-    polishProcess = null;
-  }
   return { status: "timeout" };
 }
 
@@ -309,7 +327,6 @@ async function reapStaleDefaultPolishPortOwners(
   if (!(options.isResidentStack ?? isDefaultVoiceBarSocketPath)()) return;
 
   const pids = getStaleDefaultPolishPortOwnerPids(options);
-  const currentManagedPid = polishProcess?.pid;
   const reapablePids = [...new Set(pids)].filter(
     (pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid,
   );
@@ -321,7 +338,6 @@ async function reapStaleDefaultPolishPortOwners(
     try {
       killProcess(pid, "SIGTERM");
       killed.push(pid);
-      if (pid === currentManagedPid) polishProcess = null;
     } catch {}
   }
   if (killed.length === 0) return;
@@ -403,6 +419,23 @@ function getDefaultPolishPortOwnerPids(
   if (hasTestHooks) return polishProcess?.pid ? [polishProcess.pid] : [];
 
   return findDefaultPolishPortOwnerPidsUnfiltered();
+}
+
+function existingPolishOwner(options: EnsureSTTPolishServerOptions): number | undefined {
+  if (polishProcess) {
+    const alive = options.isProcessAlive ?? ((pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        // EPERM/unknown failures do not prove that an owner exited.
+        return (error as NodeJS.ErrnoException).code !== "ESRCH";
+      }
+    });
+    if (alive(polishProcess.pid)) return polishProcess.pid;
+    polishProcess = null;
+  }
+  return getDefaultPolishPortOwnerPids(options)[0];
 }
 
 function findPolishServerBinary(): string | null {
