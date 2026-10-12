@@ -49,6 +49,7 @@ export interface EnsureSTTPolishServerOptions {
   forceRestart?: boolean;
   isProcessAlive?: (pid: number) => boolean;
   stopExitTimeoutMs?: number;
+  ownerWatchIntervalMs?: number;
   findBinary?: () => string | null;
   findPortOwnerPids?: () => number[];
   findStalePortOwnerPids?: () => number[];
@@ -73,7 +74,8 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 
 let polishProcess: ManagedPolishProcess | null = null;
 let polishLaunch: Promise<STTPolishServerStatus> | null = null;
-let ownerWatch: { pid: number; timer: ReturnType<typeof setTimeout> } | null = null;
+const reapedOwnerPids = new Set<number>();
+let ownerWatch: { pid: number; timer?: ReturnType<typeof setTimeout> } | null = null;
 /**
  * Bumped by every stop. A launch captures it at start and re-checks it after
  * each await: a stale launch spawns nothing more, terminates what it spawned,
@@ -97,9 +99,10 @@ function publishSTTPolishServerStatus(
   return status;
 }
 
-export function resetSTTPolishServerManagerForTests(): void {
+function resetSTTPolishServerManager(retainReapedOwners: boolean): void {
+  if (!retainReapedOwners) reapedOwnerPids.clear();
   polishGeneration++;
-  if (ownerWatch) clearTimeout(ownerWatch.timer);
+  if (ownerWatch?.timer) clearTimeout(ownerWatch.timer);
   ownerWatch = null;
   polishLaunch = null;
   if (polishProcess?.kill) {
@@ -110,8 +113,12 @@ export function resetSTTPolishServerManagerForTests(): void {
   polishProcess = null;
 }
 
+export function resetSTTPolishServerManagerForTests(): void {
+  resetSTTPolishServerManager(false);
+}
+
 export function stopSTTPolishServer(): void {
-  resetSTTPolishServerManagerForTests();
+  resetSTTPolishServerManager(true);
 }
 
 /**
@@ -121,7 +128,7 @@ export function stopSTTPolishServer(): void {
  */
 export async function stopSTTPolishServerAndWait(): Promise<void> {
   const proc = polishProcess;
-  resetSTTPolishServerManagerForTests();
+  resetSTTPolishServerManager(true);
   if (proc) await escalatePolishProcessExit(proc, POLISH_STOP_EXIT_TIMEOUT_MS);
 }
 
@@ -131,9 +138,13 @@ export async function ensureSTTPolishServer(
   const env = options.env ?? processingEnv();
   const endpoint = getSTTPolishEndpoint(env);
   if (getSTTPolishMode(env) === "off") {
+    if (ownerWatch?.timer) clearTimeout(ownerWatch.timer);
+    ownerWatch = null;
     return publishSTTPolishServerStatus({ status: "disabled" });
   }
   if (endpoint !== DEFAULT_POLISH_ENDPOINT) {
+    if (ownerWatch?.timer) clearTimeout(ownerWatch.timer);
+    ownerWatch = null;
     return publishSTTPolishServerStatus({ status: "external" });
   }
 
@@ -143,7 +154,7 @@ export async function ensureSTTPolishServer(
   if (generation !== polishGeneration) return { status: "disabled" };
   // Explicit user recovery reaps only an unready filtered MLX owner.
   if (ready) {
-    if (ownerWatch) clearTimeout(ownerWatch.timer);
+    if (ownerWatch?.timer) clearTimeout(ownerWatch.timer);
     ownerWatch = null;
     return publishSTTPolishServerStatus({
       status: "already-ready",
@@ -248,7 +259,7 @@ async function startAndWaitForPolishServer(
     `[voicelayer] Starting STT polish server on ${DEFAULT_POLISH_HOST}:${DEFAULT_POLISH_PORT} with model ${DEFAULT_POLISH_MODEL}`,
   );
 
-  if (ownerWatch) clearTimeout(ownerWatch.timer);
+  if (ownerWatch?.timer) clearTimeout(ownerWatch.timer);
   ownerWatch = null;
   const proc = spawnPolishServer(args, options);
   polishProcess = proc;
@@ -341,10 +352,23 @@ async function reapStaleDefaultPolishPortOwners(
   const killProcess = options.killProcess ?? process.kill;
   const killed: number[] = [];
   for (const pid of reapablePids) {
+    reapedOwnerPids.add(pid);
     try {
       killProcess(pid, "SIGTERM");
       killed.push(pid);
+      // Reaping is an explicit user action. Wait for the exact owner to exit
+      // before the duplicate-owner guard decides whether a replacement is safe.
+      const proc = polishProcess?.pid === pid ? polishProcess : {
+        pid,
+        kill: (signal: NodeJS.Signals = "SIGTERM") => {
+          // A reused PID must not turn escalation into an unrelated-process kill.
+          if (signal === "SIGKILL" && !options.killProcess && !isPolishServerPid(pid)) return;
+          killProcess(pid, signal);
+        },
+      };
+      await escalatePolishProcessExit(proc, options.stopExitTimeoutMs ?? POLISH_STOP_EXIT_TIMEOUT_MS, options);
     } catch {}
+    if (!isPolishProcessAlive(pid, options)) reapedOwnerPids.delete(pid);
   }
   if (killed.length === 0) return;
 
@@ -353,7 +377,6 @@ async function reapStaleDefaultPolishPortOwners(
     { port: DEFAULT_POLISH_PORT, pids: killed },
     { topic: "voice.transcription" },
   );
-  await (options.sleep ?? Bun.sleep)(500);
 }
 
 function getStaleDefaultPolishPortOwnerPids(
@@ -432,6 +455,11 @@ function existingPolishOwner(options: EnsureSTTPolishServerOptions): number | un
     if (isPolishProcessAlive(polishProcess.pid, options)) return polishProcess.pid;
     polishProcess = null;
   }
+  // A terminating orphan can release its port before releasing its model.
+  for (const pid of reapedOwnerPids) {
+    if (isPolishProcessAlive(pid, options)) return pid;
+    reapedOwnerPids.delete(pid);
+  }
   return getDefaultPolishPortOwnerPids(options)[0];
 }
 
@@ -445,25 +473,50 @@ function isPolishProcessAlive(pid: number, options: EnsureSTTPolishServerOptions
 function watchPolishOwner(endpoint: string, pid: number, options: EnsureSTTPolishServerOptions, generation: number): STTPolishServerStatus {
   if (ownerWatch && ownerWatch.pid !== pid) { clearTimeout(ownerWatch.timer); ownerWatch = null; }
   if (!ownerWatch) {
-    const watch = { pid, timer: setTimeout(async () => {
-      const ready = await isReady(endpoint, options).catch(() => false);
+    const watch: { pid: number; timer?: ReturnType<typeof setTimeout> } = { pid };
+    let degraded = false;
+    const arm = (ms: number) => {
+      watch.timer = setTimeout(check, ms);
+      watch.timer.unref?.();
+    };
+    const check = async () => {
       if (generation !== polishGeneration || ownerWatch !== watch) return;
-      ownerWatch = null;
-      publishSTTPolishServerStatus(ready ? { status: "already-ready", pid } : { status: "timeout" });
-    }, options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS) };
+      const alive = isPolishProcessAlive(pid, options);
+      const ready = alive && await isReady(endpoint, options).catch(() => false);
+      if (generation !== polishGeneration || ownerWatch !== watch) return;
+      if (ready) {
+        ownerWatch = null;
+        publishSTTPolishServerStatus({ status: "already-ready", pid });
+        return;
+      }
+      if (!degraded) { degraded = true; publishSTTPolishServerStatus({ status: "timeout" }); }
+      if (!alive) { ownerWatch = null; return; }
+      arm(options.ownerWatchIntervalMs ?? 5_000);
+    };
     ownerWatch = watch;
-    watch.timer.unref?.();
+    arm(options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS);
   }
   return { status: "starting", pid };
 }
 
 async function escalatePolishProcessExit(proc: ManagedPolishProcess, timeoutMs: number, options: EnsureSTTPolishServerOptions = {}): Promise<void> {
-  const wait = () => new Promise<boolean>((resolve) => {
-    if (!proc.exited && !isPolishProcessAlive(proc.pid, options)) return resolve(true);
-    const timer = setTimeout(() => resolve(false), timeoutMs);
-    void proc.exited?.then(() => { clearTimeout(timer); resolve(true); }, () => { clearTimeout(timer); resolve(false); });
-  });
+  const wait = async (): Promise<boolean> => {
+    if (!proc.exited) {
+      const deadline = Date.now() + timeoutMs;
+      while (isPolishProcessAlive(proc.pid, options)) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return false;
+        await Bun.sleep(Math.min(50, remaining));
+      }
+      return true;
+    }
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      void proc.exited!.then(() => { clearTimeout(timer); resolve(true); }, () => { clearTimeout(timer); resolve(false); });
+    });
+  };
   if (await wait()) return;
+  if (!proc.exited && !isPolishProcessAlive(proc.pid, options)) return;
   try { proc.kill?.("SIGKILL"); } catch {}
   await wait();
 }
