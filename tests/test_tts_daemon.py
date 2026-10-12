@@ -124,3 +124,67 @@ def test_synthesize_rejects_profile_model_mismatch(
     assert response.status_code == 409
     assert "model mismatch" in response.text
     assert calls == []
+
+
+@pytest.mark.parametrize("model_type", ["custom_voice", "voice_design", "base"])
+def test_clone_checks_loaded_model_type_not_directory_name(
+    monkeypatch, tmp_path, model_type
+):
+    fake_model = FakeModel()
+    fake_model.config = SimpleNamespace(tts_model_type=model_type)
+    calls = []
+
+    def generate_audio(**kwargs):
+        calls.append(kwargs)
+        (Path(kwargs["output_path"]) / "synthesis.mp3").write_bytes(b"fake-mp3")
+
+    install_fake_mlx_audio(monkeypatch, fake_model, generate_audio)
+    # A base-looking name must not disguise CustomVoice, and vice versa.
+    model_name = "qwen3-tts-4bit" if model_type == "base" else "qwen3-tts-base-4bit"
+    model_path = str(tmp_path / "models" / model_name)
+    sample = tmp_path / "voices" / "speaker" / "clip.wav"
+    sample.parent.mkdir(parents=True)
+    sample.write_bytes(b"RIFF" + b"\x00" * 128)
+    secret_file = tmp_path / "daemon.secret"
+    app = create_app(
+        model_path=model_path,
+        auth_token_file=str(secret_file),
+        voices_root=str(tmp_path / "voices"),
+    )
+    payload = synthesize_payload(str(sample))
+    payload["model"] = model_path
+    with TestClient(app) as client:
+        response = client.post(
+            "/synthesize",
+            json=payload,
+            headers=synthesize_headers(secret_file.read_text().strip()),
+        )
+    if model_type == "base":
+        assert response.status_code == 200
+        assert len(calls) == 1
+    else:
+        assert response.status_code == 409
+        assert response.json()["code"] == "clone_model_incompatible"
+        assert model_type in response.json()["detail"]
+        assert model_path in response.json()["detail"]
+        assert "needs a Qwen3-TTS Base model (tts_model_type=base)" in response.json()["detail"]
+        assert "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit" in response.json()["detail"]
+        assert "--local-dir" in response.json()["detail"]
+        assert calls == []
+
+
+def test_model_load_failure_names_provisioned_base_repo(monkeypatch, tmp_path, caplog):
+    install_fake_mlx_audio(monkeypatch, FakeModel())
+
+    def fail_load(_):
+        raise RuntimeError("fixture model missing")
+
+    monkeypatch.setattr(sys.modules["mlx_audio.tts.utils"], "load", fail_load)
+    app = create_app(model_path="fixture-model",
+                     auth_token_file=str(tmp_path / "daemon.secret"),
+                     voices_root=str(tmp_path / "voices"))
+    with TestClient(app):
+        pass
+    assert "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit" in caplog.text
+    assert "hf download" in caplog.text
+    assert "Qwen/Qwen3-TTS" not in caplog.text

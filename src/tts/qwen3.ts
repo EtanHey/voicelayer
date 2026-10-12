@@ -486,6 +486,14 @@ export function buildDaemonRequestHeaders(
 
 // --- Daemon Communication ---
 
+/** A configuration conflict must reach the caller instead of changing voices. */
+export class DaemonModelError extends Error {
+  constructor(detail: string) {
+    super(`[voicelayer] Daemon model configuration error: ${detail}`);
+    this.name = "DaemonModelError";
+  }
+}
+
 /**
  * Check if the TTS daemon is running and healthy.
  */
@@ -523,6 +531,7 @@ export async function isDaemonHealthy(): Promise<boolean> {
  * @param text - Text to speak
  * @param voiceName - Voice profile name (e.g., "theo")
  * @returns MP3 audio buffer, or null if daemon unavailable
+ * @throws DaemonModelError when the loaded model is incompatible or mismatches the profile pin
  */
 export async function synthesizeCloned(
   text: string,
@@ -573,6 +582,20 @@ export async function synthesizeCloned(
       console.error(
         `[voicelayer] Daemon synthesis failed (${res.status}): ${errText}`,
       );
+      if (res.status === 409) {
+        // Both incompatible-model and profile-pin conflicts require a deliberate
+        // configuration fix. An edge voice would hide the requested clone's failure.
+        let detail = errText;
+        try {
+          const body = JSON.parse(errText);
+          if (typeof body?.detail === "string" && body.detail.trim()) {
+            detail = body.detail;
+          }
+        } catch {
+          // Older daemons/proxies may return plain text; preserve that message.
+        }
+        throw new DaemonModelError(detail);
+      }
       return null;
     }
 
@@ -585,6 +608,7 @@ export async function synthesizeCloned(
     );
     return Buffer.from(data.audio_b64, "base64");
   } catch (err) {
+    if (err instanceof DaemonModelError) throw err;
     if (err instanceof Error && err.name === "AbortError") {
       console.error("[voicelayer] Daemon synthesis timed out");
     } else {

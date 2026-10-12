@@ -242,6 +242,7 @@ def create_app(
     try:
         from fastapi import FastAPI, HTTPException, Request
         from fastapi.middleware.cors import CORSMiddleware
+        from fastapi.responses import JSONResponse
         from pydantic import BaseModel
     except ImportError:
         logger.error("FastAPI not installed. Run: pip install fastapi uvicorn")
@@ -316,11 +317,11 @@ def create_app(
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             logger.error(
-                "Download and quantize first:\n"
-                "  python3 -m mlx_audio.quantize \\\n"
-                '    --model "Qwen/Qwen3-TTS" \\\n'
-                "    --q-bits 4 \\\n"
-                f"    --out-path {model_path}"
+                "Download a Qwen3-TTS Base model (tts_model_type=base) first:\n"
+                "  hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit "
+                "--local-dir <base-model-directory>\n"
+                "Then start voicelayer daemon --model <base-model-directory> "
+                "and use the same directory in the profile's model_path."
             )
             # Don't exit — let health check report the error
             model = None
@@ -354,6 +355,25 @@ def create_app(
 
         if not req.text.strip():
             raise HTTPException(400, "text must not be empty")
+
+        # Model directory names are user-controlled; MLX's loaded config is
+        # authoritative. Never load a second model in response to a request.
+        model_type = getattr(getattr(model, "config", None), "tts_model_type", None)
+        if model_type is not None and model_type != "base":
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "code": "clone_model_incompatible",
+                    "detail": (
+                        f"Daemon loaded {model_path!r} (type {model_type!r}); "
+                        "voice cloning needs a Qwen3-TTS Base model (tts_model_type=base). "
+                        "Run `hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit "
+                        "--local-dir <base-model-directory>`, then start "
+                        "`voicelayer daemon --model <base-model-directory>` "
+                        "and set the profile's model_path to the same model."
+                    ),
+                },
+            )
 
         if not model_pin_matches(req.model, model_path):
             logger.error(

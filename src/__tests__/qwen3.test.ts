@@ -232,6 +232,45 @@ describe("isDaemonHealthy", () => {
 });
 
 describe("synthesizeCloned", () => {
+  it.each([[409, true], [409, false], [503, true]])("handles daemon status %i (JSON=%s) without hiding model configuration errors", async (status, jsonBody) => {
+    const homeDir = join("/tmp", `voicelayer-clone-error-${process.pid}-${status}-${jsonBody}`);
+    const voiceDir = join(homeDir, ".voicelayer", "voices", "fixture");
+    mkdirSync(voiceDir, { recursive: true });
+    writeFileSync(join(voiceDir, "profile.yaml"), `name: fixture
+engine: qwen3-tts
+reference_clip: ~/fixture.wav
+reference_text: hello
+`);
+    writeFileSync(join(homeDir, ".voicelayer", "daemon.secret"), "test-token\n", { mode: 0o600 });
+    try {
+      const result = Bun.spawnSync({
+        cmd: ["bun", "-e", `
+const detail = "voice cloning needs a Qwen3-TTS Base model (tts_model_type=base). Run hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit --local-dir <base-model-directory>, then start voicelayer daemon --model <base-model-directory>";
+globalThis.fetch = async () => new Response(${jsonBody ? "JSON.stringify({ detail })" : "detail"}, { status: ${status} });
+const { synthesizeCloned } = await import("./src/tts/qwen3.ts");
+try {
+  const result = await synthesizeCloned("hello", "fixture");
+  console.log(JSON.stringify({ result }));
+} catch (error) {
+  console.log(JSON.stringify({ error: error.message }));
+}
+`],
+        cwd: process.cwd(), env: { ...process.env, HOME: homeDir }, stdout: "pipe", stderr: "pipe",
+      });
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout.toString());
+      if (status === 409) {
+        expect(output.error).toContain("voicelayer daemon --model");
+        expect(output.error).toContain("tts_model_type=base");
+        expect(output.error).not.toContain('{"detail":');
+      } else {
+        expect(output.result).toBeNull();
+      }
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns null when no profile exists", async () => {
     const { synthesizeCloned } = await import("../tts/qwen3");
     const result = await synthesizeCloned("hello", "nonexistent");
