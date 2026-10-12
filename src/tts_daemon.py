@@ -317,11 +317,11 @@ def create_app(
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             logger.error(
-                "Download and quantize first:\n"
-                "  python3 -m mlx_audio.quantize \\\n"
-                '    --model "Qwen/Qwen3-TTS" \\\n'
-                "    --q-bits 4 \\\n"
-                f"    --out-path {model_path}"
+                "Download a Qwen3-TTS Base model (tts_model_type=base) first:\n"
+                "  hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit "
+                "--local-dir <base-model-directory>\n"
+                "Then start voicelayer daemon --model <base-model-directory> "
+                "and use the same directory in the profile's model_path."
             )
             # Don't exit — let health check report the error
             model = None
@@ -366,9 +366,10 @@ def create_app(
                     "code": "clone_model_incompatible",
                     "detail": (
                         f"Daemon loaded {model_path!r} (type {model_type!r}); "
-                        "voice cloning needs qwen3-tts-base-4bit. "
-                        "Start with `voicelayer daemon --model "
-                        "~/.voicelayer/models/qwen3-tts-base-4bit` "
+                        "voice cloning needs a Qwen3-TTS Base model (tts_model_type=base). "
+                        "Download `hf download mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit "
+                        "--local-dir <base-model-directory>`, then start "
+                        "`voicelayer daemon --model <base-model-directory>` "
                         "and set the profile's model_path to the same model."
                     ),
                 },

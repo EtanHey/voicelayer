@@ -167,19 +167,24 @@ def test_clone_checks_loaded_model_type_not_directory_name(
         assert response.json()["code"] == "clone_model_incompatible"
         assert model_type in response.json()["detail"]
         assert model_path in response.json()["detail"]
-        assert "voicelayer daemon --model" in response.json()["detail"]
-        assert "qwen3-tts-base-4bit" in response.json()["detail"]
+        assert "needs a Qwen3-TTS Base model (tts_model_type=base)" in response.json()["detail"]
+        assert "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit" in response.json()["detail"]
+        assert "--local-dir" in response.json()["detail"]
         assert calls == []
 
 
-def test_clone_profile_pins_base_model(monkeypatch, tmp_path):
-    import importlib.util
+def test_model_load_failure_names_provisioned_base_repo(monkeypatch, tmp_path, caplog):
+    install_fake_mlx_audio(monkeypatch, FakeModel())
 
-    spec = importlib.util.spec_from_file_location("clone_cli", ROOT / "src/cli/clone.py")
-    clone = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(clone)
-    monkeypatch.setattr(clone, "VOICES_DIR", tmp_path)
-    (tmp_path / "fixture").mkdir()
-    clone.write_profile("fixture", [{"path": tmp_path / "fixture/clip.wav"}], ["hello"])
-    profile = (tmp_path / "fixture/profile.yaml").read_text()
-    assert "model_path: ~/.voicelayer/models/qwen3-tts-base-4bit" in profile
+    def fail_load(_):
+        raise RuntimeError("fixture model missing")
+
+    monkeypatch.setattr(sys.modules["mlx_audio.tts.utils"], "load", fail_load)
+    app = create_app(model_path="fixture-model",
+                     auth_token_file=str(tmp_path / "daemon.secret"),
+                     voices_root=str(tmp_path / "voices"))
+    with TestClient(app):
+        pass
+    assert "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit" in caplog.text
+    assert "hf download" in caplog.text
+    assert "Qwen/Qwen3-TTS" not in caplog.text

@@ -187,7 +187,7 @@ def write_profile(
     lines = [
         f"name: {name}",
         "engine: qwen3-tts",
-        "model_path: ~/.voicelayer/models/qwen3-tts-base-4bit",
+        "model_path: ~/.voicelayer/models/qwen3-tts-4bit",
         "reference_clips:",
     ]
 

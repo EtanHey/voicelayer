@@ -232,8 +232,8 @@ describe("isDaemonHealthy", () => {
 });
 
 describe("synthesizeCloned", () => {
-  it.each([409, 503])("handles daemon status %i without hiding model configuration errors", async (status) => {
-    const homeDir = join("/tmp", `voicelayer-clone-error-${process.pid}-${status}`);
+  it.each([[409, true], [409, false], [503, true]])("handles daemon status %i (JSON=%s) without hiding model configuration errors", async (status, jsonBody) => {
+    const homeDir = join("/tmp", `voicelayer-clone-error-${process.pid}-${status}-${jsonBody}`);
     const voiceDir = join(homeDir, ".voicelayer", "voices", "fixture");
     mkdirSync(voiceDir, { recursive: true });
     writeFileSync(join(voiceDir, "profile.yaml"), `name: fixture
@@ -246,7 +246,7 @@ reference_text: hello
       const result = Bun.spawnSync({
         cmd: ["bun", "-e", `
 const detail = "voice cloning needs qwen3-tts-base-4bit — start with voicelayer daemon --model ~/.voicelayer/models/qwen3-tts-base-4bit";
-globalThis.fetch = async () => new Response(JSON.stringify({ detail }), { status: ${status} });
+globalThis.fetch = async () => new Response(${jsonBody ? "JSON.stringify({ detail })" : "detail"}, { status: ${status} });
 const { synthesizeCloned } = await import("./src/tts/qwen3.ts");
 try {
   const result = await synthesizeCloned("hello", "fixture");
@@ -262,6 +262,7 @@ try {
       if (status === 409) {
         expect(output.error).toContain("voicelayer daemon --model");
         expect(output.error).toContain("qwen3-tts-base-4bit");
+        expect(output.error).not.toContain('{"detail":');
       } else {
         expect(output.result).toBeNull();
       }

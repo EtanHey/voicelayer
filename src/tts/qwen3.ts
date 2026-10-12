@@ -585,7 +585,16 @@ export async function synthesizeCloned(
       if (res.status === 409) {
         // Both incompatible-model and profile-pin conflicts require a deliberate
         // configuration fix. An edge voice would hide the requested clone's failure.
-        throw new DaemonModelError(errText);
+        let detail = errText;
+        try {
+          const body = JSON.parse(errText);
+          if (typeof body?.detail === "string" && body.detail.trim()) {
+            detail = body.detail;
+          }
+        } catch {
+          // Older daemons/proxies may return plain text; preserve that message.
+        }
+        throw new DaemonModelError(detail);
       }
       return null;
     }
