@@ -463,14 +463,26 @@ qwen3_record_preservation() {
 install_qwen3_model() {
     local model_parent staged_model old_model
     QWEN3_MODEL_STEP_OK=0
+    model_parent="$(dirname "$MODEL_DIR")"
+    staged_model="$model_parent/.$(basename "$MODEL_DIR").partial"
+    old_model="$model_parent/.$(basename "$MODEL_DIR").old"
+    # Recover a process interrupted between the two swap renames. Never
+    # replace an existing target (including a dangling link) or follow a
+    # backup symlink; restore only the exact real backup directory.
+    if [[ ! -e "$MODEL_DIR" && ! -L "$MODEL_DIR" && -d "$old_model" && ! -L "$old_model" ]]; then
+        log "Restoring interrupted model swap from $old_model"
+        run_cmd mv "$old_model" "$MODEL_DIR" || return 1
+        if [[ "$DRY_RUN" -eq 1 || "$DRY_RUN_COMMANDS" = "1" ]]; then
+            log "Would resume model checks after restoring $MODEL_DIR."
+            QWEN3_MODEL_STEP_DETAIL="would restore interrupted swap from $old_model"
+            return 0
+        fi
+    fi
     if qwen3_model_preserved; then
         qwen3_record_preservation
         return 0
     fi
 
-    model_parent="$(dirname "$MODEL_DIR")"
-    staged_model="$model_parent/.$(basename "$MODEL_DIR").partial"
-    old_model="$model_parent/.$(basename "$MODEL_DIR").old"
     # Do not follow a staging link or overwrite a prior backup. A failed
     # download can resume in our exact sibling .partial directory.
     if [[ -L "$staged_model" || -e "$old_model" || -L "$old_model" ]]; then
@@ -490,7 +502,7 @@ install_qwen3_model() {
         return 0
     fi
     if ! qwen3_base_config "$staged_model/$QWEN3_MODEL_SENTINEL" || [[ ! -s "$staged_model/model.safetensors" ]]; then
-        err "staged download is not a complete Base model; leaving $MODEL_DIR untouched"
+        err "staged download is not a verified Base model; leaving $MODEL_DIR untouched"
         return 1
     fi
     # A user may have installed a Base model or link while HF was downloading.

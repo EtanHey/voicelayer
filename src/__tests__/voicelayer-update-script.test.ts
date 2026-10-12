@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -1006,6 +1007,54 @@ case "$1" in */hf|mkdir|mv|rm) "$@" ;; *) : ;; esac
       expect(second.exitCode === 0).toBe(mode === "success");
       expect(existsSync(join(root, ".model.old-other"))).toBe(true);
       expect(existsSync(join(root, ".model.partial-other"))).toBe(true);
+    },
+  );
+
+
+  test.each(["base", "custom", "backup-link", "target-link", "target-exists"])(
+    "recovers an interrupted model swap without replacing owned paths: %s",
+    (kind) => {
+      const root = fixtureRoot("voicelayer-update-recover-");
+      const modelDir = join(root, "model");
+      const backup = join(root, ".model.old");
+      const savedDir = populatedModelDir(root, kind === "backup-link" ? "saved" : ".model.old");
+      const originalConfig = JSON.stringify({ tts_model_type: kind === "base" ? "base" : "custom_voice" });
+      writeFileSync(join(savedDir, "config.json"), originalConfig);
+      writeFileSync(join(savedDir, "model.safetensors"), "saved-weights");
+      if (kind === "backup-link") symlinkSync(savedDir, backup);
+      if (kind === "target-link") symlinkSync(join(root, "absent"), modelDir);
+      if (kind === "target-exists") populatedModelDir(root, "model");
+      const venvDir = fakeVenv(root, "hf", "python");
+      writeFileSync(join(venvDir, "bin", "hf"), `#!/usr/bin/env bash
+printf attempt >> "$HOME/attempts"
+mkdir -p "$4"
+printf '%s' '{"tts_model_type":"base"}' > "$4/config.json"
+exit 1
+`);
+      const command = ["bash", "-c", `source "$1"; run_cmd() {
+case "$1" in */hf|mkdir|mv|rm) "$@" ;; *) : ;; esac
+}; install_qwen3_model`, "_", updateScript];
+      const env = { HOME: root, VOICELAYER_UPDATE_MODEL_DIR: modelDir, VOICELAYER_UPDATE_VENV_DIR: venvDir };
+      const result = run(command, env);
+      if (kind === "base" || kind === "custom") {
+        expect(text(result.stdout)).toContain("Restoring interrupted model swap");
+        expect(readFileSync(join(modelDir, "config.json"), "utf8")).toBe(originalConfig);
+        expect(readFileSync(join(modelDir, "model.safetensors"), "utf8")).toBe("saved-weights");
+        expect(existsSync(backup)).toBe(false);
+        expect(result.exitCode === 0).toBe(kind === "base");
+        const second = run(command, env);
+        expect(text(second.stdout)).not.toContain("Restoring interrupted model swap");
+        expect(second.exitCode === 0).toBe(kind === "base");
+        expect(existsSync(join(root, "attempts"))).toBe(kind === "custom");
+      } else {
+        expect(text(result.stdout)).not.toContain("Restoring interrupted model swap");
+        expect(readFileSync(join(savedDir, "config.json"), "utf8")).toBe(originalConfig);
+        expect(readFileSync(join(savedDir, "model.safetensors"), "utf8")).toBe("saved-weights");
+        expect(existsSync(join(root, "attempts"))).toBe(false);
+        if (kind === "backup-link") expect(readlinkSync(backup)).toBe(savedDir);
+        if (kind === "target-link") expect(readlinkSync(modelDir)).toBe(join(root, "absent"));
+        if (kind === "target-exists") expect(JSON.parse(readFileSync(join(modelDir, "config.json"), "utf8")).tts_model_type).toBe("base");
+      }
     },
   );
 
