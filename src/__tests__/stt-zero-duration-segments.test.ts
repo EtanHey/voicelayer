@@ -37,3 +37,24 @@ test("unbounded, reversed or detached zero-duration timings still fail closed", 
     expect(result.segments).toEqual([]);
   }
 });
+
+test("a widened seam carries only its inherited overlap into the next segment", () => {
+  const chunks = [
+    { text: "alpha bridge", startSeconds:100, segments:[
+      {text:"alpha",startS:25,endS:28.08}, {text:"bridge",startS:28.08,endS:30},
+    ] },
+    { text: "bridge middle final", startSeconds:125, segments:[
+      {text:"bridge middle",startS:0,endS:4.34},
+      {text:"final",startS:4.34,endS:7.4},
+    ] },
+  ];
+  const result=mergeChunkTranscriptsWithSegments(chunks);
+  expect(result.text).toBe("alpha bridge middle final");
+  expect(result.segments).toEqual([
+    {text:"alpha",startS:125,endS:100+28.08},
+    {text:"bridge middle final",startS:100+28.08,endS:132.4},
+  ]);
+  const inverted=structuredClone(chunks);
+  inverted[1]!.segments[1]!.startS=4;
+  expect(mergeChunkTranscriptsWithSegments(inverted).segments).toEqual([]);
+});
