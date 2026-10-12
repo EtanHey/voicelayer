@@ -1804,6 +1804,42 @@ describe("input recording durability", () => {
     });
   }
 
+  for (const characters of [399, 400, 401]) {
+    it(`paragraph timing threshold at ${characters} chars with smart boundaries off covers all three call sites`, async () => {
+      const input = await import("../input");
+      const journal = await import("../control-layer-journal");
+      const savedSmart = process.env.VOICELAYER_STT_SMART_BOUNDARIES;
+      const savedParagraphs = process.env.VOICELAYER_STT_PAUSE_PARAGRAPHS;
+      process.env.VOICELAYER_STT_SMART_BOUNDARIES = "0";
+      process.env.VOICELAYER_STT_PAUSE_PARAGRAPHS = "1";
+      backendText = "A" + "b".repeat(characters - 2) + ".";
+      expect(backendText.length).toBe(characters);
+      const build = spyOn(input, "buildBoundaryContext").mockResolvedValue(undefined);
+      const events = spyOn(journal, "appendControlLayerEvent").mockImplementation(() => {});
+      vadProbabilityForCall = () => .95;
+      installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+      const expectedPerCall = characters >= 400 ? 1 : 0;
+      let archive: string | undefined;
+      try {
+        expect(await input.waitForInput(2_000, "standard", true, {
+          archiveSource: "voicebar", onArchiveCreated: path => { archive = join(path, "audio.wav"); },
+        })).toBe(backendText);
+        expect(build).toHaveBeenCalledTimes(expectedPerCall);
+        expect(archive).toBeDefined();
+        await input.retranscribeRecordingCapture(archive!);
+        expect(build).toHaveBeenCalledTimes(2 * expectedPerCall);
+        await input.retranscribeLastCapture();
+        expect(build).toHaveBeenCalledTimes(3 * expectedPerCall);
+      } finally {
+        build.mockRestore(); events.mockRestore();
+        if (savedSmart === undefined) delete process.env.VOICELAYER_STT_SMART_BOUNDARIES;
+        else process.env.VOICELAYER_STT_SMART_BOUNDARIES = savedSmart;
+        if (savedParagraphs === undefined) delete process.env.VOICELAYER_STT_PAUSE_PARAGRAPHS;
+        else process.env.VOICELAYER_STT_PAUSE_PARAGRAPHS = savedParagraphs;
+      }
+    });
+  }
+
   it("archives captured VoiceBar PCM when the recorder fails", async () => {
     vadMode = "throw";
     installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
