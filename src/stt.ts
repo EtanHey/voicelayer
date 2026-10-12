@@ -1671,7 +1671,7 @@ export function mergeChunkTranscriptsWithSegments(
   if (reconstructed !== text) return { text, segments: [] };
 
   const segments: Array<
-    TranscriptSegment & { source: string; chunkIndex: number }
+    TranscriptSegment & { source: string; chunkIndex: number; sourceEndS: number; seamChunkIndex?: number }
   > = [];
   for (const word of merged) {
     const previous = segments.at(-1);
@@ -1693,7 +1693,8 @@ export function mergeChunkTranscriptsWithSegments(
       // and keeps the returned list monotonic. Only the known seam window may
       // overlap; an inversion inside one chunk still fails closed.
       const isBoundedSeamOverlap =
-        word.chunkIndex === previous.chunkIndex + 1 &&
+        (word.chunkIndex === previous.chunkIndex + 1 ||
+          (previous.seamChunkIndex === word.chunkIndex && word.startS >= previous.sourceEndS)) &&
         word.startS >= word.seamStartS &&
         previous.endS <= word.seamEndS;
       if (!isBoundedSeamOverlap) return { text, segments: [] };
@@ -1701,6 +1702,9 @@ export function mergeChunkTranscriptsWithSegments(
       previous.endS = Math.max(previous.endS, word.endS);
       previous.source = word.source;
       previous.chunkIndex = word.chunkIndex;
+      // Track the last source end separately from the inherited widened end.
+      previous.sourceEndS = word.endS;
+      previous.seamChunkIndex = word.chunkIndex;
       continue;
     }
     segments.push({
@@ -1709,6 +1713,7 @@ export function mergeChunkTranscriptsWithSegments(
       endS: word.endS,
       source: word.source,
       chunkIndex: word.chunkIndex,
+      sourceEndS: word.endS,
     });
   }
 
