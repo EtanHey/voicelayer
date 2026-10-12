@@ -8,6 +8,7 @@ describe("polish controls status", () => {
       outro_gate: { source: "default", raw: null, effective: true },
       smart_chunks: { source: "default", raw: null, effective: false },
       smart_boundaries: { source: "default", raw: null, effective: false },
+      pause_paragraphs: { source: "default", raw: null, effective: true },
     });
   });
 
@@ -22,6 +23,7 @@ describe("polish controls status", () => {
       outro_gate: { source: "environment", raw: "maybe", effective: false },
       smart_chunks: { source: "environment", raw: "yes", effective: true },
       smart_boundaries: { source: "environment", raw: "yes", effective: true },
+      pause_paragraphs: { source: "default", raw: null, effective: true },
     });
   });
 });

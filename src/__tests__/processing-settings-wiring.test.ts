@@ -12,7 +12,7 @@ const SRC = join(import.meta.dir, "..");
 const files = readdirSync(SRC).filter((name) => name.endsWith(".ts"));
 
 const FORBIDDEN: Array<[RegExp, string]> = [
-  [/\b(outroGateEnabled|smartBoundariesEnabled|isSmartWavChunkingEnabled|getSTTPolishMode)\(\s*(process\.env)?\s*\)/g,
+  [/\b(pauseParagraphsEnabled|outroGateEnabled|smartBoundariesEnabled|isSmartWavChunkingEnabled|getSTTPolishMode)\(\s*(process\.env)?\s*\)/g,
     "a processing-flag parser called with process.env or no env"],
   [/\b(finalizeTranscriptionResultForSurface|buildBoundaryContext|finalizeTranscriptionTextForSurface)\([^;]*?process\.env/gs,
     "a finalize/boundary call handed process.env"],

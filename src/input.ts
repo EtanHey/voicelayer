@@ -23,6 +23,7 @@
  *   brew install whisper-cpp (or set QA_VOICE_WISPR_KEY for cloud fallback)
  */
 
+import { applyPauseParagraphs, pauseParagraphsEnabled } from "./stt-paragraphs";
 import { processingEnv } from "./processing-settings";
 import { createHash, randomBytes } from "crypto";
 import {
@@ -453,9 +454,9 @@ export async function finalizeTranscriptionTextForSurface(
  * Where Etan stopped, for the pause-aware boundary stage.
  *
  * Returns undefined — the documented "leave today's behaviour alone" answer —
- * unless `VOICELAYER_STT_SMART_BOUNDARIES=1` AND the decode handed back segment
+ * unless smart boundaries or pause paragraphs are enabled AND the decode handed back segment
  * timestamps. Costs one Silero pass over the finished WAV, so it runs only
- * under the flag. Never throws: a recording it cannot analyse just gets no
+ * when timing evidence is present. Never throws: a recording it cannot analyse just gets no
  * boundary validation, and the reason is logged.
  */
 export async function buildBoundaryContext(
@@ -465,7 +466,9 @@ export async function buildBoundaryContext(
   env: STTFinalizeEnv = processingEnv(),
   signal?: AbortSignal,
 ): Promise<STTPolishBoundaryContext | undefined> {
-  if (!smartBoundariesEnabled(env)) return undefined;
+  if (!smartBoundariesEnabled(env) && !pauseParagraphsEnabled(env)) return undefined;
+  // Never pair unbound segment times with an arbitrary WAV.
+  if (!segmentsAudioSha256) return undefined;
   if (signal?.aborted) return undefined;
   if (!segments || segments.length === 0) {
     console.error(
@@ -516,7 +519,11 @@ export async function finalizeTranscriptionResultForSurface(
   boundaryContext?: STTPolishBoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
-  if (!surface) return { text: cleanedText };
+  const paragraphText = (text: string): string =>
+    pauseParagraphsEnabled(env) && boundaryContext
+      ? applyPauseParagraphs(text, boundaryContext.segments, boundaryContext.pauses)
+      : text;
+  if (!surface) return { text: paragraphText(cleanedText) };
   const polished = await polishTranscriptionText({
     rawText,
     cleanedText,
@@ -548,7 +555,7 @@ export async function finalizeTranscriptionResultForSurface(
     recoverDefaultSTTPolishServerAfterFailure(env);
   }
   return {
-    text: polished.text,
+    text: paragraphText(polished.text),
     polished: polished.polished,
     polishStatus: polished.status,
     ...(polished.reason ? { polishReason: polished.reason } : {}),

@@ -11,6 +11,7 @@ VoiceLayer is configured entirely via environment variables. All settings have s
 | `QA_VOICE_STT_BACKEND` | `auto` | Backend selection: `whisper`, `wispr`, or `auto` |
 | `QA_VOICE_WHISPER_MODEL` | auto-detected | Absolute path to a whisper.cpp GGML model file |
 | `QA_VOICE_WISPR_KEY` | — | Wispr Flow API key (cloud fallback only) |
+| `VOICELAYER_STT_PAUSE_PARAGRAPHS` | `1` | Insert blank lines at existing sentence ends supported by long pauses; `0` disables |
 
 **Auto-detection** (`auto` mode) checks for whisper.cpp first, falls back to Wispr Flow if `QA_VOICE_WISPR_KEY` is set.
 
@@ -23,6 +24,10 @@ VoiceLayer is configured entirely via environment variables. All settings have s
 5. `ggml-small.en.bin`
 6. `ggml-small.bin`
 7. Any other `ggml-*.bin` file
+
+Pause paragraphs also accept the boolean `pause_paragraphs` key in the processing settings file. Precedence is environment > file > default. The VoiceBar Settings row is planned separately. This step preserves every non-whitespace character and keeps existing paragraphs. It needs audio-bound segment times: providers without them, the live streaming path, and decodes with both segment-producing controls disabled keep their existing output. Breaks require at least 240 characters on both sides and a pause at least 1.5 seconds and at or above the recording's upper quartile.
+
+Paragraph breaks follow the same delivery path as spoken “new paragraph”. VoiceBar sends newlines as Shift+Return; a bare shell can treat these as submit, just as it does for explicitly spoken line breaks.
 
 ### TTS (Text-to-Speech)
 

@@ -87,6 +87,7 @@ describe("processing settings (P1)", () => {
       outro_gate: { source: "environment", raw: "0", effective: false },
       smart_chunks: { source: "default", raw: null, effective: false },
       smart_boundaries: { source: "settings", raw: null, effective: true },
+      pause_paragraphs: { source: "default", raw: null, effective: true },
     });
   });
 });

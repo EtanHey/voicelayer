@@ -142,6 +142,7 @@ describe("socket health command", () => {
         outro_gate: { source: "default", raw: null, effective: true },
         smart_chunks: { source: "default", raw: null, effective: false },
         smart_boundaries: { source: "default", raw: null, effective: false },
+        pause_paragraphs: { source: "default", raw: null, effective: true },
       },
     });
   });
