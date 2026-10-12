@@ -23,6 +23,7 @@
  *   brew install whisper-cpp (or set QA_VOICE_WISPR_KEY for cloud fallback)
  */
 
+import { applyPauseParagraphs, MIN_PARAGRAPH_CHARS, pauseParagraphsEnabled } from "./stt-paragraphs";
 import { processingEnv } from "./processing-settings";
 import { createHash, randomBytes } from "crypto";
 import {
@@ -449,13 +450,19 @@ export async function finalizeTranscriptionTextForSurface(
     .text;
 }
 
+/** Short paragraph-only dictations need no audio read, SHA or Silero pass. */
+export function shouldBuildBoundaryContext(text: string, env: STTFinalizeEnv = processingEnv()): boolean {
+  return smartBoundariesEnabled(env) ||
+    (pauseParagraphsEnabled(env) && text.length >= 2 * MIN_PARAGRAPH_CHARS);
+}
+
 /**
  * Where Etan stopped, for the pause-aware boundary stage.
  *
  * Returns undefined — the documented "leave today's behaviour alone" answer —
- * unless `VOICELAYER_STT_SMART_BOUNDARIES=1` AND the decode handed back segment
+ * unless smart boundaries or pause paragraphs are enabled AND the decode handed back segment
  * timestamps. Costs one Silero pass over the finished WAV, so it runs only
- * under the flag. Never throws: a recording it cannot analyse just gets no
+ * when timing evidence is present. Never throws: a recording it cannot analyse just gets no
  * boundary validation, and the reason is logged.
  */
 export async function buildBoundaryContext(
@@ -465,7 +472,9 @@ export async function buildBoundaryContext(
   env: STTFinalizeEnv = processingEnv(),
   signal?: AbortSignal,
 ): Promise<STTPolishBoundaryContext | undefined> {
-  if (!smartBoundariesEnabled(env)) return undefined;
+  if (!smartBoundariesEnabled(env) && !pauseParagraphsEnabled(env)) return undefined;
+  // Never pair unbound segment times with an arbitrary WAV.
+  if (!segmentsAudioSha256) return undefined;
   if (signal?.aborted) return undefined;
   if (!segments || segments.length === 0) {
     console.error(
@@ -516,7 +525,11 @@ export async function finalizeTranscriptionResultForSurface(
   boundaryContext?: STTPolishBoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
-  if (!surface) return { text: cleanedText };
+  const paragraphText = (text: string): string =>
+    pauseParagraphsEnabled(env) && boundaryContext
+      ? applyPauseParagraphs(text, boundaryContext.segments, boundaryContext.pauses)
+      : text;
+  if (!surface) return { text: paragraphText(cleanedText) };
   const polished = await polishTranscriptionText({
     rawText,
     cleanedText,
@@ -550,7 +563,7 @@ export async function finalizeTranscriptionResultForSurface(
     recoverDefaultSTTPolishServerAfterFailure(env, { failureKind: polished.failureKind });
   }
   return {
-    text: polished.text,
+    text: paragraphText(polished.text),
     polished: polished.polished,
     polishStatus: polished.status,
     ...(polished.reason ? { polishReason: polished.reason } : {}),
@@ -3247,18 +3260,21 @@ export async function waitForInput(
       // Built BEFORE the finalize call, and abortable: the pause map is a
       // whole-file VAD pass, and a cancelled voice_ask must settle now rather
       // than after it (Macroscope round 1, HIGH).
-      const boundaryContext = await buildBoundaryContext(
-        wavPath,
-        result.segments,
-        result.segmentsAudioSha256,
-        processingEnv(),
-        options.signal,
-      );
+      const finalizeEnv = processingEnv();
+      const boundaryContext = shouldBuildBoundaryContext(result.text, finalizeEnv)
+        ? await buildBoundaryContext(
+            wavPath,
+            result.segments,
+            result.segmentsAudioSha256,
+            finalizeEnv,
+            options.signal,
+          )
+        : undefined;
       throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         polishSurfaceForWaitOptions(options),
-        processingEnv(),
+        finalizeEnv,
         boundaryContext,
       );
       if (result.text.trim() && !finalized.text) {
@@ -4150,15 +4166,19 @@ export async function retranscribeRecordingCapture(
       );
     try {
       const result = await backend.transcribe(sttWavPath);
+      const finalizeEnv = processingEnv();
       const finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         "dictation",
-        processingEnv(),
-        await buildBoundaryContext(
-          sttWavPath,
-          result.segments,
-          result.segmentsAudioSha256,
-        ),
+        finalizeEnv,
+        shouldBuildBoundaryContext(result.text, finalizeEnv)
+          ? await buildBoundaryContext(
+              sttWavPath,
+              result.segments,
+              result.segmentsAudioSha256,
+              finalizeEnv,
+            )
+          : undefined,
       );
       const text = finalized.text;
       if (result.text.trim() && !text) {
@@ -4251,15 +4271,19 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       prepareRetranscribeWavForSTT(sourceWavPath, pushToEnd);
     try {
       const result = await backend.transcribe(sttWavPath);
+      const finalizeEnv = processingEnv();
       const finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         retainedPolishSurfaceForRetranscription(),
-        processingEnv(),
-        await buildBoundaryContext(
-          sttWavPath,
-          result.segments,
-          result.segmentsAudioSha256,
-        ),
+        finalizeEnv,
+        shouldBuildBoundaryContext(result.text, finalizeEnv)
+          ? await buildBoundaryContext(
+              sttWavPath,
+              result.segments,
+              result.segmentsAudioSha256,
+              finalizeEnv,
+            )
+          : undefined,
       );
       const text = finalized.text;
       if (result.text.trim() && !text) {

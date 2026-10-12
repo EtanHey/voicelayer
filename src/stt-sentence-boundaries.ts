@@ -442,6 +442,23 @@ function alignWords(
 /** Cap on the alignment table, mirroring `stt-polish.ts`'s projection cap. */
 const MAX_BOUNDARY_ALIGNMENT_CELLS = 1_000_000;
 
+/** Shared bounded word alignment for whitespace-only pause paragraphing. */
+export function alignTranscriptWordIndices(
+  text: string,
+  segments: TranscriptSegment[],
+  onCellLimit?: (cells: number, limit: number) => void,
+): Map<number, number> {
+  const finalWords = tokenizeWords(text).map(w => normalizeWord(w.value));
+  const rawWords = segments.flatMap(s => tokenizeWords(s.text).map(w => normalizeWord(w.value)));
+  const cells = (finalWords.length + 1) * (rawWords.length + 1);
+  if (cells > MAX_BOUNDARY_ALIGNMENT_CELLS) {
+    onCellLimit?.(cells, MAX_BOUNDARY_ALIGNMENT_CELLS);
+    return new Map();
+  }
+  return alignWords(finalWords, rawWords, MAX_BOUNDARY_ALIGNMENT_CELLS);
+}
+
+
 /**
  * Words this stage must not lowercase when it demotes the mark before them:
  * "I" and its contractions are capitalised mid-sentence too.

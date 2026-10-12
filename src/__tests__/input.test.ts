@@ -1875,7 +1875,7 @@ describe("buildBoundaryContext", () => {
     try {
       const { path, sha } = writeWav(dir, 1);
       expect(
-        await buildBoundaryContext(path, SEGMENTS, sha, {} as NodeJS.ProcessEnv),
+        await buildBoundaryContext(path, SEGMENTS, sha, { VOICELAYER_STT_PAUSE_PARAGRAPHS: "0" } as NodeJS.ProcessEnv),
       ).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
