@@ -111,7 +111,7 @@ The daemon:
 - Inference latency: 200-500ms per call on Apple Silicon
 - Default model location: `~/.voicelayer/models/qwen3-tts-4bit/`
 - `voicelayer update` provisions [`mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit`](https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit) there
-- The updater re-fetches regular directories whose config is missing, invalid, or not `tts_model_type=base`; it preserves existing Base directories and user-managed symlinks, including incomplete or dangling ones. Preservation does not verify model completeness
+- The updater re-fetches regular directories whose config is missing, invalid, or not `tts_model_type=base`; it preserves existing Base directories and user-managed symlinks, including incomplete or dangling ones. Non-Base or unreadable symlink targets emit a warning without being modified. A dir is only replaced once a complete Base download has succeeded
 - Creates or reuses `~/.voicelayer/daemon.secret` with mode `0600`
 
 The TypeScript bridge and the Python daemon both default to the same token

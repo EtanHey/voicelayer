@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -10,7 +11,7 @@ import {
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, dirname, join } from "path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const updateScript = join(repoRoot, "scripts", "voicelayer-update.sh");
@@ -830,7 +831,7 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain(
-      `${venvDir}/bin/hf download ${QWEN3_MODEL_REPO} --local-dir ${modelDir}`,
+      `${venvDir}/bin/hf download ${QWEN3_MODEL_REPO} --local-dir ${join(dirname(modelDir), `.${basename(modelDir)}.partial`)}`,
     );
     expect(stdout).not.toContain("huggingface-cli download");
   });
@@ -853,7 +854,7 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain(
-      `${venvDir}/bin/huggingface-cli download ${QWEN3_MODEL_REPO} --local-dir ${modelDir}`,
+      `${venvDir}/bin/huggingface-cli download ${QWEN3_MODEL_REPO} --local-dir ${join(dirname(modelDir), `.${basename(modelDir)}.partial`)}`,
     );
   });
 
@@ -910,10 +911,11 @@ describe("voicelayer-update.sh", () => {
       else writeFileSync(join(modelDir, "config.json"), modelType === "malformed" ? "{" : JSON.stringify({ tts_model_type: modelType }));
       const result = run(["bash", "-c", 'source "$1"; run_cmd() { print_command "$@"; }; install_qwen3_model', "_", updateScript], {
         HOME: root, VOICELAYER_UPDATE_MODEL_DIR: modelDir,
+        VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
         VOICELAYER_UPDATE_VENV_DIR: fakeVenv(root, "hf", "python"),
       });
       expect(result.exitCode).toBe(0);
-      expect(text(result.stdout)).toContain(`hf download ${QWEN3_MODEL_REPO} --local-dir ${modelDir}`);
+      expect(text(result.stdout)).toContain(`hf download ${QWEN3_MODEL_REPO} --local-dir ${join(dirname(modelDir), `.${basename(modelDir)}.partial`)}`);
       expect(text(result.stdout)).not.toContain("CustomVoice-4bit");
     },
   );
@@ -928,7 +930,7 @@ describe("voicelayer-update.sh", () => {
       const modelDir = kind.startsWith("linked") || kind === "dangling-link" ? join(root, "model-link") : targetDir;
       if (kind === "base-no-weights") rmSync(join(targetDir, "model.safetensors"));
       if (modelDir !== targetDir) symlinkSync(kind === "dangling-link" ? join(root, "absent") : targetDir, modelDir);
-      const result = run(["bash", "-c", 'source "$1"; run_cmd() { print_command "$@"; }; install_qwen3_model', "_", updateScript], {
+      const result = run(["bash", "-c", 'source "$1"; run_cmd() { print_command "$@"; }; run_qwen3_model_step; printf "MODEL_STEP_OK=%s\\n" "$QWEN3_MODEL_STEP_OK"', "_", updateScript], {
         HOME: root, VOICELAYER_UPDATE_MODEL_DIR: modelDir,
         VOICELAYER_UPDATE_VENV_DIR: fakeVenv(root, "hf", "python"),
       });
@@ -937,7 +939,73 @@ describe("voicelayer-update.sh", () => {
       expect(text(result.stdout)).not.toContain("hf download");
       expect(text(result.stdout)).not.toContain("pip install");
       expect(text(result.stdout)).not.toContain("mkdir");
+      if (kind === "linked-custom" || kind === "dangling-link") {
+        expect(text(result.stdout)).toContain("MODEL_STEP_OK=1");
+        expect(text(result.stdout) + text(result.stderr)).toContain("WARNING");
+        expect(text(result.stdout) + text(result.stderr)).toContain("not a verified Base model");
+      }
       expect(readFileSync(join(targetDir, "config.json"), "utf8")).toBe(originalConfig);
+    },
+  );
+
+
+  test.each(["fail", "missing-weights", "wrong-type", "swap-fail", "success"].flatMap(mode => [[mode, "existing"], [mode, "fresh"]]))(
+    "stages and verifies downloads before swapping: %s (%s)",
+    (mode, modelKind) => {
+      const root = fixtureRoot("voicelayer-update-staged-");
+      const modelDir = populatedModelDir(root, "model");
+      const oldConfig = '{"tts_model_type":"custom_voice"}';
+      writeFileSync(join(modelDir, "config.json"), oldConfig);
+      writeFileSync(join(modelDir, "model.safetensors"), "custom-weights");
+      if (modelKind === "fresh") rmSync(modelDir, { recursive: true });
+      const venvDir = fakeVenv(root, "hf", "python");
+      const stage = join(root, ".model.partial");
+      const backup = join(root, ".model.old");
+      mkdirSync(join(root, ".model.old-other"));
+      mkdirSync(join(root, ".model.partial-other"));
+      writeFileSync(join(venvDir, "bin", "hf"), `#!/usr/bin/env bash
+printf 'attempt\n' >> "$HOME/attempts"
+mkdir -p "$4"
+printf '%s' '{"tts_model_type":"'"$FAKE_MODEL_TYPE"'"}' > "$4/config.json"
+if [[ "$FAKE_HF_MODE" = fail ]]; then exit 1; fi
+if [[ "$FAKE_HF_MODE" != missing-weights ]]; then printf base-weights > "$4/model.safetensors"; fi
+exit 0
+`);
+      const env = {
+        HOME: root, VOICELAYER_UPDATE_MODEL_DIR: modelDir,
+        VOICELAYER_UPDATE_VENV_DIR: venvDir,
+        FAKE_HF_MODE: mode, FAKE_MODEL_TYPE: mode === "wrong-type" ? "custom_voice" : "base",
+        FAKE_STAGE: stage,
+      };
+      // Real filesystem operations inside scratch HOME, fake HF only; pip/venv
+      // work is skipped. The updater main and resident lifecycle never run.
+      const command = ["bash", "-c", `source "$1"; run_cmd() {
+if [[ "$FAKE_HF_MODE" = swap-fail && "$1" = mv && "$2" = "$FAKE_STAGE" ]]; then return 1; fi
+case "$1" in */hf|mkdir|mv|rm) "$@" ;; *) : ;; esac
+}; install_qwen3_model`, "_", updateScript];
+      const first = run(command, env);
+      if (mode === "success") {
+        expect(first.exitCode).toBe(0);
+        expect(readFileSync(join(modelDir, "model.safetensors"), "utf8")).toBe("base-weights");
+        expect(JSON.parse(readFileSync(join(modelDir, "config.json"), "utf8")).tts_model_type).toBe("base");
+        expect(existsSync(stage)).toBe(false);
+        expect(existsSync(backup)).toBe(false);
+      } else {
+        expect(first.exitCode).not.toBe(0);
+        if (modelKind === "fresh") {
+          expect(existsSync(modelDir)).toBe(false);
+        } else {
+          expect(readFileSync(join(modelDir, "config.json"), "utf8")).toBe(oldConfig);
+          expect(readFileSync(join(modelDir, "model.safetensors"), "utf8")).toBe("custom-weights");
+        }
+        expect(existsSync(stage)).toBe(true);
+      }
+      const second = run(command, env);
+      const attempts = readFileSync(join(root, "attempts"), "utf8").trim().split("\n");
+      expect(attempts.length).toBe(mode === "success" ? 1 : 2);
+      expect(second.exitCode === 0).toBe(mode === "success");
+      expect(existsSync(join(root, ".model.old-other"))).toBe(true);
+      expect(existsSync(join(root, ".model.partial-other"))).toBe(true);
     },
   );
 
