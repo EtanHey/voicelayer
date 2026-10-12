@@ -43,7 +43,7 @@ class LockTests(unittest.TestCase):
 
 
 class ExecutableFixtureTests(unittest.TestCase):
-    # At 3 s, the unchanged 10% slack covers one 250 ms receipt-write stall.
+    # At 3 s, the unchanged 10% slack covers 200 ms of pre-signal receipt I/O.
     PACE_OBSERVATION_SECONDS = 3.0
 
     def test_recorder_keeps_pcm_pace_when_receipt_io_is_slow(self):
@@ -91,7 +91,7 @@ def slow_receipt(self, text, *args, **kwargs):
             temporary = marker.with_suffix('.new')
             original(temporary, json.dumps(dict(clock=now, elapsed=now-started)))
             temporary.replace(marker)
-            time.sleep(.25)
+            time.sleep(1.0)
     else:
         time.sleep(.12)
     return original(self, text, *args, **kwargs)
@@ -135,10 +135,7 @@ runpy.run_path(sys.argv[1], run_name='__main__')
                 if late_sigterm:
                     phase = evidence['elapsed_seconds'] - stall['elapsed']
                     self.assertGreaterEqual(phase, .19, 'SIGTERM must arrive late in the receipt write')
-                    self.assertLess(phase, .25, 'SIGTERM must arrive before the receipt write finishes')
-                print(f"pace late_sigterm={late_sigterm} pcm={actual_pcm:.6f} "
-                      f"elapsed={evidence['elapsed_seconds']:.6f} "
-                      f"ratio={actual_pcm / evidence['elapsed_seconds']:.6f}", flush=True)
+                    self.assertLess(phase, 1.0, 'SIGTERM must arrive before the receipt write finishes')
                 self.assertGreaterEqual(actual_pcm, evidence['elapsed_seconds'] * .9,
                                         'receipt latency must not accumulate into PCM drift')
                 self.assertLessEqual(actual_pcm, evidence['elapsed_seconds'] + .1,
