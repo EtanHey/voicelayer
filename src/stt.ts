@@ -1511,6 +1511,38 @@ interface TimedChunkWord {
   endS: number;
 }
 
+/**
+ * An internal instantaneous segment has words but no usable span. When its
+ * positive-duration neighbors bound it and the next starts at the same instant,
+ * retain all three texts under their wider enclosing span. Never invent a time
+ * or narrow an acoustic interval; edge/unbound/inverted cases stay invalid.
+ */
+function coalesceInstantaneousSegments(segments: TranscriptSegment[]): TranscriptSegment[] {
+  const result: TranscriptSegment[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const current = segments[i]!;
+    const previous = result.at(-1);
+    const next = segments[i + 1];
+    if (
+      previous && next && Number.isFinite(current.startS) &&
+      current.startS === current.endS &&
+      Number.isFinite(previous.startS) && previous.startS >= 0 &&
+      previous.endS > previous.startS && previous.endS <= current.startS &&
+      next.startS === current.endS && Number.isFinite(next.endS) && next.endS > next.startS
+    ) {
+      result[result.length - 1] = {
+        text: `${previous.text} ${current.text} ${next.text}`,
+        startS: previous.startS,
+        endS: next.endS,
+      };
+      i++;
+    } else {
+      result.push(current);
+    }
+  }
+  return result;
+}
+
 function timedWordsForChunk(
   chunk: TimedChunkTranscript,
   chunkIndex: number,
@@ -1525,7 +1557,7 @@ function timedWordsForChunk(
       ? SILENCE_SEAM_OVERLAP_SECONDS
       : WAV_CHUNK_OVERLAP_SECONDS);
 
-  for (const [segmentIndex, segment] of chunk.segments.entries()) {
+  for (const [segmentIndex, segment] of coalesceInstantaneousSegments(chunk.segments).entries()) {
     if (
       !Number.isFinite(segment.startS) ||
       !Number.isFinite(segment.endS) ||
