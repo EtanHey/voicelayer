@@ -15,7 +15,6 @@ import { promptPolicyFields } from "../stt-vocabulary-store";
 import { stripMarkupForSpeech } from "../sanitize";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
 import {
-  DaemonModelError,
   hasClonedProfile,
   listClonedVoiceProfiles,
   synthesizeCloned,
@@ -1949,19 +1948,7 @@ async function handleTts(
   await mkdir(config.tempDir, { recursive: true });
   try {
     if (isClonedVoice) {
-      let audio: Buffer | null;
-      try {
-        audio = await ttsEngines.synthesizeCloned(text, voice);
-      } catch (error) {
-        throwIfAborted(request.signal);
-        if (error instanceof DaemonModelError) {
-          // 409 is a configuration conflict, not an outage. Keep the
-          // provisioning message instead of a generic 500, and do not
-          // pretend the clone engine is merely offline.
-          return jsonResponse({ error: error.message }, 409);
-        }
-        throw error;
-      }
+      const audio = await ttsEngines.synthesizeCloned(text, voice);
       throwIfAborted(request.signal);
       if (!audio) {
         return jsonResponse(

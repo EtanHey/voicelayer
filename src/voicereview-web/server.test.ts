@@ -1922,49 +1922,6 @@ describe("VoiceReview web server helpers", () => {
     }
   });
 
-  it("returns 409 with the daemon message when clone synthesis hits a model conflict", async () => {
-    const root = await mkdtemp(join(tmpdir(), "voicereview-theo-model-test-"));
-    try {
-      const { DaemonModelError } = await import("../tts/qwen3");
-      const app = createVoiceReviewApp({
-        config: {
-          tempDir: root,
-          enableClonedTts: true,
-        },
-        ttsEngines: {
-          hasClonedProfile: (voice) => voice === "theo-v2",
-          synthesizeCloned: async () => {
-            throw new DaemonModelError(
-              "voice cloning needs a Qwen3-TTS Base model (tts_model_type=base)",
-            );
-          },
-          listClonedProfiles: () => ["theo-v2"],
-        },
-      });
-
-      const response = await app.fetch(
-        new Request("http://localhost/api/tts", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            text: "Hello from Theo.",
-            voice: "theo-v2",
-            rate: "-8%",
-          }),
-        }),
-      );
-      const body = await response.json();
-
-      expect(response.status).toBe(409);
-      expect(body.error).toContain("tts_model_type=base");
-      expect(body.error).toContain("Daemon model configuration error");
-      expect(body.error).not.toBe("Internal server error");
-      expect(body.error).not.toBe("theo engine offline");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
   it("returns a clear 503 when the Theo engine is offline", async () => {
     const root = await mkdtemp(join(tmpdir(), "voicereview-theo-offline-test-"));
     try {
