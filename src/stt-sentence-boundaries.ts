@@ -443,12 +443,19 @@ function alignWords(
 const MAX_BOUNDARY_ALIGNMENT_CELLS = 1_000_000;
 
 /** Shared bounded word alignment for whitespace-only pause paragraphing. */
-export function alignTranscriptWordIndices(text: string, segments: TranscriptSegment[]): Map<number, number> {
-  return alignWords(
-    tokenizeWords(text).map(w => normalizeWord(w.value)),
-    segments.flatMap(s => tokenizeWords(s.text).map(w => normalizeWord(w.value))),
-    MAX_BOUNDARY_ALIGNMENT_CELLS,
-  );
+export function alignTranscriptWordIndices(
+  text: string,
+  segments: TranscriptSegment[],
+  onCellLimit?: (cells: number, limit: number) => void,
+): Map<number, number> {
+  const finalWords = tokenizeWords(text).map(w => normalizeWord(w.value));
+  const rawWords = segments.flatMap(s => tokenizeWords(s.text).map(w => normalizeWord(w.value)));
+  const cells = (finalWords.length + 1) * (rawWords.length + 1);
+  if (cells > MAX_BOUNDARY_ALIGNMENT_CELLS) {
+    onCellLimit?.(cells, MAX_BOUNDARY_ALIGNMENT_CELLS);
+    return new Map();
+  }
+  return alignWords(finalWords, rawWords, MAX_BOUNDARY_ALIGNMENT_CELLS);
 }
 
 

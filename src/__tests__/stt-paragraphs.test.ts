@@ -30,7 +30,7 @@ describe('pause paragraphs', () => {
   });
   test('no evidence, invalid times and short text leave input verbatim', () => {
     expect(applyPauseParagraphs(text, [], pauses)).toBe(text);
-    expect(applyPauseParagraphs(text, segments, [])).toBe(`${a}\n\n${b} ${c}`); // segment gaps are evidence too
+    expect(applyPauseParagraphs(text, segments, [])).toBe(text);
     expect(applyPauseParagraphs(text, segments.map(s => ({ ...s, endS: NaN })), pauses)).toBe(text);
     expect(applyPauseParagraphs('Hello. Goodbye.', [{ text: 'Hello.', startS: 0, endS: 1 }, { text: 'Goodbye.', startS: 6, endS: 7 }], [])).toBe('Hello. Goodbye.');
     expect(applyPauseParagraphs(text, segments.map((s,i) => ({ ...s, startS: i*20, endS: (i+1)*20 })), [])).toBe(text);

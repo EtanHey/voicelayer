@@ -1,3 +1,4 @@
+import { appendControlLayerEvent } from "./control-layer-journal";
 import {
   endsWithAbbreviation,
   alignTranscriptWordIndices,
@@ -36,6 +37,7 @@ export function applyPauseParagraphs(
   segments: TranscriptSegment[],
   pauses: PauseSpan[],
 ): string {
+  if (pauses.length === 0) return text;
   if (text.length < 2 * MIN_PARAGRAPH_CHARS || /\n\s*\n/u.test(text) || segments.length < 2) return text;
   if (segments.some((s, i) =>
     !Number.isFinite(s.startS) || !Number.isFinite(s.endS) ||
@@ -44,28 +46,31 @@ export function applyPauseParagraphs(
   const validPause = (p: PauseSpan): boolean =>
     Number.isFinite(p.startS) && Number.isFinite(p.endS) && p.endS > p.startS;
   if (pauses.some((p) => !validPause(p))) return text;
-  const gaps = segments.slice(0, -1).map((s, i) => ({
-    startS: s.endS, endS: segments[i + 1].startS,
-  })).filter(validPause);
-  // A supplied Silero map is stronger evidence than apparent segment gaps.
-  const evidence = (pauses.length ? pauses : gaps).filter((p) =>
+  const evidence = pauses.filter((p) =>
     p.startS > segments[0].startS && p.endS <= segments.at(-1)!.endS
   );
   if (!evidence.length) return text;
   const targetBreaks = Math.round(text.length / 450);
   const final = words(text);
-  const alignment = alignTranscriptWordIndices(text, segments);
+  const alignment = alignTranscriptWordIndices(text, segments, (cells, limit) => {
+    appendControlLayerEvent("transcription.paragraphs.skipped", {
+      reason: "alignment-cell-cap", alignment_cells: cells, max_alignment_cells: limit,
+    }, { topic: "voice.transcription" });
+  });
+  if (alignment.size === 0) return text;
   const candidates: Array<{ start: number; end: number; pauseS: number }> = [];
   // Reuse the sentence-boundary stage's speech-run allocation (including its
   // one-word error bar), so pauses inside a verbose segment remain usable.
   const supports = evidence.filter(p => p.endS - p.startS >= MIN_PARAGRAPH_PAUSE_SECONDS - 1e-9)
     .map(p => ({ pauseS: p.endS - p.startS, indices: pauseSupportedWordIndices(
-      segments, pauses.length ? pauses : gaps, { minPauseSeconds: p.endS - p.startS },
+      segments, pauses, { minPauseSeconds: p.endS - p.startS },
     ) }));
   for (let i = 0; i < final.length - 1; i++) {
     const end = final[i].end;
-    const terminal = /^[.!?]["'”’»\)\]]*(\s+)(?=\S)/u.exec(text.slice(end));
+    const terminal = /^[.!?]["'”’»\)\]]*([^\S\r\n]+)(?=\S)/u.exec(text.slice(end));
     if (!terminal || (text[end] === "." && endsWithAbbreviation(text, end))) continue;
+    const lineStart = Math.max(text.lastIndexOf("\n", end - 1), text.lastIndexOf("\r", end - 1)) + 1;
+    if (/^[^\S\r\n]*\d+\.[^\S\r\n]+/u.test(text.slice(lineStart, end))) continue;
     const anchorStart = Math.max(0, i - 3);
     const anchor = final.slice(anchorStart, i + 5);
     const leftWords = i - anchorStart + 1;

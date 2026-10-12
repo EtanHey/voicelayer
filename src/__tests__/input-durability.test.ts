@@ -1777,6 +1777,33 @@ describe("input recording durability", () => {
       .toBe("Retained transcript.");
   });
 
+  for (const smart of [false, true]) {
+    it(`short dictations ${smart ? "keep smart boundaries" : "skip timing work"} at all three call sites`, async () => {
+      const input = await import("../input");
+      const journal = await import("../control-layer-journal");
+      const saved = process.env.VOICELAYER_STT_SMART_BOUNDARIES;
+      process.env.VOICELAYER_STT_SMART_BOUNDARIES = smart ? "1" : "0";
+      const build = spyOn(input, "buildBoundaryContext").mockResolvedValue(undefined);
+      const events = spyOn(journal, "appendControlLayerEvent").mockImplementation(() => {});
+      vadProbabilityForCall = () => .95;
+      installFakeRecorder(Array.from({length:24},()=>makePcmChunk(1800)),false);
+      let archive: string | undefined;
+      try {
+        expect(await input.waitForInput(2_000,"standard",true,{
+          archiveSource:"voicebar",onArchiveCreated:path=>{archive=join(path,"audio.wav");},
+        })).toBe("Retained transcript.");
+        expect(archive).toBeDefined();
+        await input.retranscribeRecordingCapture(archive!);
+        await input.retranscribeLastCapture();
+        expect(build).toHaveBeenCalledTimes(smart ? 3 : 0);
+      } finally {
+        build.mockRestore(); events.mockRestore();
+        if (saved === undefined) delete process.env.VOICELAYER_STT_SMART_BOUNDARIES;
+        else process.env.VOICELAYER_STT_SMART_BOUNDARIES = saved;
+      }
+    });
+  }
+
   it("archives captured VoiceBar PCM when the recorder fails", async () => {
     vadMode = "throw";
     installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
