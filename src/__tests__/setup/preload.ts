@@ -56,6 +56,9 @@ setIfUnset("VOICELAYER_TEST_ISOLATED", "1");
 setIfUnset("VOICELAYER_TMP_ROOT", join(RUN_ROOT, "tmp"));
 setIfUnset("VOICELAYER_STATE_DIR", join(RUN_ROOT, "state"));
 
+// Fleet journal DB and markers must not fall back to ~/.local/share/orc.
+setIfUnset("VOICELAYER_CONTROL_LAYER_BASE", join(RUN_ROOT, "orc"));
+
 // Sockets: redirected explicitly as well as via the root, because
 // isDefaultVoiceBarSocketPath()/isDefaultMcpSocketPath() key off these names —
 // and shouldAcceptVoiceBarCommands() needs both sides to agree.
