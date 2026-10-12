@@ -12,10 +12,9 @@ VOICELAYER_HOME="$HOME_DIR/.voicelayer"
 STATE_HOME="$HOME_DIR/.local/state/voicelayer"
 VENV_DIR="${VOICELAYER_UPDATE_VENV_DIR:-$VOICELAYER_HOME/venv}"
 MODEL_DIR="${VOICELAYER_UPDATE_MODEL_DIR:-$VOICELAYER_HOME/models/qwen3-tts-4bit}"
-QWEN3_MODEL_REPO="${VOICELAYER_UPDATE_QWEN3_MODEL_REPO:-mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit}"
+QWEN3_MODEL_REPO="${VOICELAYER_UPDATE_QWEN3_MODEL_REPO:-mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit}"
 MLX_AUDIO_VERSION_SPEC="${VOICELAYER_UPDATE_MLX_AUDIO_VERSION_SPEC:-mlx-audio>=0.4,<0.5}"
-# What mlx-audio's load_tts_model() opens first (src/tts_daemon.py); its
-# presence next to the safetensors weights is how we know the model is here.
+# Model compatibility comes from metadata, not the directory name.
 QWEN3_MODEL_SENTINEL="config.json"
 QWEN3_MODEL_STEP_OK=0
 QWEN3_MODEL_STEP_DETAIL="not run"
@@ -395,18 +394,27 @@ warn_if_dirty() {
     fi
 }
 
-# AIDEV-NOTE: -f/-d follow symlinks but `find <symlink>` does not descend into
-# one, so the old `find "$MODEL_DIR" -mindepth 1` probe read an already-populated
-# model as empty whenever ~/.voicelayer/models/qwen3-tts-4bit was a symlink into
-# ~/.cache/huggingface -- which is how the 2026-09-05 restore reached the
-# download at all. Test the sentinel file directly instead.
-qwen3_model_present() {
-    local weights
-    [[ -f "$MODEL_DIR/$QWEN3_MODEL_SENTINEL" ]] || return 1
-    for weights in "$MODEL_DIR"/*.safetensors; do
-        [[ -f "$weights" ]] && return 0
-    done
-    return 1
+# Preserve user-managed links (including dangling ones) and every Base model,
+# even an incomplete one. This is an ownership/compatibility check, not proof
+# that weights are complete or that the daemon can serve a request.
+qwen3_model_preserved() {
+    [[ -L "$MODEL_DIR" ]] && return 0
+    qwen3_base_config "$MODEL_DIR/$QWEN3_MODEL_SENTINEL"
+}
+
+qwen3_base_config() {
+    python3 - "$1" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    is_base = isinstance(config, dict) and config.get("tts_model_type") == "base"
+except (OSError, ValueError):
+    is_base = False
+sys.exit(0 if is_base else 1)
+PY
 }
 
 # `huggingface-cli` was retired upstream: it now only prints "huggingface-cli is
@@ -427,33 +435,95 @@ qwen3_download_bin() {
 }
 
 qwen3_model_skip_reason() {
-    printf '%s\n' "Qwen3 model already present at $MODEL_DIR ($QWEN3_MODEL_SENTINEL + weights); skipping the fetch."
+    if [[ -L "$MODEL_DIR" ]] && ! qwen3_base_config "$MODEL_DIR/$QWEN3_MODEL_SENTINEL"; then
+        printf '%s\n' "WARNING: preserved symlink at $MODEL_DIR is not a verified Base model; cloned voices may be unavailable."
+    fi
+    printf '%s\n' "Preserving Qwen3 model at $MODEL_DIR (user-managed symlink or tts_model_type=base); skipping the fetch. Completeness is not verified."
 }
 
 qwen3_model_step_plan() {
-    if qwen3_model_present; then
+    if qwen3_model_preserved; then
         qwen3_model_skip_reason
     else
-        printf 'will run: %s' "$(print_command "$(qwen3_download_bin)" download "$QWEN3_MODEL_REPO" --local-dir "$MODEL_DIR")"
+        local staged_model
+        staged_model="$(dirname "$MODEL_DIR")/.$(basename "$MODEL_DIR").partial"
+        printf 'will run: %s; verify Base config + weights before swap' "$(print_command "$(qwen3_download_bin)" download "$QWEN3_MODEL_REPO" --local-dir "$staged_model")"
+    fi
+}
+
+qwen3_record_preservation() {
+    log "$(qwen3_model_skip_reason)"
+    QWEN3_MODEL_STEP_DETAIL="preserved symlink/Base model at $MODEL_DIR; completeness not verified"
+    if [[ -L "$MODEL_DIR" ]] && ! qwen3_base_config "$MODEL_DIR/$QWEN3_MODEL_SENTINEL"; then
+        QWEN3_MODEL_STEP_OK=1
+        QWEN3_MODEL_STEP_DETAIL="WARNING: preserved symlink is not a verified Base model ($MODEL_DIR)"
     fi
 }
 
 install_qwen3_model() {
-    if qwen3_model_present; then
-        log "$(qwen3_model_skip_reason)"
-        QWEN3_MODEL_STEP_DETAIL="already present at $MODEL_DIR"
+    local model_parent staged_model old_model
+    QWEN3_MODEL_STEP_OK=0
+    model_parent="$(dirname "$MODEL_DIR")"
+    staged_model="$model_parent/.$(basename "$MODEL_DIR").partial"
+    old_model="$model_parent/.$(basename "$MODEL_DIR").old"
+    # Recover a process interrupted between the two swap renames. Never
+    # replace an existing target (including a dangling link) or follow a
+    # backup symlink; restore only the exact real backup directory.
+    if [[ ! -e "$MODEL_DIR" && ! -L "$MODEL_DIR" && -d "$old_model" && ! -L "$old_model" ]]; then
+        log "Restoring interrupted model swap from $old_model"
+        run_cmd mv "$old_model" "$MODEL_DIR" || return 1
+        if [[ "$DRY_RUN" -eq 1 || "$DRY_RUN_COMMANDS" = "1" ]]; then
+            log "Would resume model checks after restoring $MODEL_DIR."
+            QWEN3_MODEL_STEP_DETAIL="would restore interrupted swap from $old_model"
+            return 0
+        fi
+    fi
+    if qwen3_model_preserved; then
+        qwen3_record_preservation
         return 0
     fi
 
+    # Do not follow a staging link or overwrite a prior backup. A failed
+    # download can resume in our exact sibling .partial directory.
+    if [[ -L "$staged_model" || -e "$old_model" || -L "$old_model" ]]; then
+        err "refusing unsafe staging link or existing backup: $staged_model / $old_model"
+        return 1
+    fi
     run_cmd mkdir -p "$VOICELAYER_HOME/models" || return 1
     if [[ ! -x "$VENV_DIR/bin/python" ]]; then
         run_cmd python3 -m venv "$VENV_DIR" || return 1
     fi
     run_cmd "$VENV_DIR/bin/python" -m pip install --upgrade pip || return 1
     run_cmd "$VENV_DIR/bin/python" -m pip install "$MLX_AUDIO_VERSION_SPEC" huggingface_hub uvicorn fastapi pydantic soundfile numpy || return 1
-    run_cmd mkdir -p "$MODEL_DIR" || return 1
-    run_cmd "$(qwen3_download_bin)" download "$QWEN3_MODEL_REPO" --local-dir "$MODEL_DIR" || return 1
-    QWEN3_MODEL_STEP_DETAIL="fetched into $MODEL_DIR"
+    run_cmd mkdir -p "$model_parent" || return 1
+    run_cmd "$(qwen3_download_bin)" download "$QWEN3_MODEL_REPO" --local-dir "$staged_model" || return 1
+    if [[ "$DRY_RUN" -eq 1 || "$DRY_RUN_COMMANDS" = "1" ]]; then
+        log "Would verify staged Base config + model.safetensors, then swap into $MODEL_DIR."
+        return 0
+    fi
+    if ! qwen3_base_config "$staged_model/$QWEN3_MODEL_SENTINEL" || [[ ! -s "$staged_model/model.safetensors" ]]; then
+        err "staged download is not a verified Base model; leaving $MODEL_DIR untouched"
+        return 1
+    fi
+    # A user may have installed a Base model or link while HF was downloading.
+    if qwen3_model_preserved; then
+        qwen3_record_preservation
+        return 0
+    fi
+    if [[ -e "$MODEL_DIR" ]]; then
+        run_cmd mv "$MODEL_DIR" "$old_model" || return 1
+    fi
+    if ! run_cmd mv "$staged_model" "$MODEL_DIR"; then
+        if [[ -d "$old_model" ]]; then
+            run_cmd mv "$old_model" "$MODEL_DIR" || return 1
+        fi
+        return 1
+    fi
+    # Only this exact backup, created by the rename above, is removable.
+    if [[ -d "$old_model" ]]; then
+        run_cmd rm -r -- "$old_model" || return 1
+    fi
+    QWEN3_MODEL_STEP_DETAIL="verified Base download swapped into $MODEL_DIR"
 }
 
 # The model is optional cargo; putting VoiceBar, the cask ledger and the launchd
@@ -461,7 +531,6 @@ install_qwen3_model() {
 # the summary as a red row, not as an abort before the restore runs.
 run_qwen3_model_step() {
     if install_qwen3_model; then
-        QWEN3_MODEL_STEP_OK=0
         return 0
     fi
     QWEN3_MODEL_STEP_OK=1
