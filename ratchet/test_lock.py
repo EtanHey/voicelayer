@@ -88,6 +88,72 @@ runpy.run_path(sys.argv[1], run_name='__main__')
                 proc.stdout.close()
                 proc.stderr.close()
 
+    def test_recorder_final_clock_excludes_receipt_io_after_sigterm(self):
+        fixture = str(Path(__file__).with_name('fixture-rec.py'))
+        delayed = '''import json, os, runpy, signal, sys, time
+from pathlib import Path
+write_text, register_signal = Path.write_text, signal.signal
+started = None
+
+def slow_receipt(self, text, *args, **kwargs):
+    global started
+    evidence = json.loads(text)
+    first = started is None
+    if first:
+        started = time.monotonic() - evidence['elapsed_seconds']
+    if not evidence['stopped'] and evidence['pcm_seconds'] >= 1:
+        write_text(Path(os.environ['RATCHET_WRITING']), 'ready')
+        time.sleep(.4)
+    else:
+        time.sleep(.28 if first else .12)
+    return write_text(self, text, *args, **kwargs)
+
+def observe_signal(number, handler):
+    def stopped(*args):
+        received = time.monotonic() - started
+        handler(*args)
+        write_text(Path(os.environ['RATCHET_STOP_CLOCK']), str(received))
+    return register_signal(number, stopped)
+
+Path.write_text, signal.signal = slow_receipt, observe_signal
+runpy.run_path(sys.argv[1], run_name='__main__')
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            receipt, writing, stop_clock = (Path(directory) / name for name in ('rec.json', 'writing', 'stop-clock'))
+            proc = subprocess.Popen([sys.executable, '-c', delayed, fixture],
+                                    env=dict(os.environ, RATCHET_REC_RECEIPT=str(receipt),
+                                             RATCHET_WRITING=str(writing), RATCHET_STOP_CLOCK=str(stop_clock)),
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            audio = bytearray()
+            reader = threading.Thread(target=lambda: audio.extend(proc.stdout.read()))
+            reader.start()
+            try:
+                deadline = time.monotonic() + 4
+                while not writing.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(writing.exists(), 'slow receipt was not exercised')
+                proc.terminate()
+                self.assertEqual(proc.wait(3), 0, proc.stderr.read().decode())
+                reader.join(1)
+                self.assertFalse(reader.is_alive())
+                evidence = json.loads(receipt.read_text())
+                actual_pcm = len(audio) / 32000
+                self.assertTrue(evidence['stopped'])
+                self.assertEqual(audio, b'\0' * len(audio))
+                self.assertAlmostEqual(evidence['pcm_seconds'], actual_pcm, places=6)
+                self.assertGreaterEqual(actual_pcm, evidence['elapsed_seconds'] * .9,
+                                        'receipt latency must not accumulate into PCM drift')
+                self.assertLessEqual(actual_pcm, evidence['elapsed_seconds'] + .1,
+                                     'silence must not be emitted ahead of the recording clock')
+                self.assertAlmostEqual(evidence['elapsed_seconds'], float(stop_clock.read_text()), delta=.02)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+                reader.join(1)
+                proc.stdout.close()
+                proc.stderr.close()
+
     def test_recorder_emits_silence_and_records_termination(self):
         with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / 'rec.json'
