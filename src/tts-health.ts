@@ -197,11 +197,13 @@ export async function synthesizeWithRetry(
   audioFile: string,
   scriptPath: string,
   maxRetries = 1,
+  signal?: AbortSignal,
 ): Promise<SynthesizeResult> {
   const metadataFile = audioFile.replace(".mp3", ".meta.ndjson");
   let lastError = "";
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    signal?.throwIfAborted();
     if (attempt > 0) {
       console.error(
         `[voicelayer] edge-tts retry ${attempt}/${maxRetries} for: "${text.slice(0, 50)}..."`,
@@ -221,18 +223,27 @@ export async function synthesizeWithRetry(
         ),
       );
 
-      // Hard timeout per attempt — prevents hanging on network stalls
-      const exitCode = await Promise.race([
-        synth.exited,
-        new Promise<number>((resolve) =>
-          setTimeout(() => {
-            try {
-              synth.kill("SIGTERM");
-            } catch {}
-            resolve(-1);
-          }, SYNTH_TIMEOUT_MS),
-        ),
-      ]);
+      let timedOut = false;
+      let escalation: ReturnType<typeof setTimeout> | undefined;
+      const kill = () => {
+        try { synth.kill("SIGTERM"); } catch {}
+        clearTimeout(escalation);
+        escalation = setTimeout(() => { try { synth.kill("SIGKILL"); } catch {} }, 250);
+      };
+      const timeout = setTimeout(() => { timedOut = true; kill(); }, SYNTH_TIMEOUT_MS);
+      signal?.addEventListener("abort", kill, { once: true });
+      let exitCode: number;
+      try {
+        if (signal?.aborted) kill();
+        // Reap the child before retry/cleanup; a killed generation cannot write late files.
+        exitCode = await synth.exited;
+        signal?.throwIfAborted();
+        if (timedOut) exitCode = -1;
+      } finally {
+        clearTimeout(timeout);
+        clearTimeout(escalation);
+        signal?.removeEventListener("abort", kill);
+      }
 
       if (exitCode === -1) {
         lastError = `edge-tts timed out after ${SYNTH_TIMEOUT_MS / 1000}s`;
@@ -261,6 +272,10 @@ export async function synthesizeWithRetry(
         `[voicelayer] edge-tts failed with ${lastError} (attempt ${attempt + 1}/${maxRetries + 1})`,
       );
     } catch (err) {
+      if (signal?.aborted) {
+        try { unlinkSync(metadataFile); } catch {}
+        throw signal.reason;
+      }
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`[voicelayer] edge-tts spawn error: ${lastError}`);
     }
