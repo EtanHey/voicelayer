@@ -402,7 +402,7 @@ public final class VoiceState {
     public private(set) var speechControls: SpeechControlsState?
     public private(set) var speechPending: [String: SpeechValue] = [:]
     public private(set) var speechNotice: String?
-    private var speechRequestIDs: [String: String] = [:]
+    private var speechRequestIDs: [String: [String]] = [:]
     public var onSpeechSettled: (() -> Void)?
     public var speechAckTimeout: Duration = .seconds(10)
     /// Processing toggles sent and not yet acked (P1): the value the row shows meanwhile.
@@ -826,13 +826,31 @@ public final class VoiceState {
     }
 
     public func setTTSSetting(_ key: String, _ value: SpeechValue) {
-        guard isConnected, let controls = speechControls, controls.lockReason(for: key) == nil,
+        guard !key.hasSuffix(".engine"), isConnected, let controls = speechControls, controls.lockReason(for: key) == nil,
               speechPending[key] == nil, let sendCommand else { return }
         let id = UUID().uuidString
         speechPending[key] = value
-        speechRequestIDs[id] = key
+        speechRequestIDs[id] = [key]
         speechNotice = nil
         sendCommand(["cmd": "set_tts_setting", "key": key, "value": value.payload, "id": id])
+        scheduleSpeechTimeout(id)
+    }
+
+    /// One atomic write: the daemon never sees a new engine paired with the old voice.
+    public func setTTSProfile(_ profile: SpeechProfile, engine: String, voice: String) {
+        let engineKey = "\(profile.rawValue).engine", voiceKey = "\(profile.rawValue).voice"
+        guard isConnected, let controls = speechControls,
+              controls.voices(for: engine).contains(voice),
+              controls.lockReason(for: engineKey) == nil, controls.lockReason(for: voiceKey) == nil,
+              speechPending[engineKey] == nil, speechPending[voiceKey] == nil,
+              let sendCommand else { return }
+        let id = UUID().uuidString
+        speechPending[engineKey] = .string(engine)
+        speechPending[voiceKey] = .string(voice)
+        speechRequestIDs[id] = [engineKey, voiceKey]
+        speechNotice = nil
+        sendCommand(["cmd": "set_tts_setting", "profile": profile.rawValue,
+                     "engine": engine, "voice": voice, "id": id])
         scheduleSpeechTimeout(id)
     }
 
@@ -840,7 +858,7 @@ public final class VoiceState {
         guard isConnected, speechControls != nil, !modelsSettingsState.isBusy,
               speechRequestIDs.isEmpty, let sendCommand else { return }
         let id = UUID().uuidString
-        speechRequestIDs[id] = "preview"
+        speechRequestIDs[id] = ["preview"]
         speechPending["preview"] = .string(profile.rawValue)
         speechNotice = "Preparing preview…"
         sendCommand(["cmd": "preview_tts_profile", "profile": profile.rawValue, "id": id])
@@ -851,8 +869,8 @@ public final class VoiceState {
         let timeout = timeout ?? speechAckTimeout
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
-            guard let self, let key = speechRequestIDs.removeValue(forKey: id) else { return }
-            speechPending[key] = nil
+            guard let self, let keys = speechRequestIDs.removeValue(forKey: id) else { return }
+            for key in keys { speechPending[key] = nil }
             speechNotice = "Couldn't confirm the speech request. Showing VoiceLayer's current settings."
             sendCommand?(["cmd": "health"])
             onSpeechSettled?()
@@ -860,8 +878,8 @@ public final class VoiceState {
     }
 
     private func handleSpeechAck(_ ack: SocketAckEvent, event: [String: Any]) {
-        guard ack.outcome != .loading, let key = speechRequestIDs.removeValue(forKey: ack.id) else { return }
-        speechPending[key] = nil
+        guard ack.outcome != .loading, let keys = speechRequestIDs.removeValue(forKey: ack.id) else { return }
+        for key in keys { speechPending[key] = nil }
         if ack.outcome == .accept {
             speechNotice = nil
             if let raw = event["tts_controls"] as? [String: Any], let controls = SpeechControlsState(controls: raw) {

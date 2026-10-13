@@ -24,7 +24,7 @@ public struct SpeechSettingsView: View {
                             Text(kind == .short ? "Agent announcements" : "Long text · speak CLI and Option+F5")
                                 .font(.caption).foregroundStyle(.secondary)
                             field("Engine", key: "\(kind.rawValue).engine", controls: controls) {
-                                Picker("Engine", selection: Binding(get: { profile.engine.effective }, set: { engine in
+                                Picker("Engine", selection: Binding(get: { if case .string(let engine) = pending["\(kind.rawValue).engine"] { return engine }; return profile.engine.effective }, set: { engine in
                                     if let voice = controls.preferredVoice(for: engine, current: profile.voice.effective) {
                                         onSelectEngine?(kind, engine, voice)
                                     }

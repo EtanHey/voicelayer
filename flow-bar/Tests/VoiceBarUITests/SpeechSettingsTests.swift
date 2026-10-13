@@ -115,4 +115,98 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertTrue(state.speechPending.isEmpty)
     }
 
+    func testEngineEnvironmentLockRendersAndDisablesEngine() throws {
+        var raw = Self.controls()
+        var profiles = raw["profiles"] as! [String: [String: Any]]
+        profiles["short"]?["engine"] = ["source": "environment", "raw": "en-US-JennyNeural", "effective": "edge"]
+        raw["profiles"] = profiles
+        let controls = try XCTUnwrap(SpeechControlsState(controls: raw))
+        XCTAssertEqual(controls.lockReason(for: "short.engine"), "Set by QA_VOICE_TTS_VOICE")
+        XCTAssertTrue(SpeechSettingsView.fieldDisabled("short.engine", controls: controls, pending: [:]))
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "health", "tts_controls": raw])
+        state.setTTSProfile(.short, engine: "clone", voice: "theo-c4")
+        XCTAssertTrue(commands.isEmpty)
+    }
+
+    func testAtomicEngineChangeSendsOneCommandAndAckSettlesBothFields() throws {
+        for kind in SpeechProfile.allCases {
+            let state = VoiceState()
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.setConnectionStatus(true)
+            state.handleEvent(["type": "health", "tts_controls": Self.controls()])
+            state.setTTSProfile(kind, engine: "clone", voice: "theo-c4")
+            XCTAssertEqual(commands.count, 1)
+            let command = try XCTUnwrap(commands.first)
+            XCTAssertEqual(command["cmd"] as? String, "set_tts_setting")
+            XCTAssertEqual(command["profile"] as? String, kind.rawValue)
+            XCTAssertEqual(command["engine"] as? String, "clone")
+            XCTAssertEqual(command["voice"] as? String, "theo-c4")
+            XCTAssertNil(command["key"])
+            XCTAssertNil(command["rate"], "engine switching must not overwrite a rate")
+            XCTAssertEqual(state.speechPending["\(kind.rawValue).engine"], .string("clone"))
+            XCTAssertEqual(state.speechPending["\(kind.rawValue).voice"], .string("theo-c4"))
+            var updated = Self.controls()
+            var profiles = updated["profiles"] as! [String: [String: Any]]
+            profiles[kind.rawValue]?["engine"] = ["source": "settings", "raw": "clone", "effective": "clone"]
+            profiles[kind.rawValue]?["voice"] = ["source": "settings", "raw": "theo-c4", "effective": "theo-c4"]
+            updated["profiles"] = profiles
+            state.handleEvent(["type": "ack", "command": "set_tts_setting", "outcome": "accept",
+                               "id": command["id"] as Any, "tts_controls": updated])
+            XCTAssertTrue(state.speechPending.isEmpty)
+            XCTAssertEqual(state.speechControls?.profiles[kind]?.engine.effective, "clone")
+            XCTAssertEqual(state.speechControls?.profiles[kind]?.voice.effective, "theo-c4")
+        }
+    }
+    func testAtomicChangeRejectsInvalidPairAndLockedVoice() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        var raw = Self.controls()
+        state.handleEvent(["type": "health", "tts_controls": raw])
+        state.setTTSProfile(.short, engine: "clone", voice: "en-US-JennyNeural")
+        XCTAssertTrue(commands.isEmpty)
+        var profiles = raw["profiles"] as! [String: [String: Any]]
+        profiles["short"]?["voice"] = ["source": "environment", "raw": "en-US-JennyNeural", "effective": "en-US-JennyNeural"]
+        raw["profiles"] = profiles
+        state.handleEvent(["type": "health", "tts_controls": raw])
+        state.setTTSProfile(.short, engine: "clone", voice: "theo-c4")
+        XCTAssertTrue(commands.isEmpty)
+    }
+    @MainActor
+    func testAtomicTimeoutClearsBothPendingFields() async throws {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.speechAckTimeout = .milliseconds(20)
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "health", "tts_controls": Self.controls()])
+        state.setTTSProfile(.short, engine: "clone", voice: "theo-c4")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(state.speechPending.isEmpty)
+        XCTAssertNotNil(state.speechNotice)
+    }
+
+    func testAtomicRejectClearsBothFieldsAndKeepsDaemonValues() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "health", "tts_controls": Self.controls()])
+        state.setTTSProfile(.long, engine: "clone", voice: "theo-c4")
+        state.setTTSProfile(.long, engine: "edge", voice: "en-US-JennyNeural")
+        state.setTTSSetting("long.voice", .string("en-US-JennyNeural"))
+        XCTAssertEqual(commands.count, 1, "neither half may race the atomic request")
+        state.handleEvent(["type": "ack", "command": "set_tts_setting", "outcome": "reject",
+                           "id": commands[0]["id"] as Any, "reason": "invalid pair"])
+        XCTAssertTrue(state.speechPending.isEmpty)
+        XCTAssertEqual(state.speechControls?.profiles[.long]?.engine.effective, "edge")
+        XCTAssertEqual(state.speechControls?.profiles[.long]?.voice.effective, "en-US-JennyNeural")
+        XCTAssertTrue(state.speechNotice?.contains("invalid pair") == true)
+    }
+
 }

@@ -2869,6 +2869,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.voiceState.setTTSSetting(key, value)
                 self?.refreshSettingsWindowAnchorState()
             },
+            onSelectSpeechEngine: { [weak self] profile, engine, voice in
+                self?.voiceState.setTTSProfile(profile, engine: engine, voice: voice)
+                self?.refreshSettingsWindowAnchorState()
+            },
             onPreviewSpeech: { [weak self] profile in
                 self?.voiceState.previewTTSProfile(profile)
                 self?.refreshSettingsWindowAnchorState()

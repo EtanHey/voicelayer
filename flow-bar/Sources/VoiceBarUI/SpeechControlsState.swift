@@ -76,6 +76,7 @@ public struct SpeechControlsState: Equatable, Sendable {
     public func lockReason(for key: String) -> String? {
         let parts = key.split(separator: ".")
         guard parts.count == 2, let kind = SpeechProfile(rawValue: String(parts[0])), let p = profiles[kind] else { return nil }
+        if parts[1] == "engine", p.engine.source == .environment { return "Set by QA_VOICE_TTS_VOICE" }
         if parts[1] == "voice", p.voice.source == .environment { return "Set by QA_VOICE_TTS_VOICE" }
         if parts[1] == "rate", p.rate.source == .environment { return "Set by QA_VOICE_TTS_RATE" }
         return nil

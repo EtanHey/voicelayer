@@ -16,7 +16,7 @@ final class SpeechSettingsShotsTests: XCTestCase {
             var raw = SpeechSettingsTests.controls(rateSource: locked ? "environment" : "settings")
             if locked {
                 var profiles = raw["profiles"] as! [String: [String: Any]]
-                profiles["long"]?["engine"] = ["source": "settings", "raw": "clone", "effective": "clone"]
+                profiles["long"]?["engine"] = ["source": "environment", "raw": "theo-c4", "effective": "clone"]
                 profiles["long"]?["voice"] = ["source": "environment", "raw": "theo-c4", "effective": "theo-c4"]
                 raw["profiles"] = profiles
             }

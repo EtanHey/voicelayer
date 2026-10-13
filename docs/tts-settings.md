@@ -92,3 +92,10 @@ with fresh `tts_controls` when playback finishes. Recording, playback, an active
 voice operation, or another owner's booking rejects previews without speaking.
 Preview does not start the clone daemon. A clone-down warning explains the fast
 voice fallback; use `voicelayer daemon` to start the clone engine separately.
+
+Switching engines in Speech chooses a voice listed for that engine and sends both
+fields in a single atomic `set_tts_setting` profile command. It never sends a
+standalone engine change or overwrites the rate during an engine switch. Both
+pickers wait for the matching acknowledgment; rejection keeps the daemon's prior
+pair. `engine.source: "environment"` is locked by `QA_VOICE_TTS_VOICE`, just like
+the voice field. An engine without available voices cannot be selected.
