@@ -1589,7 +1589,11 @@ export function stopPlayback(playbackElapsedMs?: number): boolean {
 }
 
 export interface LongReadProfile { engine: "edge" | "clone"; voice: string; rate: string; fallbackVoice?: string }
-export interface LongReadHandle { id: string; done: Promise<void> }
+export interface LongReadHandle {
+  id: string; done: Promise<void>;
+  started: Promise<{ error?: string }>;
+  completion: Promise<{ error?: string }>;
+}
 let activeLongRead: (LongReadHandle & { controller: AbortController; seek?: LongReadSeek }) | undefined;
 const cancelledLongReadTeardowns = new Set<Promise<void>>();
 let longReadCounter = 0;
@@ -1649,7 +1653,12 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
   const controller = new AbortController();
   const id = `long-read-${process.pid}-${++longReadCounter}`;
   const texts = chunkTextForTTS(displayText);
-  const handle: LongReadHandle & { controller: AbortController; seek?: LongReadSeek } = { id, controller, done: Promise.resolve() };
+  let resolveStarted!: (result: { error?: string }) => void;
+  const started = new Promise<{ error?: string }>((resolve) => { resolveStarted = resolve; });
+  let failure: string | undefined;
+  let audioStarted = false;
+  const handleStarted = () => resolveStarted({});
+  const handle: LongReadHandle & { controller: AbortController; seek?: LongReadSeek } = { id, controller, started, done: Promise.resolve(), completion: Promise.resolve({} as { error?: string }) };
   activeLongRead = handle;
   const signal = controller.signal;
   const requireClone = requireClonedVoiceEnabled();
@@ -1726,8 +1735,11 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
           playbackOffsetMs: info.chunk_start_ms + position.offsetMs,
           getUtteranceDurationMs: position.getDurationMs,
           ...(position.isSeek ? { localOffsetMs: position.offsetMs, isSeek: true, seekSliceFile: position.sliceFile } : {}),
-          onStarted: () => { started = true; resolveStarted(true); },
-          onCompleted: () => { if (!started) resolveStarted(false); },
+          onStarted: () => { started = true; resolveStarted(true); audioStarted = true; handleStarted(); },
+          onCompleted: (outcome) => {
+            if (!started) resolveStarted(false);
+            if (outcome.status === "failed") failure = `Speech playback failed: ${outcome.reason ?? "player-error"}`;
+          },
         });
         return { started: start, exited: playback.exited, interrupt: () => playbackQueueManager.interrupt(playback.id) };
       },
@@ -1748,18 +1760,21 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
   // Preserve stopped audio: finish its history/cleanup before a replacement starts.
   handle.done = (predecessors.length ? Promise.all(predecessors).then(run) : run()).catch((error) => {
     if (signal.aborted) return;
+    failure = error instanceof Error ? error.message : String(error);
     if (activeLongRead === handle) {
       controller.abort();
       playbackQueueManager.stop();
       broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
     }
   }).finally(() => {
+    if (!audioStarted) resolveStarted({ error: failure ?? "Speech stopped before playback" });
     if (activeLongRead === handle) {
       activeLongRead = undefined;
       if (playbackQueueManager.getDepthForHealth() === 0) broadcastPlaybackIdleIfSpeakerClear();
     }
   });
-  return { id, done: handle.done };
+  handle.completion = handle.done.then(() => failure ? { error: failure } : {});
+  return { id, done: handle.done, started, completion: handle.completion };
 }
 
 /** Restart the active audio job without resolving its blocking playback handle. */

@@ -264,6 +264,21 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(events.some((e) => e.type === "subtitle")).toBe(false); expect(loadHistory()).toHaveLength(1);
   });
 
+  it("exposes first playback and reports failed playback to CLI waiters", async () => {
+    const h = start("edge", "A sentence.");
+    expect(await h.started).toEqual({});
+    players[0].exit.resolve(1);
+    expect(await h.completion).toMatchObject({ error: "Speech playback failed: player-error" });
+  });
+
+  it("reports cancellation before playback through the start lifecycle", async () => {
+    holdSynth = true;
+    synths.push({ argv: [], exit: deferred<number>(), killed: false });
+    const h = start(); stopPlayback();
+    expect(await h.started).toEqual({ error: "Speech stopped before playback" });
+    await h.done;
+  });
+
   it("keeps the ring bounded at twenty entries", async () => {
     autoPlay = true;
     for (let i = 0; i < 22; i++) { const h = speakLongRead(`Read ${i}.`, { engine: "edge", voice: "fixture", rate: "+0%" }); handles.push(h); await h.done; }

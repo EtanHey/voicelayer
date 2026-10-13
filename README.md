@@ -50,6 +50,31 @@ mkdir -p ~/.cache/whisper && curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
 ```
 
+### Speak from the terminal
+
+```bash
+voicelayer speak "Hello"
+echo "Text to read" | voicelayer speak
+voicelayer speak - --markdown
+voicelayer speak --file notes.md --profile long --wait
+voicelayer speak --stop
+```
+
+Speech goes through the running VoiceLayer daemon, sharing Stop and the teleprompter.
+The command returns after the first audio starts; `--wait` waits for completion.
+`--profile auto` is the default; `short` and `long` select the corresponding profile.
+Profile settings use the current `speak_text` resolver (separate profile settings are pending).
+Markdown conversion defaults on for `.md` files; literal text and stdin are plain unless
+`--markdown` is supplied. Long reads stream chunks without the MCP tool's text cap,
+up to the shared 200,000-character safety limit.
+
+If the daemon is unavailable, the CLI reports it on stderr and runs the same streaming
+engine locally. Local fallback has no daemon Stop or teleprompter; `--stop` requires the
+daemon. Authentication, busy, synthesis and playback failures return a nonzero exit code.
+Failures after the default command has returned are reported by the daemon or local worker;
+use `--wait` when the final exit status matters. An older running daemon must be
+updated/restarted to support this command.
+
 ### Point your MCP client at the daemon
 
 VoiceLayer runs as one persistent daemon on a Unix socket; every session connects through a

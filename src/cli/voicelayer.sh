@@ -48,6 +48,10 @@ if [[ "${VOICELAYER_DEBUG_PACKAGE_ROOT:-0}" = "1" ]]; then
 fi
 
 case "${1:-}" in
+    speak)
+        shift
+        exec bun "$SCRIPT_DIR/speak.ts" "$@"
+        ;;
     extract)
         shift
         exec python3 "$SCRIPT_DIR/extract.py" "$@"
@@ -148,6 +152,7 @@ case "${1:-}" in
         echo "Usage: voicelayer <command> [options]"
         echo ""
         echo "Commands:"
+        echo "  speak      Speak text, stdin or a file through the running daemon"
         echo "  serve      Start standalone voice daemon (without MCP/Claude Code)"
         echo "  extract    Extract voice samples from YouTube for voice cloning"
         echo "  clone      Create a voice profile from extracted samples"

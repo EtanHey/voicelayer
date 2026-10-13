@@ -20,6 +20,7 @@
  *   "voicelayer": { "command": "socat", "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] }
  */
 
+import { createSpeechControl, loadSpeechSecret } from "./speech-control";
 import { getBackend } from "./stt";
 import {
   DISABLE_VOICELAYER,
@@ -243,6 +244,7 @@ async function main() {
   // Start MCP daemon (includes orphan socket cleanup and chmod 600)
   const daemon = await createMcpDaemon({
     socketPath: MCP_SOCKET_PATH,
+    speechControl: createSpeechControl(loadSpeechSecret(), handleSocketCommand),
     toolExecutor: {
       executeTool: async (name, args, context) => {
         const handler = toolDispatch[name];

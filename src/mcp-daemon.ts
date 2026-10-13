@@ -36,7 +36,10 @@ import {
 import { MAX_NDJSON_LINE_BYTES, NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
 
+import type { SpeechControl } from "./speech-control";
+
 export interface McpDaemonOptions {
+  speechControl?: SpeechControl;
   /** Unix socket path to listen on. */
   socketPath: string;
   /** Tool executor for tools/call dispatch. */
@@ -295,6 +298,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
             socket.data.loggingLevel = level;
           },
         },
+        options.speechControl,
       )
         .then((response) => {
           if (response) {
@@ -383,6 +387,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
                 socket.data.loggingLevel = level;
               },
             },
+            options.speechControl,
           )
             .then((response) => {
               if (response) {

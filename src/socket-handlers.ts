@@ -98,6 +98,7 @@ onWhisperModelStateChange(publishModelStatusEvent);
 
 export function handleSocketCommand(
   command: SocketCommand,
+  onSpeak?: (read: import("./tts").LongReadHandle) => void,
 ): SocketResponse | void | Promise<SocketResponse> {
   const recordingState = getRecordingState();
   const playbackQueueDepth = getPlaybackQueueDepth();
@@ -116,7 +117,8 @@ export function handleSocketCommand(
       }
       const text = command.format === "markdown" ? markdownToSpeech(command.text) : command.text;
       try {
-        speakText(text, command.profile ?? "auto");
+        const read = speakText(text, command.profile ?? "auto");
+        onSpeak?.(read);
         return buildAck(command, "accept");
       } catch (error) {
         return buildAck(command, "reject", error instanceof Error ? error.message : String(error));

@@ -5,6 +5,8 @@
  * and returns JSON-RPC responses. Pure logic — no I/O or socket concerns.
  */
 
+import type { SpeechControl } from "./speech-control";
+
 import { getToolDefinitions } from "./mcp-tools";
 import { formatError } from "./format-response";
 import { PACKAGE_VERSION } from "./version";
@@ -60,10 +62,19 @@ export async function handleMcpRequest(
   request: McpRequest,
   executor?: ToolExecutor,
   requestContext?: McpRequestContext,
+  speechControl?: SpeechControl,
 ): Promise<McpResponse | null> {
   // Notifications (no id) don't get responses
   if (request.id === undefined || request.id === null) {
     return null;
+  }
+
+  if (request.method === "voicelayer/speech" && speechControl) {
+    try {
+      return { jsonrpc: "2.0", id: request.id, result: await speechControl(request.params ?? {}) };
+    } catch (error) {
+      return { jsonrpc: "2.0", id: request.id, error: { code: -32000, message: error instanceof Error ? error.message : String(error) } };
+    }
   }
 
   switch (request.method) {
