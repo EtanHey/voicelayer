@@ -1224,6 +1224,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
             commandModeAXHelper.applyReplacement(text)
         }
+        voiceState.selectionTextCaptureHandler = { completion in
+            SpeakSelectionCapture().capture(completion: completion)
+        }
         RetainedRecordingPreview.urlProvider = {
             URL(fileURLWithPath: VoiceLayerPaths.retainedRecordingPath)
         }
@@ -1341,6 +1344,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         manager.onPasteLastTranscript = { [weak self] in
             self?.voiceState.repasteLastTranscript(source: "shift_f5")
+        }
+        manager.onSpeakSelection = { [weak self] in
+            self?.voiceState.speakSelection()
         }
         manager.shouldHandleEscape = { [weak self] in
             self?.commandRouter.shouldHandleEscape ?? false

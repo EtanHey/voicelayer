@@ -738,6 +738,38 @@ public final class VoiceState {
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
     public var sendCommand: (([String: Any]) -> Void)?
 
+    public var selectionTextCaptureHandler: (@escaping (String?) -> Void) -> Void = { $0(nil) }
+    private var selectionCaptureInFlight = false
+
+    public func speakSelection() {
+        guard mode != .recording, mode != .transcribing, hotkeyPhase == .idle else { return }
+        if mode == .speaking {
+            sendCommand?(["cmd": "stop"])
+            return
+        }
+        guard !selectionCaptureInFlight else { return }
+        guard mode != .disconnected, sendCommand != nil else {
+            showConfirmation("VoiceLayer is disconnected")
+            return
+        }
+        selectionCaptureInFlight = true
+        selectionTextCaptureHandler { [weak self] text in
+            guard let self else { return }
+            selectionCaptureInFlight = false
+            // Capturing yields to the run loop. A new F5 session always wins.
+            guard mode != .recording, mode != .transcribing, mode != .speaking,
+                  mode != .disconnected, hotkeyPhase == .idle else { return }
+            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                expandFromCollapse()
+                showConfirmation("No text selected")
+                startCollapseTimer()
+                return
+            }
+            sendCommand?(["cmd": "speak_text", "text": text, "profile": "auto",
+                          "format": "markdown", "source": "selection"])
+        }
+    }
+
     /// Callback when the pill's rendered size changes — used to resize the NSPanel.
     public var onPillSizeChange: ((CGSize) -> Void)?
 

@@ -311,6 +311,7 @@ enum HotkeyAction: Equatable {
     case keyUp
     case sendEnter
     case pasteLastTranscript
+    case speakSelection
     case cancel
 }
 
@@ -340,6 +341,7 @@ struct HotkeyDebounceState {
 
 struct HotkeySequenceState {
     var pendingRepasteKeycodes: Set<Int64> = []
+    var pendingSpeakSelectionKeycodes: Set<Int64> = []
 }
 
 private let hotkeyDuplicateEventDebounceSeconds: TimeInterval = 0.01
@@ -371,7 +373,7 @@ func shouldConsumeHotkeyEvent(
         true
     case .consume, .sendEnter:
         true
-    case .pasteLastTranscript:
+    case .pasteLastTranscript, .speakSelection:
         targetKeycodes.contains(keycode)
     case .ignore:
         false
@@ -383,7 +385,8 @@ func dispatchHotkeyAction(
     onKeyDown: @escaping () -> Void,
     onKeyUp: @escaping () -> Void = {},
     onCancel: @escaping () -> Void,
-    onPasteLastTranscript: @escaping () -> Void = {}
+    onPasteLastTranscript: @escaping () -> Void = {},
+    onSpeakSelection: @escaping () -> Void = {}
 ) {
     switch action {
     case .keyDown:
@@ -396,6 +399,8 @@ func dispatchHotkeyAction(
         postReturnKeyPress()
     case .pasteLastTranscript:
         DispatchQueue.main.async(execute: onPasteLastTranscript)
+    case .speakSelection:
+        DispatchQueue.main.async(execute: onSpeakSelection)
     case .ignore, .consume:
         break
     }
@@ -430,7 +435,7 @@ func hotkeyAction(
     }
 
     // In plain mode, system chords like Cmd+F5 (VoiceOver toggle), Ctrl+F5
-    // (Full Keyboard Access), and Option+F5 must pass through to the OS for
+    // (Full Keyboard Access) must pass through to the OS for
     // BOTH keyDown and keyUp — otherwise VoiceBar's event tap eats the keyUp
     // and leaves the OS with an unpaired keyDown (stuck modifier state, broken
     // accessibility chords). Must run before the keyUp early-return so it
@@ -440,6 +445,14 @@ func hotkeyAction(
     // happens to be holding a modifier on release, let the keyUp through so
     // GestureStateMachine.handleKeyUp() can unwind the hold. Otherwise the
     // recording would sit open until manually cancelled.
+    let exactOptionOnly = flags.contains(.maskAlternate)
+        && !flags.contains(.maskCommand) && !flags.contains(.maskControl) && !flags.contains(.maskShift)
+    if exactOptionOnly, type == .keyDown {
+        return autorepeat == 0 ? .speakSelection : .ignore
+    }
+    // A release paired with speakSelection is handled by sequenceAwareHotkeyAction.
+    // Keep the existing active-hold escape hatch when Option was added mid-dictation.
+    if exactOptionOnly, type == .keyUp, !gestureIsActive { return .ignore }
     if !useModifierMode, type == .keyDown || type == .keyUp {
         let blockingModifiers: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl]
         if !flags.isDisjoint(with: blockingModifiers) {
@@ -585,6 +598,17 @@ func sequenceAwareHotkeyAction(
     cancellationIsActive: Bool? = nil,
     sequenceState: inout HotkeySequenceState
 ) -> HotkeyAction {
+    if sequenceState.pendingSpeakSelectionKeycodes.contains(keycode) {
+        if type == .keyUp {
+            sequenceState.pendingSpeakSelectionKeycodes.remove(keycode)
+            return .consume
+        }
+        if type == .keyDown {
+            if autorepeat != 0 { return .consume }
+            // A fresh press recovers from a keyUp lost while the tap was disabled.
+            sequenceState.pendingSpeakSelectionKeycodes.remove(keycode)
+        }
+    }
     if type == .keyUp, sequenceState.pendingRepasteKeycodes.remove(keycode) != nil {
         HotkeyDiagnostics.log(
             "[HotkeyManager] Consuming keyUp paired with re-paste keyDown for keycode \(keycode)"
@@ -604,6 +628,9 @@ func sequenceAwareHotkeyAction(
         cancellationIsActive: cancellationIsActive
     )
     if type == .keyDown, autorepeat == 0, targetKeycodes.contains(keycode) {
+        if action == .speakSelection {
+            sequenceState.pendingSpeakSelectionKeycodes.insert(keycode)
+        }
         if action == .pasteLastTranscript {
             sequenceState.pendingRepasteKeycodes.insert(keycode)
         } else {
@@ -687,6 +714,7 @@ final class TapContext {
     let onMouseUp: () -> Void
     let onCancel: () -> Void
     let onPasteLastTranscript: () -> Void
+    let onSpeakSelection: () -> Void
     let shouldHandleEscape: () -> Bool
     var debounceState = HotkeyDebounceState()
     var hotkeySequenceState = HotkeySequenceState()
@@ -705,6 +733,7 @@ final class TapContext {
         onMouseUp: @escaping () -> Void,
         onCancel: @escaping () -> Void,
         onPasteLastTranscript: @escaping () -> Void,
+        onSpeakSelection: @escaping () -> Void = {},
         shouldHandleEscape: @escaping () -> Bool
     ) {
         self.gesture = gesture
@@ -718,6 +747,7 @@ final class TapContext {
         self.onMouseUp = onMouseUp
         self.onCancel = onCancel
         self.onPasteLastTranscript = onPasteLastTranscript
+        self.onSpeakSelection = onSpeakSelection
         self.shouldHandleEscape = shouldHandleEscape
     }
 }
@@ -788,7 +818,8 @@ func hotkeyCallback(
         onKeyDown: { isMouseHotkeyEvent ? ctx.onMouseDown() : ctx.onKeyDown() },
         onKeyUp: { isMouseHotkeyEvent ? ctx.onMouseUp() : ctx.onKeyUp() },
         onCancel: ctx.onCancel,
-        onPasteLastTranscript: ctx.onPasteLastTranscript
+        onPasteLastTranscript: ctx.onPasteLastTranscript,
+        onSpeakSelection: ctx.onSpeakSelection
     )
 
     if shouldConsumeHotkeyEvent(
@@ -837,6 +868,7 @@ final class HotkeyManager {
     var onMouseUp: () -> Void
     var onCancel: () -> Void
     var onPasteLastTranscript: () -> Void = {}
+    var onSpeakSelection: () -> Void = {}
     var shouldHandleEscape: () -> Bool = { false }
     private(set) var permissionStatus = HotkeyPermissionStatus(
         listenEventGranted: false,
@@ -919,6 +951,7 @@ final class HotkeyManager {
             onMouseUp: onMouseUp,
             onCancel: onCancel,
             onPasteLastTranscript: onPasteLastTranscript,
+            onSpeakSelection: onSpeakSelection,
             shouldHandleEscape: shouldHandleEscape
         )
         tapContext = ctx

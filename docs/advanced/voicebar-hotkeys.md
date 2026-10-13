@@ -1,6 +1,6 @@
 # VoiceBar Hotkeys and Mouse Buttons
 
-Status: current as of 2026-05-17.
+Status: source shortcut contract updated 2026-10-14; installed acceptance is verified separately.
 
 This document records the known-good VoiceBar hotkey setup. Read it before changing
 Karabiner, `hidutil`, or `HotkeyManager.swift`.
@@ -11,11 +11,18 @@ Karabiner, `hidutil`, or `HotkeyManager.swift`.
 |-------|-------|----------|
 | F5 / internal F18 relay | VoiceBar `CGEventTap` | Push-to-talk recording and double-tap lock |
 | Shift+F5 / Shift+F18 relay | VoiceBar `CGEventTap` | Re-paste last transcript |
+| Option+F5 / Option+F18 relay | VoiceBar `CGEventTap` | Speak selected text; press again while speaking to stop |
 | Logitech side recording button | VoiceBar `CGEventTap` | Push-to-talk recording |
 | Logitech side submit button | VoiceBar `CGEventTap` | Send Return/Enter to the focused app |
 | F4 / Spotlight / Launchpad key | Karabiner | Wispr Flow Option+F4 push-to-talk |
 
 The installed app is `/Applications/VoiceBar.app`.
+
+Speak selection requires Option alone (no Shift, Command, or Control) and is ignored
+while recording or transcribing. VoiceBar reads Accessibility selected text first;
+if unavailable, it briefly copies the selection and restores every prior clipboard
+item and data type. Empty selection shows brief feedback. The daemon handles
+Markdown speech cleanup; VoiceBar sends the original selection unchanged.
 
 ## Button Numbering
 

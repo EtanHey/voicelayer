@@ -12,6 +12,9 @@ transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP clie
 
 On a mouse with side buttons, button 5 (forward) works like F5 and button 4 (back) presses Return.
 
+Select text in any app and press **Option+F5** to read it aloud; press it again to stop.
+**Shift+F5** re-pastes the last transcript. Option+F5 is ignored during dictation or transcription.
+
 ```
   You ──🎤──> whisper.cpp ──> Claude Code ──> edge-tts ──🔊──> You
          STT (local)           MCP tools         TTS (free)
