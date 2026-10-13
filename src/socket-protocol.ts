@@ -381,11 +381,10 @@ export interface SetWhisperEffortCommand extends SocketCommandBase {
 }
 
 /** Settings → Speech. Dot keys select a SHORT/LONG field; short_limit_chars is global. */
-export interface SetTTSSettingCommand extends SocketCommandBase {
-  cmd: "set_tts_setting";
-  key: import("./tts-settings").TTSSettingKey;
-  value: string | number;
-}
+export type SetTTSSettingCommand = SocketCommandBase & {cmd: "set_tts_setting"} & (
+  | {key: import("./tts-settings").TTSSettingKey; value: string | number}
+  | {profile: "short" | "long"; engine: "edge" | "clone"; voice: string; rate?: string}
+);
 
 /** Settings → Models → Processing toggle (P1). Persisted by the daemon; env still wins. */
 export interface SetProcessingSettingCommand extends SocketCommandBase {
@@ -725,6 +724,16 @@ export function parseCommand(line: string): SocketCommand | null {
         );
       }
       case "set_tts_setting": {
+        if (parsed.profile !== undefined) {
+          if (parsed.key !== undefined || parsed.value !== undefined ||
+              (parsed.profile !== "short" && parsed.profile !== "long") ||
+              !validTTSSetting(`${parsed.profile}.engine`, parsed.engine) ||
+              !validTTSSetting(`${parsed.profile}.voice`, parsed.voice) ||
+              (parsed.rate !== undefined && !validTTSSetting(`${parsed.profile}.rate`, parsed.rate))) return null;
+          return withCommandId<SetTTSSettingCommand>({cmd: "set_tts_setting", profile: parsed.profile,
+            engine: parsed.engine as "edge" | "clone", voice: parsed.voice as string,
+            ...(parsed.rate !== undefined ? {rate: parsed.rate as string} : {})}, id);
+        }
         if (!validTTSSetting(parsed.key, parsed.value)) return null;
         return withCommandId<SetTTSSettingCommand>({cmd: "set_tts_setting", key: parsed.key, value: parsed.value as string | number}, id);
       }

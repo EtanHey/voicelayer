@@ -2,6 +2,7 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
+import * as settings from "../tts-settings";
 import { resolveSpeakProfile, setTTSSetting } from "../tts-settings";
 import { readTTSControlsStatus, recordFirstAudio, probeCloneDaemon } from "../tts-controls-status";
 import * as qwen from "../tts/qwen3";
@@ -71,6 +72,25 @@ test("legacy env-selected clone is reflected in the effective engine", () => {
  try {
   const e={...env(),QA_VOICE_TTS_VOICE:"fixture"};
   expect(resolveSpeakProfile("short","hello",e).engine).toBe("clone");
-  expect(readTTSControlsStatus(e).profiles.short.engine).toMatchObject({source:"default",effective:"clone"});
+  expect(readTTSControlsStatus(e).profiles.short.engine).toMatchObject({source:"environment",effective:"clone"});
  } finally {profile.mockRestore();}
+});
+
+test("R1 env voice overrides the saved engine in both directions, including empty", () => {
+ const e=env(); const profile=spyOn(qwen,"hasClonedProfile").mockImplementation(v=>v==="fixture");
+ try {
+  writeFileSync(e.VOICELAYER_TTS_SETTINGS_PATH,JSON.stringify({profiles:{short:{engine:"clone",voice:"fixture"}}}));
+  for(const voice of ["en-US-JennyNeural",""]) expect(resolveSpeakProfile("short","hello",{...e,QA_VOICE_TTS_VOICE:voice})).toMatchObject({engine:"edge",engineSource:"environment",voice:"en-US-JennyNeural"});
+  writeFileSync(e.VOICELAYER_TTS_SETTINGS_PATH,JSON.stringify({profiles:{short:{engine:"edge",voice:"en-US-JennyNeural"}}}));
+  expect(resolveSpeakProfile("short","hello",{...e,QA_VOICE_TTS_VOICE:"fixture"})).toMatchObject({engine:"clone",engineSource:"environment"});
+ } finally {profile.mockRestore();}
+});
+test("R5 voice values are persisted trimmed", () => {
+ const e=env(); setTTSSetting("short.voice","  en-US-GuyNeural  ",e);
+ expect(JSON.parse(readFileSync(e.VOICELAYER_TTS_SETTINGS_PATH,"utf8")).profiles.short.voice).toBe("en-US-GuyNeural");
+});
+test("R4 inconsistent effective pairs are rejected without writing", () => {
+ const e=env(); const profile=spyOn(qwen,"hasClonedProfile").mockReturnValue(false);
+ try { expect(()=>setTTSSetting("short.engine","clone",e)).toThrow("engine/voice"); expect(()=>readFileSync(e.VOICELAYER_TTS_SETTINGS_PATH,"utf8")).toThrow(); }
+ finally {profile.mockRestore();}
 });

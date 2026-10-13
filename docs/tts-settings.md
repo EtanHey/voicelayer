@@ -22,15 +22,21 @@ Only changed fields need to be stored:
 limit. MCP caps remain 1200 characters for speaks and 600 for asks.
 
 `QA_VOICE_TTS_VOICE` and `QA_VOICE_TTS_RATE`, when defined even as empty strings,
-override and lock the corresponding fields in both profiles. Empty values keep
+override and lock the corresponding fields in both profiles. A defined voice
+also determines the engine from the installed profile inventory, overriding
+any saved engine, and reports its engine source as environment. Empty values keep
 the historical Jenny / +0% fallback. Explicit speak voice/rate arguments win.
-A file rate overrides the mode rate; absent a file rate, the existing mode rates,
-environment fallback, and edge long-text slowdown are preserved. Clone rates
+An edge-profile file rate overrides the mode rate; absent that rate, the existing
+mode rates, environment fallback, and edge long-text slowdown are preserved.
+Clone-profile rates apply only to clone playback. Its short announcement shortcut
+and synthesis fallback retain the legacy edge mode rate unless the caller
+explicitly supplies a rate. Clone rates
 use ffmpeg tempo adjustment without changing pitch; untouched clone playback
 keeps its original speed. An unset engine retains legacy voice-based detection;
 an explicitly selected engine routes to edge or the existing clone cascade.
-Missing selected clone profiles fail clearly; unavailable synthesis keeps the
-existing edge fallback unless the caller requires a clone.
+Missing selected clone profiles log a warning and use the edge default.
+Unavailable synthesis keeps the existing profile edge fallback. Callers requiring
+a clone (option or QA_VOICE_TTS_REQUIRE_CLONE) remain fail closed in both cases.
 
 Send a newline-delimited socket command, with an optional correlation id:
 
@@ -41,6 +47,16 @@ Send a newline-delimited socket command, with an optional correlation id:
 Keys are `short.engine`, `short.voice`, `short.rate`, the matching `long.*` keys,
 and `short_limit_chars`. Engines are `edge` / `clone`, rates are signed integer
 percentages from -99% to +100%, and the limit is a positive safe integer.
+Inconsistent effective engine/voice pairs are rejected before writing. To switch
+both fields together, use the additive atomic form (rate and id are optional):
+
+```json
+{"cmd":"set_tts_setting","profile":"short","engine":"clone","voice":"theo-c4","rate":"+10%","id":"speech-2"}
+```
+
+`profile` is `short` or `long`. Both engine and voice are required; omitting rate
+preserves the saved rate. Atomic and dot-key forms cannot be mixed. Voices are
+trimmed before persistence. Env-locked fields reject the whole transaction.
 Changes apply to the next speak, including changes made during playback.
 The ack contains fresh `tts_controls`; env-locked writes are rejected with
 `Set by <VAR>`.

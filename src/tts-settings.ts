@@ -15,7 +15,7 @@ export function ttsSettingsPath(env: TTSEnv = process.env): string {
   return env.VOICELAYER_TTS_SETTINGS_PATH?.trim() || join(STATE_DIR, "tts-settings.json");
 }
 export function ttsSettingEnvVar(key: TTSSettingKey): string | undefined {
-  if (key.endsWith(".voice")) return "QA_VOICE_TTS_VOICE";
+  if (key.endsWith(".voice") || key.endsWith(".engine")) return "QA_VOICE_TTS_VOICE";
   if (key.endsWith(".rate")) return "QA_VOICE_TTS_RATE";
   return undefined;
 }
@@ -44,36 +44,74 @@ export function readTTSSettings(env: TTSEnv = process.env): TTSSettings {
     return settings;
   } catch { return {}; }
 }
-export function setTTSSetting(key: TTSSettingKey, value: string | number, env: TTSEnv = process.env): void {
-  if (!validTTSSetting(key, value)) throw new Error("Invalid TTS setting");
+function assertUnlocked(key: TTSSettingKey, env: TTSEnv): void {
   const variable = ttsSettingEnvVar(key);
   if (variable && env[variable] !== undefined) throw new Error(`Set by ${variable}`);
+}
+
+function assertConsistent(kind: SpeakProfileKind, settings: TTSSettings, env: TTSEnv): void {
+  const pair = resolveProfile(kind, settings, env);
+  if ((pair.engine === "clone") !== hasClonedProfile(pair.voice)) {
+    throw new Error(`Inconsistent TTS engine/voice pair for ${kind}`);
+  }
+}
+
+function writeTTSSettings(next: TTSSettings, env: TTSEnv): void {
+  const path = ttsSettingsPath(env), tmp = `${path}.${process.pid}.tmp`;
+  safeWriteFileSync(tmp, JSON.stringify({ version: 1, ...next, updated_at: new Date().toISOString() }, null, 2) + "\n");
+  try { renameSync(tmp, path); } catch (error) { rmSync(tmp, { force: true }); throw error; }
+}
+
+export function setTTSSetting(key: TTSSettingKey, value: string | number, env: TTSEnv = process.env): void {
+  if (!validTTSSetting(key, value)) throw new Error("Invalid TTS setting");
+  assertUnlocked(key, env);
   const next = readTTSSettings(env);
   if (key === "short_limit_chars") next.short_limit_chars = value as number;
   else {
     const [kind, field] = key.split(".") as [SpeakProfileKind, keyof TTSProfile];
     next.profiles ??= {};
     next.profiles[kind] ??= {};
-    Object.assign(next.profiles[kind]!, { [field]: value });
+    Object.assign(next.profiles[kind]!, { [field]: field === "voice" ? (value as string).trim() : value });
+    assertConsistent(kind, next, env);
   }
-  const path = ttsSettingsPath(env), tmp = `${path}.${process.pid}.tmp`;
-  safeWriteFileSync(tmp, JSON.stringify({ version: 1, ...next, updated_at: new Date().toISOString() }, null, 2) + "\n");
-  try { renameSync(tmp, path); } catch (error) { rmSync(tmp, { force: true }); throw error; }
+  writeTTSSettings(next, env);
+}
+
+/** Switch engine and voice in a single validated atomic write; preserve an omitted rate. */
+export function setTTSProfile(kind: SpeakProfileKind, value: Pick<TTSProfile, "engine" | "voice"> & Partial<Pick<TTSProfile, "rate">>, env: TTSEnv = process.env): void {
+  if (kind !== "short" && kind !== "long") throw new Error("Invalid TTS profile");
+  for (const field of ["engine", "voice", "rate"] as const) {
+    if (field === "rate" && value.rate === undefined) continue;
+    if (!validTTSSetting(`${kind}.${field}`, value[field])) throw new Error("Invalid TTS setting");
+    assertUnlocked(`${kind}.${field}`, env);
+  }
+  const next = readTTSSettings(env);
+  next.profiles ??= {};
+  next.profiles[kind] = { ...next.profiles[kind], engine: value.engine, voice: value.voice.trim(), ...(value.rate !== undefined ? {rate: value.rate} : {}) };
+  assertConsistent(kind, next, env);
+  writeTTSSettings(next, env);
+}
+
+function resolveProfile(selected: SpeakProfileKind, file: TTSSettings, env: TTSEnv) {
+  const profile = file.profiles?.[selected];
+  const envVoice = env.QA_VOICE_TTS_VOICE !== undefined;
+  const voice = envVoice ? env.QA_VOICE_TTS_VOICE || TTS_DEFAULTS.voice : profile?.voice ?? TTS_DEFAULTS.voice;
+  const engine = envVoice || profile?.engine === undefined
+    ? (hasClonedProfile(voice) ? "clone" : TTS_DEFAULTS.engine)
+    : profile.engine;
+  return {
+    kind: selected,
+    engine,
+    voice,
+    rate: env.QA_VOICE_TTS_RATE !== undefined ? env.QA_VOICE_TTS_RATE || TTS_DEFAULTS.rate : profile?.rate ?? TTS_DEFAULTS.rate,
+    rateSource: env.QA_VOICE_TTS_RATE !== undefined ? "environment" : profile?.rate !== undefined ? "settings" : "default",
+    engineSource: envVoice ? "environment" : profile?.engine !== undefined ? "settings" : "default",
+  } as const;
 }
 
 /** Re-read on every call. Empty legacy env values lock the field but keep its historical fallback. */
 export function resolveSpeakProfile(kind: SpeakProfileKind | "auto", text: string, env: TTSEnv = process.env) {
   const file = readTTSSettings(env);
   const selected = kind === "auto" ? (text.length > (file.short_limit_chars ?? 400) ? "long" : "short") : kind;
-  const profile = file.profiles?.[selected];
-  const voice = env.QA_VOICE_TTS_VOICE !== undefined ? env.QA_VOICE_TTS_VOICE || TTS_DEFAULTS.voice : profile?.voice ?? TTS_DEFAULTS.voice;
-  return {
-    kind: selected,
-    engine: profile?.engine ?? (hasClonedProfile(voice) ? "clone" : TTS_DEFAULTS.engine),
-    voice,
-    rate: env.QA_VOICE_TTS_RATE !== undefined ? env.QA_VOICE_TTS_RATE || TTS_DEFAULTS.rate : profile?.rate ?? TTS_DEFAULTS.rate,
-    rateSource: env.QA_VOICE_TTS_RATE !== undefined ? "environment" : profile?.rate !== undefined ? "settings" : "default",
-    // An untouched engine retains legacy voice-based clone detection (including env overrides).
-    engineSource: profile?.engine !== undefined ? "settings" : "default",
-  } as const;
+  return resolveProfile(selected, file, env);
 }

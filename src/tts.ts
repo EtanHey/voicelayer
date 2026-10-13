@@ -1495,14 +1495,25 @@ export async function speak(
   // Resolve voice — determines engine (cloned vs edge-tts)
   const profile = resolveSpeakProfile(options?.profile ?? "short", text);
   const selectedVoice = options?.voice ?? profile.voice;
-  const resolved = resolveVoice(selectedVoice, options?.voice !== undefined ? undefined : profile.engineSource === "settings" ? profile.engine : undefined);
+  const requireClone = requireClonedVoiceEnabled(options);
+  let resolved: ReturnType<typeof resolveVoice>;
+  try {
+    resolved = resolveVoice(selectedVoice, options?.voice !== undefined || profile.engineSource === "default" ? undefined : profile.engine);
+  } catch (error) {
+    if (!(error instanceof VoiceProfileUnavailableError) || requireClone) throw error;
+    const warning = `Cloned voice "${selectedVoice}" is missing — falling back to edge-tts (${TTS_DEFAULTS.voice})`;
+    console.error(`[voicelayer] ${warning}`);
+    resolved = {voice: TTS_DEFAULTS.voice, engine: "edge-tts", warning};
+  }
+  const cloneRate = options?.rate ?? profile.rate;
+  const cloneOptions = () => ({...options, rate: cloneRate});
   let audioEngine = "edge-tts";
   let audioVoice = resolved.voice;
   const onPlaybackStart = options?.onPlaybackStart;
   let firstAudio = false;
   options = {
     ...options,
-    rate: options?.rate ?? (profile.rateSource === "settings" || (resolved.engine === "cloned" && profile.rateSource === "environment") ? profile.rate : undefined),
+    rate: options?.rate ?? (resolved.engine === "edge-tts" && profile.rateSource === "settings" && profile.engine !== "clone" ? profile.rate : undefined),
     onPlaybackStart: (startedAt) => {
       if (!firstAudio) {
         firstAudio = true;
@@ -1519,10 +1530,9 @@ export async function speak(
   // resolved.engine === "cloned" iff resolveVoice's Tier 1 hasClonedProfile()
   // matched, so this is the inline equivalent of assertRegisteredClone() (the
   // standalone export callers can use to pre-validate a reference before speak).
-  const requireClone = requireClonedVoiceEnabled(options);
   if (requireClone && resolved.engine !== "cloned") {
     throw new VoiceProfileUnavailableError(
-      options?.voice || defaultVoice(),
+      selectedVoice,
       "missing-profile",
     );
   }
@@ -1569,7 +1579,7 @@ export async function speak(
           `xtts:${resolved.voice}`,
           speakingText,
           resolved.voice,
-          options,
+          cloneOptions(),
         );
         return {
           warning: resolved.warning,
@@ -1605,7 +1615,7 @@ export async function speak(
           `f5tts:${resolved.voice}`,
           speakingText,
           resolved.voice,
-          options,
+          cloneOptions(),
         );
         return {
           warning: resolved.warning,
@@ -1632,7 +1642,7 @@ export async function speak(
         `cloned:${resolved.voice}`,
         speakingText,
         resolved.voice,
-        options,
+        cloneOptions(),
       );
       return {
         warning: resolved.warning,
