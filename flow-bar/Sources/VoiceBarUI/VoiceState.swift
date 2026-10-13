@@ -398,6 +398,13 @@ public final class VoiceState {
     /// An effort change the daemon acked `loading`: it is relaunching the model (E2).
     private var pendingEffortReloadID: String?
     private var pendingEffortReloadTimeout: Task<Void, Never>?
+    /// Speech controls are owned and reported by the daemon.
+    public private(set) var speechControls: SpeechControlsState?
+    public private(set) var speechPending: [String: SpeechValue] = [:]
+    public private(set) var speechNotice: String?
+    private var speechRequestIDs: [String: String] = [:]
+    public var onSpeechSettled: (() -> Void)?
+    public var speechAckTimeout: Duration = .seconds(10)
     /// Processing toggles sent and not yet acked (P1): the value the row shows meanwhile.
     public private(set) var processingPending: [ProcessingKey: Bool] = [:]
     public private(set) var processingNotice: String?
@@ -816,6 +823,52 @@ public final class VoiceState {
         // real (re)connect, which `setConnectionStatus(true)` marks.
         modelsSettingsState = lastKnownModelsStateWhileRefreshing()
         sendCommand?(["cmd": "health"])
+    }
+
+    public func setTTSSetting(_ key: String, _ value: SpeechValue) {
+        guard isConnected, let controls = speechControls, controls.lockReason(for: key) == nil,
+              speechPending[key] == nil, let sendCommand else { return }
+        let id = UUID().uuidString
+        speechPending[key] = value
+        speechRequestIDs[id] = key
+        speechNotice = nil
+        sendCommand(["cmd": "set_tts_setting", "key": key, "value": value.payload, "id": id])
+        scheduleSpeechTimeout(id)
+    }
+
+    public func previewTTSProfile(_ profile: SpeechProfile) {
+        guard isConnected, speechControls != nil, !modelsSettingsState.isBusy,
+              speechRequestIDs.isEmpty, let sendCommand else { return }
+        let id = UUID().uuidString
+        speechRequestIDs[id] = "preview"
+        speechPending["preview"] = .string(profile.rawValue)
+        speechNotice = "Preparing preview…"
+        sendCommand(["cmd": "preview_tts_profile", "profile": profile.rawValue, "id": id])
+        scheduleSpeechTimeout(id, timeout: .seconds(90))
+    }
+
+    private func scheduleSpeechTimeout(_ id: String, timeout: Duration? = nil) {
+        let timeout = timeout ?? speechAckTimeout
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard let self, let key = speechRequestIDs.removeValue(forKey: id) else { return }
+            speechPending[key] = nil
+            speechNotice = "Couldn't confirm the speech request. Showing VoiceLayer's current settings."
+            sendCommand?(["cmd": "health"])
+            onSpeechSettled?()
+        }
+    }
+
+    private func handleSpeechAck(_ ack: SocketAckEvent, event: [String: Any]) {
+        guard ack.outcome != .loading, let key = speechRequestIDs.removeValue(forKey: ack.id) else { return }
+        speechPending[key] = nil
+        if ack.outcome == .accept {
+            speechNotice = nil
+            if let raw = event["tts_controls"] as? [String: Any], let controls = SpeechControlsState(controls: raw) {
+                speechControls = controls
+            } else { sendCommand?(["cmd": "health"]) }
+        } else { speechNotice = "Couldn't complete the speech request" + (ack.reason.map { " - \($0)" } ?? "") }
+        onSpeechSettled?()
     }
 
     /// Save one Processing toggle in the daemon. It applies from the next dictation.
@@ -1694,6 +1747,7 @@ public final class VoiceState {
             }
 
         case "health":
+            speechControls = (event["tts_controls"] as? [String: Any]).flatMap(SpeechControlsState.init(controls:))
             let status = ModelsSettingsState(healthEvent: event)
             modelsRecordingBusy = event["recording_state"] as? String != "idle"
             modelsRecordingReason = (event["recording_state"] as? String)
@@ -1701,6 +1755,7 @@ public final class VoiceState {
             if let depth = event["queue_depth"] as? Int { queueDepth = max(0, depth) }
             modelsSettingsState = status
             refreshModelsBusy()
+            onSpeechSettled?()
             remoteSTTConfigured = event["remote_stt_configured"] as? Bool
 
         case "model_status":
@@ -1831,6 +1886,11 @@ public final class VoiceState {
         isConnected = connected
         guard previous != connected else { return }
         remoteSTTConfigured = nil
+        speechControls = nil
+        speechPending = [:]
+        speechRequestIDs = [:]
+        speechNotice = nil
+        onSpeechSettled?()
 
         onConnectionChange?(connected)
 
@@ -3200,6 +3260,10 @@ public final class VoiceState {
             return
         }
 
+        if ack.command == .setTTSSetting || ack.command == .previewTTSProfile {
+            handleSpeechAck(ack, event: event)
+            return
+        }
         if ack.command == .setProcessingSetting {
             handleProcessingAck(ack, event: event)
             return

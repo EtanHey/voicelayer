@@ -79,3 +79,16 @@ Each successful player spawn logs one line:
 Latency includes synthesis and queue wait; rejected, disabled, failed, or
 cancelled-before-playback requests do not replace the last successful value.
 This core change does not supply a Swift settings screen or native acceptance.
+
+VoiceBar Settings → Speech (also `voicebar://settings/speech`) presents separate
+Short speaks and Long reads cards. Each shows the engine, its available voices,
+rate, and the last first-audio latency. Environment overrides disable the matching
+fields and show `Set by <VAR>`. The threshold selects when automatic long reads
+use LONG. Changes apply to the next speak; the UI never writes settings files.
+
+The Preview button sends `{"cmd":"preview_tts_profile","profile":"short","id":"preview-1"}`
+(or `long`). The daemon speaks a fixed sample using that profile and acknowledges
+with fresh `tts_controls` when playback finishes. Recording, playback, an active
+voice operation, or another owner's booking rejects previews without speaking.
+Preview does not start the clone daemon. A clone-down warning explains the fast
+voice fallback; use `voicelayer daemon` to start the clone engine separately.

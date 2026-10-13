@@ -33,7 +33,7 @@ final class SettingsSidebarAccessibilityTests: XCTestCase {
         let table = try XCTUnwrap(firstTable(in: host), "the sidebar must be a native table-backed List")
         XCTAssertTrue(window.makeFirstResponder(table))
 
-        for expected in [SettingsTab.models, .dictionary, .history, .history] {
+        for expected in [SettingsTab.models, .speech, .dictionary, .history, .history] {
             try window.sendEvent(arrow(down: true, window: window))
             settle()
             XCTAssertEqual(box.tab, expected, "↓ must move the sidebar selection")

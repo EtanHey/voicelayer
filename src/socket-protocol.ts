@@ -242,7 +242,8 @@ export type AckCommand =
   | "set_whisper_effort"
   | "set_whisper_residency"
   | "set_processing_setting"
-  | "set_tts_setting";
+  | "set_tts_setting"
+  | "preview_tts_profile";
 
 export interface AckEvent {
   type: "ack";
@@ -380,6 +381,12 @@ export interface SetWhisperEffortCommand extends SocketCommandBase {
   effort: WhisperPerformanceEffort;
 }
 
+/** Fixed sample through the existing daemon speak path. */
+export interface PreviewTTSProfileCommand extends SocketCommandBase {
+  cmd: "preview_tts_profile";
+  profile: "short" | "long";
+}
+
 /** Settings → Speech. Dot keys select a SHORT/LONG field; short_limit_chars is global. */
 export type SetTTSSettingCommand = SocketCommandBase & {cmd: "set_tts_setting"} & (
   | {key: import("./tts-settings").TTSSettingKey; value: string | number}
@@ -422,6 +429,7 @@ export type SocketCommand =
   | VocabRemoveTermCommand
   | SetRecordingHoldCommand
   | SetWhisperEffortCommand
+  | PreviewTTSProfileCommand
   | SetTTSSettingCommand
   | SetProcessingSettingCommand
   | SetWhisperResidencyCommand;
@@ -722,6 +730,10 @@ export function parseCommand(line: string): SocketCommand | null {
           },
           id,
         );
+      }
+      case "preview_tts_profile": {
+        if (parsed.profile !== "short" && parsed.profile !== "long") return null;
+        return withCommandId<PreviewTTSProfileCommand>({cmd: "preview_tts_profile", profile: parsed.profile}, id);
       }
       case "set_tts_setting": {
         if (parsed.profile !== undefined) {

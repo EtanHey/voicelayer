@@ -19,6 +19,7 @@ import {
   safeWriteFileSync,
 } from "./paths";
 import {
+  speak,
   awaitCurrentPlayback,
   getHistoryEntry,
   playAudioNonBlocking,
@@ -76,7 +77,7 @@ import {
   verifiedWhisperServerLaunchRecord,
 } from "./whisper-server";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
-import { hasActiveVoiceOperation } from "./voice-operation-reservation";
+import { reserveStandardVoiceOperation, hasActiveVoiceOperation } from "./voice-operation-reservation";
 
 let modelStatusRevision = 0;
 function publishModelStatusEvent(): void {
@@ -394,6 +395,17 @@ export function handleSocketCommand(
       return handleEffortCommand(command);
     case "set_whisper_residency":
       return handleResidencyCommand(command);
+    case "preview_tts_profile": {
+      if (residencyBusy()) return buildAck(command, "reject", residencyBusyReason());
+      const reservation = reserveStandardVoiceOperation();
+      if (!reservation) return buildAck(command, "reject", "Voice session in progress");
+      return speak("Here is a sample of this voice. Clear speech, at your preferred pace.", {
+        profile: command.profile, waitForPlayback: true,
+      }).then(result => ({...buildAck(command, result.playbackId ? "accept" : "reject",
+        result.playbackId ? undefined : "No preview audio was played"), tts_controls: readTTSControlsStatus()}))
+        .catch(error => buildAck(command, "reject", vocabularyErrorReason(error)))
+        .finally(() => reservation.release());
+    }
     case "set_tts_setting":
       try {
         if ("profile" in command) setTTSProfile(command.profile, command);

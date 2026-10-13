@@ -4,6 +4,7 @@ import SwiftUI
 public enum SettingsTab: Hashable, CaseIterable, Identifiable {
     case general
     case models
+    case speech
     case dictionary
     case history
 
@@ -14,6 +15,7 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
     public var title: String {
         switch self {
         case .general: "General"
+        case .speech: "Speech"
         case .models: "Models"
         case .dictionary: "Dictionary"
         case .history: "History"
@@ -30,6 +32,7 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
     public var systemImage: String {
         switch self {
         case .general: "gearshape"
+        case .speech: "speaker.wave.2"
         case .models: "cpu"
         case .dictionary: "text.book.closed"
         case .history: "clock.arrow.circlepath"
@@ -419,6 +422,13 @@ public struct SettingsView: View {
     public let onRefreshModelsStatus: () -> Void
     public let residencyNotice: () -> String?
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
+    public let speechControls: () -> SpeechControlsState?
+    public let speechConnected: () -> Bool
+    public let speechPending: () -> [String: SpeechValue]
+    public let speechNotice: () -> String?
+    public let onChangeSpeech: ((String, SpeechValue) -> Void)?
+    public let onSelectSpeechEngine: ((SpeechProfile, String, String) -> Void)?
+    public let onPreviewSpeech: ((SpeechProfile) -> Void)?
     public let processingPending: () -> [ProcessingKey: Bool]
     public let processingNotice: () -> String?
     public let onToggleProcessing: ((ProcessingKey, Bool) -> Void)?
@@ -551,6 +561,13 @@ public struct SettingsView: View {
         onRefreshModelsStatus: @escaping () -> Void,
         residencyNotice: @escaping () -> String? = { nil },
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
+        speechControls: @escaping () -> SpeechControlsState? = { nil },
+        speechConnected: @escaping () -> Bool = { false },
+        speechPending: @escaping () -> [String: SpeechValue] = { [:] },
+        speechNotice: @escaping () -> String? = { nil },
+        onChangeSpeech: ((String, SpeechValue) -> Void)? = nil,
+        onSelectSpeechEngine: ((SpeechProfile, String, String) -> Void)? = nil,
+        onPreviewSpeech: ((SpeechProfile) -> Void)? = nil,
         processingPending: @escaping () -> [ProcessingKey: Bool] = { [:] },
         processingNotice: @escaping () -> String? = { nil },
         onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil,
@@ -648,6 +665,13 @@ public struct SettingsView: View {
         self.onRefreshModelsStatus = onRefreshModelsStatus
         self.residencyNotice = residencyNotice
         self.onSelectResidency = onSelectResidency
+        self.speechControls = speechControls
+        self.speechConnected = speechConnected
+        self.speechPending = speechPending
+        self.speechNotice = speechNotice
+        self.onChangeSpeech = onChangeSpeech
+        self.onSelectSpeechEngine = onSelectSpeechEngine
+        self.onPreviewSpeech = onPreviewSpeech
         self.processingPending = processingPending
         self.processingNotice = processingNotice
         self.onToggleProcessing = onToggleProcessing
@@ -750,6 +774,13 @@ public struct SettingsView: View {
                     title: "History",
                     subtitle: "Your recordings and conversations"
                 ) { historyTab }
+            case .speech:
+                settingsPage(title: "Speech") {
+                    SpeechSettingsView(controls: speechControls(), connected: speechConnected(),
+                                       busy: modelsStatus().isBusy, pending: speechPending(), notice: speechNotice(),
+                                       onChange: onChangeSpeech, onSelectEngine: onSelectSpeechEngine, onPreview: onPreviewSpeech)
+                        .onAppear { onRefreshModelsStatus() }
+                }
             case .models:
                 settingsPage(title: "Models") { modelsTab }
             case .general:

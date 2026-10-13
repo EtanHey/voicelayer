@@ -242,6 +242,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.onAckEvent = { [weak self] ack in
             self?.handlePerformanceEffortAck(ack)
         }
+        voiceState.onSpeechSettled = { [weak self] in
+            self?.refreshSettingsWindowAnchorState()
+        }
         voiceState.onProcessingSettled = { [weak self] in
             self?.refreshSettingsWindowAnchorState()
         }
@@ -2857,6 +2860,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             residencyNotice: { [weak self] in self?.voiceState.residencyNotice },
             onSelectResidency: { [weak self] target in
                 self?.voiceState.setWhisperResidency(target)
+            },
+            speechControls: { [weak self] in self?.voiceState.speechControls },
+            speechConnected: { [weak self] in self?.voiceState.isConnected ?? false },
+            speechPending: { [weak self] in self?.voiceState.speechPending ?? [:] },
+            speechNotice: { [weak self] in self?.voiceState.speechNotice },
+            onChangeSpeech: { [weak self] key, value in
+                self?.voiceState.setTTSSetting(key, value)
+                self?.refreshSettingsWindowAnchorState()
+            },
+            onPreviewSpeech: { [weak self] profile in
+                self?.voiceState.previewTTSProfile(profile)
+                self?.refreshSettingsWindowAnchorState()
             },
             processingPending: { [weak self] in self?.voiceState.processingPending ?? [:] },
             processingNotice: { [weak self] in self?.voiceState.processingNotice },

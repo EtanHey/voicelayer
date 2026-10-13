@@ -86,14 +86,18 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Picker(\"Anchor\""))
     }
 
-    func testSettingsUsesApprovedFourDestinationOrder() {
+    func testSettingsUsesFiveDestinationOrder() {
         XCTAssertEqual(
             SettingsTab.allCases,
-            [.general, .models, .dictionary, .history]
+            [.general, .models, .speech, .dictionary, .history]
         )
         XCTAssertEqual(SettingsTab.allCases.map(\.title), [
-            "General", "Models", "Dictionary", "History",
+            "General", "Models", "Speech", "Dictionary", "History",
         ])
+    }
+
+    func testSpeechURLRouting() {
+        XCTAssertEqual(SettingsTab(urlComponent: "SpEeCh"), .speech)
     }
 
     func testDictionarySourceLabelsStayTypedAndPlainLanguage() {
