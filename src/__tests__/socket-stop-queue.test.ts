@@ -137,6 +137,11 @@ describe("socket health command", () => {
         configured_effort: "accurate",
         active_effort: null,
       },
+      tts_controls: expect.objectContaining({
+        profiles: expect.objectContaining({short: expect.any(Object), long: expect.any(Object)}),
+        available_voices: expect.any(Array),
+        clone_daemon: expect.stringMatching(/^(up|down)$/),
+      }),
       polish_controls: {
         model_polish: { source: "default", raw: null, effective: "on" },
         outro_gate: { source: "default", raw: null, effective: true },

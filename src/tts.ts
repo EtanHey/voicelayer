@@ -60,8 +60,11 @@ import {
   type PlaybackAmplitudeEnvelope,
 } from "./playback-amplitude";
 
-const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
-const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
+import { resolveSpeakProfile, TTS_DEFAULTS } from "./tts-settings";
+import { recordFirstAudio } from "./tts-controls-status";
+export { resolveSpeakProfile } from "./tts-settings";
+const defaultVoice = () => process.env.QA_VOICE_TTS_VOICE || TTS_DEFAULTS.voice;
+const defaultRate = () => process.env.QA_VOICE_TTS_RATE || TTS_DEFAULTS.rate;
 const RING_BUFFER_SIZE = 20;
 export const SPEAKER_OUTPUT_REFUSED_MESSAGE =
   "user is recording — speaker output refused";
@@ -165,23 +168,25 @@ export function assertRegisteredClone(
   }
 }
 
-export function resolveVoice(name?: string): {
+export function resolveVoice(name?: string, engine?: "edge" | "clone"): {
   voice: string;
   engine: "cloned" | "edge-tts";
   warning?: string;
   fallbackVoice?: string;
 } {
-  const requestedName = name || DEFAULT_VOICE;
+  const requestedName = name || defaultVoice();
 
   // Tier 1: Check for cloned voice profile (profile.yaml)
-  const clonedProfile = loadProfile(requestedName);
+  const clonedProfile = engine === "edge" ? null : loadProfile(requestedName);
   if (clonedProfile) {
     return {
       voice: clonedProfile.profile_id || clonedProfile.name || requestedName,
       engine: "cloned",
-      fallbackVoice: clonedProfile.fallback || DEFAULT_VOICE,
+      fallbackVoice: clonedProfile.fallback || defaultVoice(),
     };
   }
+
+  if (engine === "clone") throw new VoiceProfileUnavailableError(requestedName, "missing-profile");
 
   // Tier 2: Check preset profiles (voices.json)
   const profiles = loadVoiceProfiles();
@@ -189,7 +194,7 @@ export function resolveVoice(name?: string): {
   if (profile) {
     if (profile.engine !== "edge-tts") {
       return {
-        voice: DEFAULT_VOICE,
+        voice: defaultVoice(),
         engine: "edge-tts",
         warning: `Voice profile "${requestedName}" uses engine "${profile.engine}" which is not yet supported. Using default.`,
       };
@@ -204,9 +209,9 @@ export function resolveVoice(name?: string): {
 
   // Unknown name — fallback with warning
   return {
-    voice: DEFAULT_VOICE,
+    voice: defaultVoice(),
     engine: "edge-tts",
-    warning: `Unknown voice "${requestedName}". Using default (${DEFAULT_VOICE}). Add it to ~/.voicelayer/voices.json or use a raw edge-tts voice name.`,
+    warning: `Unknown voice "${requestedName}". Using default (${defaultVoice()}). Add it to ~/.voicelayer/voices.json or use a raw edge-tts voice name.`,
   };
 }
 
@@ -635,6 +640,7 @@ async function playClonedAudio(
   speakingText: string,
   resolvedVoice: string,
   options?: {
+    rate?: string;
     mode?: string;
     waitForPlayback?: boolean;
     onPlaybackStart?: (startedAtMs: number) => void;
@@ -647,6 +653,23 @@ async function playClonedAudio(
     "audioArtifact" | "playbackId" | "playbackOutcome"
   >
 > {
+  const percentage = parseInt(options?.rate ?? "+0%", 10);
+  if (Number.isFinite(percentage) && percentage !== 0) {
+    const adjusted = ttsFile.replace(/\.mp3$/, ".rate.mp3");
+    const factor = Math.max(0.01, 1 + percentage / 100);
+    const filters: string[] = [];
+    let remaining = factor;
+    while (remaining < 0.5) { filters.push("atempo=0.5"); remaining /= 0.5; }
+    while (remaining > 2) { filters.push("atempo=2"); remaining /= 2; }
+    filters.push(`atempo=${remaining}`);
+    const conversion = Bun.spawnSync(["ffmpeg", "-y", "-i", ttsFile, "-af", filters.join(","), adjusted], {stdout: "ignore", stderr: "pipe"});
+    if (conversion.exitCode !== 0) {
+      for (const path of [adjusted, ttsFile]) { try { unlinkSync(path); } catch {} }
+      throw new Error("Clone rate conversion failed");
+    }
+    try { unlinkSync(ttsFile); } catch {}
+    ttsFile = adjusted;
+  }
   let proc: PlaybackHandle;
   let audioArtifact: TextToSpeechResult["audioArtifact"];
   try {
@@ -1439,7 +1462,7 @@ export class QueuedPlaybackController implements PlaybackController {
  * The audio file is saved to the ring buffer for replay.
  *
  * @param text - Text to speak
- * @param options.rate - Rate override (e.g., "-10%", "+5%"). If omitted, uses DEFAULT_RATE.
+ * @param options.rate - Rate override (e.g., "-10%", "+5%"). If omitted, uses profile settings, then mode/env defaults.
  * @param options.mode - Voice mode name for auto-rate selection (announce/brief/consult/converse).
  * @param options.voice - Voice name (profile name or raw edge-tts voice). If omitted, uses default.
  * @param options.waitForPlayback - If true, wait for audio playback to finish (used in converse mode before recording).
@@ -1448,6 +1471,8 @@ export async function speak(
   text: string,
   options?: TextToSpeechOptions,
 ): Promise<TextToSpeechResult> {
+  const receivedAt = Date.now();
+  const chars = text?.length ?? 0;
   if (!text?.trim()) return {};
   assertSpeakerClear();
 
@@ -1468,7 +1493,26 @@ export async function speak(
   }
 
   // Resolve voice — determines engine (cloned vs edge-tts)
-  const resolved = resolveVoice(options?.voice);
+  const profile = resolveSpeakProfile(options?.profile ?? "short", text);
+  const selectedVoice = options?.voice ?? profile.voice;
+  const resolved = resolveVoice(selectedVoice, options?.voice !== undefined ? undefined : profile.engineSource === "settings" ? profile.engine : undefined);
+  let audioEngine = "edge-tts";
+  let audioVoice = resolved.voice;
+  const onPlaybackStart = options?.onPlaybackStart;
+  let firstAudio = false;
+  options = {
+    ...options,
+    rate: options?.rate ?? (profile.rateSource === "settings" || (resolved.engine === "cloned" && profile.rateSource === "environment") ? profile.rate : undefined),
+    onPlaybackStart: (startedAt) => {
+      if (!firstAudio) {
+        firstAudio = true;
+        const ms = Math.max(0, startedAt - receivedAt);
+        recordFirstAudio(profile.kind, ms);
+        console.error(`[tts] first_audio_ms=${ms} profile=${profile.kind} engine=${audioEngine} voice=${audioVoice} chars=${chars}`);
+      }
+      onPlaybackStart?.(startedAt);
+    },
+  };
 
   // Fail-closed gate: when a cloned voice is MANDATED, an unregistered profile
   // must BLOCK rather than silently downgrade to a preset/system voice.
@@ -1478,7 +1522,7 @@ export async function speak(
   const requireClone = requireClonedVoiceEnabled(options);
   if (requireClone && resolved.engine !== "cloned") {
     throw new VoiceProfileUnavailableError(
-      options?.voice || DEFAULT_VOICE,
+      options?.voice || defaultVoice(),
       "missing-profile",
     );
   }
@@ -1490,12 +1534,14 @@ export async function speak(
   if (
     resolved.engine === "cloned" &&
     !requireClone &&
+    (options?.voice !== undefined || profile.engineSource !== "settings") &&
     options?.mode === "announce" &&
     spokenText.length < 50
   ) {
+    audioVoice = resolved.fallbackVoice || defaultVoice();
     return speakWithEdgeTTS(
       spokenText,
-      resolved.fallbackVoice || DEFAULT_VOICE,
+      resolved.fallbackVoice || defaultVoice(),
       options,
       resolved.warning,
       displayText,
@@ -1516,6 +1562,7 @@ export async function speak(
       );
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
       if (mp3Path) {
+        audioEngine = "xtts-v2";
         const playback = await playClonedAudio(
           mp3Path,
           displayText,
@@ -1551,6 +1598,7 @@ export async function speak(
       );
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
       if (mp3Path) {
+        audioEngine = "f5-tts-mlx";
         const playback = await playClonedAudio(
           mp3Path,
           displayText,
@@ -1575,6 +1623,7 @@ export async function speak(
     // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
     const audioBuffer = await synthesizeCloned(spokenText, resolved.voice);
     if (audioBuffer) {
+      audioEngine = "qwen3-tts";
       const ttsFile = ttsFilePath(process.pid, ttsCounter++);
       writeFileSync(ttsFile, audioBuffer);
       const playback = await playClonedAudio(
@@ -1605,9 +1654,10 @@ export async function speak(
     console.error(
       `[voicelayer] Cloned voice "${resolved.voice}" unavailable — falling back to edge-tts (${resolved.fallbackVoice})`,
     );
+    audioVoice = resolved.fallbackVoice || defaultVoice();
     return speakWithEdgeTTS(
       spokenText,
-      resolved.fallbackVoice || DEFAULT_VOICE,
+      resolved.fallbackVoice || defaultVoice(),
       options,
       undefined,
       displayText,
@@ -1642,11 +1692,11 @@ async function speakWithEdgeTTS(
   warning?: string,
   displayText: string = spokenText,
 ): Promise<TextToSpeechResult> {
-  // Determine rate: explicit > mode default > env default
+  // Profile file rates enter as explicit options; otherwise preserve mode > env > default.
   let rate =
     options?.rate ??
     (options?.mode ? MODE_RATES[options.mode] : undefined) ??
-    DEFAULT_RATE;
+    defaultRate();
 
   // Auto-slow for long text
   rate = adjustRateForLength(rate, spokenText.length);
