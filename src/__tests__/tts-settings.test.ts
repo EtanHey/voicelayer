@@ -2,7 +2,6 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
-import * as settings from "../tts-settings";
 import { resolveSpeakProfile, setTTSSetting } from "../tts-settings";
 import { readTTSControlsStatus, recordFirstAudio, probeCloneDaemon } from "../tts-controls-status";
 import * as qwen from "../tts/qwen3";
@@ -93,4 +92,13 @@ test("R4 inconsistent effective pairs are rejected without writing", () => {
  const e=env(); const profile=spyOn(qwen,"hasClonedProfile").mockReturnValue(false);
  try { expect(()=>setTTSSetting("short.engine","clone",e)).toThrow("engine/voice"); expect(()=>readFileSync(e.VOICELAYER_TTS_SETTINGS_PATH,"utf8")).toThrow(); }
  finally {profile.mockRestore();}
+});
+test("R2 engine raw stays engine-valued under a voice env override", () => {
+ const profile=spyOn(qwen,"hasClonedProfile").mockImplementation(v=>v==="fixture");
+ try {
+  for(const [voice,engine] of [["en-US-JennyNeural","edge"],["fixture","clone"],["","edge"]]) {
+   const status=readTTSControlsStatus({...env(),QA_VOICE_TTS_VOICE:voice});
+   for(const kind of ["short","long"] as const) expect(status.profiles[kind].engine).toEqual({source:"environment",raw:engine,effective:engine,locked:"Set by QA_VOICE_TTS_VOICE"});
+  }
+ } finally {profile.mockRestore();}
 });

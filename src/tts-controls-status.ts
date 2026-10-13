@@ -61,7 +61,7 @@ export function readTTSControlsStatus(env: TTSEnv = process.env) {
       const variable = ttsSettingEnvVar(`${kind}.${key}`);
       const raw = variable ? env[variable] : undefined;
       const stored = file.profiles?.[kind]?.[key];
-      return { source: raw !== undefined ? "environment" : stored !== undefined ? "settings" : "default", raw: raw ?? stored ?? null, effective: resolved[key], ...(raw !== undefined ? {locked: `Set by ${variable}`} : {}) };
+      return { source: raw !== undefined ? "environment" : stored !== undefined ? "settings" : "default", raw: raw !== undefined && key === "engine" ? resolved.engine : raw ?? stored ?? null, effective: resolved[key], ...(raw !== undefined ? {locked: `Set by ${variable}`} : {}) };
     }
     return {engine: field("engine"), voice: field("voice"), rate: field("rate"), last_first_audio_ms: latency[kind]};
   }
