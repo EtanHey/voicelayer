@@ -536,7 +536,9 @@ export async function isDaemonHealthy(): Promise<boolean> {
 export async function synthesizeCloned(
   text: string,
   voiceName: string,
+  signal?: AbortSignal,
 ): Promise<Buffer | null> {
+  signal?.throwIfAborted();
   const profile = loadProfile(voiceName);
   if (!profile) {
     console.error(`[voicelayer] No voice profile found for "${voiceName}"`);
@@ -557,12 +559,13 @@ export async function synthesizeCloned(
   // Expand ~ in paths
   const expandedPath = refClip.replace(/^~/, process.env.HOME || "~");
 
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const headers = buildDaemonRequestHeaders(true);
     if (!headers) return null;
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), DAEMON_TIMEOUT_MS);
+    timeout = setTimeout(() => controller.abort(), DAEMON_TIMEOUT_MS);
 
     const res = await fetch(`${DAEMON_URL}/synthesize`, {
       method: "POST",
@@ -573,9 +576,8 @@ export async function synthesizeCloned(
         reference_text: refText,
         ...(profile.model ? { model: profile.model } : {}),
       }),
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
     });
-    clearTimeout(timeout);
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "unknown error");
@@ -603,11 +605,13 @@ export async function synthesizeCloned(
       audio_b64: string;
       duration_ms: number;
     };
+    signal?.throwIfAborted();
     console.error(
       `[voicelayer] Cloned voice synthesis: ${data.duration_ms.toFixed(0)}ms`,
     );
     return Buffer.from(data.audio_b64, "base64");
   } catch (err) {
+    if (signal?.aborted) throw signal.reason;
     if (err instanceof DaemonModelError) throw err;
     if (err instanceof Error && err.name === "AbortError") {
       console.error("[voicelayer] Daemon synthesis timed out");
@@ -615,5 +619,7 @@ export async function synthesizeCloned(
       console.error(`[voicelayer] Daemon connection failed: ${err}`);
     }
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
 }
