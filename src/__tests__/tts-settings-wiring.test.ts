@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import * as os from "os";
 import { TEST_TMP } from "./setup/test-tmp";
 import { speak, awaitCurrentPlayback, stopPlayback, VoiceProfileUnavailableError } from "../tts";
 import * as recording from "../recording-state";
@@ -89,12 +90,13 @@ test("explicit edge engine bypasses clone lookup; clone fallback logs actual edg
  await speak("hello");await awaitCurrentPlayback();
  expect(logs.mock.calls.some(([line])=>String(line).includes("profile=short engine=edge-tts voice=en-US-AriaNeural"))).toBe(true);
 });
-test("clone rate adjusts audio before player spawn and explicit rate wins",async()=>{
+test.each(["darwin", "linux"] as const)("clone rate adjusts audio before player spawn and explicit rate wins (%s)",async(platform)=>{
+ spies.push(spyOn(os,"platform").mockReturnValue(platform));
  writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{short:{engine:"clone",voice:"fixture",rate:"+20%"}}}));
  spies.push(spyOn(qwen,"loadProfile").mockReturnValue({name:"fixture",engine:"qwen3-tts"} as never),spyOn(xtts,"isXTTSAvailable").mockReturnValue(false),spyOn(f5,"isF5TTSAvailable").mockReturnValue(false),spyOn(qwen,"synthesizeCloned").mockResolvedValue(Buffer.from("audio")));
  await speak("hello",{rate:"+30%"});await awaitCurrentPlayback();
  expect(argv.find(a=>a.includes("-af"))).toContain("atempo=1.3");
- expect(argv.some(a=>a[0]==="afplay" && a.at(-1)?.endsWith(".rate.mp3"))).toBe(true);
+ expect(argv.some(a=>a[0]===(platform === "darwin" ? "afplay" : "mpv") && a.at(-1)?.endsWith(".rate.mp3"))).toBe(true);
 });
 test("explicit clone voice retains legacy announce shortcut over configured engine",async()=>{
  writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{short:{engine:"edge",voice:"en-US-GuyNeural"}}}));
