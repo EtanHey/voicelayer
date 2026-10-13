@@ -24,6 +24,7 @@ import {
   playAudioNonBlocking,
   restartPlayback,
   stopPlayback,
+  speakText,
 } from "./tts";
 import {
   waitForInput,
@@ -77,6 +78,7 @@ import {
 } from "./whisper-server";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
+import { markdownToSpeech } from "./tts/markdown-to-speech";
 
 let modelStatusRevision = 0;
 function publishModelStatusEvent(): void {
@@ -100,6 +102,18 @@ export function handleSocketCommand(
   const isSpeaking = recordingState === "idle" && playbackQueueDepth > 0;
 
   switch (command.cmd) {
+    case "speak_text": {
+      if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) {
+        return buildAck(command, "reject", "busy");
+      }
+      const text = command.format === "markdown" ? markdownToSpeech(command.text) : command.text;
+      try {
+        speakText(text, command.profile ?? "auto");
+        return buildAck(command, "accept");
+      } catch (error) {
+        return buildAck(command, "reject", error instanceof Error ? error.message : String(error));
+      }
+    }
     case "stop":
       if (recordingState === "idle" && playbackQueueDepth === 0) {
         return buildAck(command, "noop", "already idle");

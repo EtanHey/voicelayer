@@ -33,6 +33,15 @@ export interface StateEvent {
   text?: string;
   /** Present when state is "speaking" — the voice being used. */
   voice?: string;
+  /** Chunk-local playback clock; additive global position for future seek clients. */
+  long_read?: {
+    id: string;
+    chunk_index: number;
+    chunk_count: number;
+    chunk_start_ms: number;
+    /** Activates existing Stop/Escape UI before first audio; no audio clock yet. */
+    preparing?: boolean;
+  };
   /** Fixed-window RMS truth for the audio file that just started playing. */
   playback_amplitude?: PlaybackAmplitudeEnvelope;
   /** Present when state is "recording" — the recording mode. */
@@ -225,6 +234,7 @@ export interface ClipMarkerEvent {
 export type IntentOutcome = "accept" | "noop" | "reject" | "loading";
 
 export type AckCommand =
+  | "speak_text"
   | "stop"
   | "cancel"
   | "replay"
@@ -290,6 +300,15 @@ export type SocketEvent =
 
 interface SocketCommandBase {
   id?: string;
+}
+
+export const SPEAK_TEXT_MAX_CHARS = 200_000;
+export interface SpeakTextCommand extends SocketCommandBase {
+  cmd: "speak_text";
+  text: string;
+  profile?: "auto" | "short" | "long";
+  format?: "plain" | "markdown";
+  source?: string;
 }
 
 export interface StopCommand extends SocketCommandBase {
@@ -404,6 +423,7 @@ export interface SetRecordingHoldCommand extends SocketCommandBase {
 }
 
 export type SocketCommand =
+  | SpeakTextCommand
   | { cmd: "history_playback_ready"; id: string }
   | StopCommand
   | CancelCommand
@@ -575,6 +595,18 @@ export function parseCommand(line: string): SocketCommand | null {
         ? Math.round(parsed.playback_elapsed_ms)
         : undefined;
     switch (parsed.cmd) {
+      case "speak_text": {
+        if (typeof parsed.text !== "string" || !parsed.text.trim() || parsed.text.length > SPEAK_TEXT_MAX_CHARS) return null;
+        if (parsed.profile !== undefined && !["auto", "short", "long"].includes(parsed.profile)) return null;
+        if (parsed.format !== undefined && !["plain", "markdown"].includes(parsed.format)) return null;
+        if (parsed.source !== undefined && (typeof parsed.source !== "string" || parsed.source.length > 256)) return null;
+        return withCommandId<SpeakTextCommand>({
+          cmd: "speak_text", text: parsed.text,
+          ...(parsed.profile !== undefined ? { profile: parsed.profile } : {}),
+          ...(parsed.format !== undefined ? { format: parsed.format } : {}),
+          ...(parsed.source !== undefined ? { source: parsed.source } : {}),
+        }, id);
+      }
       case "history_playback_ready":
         return id ? { cmd: "history_playback_ready", id } : null;
       case "stop":
