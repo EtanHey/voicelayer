@@ -118,8 +118,17 @@ let resolutionGeneration = 0;
 const isMediaBinary = (name: string) => name === "ffmpeg" || name === "ffprobe";
 const versionFlag = (name: string) => isMediaBinary(name) ? "-version" : "--version";
 const preferHomebrew = (name: string) => isMediaBinary(name) && platform() === "darwin" && arch() === "arm64";
-function remember(name: string, path: string): string {
-  resolvedPaths.set(name, path);
+function candidatePaths(name: string, candidates: string[]): string[] {
+  return [...new Set([...candidates, `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, `/usr/bin/${name}`])];
+}
+
+function lookupKey(name: string, candidates: string[]): string {
+  // Duplicated/default fallbacks are equivalent; custom ordering is significant.
+  return JSON.stringify([name, candidatePaths(name, candidates)]);
+}
+
+function remember(key: string, path: string): string {
+  resolvedPaths.set(key, path);
   return path;
 }
 
@@ -186,7 +195,8 @@ export function resolveBinary(
   candidates: string[] = [],
   options: ResolveBinaryOptions = {},
 ): string | null {
-  const cached = resolvedPaths.get(name);
+  const key = lookupKey(name, candidates);
+  const cached = resolvedPaths.get(key);
   if (cached) return cached;
   const spawnTimeoutMs = options.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS;
   const budgetMs = options.budgetMs ?? RESOLVE_BUDGET_MS;
@@ -216,7 +226,7 @@ export function resolveBinary(
     if (timeout === null) return giveUp();
     const check = runProbe([preferred, versionFlag(name)], timeout);
     if (check.timedOut) timedOut = true;
-    if (check.exitCode === 0) return remember(name, preferred);
+    if (check.exitCode === 0) return remember(key, preferred);
   }
 
   // Try `which` with enriched PATH
@@ -227,22 +237,17 @@ export function resolveBinary(
   if (which.exitCode === 0) {
     const path = which.stdout.trim();
     if (path) {
-      if (!isMediaBinary(name)) return remember(name, path);
+      if (!isMediaBinary(name)) return remember(key, path);
       const timeout = nextTimeout();
       if (timeout === null) return giveUp();
       const check = runProbe([path, "-version"], timeout);
       if (check.timedOut) timedOut = true;
-      if (check.exitCode === 0) return remember(name, path);
+      if (check.exitCode === 0) return remember(key, path);
     }
   }
 
   // Probe candidate paths directly
-  const allCandidates = [
-    ...candidates,
-    `/opt/homebrew/bin/${name}`,
-    `/usr/local/bin/${name}`,
-    `/usr/bin/${name}`,
-  ];
+  const allCandidates = candidatePaths(name, candidates);
 
   for (const candidate of allCandidates) {
     const timeout = nextTimeout();
@@ -251,7 +256,7 @@ export function resolveBinary(
     if (check.timedOut) timedOut = true;
     if (check.exitCode === 0) {
       console.error(`[voicelayer] Resolved ${name} at: ${candidate}`);
-      return remember(name, candidate);
+      return remember(key, candidate);
     }
   }
 
@@ -308,18 +313,19 @@ export function resolveBinaryAsync(
   candidates: string[] = [],
   timeoutMs: number = ASYNC_RESOLVE_TIMEOUT_MS,
 ): Promise<string | null> {
-  const cached = resolvedPaths.get(name);
+  const key = lookupKey(name, candidates);
+  const cached = resolvedPaths.get(key);
   if (cached) return Promise.resolve(cached);
-  const pending = pendingPaths.get(name);
+  const pending = pendingPaths.get(key);
   if (pending) return pending;
   const generation = resolutionGeneration;
   const result = resolveBinaryAsyncUncached(name, candidates, timeoutMs).then(path => {
-    if (path && generation === resolutionGeneration) remember(name, path);
+    if (path && generation === resolutionGeneration) remember(key, path);
     return path;
   }).finally(() => {
-    if (pendingPaths.get(name) === result) pendingPaths.delete(name);
+    if (pendingPaths.get(key) === result) pendingPaths.delete(key);
   });
-  pendingPaths.set(name, result);
+  pendingPaths.set(key, result);
   return result;
 }
 
@@ -360,12 +366,7 @@ async function resolveBinaryAsyncUncached(
     // which not found — fall through to the candidate probes
   }
 
-  const allCandidates = [
-    ...candidates,
-    `/opt/homebrew/bin/${name}`,
-    `/usr/local/bin/${name}`,
-    `/usr/bin/${name}`,
-  ];
+  const allCandidates = candidatePaths(name, candidates);
 
   for (const candidate of allCandidates) {
     if ((await probeExitCode([candidate, versionFlag(name)], timeoutMs)) === 0) {
