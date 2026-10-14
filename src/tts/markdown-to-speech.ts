@@ -61,7 +61,7 @@ function looksLikeCode(line: string): boolean {
     /^(?:if|for|while|switch|catch)\s*\([^\n]*\)\s*\{$/.test(text) ||
     /^(?:function\s+[\w$]+\([^\n]*\)|class\s+[\w$]+)\s*\{$/.test(text) ||
     /^def\s+\w+\([^\n]*\)\s*:$/.test(text) ||
-    /^(?:\[[^\n]*\]|\{[^\n]*\})\s*[,;]?$/.test(text) ||
+    /^(?:\[(?:|[^\n]*[;{}()=:+*/\\<>"'`,][^\n]*)\]|\{(?:|[^\n]*[;{}()=:+*/\\<>"'`,][^\n]*)\})\s*[,;]?$/.test(text) ||
     /^[{}[\]);,]+$/.test(text);
 }
 
@@ -94,13 +94,6 @@ function speechLinesFromFences(markdown: string): string[] {
     const obviousProse = !looksLikeCode(nextContent) &&
       (/^\s*(?:#{1,6}\s|[-*+]\s)/.test(nextContent) || /[\p{L}].*[.!?]$/u.test(nextContent.trim()));
     const codePrefix = hasPrefix && codeOnlyPrefix;
-    if (!fence[2].trim() && (codePrefix || obviousProse)) {
-      if (codePrefix) output.length = 0;
-      output.push("code block");
-      hasPrefix = true; codeOnlyPrefix = false;
-      recoverPartialCode = false;
-      continue;
-    }
     // Index each marker length once; repeated unmatched fences do not rescan the tail.
     const key = `${fence[1][0]}:${fence[1].length}`;
     let positions = closingCache.get(key);
@@ -119,9 +112,30 @@ function speechLinesFromFences(markdown: string): string[] {
       else high = middle;
     }
     const closing = positions[low] ?? -1;
+    let taggedBeforeCloser = false;
+    if (closing >= 0) {
+      for (let candidate = index + 1; candidate < closing; candidate++) {
+        const inner = fences[candidate];
+        if (inner && inner[1][0] === fence[1][0] && inner[1].length >= fence[1].length && inner[2].trim()) {
+          taggedBeforeCloser = true;
+          break;
+        }
+      }
+    }
+    const complete = closing >= 0 && !taggedBeforeCloser;
+    // Unmatched bare fences may close a code-only prefix or sit before obvious
+    // prose. Do not treat them as openers that steal a later tagged fence's closer
+    // or leak a complete fence's body.
+    if (!complete && !fence[2].trim() && (codePrefix || obviousProse)) {
+      if (codePrefix) output.length = 0;
+      output.push("code block");
+      hasPrefix = true; codeOnlyPrefix = false;
+      recoverPartialCode = false;
+      continue;
+    }
     output.push("code block");
     hasPrefix = true; codeOnlyPrefix = false;
-    if (closing >= 0) { index = closing; recoverPartialCode = false; }
+    if (complete) { index = closing; recoverPartialCode = false; }
     else recoverPartialCode = true;
   }
   return output;
