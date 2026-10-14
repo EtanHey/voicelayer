@@ -20,9 +20,11 @@ reserved voice operation refuse the command with `reason: "busy"`.
 
 `src/tts.ts` exports `speakLongRead(text, {engine, voice, rate})`, returning `{id, done}`.
 `engine` is `edge` or `clone`. The clone path uses Qwen3 directly, bypassing the short-read
-XTTS/F5 truncation paths. The pipeline plays chunk zero before starting later synthesis,
-then synthesizes at most one next chunk during playback. Chunks prefer sentence boundaries;
-overlong sentences fall back to words, then hard cuts. Pronunciation changes apply to engine
+XTTS/F5 truncation paths. The pipeline offers chunk zero to playback as soon as it is ready.
+Synthesis refills on chunk completion, even while playback is preparing: one chunk ahead for
+edge and up to two for clone, with only one synthesis request in flight. Bounded lookahead
+reduces preparation gaps; sustained synthesis slower than playback still causes gaps.
+Chunks prefer sentence boundaries; overlong sentences fall back to words, then hard cuts. Pronunciation changes apply to engine
 input while the chunk's original display text labels the teleprompter.
 
 `stopPlayback()` aborts the read's shared AbortController and clears/kills the playback queue.
@@ -51,9 +53,12 @@ global timeline/history. After completion, normal history replay remains availab
 The ring receives one concatenated MP3 per read once it completes or is stopped. Only chunks
 that actually started playback contribute audio; the interrupted final chunk is trimmed to its
 reported playback position. Synthesized lookahead that never played is excluded. History
-assembly and cleanup can finish after the stop acknowledgement, without keeping audio active.
-The existing twenty-slot ring remains bounded. A history conversion failure is logged even
-for a cancelled read. `done` settles after history/cleanup; synthesis failures are published
+assembly, synthesis reaping and cleanup finish before the stop/cancel acknowledgement or
+voice_ask prompt proceeds. Audio stop and playback idle remain immediate. Replacement long
+reads and ordinary speech also wait for cancelled-generation cleanup before synthesis starts,
+so post-stop history ffmpeg never races a replacement. History text labels include only chunks
+that actually played; the final partially played chunk retains its chunk label. The existing
+twenty-slot ring remains bounded. A history conversion failure is logged even for a cancelled read. `done` settles after history/cleanup; synthesis failures are published
 as events rather than rethrown from this background handle.
 
 ## Profile wiring
@@ -65,8 +70,12 @@ PR A. The socket calls `speakText(text, command.profile ?? "auto")`, which passe
 `speakLongRead`. No profile file or short-limit policy is duplicated here.
 
 `src/tts/markdown-to-speech.ts` exports the pure `markdownToSpeech` function for socket/selection
-callers. It strips emphasis/heading/inline-code markers, keeps link labels, replaces bare URLs
-with `link`, replaces fenced code with `code block`, and reads list/table rows as sentences.
+callers. It strips emphasis at word boundaries (preserving snake_case and dunder identifiers),
+heading/inline-code markers, keeps link labels, replaces bare URLs with `link`, and reads
+list/table rows as sentences. Complete fenced code becomes `code block`. For incomplete
+selections, a bare fence after a code-only prefix or before obvious prose is treated as a
+closing boundary; other unmatched fences suppress only recognizable code syntax and preserve
+unknown/prose lines. Ambiguous content is spoken rather than silently dropped.
 
 ## Verification boundary
 
