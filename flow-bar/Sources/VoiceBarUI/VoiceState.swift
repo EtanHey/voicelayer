@@ -404,6 +404,14 @@ public final class VoiceState {
     public private(set) var speechNotice: String?
     private var speechRequestIDs: [String: [String]] = [:]
     public var onSpeechSettled: (() -> Void)?
+    public var speechPreviewAckTimeout: Duration = .seconds(90)
+    private var timedOutSpeechPreviewID: String?
+    public var speechBusyReason: String? {
+        if mode == .speaking || queueDepth > 0 { return "Speaking…" }
+        if mode == .recording { return "Recording in progress" }
+        if mode == .transcribing { return "Transcription in progress" }
+        return modelsSettingsState.isBusy ? modelsSettingsState.busyReason ?? "Voice session in progress" : nil
+    }
     public var speechAckTimeout: Duration = .seconds(10)
     /// Processing toggles sent and not yet acked (P1): the value the row shows meanwhile.
     public private(set) var processingPending: [ProcessingKey: Bool] = [:]
@@ -855,21 +863,29 @@ public final class VoiceState {
     }
 
     public func previewTTSProfile(_ profile: SpeechProfile) {
-        guard isConnected, speechControls != nil, !modelsSettingsState.isBusy,
+        guard isConnected, speechControls != nil, speechBusyReason == nil,
               speechRequestIDs.isEmpty, let sendCommand else { return }
         let id = UUID().uuidString
         speechRequestIDs[id] = ["preview"]
         speechPending["preview"] = .string(profile.rawValue)
         speechNotice = "Preparing preview…"
         sendCommand(["cmd": "preview_tts_profile", "profile": profile.rawValue, "id": id])
-        scheduleSpeechTimeout(id, timeout: .seconds(90))
+        scheduleSpeechTimeout(id, timeout: speechPreviewAckTimeout)
     }
 
     private func scheduleSpeechTimeout(_ id: String, timeout: Duration? = nil) {
         let timeout = timeout ?? speechAckTimeout
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
-            guard let self, let keys = speechRequestIDs.removeValue(forKey: id) else { return }
+            guard let self, let keys = speechRequestIDs[id] else { return }
+            if keys == ["preview"] {
+                timedOutSpeechPreviewID = id
+                speechNotice = "Preview hasn't finished. Waiting for VoiceLayer; Preview stays disabled."
+                sendCommand?(["cmd": "health"])
+                onSpeechSettled?()
+                return
+            }
+            speechRequestIDs[id] = nil
             for key in keys { speechPending[key] = nil }
             speechNotice = "Couldn't confirm the speech request. Showing VoiceLayer's current settings."
             sendCommand?(["cmd": "health"])
@@ -880,6 +896,7 @@ public final class VoiceState {
     private func handleSpeechAck(_ ack: SocketAckEvent, event: [String: Any]) {
         guard ack.outcome != .loading, let keys = speechRequestIDs.removeValue(forKey: ack.id) else { return }
         for key in keys { speechPending[key] = nil }
+        if timedOutSpeechPreviewID == ack.id { timedOutSpeechPreviewID = nil }
         if ack.outcome == .accept {
             speechNotice = nil
             if let raw = event["tts_controls"] as? [String: Any], let controls = SpeechControlsState(controls: raw) {
@@ -1765,7 +1782,17 @@ public final class VoiceState {
             }
 
         case "health":
-            speechControls = (event["tts_controls"] as? [String: Any]).flatMap(SpeechControlsState.init(controls:))
+            if let raw = event["tts_controls"] as? [String: Any], let controls = SpeechControlsState(controls: raw) {
+                speechControls = controls
+                if let id = timedOutSpeechPreviewID, controls.previewActive == false,
+                   event["recording_state"] as? String == "idle", event["queue_depth"] as? Int == 0,
+                   mode != .speaking {
+                    speechRequestIDs[id] = nil
+                    speechPending["preview"] = nil
+                    timedOutSpeechPreviewID = nil
+                    speechNotice = nil
+                }
+            }
             let status = ModelsSettingsState(healthEvent: event)
             modelsRecordingBusy = event["recording_state"] as? String != "idle"
             modelsRecordingReason = (event["recording_state"] as? String)
@@ -1773,7 +1800,6 @@ public final class VoiceState {
             if let depth = event["queue_depth"] as? Int { queueDepth = max(0, depth) }
             modelsSettingsState = status
             refreshModelsBusy()
-            onSpeechSettled?()
             remoteSTTConfigured = event["remote_stt_configured"] as? Bool
 
         case "model_status":
@@ -1904,11 +1930,13 @@ public final class VoiceState {
         isConnected = connected
         guard previous != connected else { return }
         remoteSTTConfigured = nil
+        let hadPendingSpeech = !speechPending.isEmpty
         speechControls = nil
         speechPending = [:]
         speechRequestIDs = [:]
         speechNotice = nil
-        onSpeechSettled?()
+        timedOutSpeechPreviewID = nil
+        if !connected, hadPendingSpeech { onSpeechSettled?() }
 
         onConnectionChange?(connected)
 

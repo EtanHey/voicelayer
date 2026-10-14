@@ -146,3 +146,10 @@ test("R4 a disappeared configured clone falls back with warning, but a mandate f
  await expect(speak("hello")).rejects.toBeInstanceOf(VoiceProfileUnavailableError);
  expect(synthArgs()).toHaveLength(1);
 });
+
+test("preview latency names the actual fallback engine at the first player spawn", async()=>{
+ cloneFixture(null);
+ writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"fixture"}}}));
+ await speak("hello preview",{profile:"long",measurementOrigin:"preview"});await awaitCurrentPlayback();
+ expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine:"edge-tts",origin:"preview",fallback:true});
+});

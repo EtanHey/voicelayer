@@ -2863,6 +2863,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             speechControls: { [weak self] in self?.voiceState.speechControls },
             speechConnected: { [weak self] in self?.voiceState.isConnected ?? false },
+            speechBusyReason: { [weak self] in self?.voiceState.speechBusyReason },
             speechPending: { [weak self] in self?.voiceState.speechPending ?? [:] },
             speechNotice: { [weak self] in self?.voiceState.speechNotice },
             onChangeSpeech: { [weak self] key, value in

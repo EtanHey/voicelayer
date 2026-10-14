@@ -22,8 +22,17 @@ public struct SpeechControlsState: Equatable, Sendable {
         public let voice: SpeechSetting<String>
         public let rate: SpeechSetting<String>
         public let firstAudioMS: Double?
+        public let measuredEngine: String?
+        public let measurementOrigin: String?
+        public let measurementFallback: Bool
         public var latencyLabel: String {
-            firstAudioMS.map { String(format: "First audio: %.1f s", $0 / 1000) } ?? "First audio: —"
+            guard let ms = firstAudioMS, let engine = measuredEngine, let origin = measurementOrigin else {
+                return "Not measured yet. Press Preview."
+            }
+            let name = engine == "edge-tts" ? "Fast voice" : "Cloned voice"
+            let source = origin == "preview" ? "Last preview" : "Last speech"
+            return String(format: "%@: first sound after %.1f s · %@%@", source, ms / 1000, name,
+                          measurementFallback ? " (fallback)" : "")
         }
     }
     public struct Voice: Equatable, Sendable { public let engine: String; public let voice: String }
@@ -31,6 +40,7 @@ public struct SpeechControlsState: Equatable, Sendable {
     public let shortLimit: SpeechSetting<Int>
     public let availableVoices: [Voice]
     public let cloneRunning: Bool
+    public let previewActive: Bool?
 
     public init?(controls: [String: Any]) {
         func field<T: Equatable & Sendable>(_ data: Any?, _ decode: (Any) -> T?) -> SpeechSetting<T>? {
@@ -56,8 +66,16 @@ public struct SpeechControlsState: Equatable, Sendable {
                   let voice = field(p["voice"], { $0 as? String }),
                   let rate = field(p["rate"], { $0 as? String }) else { return nil }
             let latency = (p["last_first_audio_ms"] as? NSNumber)?.doubleValue
+            let measured = p["last_first_audio"] as? [String: Any]
+            let engineName = measured?["engine"] as? String
+            let origin = measured?["origin"] as? String
+            let validMeasurement = ["edge-tts", "xtts-v2", "f5-tts-mlx", "qwen3-tts"].contains(engineName ?? "")
+                && ["preview", "speak"].contains(origin ?? "")
             profiles[kind] = Profile(engine: engine, voice: voice, rate: rate,
-                                     firstAudioMS: latency.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil })
+                                     firstAudioMS: latency.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil },
+                                     measuredEngine: validMeasurement ? engineName : nil,
+                                     measurementOrigin: validMeasurement ? origin : nil,
+                                     measurementFallback: measured?["fallback"] as? Bool ?? false)
         }
         self.profiles = profiles
         shortLimit = limit
@@ -66,6 +84,7 @@ public struct SpeechControlsState: Equatable, Sendable {
             return Voice(engine: engine, voice: voice)
         }
         cloneRunning = daemon == "up"
+        previewActive = controls["preview_active"] as? Bool
     }
 
     public func voices(for engine: String) -> [String] { availableVoices.filter { $0.engine == engine }.map(\.voice) }

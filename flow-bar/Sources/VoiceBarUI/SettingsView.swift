@@ -424,6 +424,7 @@ public struct SettingsView: View {
     public let onSelectResidency: ((VoiceModelResidency) -> Void)?
     public let speechControls: () -> SpeechControlsState?
     public let speechConnected: () -> Bool
+    public let speechBusyReason: () -> String?
     public let speechPending: () -> [String: SpeechValue]
     public let speechNotice: () -> String?
     public let onChangeSpeech: ((String, SpeechValue) -> Void)?
@@ -563,6 +564,7 @@ public struct SettingsView: View {
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
         speechControls: @escaping () -> SpeechControlsState? = { nil },
         speechConnected: @escaping () -> Bool = { false },
+        speechBusyReason: @escaping () -> String? = { nil },
         speechPending: @escaping () -> [String: SpeechValue] = { [:] },
         speechNotice: @escaping () -> String? = { nil },
         onChangeSpeech: ((String, SpeechValue) -> Void)? = nil,
@@ -667,6 +669,7 @@ public struct SettingsView: View {
         self.onSelectResidency = onSelectResidency
         self.speechControls = speechControls
         self.speechConnected = speechConnected
+        self.speechBusyReason = speechBusyReason
         self.speechPending = speechPending
         self.speechNotice = speechNotice
         self.onChangeSpeech = onChangeSpeech
@@ -777,7 +780,7 @@ public struct SettingsView: View {
             case .speech:
                 settingsPage(title: "Speech") {
                     SpeechSettingsView(controls: speechControls(), connected: speechConnected(),
-                                       busy: modelsStatus().isBusy, pending: speechPending(), notice: speechNotice(),
+                                       busy: speechBusyReason() != nil, busyReason: speechBusyReason(), pending: speechPending(), notice: speechNotice(),
                                        onChange: onChangeSpeech, onSelectEngine: onSelectSpeechEngine, onPreview: onPreviewSpeech)
                         .onAppear { onRefreshModelsStatus() }
                 }

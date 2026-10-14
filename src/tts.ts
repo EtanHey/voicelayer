@@ -1505,6 +1505,7 @@ export async function speak(
     console.error(`[voicelayer] ${warning}`);
     resolved = {voice: TTS_DEFAULTS.voice, engine: "edge-tts", warning};
   }
+  const requestedClone = profile.engine === "clone" || resolved.engine === "cloned";
   const cloneRate = options?.rate ?? profile.rate;
   const cloneOptions = () => ({...options, rate: cloneRate});
   let audioEngine = "edge-tts";
@@ -1518,7 +1519,8 @@ export async function speak(
       if (!firstAudio) {
         firstAudio = true;
         const ms = Math.max(0, startedAt - receivedAt);
-        recordFirstAudio(profile.kind, ms);
+        recordFirstAudio(profile.kind, ms, {engine: audioEngine,
+          origin: options?.measurementOrigin ?? "speak", fallback: requestedClone && audioEngine === "edge-tts"});
         console.error(`[tts] first_audio_ms=${ms} profile=${profile.kind} engine=${audioEngine} voice=${audioVoice} chars=${chars}`);
       }
       onPlaybackStart?.(startedAt);

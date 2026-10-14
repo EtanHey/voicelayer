@@ -99,3 +99,16 @@ standalone engine change or overwrites the rate during an engine switch. Both
 pickers wait for the matching acknowledgment; rejection keeps the daemon's prior
 pair. `engine.source: "environment"` is locked by `QA_VOICE_TTS_VOICE`, just like
 the voice field. An engine without available voices cannot be selected.
+
+The first-sound readout describes the last successful speech request (or Preview)
+from request receipt to player start, including synthesis and queue wait.
+`last_first_audio_ms` remains compatible; additive `last_first_audio` metadata
+contains the actual `engine`, `origin: "preview" | "speak"`, and `fallback` flag.
+The UI names the producing engine category rather than assuming the configured
+engine played. Without attribution it says “Not measured yet. Press Preview.”
+
+`tts_controls.preview_active` stays true throughout preview synthesis/playback
+and becomes false when its reservation is released. A client confirmation timeout
+keeps Preview disabled until its matching late ack or explicit idle daemon health.
+Health refreshes update observed state without replacing the Settings root view;
+malformed or absent Speech controls retain the last successfully parsed snapshot.

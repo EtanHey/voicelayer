@@ -7,7 +7,8 @@ final class SpeechSettingsTests: XCTestCase {
             ["source": source, "raw": source == "default" ? NSNull() : value, "effective": value]
         }
         let profile: [String: Any] = ["engine": field("edge"), "voice": field("en-US-JennyNeural"),
-            "rate": field(rate, source: rateSource), "last_first_audio_ms": 800]
+            "rate": field(rate, source: rateSource), "last_first_audio_ms": 800,
+            "last_first_audio": ["engine": "edge-tts", "origin": "speak", "fallback": false]]
         return ["profiles": ["short": profile, "long": profile], "short_limit_chars": field(400),
                 "clone_daemon": "down", "available_voices": [["engine": "edge", "voice": "en-US-JennyNeural"],
                                                             ["engine": "clone", "voice": "theo-c4"]]]
@@ -17,7 +18,7 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertEqual(state.profiles[.short]?.rate.source, .environment)
         XCTAssertEqual(state.profiles[.short]?.rate.raw, .string("+10%"))
         XCTAssertEqual(state.voices(for: "clone"), ["theo-c4"])
-        XCTAssertEqual(state.profiles[.short]?.latencyLabel, "First audio: 0.8 s")
+        XCTAssertEqual(state.profiles[.short]?.latencyLabel, "Last speech: first sound after 0.8 s · Fast voice")
         XCTAssertEqual(state.lockReason(for: "short.rate"), "Set by QA_VOICE_TTS_RATE")
         XCTAssertTrue(SpeechSettingsView.fieldDisabled("short.rate", controls: state, pending: [:]))
         XCTAssertFalse(SpeechSettingsView.fieldDisabled("short.engine", controls: state, pending: [:]))
@@ -118,7 +119,7 @@ final class SpeechSettingsTests: XCTestCase {
     func testEngineEnvironmentLockRendersAndDisablesEngine() throws {
         var raw = Self.controls()
         var profiles = raw["profiles"] as! [String: [String: Any]]
-        profiles["short"]?["engine"] = ["source": "environment", "raw": "en-US-JennyNeural", "effective": "edge"]
+        profiles["short"]?["engine"] = ["source": "environment", "raw": "edge", "effective": "edge"]
         raw["profiles"] = profiles
         let controls = try XCTUnwrap(SpeechControlsState(controls: raw))
         XCTAssertEqual(controls.lockReason(for: "short.engine"), "Set by QA_VOICE_TTS_VOICE")
