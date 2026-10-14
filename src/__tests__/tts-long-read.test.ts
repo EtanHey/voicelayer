@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
+import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 import { runLongRead, type LongReadChunk, type LongReadDependencies } from "../tts/long-read";
 
 function deferred<T>() {
@@ -6,7 +7,7 @@ function deferred<T>() {
   const promise = new Promise<T>((r) => { resolve = r; });
   return { promise, resolve };
 }
-const tick = () => Bun.sleep(0);
+const tick = fixtureCheckpoint;
 const chunk = (i: number): LongReadChunk => ({ audioFile: `${i}.mp3`, durationMs: 1000, wordBoundaries: [] });
 
 function fixture() {
@@ -16,22 +17,23 @@ function fixture() {
   const playback = Array.from({ length: 3 }, () => deferred<any>());
   const started = Array.from({ length: 3 }, () => deferred<boolean>());
   let saved: any[] = [];
+  const synthesized = fixtureBarrier<number>(), played = fixtureBarrier<number>();
   const deps: LongReadDependencies = {
-    synthesize: (_text, i, signal) => { expect(signal).toBe(controller.signal); synths.push(i); return synthesis[i].promise; },
-    play: (_chunk, _text, info) => { plays.push(info.chunk_index); return { started: started[info.chunk_index].promise, exited: playback[info.chunk_index].promise }; },
+    synthesize: (_text, i, signal) => { expect(signal).toBe(controller.signal); synths.push(i); synthesized.push(i); return synthesis[i].promise; },
+    play: (_chunk, _text, info) => { plays.push(info.chunk_index); played.push(info.chunk_index); return { started: started[info.chunk_index].promise, exited: playback[info.chunk_index].promise }; },
     saveHistory: async (played) => { saved = [...played]; },
     dispose: (_chunk, i) => { disposed.push(i); },
   };
-  const done = () => runLongRead(["One.", "Two.", "Three."], "read-id", controller.signal, deps);
-  return { controller, synths, plays, disposed, synthesis, playback, started, done, saved: () => saved };
+  const done = (lookahead = 1) => runLongRead(["One.", "Two.", "Three."], "read-id", controller.signal, deps, lookahead);
+  return { controller, synths, plays, disposed, synthesis, playback, started, done, synthesized, played, saved: () => saved };
 }
 
 describe("long-read pipeline", () => {
-  it("starts chunk zero before synthesizing later chunks, with only one chunk of lookahead", async () => {
+  it("R1-5 synthesizes ahead as soon as a chunk is ready, before the player starts", async () => {
     const f = fixture(); const done = f.done();
     expect(f.synths).toEqual([0]);
     f.synthesis[0].resolve(chunk(0)); await tick();
-    expect(f.plays).toEqual([0]); expect(f.synths).toEqual([0]);
+    expect(f.plays).toEqual([0]); expect(f.synths).toEqual([0, 1]);
     f.started[0].resolve(true); await tick();
     expect(f.synths).toEqual([0, 1]);
     f.synthesis[1].resolve(chunk(1)); await tick();
@@ -44,6 +46,50 @@ describe("long-read pipeline", () => {
     await done;
     expect(f.plays).toEqual([0, 1, 2]); expect(f.saved()).toHaveLength(3);
     expect(f.disposed.sort()).toEqual([0, 1, 2]);
+  });
+
+  it("R1-5 1500ms synthesis is ready when 1000ms playback ends after 800ms preparation", async () => {
+    jest.useFakeTimers();
+    let done: Promise<void> | undefined;
+    try {
+      const plays: number[] = [];
+      let nextReady = false;
+      done = runLongRead(["One.", "Two."], "slow-read", new AbortController().signal, {
+        synthesize: (_text, index) => index === 0 ? Promise.resolve(chunk(0)) :
+          new Promise((resolve) => setTimeout(() => { nextReady = true; resolve(chunk(index)); }, 1500)),
+        play: (_chunk, _text, info) => {
+          plays.push(info.chunk_index);
+          const started = info.chunk_index === 0 ?
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 800)) : Promise.resolve(true);
+          const exited = new Promise<{ status: "completed"; stopped_at_ms: number }>((resolve) =>
+            setTimeout(() => resolve({ status: "completed", stopped_at_ms: 1000 }), info.chunk_index === 0 ? 1800 : 1000));
+          return { started, exited };
+        },
+        saveHistory: async () => {}, dispose: () => {},
+      });
+      await fixtureCheckpoint();
+      jest.advanceTimersByTime(800); await fixtureCheckpoint();
+      expect(plays).toEqual([0]);
+      jest.advanceTimersByTime(700); await fixtureCheckpoint();
+      expect(nextReady).toBe(true);
+      jest.advanceTimersByTime(300); await fixtureCheckpoint();
+      expect(plays).toEqual([0, 1]);
+      jest.advanceTimersByTime(1000); await done;
+    } finally {
+      // Reap fake work even on RED: promise continuations can schedule the next timer.
+      for (let i = 0; i < 3; i++) { jest.advanceTimersByTime(10000); await fixtureCheckpoint(); }
+      await done;
+      jest.useRealTimers();
+    }
+  });
+
+  it("R1-5 clone can fill two chunks ahead while the first player is preparing", async () => {
+    const f = fixture(); const done = f.done(2);
+    f.synthesis[0].resolve(chunk(0)); await tick(); f.synthesis[1].resolve(chunk(1)); await tick();
+    expect(f.synths).toEqual([0, 1, 2]); expect(f.plays).toEqual([0]);
+    f.synthesis[2].resolve(chunk(2)); f.started[0].resolve(true); f.playback[0].resolve({ status: "completed", stopped_at_ms: 1000 });
+    await f.played.at(1); f.started[1].resolve(true); f.playback[1].resolve({ status: "completed", stopped_at_ms: 1000 });
+    await f.played.at(2); f.started[2].resolve(true); f.playback[2].resolve({ status: "completed", stopped_at_ms: 1000 }); await done;
   });
 
   it("stop during chunk-one synthesis prevents every later playback even when synthesis ignores abort", async () => {
@@ -62,9 +108,9 @@ describe("long-read pipeline", () => {
     await done; expect(f.plays).toEqual([]); expect(f.saved()).toEqual([]); expect(f.disposed).toEqual([0]);
   });
 
-  it("a player refusal ends the pipeline without synthesizing ahead", async () => {
+  it("a player refusal disposes bounded lookahead without playing it", async () => {
     const f = fixture(); const done = f.done(); f.synthesis[0].resolve(chunk(0)); await tick();
-    f.started[0].resolve(false); f.playback[0].resolve({ status: "failed", stopped_at_ms: 0 });
-    await done; expect(f.synths).toEqual([0]); expect(f.saved()).toEqual([]);
+    f.synthesis[1].resolve(chunk(1)); f.started[0].resolve(false); f.playback[0].resolve({ status: "failed", stopped_at_ms: 0 });
+    await done; expect(f.synths).toEqual([0, 1]); expect(f.plays).toEqual([0]); expect(f.saved()).toEqual([]);
   });
 });
