@@ -1467,7 +1467,7 @@ export function stopPlayback(playbackElapsedMs?: number): boolean {
   return hadLongRead || stopped;
 }
 
-export interface LongReadProfile { engine: "edge" | "clone"; voice: string; rate: string }
+export interface LongReadProfile { engine: "edge" | "clone"; voice: string; rate: string; fallbackVoice?: string }
 export interface LongReadHandle { id: string; done: Promise<void> }
 let activeLongRead: (LongReadHandle & { controller: AbortController }) | undefined;
 const cancelledLongReadTeardowns = new Set<Promise<void>>();
@@ -1493,10 +1493,23 @@ function cancelLongRead(): boolean {
   return true;
 }
 
-/** PR A integration seam: replace this body with resolveSpeakProfile(kind, text). */
-export function resolveLongReadProfile(_kind: "auto" | "short" | "long", _text: string): LongReadProfile {
-  const resolved = resolveVoice();
-  return { engine: resolved.engine === "cloned" ? "clone" : "edge", voice: resolved.voice, rate: DEFAULT_RATE };
+/** Shared saved-profile and legacy environment precedence with voice_speak. */
+export function resolveLongReadProfile(kind: "auto" | "short" | "long", text: string): LongReadProfile {
+  const profile = resolveSpeakProfile(kind, text);
+  let resolved: ReturnType<typeof resolveVoice>;
+  try {
+    resolved = resolveVoice(profile.voice, profile.engineSource === "default" ? undefined : profile.engine);
+  } catch (error) {
+    if (!(error instanceof VoiceProfileUnavailableError) || requireClonedVoiceEnabled()) throw error;
+    console.error(`[voicelayer] Cloned voice "${profile.voice}" is missing — falling back to edge-tts (${TTS_DEFAULTS.voice})`);
+    return { engine: "edge", voice: TTS_DEFAULTS.voice, rate: defaultRate() };
+  }
+  if (requireClonedVoiceEnabled() && resolved.engine !== "cloned") {
+    throw new VoiceProfileUnavailableError(profile.voice, "missing-profile");
+  }
+  if (resolved.warning) console.error(`[voicelayer] ${resolved.warning}`);
+  return { engine: resolved.engine === "cloned" ? "clone" : "edge", voice: resolved.voice,
+    rate: profile.rate, fallbackVoice: resolved.fallbackVoice };
 }
 
 export function speakText(text: string, kind: "auto" | "short" | "long" = "auto"): LongReadHandle {
@@ -1518,6 +1531,9 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
   const handle = { id, controller, done: Promise.resolve() };
   activeLongRead = handle;
   const signal = controller.signal;
+  const requireClone = requireClonedVoiceEnabled();
+  const edgeFallbackRate = defaultRate();
+  const chunkVoices = new Map<string, string>();
   // Swift routes Escape only in active modes. Actual playback resets this clock/text.
   broadcast({ type: "state", state: "speaking", text: "Preparing speech…", voice: profile.voice,
     long_read: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0, preparing: true } });
@@ -1530,21 +1546,36 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
         const audioFile = ttsFilePath(process.pid, ttsCounter++);
         const spoken = applyPronunciation(displayChunk);
         try {
-          if (profile.engine === "edge") {
-            const chunk = await synthesizeEdgeChunk(spoken, profile.voice, profile.rate, audioFile,
+          const synthesizeEdge = async (voice: string, rate: string) => {
+            const chunk = await synthesizeEdgeChunk(spoken, voice, rate, audioFile,
               new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal);
             chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, spoken, chunk.wordBoundaries);
+            chunkVoices.set(audioFile, voice);
             return chunk;
+          };
+          if (profile.engine === "edge") {
+            return await synthesizeEdge(profile.voice, profile.rate);
           }
           const audio = await synthesizeCloned(spoken, profile.voice, signal);
           signal.throwIfAborted();
-          if (!audio) throw new Error(`Cloned voice unavailable: ${profile.voice}`);
+          if (!audio) {
+            if (requireClone) throw new VoiceProfileUnavailableError(profile.voice, "synthesis-failed");
+            const voice = resolveVoice(profile.fallbackVoice || loadProfile(profile.voice)?.fallback || defaultVoice(), "edge").voice;
+            console.error(`[voicelayer] Cloned voice "${profile.voice}" unavailable — falling back to edge-tts (${voice})`);
+            return await synthesizeEdge(voice, edgeFallbackRate);
+          }
+          chunkVoices.set(audioFile, profile.voice);
           writeFileSync(audioFile, audio);
-          const speed = 1 + Number.parseFloat(profile.rate) / 100;
-          if (Number.isFinite(speed) && speed !== 1 && speed >= 0.5 && speed <= 2) {
+          const speed = Math.max(0.01, 1 + Number.parseFloat(profile.rate) / 100);
+          if (Number.isFinite(speed) && speed !== 1) {
+            const filters: string[] = [];
+            let remaining = speed;
+            while (remaining < 0.5) { filters.push("atempo=0.5"); remaining /= 0.5; }
+            while (remaining > 2) { filters.push("atempo=2"); remaining /= 2; }
+            filters.push(`atempo=${remaining}`);
             const adjusted = audioFile.replace(".mp3", ".rate.mp3");
             try {
-              await runAudioCommand(["ffmpeg", "-nostdin", "-y", "-i", audioFile, "-af", `atempo=${speed}`, adjusted], signal);
+              await runAudioCommand(["ffmpeg", "-nostdin", "-y", "-i", audioFile, "-af", filters.join(","), adjusted], signal);
               copyFileSync(adjusted, audioFile);
             } finally { try { unlinkSync(adjusted); } catch {} }
           }
@@ -1564,7 +1595,7 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
         let resolveStarted!: (value: boolean) => void;
         const start = new Promise<boolean>((resolve) => { resolveStarted = resolve; });
         const playback = playAudioNonBlocking(chunk.audioFile, {
-          text, voice: profile.voice, durationMs: chunk.durationMs, longRead: info,
+          text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs, longRead: info,
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
           onStarted: () => { started = true; resolveStarted(true); },
           onCompleted: () => { if (!started) resolveStarted(false); },
@@ -1575,13 +1606,14 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
         const combined = ttsFilePath(process.pid, ttsCounter++);
         try {
           await assembleLongReadHistory(played, combined);
-          addToHistory(played.map((item) => item.text).join(" "), combined, profile.voice);
+          addToHistory(played.map((item) => item.text).join(" "), combined,
+            chunkVoices.get(played[0]?.chunk.audioFile) ?? profile.voice);
         } catch (error) {
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);
           throw error;
         } finally { try { unlinkSync(combined); } catch {} }
       },
-      dispose: (chunk) => { try { unlinkSync(chunk.audioFile); } catch {} },
+      dispose: (chunk) => { chunkVoices.delete(chunk.audioFile); try { unlinkSync(chunk.audioFile); } catch {} },
     }, profile.engine === "clone" ? 2 : 1);
   };
   // Preserve stopped audio: finish its history/cleanup before a replacement starts.
