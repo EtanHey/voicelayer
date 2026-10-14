@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.42] - 2026-10-14
+
+### Added
+- Speech settings with separate short-reply and long-read voice profiles, preview controls, and a first-sound latency readout.
+- `voicelayer speak` for text, piped input, Markdown and files, with profile selection, optional waiting, and `--stop`.
+- Option+F5 reads the selected text aloud; press it again to stop. Secure fields are excluded.
+- Click a teleprompter word or drag the scrub bar to revisit a spoken passage.
+
+### Changed
+- Long reads synthesize and play in chunks, with shared cancellation and playback controls across VoiceBar, MCP and CLI.
+- Settings now appear in this order: General, Transcription, Dictionary, Speech, History. Models is renamed Transcription; clicking sidebar status opens General.
+
+### Fixed
+- Preserve seek position and interruption handling across playback controls.
+- Reconcile Speech profile selection, preview status and first-sound reporting.
+- Package long-read audio helpers and provide audio tooling in CI.
+
+Includes mission PRs #302–#315.
+
 ## [2.2.7] - 2026-08-20
 
 ### Fixed
