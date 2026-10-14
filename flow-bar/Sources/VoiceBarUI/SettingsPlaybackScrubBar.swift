@@ -83,23 +83,22 @@ struct SettingsPlaybackScrubBar: View {
         let shown = SettingsAudioPlaybackPosition(currentTime: shownTime, duration: position.duration)
 
         return HStack(spacing: 8) {
-            if !isTeleprompter || allowsSeeking || position.duration == 0 {
-                Text(SettingsAudioPlaybackPosition.clockLabel(shown.currentTime))
-                    .font(isTeleprompter ? .system(size: 10).monospacedDigit() : .caption.monospacedDigit())
-                    .lineLimit(1)
-                    .frame(width: isTeleprompter ? max(42, CGFloat(SettingsAudioPlaybackPosition.clockLabel(shown.currentTime).count) * 7) : nil, alignment: .trailing)
-                    .frame(minWidth: 34, alignment: .trailing)
-            }
+            Text(SettingsAudioPlaybackPosition.clockLabel(shown.currentTime))
+                .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
+                .lineLimit(1)
+                .frame(width: isTeleprompter ? 42 : nil, alignment: .trailing)
+                .frame(minWidth: 34, alignment: .trailing)
+                .opacity(isTeleprompter && !allowsSeeking && position.duration > 0 ? 0 : 1)
             track(shown)
-            if !isTeleprompter || allowsSeeking || position.duration == 0 {
-                Text(SettingsAudioPlaybackPosition.clockLabel(shown.duration) + (isGrowing ? " so far…" : ""))
-                    .font(isTeleprompter ? .system(size: 10).monospacedDigit() : .caption.monospacedDigit())
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(minWidth: 34, alignment: .leading)
-            }
+            Text(SettingsAudioPlaybackPosition.clockLabel(shown.duration) + (isGrowing ? " so far…" : ""))
+                .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(width: isTeleprompter ? 90 : nil, alignment: .leading)
+                .frame(minWidth: 34, alignment: .leading)
+                .opacity(isTeleprompter && !allowsSeeking && position.duration > 0 ? 0 : 1)
         }
-        .font(isTeleprompter ? .system(size: 10).monospacedDigit() : .caption.monospacedDigit())
+        .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
         .foregroundStyle(isTeleprompter ? Color(red: 154/255, green: 154/255, blue: 163/255) : Color.secondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback position, \(accessibilityNoun)")
@@ -110,7 +109,7 @@ struct SettingsPlaybackScrubBar: View {
         GeometryReader { geometry in
             let width = max(geometry.size.width, 1)
             // Reserve a dashed, explicitly unknown tail. This is not an estimated total duration.
-            let availableWidth = isGrowing ? width * 0.75 : width
+            let availableWidth = isGrowing && allowsSeeking ? width * 0.75 : width
             let knobX = CGFloat(position.fraction) * availableWidth
             let diameter = drag.fraction == nil ? Self.knobDiameter : 16
 
@@ -118,20 +117,21 @@ struct SettingsPlaybackScrubBar: View {
                 Capsule()
                     .fill(Color(nsColor: .quaternaryLabelColor))
                     .frame(width: availableWidth, height: allowsSeeking ? Self.trackHeight : 2)
-                Capsule()
-                    .fill(isTeleprompter
-                        ? AnyShapeStyle(LinearGradient(colors: [Color(red: 157/255, green: 184/255, blue: 1), Color(red: 92/255, green: 124/255, blue: 1)], startPoint: .leading, endPoint: .trailing))
-                        : AnyShapeStyle(Color.accentColor))
-                    .frame(width: knobX, height: allowsSeeking ? Self.trackHeight : 2)
-                    .opacity(allowsSeeking ? 1 : 0.35)
-                if isGrowing {
+                if allowsSeeking {
+                    Capsule()
+                        .fill(isTeleprompter
+                            ? AnyShapeStyle(LinearGradient(colors: [Color(red: 157/255, green: 184/255, blue: 1), Color(red: 92/255, green: 124/255, blue: 1)], startPoint: .leading, endPoint: .trailing))
+                            : AnyShapeStyle(Color.accentColor))
+                        .frame(width: knobX, height: Self.trackHeight)
+                }
+                if isGrowing && allowsSeeking {
                     Path { path in
                         path.move(to: CGPoint(x: availableWidth + 4, y: 12))
                         path.addLine(to: CGPoint(x: width, y: 12))
                     }
                     .stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
                 }
-                if allowsSeeking && (!isGrowing || drag.fraction != nil) {
+                if allowsSeeking {
                     Circle()
                         .fill(Color.white.opacity(isTeleprompter ? 0.75 : 1))
                         .overlay(Circle().stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
@@ -141,7 +141,7 @@ struct SettingsPlaybackScrubBar: View {
                 }
                 if drag.fraction != nil {
                     Text(SettingsAudioPlaybackPosition.clockLabel(position.currentTime))
-                        .font(.system(size: 10).monospacedDigit())
+                        .font(.system(size: 10, design: .monospaced))
                         .padding(3)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
                         .offset(x: min(max(knobX - 18, 0), width - 36), y: -19)

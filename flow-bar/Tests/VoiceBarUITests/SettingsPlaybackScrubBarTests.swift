@@ -77,6 +77,21 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
         XCTAssertGreaterThan(colorDistance(earlyMid, lateMid), 0.2)
     }
 
+    func testCloneTrackIsUniformAcrossPlaybackPositions() throws {
+        func bitmap(at time: Double) throws -> NSBitmapImageRep {
+            try render(SettingsPlaybackScrubBar(position: { SettingsAudioPlaybackPosition(currentTime: time, duration: 100) },
+                seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: false,
+                allowsSeeking: false, isTeleprompter: true).frame(width: 400, height: 24),
+                size: CGSize(width: 400, height: 24), appearance: NSAppearance(named: .darkAqua))
+        }
+        let early = try bitmap(at: 10)
+        let late = try bitmap(at: 90)
+        let midX = early.pixelsWide / 2
+        let midY = early.pixelsHigh / 2
+        XCTAssertLessThan(colorDistance(try XCTUnwrap(early.colorAt(x: midX, y: midY)),
+            try XCTUnwrap(late.colorAt(x: midX, y: midY))), 0.01, "untimed track must have no moving fill")
+    }
+
     func testTheBarIsMountedOnlyUnderThePlayingPart() throws {
         let source = try source(named: "SettingsView.swift")
 
