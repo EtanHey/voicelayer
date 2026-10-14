@@ -104,7 +104,7 @@ final class SettingsPlaybackScrubFocusTests: XCTestCase {
         )
 
         XCTAssertTrue(source.contains("""
-                .focusable()
+                .focusable(allowsSeeking)
                 .focused($isFocused)
                 .focusEffectDisabled(drag.hidesFocusRing)
                 .onChange(of: isFocused) { _, focused in drag.focusChanged(to: focused) }
@@ -115,9 +115,9 @@ final class SettingsPlaybackScrubFocusTests: XCTestCase {
                                 drag.changed(
         """))
         XCTAssertTrue(source.contains("""
-                .accessibilityAdjustableAction { direction in
-                    step(by: Self.seekDelta(for: direction))
-                }
+                        tickingContent.accessibilityAdjustableAction { direction in
+                            step(by: Self.seekDelta(for: direction))
+                        }
         """))
     }
 
