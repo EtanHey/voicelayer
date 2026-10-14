@@ -2,9 +2,17 @@
 import XCTest
 
 final class SpeakSelectionTests: XCTestCase {
+    func testClipboardOwnershipAbortOffersRetryWithoutSpeaking() {
+        let state = VoiceState()
+        state.sendCommand = { _ in XCTFail("ownership abort must not speak") }
+        state.selectionTextCaptureHandler = { $0(.clipboardChanged) }
+        state.speakSelection()
+        XCTAssertEqual(state.confirmationText, "Couldn't read the selection, try again")
+    }
+
     func testSecondPressCancelsPendingCaptureAndAFreshPressCanCaptureAgain() {
         let state = VoiceState()
-        var completion: ((String?) -> Void)?
+        var completion: ((SelectionCaptureResult) -> Void)?
         var captures = 0
         var commands = 0
         state.sendCommand = { _ in commands += 1 }
@@ -12,12 +20,12 @@ final class SpeakSelectionTests: XCTestCase {
         state.speakSelection()
         state.speakSelection()
         XCTAssertEqual(captures, 1)
-        completion?("text from cancelled capture")
+        completion?(.completed("text from cancelled capture"))
         XCTAssertEqual(commands, 0)
         XCTAssertNil(state.confirmationText)
         state.speakSelection()
         XCTAssertEqual(captures, 2)
-        completion?("fresh selection")
+        completion?(.completed("fresh selection"))
         XCTAssertEqual(commands, 1)
     }
 
@@ -46,7 +54,7 @@ final class SpeakSelectionTests: XCTestCase {
         state.sendCommand = { _ in XCTFail("empty selection must not speak") }
         state.isCollapsed = true
         for selection: String? in [nil, "", " \n\t "] {
-            state.selectionTextCaptureHandler = { $0(selection) }
+            state.selectionTextCaptureHandler = { $0(.completed(selection)) }
             state.speakSelection()
             XCTAssertEqual(state.confirmationText, "No text selected")
             XCTAssertFalse(state.isCollapsed, "transient feedback must be visible from collapsed idle")
@@ -56,14 +64,14 @@ final class SpeakSelectionTests: XCTestCase {
 
     func testCaptureCompletionCannotInterruptNewDictation() {
         let state = VoiceState()
-        var completion: ((String?) -> Void)?
+        var completion: ((SelectionCaptureResult) -> Void)?
         var captures = 0
         state.sendCommand = { _ in XCTFail("stale capture must not speak over dictation") }
         state.selectionTextCaptureHandler = { captures += 1; completion = $0 }
         state.speakSelection()
         XCTAssertEqual(captures, 1)
         state.mode = .recording
-        completion?("selection")
+        completion?(.completed("selection"))
         XCTAssertEqual(state.mode, .recording)
     }
 }

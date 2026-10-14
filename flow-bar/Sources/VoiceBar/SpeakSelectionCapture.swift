@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import VoiceBarUI
 
 final class SpeakSelectionCapture {
     private static let captureQueue = DispatchQueue(label: "com.voicelayer.speak-selection", qos: .utility)
@@ -26,11 +27,11 @@ final class SpeakSelectionCapture {
         self.now = now
     }
 
-    func capture(completion: @escaping (String?) -> Void) {
+    func capture(completion: @escaping (SelectionCaptureResult) -> Void) {
         Self.captureQueue.async {
             // AX IPC can take multiple messaging timeouts. Never do it on the tap's run loop.
             if let text = self.readAXSelection(), !text.isEmpty {
-                Self.onMain { completion(text) }
+                Self.onMain { completion(.completed(text)) }
             } else {
                 // Keep AppKit pasteboard/item access serialized with the app's other clipboard users.
                 Self.onMain { self.captureUsingPasteboard(completion: completion) }
@@ -38,24 +39,24 @@ final class SpeakSelectionCapture {
         }
     }
 
-    private func captureUsingPasteboard(completion: @escaping (String?) -> Void) {
+    private func captureUsingPasteboard(completion: @escaping (SelectionCaptureResult) -> Void) {
         // Unlike the transcript-paste snapshot, keep dynamic and org.nspasteboard
         // types too. Fail closed if any advertised representation cannot be saved.
         let changeCount = pasteboard.changeCount
         guard let snapshot = snapshot(), pasteboard.changeCount == changeCount else {
-            completion(nil)
+            completion(.completed(nil))
             return
         }
         let deadline = now() + 0.4
         func finish(_ text: String?, expectedChangeCount: Int) {
             switch restore(snapshot, expectedChangeCount: expectedChangeCount) {
             case .restored:
-                completion(text)
+                completion(.completed(text))
             case .changed:
-                completion(nil) // A competing copy makes the captured text untrustworthy too.
+                completion(.clipboardChanged)
             case .failed:
                 NSLog("[VoiceBar] Selection capture could not restore the pasteboard")
-                completion(nil)
+                completion(.completed(nil))
             }
         }
         guard postCopy() else { finish(nil, expectedChangeCount: changeCount); return }

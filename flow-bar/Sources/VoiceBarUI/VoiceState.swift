@@ -25,6 +25,16 @@ public enum VoiceMode: String, CaseIterable {
     case disconnected
 }
 
+public enum SelectionCaptureResult: Equatable {
+    case completed(String?)
+    case clipboardChanged
+
+    public var text: String? {
+        if case let .completed(text) = self { return text }
+        return nil
+    }
+}
+
 public struct QueueItemState: Equatable {
     public var text: String
     public var voice: String
@@ -739,7 +749,7 @@ public final class VoiceState {
     public var sendCommand: (([String: Any]) -> Void)?
 
     /// Capture may perform background work; its completion must run on main.
-    public var selectionTextCaptureHandler: (@escaping (String?) -> Void) -> Void = { $0(nil) }
+    public var selectionTextCaptureHandler: (@escaping (SelectionCaptureResult) -> Void) -> Void = { $0(.completed(nil)) }
     private var selectionCaptureInFlight = false
     private var selectionCaptureCancelled = false
 
@@ -759,7 +769,7 @@ public final class VoiceState {
         }
         selectionCaptureInFlight = true
         selectionCaptureCancelled = false
-        selectionTextCaptureHandler { [weak self] text in
+        selectionTextCaptureHandler { [weak self] result in
             guard let self else { return }
             selectionCaptureInFlight = false
             guard !selectionCaptureCancelled else {
@@ -769,9 +779,10 @@ public final class VoiceState {
             // Capturing yields to the run loop. A new F5 session always wins.
             guard mode != .recording, mode != .transcribing, mode != .speaking,
                   mode != .disconnected, hotkeyPhase == .idle else { return }
-            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard let text = result.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 expandFromCollapse()
-                showConfirmation("No text selected")
+                showConfirmation(result == .clipboardChanged
+                    ? "Couldn't read the selection, try again" : "No text selected")
                 startCollapseTimer()
                 return
             }

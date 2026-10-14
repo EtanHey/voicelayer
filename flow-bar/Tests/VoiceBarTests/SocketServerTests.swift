@@ -13,7 +13,7 @@ final class SocketServerTests: XCTestCase {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }
         let selection = "  **שלום**\n```swift\nprint(\"hi\")\n```  "
-        fixture.state.selectionTextCaptureHandler = { $0(selection) }
+        fixture.state.selectionTextCaptureHandler = { $0(.completed(selection)) }
         fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
         fixture.state.speakSelection()
         let line = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))

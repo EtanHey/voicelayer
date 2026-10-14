@@ -1,5 +1,6 @@
 import AppKit
 @testable import VoiceBar
+import VoiceBarUI
 import XCTest
 
 final class SpeakSelectionCaptureTests: XCTestCase {
@@ -17,7 +18,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
             board.setString("newer user copy", forType: .string)
             return text
         })
-        captureAndWait(capture) { XCTAssertNil($0, "a read spanning two owners is not trustworthy") }
+        captureAndWait(capture, expectedResult: .clipboardChanged) { XCTAssertNil($0, "a read spanning two owners is not trustworthy") }
         XCTAssertEqual(board.string(forType: .string), "newer user copy")
     }
 
@@ -32,7 +33,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
             board.setString("foreign app copy", forType: .string)
             return true
         })
-        captureAndWait(capture) { XCTAssertNil($0) }
+        captureAndWait(capture, expectedResult: .clipboardChanged) { XCTAssertNil($0) }
         XCTAssertEqual(board.string(forType: .string), "foreign app copy")
     }
 
@@ -52,7 +53,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         }, pasteboard: board)
         capture.capture {
             XCTAssertTrue(Thread.isMainThread, "VoiceState completion must run on main")
-            XCTAssertEqual($0, "selection")
+            XCTAssertEqual($0.text, "selection")
             finished.fulfill()
         }
         wait(for: [readerEntered, finished], timeout: 2)
@@ -102,7 +103,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
             capture.capture { selection in
                 completions += 1
                 signalReady()
-                XCTAssertEqual(selection, ["text", "emptyAX"].contains(outcome) ? "raw **selection**" : nil)
+                XCTAssertEqual(selection.text, ["text", "emptyAX"].contains(outcome) ? "raw **selection**" : nil)
                 XCTAssertEqual(self.contents(board), original, "restore must precede completion: \(outcome)")
             }
             wait(for: [ready], timeout: 2)
@@ -128,7 +129,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         let polling = expectation(description: "polling yielded")
         let capture = SpeakSelectionCapture(readAXSelection: { nil }, pasteboard: board, postCopy: { true },
                                             schedule: { jobs.append(($0, $1)); polling.fulfill() }, now: { time })
-        capture.capture { result = $0 }
+        capture.capture { result = $0.text }
         wait(for: [polling], timeout: 2)
         XCTAssertNil(result)
         XCTAssertEqual(jobs.count, 1, "polling must yield rather than block the hotkey/UI run loop")
@@ -155,11 +156,13 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         XCTAssertEqual(contents(board), original)
     }
 
-    private func captureAndWait(_ capture: SpeakSelectionCapture, assertion: @escaping (String?) -> Void) {
+    private func captureAndWait(_ capture: SpeakSelectionCapture, expectedResult: SelectionCaptureResult? = nil,
+                                assertion: @escaping (String?) -> Void) {
         let finished = expectation(description: "capture finished")
         capture.capture {
             XCTAssertTrue(Thread.isMainThread)
-            assertion($0)
+            if let expectedResult { XCTAssertEqual($0, expectedResult) }
+            assertion($0.text)
             finished.fulfill()
         }
         wait(for: [finished], timeout: 2)
