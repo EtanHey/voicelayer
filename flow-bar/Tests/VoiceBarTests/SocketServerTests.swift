@@ -159,6 +159,21 @@ final class SocketServerTests: XCTestCase {
         XCTAssertNil(try readLine(from: passiveClient, timeout: 0.2))
     }
 
+    func testSeekTargetsActivePassivePlaybackOwnerThenFallsBackAfterIdle() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        try writeLine(#"{"type":"state","state":"speaking","text":"Legacy speech"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 5))
+        fixture.server.sendCommandToOwner(command: ["cmd": "seek", "offset_ms": 250])
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1)).contains(#""cmd":"seek""#))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.1))
+        try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 5))
+        fixture.server.sendCommandToOwner(command: ["cmd": "seek", "offset_ms": 250])
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"seek""#))
+        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.1))
+    }
+
     func testStopInterruptReachesLegacyPlaybackClientAndCommandOwner() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }

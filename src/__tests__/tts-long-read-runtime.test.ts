@@ -7,7 +7,7 @@ import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
-import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback } from "../tts";
+import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback } from "../tts";
 import { handleSocketCommand } from "../socket-handlers";
 import { TTS_HISTORY_FILE } from "../paths";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
@@ -46,6 +46,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     // Only platform probing uses spawnSync; all synth/play/decode/conversion spawns are fakes.
     Bun.spawnSync = ((argv: string[]) => ({ exitCode: argv[0] === "ffprobe" ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) })) as any;
     Bun.spawn = ((argv: string[]) => {
+      if (argv[0] === "which") return { pid: 70000, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg"]).stream(), kill: () => {} };
       if (argv.some((arg) => arg.startsWith("--text="))) {
         const media = argv.find((arg) => arg.startsWith("--write-media="))!.split("=").slice(1).join("=");
         const metadata = argv.find((arg) => arg.startsWith("--write-metadata="))!.split("=").slice(1).join("=");
@@ -55,6 +56,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
       }
       if (argv[0] === "ffmpeg") {
+        if (argv.includes("-ss")) writeFileSync(argv.at(-1)!, "trimmed audio");
         if (argv.includes("concat")) {
           const playlist = argv[argv.indexOf("-i") + 1];
           historyInputs.push(readFileSync(playlist, "utf8").split("\n"));
@@ -209,6 +211,31 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(answer.isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
     expect(synths[1].killed).toBe(true); expect(players[0].killed).toBe(true);
     expect(players).toHaveLength(2);
+  });
+
+  it("publishes all synthesized duration at player start after held preparation", async () => {
+    holdDecoder = true; const h = start();
+    const decoder = await decoderBarrier.at(0); await synthBarrier.at(1); await fixtureCheckpoint();
+    holdDecoder = false; decoder.exit.resolve(0); await playerBarrier.at(0);
+    expect(events.find(e => e.state === "speaking" && !e.long_read?.preparing).duration_ms).toBe(2000);
+    stopPlayback(200); await h.done;
+  });
+
+  it("seeks across retained chunks through the real queue and converts global stop time", async () => {
+    const h = start(); await playerBarrier.at(0);
+    players[0].exit.resolve(0); await playerBarrier.at(1); await synthBarrier.at(2);
+    clockMs += 200;
+    expect(seekPlayback(250)).toMatchObject({ outcome: "accept", offset_ms: 250 });
+    await playerBarrier.at(2);
+    const back = events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1);
+    expect(back).toMatchObject({ playback_offset_ms: 250, long_read: { chunk_index: 0 } });
+    expect(back.duration_ms).toBeGreaterThanOrEqual(2000);
+    expect(synths.filter(item => item.argv.includes(synths[0].argv.find(arg => arg.startsWith("--text="))!))).toHaveLength(1);
+    players[2].exit.resolve(0); await playerBarrier.at(3);
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 1000, long_read: { chunk_index: 1 } });
+    stopPlayback(1250); await h.done;
+    expect(events.filter(e => e.type === "playback_outcome").at(-1).stopped_at_ms).toBe(250);
+    expect(seekPlayback(0).outcome).toBe("noop"); expect(players).toHaveLength(4);
   });
 
   it("streams edge chunks with local subtitles, global metadata, no lost text, and one history entry", async () => {

@@ -57,6 +57,26 @@ describe("long-read synthesis adapters", () => {
 });
 
 describe("long-read replay audio with real ffmpeg, no speaker", () => {
+  it("keeps exactly the heard ranges after a seek, checked against decoded signal energy", async () => {
+    const dir = mkdtempSync(join(TEST_TMP, "seek-history-"));
+    try {
+      const source = join(dir, "source.wav"), output = join(dir, "history.mp3");
+      await runAudioCommand(["ffmpeg", "-nostdin", "-y", "-f", "lavfi", "-i",
+        "aevalsrc=if(lt(t\\,0.5)\\,0\\,0.5*sin(2*PI*440*t)):s=16000:d=1", source]);
+      const chunk = { audioFile: source, durationMs: 1000, wordBoundaries: [] };
+      await assembleLongReadHistory([
+        { chunk, text: "tone tail", startMs: 500, playedMs: 200 },
+        { chunk, text: "silent prefix", playedMs: 200 },
+      ], output);
+      const pcm = Bun.spawnSync(["ffmpeg", "-v", "error", "-i", output, "-f", "f32le", "-ac", "1", "-ar", "16000", "pipe:1"]);
+      expect(pcm.exitCode).toBe(0);
+      const samples = new Float32Array(pcm.stdout.buffer, pcm.stdout.byteOffset, pcm.stdout.byteLength / 4);
+      const rms = (from: number, to: number) => Math.sqrt(samples.slice(from, to).reduce((sum, x) => sum + x*x, 0) / (to-from));
+      expect(samples.length / 16000).toBeCloseTo(0.4, 1);
+      expect(rms(400, 2400)).toBeGreaterThan(0.2);
+      expect(rms(4000, 6000)).toBeLessThan(0.01);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   it("concatenates full chunks and trims the stopped tail using an independent duration probe", async () => {
     const dir = mkdtempSync(join(TEST_TMP, "long-read-audio-"));
     try {
