@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, symlinkSync, lstatSync, statSync } from "fs";
 import { join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
 import { resolveSpeakProfile, setTTSSetting } from "../tts-settings";
@@ -101,4 +101,29 @@ test("R2 engine raw stays engine-valued under a voice env override", () => {
    for(const kind of ["short","long"] as const) expect(status.profiles[kind].engine).toEqual({source:"environment",raw:engine,effective:engine,locked:"Set by QA_VOICE_TTS_VOICE"});
   }
  } finally {profile.mockRestore();}
+});
+
+
+test("settings write never promotes a preexisting staging symlink", () => {
+ const e = env();
+ const substitute = join(dir, "substitute.json");
+ const stale = `${e.VOICELAYER_TTS_SETTINGS_PATH}.${process.pid}.tmp`;
+ writeFileSync(substitute, JSON.stringify({short_limit_chars:999}));
+ symlinkSync(substitute, stale);
+ setTTSSetting("short_limit_chars",123,e);
+ expect(lstatSync(e.VOICELAYER_TTS_SETTINGS_PATH).isSymbolicLink()).toBe(false);
+ expect(resolveSpeakProfile("auto","x".repeat(124),e).kind).toBe("long");
+ expect(JSON.parse(readFileSync(substitute,"utf8"))).toEqual({short_limit_chars:999});
+ expect(lstatSync(stale).isSymbolicLink()).toBe(true);
+ expect(statSync(e.VOICELAYER_TTS_SETTINGS_PATH).mode & 0o777).toBe(0o600);
+ expect(readdirSync(dir).sort()).toEqual(["settings.json", `settings.json.${process.pid}.tmp`, "substitute.json"].sort());
+});
+
+test("failed settings rename removes only its own staging directory", () => {
+ const e = env();
+ mkdirSync(e.VOICELAYER_TTS_SETTINGS_PATH);
+ writeFileSync(join(e.VOICELAYER_TTS_SETTINGS_PATH,"keep"),"original");
+ expect(()=>setTTSSetting("short_limit_chars",123,e)).toThrow();
+ expect(readFileSync(join(e.VOICELAYER_TTS_SETTINGS_PATH,"keep"),"utf8")).toBe("original");
+ expect(readdirSync(dir)).toEqual(["settings.json"]);
 });

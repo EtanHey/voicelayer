@@ -153,3 +153,15 @@ test("preview latency names the actual fallback engine at the first player spawn
  await speak("hello preview",{profile:"long",measurementOrigin:"preview"});await awaitCurrentPlayback();
  expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine:"edge-tts",origin:"preview",fallback:true});
 });
+
+test("explicit clone voice ignores saved edge rate but honors explicit and env rates",async()=>{
+ cloneFixture();writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{short:{engine:"edge",voice:"en-US-JennyNeural",rate:"+20%"}}}));
+ await speak("hello",{voice:"fixture",mode:"brief"});await awaitCurrentPlayback();
+ expect(argv.some(a=>a.includes("-af"))).toBe(false);
+ argv=[];
+ await speak("hello",{voice:"fixture",rate:"+30%"});await awaitCurrentPlayback();
+ expect(argv.find(a=>a.includes("-af"))).toContain("atempo=1.3");
+ argv=[];process.env.QA_VOICE_TTS_RATE="+40%";
+ await speak("hello",{voice:"fixture"});await awaitCurrentPlayback();
+ expect(argv.find(a=>a.includes("-af"))).toContain("atempo=1.4");
+});

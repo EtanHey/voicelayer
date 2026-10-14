@@ -1506,7 +1506,8 @@ export async function speak(
     resolved = {voice: TTS_DEFAULTS.voice, engine: "edge-tts", warning};
   }
   const requestedClone = profile.engine === "clone" || resolved.engine === "cloned";
-  const cloneRate = options?.rate ?? profile.rate;
+  const cloneRate = options?.rate ??
+    (profile.engine === "clone" || profile.rateSource === "environment" ? profile.rate : undefined);
   const cloneOptions = () => ({...options, rate: cloneRate});
   let audioEngine = "edge-tts";
   let audioVoice = resolved.voice;
