@@ -89,11 +89,21 @@ final class SettingsViewContractTests: XCTestCase {
     func testSettingsUsesFiveDestinationOrder() {
         XCTAssertEqual(
             SettingsTab.allCases,
-            [.general, .models, .speech, .dictionary, .history]
+            [.general, .transcription, .dictionary, .speech, .history]
         )
         XCTAssertEqual(SettingsTab.allCases.map(\.title), [
-            "General", "Models", "Speech", "Dictionary", "History",
+            "General", "Transcription", "Dictionary", "Speech", "History",
         ])
+    }
+
+    func testTranscriptionLabelsAndSymbol() throws {
+        XCTAssertEqual(SettingsTab.transcription.systemImage, "waveform")
+        XCTAssertTrue(try settingsViewSource().contains("settingsPage(title: \"Transcription\")"))
+        let modelSource = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift"), encoding: .utf8)
+        XCTAssertTrue(modelSource.contains("LabeledContent(\"Transcription model\")"))
+        XCTAssertFalse(modelSource.contains("LabeledContent(\"Speech model\")"))
     }
 
     func testSpeechURLRouting() {

@@ -46,8 +46,16 @@ struct SettingsNavigationShell<Detail: View>: View {
                 .listStyle(.sidebar)
 
                 Divider()
-                VoiceBarStatusFooter(presentation: footer)
-                    .padding(12)
+                Button {
+                    selection = .general
+                } label: {
+                    VoiceBarStatusFooter(presentation: footer)
+                        .padding(12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open General settings for permissions and setup. \(footer.status). \(footer.privacy)")
+                .help("Open General settings for permissions and setup")
             }
             .frame(width: 172)
 

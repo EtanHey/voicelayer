@@ -57,7 +57,7 @@ public struct ModelsSettingsView: View {
             }
 
             Section {
-                LabeledContent("Speech model") {
+                LabeledContent("Transcription model") {
                     Text(modelSummary)
                         .accessibilityIdentifier("models-configured-model")
                 }
