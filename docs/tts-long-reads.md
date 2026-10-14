@@ -67,11 +67,18 @@ read. `done` settles after history/cleanup; synthesis failures are published as 
 
 ## Profile wiring
 
-`src/tts.ts: resolveLongReadProfile(kind, text)` is the sole transitional settings seam.
-It currently resolves the existing default voice/rate; all three kinds use that default until
-PR A is integrated. Replace its body with `resolveSpeakProfile(kind, text)` after rebasing onto
-PR A. The socket calls `speakText(text, command.profile ?? "auto")`, which passes the result to
-`speakLongRead`. No profile file or short-limit policy is duplicated here.
+`src/tts.ts: resolveLongReadProfile(kind, text)` calls `resolveSpeakProfile(kind, text)` from
+`src/tts-settings.ts`. The socket calls `speakText(text, command.profile ?? "auto")`, which
+passes the selected saved engine, voice and rate to `speakLongRead`. Auto uses Short at or
+below the saved `short_limit_chars` and Long above it (400 characters by default). Settings
+are reread for every request, with legacy voice/rate environment overrides taking precedence.
+No profile file or short-limit policy is duplicated here.
+
+A disappeared clone falls back to the default edge voice; failed clone synthesis falls back
+to the clone's configured edge voice. Both log a warning. A saved clone rate applies to clone
+audio and does not replace the edge fallback's environment/default rate. A mandated clone
+(`QA_VOICE_TTS_REQUIRE_CLONE`) rejects a missing profile or publishes a synthesis error without
+downgrading. Actual playback and history label the voice that produced the audio.
 
 `src/tts/markdown-to-speech.ts` exports the pure `markdownToSpeech` function for socket/selection
 callers. It strips emphasis at word boundaries (preserving snake_case and dunder identifiers),
