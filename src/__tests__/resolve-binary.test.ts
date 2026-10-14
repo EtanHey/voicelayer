@@ -1,8 +1,9 @@
+import * as os from "node:os";
 /**
  * Tests for binary resolution in daemon/LaunchAgent context.
  */
 
-import { afterEach, describe, it, expect } from "bun:test";
+import { afterEach, beforeEach, describe, it, expect, spyOn } from "bun:test";
 import {
   __resetBinarySpawnForTests,
   __setBinarySpawnForTests,
@@ -11,6 +12,8 @@ import {
   resolveBinaryAsync,
   type BinarySpawnSync,
 } from "../resolve-binary";
+
+beforeEach(() => __resetBinarySpawnForTests());
 
 describe("initEnrichedPATH", () => {
   it("returns a non-empty string", () => {
@@ -191,4 +194,47 @@ describe("ffmpeg executable validation", () => {
     try { expect(await resolveBinaryAsync("ffmpeg", ["/working/ffmpeg"])).toBe("/working/ffmpeg"); }
     finally { Bun.spawn = original; }
   });
+});
+
+
+describe("media resolver review regressions", () => {
+  afterEach(() => __resetBinarySpawnForTests());
+  it("validates ffprobe and skips its EBADARCH PATH twin", () => {
+    const calls: string[][] = [];
+    __setBinarySpawnForTests(cmd => {
+      calls.push(cmd);
+      if (cmd[0] === "which") return {exitCode: 0, stdout: "/stale/ffprobe"};
+      if (cmd[0] === "/stale/ffprobe") throw Object.assign(new Error("Bad CPU type"), {code:"EBADARCH"});
+      return {exitCode: cmd[0] === "/working/ffprobe" && cmd[1] === "-version" ? 0 : 1};
+    });
+    expect(resolveBinary("ffprobe", ["/working/ffprobe"])).toBe("/working/ffprobe");
+    expect(calls).toContainEqual(["/working/ffprobe", "-version"]);
+  });
+  it("memoizes successful paths across sync and async calls without another spawn", async () => {
+    const calls: string[][] = [];
+    __setBinarySpawnForTests(cmd => {calls.push(cmd); return {exitCode:0, stdout:"/working/tool"};});
+    expect(resolveBinary("fixture-cache")).toBe("/working/tool");
+    const count = calls.length;
+    expect(resolveBinary("fixture-cache")).toBe("/working/tool");
+    expect(await resolveBinaryAsync("fixture-cache")).toBe("/working/tool");
+    expect(calls).toHaveLength(count);
+    __resetBinarySpawnForTests();
+    __setBinarySpawnForTests(cmd => {calls.push(cmd); return {exitCode:0, stdout:"/working/tool"};});
+    expect(resolveBinary("fixture-cache")).toBe("/working/tool");
+    expect(calls.length).toBeGreaterThan(count);
+  });
+});
+
+
+it("prefers native Homebrew media binaries on arm64 before PATH", async () => {
+  const platform = spyOn(os, "platform").mockReturnValue("darwin");
+  const arch = spyOn(os, "arch").mockReturnValue("arm64");
+  const calls: string[][] = [];
+  __setBinarySpawnForTests(cmd => {calls.push(cmd); return {exitCode:0};});
+  try {
+    expect(resolveBinary("ffprobe")).toBe("/opt/homebrew/bin/ffprobe");
+    expect(calls).toEqual([["/opt/homebrew/bin/ffprobe", "-version"]]);
+    expect(await resolveBinaryAsync("ffprobe")).toBe("/opt/homebrew/bin/ffprobe");
+    expect(calls).toHaveLength(1);
+  } finally { platform.mockRestore(); arch.mockRestore(); __resetBinarySpawnForTests(); }
 });

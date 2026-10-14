@@ -381,8 +381,10 @@ function inferBoundaryEndMs(wordBoundaries: WordBoundary[]): number {
 
 function probeAudioDurationMs(audioFile: string): number | null {
   try {
+    const ffprobe = resolveBinary("ffprobe");
+    if (!ffprobe) return null;
     const probe = Bun.spawnSync([
-      "ffprobe",
+      ffprobe,
       "-v",
       "error",
       "-show_entries",

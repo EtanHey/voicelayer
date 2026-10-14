@@ -42,12 +42,15 @@ describe("seek review regressions", () => {
     spies.push(spyOn(health, "synthesizeWithRetry").mockImplementation(async (_text, _voice, _rate, file) => {
       writeFileSync(file, "synthesized"); return { success: true, wordBoundaries: synthWords };
     }));
-    spies.push(spyOn(Bun, "spawnSync").mockImplementation(((argv: string[]) => ({ exitCode: argv[0] === "ffprobe" ? 0 : 1, stdout: Buffer.from("2\n"), stderr: Buffer.alloc(0) })) as any));
+    spies.push(spyOn(Bun, "spawnSync").mockImplementation(((argv: string[]) => {
+      if (argv[0] === "which" && argv[1] === "ffprobe") return {exitCode:0, stdout:Buffer.from("ffprobe"), stderr:Buffer.alloc(0)};
+      return ({ exitCode: argv[0] === "ffprobe" ? 0 : 1, stdout: Buffer.from("2\n"), stderr: Buffer.alloc(0) }); }) as any));
     let pid = 94000;
     spies.push(spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
       const exit = deferred<number>(); const child = { argv, exit, killed: false };
       const proc = { pid: ++pid, exited: exit.promise, stdout: new Blob(["/fake/ffmpeg"]).stream(), kill: () => { child.killed = true; exit.resolve(143); } };
-      if (argv[0] === "which" || argv[1] === "-version") exit.resolve(0);
+      if (argv[0] === "which") exit.resolve(0);
+      else if (argv[1] === "-version") exit.resolve(argv[0] === "/fake/ffmpeg" ? 0 : 1);
       else if (argv.includes("concat")) { writeFileSync(argv.at(-1)!, "history"); exit.resolve(0); }
       else if (argv.includes("-ss")) cuts.push(child);
       else players.push(child);
@@ -219,7 +222,7 @@ describe("ffmpeg candidate resolution", () => {
       argv.push(cmd); return { pid: 95000, stdout: new Blob([]).stream(), exited: Promise.resolve(cmd[0] === "which" ? 1 : cmd[1] === "-version" ? 0 : 8), kill: () => {} };
     }) as any); spies.push(spawn);
     expect(await resolveBinaryAsync("ffmpeg")).toBe("/opt/homebrew/bin/ffmpeg");
-    expect(argv[1]).toEqual(["/opt/homebrew/bin/ffmpeg", "-version"]);
+    expect(argv).toContainEqual(["/opt/homebrew/bin/ffmpeg", "-version"]);
     argv.length = 0; await resolveBinaryAsync("python3");
     expect(argv[1]).toEqual(["/opt/homebrew/bin/python3", "--version"]);
   });
@@ -227,6 +230,6 @@ describe("ffmpeg candidate resolution", () => {
     const argv: string[][] = [];
     __setBinarySpawnForTests(cmd => { argv.push(cmd); return { exitCode: cmd[0] === "which" ? 1 : cmd[1] === "-version" ? 0 : 8 }; });
     expect(resolveBinary("ffmpeg")).toBe("/opt/homebrew/bin/ffmpeg");
-    expect(argv[1]).toEqual(["/opt/homebrew/bin/ffmpeg", "-version"]);
+    expect(argv).toContainEqual(["/opt/homebrew/bin/ffmpeg", "-version"]);
   });
 });

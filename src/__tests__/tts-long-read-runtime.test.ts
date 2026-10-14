@@ -47,9 +47,11 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     spies.push(spyOn(socket, "broadcast").mockImplementation((event) => events.push(structuredClone(event))));
     spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
     // Only platform probing uses spawnSync; all synth/play/decode/conversion spawns are fakes.
-    Bun.spawnSync = ((argv: string[]) => ({ exitCode: argv[0] === "ffprobe" ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) })) as any;
+    Bun.spawnSync = ((argv: string[]) => {
+      if (argv[0] === "which" && argv[1] === "ffprobe") return {exitCode:0, stdout:Buffer.from("ffprobe"), stderr:Buffer.alloc(0)};
+      return ({ exitCode: argv[0] === "ffprobe" ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
     Bun.spawn = ((argv: string[]) => {
-      if (argv[1] === "-version") return {pid: 70001, exited: Promise.resolve(0), kill() {}};
+      if (argv[1] === "-version") return {pid: 70001, exited: Promise.resolve(argv[0] === "ffmpeg" ? 0 : 1), kill() {}};
       if (argv[0] === "which") return { pid: 70000, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg"]).stream(), kill: () => {} };
       if (argv.some((arg) => arg.startsWith("--text="))) {
         const media = argv.find((arg) => arg.startsWith("--write-media="))!.split("=").slice(1).join("=");
