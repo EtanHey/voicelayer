@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import * as os from "os";
 import { TEST_TMP } from "./setup/test-tmp";
-import { speak, awaitCurrentPlayback, stopPlayback, VoiceProfileUnavailableError } from "../tts";
+import { speak, speakText, awaitCurrentPlayback, stopPlayback, VoiceProfileUnavailableError } from "../tts";
 import * as recording from "../recording-state";
 import * as socket from "../socket-client";
 import * as qwen from "../tts/qwen3";
@@ -23,6 +23,7 @@ beforeEach(()=>{
    argv.push([...cmd]);
    const media=cmd.find(a=>a.startsWith("--write-media="))?.split("=").slice(1).join("=");
    if(media) writeFileSync(media,"fake mp3");
+   if(cmd[0]==="ffmpeg" && cmd.at(-1)?.endsWith(".mp3")) writeFileSync(cmd.at(-1)!,"converted audio");
    return {pid:98765,exited:Promise.resolve(0),stdout:new Blob([new Uint8Array([0,0])]).stream(),kill:()=>{}};
  }) as never));
  spies.push(spyOn(Bun,"spawnSync").mockImplementation(((cmd: string[])=>{argv.push([...cmd]); if(cmd[0]==="ffmpeg" && cmd.includes("-af")) writeFileSync(cmd.at(-1)!,"rate adjusted"); return {exitCode:0,stdout:Buffer.from("1.0"),stderr:Buffer.alloc(0)};}) as never));
@@ -164,4 +165,67 @@ test("explicit clone voice ignores saved edge rate but honors explicit and env r
  argv=[];process.env.QA_VOICE_TTS_RATE="+40%";
  await speak("hello",{voice:"fixture"});await awaitCurrentPlayback();
  expect(argv.find(a=>a.includes("-af"))).toContain("atempo=1.4");
+});
+
+// Exercise the streaming runtime, including its actual synthesis argv (not just the resolver).
+test("speak_text saved LONG profile selects edge engine, voice and rate",async()=>{
+ writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"edge",voice:"en-US-AriaNeural",rate:"+20%"}}}));
+ const clone=spyOn(qwen,"synthesizeCloned").mockResolvedValue(Buffer.from("audio"));spies.push(clone);
+ await speakText("A saved long profile.","long").done;
+ expect(synthArgs()).toEqual([["--voice=en-US-AriaNeural","--rate=+20%"]]);
+ expect(clone).not.toHaveBeenCalled();
+});
+test("speak_text AUTO uses SHORT at the saved threshold and LONG above it",async()=>{
+ writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({short_limit_chars:10,profiles:{short:{engine:"edge",voice:"en-US-GuyNeural",rate:"-10%"},long:{engine:"edge",voice:"en-US-AriaNeural",rate:"+20%"}}}));
+ await speakText("0123456789","auto").done;
+ await speakText("01234567890","auto").done;
+ expect(synthArgs()).toEqual([["--voice=en-US-GuyNeural","--rate=-10%"],["--voice=en-US-AriaNeural","--rate=+20%"]]);
+});
+test("speak_text rereads saved profiles and legacy environment overrides",async()=>{
+ writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"edge",voice:"en-US-AriaNeural",rate:"+20%"}}}));
+ await speakText("First read.","long").done;
+ writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"edge",voice:"en-US-GuyNeural",rate:"-10%"}}}));
+ await speakText("Second read.","long").done;
+ process.env.QA_VOICE_TTS_VOICE="en-US-AndrewNeural";process.env.QA_VOICE_TTS_RATE="+30%";
+ await speakText("Third read.","long").done;
+ expect(synthArgs()).toEqual([["--voice=en-US-AriaNeural","--rate=+20%"],["--voice=en-US-GuyNeural","--rate=-10%"],["--voice=en-US-AndrewNeural","--rate=+30%"]]);
+});
+test("speak_text saved LONG clone uses Qwen3 and applies its rate before playback",async()=>{
+ cloneFixture();writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"fixture",rate:"+20%"}}}));
+ await speakText("Read the entire selection.","long").done;
+ expect(qwen.synthesizeCloned).toHaveBeenCalledWith("Read the entire selection.","fixture",expect.any(AbortSignal));
+ expect(synthArgs()).toHaveLength(0);
+ expect(argv.find(a=>a.includes("-af") && a.includes("atempo=1.2"))).toBeDefined();
+});
+test("speak_text unavailable clone falls back to its edge voice without the saved clone rate",async()=>{
+ cloneFixture(null);writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"fixture",rate:"+20%"}}}));
+ const logs=spyOn(console,"error").mockImplementation(()=>{});spies.push(logs);
+ const events: any[]=[];spies.push(spyOn(socket,"broadcast").mockImplementation(e=>{events.push(e);}));
+ await speakText("Read this selection.","long").done;
+ expect(synthArgs()).toEqual([["--voice=en-US-AriaNeural","--rate=+0%"]]);
+ expect(events.some(e=>e.type==="state" && e.text==="Read this selection." && e.voice==="en-US-AriaNeural")).toBe(true);
+ expect(logs.mock.calls.some(([line])=>String(line).includes("falling back to edge-tts"))).toBe(true);
+});
+test("speak_text disappeared clone falls back to default edge, but a mandate rejects",async()=>{
+ cloneFixture();writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"missing",rate:"+20%"}}}));
+ await speakText("Read this selection.","long").done;
+ expect(synthArgs()).toEqual([["--voice=en-US-JennyNeural","--rate=+0%"]]);
+ process.env.QA_VOICE_TTS_REQUIRE_CLONE="1";
+ expect(()=>speakText("Read this selection.","long")).toThrow(VoiceProfileUnavailableError);
+ expect(synthArgs()).toHaveLength(1);
+});
+test("speak_text mandated clone synthesis failure never downgrades to edge",async()=>{
+ cloneFixture(null);process.env.QA_VOICE_TTS_REQUIRE_CLONE="1";
+ writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"fixture"}}}));
+ const events: any[]=[];spies.push(spyOn(socket,"broadcast").mockImplementation(e=>{events.push(e);}));
+ await speakText("Read this selection.","long").done;
+ expect(qwen.synthesizeCloned).toHaveBeenCalled();
+ expect(synthArgs()).toHaveLength(0);
+ expect(events.some(e=>e.type==="error" && e.message.includes("Refusing to fall back"))).toBe(true);
+});
+
+test("speak_text saved clone rate below minus fifty percent chains tempo filters",async()=>{
+ cloneFixture();writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"fixture",rate:"-75%"}}}));
+ await speakText("Read the entire selection.","long").done;
+ expect(argv.find(a=>a.includes("-af") && a.includes("atempo=0.5,atempo=0.5"))).toBeDefined();
 });

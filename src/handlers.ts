@@ -15,6 +15,7 @@ import {
   playAudioNonBlocking,
   awaitCurrentPlayback,
   getPlaybackQueueDepth,
+  preemptLongRead,
 } from "./tts";
 import {
   waitForInput,
@@ -671,6 +672,7 @@ export async function handleConverse(
     assertSpeakerClear();
 
     // Wait for all queued playback to finish (P0-2: awaits full queue)
+    preemptLongRead();
     await awaitCurrentPlayback();
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return textResult(
