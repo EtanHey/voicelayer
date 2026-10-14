@@ -6,7 +6,7 @@
  */
 
 import { setTTSSetting, setTTSProfile } from "./tts-settings";
-import { readTTSControlsStatus } from "./tts-controls-status";
+import { setTTSPreviewActive, readTTSControlsStatus } from "./tts-controls-status";
 import { PROCESSING_ENV_VARS, setProcessingSetting } from "./processing-settings";
 import { readPolishControlsStatus } from "./polish-controls-status";
 import { ensureSTTPolishServer, stopSTTPolishServerAndWait } from "./stt-polish-server";
@@ -19,6 +19,7 @@ import {
   safeWriteFileSync,
 } from "./paths";
 import {
+  speak,
   awaitCurrentPlayback,
   getHistoryEntry,
   playAudioNonBlocking,
@@ -76,7 +77,7 @@ import {
   verifiedWhisperServerLaunchRecord,
 } from "./whisper-server";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
-import { hasActiveVoiceOperation } from "./voice-operation-reservation";
+import { reserveStandardVoiceOperation, hasActiveVoiceOperation } from "./voice-operation-reservation";
 
 let modelStatusRevision = 0;
 function publishModelStatusEvent(): void {
@@ -394,6 +395,29 @@ export function handleSocketCommand(
       return handleEffortCommand(command);
     case "set_whisper_residency":
       return handleResidencyCommand(command);
+    case "preview_tts_profile": {
+      const reject = (reason: string) => ({...buildAck(command, "reject", reason), tts_controls: readTTSControlsStatus()});
+      if (residencyBusy()) return reject(residencyBusyReason());
+      const reservation = reserveStandardVoiceOperation();
+      if (!reservation) return reject("Voice session in progress");
+      setTTSPreviewActive(true);
+      return (async () => {
+        let ack: AckEvent;
+        try {
+          const result = await speak("Here is a sample of this voice. Clear speech, at your preferred pace.", {
+            profile: command.profile, waitForPlayback: true, measurementOrigin: "preview",
+          });
+          ack = buildAck(command, result.playbackId ? "accept" : "reject",
+            result.playbackId ? undefined : "No preview audio was played");
+        } catch (error) {
+          ack = buildAck(command, "reject", vocabularyErrorReason(error));
+        } finally {
+          setTTSPreviewActive(false);
+          reservation.release();
+        }
+        return {...ack, tts_controls: readTTSControlsStatus()};
+      })();
+    }
     case "set_tts_setting":
       try {
         if ("profile" in command) setTTSProfile(command.profile, command);

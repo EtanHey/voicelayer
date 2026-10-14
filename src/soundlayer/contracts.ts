@@ -32,6 +32,8 @@ export interface SpeechToTextBackendSelector {
 export interface TextToSpeechOptions {
   /** Default SHORT for MCP; long-read callers can opt into automatic selection. */
   profile?: "short" | "long" | "auto";
+  /** Attribution for the measured request-to-player latency. */
+  measurementOrigin?: "preview" | "speak";
   rate?: string;
   mode?: string;
   voice?: string;
