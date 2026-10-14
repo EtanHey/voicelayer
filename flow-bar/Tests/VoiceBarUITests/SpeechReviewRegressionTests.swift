@@ -8,13 +8,15 @@ final class SpeechReviewRegressionTests: XCTestCase {
         if let controls { event["tts_controls"] = controls }
         return event
     }
-    func testHealthNeverRebuildsSettingsAndRetainsGoodSpeechStatus() {
+    func testUnchangedOrMalformedHealthDoesNotRebuildAndRetainsGoodSpeechStatus() {
         let state = VoiceState()
         var rebuilt = 0
         state.onSpeechSettled = { rebuilt += 1 }
         state.setConnectionStatus(true)
         state.handleEvent(Self.health())
         let good = state.speechControls
+        rebuilt = 0
+        state.handleEvent(Self.health())
         state.handleEvent(Self.health(nil))
         state.handleEvent(Self.health([:]))
         XCTAssertEqual(rebuilt, 0, "health and connection without pending must not replace the Settings root")
@@ -115,10 +117,12 @@ final class SpeechReviewRegressionTests: XCTestCase {
         state.onSpeechSettled = { rebuilds += 1 }
         state.setConnectionStatus(true)
         state.handleEvent(Self.health())
+        rebuilds = 0
         state.setConnectionStatus(false)
         XCTAssertEqual(rebuilds, 0)
         state.setConnectionStatus(true)
         state.handleEvent(Self.health())
+        rebuilds = 0
         state.setTTSSetting("short.rate", .string("+20%"))
         state.setConnectionStatus(false)
         XCTAssertEqual(rebuilds, 1)

@@ -72,3 +72,12 @@ test("health stays preview-active throughout synthesis until its response settle
   expect(await pending).toMatchObject({outcome:"accept",tts_controls:{preview_active:false}});
   expect(readTTSControlsStatus().preview_active).toBe(false);
 });
+test("synthesis reject ack includes controls after preview reservation clears", async()=>{
+  mocks.push(spyOn(input,"getRecordingState").mockReturnValue("idle"));
+  mocks.push(spyOn(tts,"getPlaybackQueueDepth").mockReturnValue(0));
+  mocks.push(spyOn(booking,"isVoiceBooked").mockReturnValue({booked:false} as never));
+  mocks.push(spyOn(tts,"speak").mockRejectedValue(new Error("synthesis failed")));
+  const ack = await handleSocketCommand({cmd:"preview_tts_profile",profile:"short",id:"reject-preview"} as never);
+  expect(ack).toMatchObject({outcome:"reject",id:"reject-preview",tts_controls:{preview_active:false}});
+  expect(hasActiveVoiceOperation()).toBe(false);
+});

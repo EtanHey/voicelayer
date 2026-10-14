@@ -232,6 +232,7 @@ public final class VoiceState {
         didSet {
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
+            if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
             if oldValue != mode, oldValue == .recording || mode == .recording {
                 resetRecordingHold()
             }
@@ -408,9 +409,11 @@ public final class VoiceState {
     private var timedOutSpeechPreviewID: String?
     public var speechBusyReason: String? {
         if mode == .speaking || queueDepth > 0 { return "Speaking…" }
-        if mode == .recording { return "Recording in progress" }
-        if mode == .transcribing { return "Transcription in progress" }
-        return modelsSettingsState.isBusy ? modelsSettingsState.busyReason ?? "Voice session in progress" : nil
+        // This health-derived reason tracks capture only, never Models' load/refresh flags.
+        if mode == .recording || modelsRecordingReason == "Recording…" { return "Recording in progress" }
+        if mode == .transcribing || modelsRecordingReason == "Transcribing…" { return "Transcription in progress" }
+        if speechPending["preview"] != nil || speechControls?.previewActive == true { return "Preview in progress…" }
+        return speechPending.isEmpty ? nil : "Saving speech settings…"
     }
     public var speechAckTimeout: Duration = .seconds(10)
     /// Processing toggles sent and not yet acked (P1): the value the row shows meanwhile.
@@ -863,8 +866,11 @@ public final class VoiceState {
     }
 
     public func previewTTSProfile(_ profile: SpeechProfile) {
-        guard isConnected, speechControls != nil, speechBusyReason == nil,
-              speechRequestIDs.isEmpty, let sendCommand else { return }
+        guard isConnected else { speechNotice = "Preview unavailable: VoiceLayer isn't connected."; return }
+        guard speechControls != nil else { speechNotice = "Preview unavailable: Speech settings haven't arrived yet."; return }
+        if let reason = speechBusyReason { speechNotice = "Preview unavailable: \(reason)"; return }
+        guard speechRequestIDs.isEmpty else { speechNotice = "Preview unavailable: a speech request is still in progress."; return }
+        guard let sendCommand else { speechNotice = "Preview unavailable: VoiceLayer can't receive commands."; return }
         let id = UUID().uuidString
         speechRequestIDs[id] = ["preview"]
         speechPending["preview"] = .string(profile.rawValue)
@@ -897,12 +903,11 @@ public final class VoiceState {
         guard ack.outcome != .loading, let keys = speechRequestIDs.removeValue(forKey: ack.id) else { return }
         for key in keys { speechPending[key] = nil }
         if timedOutSpeechPreviewID == ack.id { timedOutSpeechPreviewID = nil }
-        if ack.outcome == .accept {
-            speechNotice = nil
-            if let raw = event["tts_controls"] as? [String: Any], let controls = SpeechControlsState(controls: raw) {
-                speechControls = controls
-            } else { sendCommand?(["cmd": "health"]) }
-        } else { speechNotice = "Couldn't complete the speech request" + (ack.reason.map { " - \($0)" } ?? "") }
+        if let raw = event["tts_controls"] as? [String: Any], let controls = SpeechControlsState(controls: raw) {
+            speechControls = controls
+        } else if ack.outcome == .accept { sendCommand?(["cmd": "health"]) }
+        if ack.outcome == .accept { speechNotice = nil }
+        else { speechNotice = "Couldn't complete the speech request" + (ack.reason.map { " - \($0)" } ?? "") }
         onSpeechSettled?()
     }
 
@@ -1782,7 +1787,9 @@ public final class VoiceState {
             }
 
         case "health":
+            var speechControlsChanged = false
             if let raw = event["tts_controls"] as? [String: Any], let controls = SpeechControlsState(controls: raw) {
+                speechControlsChanged = speechControls != controls
                 speechControls = controls
                 if let id = timedOutSpeechPreviewID, controls.previewActive == false,
                    event["recording_state"] as? String == "idle", event["queue_depth"] as? Int == 0,
@@ -1801,6 +1808,8 @@ public final class VoiceState {
             modelsSettingsState = status
             refreshModelsBusy()
             remoteSTTConfigured = event["remote_stt_configured"] as? Bool
+            // One repaint for new data; the root's follow-up identical health cannot rebuild again.
+            if speechControlsChanged { onSpeechSettled?() }
 
         case "model_status":
             if isConnected, let modelStatus = event["model_status"] as? [String: Any] {

@@ -396,20 +396,27 @@ export function handleSocketCommand(
     case "set_whisper_residency":
       return handleResidencyCommand(command);
     case "preview_tts_profile": {
-      if (residencyBusy()) return buildAck(command, "reject", residencyBusyReason());
+      const reject = (reason: string) => ({...buildAck(command, "reject", reason), tts_controls: readTTSControlsStatus()});
+      if (residencyBusy()) return reject(residencyBusyReason());
       const reservation = reserveStandardVoiceOperation();
-      if (!reservation) return buildAck(command, "reject", "Voice session in progress");
+      if (!reservation) return reject("Voice session in progress");
       setTTSPreviewActive(true);
-      return speak("Here is a sample of this voice. Clear speech, at your preferred pace.", {
-        profile: command.profile, waitForPlayback: true, measurementOrigin: "preview",
-      }).then(result => {
-        setTTSPreviewActive(false);
-        reservation.release();
-        return {...buildAck(command, result.playbackId ? "accept" : "reject",
-          result.playbackId ? undefined : "No preview audio was played"), tts_controls: readTTSControlsStatus()};
-      })
-        .catch(error => buildAck(command, "reject", vocabularyErrorReason(error)))
-        .finally(() => { setTTSPreviewActive(false); reservation.release(); });
+      return (async () => {
+        let ack: AckEvent;
+        try {
+          const result = await speak("Here is a sample of this voice. Clear speech, at your preferred pace.", {
+            profile: command.profile, waitForPlayback: true, measurementOrigin: "preview",
+          });
+          ack = buildAck(command, result.playbackId ? "accept" : "reject",
+            result.playbackId ? undefined : "No preview audio was played");
+        } catch (error) {
+          ack = buildAck(command, "reject", vocabularyErrorReason(error));
+        } finally {
+          setTTSPreviewActive(false);
+          reservation.release();
+        }
+        return {...ack, tts_controls: readTTSControlsStatus()};
+      })();
     }
     case "set_tts_setting":
       try {

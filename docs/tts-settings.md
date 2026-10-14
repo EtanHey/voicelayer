@@ -110,5 +110,11 @@ engine played. Without attribution it says â€œNot measured yet. Press Preview.â€
 `tts_controls.preview_active` stays true throughout preview synthesis/playback
 and becomes false when its reservation is released. A client confirmation timeout
 keeps Preview disabled until its matching late ack or explicit idle daemon health.
-Health refreshes update observed state without replacing the Settings root view;
-malformed or absent Speech controls retain the last successfully parsed snapshot.
+Health repaints Settings once when successfully parsed Speech controls meaningfully
+change (including the first snapshot after reconnect and new latency measurements).
+Identical health never repaints again, so the Settings appearance refresh cannot
+loop. Malformed or absent controls retain the last successfully parsed snapshot.
+Speech admission uses capture/playback and pending speech state; Models refresh
+and Whisper load/unload flags do not block Preview. Preparation and playback
+status share the inline Preview surface, and rejection acks include controls read
+after the preview reservation is released.

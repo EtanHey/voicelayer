@@ -102,14 +102,14 @@ public struct SpeechSettingsView: View {
                                                    }).accessibilityLabel("\(kind.title) rate")
                                             Text(Self.rateLabel(rateDraft[kind].map { String(format: "%+d%%", Int($0)) } ?? rate.wrappedValue))
                                                 .monospacedDigit().frame(width: 110, alignment: .trailing)
-                                        }
+                                        }.frame(height: 22)
                                         HStack {
                                             Text("Slower"); Spacer(); Text("0% · Normal"); Spacer(); Text("Faster")
                                         }.font(.caption2).foregroundStyle(.secondary)
                                     }
                                 }
                             }
-                            if Self.cloneStatusOwner(controls: controls, pending: pending) == kind {
+                            if display.cloneWarning || Self.cloneStatusOwner(controls: controls, pending: pending) == kind {
                                 if display.cloneWarning {
                                     Label("Clone engine isn't running, so this will use the fast voice. Start it with `voicelayer daemon`.",
                                           systemImage: "exclamationmark.triangle.fill")
@@ -123,7 +123,7 @@ public struct SpeechSettingsView: View {
                         } header: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(kind.title)
-                                Text(Self.subtitle(kind, limit: controls.shortLimit.effective) + (kind == .short ? " Changes apply to the next speech." : ""))
+                                Text(Self.subtitle(kind, limit: controls.shortLimit.effective))
                                     .font(.caption).foregroundStyle(.secondary).fontWeight(.regular)
                             }
                         } footer: {
@@ -131,7 +131,8 @@ public struct SpeechSettingsView: View {
                                 if let lock = Self.lockFooter(kind, controls: controls) {
                                     Label(lock, systemImage: "lock.fill").fixedSize(horizontal: false, vertical: true)
                                 }
-                            }.font(.caption).foregroundStyle(.secondary)
+                                if kind == .long { Text("Changes apply to the next speech.").font(.caption) }
+                            }.font(.callout).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -139,7 +140,7 @@ public struct SpeechSettingsView: View {
                 Text(connected ? "Speech settings are not reported by this VoiceLayer version." : "VoiceLayer isn't connected. Speech settings appear when it reconnects.")
                     .foregroundStyle(.secondary)
             }
-            if let notice { Text(notice).font(.caption).foregroundStyle(.primary) }
+            if let notice, pending["preview"] == nil { Text(notice).font(.caption).foregroundStyle(.primary) }
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -160,22 +161,24 @@ public struct SpeechSettingsView: View {
     }
     static func subtitle(_ kind: SpeechProfile, limit: Int) -> String {
         kind == .short ? "Agent announcements and automatic reads up to \(limit) characters."
-            : "Automatic reads over \(limit) characters, including the speak command and Option+F5."
+            : "Reads over \(limit) characters, such as the speak command and Option+F5."
     }
     static func lockFooter(_ kind: SpeechProfile, controls: SpeechControlsState) -> String? {
         guard let profile = controls.profiles[kind] else { return nil }
         var variables: [String] = []
-        if profile.engine.source == .environment || profile.voice.source == .environment { variables.append("QA_VOICE_TTS_VOICE") }
-        if profile.rate.source == .environment { variables.append("QA_VOICE_TTS_RATE") }
+        if profile.engine.source == .environment || profile.voice.source == .environment { variables.append("QA_VOICE_TTS_VOICE (engine and voice)") }
+        if profile.rate.source == .environment { variables.append("QA_VOICE_TTS_RATE (rate)") }
         guard !variables.isEmpty else { return nil }
-        return "Locked by environment \(variables.joined(separator: " and ")) (applies to both profiles). Unset \(variables.count == 1 ? "it" : "them") and restart VoiceLayer to change this here."
+        return "Locked by environment \(variables.count == 1 ? "variable" : "variables") \(variables.joined(separator: " and ")) (applies to both profiles). Unset \(variables.count == 1 ? "it" : "them") and restart VoiceLayer to change this here."
     }
     static func cloneStatusOwner(controls: SpeechControlsState, pending: [String: SpeechValue]) -> SpeechProfile? {
         SpeechProfile.allCases.first { displayProfile($0, controls: controls, pending: pending)?.engine == "clone" }
     }
     private func previewHint(_ kind: SpeechProfile) -> String? {
+        if case .string(let profile) = pending["preview"], profile == kind.rawValue {
+            return notice ?? (busyReason == "Speaking…" ? "Speaking…" : "Preview in progress…")
+        }
         if busyReason == "Speaking…" { return "Speaking…" }
-        if case .string(let profile) = pending["preview"], profile == kind.rawValue { return "Preview in progress…" }
         if busy { return busyReason ?? "Voice session in progress" }
         return nil
     }
@@ -184,7 +187,11 @@ public struct SpeechSettingsView: View {
                 set: { onChange?(key, .string($0)) })
     }
     private func field(_ title: String, key: String, controls: SpeechControlsState, @ViewBuilder content: () -> some View) -> some View {
-        HStack { Text(title); Spacer(); content() }
+        HStack(alignment: key.hasSuffix(".rate") ? .top : .center) {
+            Text(title).padding(.top, key.hasSuffix(".rate") && controls.lockReason(for: key) == nil ? 3 : 0)
+            Spacer()
+            content()
+        }
             .disabled(Self.fieldDisabled(key, controls: controls, pending: pending,
                                         callbackAvailable: key.hasSuffix(".engine") ? onSelectEngine != nil : onChange != nil))
             .accessibilityIdentifier("speech-\(key)")
@@ -199,6 +206,7 @@ private struct SpeechThresholdField: View {
     @FocusState private var focused: Bool
     var body: some View {
         TextField("Characters", text: $draft)
+            .textFieldStyle(.roundedBorder)
             .labelsHidden().frame(width: 90).multilineTextAlignment(.trailing)
             .focused($focused)
             .onAppear { draft = String(value) }
