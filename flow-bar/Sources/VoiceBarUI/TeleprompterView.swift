@@ -407,6 +407,23 @@ public enum TeleprompterSeekPolicy {
     }
 }
 
+/// Owns one cursor stack entry across word transitions; view/word teardown is idempotent.
+struct TeleprompterPointerState {
+    private var hoveredWords: Set<Int> = []
+
+    mutating func hover(wordID: Int, isInside: Bool, push: () -> Void, pop: () -> Void) {
+        let wasEmpty = hoveredWords.isEmpty
+        if isInside { hoveredWords.insert(wordID) } else { hoveredWords.remove(wordID) }
+        if wasEmpty && !hoveredWords.isEmpty { push() }
+        if !wasEmpty && hoveredWords.isEmpty { pop() }
+    }
+
+    mutating func reset(pop: () -> Void) {
+        if !hoveredWords.isEmpty { pop() }
+        hoveredWords.removeAll()
+    }
+}
+
 public struct TeleprompterView: View {
     public let text: String
     public var playbackEpoch = 0
@@ -465,6 +482,7 @@ public struct TeleprompterView: View {
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
     @State private var hoveredWordID: Int?
+    @State private var pointerState = TeleprompterPointerState()
     @State private var currentIndex: Int
     @State private var animationTask: Task<Void, Never>?
     @Environment(\.voiceBarNotchAppearance) private var notchAppearance
@@ -514,7 +532,11 @@ public struct TeleprompterView: View {
                     startAnimating()
                 }
             }
-            .onDisappear { stopAnimating() }
+            .onDisappear {
+                stopAnimating()
+                pointerState.reset(pop: { NSCursor.pop() })
+                hoveredWordID = nil
+            }
             .onChange(of: text) { _, _ in
                 restart()
                 scrollToCurrentWord(with: proxy, animated: false)
@@ -552,10 +574,8 @@ public struct TeleprompterView: View {
                             .underline(hoveredWordID == word.id)
                     }
                     .buttonStyle(.plain)
-                    .onHover { hovering in
-                        hoveredWordID = hovering ? word.id : nil
-                        if hovering { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
-                    }
+                    .onHover { hovering in updateWordHover(word.id, isInside: hovering) }
+                    .onDisappear { updateWordHover(word.id, isInside: false) }
                     .accessibilityHint("Seek to this word")
                     .help("Seek to this word")
                 } else {
@@ -564,6 +584,12 @@ public struct TeleprompterView: View {
             }
             .id(word.id)
         }
+    }
+
+    private func updateWordHover(_ wordID: Int, isInside: Bool) {
+        if isInside { hoveredWordID = wordID } else if hoveredWordID == wordID { hoveredWordID = nil }
+        pointerState.hover(wordID: wordID, isInside: isInside,
+            push: { NSCursor.pointingHand.push() }, pop: { NSCursor.pop() })
     }
 
     private func wordLabel(_ word: TeleprompterWord, highlightedIndex: Int) -> some View {
@@ -577,7 +603,7 @@ public struct TeleprompterView: View {
                 if !isReadback, !wordBoundaries.isEmpty,
                    word.id == highlightedIndex || hoveredWordID == word.id {
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(red: 92/255, green: 124/255, blue: 1).opacity(word.id == highlightedIndex ? 0.22 : 0.12))
+                        .fill(Color(red: 92/255, green: 124/255, blue: 1).opacity(word.id == highlightedIndex ? 0.30 : 0.12))
                 }
             }
     }

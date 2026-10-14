@@ -263,8 +263,27 @@ final class TeleprompterScrubTests: XCTestCase {
                 XCTAssertGreaterThan(brightTextPixels, 25, "the selected word must remain bright in the mounted notch")
             }
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                .write(to: directory.appendingPathComponent("r1-\(name).png"))
+                .write(to: directory.appendingPathComponent("r2-\(name).png"))
         }
+    }
+
+    func testTimedWordCursorPushPopBalancesOverlapsAndDisappear() {
+        var pointer = TeleprompterPointerState()
+        var actions: [String] = []
+        let push = { actions.append("push") }
+        let pop = { actions.append("pop") }
+        pointer.hover(wordID: 1, isInside: true, push: push, pop: pop)
+        pointer.hover(wordID: 1, isInside: true, push: push, pop: pop)
+        pointer.hover(wordID: 2, isInside: true, push: push, pop: pop)
+        pointer.hover(wordID: 1, isInside: false, push: push, pop: pop)
+        XCTAssertEqual(actions, ["push"])
+        pointer.reset(pop: pop)
+        pointer.hover(wordID: 2, isInside: false, push: push, pop: pop)
+        pointer.reset(pop: pop)
+        XCTAssertEqual(actions, ["push", "pop"], "disappear pops exactly once")
+        pointer.hover(wordID: 3, isInside: true, push: push, pop: pop)
+        pointer.hover(wordID: 3, isInside: false, push: push, pop: pop)
+        XCTAssertEqual(actions, ["push", "pop", "push", "pop"])
     }
 
     private final class ArtifactRouter: BarCommandRouting {
