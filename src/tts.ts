@@ -55,7 +55,7 @@ import type {
 import { applyPronunciation } from "./pronunciation";
 import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
-import { resolveBinaryAsync } from "./resolve-binary";
+import { prepareSeekSlice, disposeSeekSlice } from "./tts/seek-audio";
 import { runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
@@ -738,6 +738,8 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   utteranceDurationMs?: number;
   getUtteranceDurationMs?(): number;
   localOffsetMs?: number;
+  seekSliceFile?: string;
+  isSeek?: boolean;
   wordBoundaries?: WordBoundary[];
   priority?: PlaybackPriority;
   durationMs?: number;
@@ -753,6 +755,7 @@ interface PlaybackJob {
   id: string;
   audioFile: string;
   sliceFile?: string;
+  skipAmplitudeDecode?: boolean;
   metadata?: PlaybackMetadata;
   playbackAmplitude?: PlaybackAmplitudeEnvelope;
   priority: PlaybackPriority;
@@ -886,6 +889,7 @@ class PlaybackQueueManager {
   private replayPreparingJob: PlaybackJob | null = null;
   private drainWaiters = new Set<() => void>();
   private conversions = new Set<Promise<void>>();
+  private seekPreparation?: { job: PlaybackJob; controller: AbortController };
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
   enqueue(
@@ -901,7 +905,9 @@ class PlaybackQueueManager {
     const job: PlaybackJob = {
       id: nextPlaybackId(),
       audioFile,
-      metadata,
+      sliceFile: metadata?.seekSliceFile,
+      skipAmplitudeDecode: metadata?.isSeek,
+      metadata: metadata ? { ...metadata } : undefined,
       priority,
       enqueuedAt: Date.now(),
       expiresAt: Date.now() + ttlForPriority(priority),
@@ -931,6 +937,7 @@ class PlaybackQueueManager {
   }
 
   stop(playbackElapsedMs?: number): boolean {
+    this.cancelSeekPreparation();
     const active = this.current;
     if (playbackElapsedMs !== undefined) {
       playbackElapsedMs = Math.max(0, playbackElapsedMs - (active?.job.metadata?.longRead?.chunk_start_ms ?? 0));
@@ -998,6 +1005,7 @@ class PlaybackQueueManager {
   }
 
   restart(): boolean {
+    this.cancelSeekPreparation();
     if ((this.current?.job ?? this.restartAfterTermination ?? this.preparing?.job)?.metadata?.localOffsetMs !== undefined) {
       return this.seek(0).outcome === "accept";
     }
@@ -1031,22 +1039,58 @@ class PlaybackQueueManager {
     return true;
   }
 
+  private cancelSeekPreparation(): void {
+    this.seekPreparation?.controller.abort();
+    this.seekPreparation = undefined;
+  }
+
   seek(offsetMs: number): SeekResult {
     const job = this.current?.job ?? this.restartAfterTermination ?? this.preparing?.job;
     if (!job || job.completed) return { outcome: "noop", reason: "nothing playing" };
     const duration = job.metadata?.durationMs;
     if (!duration || !job.metadata) return { outcome: "noop", reason: "duration unavailable" };
     const offset = Math.min(offsetMs, duration);
-    job.metadata.localOffsetMs = offset;
-    job.metadata.playbackOffsetMs = offset;
-    if (this.current) {
+    this.cancelSeekPreparation();
+    if (offset === 0 || offset === duration) {
+      this.commitSeek(job, offset);
+    } else {
+      const preparation = { job, controller: new AbortController() };
+      this.seekPreparation = preparation;
+      const conversion = (async () => {
+        try {
+          const slice = await prepareSeekSlice(job.audioFile, offset, preparation.controller.signal);
+          if (this.seekPreparation !== preparation || job.completed) { disposeSeekSlice(slice); return; }
+          this.seekPreparation = undefined;
+          this.commitSeek(job, offset, slice);
+        } catch (error) {
+          if (this.seekPreparation === preparation) {
+            this.seekPreparation = undefined;
+            broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true });
+          }
+        }
+      })();
+      this.conversions.add(conversion);
+      void conversion.then(() => this.conversions.delete(conversion));
+    }
+    return { outcome: "accept", offset_ms: offset, clamped: offsetMs > duration };
+  }
+
+  private commitSeek(job: PlaybackJob, offset: number, slice?: string): void {
+    if (job.completed || (this.current?.job !== job && this.preparing?.job !== job && this.restartAfterTermination !== job)) {
+      disposeSeekSlice(slice); return;
+    }
+    disposeSeekSlice(job.sliceFile);
+    job.sliceFile = slice;
+    job.skipAmplitudeDecode = true;
+    job.metadata!.localOffsetMs = offset;
+    job.metadata!.playbackOffsetMs = offset;
+    if (this.current?.job === job) {
       const active = this.current; this.current = null;
       this.restartAfterTermination = job; this.stopProgressTimer(); this.terminate(active);
-    } else if (this.preparing) {
+    } else if (this.preparing?.job === job) {
       const preparing = this.preparing; this.preparing = null; preparing.cancel();
       this.pending.unshift(job); this.processNext();
     }
-    return { outcome: "accept", offset_ms: offset, clamped: offsetMs > duration };
   }
 
   interrupt(id: string): void {
@@ -1065,37 +1109,6 @@ class PlaybackQueueManager {
       });
     }
     this.processNext();
-  }
-
-  private prepareSeek(job: PlaybackJob): void {
-    const controller = new AbortController();
-    let cancelEnvelope: (() => void) | undefined;
-    const preparation = { job, cancel: () => { controller.abort(); cancelEnvelope?.(); } };
-    this.preparing = preparation;
-    const slice = `${job.audioFile}.${nextPlaybackId()}.seek.wav`;
-    if (job.sliceFile) { try { unlinkSync(job.sliceFile); } catch {} job.sliceFile = undefined; }
-    const conversion = (async () => {
-      try {
-        const ffmpeg = await resolveBinaryAsync("ffmpeg");
-        controller.signal.throwIfAborted();
-        if (!ffmpeg) throw new Error("ffmpeg unavailable for seek");
-        await runAudioCommand([ffmpeg, "-nostdin", "-y", "-ss", String((job.metadata?.localOffsetMs ?? 0) / 1000),
-          "-i", job.audioFile, "-vn", "-c:a", "pcm_s16le", slice], controller.signal);
-        if (this.preparing !== preparation) return;
-        job.sliceFile = slice;
-        const extraction = startPlaybackAmplitudeEnvelopeExtraction(slice); cancelEnvelope = extraction.cancel;
-        const envelope = await extraction.result;
-        if (this.preparing === preparation) this.startPreparedPlayback(job, envelope);
-      } catch (error) {
-        if (this.preparing === preparation) {
-          this.preparing = null; this.refuseQueuedPlayback(job, error); this.processNext();
-        }
-      } finally {
-        if (job.sliceFile !== slice) { try { unlinkSync(slice); } catch {} }
-      }
-    })();
-    this.conversions.add(conversion);
-    void conversion.finally(() => this.conversions.delete(conversion));
   }
 
   private refuseQueuedPlayback(job: PlaybackJob, error: unknown): void {
@@ -1137,8 +1150,9 @@ class PlaybackQueueManager {
         if (this.depth() === 0) broadcastPlaybackIdleIfSpeakerClear(next.metadata.nextState);
         continue;
       }
-      if (next.metadata?.localOffsetMs !== undefined) {
-        this.prepareSeek(next); this.emitQueueSnapshot(); return;
+      if (next.skipAmplitudeDecode) {
+        this.preparing = { job: next, cancel: () => {} };
+        this.startPreparedPlayback(next, undefined); return;
       }
       if (!next.metadata) {
         this.preparing = { job: next, cancel: () => {} };
@@ -1259,6 +1273,7 @@ class PlaybackQueueManager {
 
   private finish(job: PlaybackJob, pid: number, succeeded: boolean) {
     if (this.current?.proc.pid !== pid) return;
+    if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
     const elapsedMs = Date.now() - this.current.startedAt;
     this.stopProgressTimer();
     this.current = null;
@@ -1279,6 +1294,7 @@ class PlaybackQueueManager {
   }
 
   private bargeIn(job: PlaybackJob) {
+    this.cancelSeekPreparation();
     // ASYNC SAFETY: Cancel the decoder and clear its ownership before any late
     // result can attempt to start playback.
     const active = this.current;
@@ -1555,8 +1571,10 @@ export function getPlaybackQueueDepth(): number {
 /** Seek only the currently owned utterance; never enqueue a stopped generation. */
 export function seekPlayback(offsetMs: number): SeekResult {
   if (!Number.isFinite(offsetMs) || offsetMs < 0) return { outcome: "reject", reason: "invalid offset" };
+  if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
   if (activeLongRead) {
-    if (activeLongRead.controller.signal.aborted || !activeLongRead.seek) return { outcome: "noop", reason: "nothing playing" };
+    if (activeLongRead.controller.signal.aborted) return { outcome: "noop", reason: "nothing playing" };
+    if (!activeLongRead.seek) return { outcome: "noop", reason: "not ready" };
     return activeLongRead.seek.seek(offsetMs);
   }
   return playbackQueueManager.seek(offsetMs);
@@ -1646,6 +1664,10 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
     assertSpeakerClear();
     await runLongRead(texts, id, signal, {
       registerSeek: (control) => { handle.seek = control; },
+      prepareSeek: (chunk, offset, seekSignal) => offset < chunk.durationMs
+        ? prepareSeekSlice(chunk.audioFile, offset, seekSignal) : Promise.resolve(undefined),
+      disposeSeek: disposeSeekSlice,
+      seekFailed: (error) => broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true }),
       synthesize: async (displayChunk, _index, signal) => {
         const audioFile = ttsFilePath(process.pid, ttsCounter++);
         const spoken = applyPronunciation(displayChunk);
@@ -1703,7 +1725,7 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
           playbackOffsetMs: info.chunk_start_ms + position.offsetMs,
           getUtteranceDurationMs: position.getDurationMs,
-          ...(position.offsetMs > 0 ? { localOffsetMs: position.offsetMs } : {}),
+          ...(position.isSeek ? { localOffsetMs: position.offsetMs, isSeek: true, seekSliceFile: position.sliceFile } : {}),
           onStarted: () => { started = true; resolveStarted(true); },
           onCompleted: () => { if (!started) resolveStarted(false); },
         });
@@ -2115,10 +2137,7 @@ async function speakWithEdgeTTS(
       voice,
       wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
       priority: playbackPriorityForMode(options?.mode),
-      durationMs:
-        wordBoundaries.length > 0
-          ? inferBoundaryEndMs(wordBoundaries)
-          : undefined,
+      durationMs: Math.max(probeAudioDurationMs(ttsFile) ?? 0, inferBoundaryEndMs(wordBoundaries)) || undefined,
       nextState: options?.mode === "converse" ? "recording" : undefined,
       onStarted: options?.onPlaybackStart,
       onCompleted: options?.onPlaybackComplete,

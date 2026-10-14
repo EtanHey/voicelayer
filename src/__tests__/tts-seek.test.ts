@@ -23,7 +23,7 @@ describe("seek protocol", () => {
     tts.stopPlayback();
     expect(handleSocketCommand({ cmd: "seek", offset_ms: 50 } as any)).toMatchObject({ command: "seek", outcome: "noop", reason: "nothing playing" });
   });
-  it("rejects an old decoder result while a seek replacement is trimming", async () => {
+  it("rejects an old decoder result after a seek replacement commits", async () => {
     const decoded = deferred<any>(), trim = deferred<number>(), conversions = fixtureBarrier<string[]>();
     const extract = spyOn(amplitude, "startPlaybackAmplitudeEnvelopeExtraction").mockReturnValue({ result: decoded.promise, cancel: () => {} });
     const players: string[][] = [];
@@ -35,9 +35,11 @@ describe("seek protocol", () => {
     try {
       tts.playAudioNonBlocking(`${TEST_TMP}/preparing.mp3`, { text: "Preparing", voice: "test", durationMs: 1000 });
       seek(300); await conversions.at(0);
+      trim.resolve(0); await fixtureCheckpoint();
+      expect(players).toHaveLength(1); expect(players[0].at(-1)).toEndWith(".seek.wav");
       decoded.resolve({ source: "unavailable", sample_interval_ms: 50, samples: [] });
-      await fixtureCheckpoint(); expect(players).toEqual([]);
-      tts.stopPlayback(); await tts.awaitCurrentPlayback(); expect(players).toEqual([]);
+      await fixtureCheckpoint(); expect(players).toHaveLength(1);
+      tts.stopPlayback(); await tts.awaitCurrentPlayback();
     } finally { tts.stopPlayback(); trim.resolve(143); await tts.awaitCurrentPlayback(); extract.mockRestore(); spawn.mockRestore(); }
   });
   it("trims from the original file, rebroadcasts timing, and fences rapid seeks/stop", async () => {
@@ -61,14 +63,14 @@ describe("seek protocol", () => {
       const handle = tts.playAudioNonBlocking(source, { text: "Hello", voice: "test", durationMs: 1000, wordBoundaries: words });
       await players.at(0);
       expect(seek(300)).toMatchObject({ outcome: "accept", offset_ms: 300 });
-      await fixtureCheckpoint(); expect(trims.values).toHaveLength(0);
-      expect(seek(300).outcome).toBe("accept");
-      players.values[0].exit.resolve(0);
       const first = await trims.at(0);
+      expect(players.values).toHaveLength(1);
       expect(first.argv.indexOf("-ss")).toBeLessThan(first.argv.indexOf("-i"));
       expect(first.argv[first.argv.indexOf("-ss") + 1]).toBe("0.3");
       expect(first.argv[first.argv.indexOf("-i") + 1]).toBe(source);
       writeFileSync(first.argv.at(-1), "slice"); first.exit.resolve(0);
+      await fixtureCheckpoint(); expect(players.values).toHaveLength(1);
+      players.values[0].exit.resolve(0);
       const secondPlayer = await players.at(1);
       expect(secondPlayer.argv).toContain(first.argv.at(-1));
       expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 300, duration_ms: 1000 });
@@ -85,12 +87,12 @@ describe("seek protocol", () => {
       await players.at(2); seek(350); const cancelled = await trims.at(3);
       const replacement = tts.playAudioNonBlocking(source, { text: "Critical", voice: "test", durationMs: 1000, priority: "critical" });
       await players.at(3); cancelled.exit.resolve(0); await fixtureCheckpoint();
-      expect(await preempted.exited).toMatchObject({ status: "skipped", reason: "barge-in" });
+      expect(await preempted.exited).toMatchObject({ status: "interrupted", reason: "barge-in" });
       expect(players.values).toHaveLength(4);
       expect(events.filter(e => e.state === "speaking").at(-1).text).toBe("Critical");
       expect(seek(2000)).toMatchObject({ outcome: "accept", offset_ms: 1000, clamped: true });
       await replacement.exited; await tts.awaitCurrentPlayback(); expect(players.values).toHaveLength(4);
-    } finally { tts.stopPlayback(); for (const t of trims.values) t.exit.resolve(0); await tts.awaitCurrentPlayback(); spawn.mockRestore(); broadcast.mockRestore(); }
+    } finally { tts.stopPlayback(); for (const player of players.values) player.exit.resolve(0); for (const t of trims.values) t.exit.resolve(0); await tts.awaitCurrentPlayback(); spawn.mockRestore(); broadcast.mockRestore(); }
   });
 });
 

@@ -139,6 +139,19 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.playbackAudioLevel(), 0.7, accuracy: 0.0001)
     }
 
+    func testFailedSeekPreservesSpeakingClockAndWordBoundaries() {
+        var now = 100.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Still playing", "playback_offset_ms": 300])
+        state.handleEvent(["type": "subtitle", "words": [["offset_ms": 300, "duration_ms": 400, "text": "Still"]]])
+        now += 0.2
+        state.handleEvent(["type": "error", "source": "seek", "recoverable": true, "message": "Conversion failed"])
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 500)
+        XCTAssertEqual(state.wordBoundaries.first?.text, "Still")
+        XCTAssertEqual(state.errorMessage, "Conversion failed")
+    }
+
     func testSeekResynchronizesClockAndKeepsWordBoundaries() {
         var now = 100.0
         let state = VoiceState(playbackAmplitudeClock: { now })

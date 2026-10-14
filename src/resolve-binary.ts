@@ -212,7 +212,7 @@ export function resolveBinary(
   for (const candidate of allCandidates) {
     const timeout = nextTimeout();
     if (timeout === null) return giveUp();
-    const check = runProbe([candidate, "--version"], timeout);
+    const check = runProbe([candidate, name === "ffmpeg" ? "-version" : "--version"], timeout);
     if (check.timedOut) timedOut = true;
     if (check.exitCode === 0) {
       console.error(`[voicelayer] Resolved ${name} at: ${candidate}`);
@@ -264,8 +264,8 @@ async function probeExitCode(
  * Every probe here is `Bun.spawn` plus an enforced timer, so a wedged binary
  * costs `timeoutMs` and a SIGKILL rather than the whole process.
  *
- * The sync twin is deliberately left alone: changing it would touch the capture
- * path's `rec`/sox resolution, which is out of scope here. New callers on
+ * The sync twin retains its capture-path lookup and timing behavior for other
+ * binaries; ffmpeg alone uses its supported `-version` probe. New callers on
  * latency-sensitive paths should use this one.
  */
 export async function resolveBinaryAsync(
@@ -309,7 +309,7 @@ export async function resolveBinaryAsync(
   ];
 
   for (const candidate of allCandidates) {
-    if ((await probeExitCode([candidate, "--version"], timeoutMs)) === 0) {
+    if ((await probeExitCode([candidate, name === "ffmpeg" ? "-version" : "--version"], timeoutMs)) === 0) {
       return candidate;
     }
   }

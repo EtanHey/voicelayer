@@ -1910,6 +1910,10 @@ public final class VoiceState {
             }
 
         case "error":
+            if event["source"] as? String == "seek", mode == .speaking {
+                errorMessage = event["message"] as? String ?? "Seek failed"
+                return
+            }
             let showDuringBarRecording = event["show_during_bar_recording"] as? Bool ?? false
             let shouldShowError = showDuringBarRecording || !barInitiatedRecording
             if shouldShowError {
