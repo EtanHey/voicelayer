@@ -738,8 +738,10 @@ public final class VoiceState {
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
     public var sendCommand: (([String: Any]) -> Void)?
 
+    /// Capture may perform background work; its completion must run on main.
     public var selectionTextCaptureHandler: (@escaping (String?) -> Void) -> Void = { $0(nil) }
     private var selectionCaptureInFlight = false
+    private var selectionCaptureCancelled = false
 
     public func speakSelection() {
         guard mode != .recording, mode != .transcribing, hotkeyPhase == .idle else { return }
@@ -747,15 +749,23 @@ public final class VoiceState {
             sendCommand?(["cmd": "stop"])
             return
         }
-        guard !selectionCaptureInFlight else { return }
+        guard !selectionCaptureInFlight else {
+            selectionCaptureCancelled = true
+            return
+        }
         guard mode != .disconnected, sendCommand != nil else {
             showConfirmation("VoiceLayer is disconnected")
             return
         }
         selectionCaptureInFlight = true
+        selectionCaptureCancelled = false
         selectionTextCaptureHandler { [weak self] text in
             guard let self else { return }
             selectionCaptureInFlight = false
+            guard !selectionCaptureCancelled else {
+                selectionCaptureCancelled = false
+                return
+            }
             // Capturing yields to the run loop. A new F5 session always wins.
             guard mode != .recording, mode != .transcribing, mode != .speaking,
                   mode != .disconnected, hotkeyPhase == .idle else { return }

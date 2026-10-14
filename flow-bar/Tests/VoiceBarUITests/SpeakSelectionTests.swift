@@ -2,6 +2,25 @@
 import XCTest
 
 final class SpeakSelectionTests: XCTestCase {
+    func testSecondPressCancelsPendingCaptureAndAFreshPressCanCaptureAgain() {
+        let state = VoiceState()
+        var completion: ((String?) -> Void)?
+        var captures = 0
+        var commands = 0
+        state.sendCommand = { _ in commands += 1 }
+        state.selectionTextCaptureHandler = { captures += 1; completion = $0 }
+        state.speakSelection()
+        state.speakSelection()
+        XCTAssertEqual(captures, 1)
+        completion?("text from cancelled capture")
+        XCTAssertEqual(commands, 0)
+        XCTAssertNil(state.confirmationText)
+        state.speakSelection()
+        XCTAssertEqual(captures, 2)
+        completion?("fresh selection")
+        XCTAssertEqual(commands, 1)
+    }
+
     func testSpeakingStopsWithoutCapturing() {
         let state = VoiceState()
         state.mode = .speaking
@@ -35,13 +54,12 @@ final class SpeakSelectionTests: XCTestCase {
         }
     }
 
-    func testPendingCaptureCannotOverlapOrInterruptNewDictation() {
+    func testCaptureCompletionCannotInterruptNewDictation() {
         let state = VoiceState()
         var completion: ((String?) -> Void)?
         var captures = 0
         state.sendCommand = { _ in XCTFail("stale capture must not speak over dictation") }
         state.selectionTextCaptureHandler = { captures += 1; completion = $0 }
-        state.speakSelection()
         state.speakSelection()
         XCTAssertEqual(captures, 1)
         state.mode = .recording

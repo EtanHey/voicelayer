@@ -20,9 +20,10 @@ The installed app is `/Applications/VoiceBar.app`.
 
 Speak selection requires Option alone (no Shift, Command, or Control) and is ignored
 while recording or transcribing. VoiceBar reads Accessibility selected text first;
-if unavailable, it briefly copies the selection and restores every prior clipboard
-item and data type. Empty selection shows brief feedback. The daemon handles
-Markdown speech cleanup; VoiceBar sends the original selection unchanged.
+if unavailable, it briefly copies the selection and restores prior clipboard items
+and data types only if no newer copy has arrived. Competing copies abort the read;
+pressing again while capture is pending cancels it. Empty selection shows brief
+feedback. The daemon handles Markdown speech cleanup; VoiceBar sends the original selection unchanged.
 
 ## Button Numbering
 
