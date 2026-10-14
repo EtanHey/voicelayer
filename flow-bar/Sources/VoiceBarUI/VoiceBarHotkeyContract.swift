@@ -10,6 +10,8 @@ public enum VoiceBarHotkeyContract {
     public static let doubleTapDescription = "Lock the active recording (hands-free)"
     public static let repasteShortcutLabel = "Shift+F5"
     public static let repasteDescription = "Re-paste last transcript"
+    public static let speakSelectionShortcutLabel = "Option+F5"
+    public static let speakSelectionDescription = "Speak selection; press again to stop"
     public static let activationLogMessage = "[VoiceBar] Hotkey system active — primary shortcut is F5"
 
     // MARK: - System remap chain (hidutil LaunchAgent)

@@ -999,6 +999,8 @@ public struct SettingsView: View {
                     LabeledContent("Double-tap", value: VoiceBarHotkeyContract.doubleTapDescription)
                     LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel,
                                    value: VoiceBarHotkeyContract.repasteDescription)
+                    LabeledContent(VoiceBarHotkeyContract.speakSelectionShortcutLabel,
+                                   value: VoiceBarHotkeyContract.speakSelectionDescription)
                 }
                 .padding(.top, 6)
             }

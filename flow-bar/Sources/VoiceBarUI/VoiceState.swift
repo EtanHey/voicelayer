@@ -25,6 +25,16 @@ public enum VoiceMode: String, CaseIterable {
     case disconnected
 }
 
+public enum SelectionCaptureResult: Equatable {
+    case completed(String?)
+    case clipboardChanged
+
+    public var text: String? {
+        if case let .completed(text) = self { return text }
+        return nil
+    }
+}
+
 public struct QueueItemState: Equatable {
     public var text: String
     public var voice: String
@@ -755,6 +765,49 @@ public final class VoiceState {
     /// Transport-layer hook injected by AppDelegate.
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
     public var sendCommand: (([String: Any]) -> Void)?
+
+    /// Capture may perform background work; its completion must run on main.
+    public var selectionTextCaptureHandler: (@escaping (SelectionCaptureResult) -> Void) -> Void = { $0(.completed(nil)) }
+    private var selectionCaptureInFlight = false
+    private var selectionCaptureCancelled = false
+
+    public func speakSelection() {
+        guard mode != .recording, mode != .transcribing, hotkeyPhase == .idle else { return }
+        if mode == .speaking {
+            sendCommand?(["cmd": "stop"])
+            return
+        }
+        guard !selectionCaptureInFlight else {
+            selectionCaptureCancelled = true
+            return
+        }
+        guard mode != .disconnected, sendCommand != nil else {
+            showConfirmation("VoiceLayer is disconnected")
+            return
+        }
+        selectionCaptureInFlight = true
+        selectionCaptureCancelled = false
+        selectionTextCaptureHandler { [weak self] result in
+            guard let self else { return }
+            selectionCaptureInFlight = false
+            guard !selectionCaptureCancelled else {
+                selectionCaptureCancelled = false
+                return
+            }
+            // Capturing yields to the run loop. A new F5 session always wins.
+            guard mode != .recording, mode != .transcribing, mode != .speaking,
+                  mode != .disconnected, hotkeyPhase == .idle else { return }
+            guard let text = result.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                expandFromCollapse()
+                showConfirmation(result == .clipboardChanged
+                    ? "Couldn't read the selection, try again" : "No text selected")
+                startCollapseTimer()
+                return
+            }
+            sendCommand?(["cmd": "speak_text", "text": text, "profile": "auto",
+                          "format": "markdown", "source": "selection"])
+        }
+    }
 
     /// Callback when the pill's rendered size changes — used to resize the NSPanel.
     public var onPillSizeChange: ((CGSize) -> Void)?
