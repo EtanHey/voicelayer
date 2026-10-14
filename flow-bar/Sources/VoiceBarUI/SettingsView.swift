@@ -3,9 +3,9 @@ import SwiftUI
 
 public enum SettingsTab: Hashable, CaseIterable, Identifiable {
     case general
-    case models
-    case speech
+    case transcription
     case dictionary
+    case speech
     case history
 
     public var id: Self {
@@ -16,14 +16,18 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .speech: "Speech"
-        case .models: "Models"
+        case .transcription: "Transcription"
         case .dictionary: "Dictionary"
         case .history: "History"
         }
     }
 
-    /// The `voicebar://settings/<tab>` path component, matched case-insensitively against the title.
+    /// Case-insensitive `voicebar://settings/<tab>` routing; `models` is a permanent legacy alias.
     public init?(urlComponent: String) {
+        if urlComponent.lowercased() == "models" {
+            self = .transcription
+            return
+        }
         guard let tab = Self.allCases.first(where: { $0.title.lowercased() == urlComponent.lowercased() })
         else { return nil }
         self = tab
@@ -33,7 +37,7 @@ public enum SettingsTab: Hashable, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .speech: "speaker.wave.2"
-        case .models: "cpu"
+        case .transcription: "waveform"
         case .dictionary: "text.book.closed"
         case .history: "clock.arrow.circlepath"
         }
@@ -784,8 +788,8 @@ public struct SettingsView: View {
                                        onChange: onChangeSpeech, onSelectEngine: onSelectSpeechEngine, onPreview: onPreviewSpeech)
                         .onAppear { onRefreshModelsStatus() }
                 }
-            case .models:
-                settingsPage(title: "Models") { modelsTab }
+            case .transcription:
+                settingsPage(title: "Transcription") { transcriptionTab }
             case .general:
                 settingsPage(title: "General") { generalTab }
             }
@@ -1212,7 +1216,7 @@ public struct SettingsView: View {
         refreshMicrophoneSnapshot()
     }
 
-    private var modelsTab: some View {
+    private var transcriptionTab: some View {
         ModelsSettingsView(
             state: modelsStatus(),
             effort: $selectedPerformanceEffort,

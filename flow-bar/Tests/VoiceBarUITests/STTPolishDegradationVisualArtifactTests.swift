@@ -34,7 +34,7 @@ final class STTPolishDegradationVisualArtifactTests: XCTestCase {
             modelsStatus: { .loading },
             onRefreshModelsStatus: {},
             vocabularyRevision: { 0 },
-            initialTab: .models
+            initialTab: .transcription
         )
         .frame(width: 520, height: 620)
 

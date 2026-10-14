@@ -158,7 +158,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
             onRefreshModelsStatus: {},
             onSelectResidency: onSelectResidency,
             vocabularyRevision: { 0 },
-            initialTab: .models
+            initialTab: .transcription
         )
     }
 

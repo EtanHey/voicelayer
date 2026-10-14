@@ -33,23 +33,60 @@ final class SettingsSidebarAccessibilityTests: XCTestCase {
         let table = try XCTUnwrap(firstTable(in: host), "the sidebar must be a native table-backed List")
         XCTAssertTrue(window.makeFirstResponder(table))
 
-        for expected in [SettingsTab.models, .speech, .dictionary, .history, .history] {
+        for expected in [SettingsTab.transcription, .dictionary, .speech, .history, .history] {
             try window.sendEvent(arrow(down: true, window: window))
             settle()
             XCTAssertEqual(box.tab, expected, "↓ must move the sidebar selection")
         }
         try window.sendEvent(arrow(down: false, window: window))
         settle()
-        XCTAssertEqual(box.tab, .dictionary, "↑ must move the sidebar selection back")
+        XCTAssertEqual(box.tab, .speech, "↑ must move the sidebar selection back")
 
-        let dictionaryRow = try XCTUnwrap(SettingsTab.allCases.firstIndex(of: .dictionary))
-        XCTAssertEqual(table.selectedRow, dictionaryRow)
+        let speechRow = try XCTUnwrap(SettingsTab.allCases.firstIndex(of: .speech))
+        XCTAssertEqual(table.selectedRow, speechRow)
         XCTAssertEqual(table.accessibilitySelectedRows()?.count, 1, "VoiceOver reads the selected row from here")
-        XCTAssertEqual(table.rowView(atRow: dictionaryRow, makeIfNecessary: false)?.isSelected, true)
+        XCTAssertEqual(table.rowView(atRow: speechRow, makeIfNecessary: false)?.isSelected, true)
         XCTAssertEqual(
             table.selectionHighlightStyle, .none,
             "the row's own white-on-accent pill is the only highlight; the native one would double it"
         )
+    }
+
+    func testStatusFooterIsAnAccessibleButtonOpeningGeneral() throws {
+        let box = SelectionBox()
+        box.tab = .history
+        let footer = VoiceBarFooterPresentation.resolve(
+            isConnected: true, mode: .idle, captureLive: false,
+            errorMessage: nil, remoteSTTConfigured: false, hasFreshHealth: true
+        )
+        let host = NSHostingView(rootView: SettingsNavigationShell(
+            selection: Binding(get: { box.tab }, set: { box.tab = $0 }), footer: footer
+        ) { Text("detail") }.frame(width: 780, height: 620))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 620),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        settle()
+
+        // SwiftUI's virtual AX descendants are absent for offscreen XCTest hosts. Exercise the
+        // real button via mouse events, and pin its explicit accessible name in the shell contract.
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/SettingsNavigationShell.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("Button {"))
+        XCTAssertTrue(source.contains(".accessibilityLabel(\"Open General settings\")"))
+        XCTAssertFalse(source.contains(".animation("))
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(
+                with: type, location: NSPoint(x: 86, y: 30), modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+            ))
+            window.sendEvent(event)
+        }
+        settle()
+        XCTAssertEqual(box.tab, .general)
     }
 
     private func settle() {
