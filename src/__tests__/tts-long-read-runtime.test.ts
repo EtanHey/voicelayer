@@ -10,6 +10,7 @@ import { handleVoiceAsk } from "../handlers";
 import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback } from "../tts";
 import { handleSocketCommand } from "../socket-handlers";
 import { TTS_HISTORY_FILE } from "../paths";
+import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; }
@@ -213,6 +214,29 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(players).toHaveLength(2);
   });
 
+  it("records long-read first audio at player spawn once, including held preparation", async () => {
+    recordFirstAudio("long", 9999); recordFirstAudio("short", 1234);
+    const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
+    holdDecoder = true; const h = start();
+    const decoder = await decoderBarrier.at(0);
+    expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(9999);
+    clockMs += 650; holdDecoder = false; decoder.exit.resolve(0);
+    await playerBarrier.at(0); await h.started;
+    expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(650);
+    expect(readTTSControlsStatus().profiles.short.last_first_audio_ms).toBe(1234);
+    expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine: "edge-tts", origin: "speak", fallback: false});
+    clockMs += 400; players[0].exit.resolve(0); await playerBarrier.at(1);
+    expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(650);
+    expect(logs.mock.calls.filter(([line]) => String(line) === `[tts] first_audio_ms=650 profile=long engine=edge-tts voice=fixture chars=${text.length}`)).toHaveLength(1);
+    stopPlayback(1200); await h.done;
+  });
+
+  it("records the actual edge engine when a long-read clone falls back", async () => {
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(null));
+    autoPlay = true; await start("clone", "A sentence.").done;
+    expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine: "edge-tts", origin: "speak", fallback: true});
+  });
+
   it("publishes all synthesized duration at player start after held preparation", async () => {
     holdDecoder = true; const h = start();
     const decoder = await decoderBarrier.at(0); await synthBarrier.at(1); await fixtureCheckpoint();
@@ -261,6 +285,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(longText.length).toBeGreaterThan(50_000);
     expect(calls.join(" ")).toBe(longText); expect(calls.length).toBeGreaterThan(1);
     expect(new Set(signals).size).toBe(1);
+    expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine: "qwen3-tts", origin: "speak", fallback: false});
     expect(events.some((e) => e.type === "subtitle")).toBe(false); expect(loadHistory()).toHaveLength(1);
   });
 
@@ -272,10 +297,12 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   });
 
   it("reports cancellation before playback through the start lifecycle", async () => {
+    recordFirstAudio("long", 9999);
     holdSynth = true;
     synths.push({ argv: [], exit: deferred<number>(), killed: false });
     const h = start(); stopPlayback();
     expect(await h.started).toEqual({ error: "Speech stopped before playback" });
+    expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(9999);
     await h.done;
   });
 

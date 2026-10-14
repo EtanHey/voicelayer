@@ -3,13 +3,13 @@ import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import * as os from "os";
 import { TEST_TMP } from "./setup/test-tmp";
-import { speak, speakText, awaitCurrentPlayback, stopPlayback, VoiceProfileUnavailableError } from "../tts";
+import { speak, speakText, resolveLongReadProfile, awaitCurrentPlayback, stopPlayback, VoiceProfileUnavailableError } from "../tts";
 import * as recording from "../recording-state";
 import * as socket from "../socket-client";
 import * as qwen from "../tts/qwen3";
 import * as xtts from "../tts/xtts";
 import * as f5 from "../tts/f5tts";
-import { readTTSControlsStatus } from "../tts-controls-status";
+import { recordFirstAudio, readTTSControlsStatus } from "../tts-controls-status";
 const dir=join(TEST_TMP,"tts-wiring");
 let saved: Record<string,string|undefined>;
 let spies: Array<ReturnType<typeof spyOn>>=[];
@@ -177,8 +177,12 @@ test("speak_text saved LONG profile selects edge engine, voice and rate",async()
 });
 test("speak_text AUTO uses SHORT at the saved threshold and LONG above it",async()=>{
  writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({short_limit_chars:10,profiles:{short:{engine:"edge",voice:"en-US-GuyNeural",rate:"-10%"},long:{engine:"edge",voice:"en-US-AriaNeural",rate:"+20%"}}}));
+ recordFirstAudio("long", 9999);
  await speakText("0123456789","auto").done;
+ expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(9999);
+ expect(readTTSControlsStatus().profiles.short.last_first_audio).toMatchObject({engine:"edge-tts",origin:"speak"});
  await speakText("01234567890","auto").done;
+ expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).not.toBe(9999);
  expect(synthArgs()).toEqual([["--voice=en-US-GuyNeural","--rate=-10%"],["--voice=en-US-AriaNeural","--rate=+20%"]]);
 });
 test("speak_text rereads saved profiles and legacy environment overrides",async()=>{
@@ -210,6 +214,8 @@ test("speak_text disappeared clone falls back to default edge, but a mandate rej
  cloneFixture();writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"missing",rate:"+20%"}}}));
  await speakText("Read this selection.","long").done;
  expect(synthArgs()).toEqual([["--voice=en-US-JennyNeural","--rate=+0%"]]);
+ expect(resolveLongReadProfile("long", "Read this selection.")).toMatchObject({engine:"edge", requestedClone:true});
+ expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine:"edge-tts",origin:"speak",fallback:true});
  process.env.QA_VOICE_TTS_REQUIRE_CLONE="1";
  expect(()=>speakText("Read this selection.","long")).toThrow(VoiceProfileUnavailableError);
  expect(synthArgs()).toHaveLength(1);

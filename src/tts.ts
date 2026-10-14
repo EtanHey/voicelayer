@@ -1588,7 +1588,7 @@ export function stopPlayback(playbackElapsedMs?: number): boolean {
   return hadLongRead || stopped;
 }
 
-export interface LongReadProfile { engine: "edge" | "clone"; voice: string; rate: string; fallbackVoice?: string }
+export interface LongReadProfile { requestedClone?: boolean; kind?: "short" | "long"; engine: "edge" | "clone"; voice: string; rate: string; fallbackVoice?: string }
 export interface LongReadHandle {
   id: string; done: Promise<void>;
   started: Promise<{ error?: string }>;
@@ -1627,22 +1627,26 @@ export function resolveLongReadProfile(kind: "auto" | "short" | "long", text: st
   } catch (error) {
     if (!(error instanceof VoiceProfileUnavailableError) || requireClonedVoiceEnabled()) throw error;
     console.error(`[voicelayer] Cloned voice "${profile.voice}" is missing — falling back to edge-tts (${TTS_DEFAULTS.voice})`);
-    return { engine: "edge", voice: TTS_DEFAULTS.voice, rate: defaultRate() };
+    return { kind: profile.kind, requestedClone: profile.engine === "clone", engine: "edge", voice: TTS_DEFAULTS.voice, rate: defaultRate() };
   }
   if (requireClonedVoiceEnabled() && resolved.engine !== "cloned") {
     throw new VoiceProfileUnavailableError(profile.voice, "missing-profile");
   }
   if (resolved.warning) console.error(`[voicelayer] ${resolved.warning}`);
-  return { engine: resolved.engine === "cloned" ? "clone" : "edge", voice: resolved.voice,
+  return { kind: profile.kind, requestedClone: profile.engine === "clone" || resolved.engine === "cloned",
+    engine: resolved.engine === "cloned" ? "clone" : "edge", voice: resolved.voice,
     rate: profile.rate, fallbackVoice: resolved.fallbackVoice };
 }
 
 export function speakText(text: string, kind: "auto" | "short" | "long" = "auto"): LongReadHandle {
-  return speakLongRead(text, resolveLongReadProfile(kind, text));
+  const receivedAt = Date.now();
+  return speakLongRead(text, resolveLongReadProfile(kind, text), receivedAt);
 }
 
 /** Long reads bypass XTTS/F5 truncation and call the Qwen3 clone tier directly. */
-export function speakLongRead(text: string, profile: LongReadProfile): LongReadHandle {
+export function speakLongRead(text: string, profile: LongReadProfile, receivedAt = Date.now()): LongReadHandle {
+  const chars = text.length;
+  const requestedClone = profile.requestedClone ?? (profile.engine === "clone");
   assertSpeakerClear();
   if (!text.trim() || text.length > SPEAK_TEXT_MAX_CHARS) throw new Error("Speech text must contain 1–200,000 characters");
   if (isTTSDisabled()) throw new Error("TTS is disabled");
@@ -1664,6 +1668,7 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
   const requireClone = requireClonedVoiceEnabled();
   const edgeFallbackRate = defaultRate();
   const chunkVoices = new Map<string, string>();
+  const chunkEngines = new Map<string, string>();
   // Swift routes Escape only in active modes. Actual playback resets this clock/text.
   broadcast({ type: "state", state: "speaking", text: "Preparing speech…", voice: profile.voice,
     long_read: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0, preparing: true } });
@@ -1686,6 +1691,7 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
               new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal);
             chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, spoken, chunk.wordBoundaries);
             chunkVoices.set(audioFile, voice);
+            chunkEngines.set(audioFile, "edge-tts");
             return chunk;
           };
           if (profile.engine === "edge") {
@@ -1700,6 +1706,7 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
             return await synthesizeEdge(voice, edgeFallbackRate);
           }
           chunkVoices.set(audioFile, profile.voice);
+          chunkEngines.set(audioFile, "qwen3-tts");
           writeFileSync(audioFile, audio);
           const speed = Math.max(0.01, 1 + Number.parseFloat(profile.rate) / 100);
           if (Number.isFinite(speed) && speed !== 1) {
@@ -1735,7 +1742,17 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
           playbackOffsetMs: info.chunk_start_ms + position.offsetMs,
           getUtteranceDurationMs: position.getDurationMs,
           ...(position.isSeek ? { localOffsetMs: position.offsetMs, isSeek: true, seekSliceFile: position.sliceFile } : {}),
-          onStarted: () => { started = true; resolveStarted(true); audioStarted = true; handleStarted(); },
+          onStarted: (startedAt) => {
+            if (!audioStarted) {
+              const ms = Math.max(0, startedAt - receivedAt);
+              const kind = profile.kind ?? "long";
+              const engine = chunkEngines.get(chunk.audioFile) ?? "edge-tts";
+              const voice = chunkVoices.get(chunk.audioFile) ?? profile.voice;
+              recordFirstAudio(kind, ms, {engine, origin: "speak", fallback: requestedClone && engine === "edge-tts"});
+              console.error(`[tts] first_audio_ms=${ms} profile=${kind} engine=${engine} voice=${voice} chars=${chars}`);
+            }
+            started = true; resolveStarted(true); audioStarted = true; handleStarted();
+          },
           onCompleted: (outcome) => {
             if (!started) resolveStarted(false);
             if (outcome.status === "failed") failure = `Speech playback failed: ${outcome.reason ?? "player-error"}`;
@@ -1754,7 +1771,7 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
           throw error;
         } finally { try { unlinkSync(combined); } catch {} }
       },
-      dispose: (chunk) => { chunkVoices.delete(chunk.audioFile); try { unlinkSync(chunk.audioFile); } catch {} },
+      dispose: (chunk) => { chunkEngines.delete(chunk.audioFile); chunkVoices.delete(chunk.audioFile); try { unlinkSync(chunk.audioFile); } catch {} },
     }, profile.engine === "clone" ? 2 : 1);
   };
   // Preserve stopped audio: finish its history/cleanup before a replacement starts.
