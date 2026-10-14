@@ -30,6 +30,8 @@ export interface SpeechToTextBackendSelector {
 }
 
 export interface TextToSpeechOptions {
+  /** Default SHORT for MCP; long-read callers can opt into automatic selection. */
+  profile?: "short" | "long" | "auto";
   rate?: string;
   mode?: string;
   voice?: string;

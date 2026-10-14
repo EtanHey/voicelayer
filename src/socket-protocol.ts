@@ -7,6 +7,7 @@
  * Both the Bun socket client and SwiftUI Voice Bar server must agree on these types.
  */
 
+import { validTTSSetting } from "./tts-settings";
 import { PROCESSING_KEYS } from "./processing-settings";
 import type { WhisperPerformanceEffort } from "./whisper-performance";
 import type { WhisperModelResidency, WhisperModelStatus } from "./model-status";
@@ -240,7 +241,8 @@ export type AckCommand =
   | "set_recording_hold"
   | "set_whisper_effort"
   | "set_whisper_residency"
-  | "set_processing_setting";
+  | "set_processing_setting"
+  | "set_tts_setting";
 
 export interface AckEvent {
   type: "ack";
@@ -250,6 +252,7 @@ export interface AckEvent {
   reason?: string;
   model_status?: WhisperModelStatus;
   residency?: WhisperModelResidency;
+  tts_controls?: import("./tts-controls-status").TTSControlsStatus;
   polish_controls?: import("./polish-controls-status").PolishControlsStatus;
 }
 
@@ -377,6 +380,12 @@ export interface SetWhisperEffortCommand extends SocketCommandBase {
   effort: WhisperPerformanceEffort;
 }
 
+/** Settings → Speech. Dot keys select a SHORT/LONG field; short_limit_chars is global. */
+export type SetTTSSettingCommand = SocketCommandBase & {cmd: "set_tts_setting"} & (
+  | {key: import("./tts-settings").TTSSettingKey; value: string | number}
+  | {profile: "short" | "long"; engine: "edge" | "clone"; voice: string; rate?: string}
+);
+
 /** Settings → Models → Processing toggle (P1). Persisted by the daemon; env still wins. */
 export interface SetProcessingSettingCommand extends SocketCommandBase {
   cmd: "set_processing_setting";
@@ -413,6 +422,7 @@ export type SocketCommand =
   | VocabRemoveTermCommand
   | SetRecordingHoldCommand
   | SetWhisperEffortCommand
+  | SetTTSSettingCommand
   | SetProcessingSettingCommand
   | SetWhisperResidencyCommand;
 
@@ -423,6 +433,7 @@ export interface HealthResponse {
   recording_state: "idle" | "recording" | "transcribing";
   model_status: WhisperModelStatus;
   remote_stt_configured: boolean;
+  tts_controls: import("./tts-controls-status").TTSControlsStatus;
   polish_controls: import("./polish-controls-status").PolishControlsStatus;
 }
 
@@ -711,6 +722,20 @@ export function parseCommand(line: string): SocketCommand | null {
           },
           id,
         );
+      }
+      case "set_tts_setting": {
+        if (parsed.profile !== undefined) {
+          if (parsed.key !== undefined || parsed.value !== undefined ||
+              (parsed.profile !== "short" && parsed.profile !== "long") ||
+              !validTTSSetting(`${parsed.profile}.engine`, parsed.engine) ||
+              !validTTSSetting(`${parsed.profile}.voice`, parsed.voice) ||
+              (parsed.rate !== undefined && !validTTSSetting(`${parsed.profile}.rate`, parsed.rate))) return null;
+          return withCommandId<SetTTSSettingCommand>({cmd: "set_tts_setting", profile: parsed.profile,
+            engine: parsed.engine as "edge" | "clone", voice: parsed.voice as string,
+            ...(parsed.rate !== undefined ? {rate: parsed.rate as string} : {})}, id);
+        }
+        if (!validTTSSetting(parsed.key, parsed.value)) return null;
+        return withCommandId<SetTTSSettingCommand>({cmd: "set_tts_setting", key: parsed.key, value: parsed.value as string | number}, id);
       }
       case "set_processing_setting": {
         if (

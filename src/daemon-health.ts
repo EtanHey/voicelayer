@@ -1,3 +1,4 @@
+import { readTTSControlsStatus, type TTSControlsStatus } from "./tts-controls-status";
 import type { WhisperModelStatus } from "./model-status";
 import { readPolishControlsStatus, type PolishControlsStatus } from "./polish-controls-status";
 
@@ -65,6 +66,7 @@ export function buildHealthResponse(health: {
   model_status: WhisperModelStatus;
   remote_stt_configured: boolean;
   polish_controls: PolishControlsStatus;
+  tts_controls: TTSControlsStatus;
 } {
   const preference = (environment.QA_VOICE_STT_BACKEND ?? "auto").toLowerCase();
   return {
@@ -78,6 +80,7 @@ export function buildHealthResponse(health: {
     // prevents selection, so the UI never overclaims local-only processing.
     remote_stt_configured: preference === "wispr" || Boolean(environment.QA_VOICE_WISPR_KEY),
     polish_controls: readPolishControlsStatus(),
+    tts_controls: readTTSControlsStatus(environment),
   };
 }
 

@@ -5,6 +5,8 @@
  * broadcast() to communicate state back to Voice Bar clients.
  */
 
+import { setTTSSetting, setTTSProfile } from "./tts-settings";
+import { readTTSControlsStatus } from "./tts-controls-status";
 import { PROCESSING_ENV_VARS, setProcessingSetting } from "./processing-settings";
 import { readPolishControlsStatus } from "./polish-controls-status";
 import { ensureSTTPolishServer, stopSTTPolishServerAndWait } from "./stt-polish-server";
@@ -392,6 +394,14 @@ export function handleSocketCommand(
       return handleEffortCommand(command);
     case "set_whisper_residency":
       return handleResidencyCommand(command);
+    case "set_tts_setting":
+      try {
+        if ("profile" in command) setTTSProfile(command.profile, command);
+        else setTTSSetting(command.key, command.value);
+        return {...buildAck(command, "accept"), tts_controls: readTTSControlsStatus()};
+      } catch (error) {
+        return buildAck(command, "reject", vocabularyErrorReason(error));
+      }
     case "set_processing_setting":
       return handleProcessingSettingCommand(command);
     case "set_recording_hold":

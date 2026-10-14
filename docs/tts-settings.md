@@ -1,0 +1,81 @@
+# Speech settings (daemon core)
+
+The daemon re-reads `~/.local/state/voicelayer/tts-settings.json` on each speak.
+`VOICELAYER_TTS_SETTINGS_PATH` overrides the location. Writes use a temporary
+file and atomic rename, with `version: 1` and an ISO `updated_at` timestamp.
+Only changed fields need to be stored:
+
+```json
+{
+  "version": 1,
+  "profiles": {
+    "short": { "engine": "edge", "voice": "en-US-JennyNeural", "rate": "+0%" },
+    "long": { "engine": "clone", "voice": "theo-c4", "rate": "+10%" }
+  },
+  "short_limit_chars": 400
+}
+```
+
+`voice_speak` uses SHORT. Internal callers can pass `profile: "long"` or
+`profile: "auto"` to `speak`, or use the exported
+`resolveSpeakProfile(kind, text)`. Auto selects LONG only above the character
+limit. MCP caps remain 1200 characters for speaks and 600 for asks.
+
+`QA_VOICE_TTS_VOICE` and `QA_VOICE_TTS_RATE`, when defined even as empty strings,
+override and lock the corresponding fields in both profiles. A defined voice
+also determines the engine from the installed profile inventory, overriding
+any saved engine, and reports its engine source as environment. Empty values keep
+the historical Jenny / +0% fallback. Explicit speak voice/rate arguments win.
+An edge-profile file rate overrides the mode rate; absent that rate, the existing
+mode rates, environment fallback, and edge long-text slowdown are preserved.
+Clone-profile rates apply only to clone playback. Its short announcement shortcut
+and synthesis fallback retain the legacy edge mode rate unless the caller
+explicitly supplies a rate. Clone rates
+use ffmpeg tempo adjustment without changing pitch; untouched clone playback
+keeps its original speed. An unset engine retains legacy voice-based detection;
+an explicitly selected engine routes to edge or the existing clone cascade.
+Missing selected clone profiles log a warning and use the edge default.
+Unavailable synthesis keeps the existing profile edge fallback. Callers requiring
+a clone (option or QA_VOICE_TTS_REQUIRE_CLONE) remain fail closed in both cases.
+
+Send a newline-delimited socket command, with an optional correlation id:
+
+```json
+{"cmd":"set_tts_setting","key":"long.rate","value":"+10%","id":"speech-1"}
+```
+
+Keys are `short.engine`, `short.voice`, `short.rate`, the matching `long.*` keys,
+and `short_limit_chars`. Engines are `edge` / `clone`, rates are signed integer
+percentages from -99% to +100%, and the limit is a positive safe integer.
+Inconsistent effective engine/voice pairs are rejected before writing. To switch
+both fields together, use the additive atomic form (rate and id are optional):
+
+```json
+{"cmd":"set_tts_setting","profile":"short","engine":"clone","voice":"theo-c4","rate":"+10%","id":"speech-2"}
+```
+
+`profile` is `short` or `long`. Both engine and voice are required; omitting rate
+preserves the saved rate. Atomic and dot-key forms cannot be mixed. Voices are
+trimmed before persistence. Env-locked fields reject the whole transaction.
+Changes apply to the next speak, including changes made during playback.
+The ack contains fresh `tts_controls`; env-locked writes are rejected with
+`Set by <VAR>`.
+
+Health includes `tts_controls.profiles.short/long` with engine, voice, and rate
+`{source, raw, effective}` objects, optional `locked` text, and nullable
+`last_first_audio_ms`. It also includes the character-limit setting,
+`available_voices` entries `{engine, voice}`, and `clone_daemon: "up" | "down"`.
+Available voices include edge defaults, valid edge preset aliases from
+`~/.voicelayer/voices.json`, and clone directory names actually containing
+`profile.yaml`. No narrationlayer aliases are invented.
+
+Clone health uses an authenticated, 500ms `/health` probe on localhost:8880,
+coalesced and cached for five seconds. It never starts or loads a model. The
+synchronous health snapshot starts a background refresh; its next poll observes
+the result (initially down). Up requires `status: "ok"` and `model_loaded: true`.
+
+Each successful player spawn logs one line:
+`[tts] first_audio_ms=N profile=short engine=edge-tts voice=... chars=N`.
+Latency includes synthesis and queue wait; rejected, disabled, failed, or
+cancelled-before-playback requests do not replace the last successful value.
+This core change does not supply a Swift settings screen or native acceptance.

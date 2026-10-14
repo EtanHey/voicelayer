@@ -78,6 +78,8 @@ Updates, kill-switches, and cross-machine setup:
 Both ship full MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
 Neither is destructive; both set `openWorldHint: false`.
 
+Daemon speech profiles, env overrides, and socket controls: [docs/tts-settings.md](docs/tts-settings.md).
+
 **How `voice_ask` works:** waits for any playing audio to finish → speaks the question via
 edge-tts → records the mic and resamples to 16kHz → Silero VAD detects when you stop talking →
 whisper.cpp transcribes locally (~200-400ms on Apple Silicon) → returns the text to your agent.
