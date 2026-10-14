@@ -67,6 +67,11 @@ run()  { # run a mutating command, or just print it in dry-run
 }
 
 # --- codesign helpers -------------------------------------------------------
+agent_target() {
+  /usr/libexec/PlistBuddy -c 'Print :Program' "$1" 2>/dev/null ||
+    /usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$1" 2>/dev/null
+}
+
 app_authority() { codesign -dvvv "$1" 2>&1 | awk -F= '/^Authority=/{print $2; exit}'; }
 app_teamid()    { codesign -dvvv "$1" 2>&1 | awk -F= '/^TeamIdentifier=/{print $2; exit}'; }
 app_bundleid()  { defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null || echo "?"; }
@@ -116,7 +121,7 @@ if [[ "${#AGENT_FILES[@]}" -eq 0 ]]; then
   log "  none"
 else
   for f in "${AGENT_FILES[@]}"; do
-    tgt="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$f" 2>/dev/null || echo '?')"
+    tgt="$(agent_target "$f" || echo '?')"
     printf '  %s\n      -> %s\n' "$f" "$tgt"
   done
 fi
@@ -164,12 +169,12 @@ else
 fi
 
 # 6b. Bootout + back up stray LaunchAgents that don't point at the canonical app
-log "-- prune stray LaunchAgents (keep only $LABEL -> $CANONICAL_APP)"
+log "-- prune duplicate VoiceBar LaunchAgents (preserve $LABEL and TTS services)"
 for f in "${AGENT_FILES[@]:-}"; do
   [[ -n "$f" ]] || continue
   base="$(basename "$f")"
   agent_label="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$f" 2>/dev/null || echo '')"
-  tgt="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$f" 2>/dev/null || echo '')"
+  tgt="$(agent_target "$f" || echo '')"
   # Resource paths inside VoiceBar do not make their service a VoiceBar owner.
   # Match the plist's exact Label, including when its filename was renamed.
   if [[ "$agent_label" == "com.golems.tts-daemon" ]]; then
