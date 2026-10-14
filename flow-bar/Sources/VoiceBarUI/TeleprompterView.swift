@@ -80,6 +80,8 @@ public struct TeleprompterWord: Equatable, Identifiable {
     public let text: String
     public let offsetMs: Int?
     public let durationMs: Int?
+    /// Rescheduled display words can highlight, but their estimates are never seek targets.
+    public var hasEstimatedTiming = false
 }
 
 public enum TeleprompterPacePolicy {
@@ -132,7 +134,8 @@ public enum TeleprompterPacePolicy {
                 id: word.id,
                 text: word.text,
                 offsetMs: scheduledStart,
-                durationMs: max(1, scheduledEnd - scheduledStart)
+                durationMs: max(1, scheduledEnd - scheduledStart),
+                hasEstimatedTiming: true
             )
         }
     }
@@ -269,7 +272,8 @@ public enum TeleprompterContentModel {
                 id: index,
                 text: word.text,
                 offsetMs: word.offsetMs,
-                durationMs: word.durationMs
+                durationMs: word.durationMs,
+                hasEstimatedTiming: word.hasEstimatedTiming
             )
         }
     }
@@ -289,7 +293,8 @@ public enum TeleprompterContentModel {
                     id: 0,
                     text: String(word.text[start ..< end]),
                     offsetMs: word.offsetMs,
-                    durationMs: word.durationMs
+                    durationMs: word.durationMs,
+                    hasEstimatedTiming: word.hasEstimatedTiming
                 )
             )
             start = end
@@ -386,6 +391,18 @@ public enum TeleprompterPlaybackPolicy {
     }
 }
 
+public enum TeleprompterSeekPolicy {
+    public static func offset(for word: TeleprompterWord, isReadback: Bool) -> Int? {
+        guard !isReadback, !word.hasEstimatedTiming, let offset = word.offsetMs, offset >= 0 else { return nil }
+        return offset
+    }
+
+    public static func seek(_ word: TeleprompterWord, isReadback: Bool, seek: (Int) -> Void) {
+        guard let offset = offset(for: word, isReadback: isReadback) else { return }
+        seek(offset)
+    }
+}
+
 public struct TeleprompterView: View {
     public let text: String
     public var playbackEpoch = 0
@@ -393,6 +410,8 @@ public struct TeleprompterView: View {
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
     public var isReadback = false
     public let playbackElapsedMilliseconds: () -> Int
+    public var onSeek: ((Int) -> Void)?
+    public var estimatedPlaybackStartMilliseconds = 0
     public var wrapWidth = Theme.teleprompterWrapWidth
     public var viewportHeight = Theme.teleprompterViewportHeight
     public var contentInset = Theme.teleprompterContentInset
@@ -403,6 +422,8 @@ public struct TeleprompterView: View {
         isReadback: Bool = false,
         playbackEpoch: Int = 0,
         playbackElapsedMilliseconds: @escaping () -> Int,
+        onSeek: ((Int) -> Void)? = nil,
+        estimatedPlaybackStartMilliseconds: Int = 0,
         wrapWidth: CGFloat = Theme.teleprompterWrapWidth,
         viewportHeight: CGFloat = Theme.teleprompterViewportHeight,
         contentInset: CGFloat = Theme.teleprompterContentInset
@@ -412,6 +433,8 @@ public struct TeleprompterView: View {
         self.isReadback = isReadback
         self.playbackEpoch = playbackEpoch
         self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
+        self.onSeek = onSeek
+        self.estimatedPlaybackStartMilliseconds = estimatedPlaybackStartMilliseconds
         self.wrapWidth = wrapWidth
         self.viewportHeight = viewportHeight
         self.contentInset = contentInset
@@ -429,13 +452,15 @@ public struct TeleprompterView: View {
             ? 0
             : TeleprompterPlaybackPolicy.currentWordIndex(
                 in: initialWords,
-                elapsedMilliseconds: playbackElapsedMilliseconds()
+                elapsedMilliseconds: playbackElapsedMilliseconds() -
+                    (TeleprompterPlaybackPolicy.usesServerTimestamps(in: initialWords) ? 0 : estimatedPlaybackStartMilliseconds)
             )
         _currentIndex = State(initialValue: initialWordIndex)
     }
 
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
+    @State private var hoveredWordID: Int?
     @State private var currentIndex: Int
     @State private var animationTask: Task<Void, Never>?
     @Environment(\.voiceBarNotchAppearance) private var notchAppearance
@@ -512,34 +537,49 @@ public struct TeleprompterView: View {
     }
 
     private var wordViews: some View {
-        ForEach(teleprompterWords) { word in
-            Text(word.text)
-                .font(.system(
-                    size: 16,
-                    weight: word.id == currentIndex ? .bold : .medium
-                ))
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: wrapWidth, alignment: .leading)
-                .foregroundStyle(
-                    notchPalette.primary.color.opacity(opacityFor(word.id))
-                )
-                .id(word.id)
+        let highlightedIndex = currentIndex
+        return ForEach(teleprompterWords) { word in
+            Group {
+                if let onSeek, TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {
+                    Button {
+                        TeleprompterSeekPolicy.seek(word, isReadback: isReadback, seek: onSeek)
+                    } label: {
+                        wordLabel(word, highlightedIndex: highlightedIndex)
+                            .underline(hoveredWordID == word.id)
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hovering in hoveredWordID = hovering ? word.id : nil }
+                    .accessibilityHint("Seek to this word")
+                    .help("Seek to this word")
+                } else {
+                    wordLabel(word, highlightedIndex: highlightedIndex)
+                }
+            }
+            .id(word.id)
         }
+    }
+
+    private func wordLabel(_ word: TeleprompterWord, highlightedIndex: Int) -> some View {
+        Text(word.text)
+            .font(.system(size: 16, weight: word.id == highlightedIndex ? .bold : .medium))
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: wrapWidth, alignment: .leading)
+            .foregroundStyle(notchPalette.primary.color.opacity(opacityFor(word.id, highlightedIndex: highlightedIndex)))
     }
 
     // MARK: - Word opacity
 
-    private func opacityFor(_ index: Int) -> Double {
+    private func opacityFor(_ index: Int, highlightedIndex: Int) -> Double {
         let minimumOpacity = VoiceBarNotchContrastPalette.minimumTeleprompterOpacity(
             for: notchAppearance
         )
         if let readbackOpacity = TeleprompterPlaybackPolicy.wordOpacity(isReadback: isReadback) {
             return readbackOpacity
         }
-        if index == currentIndex { return 1.0 }
-        if index < currentIndex {
-            let distance = currentIndex - index
+        if index == highlightedIndex { return 1.0 }
+        if index < highlightedIndex {
+            let distance = highlightedIndex - index
             return max(minimumOpacity, 0.70 - Double(distance) * 0.06)
         }
         return minimumOpacity
@@ -555,15 +595,18 @@ public struct TeleprompterView: View {
         TeleprompterPlaybackPolicy.usesServerTimestamps(in: teleprompterWords)
     }
 
+    private var highlightElapsedMilliseconds: Int {
+        playbackElapsedMilliseconds() - (hasServerTimestamps ? 0 : estimatedPlaybackStartMilliseconds)
+    }
+
     private func startAnimating() {
         guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback) else { return }
-        guard teleprompterWords.count > 1 else { return }
-
         currentIndex = TeleprompterPlaybackPolicy.currentWordIndex(
             in: teleprompterWords,
-            elapsedMilliseconds: playbackElapsedMilliseconds()
+            elapsedMilliseconds: highlightElapsedMilliseconds
         )
 
+        guard teleprompterWords.count > 1 else { return }
         if hasServerTimestamps {
             startTimestampAnimation()
         } else {
@@ -611,7 +654,7 @@ public struct TeleprompterView: View {
                     forWordAt: index,
                     in: words
                 )
-                let remainingMilliseconds = targetOffsetMilliseconds - playbackElapsedMilliseconds()
+                let remainingMilliseconds = targetOffsetMilliseconds - highlightElapsedMilliseconds
                 if remainingMilliseconds > 0 {
                     try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
                 }
@@ -647,7 +690,9 @@ public struct TeleprompterView: View {
 
     private func restart() {
         stopAnimating()
-        currentIndex = 0
+        currentIndex = isReadback ? 0 : TeleprompterPlaybackPolicy.currentWordIndex(
+            in: teleprompterWords, elapsedMilliseconds: highlightElapsedMilliseconds
+        )
         startAnimating()
     }
 }

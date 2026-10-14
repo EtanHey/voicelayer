@@ -594,6 +594,9 @@ public struct BarView: View {
             VStack(spacing: 12) {
                 notchTeleprompterTimeline
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if state.mode == .speaking {
+                    TeleprompterPlaybackScrubBar(state: state)
+                }
                 notchTeleprompterControls
             }
             .padding(
@@ -617,6 +620,8 @@ public struct BarView: View {
                     isReadback: state.isTeleprompterReadback,
                     playbackEpoch: state.playbackEpoch,
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
+                    onSeek: state.seek,
+                    estimatedPlaybackStartMilliseconds: state.playbackChunkStartMilliseconds,
                     wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth
                     ),
@@ -627,6 +632,7 @@ public struct BarView: View {
                         isDismissed: state.isTeleprompterDismissed
                     )
                 )
+                .allowsHitTesting(!state.isTeleprompterDismissed)
                 .accessibilityHidden(state.isTeleprompterDismissed)
 
                 Text("Teleprompter hidden")

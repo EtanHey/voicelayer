@@ -295,7 +295,8 @@ public final class VoiceState {
     private var localRecordingLevel: Double?
     public private(set) var playbackAmplitudeEnvelope: PlaybackAmplitudeEnvelope?
     private var playbackAmplitudeStartedAt: TimeInterval?
-    private var playbackChunkStartMilliseconds = 0
+    public private(set) var playbackChunkStartMilliseconds = 0
+    public private(set) var isPlaybackDurationGrowing = false
     public private(set) var playbackDurationMilliseconds: Int?
     private var playbackStartedAt: TimeInterval?
     /// Advances for every speaking receipt, including same-text replay.
@@ -1291,6 +1292,18 @@ public final class VoiceState {
         playbackAudioLevel(atSystemUptime: playbackAmplitudeClock())
     }
 
+    public var isTeleprompterPlaybackReady: Bool {
+        mode == .speaking && (playbackDurationMilliseconds ?? 0) > 0
+    }
+
+    /// F supplies a global clock and global subtitle offsets. Do not add chunk_start_ms twice.
+    public var teleprompterPlaybackPosition: SettingsAudioPlaybackPosition {
+        SettingsAudioPlaybackPosition(
+            currentTime: Double(playbackElapsedMilliseconds()) / 1000,
+            duration: Double(max(0, playbackDurationMilliseconds ?? 0)) / 1000
+        )
+    }
+
     public func seek(offsetMs: Int) {
         guard mode == .speaking, offsetMs >= 0 else { return }
         sendCommand?(["cmd": "seek", "offset_ms": offsetMs])
@@ -1616,6 +1629,8 @@ public final class VoiceState {
                 playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000
                 playbackDurationMilliseconds = (event["duration_ms"] as? NSNumber)?.intValue
                 playbackChunkStartMilliseconds = (event["long_read"] as? [String: Any])?["chunk_start_ms"] as? Int ?? 0
+                let longRead = event["long_read"] as? [String: Any]
+                isPlaybackDurationGrowing = longRead != nil && longRead?["estimated_total_ms"] == nil
                 playbackEpoch += 1
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
