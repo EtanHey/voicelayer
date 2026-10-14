@@ -16,6 +16,7 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -105,7 +106,6 @@ def download_audio(
 
     cmd = [
         "yt-dlp",
-        "--ffmpeg-location", str(Path(resolve_media_binary("ffmpeg")).parent),
         "--extract-audio",
         "--audio-format", "wav",
         "--audio-quality", "0",
@@ -122,12 +122,17 @@ def download_audio(
     print(f"[voicelayer] Sections: {section_start} → {section_end}")
     print(f"[voicelayer] Max downloads: {count}")
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+    # yt-dlp derives BOTH tools from ffmpeg-location, even if our resolver
+    # found them in different directories. Own the pair only for this child.
+    with tempfile.TemporaryDirectory(prefix="voicelayer-media-") as location:
+        for tool in ("ffmpeg", "ffprobe"):
+            Path(location, tool).symlink_to(Path(resolve_media_binary(tool)).resolve())
+        result = subprocess.run(
+            [cmd[0], "--ffmpeg-location", location, *cmd[1:]],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
 
     if result.returncode != 0 and "Max downloads reached" not in result.stderr:
         # yt-dlp returns non-zero on max-downloads, that's expected
