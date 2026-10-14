@@ -97,6 +97,7 @@ describe("speak CLI", () => {
     const old = { ...process.env };
     try {
       delete process.env.VOICELAYER_STATE_DIR; delete process.env.VOICELAYER_DAEMON_SECRET_PATH;
+      delete process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE; delete process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE;
       process.env.VOICELAYER_MCP_SOCKET_PATH = "/tmp/d-isolated.sock";
       process.env.QA_VOICE_MCP_SOCKET_PATH = "/tmp/d-legacy.sock";
       expect(speechSecretPath()).toBe("/tmp/d-isolated.sock.secret");
@@ -162,10 +163,31 @@ describe("speak CLI review regressions", () => {
       expect(() => loadSpeechSecret()).toThrow(kind === "world-readable" ? "0600" : kind === "symlink" ? "symlink" : "Empty");
     } finally { process.env = old; for (const path of [link, file]) try { unlinkSync(path); } catch {} }
   });
-  test("secret recognizes the existing TTS path aliases", () => {
+  test("isolated state and socket secret paths outrank TTS aliases", () => {
     const old = { ...process.env };
     try {
       delete process.env.VOICELAYER_DAEMON_SECRET_PATH;
+      process.env.VOICELAYER_STATE_DIR = "/isolated/state";
+      process.env.VOICELAYER_MCP_SOCKET_PATH = "/isolated/mcp.sock";
+      process.env.QA_VOICE_MCP_SOCKET_PATH = "/isolated/legacy.sock";
+      process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE = "/outside/tts.secret";
+      process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE = "/outside/alias.secret";
+      const paths = [speechSecretPath()];
+      delete process.env.VOICELAYER_STATE_DIR; paths.push(speechSecretPath());
+      delete process.env.VOICELAYER_MCP_SOCKET_PATH; paths.push(speechSecretPath());
+      process.env.VOICELAYER_DAEMON_SECRET_PATH = "/explicit/speech.secret";
+      paths.push(speechSecretPath());
+      expect(paths).toEqual([
+        "/isolated/state/daemon.secret", "/isolated/mcp.sock.secret",
+        "/isolated/legacy.sock.secret", "/explicit/speech.secret",
+      ]);
+    } finally { process.env = old; }
+  });
+  test("secret recognizes the existing TTS path aliases", () => {
+    const old = { ...process.env };
+    try {
+      delete process.env.VOICELAYER_DAEMON_SECRET_PATH; delete process.env.VOICELAYER_STATE_DIR;
+      delete process.env.VOICELAYER_MCP_SOCKET_PATH; delete process.env.QA_VOICE_MCP_SOCKET_PATH;
       process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE = "/isolated/tts.secret";
       process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE = "/isolated/alias.secret";
       expect(speechSecretPath()).toBe("/isolated/tts.secret");
