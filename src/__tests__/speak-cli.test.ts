@@ -3,7 +3,8 @@ import { parseSpeakArgs, runSpeakCli, requestSpeech } from "../cli/speak";
 import { createMcpDaemon } from "../mcp-daemon";
 import { createSpeechControl, speechSecretPath, loadSpeechSecret } from "../speech-control";
 import { join } from "node:path";
-import { writeFileSync, unlinkSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { writeFileSync, unlinkSync, mkdirSync, rmSync, statSync, chmodSync, symlinkSync, readFileSync, existsSync } from "node:fs";
+import { createConnection } from "node:net";
 import { STATE_DIR } from "../paths";
 
 const io = (stdin = "") => ({ readStdin: async () => stdin, readFile: async () => "# File", stderr: (_s: string) => {}, stdout: (_s: string) => {} });
@@ -74,7 +75,7 @@ describe("speak CLI", () => {
       expect((await run(["--profile", "bad"])).code).toBe(1);
     } finally { daemon.stop(); unlinkSync(secretPath); unlinkSync(file); }
   });
-  test("local fallback streams in an isolated child and waits on request", async () => {
+  test("local fallback runs in the foreground until completion", async () => {
     const dir = join(STATE_DIR, "fallback"); mkdirSync(dir, { recursive: true });
     const scripts: Record<string, string> = {
       python3: "#!/bin/bash\nfor arg in \"$@\"; do case \"$arg\" in --write-media=*) printf audio > \"${arg#*=}\" ;; --write-metadata=*) printf '{ \"text\": \"hello\", \"offset\": 0, \"duration\": 5000000 }' > \"${arg#*=}\" ;; esac; done\n",
@@ -124,5 +125,105 @@ describe("speak CLI", () => {
       return { type: "ack", command: "speak_text", outcome: "accept" };
     });
     await expect(failed({ token: "t", cmd: "speak_text", text: "hi" })).rejects.toThrow("synthesis failed");
+  });
+});
+
+
+async function until(check: () => boolean) {
+  const deadline = Date.now() + 3000;
+  while (!check()) { if (Date.now() > deadline) throw new Error("Fixture did not advance"); await Bun.sleep(10); }
+}
+function alive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch { return false; } }
+function rpc(path: string, method: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(path); let buffer = "";
+    socket.on("error", reject);
+    socket.on("connect", () => socket.write(JSON.stringify({ jsonrpc: "2.0", id: 4, method }) + "\n"));
+    socket.on("data", data => { buffer += data.toString(); if (buffer.includes("\n")) { socket.destroy(); resolve(JSON.parse(buffer.split("\n")[0])); } });
+  });
+}
+
+describe("speak CLI review regressions", () => {
+  test("stop when daemon is down has a useful message for both connection errors", async () => {
+    for (const code of ["ENOENT", "ECONNREFUSED"]) {
+      let stderr = "";
+      expect(await runSpeakCli(["--stop"], { ...io(), stderr: message => { stderr += message; }, request: async () => { throw Object.assign(new Error(`connect ${code}`), { code }); }, local: async () => { throw new Error("must not fallback"); } })).toBe(1);
+      expect(stderr).toContain("VoiceLayer daemon isn't running; nothing to stop");
+      expect(stderr).not.toContain(`connect ${code}`);
+    }
+  });
+  for (const kind of ["symlink", "world-readable", "empty"]) test(`secret rejects ${kind}`, () => {
+    const old = { ...process.env }, file = join(STATE_DIR, "r1.secret"), link = `${file}.link`;
+    try {
+      writeFileSync(file, kind === "empty" ? "   " : "fixture", { mode: 0o600 });
+      if (kind === "world-readable") chmodSync(file, 0o644);
+      if (kind === "symlink") symlinkSync(file, link);
+      process.env.VOICELAYER_DAEMON_SECRET_PATH = kind === "symlink" ? link : file;
+      expect(() => loadSpeechSecret()).toThrow(kind === "world-readable" ? "0600" : kind === "symlink" ? "symlink" : "Empty");
+    } finally { process.env = old; for (const path of [link, file]) try { unlinkSync(path); } catch {} }
+  });
+  test("secret recognizes the existing TTS path aliases", () => {
+    const old = { ...process.env };
+    try {
+      delete process.env.VOICELAYER_DAEMON_SECRET_PATH;
+      process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE = "/isolated/tts.secret";
+      process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE = "/isolated/alias.secret";
+      expect(speechSecretPath()).toBe("/isolated/tts.secret");
+      delete process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE;
+      expect(speechSecretPath()).toBe("/isolated/alias.secret");
+    } finally { process.env = old; }
+  });
+  test("wait unblocks after a concurrent stop; tools remain the canonical two", async () => {
+    const socketPath = join(STATE_DIR, "r1.sock");
+    let finish!: (value: {}) => void;
+    const completion = new Promise<{}>(resolve => { finish = resolve; });
+    let speaking = false, ended = false;
+    const daemon = await createMcpDaemon({ socketPath, speechControl: createSpeechControl("token", async (command, lifecycle) => {
+      if (command.cmd === "speak_text") { speaking = true; lifecycle?.({ id: "r1", started: Promise.resolve({}), completion, done: completion.then(() => {}) }); }
+      else { finish({}); await completion; }
+      return { type: "ack", command: command.cmd as "speak_text" | "stop", outcome: "accept" };
+    }) });
+    try {
+      const waiting = requestSpeech({ cmd: "speak_text", text: "read", profile: "auto", format: "plain", wait: true }, { socketPath, token: "token" }).then(() => { ended = true; });
+      await until(() => speaking); expect(ended).toBe(false);
+      await requestSpeech({ cmd: "stop" }, { socketPath, token: "token" }); await waiting;
+      expect(ended).toBe(true);
+      expect((await rpc(socketPath, "tools/list")).result.tools.map((tool: any) => tool.name)).toEqual(["voice_speak", "voice_ask"]);
+    } finally { daemon.stop(); }
+  });
+  for (const signal of ["SIGINT", "SIGTERM"] as const) for (const phase of ["synth", "player"]) test(`${signal} reaps foreground fallback during ${phase}`, async () => {
+    const dir = join(STATE_DIR, `r1-${phase}`); mkdirSync(dir, { recursive: true });
+    const fixture = `#!${process.execPath}
+import { writeFileSync } from "node:fs";
+const dir = process.env.R1_DIR;
+const kind = process.argv[1].endsWith("afplay") ? "player" : "synth";
+writeFileSync(dir + "/" + kind + ".pid", String(process.pid));
+writeFileSync(dir + "/owner.pid", String(process.ppid));
+if (kind === "synth" && process.env.R1_PHASE === "player") {
+ for (const arg of process.argv) { if (arg.startsWith("--write-media=")) writeFileSync(arg.slice(14), "audio"); if (arg.startsWith("--write-metadata=")) writeFileSync(arg.slice(17), '{"text":"hello","offset":0,"duration":5000000}'); }
+ process.exit(0);
+}
+process.on("SIGTERM", () => { writeFileSync(dir + "/" + kind + ".stopped", "yes"); process.exit(0); });
+writeFileSync(dir + "/" + kind + ".ready", "yes");
+setInterval(() => {}, 1000);
+`;
+    for (const name of ["python3", "afplay"]) writeFileSync(join(dir, name), fixture, { mode: 0o700 });
+    writeFileSync(join(dir, "ffprobe"), '#!/bin/bash\nprintf "1\\n"\n', { mode: 0o700 });
+    writeFileSync(join(dir, "ffmpeg"), '#!/bin/bash\nlast="${@: -1}"\nif [[ "$last" == "pipe:1" ]]; then printf "00000000"; else printf audio > "$last"; fi\n', { mode: 0o700 });
+    const child = Bun.spawn([process.execPath, "src/cli/speak.ts", "hello"], { env: { ...process.env, R1_DIR: dir, R1_PHASE: phase, PATH: `${dir}:${process.env.PATH}`, VOICELAYER_TMP_ROOT: dir, VOICELAYER_STATE_DIR: join(dir, "state"), VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock"), QA_VOICE_TTS_VOICE: "en-US-JennyNeural" }, stdout: "ignore", stderr: Bun.file(join(dir, "stderr")) });
+    const pids: number[] = [];
+    try {
+      await until(() => existsSync(join(dir, `${phase}.ready`)));
+      pids.push(Number(readFileSync(join(dir, `${phase}.pid`), "utf8")), Number(readFileSync(join(dir, "owner.pid"), "utf8")));
+      child.kill(signal);
+      expect(await child.exited).not.toBe(0);
+      await Bun.sleep(100);
+      expect(pids.every(pid => !alive(pid))).toBe(true);
+      expect(existsSync(join(dir, `${phase}.stopped`))).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+      for (const pid of pids) if (alive(pid)) try { process.kill(pid, "SIGKILL"); } catch {}
+      await child.exited; await Bun.sleep(50); rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
