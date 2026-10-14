@@ -12,6 +12,8 @@ Usage:
 
 import argparse
 import json
+import os
+import platform
 import subprocess
 import sys
 import time
@@ -32,13 +34,36 @@ FFMPEG_NORMALIZE_FILTER = (
 )
 
 
+_MEDIA_BINARIES: dict[str, str] = {}
+
+
+def resolve_media_binary(name: str) -> str:
+    """Validate executable architecture once, matching the TS media resolver."""
+    if name in _MEDIA_BINARIES:
+        return _MEDIA_BINARIES[name]
+    candidates = []
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        candidates.append(f"/opt/homebrew/bin/{name}")
+    candidates.extend(str(Path(directory) / name) for directory in os.environ.get("PATH", "").split(os.pathsep) if directory)
+    candidates.extend(f"{directory}/{name}" for directory in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"])
+    for candidate in dict.fromkeys(candidates):
+        try:
+            probe = subprocess.run([candidate, "-version"], capture_output=True, timeout=1.5)
+            if probe.returncode == 0:
+                _MEDIA_BINARIES[name] = candidate
+                return candidate
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    raise FileNotFoundError(f"No working {name} executable")
+
+
 def check_dependencies() -> list[str]:
     """Check which required tools are available."""
     missing = []
     for cmd in ["yt-dlp", "ffmpeg", "ffprobe"]:
         try:
             subprocess.run(
-                [cmd, "--version"],
+                [resolve_media_binary(cmd), "-version"] if cmd in {"ffmpeg", "ffprobe"} else [cmd, "--version"],
                 capture_output=True,
                 timeout=10,
             )
@@ -80,6 +105,7 @@ def download_audio(
 
     cmd = [
         "yt-dlp",
+        "--ffmpeg-location", str(Path(resolve_media_binary("ffmpeg")).parent),
         "--extract-audio",
         "--audio-format", "wav",
         "--audio-quality", "0",
@@ -126,7 +152,7 @@ def detect_music(wav_path: Path) -> bool:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "quiet",
+                resolve_media_binary("ffprobe"), "-v", "quiet",
                 "-print_format", "json",
                 "-show_format",
                 str(wav_path),
@@ -140,7 +166,7 @@ def detect_music(wav_path: Path) -> bool:
         duration = float(info.get("format", {}).get("duration", 0))
         if duration < 10:
             return False
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
         pass
 
     return False  # Default: assume clean audio, skip Demucs
@@ -358,7 +384,7 @@ def run_diarization(wav_path: Path) -> dict:
 def normalize_audio(input_path: Path, output_path: Path) -> bool:
     """Normalize audio with FFmpeg — 24kHz mono 16-bit PCM WAV."""
     cmd = [
-        "ffmpeg", "-y",
+        resolve_media_binary("ffmpeg"), "-y",
         "-i", str(input_path),
         "-af", FFMPEG_NORMALIZE_FILTER,
         "-ar", "24000",
@@ -476,7 +502,7 @@ def _get_version(cmd: str) -> str:
     """Get version string for a CLI tool."""
     try:
         result = subprocess.run(
-            [cmd, "--version"],
+            [resolve_media_binary(cmd), "-version"] if cmd in {"ffmpeg", "ffprobe"} else [cmd, "--version"],
             capture_output=True,
             text=True,
             timeout=10,

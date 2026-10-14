@@ -26,6 +26,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let spies: ReturnType<typeof spyOn>[];
   let historyInputs: string[][];
   let holdHistory: boolean, holdDecoder: boolean;
+  let failHistory: boolean;
   type Child = { exit: ReturnType<typeof deferred<number>>; killed: boolean };
   let synthBarrier: ReturnType<typeof fixtureBarrier<typeof synths[number]>>;
   let playerBarrier: ReturnType<typeof fixtureBarrier<typeof players[number]>>;
@@ -37,6 +38,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   beforeEach(() => {
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdSynth = false; autoPlay = false; holdHistory = false; holdDecoder = false;
+    failHistory = false;
     clockMs = 100_000;
     spies.push(spyOn(Date, "now").mockImplementation(() => clockMs));
     synthBarrier = fixtureBarrier(); playerBarrier = fixtureBarrier();
@@ -45,8 +47,11 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     spies.push(spyOn(socket, "broadcast").mockImplementation((event) => events.push(structuredClone(event))));
     spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
     // Only platform probing uses spawnSync; all synth/play/decode/conversion spawns are fakes.
-    Bun.spawnSync = ((argv: string[]) => ({ exitCode: argv[0] === "ffprobe" ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) })) as any;
+    Bun.spawnSync = ((argv: string[]) => {
+      if (argv[0] === "which" && argv[1] === "ffprobe") return {exitCode:0, stdout:Buffer.from("ffprobe"), stderr:Buffer.alloc(0)};
+      return ({ exitCode: argv[0] === "ffprobe" ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
     Bun.spawn = ((argv: string[]) => {
+      if (argv[1] === "-version") return {pid: 70001, exited: Promise.resolve(argv[0] === "ffmpeg" ? 0 : 1), kill() {}};
       if (argv[0] === "which") return { pid: 70000, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg"]).stream(), kill: () => {} };
       if (argv.some((arg) => arg.startsWith("--text="))) {
         const media = argv.find((arg) => arg.startsWith("--write-media="))!.split("=").slice(1).join("=");
@@ -58,6 +63,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       }
       if (argv[0] === "ffmpeg") {
         if (argv.includes("-ss")) writeFileSync(argv.at(-1)!, "trimmed audio");
+        if (argv.includes("concat") && failHistory) throw Object.assign(new Error("EBADARCH"), {code: "EBADARCH"});
         if (argv.includes("concat")) {
           const playlist = argv[argv.indexOf("-i") + 1];
           historyInputs.push(readFileSync(playlist, "utf8").split("\n"));
@@ -287,6 +293,16 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(new Set(signals).size).toBe(1);
     expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine: "qwen3-tts", origin: "speak", fallback: false});
     expect(events.some((e) => e.type === "subtitle")).toBe(false); expect(loadHistory()).toHaveLength(1);
+  });
+
+  it("history failure warns without failing a successful playback completion", async () => {
+    failHistory = true; autoPlay = true;
+    const warning = spyOn(console, "error").mockImplementation(() => {}); spies.push(warning);
+    const h = start("edge", "A sentence.");
+    expect(await h.started).toEqual({});
+    expect(await h.completion).toEqual({});
+    expect(warning.mock.calls.some(([line]) => String(line).includes("Long-read history could not be saved: EBADARCH"))).toBe(true);
+    expect(loadHistory()).toHaveLength(0);
   });
 
   it("exposes first playback and reports failed playback to CLI waiters", async () => {

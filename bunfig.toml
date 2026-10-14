@@ -4,4 +4,4 @@
 # dictating on this Mac. Removing it re-opens the 2026-09-06 cancelled-dictation
 # bug; see src/__tests__/setup/preload.ts.
 [test]
-preload = ["./src/__tests__/setup/preload.ts"]
+preload = ["./src/__tests__/setup/preload.ts", "./src/__tests__/setup/resolver-cache.ts"]

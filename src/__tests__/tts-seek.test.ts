@@ -28,6 +28,7 @@ describe("seek protocol", () => {
     const extract = spyOn(amplitude, "startPlaybackAmplitudeEnvelopeExtraction").mockReturnValue({ result: decoded.promise, cancel: () => {} });
     const players: string[][] = [];
     const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
+      if (argv[1] === "-version") return {pid: 91003, exited: Promise.resolve(0), kill() {}};
       if (argv[0] === "which") return { pid: 91000, exited: Promise.resolve(0), stdout: new Blob(["/fake/ffmpeg"]).stream(), kill: () => {} };
       if (argv.includes("-ss")) { conversions.push(argv); return { pid: 91001, exited: trim.promise, kill: () => trim.resolve(143) }; }
       players.push(argv); return { pid: 91002, exited: Promise.resolve(0), kill: () => {} };
@@ -49,7 +50,8 @@ describe("seek protocol", () => {
     const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
       const exit = deferred<number>();
       const proc = { pid: 90000 + players.values.length + trims.values.length, exited: exit.promise, kill: () => exit.resolve(0), stdout: new Blob([new Uint8Array([0, 0])]).stream() };
-      if (argv.includes("-ss")) trims.push({ argv, exit, proc });
+      if (argv[1] === "-version") exit.resolve(0);
+      else if (argv.includes("-ss")) trims.push({ argv, exit, proc });
       else if (argv.includes("-f") && argv.includes("s16le")) exit.resolve(0);
       else if (argv[0] === "which") { proc.stdout = new Blob(["/fake/ffmpeg"]).stream(); exit.resolve(0); }
       else {

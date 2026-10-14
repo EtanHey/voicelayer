@@ -58,6 +58,8 @@ describe("speaker output recording gate", () => {
 
     // @ts-ignore — test seam for external audio commands.
     Bun.spawn = (cmd: string[], _opts?: unknown) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {pid: 89990, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg\n"]).stream(), kill() {}};
+      if (cmd[1] === "-version") return {pid: 89991, exited: Promise.resolve(cmd[0] === "ffmpeg" ? 0 : 1), kill() {}};
       spawnCalls.push([...(Array.isArray(cmd) ? cmd : [String(cmd)])]);
       // edge-tts args use the `--flag=value` form (buildEdgeTTSArgs); extract by
       // prefix, not the two-token indexOf shape.
@@ -86,6 +88,8 @@ describe("speaker output recording gate", () => {
 
     // @ts-ignore — make audio player selection deterministic.
     Bun.spawnSync = (cmd: string[]) => {
+      if (cmd[0] === "which" && ["ffmpeg", "ffprobe"].includes(cmd[1])) return {exitCode: 0, stdout: Buffer.from(`${cmd[1]}\n`), stderr: Buffer.alloc(0)};
+      if (cmd[1] === "-version") return {exitCode: ["ffmpeg", "ffprobe"].includes(cmd[0]) ? 0 : 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0)};
       if (Array.isArray(cmd) && cmd[0] === "which") {
         return {
           exitCode: 1,
@@ -246,6 +250,8 @@ describe("speaker output recording gate", () => {
 
     // @ts-ignore — flip recording state after synthesis writes the file.
     Bun.spawn = (cmd: string[], _opts?: unknown) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {pid: 89990, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg\n"]).stream(), kill() {}};
+      if (cmd[1] === "-version") return {pid: 89991, exited: Promise.resolve(cmd[0] === "ffmpeg" ? 0 : 1), kill() {}};
       spawnCalls.push([...(Array.isArray(cmd) ? cmd : [String(cmd)])]);
       // edge-tts args use the `--flag=value` form (buildEdgeTTSArgs); extract by
       // prefix, not the two-token indexOf shape.

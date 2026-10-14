@@ -1,9 +1,16 @@
 import { unlinkSync, writeFileSync } from "fs";
+import { resolveBinaryAsync } from "../resolve-binary";
 import type { PlayedChunk } from "./long-read";
 
 /** Run only the owned child; cancellation never kills another daemon's process. */
 export async function runAudioCommand(argv: string[], signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
+  if (argv[0] === "ffmpeg") {
+    const ffmpeg = await resolveBinaryAsync("ffmpeg");
+    signal?.throwIfAborted();
+    if (!ffmpeg) throw new Error("ffmpeg unavailable for audio conversion");
+    argv = [ffmpeg, ...argv.slice(1)];
+  }
   const proc = Bun.spawn(argv, { stdout: "ignore", stderr: "ignore" });
   let escalation: ReturnType<typeof setTimeout> | undefined;
   const kill = () => {

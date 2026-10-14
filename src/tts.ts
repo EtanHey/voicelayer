@@ -23,6 +23,7 @@ import {
   copyFileSync,
   unlinkSync,
 } from "fs";
+import { resolveBinary } from "./resolve-binary";
 import { platform } from "os";
 import {
   ttsFilePath,
@@ -380,8 +381,10 @@ function inferBoundaryEndMs(wordBoundaries: WordBoundary[]): number {
 
 function probeAudioDurationMs(audioFile: string): number | null {
   try {
+    const ffprobe = resolveBinary("ffprobe");
+    if (!ffprobe) return null;
     const probe = Bun.spawnSync([
-      "ffprobe",
+      ffprobe,
       "-v",
       "error",
       "-show_entries",
@@ -621,8 +624,10 @@ export function isTTSDisabled(): boolean {
 /** Convert a WAV file to MP3 via ffmpeg. Returns the MP3 path, or null on failure. */
 function convertWavToMp3(wavPath: string): string | null {
   const mp3Path = ttsFilePath(process.pid, ttsCounter++);
+  const ffmpeg = resolveBinary("ffmpeg");
+  if (!ffmpeg) return null;
   const result = Bun.spawnSync([
-    "ffmpeg",
+    ffmpeg,
     "-y",
     "-i",
     wavPath,
@@ -671,7 +676,9 @@ async function playClonedAudio(
     while (remaining < 0.5) { filters.push("atempo=0.5"); remaining /= 0.5; }
     while (remaining > 2) { filters.push("atempo=2"); remaining /= 2; }
     filters.push(`atempo=${remaining}`);
-    const conversion = Bun.spawnSync(["ffmpeg", "-y", "-i", ttsFile, "-af", filters.join(","), adjusted], {stdout: "ignore", stderr: "pipe"});
+    const ffmpeg = resolveBinary("ffmpeg");
+    if (!ffmpeg) throw new Error("ffmpeg unavailable for clone rate conversion");
+    const conversion = Bun.spawnSync([ffmpeg, "-y", "-i", ttsFile, "-af", filters.join(","), adjusted], {stdout: "ignore", stderr: "pipe"});
     if (conversion.exitCode !== 0) {
       for (const path of [adjusted, ttsFile]) { try { unlinkSync(path); } catch {} }
       throw new Error("Clone rate conversion failed");
@@ -1768,7 +1775,6 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
             chunkVoices.get(played[0]?.chunk.audioFile) ?? profile.voice);
         } catch (error) {
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);
-          throw error;
         } finally { try { unlinkSync(combined); } catch {} }
       },
       dispose: (chunk) => { chunkEngines.delete(chunk.audioFile); chunkVoices.delete(chunk.audioFile); try { unlinkSync(chunk.audioFile); } catch {} },

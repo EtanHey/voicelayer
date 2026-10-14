@@ -1,3 +1,5 @@
+import { handleSocketCommand } from "../socket-handlers";
+import { __resetBinarySpawnForTests } from "../resolve-binary";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -15,18 +17,24 @@ let saved: Record<string,string|undefined>;
 let spies: Array<ReturnType<typeof spyOn>>=[];
 let argv: string[][]=[];
 beforeEach(()=>{
+ __resetBinarySpawnForTests();
  mkdirSync(dir,{recursive:true}); argv=[];
  saved=Object.fromEntries(["VOICELAYER_TTS_SETTINGS_PATH","QA_VOICE_TTS_VOICE","QA_VOICE_TTS_RATE","QA_VOICE_TTS_REQUIRE_CLONE"].map(k=>[k,process.env[k]]));
  process.env.VOICELAYER_TTS_SETTINGS_PATH=join(dir,"settings.json"); delete process.env.QA_VOICE_TTS_VOICE; delete process.env.QA_VOICE_TTS_RATE; delete process.env.QA_VOICE_TTS_REQUIRE_CLONE;
  spies.push(spyOn(recording,"getEffectiveRecordingState").mockReturnValue("idle"),spyOn(socket,"broadcast").mockImplementation(()=>{}));
  spies.push(spyOn(Bun,"spawn").mockImplementation(((cmd: string[])=>{
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {pid: 89990, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg\n"]).stream(), kill() {}};
+      if (cmd[1] === "-version") return {pid: 89991, exited: Promise.resolve(cmd[0] === "ffmpeg" ? 0 : 1), kill() {}};
    argv.push([...cmd]);
    const media=cmd.find(a=>a.startsWith("--write-media="))?.split("=").slice(1).join("=");
    if(media) writeFileSync(media,"fake mp3");
    if(cmd[0]==="ffmpeg" && cmd.at(-1)?.endsWith(".mp3")) writeFileSync(cmd.at(-1)!,"converted audio");
    return {pid:98765,exited:Promise.resolve(0),stdout:new Blob([new Uint8Array([0,0])]).stream(),kill:()=>{}};
  }) as never));
- spies.push(spyOn(Bun,"spawnSync").mockImplementation(((cmd: string[])=>{argv.push([...cmd]); if(cmd[0]==="ffmpeg" && cmd.includes("-af")) writeFileSync(cmd.at(-1)!,"rate adjusted"); return {exitCode:0,stdout:Buffer.from("1.0"),stderr:Buffer.alloc(0)};}) as never));
+ spies.push(spyOn(Bun,"spawnSync").mockImplementation(((cmd: string[])=>{
+   if (cmd[0] === "which" && ["ffmpeg", "ffprobe"].includes(cmd[1])) return {exitCode: 0, stdout: Buffer.from(`${cmd[1]}\n`), stderr: Buffer.alloc(0)};
+      if (cmd[1] === "-version") return {exitCode: ["ffmpeg", "ffprobe"].includes(cmd[0]) ? 0 : 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0)};
+   argv.push([...cmd]); if(cmd[0]==="ffmpeg" && cmd.includes("-af")) writeFileSync(cmd.at(-1)!,"rate adjusted"); return {exitCode:0,stdout:Buffer.from("1.0"),stderr:Buffer.alloc(0)};}) as never));
 });
 afterEach(async()=>{stopPlayback(); await awaitCurrentPlayback(); for(const s of spies.splice(0))s.mockRestore(); for(const [k,v]of Object.entries(saved)) {if(v===undefined)delete process.env[k];else process.env[k]=v;} rmSync(dir,{recursive:true,force:true});});
 function synthArgs(){return argv.filter(a=>a.some(x=>x.startsWith("--voice="))).map(a=>a.filter(x=>x.startsWith("--voice=")||x.startsWith("--rate=")));}
@@ -234,4 +242,35 @@ test("speak_text saved clone rate below minus fifty percent chains tempo filters
  cloneFixture();writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"fixture",rate:"-75%"}}}));
  await speakText("Read the entire selection.","long").done;
  expect(argv.find(a=>a.includes("-af") && a.includes("atempo=0.5,atempo=0.5"))).toBeDefined();
+});
+
+
+test("preview_tts_profile clone with non-zero rate survives stale PATH ffmpeg and ffprobe", async () => {
+ writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"fixture",rate:"+20%"}}}));
+ spies.push(spyOn(qwen,"loadProfile").mockReturnValue({name:"fixture",engine:"qwen3-tts"} as never),
+   spyOn(xtts,"isXTTSAvailable").mockReturnValue(false), spyOn(f5,"isF5TTSAvailable").mockReturnValue(false),
+   spyOn(qwen,"synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
+ const commands: string[][] = [];
+ const sync = (cmd: string[]) => {
+   commands.push([...cmd]);
+   if (cmd[0] === "which") return {exitCode:0, stdout:Buffer.from(`/usr/local/bin/${cmd[1]}`), stderr:Buffer.alloc(0)};
+   if (cmd[0] === "ffprobe" || cmd[0].startsWith("/usr/local/bin/ff")) throw Object.assign(new Error("Bad CPU type"), {code:"EBADARCH"});
+   if (cmd[0] === "/opt/homebrew/bin/ffmpeg" && cmd.includes("-af")) writeFileSync(cmd.at(-1)!, "adjusted clone");
+   return {exitCode:0, stdout:Buffer.from(cmd.includes("-show_entries") ? "1.0" : ""), stderr:Buffer.alloc(0)};
+ };
+ spies.push(spyOn(Bun,"spawnSync").mockImplementation(sync as never));
+ spies.push(spyOn(Bun,"spawn").mockImplementation(((cmd: string[]) => {
+   commands.push([...cmd]);
+   if (cmd[0] === "which") return {pid:99000, exited:Promise.resolve(0), stdout:new Blob([`/usr/local/bin/${cmd[1]}`]).stream(), kill(){}};
+   if (cmd[0].startsWith("/usr/local/bin/ff")) throw Object.assign(new Error("Bad CPU type"), {code:"EBADARCH"});
+   if (cmd[0] === "/opt/homebrew/bin/ffmpeg" && cmd.at(-1)?.endsWith(".mp3")) writeFileSync(cmd.at(-1)!, "converted");
+   return {pid:99001, exited:Promise.resolve(0), stdout:new Blob([new Uint8Array([0,0])]).stream(), kill(){}};
+ }) as never));
+ const result = await handleSocketCommand({cmd:"preview_tts_profile", profile:"long"});
+ expect(result).toMatchObject({outcome:"accept"});
+ const read = speakText("A long clone at the configured rate.", "long");
+ expect(await read.completion).toEqual({});
+ expect(commands.some(cmd => cmd[0] === "/opt/homebrew/bin/ffprobe" && cmd.includes("-show_entries"))).toBe(true);
+ expect(commands.some(cmd => cmd[0] === "/opt/homebrew/bin/ffmpeg" && cmd.includes("-af"))).toBe(true);
+ expect(commands.some(cmd => cmd[0] === "ffprobe" || cmd[0] === "ffmpeg")).toBe(false);
 });

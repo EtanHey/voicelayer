@@ -1,3 +1,5 @@
+import { arch, platform } from "node:os";
+
 /**
  * Binary resolution for daemon/LaunchAgent context.
  *
@@ -110,13 +112,27 @@ const defaultBinarySpawn: BinarySpawnSync = (cmd, options) =>
   Bun.spawnSync(cmd, options);
 
 let binarySpawn: BinarySpawnSync = defaultBinarySpawn;
+const resolvedPaths = new Map<string, string>();
+const pendingPaths = new Map<string, Promise<string | null>>();
+let resolutionGeneration = 0;
+const isMediaBinary = (name: string) => name === "ffmpeg" || name === "ffprobe";
+const versionFlag = (name: string) => isMediaBinary(name) ? "-version" : "--version";
+const preferHomebrew = (name: string) => isMediaBinary(name) && platform() === "darwin" && arch() === "arm64";
+function remember(name: string, path: string): string {
+  resolvedPaths.set(name, path);
+  return path;
+}
 
 export function __setBinarySpawnForTests(spawn: BinarySpawnSync): void {
+  __resetBinarySpawnForTests();
   binarySpawn = spawn;
 }
 
 export function __resetBinarySpawnForTests(): void {
   binarySpawn = defaultBinarySpawn;
+  resolvedPaths.clear();
+  pendingPaths.clear();
+  resolutionGeneration++;
 }
 
 export interface ResolveBinaryOptions {
@@ -170,6 +186,8 @@ export function resolveBinary(
   candidates: string[] = [],
   options: ResolveBinaryOptions = {},
 ): string | null {
+  const cached = resolvedPaths.get(name);
+  if (cached) return cached;
   const spawnTimeoutMs = options.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS;
   const budgetMs = options.budgetMs ?? RESOLVE_BUDGET_MS;
   const started = Date.now();
@@ -191,6 +209,16 @@ export function resolveBinary(
     return null;
   };
 
+  // Native Homebrew wins over a stale Intel PATH twin on Apple Silicon.
+  const preferred = preferHomebrew(name) ? `/opt/homebrew/bin/${name}` : undefined;
+  if (preferred) {
+    const timeout = nextTimeout();
+    if (timeout === null) return giveUp();
+    const check = runProbe([preferred, versionFlag(name)], timeout);
+    if (check.timedOut) timedOut = true;
+    if (check.exitCode === 0) return remember(name, preferred);
+  }
+
   // Try `which` with enriched PATH
   const whichTimeout = nextTimeout();
   if (whichTimeout === null) return giveUp();
@@ -198,7 +226,14 @@ export function resolveBinary(
   if (which.timedOut) timedOut = true;
   if (which.exitCode === 0) {
     const path = which.stdout.trim();
-    if (path) return path;
+    if (path) {
+      if (!isMediaBinary(name)) return remember(name, path);
+      const timeout = nextTimeout();
+      if (timeout === null) return giveUp();
+      const check = runProbe([path, "-version"], timeout);
+      if (check.timedOut) timedOut = true;
+      if (check.exitCode === 0) return remember(name, path);
+    }
   }
 
   // Probe candidate paths directly
@@ -212,11 +247,11 @@ export function resolveBinary(
   for (const candidate of allCandidates) {
     const timeout = nextTimeout();
     if (timeout === null) return giveUp();
-    const check = runProbe([candidate, name === "ffmpeg" ? "-version" : "--version"], timeout);
+    const check = runProbe([candidate, versionFlag(name)], timeout);
     if (check.timedOut) timedOut = true;
     if (check.exitCode === 0) {
       console.error(`[voicelayer] Resolved ${name} at: ${candidate}`);
-      return candidate;
+      return remember(name, candidate);
     }
   }
 
@@ -265,14 +300,38 @@ async function probeExitCode(
  * costs `timeoutMs` and a SIGKILL rather than the whole process.
  *
  * The sync twin retains its capture-path lookup and timing behavior for other
- * binaries; ffmpeg alone uses its supported `-version` probe. New callers on
+ * binaries; ffmpeg and ffprobe use their supported `-version` probe. New callers on
  * latency-sensitive paths should use this one.
  */
-export async function resolveBinaryAsync(
+export function resolveBinaryAsync(
   name: string,
   candidates: string[] = [],
   timeoutMs: number = ASYNC_RESOLVE_TIMEOUT_MS,
 ): Promise<string | null> {
+  const cached = resolvedPaths.get(name);
+  if (cached) return Promise.resolve(cached);
+  const pending = pendingPaths.get(name);
+  if (pending) return pending;
+  const generation = resolutionGeneration;
+  const result = resolveBinaryAsyncUncached(name, candidates, timeoutMs).then(path => {
+    if (path && generation === resolutionGeneration) remember(name, path);
+    return path;
+  }).finally(() => {
+    if (pendingPaths.get(name) === result) pendingPaths.delete(name);
+  });
+  pendingPaths.set(name, result);
+  return result;
+}
+
+async function resolveBinaryAsyncUncached(
+  name: string,
+  candidates: string[] = [],
+  timeoutMs: number = ASYNC_RESOLVE_TIMEOUT_MS,
+): Promise<string | null> {
+  if (preferHomebrew(name)) {
+    const preferred = `/opt/homebrew/bin/${name}`;
+    if (await probeExitCode([preferred, versionFlag(name)], timeoutMs) === 0) return preferred;
+  }
   try {
     const proc = Bun.spawn(["which", name], {
       stdout: "pipe",
@@ -292,7 +351,7 @@ export async function resolveBinaryAsync(
       ]);
       if (!timedOut && exitCode === 0) {
         const path = out.trim();
-        if (path) return path;
+        if (path && (!isMediaBinary(name) || await probeExitCode([path, "-version"], timeoutMs) === 0)) return path;
       }
     } finally {
       clearTimeout(timer);
@@ -309,7 +368,7 @@ export async function resolveBinaryAsync(
   ];
 
   for (const candidate of allCandidates) {
-    if ((await probeExitCode([candidate, name === "ffmpeg" ? "-version" : "--version"], timeoutMs)) === 0) {
+    if ((await probeExitCode([candidate, versionFlag(name)], timeoutMs)) === 0) {
       return candidate;
     }
   }

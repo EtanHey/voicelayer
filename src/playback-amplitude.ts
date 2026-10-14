@@ -1,3 +1,4 @@
+import { resolveBinary, resolveBinaryAsync } from "./resolve-binary";
 /** Truthful playback-amplitude extraction for VoiceBar waveforms. */
 
 export const PLAYBACK_AMPLITUDE_INTERVAL_MS = 50;
@@ -132,7 +133,9 @@ export function buildPlaybackAmplitudeEnvelope(
 }
 
 function runFFmpeg(command: string[]): PlaybackAmplitudeDecoderResult {
-  const result = Bun.spawnSync(command, {
+  const ffmpeg = resolveBinary("ffmpeg");
+  if (!ffmpeg) throw new Error("ffmpeg unavailable for amplitude");
+  const result = Bun.spawnSync([ffmpeg, ...command.slice(1)], {
     stdout: "pipe",
     stderr: "ignore",
     maxBuffer: PLAYBACK_AMPLITUDE_MAX_PCM_BYTES + 1,
@@ -178,6 +181,20 @@ async function readBoundedPCM(
 }
 
 function runFFmpegAsync(command: string[]): PlaybackAmplitudeDecoderTask {
+  let decoder: PlaybackAmplitudeDecoderTask | undefined;
+  let cancelled = false;
+  return {
+    cancel: () => { cancelled = true; decoder?.cancel(); },
+    result: (async () => {
+      const ffmpeg = await resolveBinaryAsync("ffmpeg");
+      if (cancelled || !ffmpeg) throw new Error("amplitude decoder unavailable or cancelled");
+      decoder = spawnFFmpegAsync([ffmpeg, ...command.slice(1)]);
+      return decoder.result;
+    })(),
+  };
+}
+
+function spawnFFmpegAsync(command: string[]): PlaybackAmplitudeDecoderTask {
   const subprocess = Bun.spawn(command, {
     stdin: "ignore",
     stdout: "pipe",

@@ -80,7 +80,7 @@ describe("speak CLI", () => {
     const scripts: Record<string, string> = {
       python3: "#!/bin/bash\nfor arg in \"$@\"; do case \"$arg\" in --write-media=*) printf audio > \"${arg#*=}\" ;; --write-metadata=*) printf '{ \"text\": \"hello\", \"offset\": 0, \"duration\": 5000000 }' > \"${arg#*=}\" ;; esac; done\n",
       ffprobe: '#!/bin/bash\nprintf "1\\n"\n',
-      ffmpeg: '#!/bin/bash\nlast="${@: -1}"\nif [[ "$last" == "pipe:1" ]]; then printf "00000000"; else printf audio > "$last"; fi\n',
+      ffmpeg: '#!/bin/bash\nif [[ "${1:-}" == "-version" ]]; then exit 0; fi\nlast="${@: -1}"\nif [[ "$last" == "pipe:1" ]]; then printf "00000000"; else printf audio > "$last"; fi\n',
       afplay: '#!/bin/bash\nsleep 0.1\n',
     };
     for (const [name, source] of Object.entries(scripts)) writeFileSync(join(dir, name), source, { mode: 0o700 });
@@ -232,7 +232,7 @@ setInterval(() => {}, 1000);
 `;
     for (const name of ["python3", "afplay", "mpv", "ffplay", "mpg123"]) writeFileSync(join(dir, name), fixture, { mode: 0o700 });
     writeFileSync(join(dir, "ffprobe"), '#!/bin/bash\nprintf "1\\n"\n', { mode: 0o700 });
-    writeFileSync(join(dir, "ffmpeg"), '#!/bin/bash\nlast="${@: -1}"\nif [[ "$last" == "pipe:1" ]]; then printf "00000000"; else printf audio > "$last"; fi\n', { mode: 0o700 });
+    writeFileSync(join(dir, "ffmpeg"), '#!/bin/bash\nif [[ "${1:-}" == "-version" ]]; then exit 0; fi\nlast="${@: -1}"\nif [[ "$last" == "pipe:1" ]]; then printf "00000000"; else printf audio > "$last"; fi\n', { mode: 0o700 });
     const platformPreload = join(dir, "platform.ts");
     writeFileSync(platformPreload, 'import { mock } from "bun:test"; import * as os from "node:os"; const original = {...os}; mock.module("os", () => ({...original, platform: () => "linux"})); mock.module("node:os", () => ({...original, platform: () => "linux"}));');
     const child = Bun.spawn([process.execPath, ...(host === "linux" ? ["--preload", platformPreload] : []), "src/cli/speak.ts", "hello"], { env: { ...process.env, R1_DIR: dir, R1_PHASE: phase, PATH: `${dir}:${process.env.PATH}`, VOICELAYER_TMP_ROOT: dir, VOICELAYER_STATE_DIR: join(dir, "state"), VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock"), QA_VOICE_TTS_VOICE: "en-US-JennyNeural" }, stdout: "ignore", stderr: Bun.file(join(dir, "stderr")) });
