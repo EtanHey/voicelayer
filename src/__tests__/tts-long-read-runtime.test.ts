@@ -227,7 +227,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine: "edge-tts", origin: "speak", fallback: false});
     clockMs += 400; players[0].exit.resolve(0); await playerBarrier.at(1);
     expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(650);
-    expect(logs.mock.calls.filter(([line]) => String(line).startsWith("[tts] first_audio_ms=650 profile=long engine=edge-tts voice=fixture chars="))).toHaveLength(1);
+    expect(logs.mock.calls.filter(([line]) => String(line) === `[tts] first_audio_ms=650 profile=long engine=edge-tts voice=fixture chars=${text.length}`)).toHaveLength(1);
     stopPlayback(1200); await h.done;
   });
 

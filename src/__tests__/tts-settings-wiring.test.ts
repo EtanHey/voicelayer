@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import * as os from "os";
 import { TEST_TMP } from "./setup/test-tmp";
-import { speak, speakText, awaitCurrentPlayback, stopPlayback, VoiceProfileUnavailableError } from "../tts";
+import { speak, speakText, resolveLongReadProfile, awaitCurrentPlayback, stopPlayback, VoiceProfileUnavailableError } from "../tts";
 import * as recording from "../recording-state";
 import * as socket from "../socket-client";
 import * as qwen from "../tts/qwen3";
@@ -214,6 +214,8 @@ test("speak_text disappeared clone falls back to default edge, but a mandate rej
  cloneFixture();writeFileSync(process.env.VOICELAYER_TTS_SETTINGS_PATH!,JSON.stringify({profiles:{long:{engine:"clone",voice:"missing",rate:"+20%"}}}));
  await speakText("Read this selection.","long").done;
  expect(synthArgs()).toEqual([["--voice=en-US-JennyNeural","--rate=+0%"]]);
+ expect(resolveLongReadProfile("long", "Read this selection.")).toMatchObject({engine:"edge", requestedClone:true});
+ expect(readTTSControlsStatus().profiles.long.last_first_audio).toEqual({engine:"edge-tts",origin:"speak",fallback:true});
  process.env.QA_VOICE_TTS_REQUIRE_CLONE="1";
  expect(()=>speakText("Read this selection.","long")).toThrow(VoiceProfileUnavailableError);
  expect(synthArgs()).toHaveLength(1);
