@@ -1417,6 +1417,8 @@ export function playAudioNonBlocking(
   return playbackQueueManager.enqueue(audioFile, metadata);
 }
 
+const PLAYBACK_WAIT_TIMEOUT_MS = 35_000;
+
 /**
  * Wait for all queued playback to finish. Resolves immediately if queue is empty.
  *
@@ -1425,17 +1427,36 @@ export function playAudioNonBlocking(
  * P0-2 fix — voice_ask uses this to ensure all pending audio finishes before
  * starting recording. Previously only awaited currentPlayback.proc.exited, which
  * returned immediately if the queue hadn't started processing.
+ * Rejects after 35 seconds without releasing pending playback/cleanup ownership.
  */
 export async function awaitCurrentPlayback(): Promise<void> {
   // Snapshot generation ownership before yielding, including already-aborted cleanup.
   const generations = [...cancelledLongReadTeardowns];
   if (activeLongRead) generations.push(activeLongRead.done);
-  await Promise.all(generations);
-  await playbackQueueManager.awaitDrained();
+  const settled = async () => {
+    await Promise.all(generations);
+    await playbackQueueManager.awaitDrained();
+  };
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      settled(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          const message = `Playback wait timed out after ${PLAYBACK_WAIT_TIMEOUT_MS}ms`;
+          console.warn(`[voicelayer] ${message}; refusing to advance while playback or cleanup remains pending`);
+          reject(new Error(message));
+        }, PLAYBACK_WAIT_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function getPlaybackQueueDepth(): number {
-  return playbackQueueManager.getDepthForHealth() || (activeLongRead && !activeLongRead.controller.signal.aborted ? 1 : 0);
+  return (playbackQueueManager.getDepthForHealth() + cancelledLongReadTeardowns.size) ||
+    (activeLongRead && !activeLongRead.controller.signal.aborted ? 1 : 0);
 }
 
 /** Stop current playback if any. */

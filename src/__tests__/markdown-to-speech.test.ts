@@ -41,4 +41,35 @@ describe("markdownToSpeech", () => {
     expect(markdownToSpeech("Use voice_ask and snake_case_name with _emphasis_ or (__init__)."))
       .toBe("Use voice_ask and snake_case_name with emphasis or (__init__).");
   });
+  it("N1 retains import-led prose after an incomplete fence", () => {
+    expect(markdownToSpeech("Hi\n```js\nsecret()\nimport this idea carefully."))
+      .toBe("Hi code block import this idea carefully.");
+  });
+  it("N1 retains from-led prose after an incomplete fence", () => {
+    expect(markdownToSpeech("Hi\n```js\nsecret()\nfrom experience, avoid that."))
+      .toBe("Hi code block from experience, avoid that.");
+  });
+  it("N1 retains const-led prose after an incomplete fence", () => {
+    expect(markdownToSpeech("Hi\n```js\nsecret()\nconst foo = bar is wrong though."))
+      .toBe("Hi code block const foo = bar is wrong though.");
+  });
+  it("N1 collapses strongly evidenced code after an incomplete fence", () => {
+    for (const code of ['import x from "y"', 'from math import (sqrt)', 'const x = 1;', 'name()', 'x = 1;', 'values = [1, 2]', 'if (ready) {']) {
+      expect(markdownToSpeech(`Hi\n\`\`\`js\n${code}`)).toBe("Hi code block");
+    }
+  });
+  it("N1 retains four-word prose and sentence punctuation despite code-like prefixes", () => {
+    for (const prose of ['import this idea carefully', 'from experience avoid that', 'from math import sqrt', 'const ideas are worth discussing', '    import this idea carefully.', 'name() is helpful, right?', 'Call name()!', 'name() // useful in practice.']) {
+      expect(markdownToSpeech(`Hi\n\`\`\`js\n${prose}`)).toBe(`Hi code block ${prose.trim()}`);
+    }
+  });
+  it("N2 collapses unprefixed assignments before a leading closing fence", () => {
+    expect(markdownToSpeech("x = 1;\ny = 2;\n```\nHere is the explanation."))
+      .toBe("code block Here is the explanation.");
+  });
+  it("N2 retains ambiguous leading prose before a closing fence", () => {
+    expect(markdownToSpeech("const foo = bar is wrong though.\n```\nHere is the explanation."))
+      .toBe("const foo = bar is wrong though. code block Here is the explanation.");
+  });
+
 });

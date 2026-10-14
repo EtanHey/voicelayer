@@ -47,10 +47,22 @@ function stripInlineLinkTargets(line: string): string {
 /** Recognize syntax only; unknown lines in a partial selection are retained as prose. */
 function looksLikeCode(line: string): boolean {
   const text = line.trim();
-  return /^(?:const|let|var)\s+[\w$]+\s*(?:=|:)/.test(text) ||
-    /^(?:(?:import|from)\s+[\w."'{}*]|(?:def|class|function)\s+\w+\s*[(:{])/.test(text) ||
-    /^(?:[\w$]+\.)*[\w$]+\([^)]*\)\s*;?$/.test(text) ||
-    /^(?:[{}[\];]+|\/\/.*)$/.test(text);
+  // Sentence evidence wins, even with a keyword, indentation or an equals sign.
+  if (/\p{L}/u.test(text) && /\s/u.test(text) && /[.!?]$/u.test(text)) return false;
+  const codePunctuation = /[;{}()[\]=:+*/\\<>"'`,]/u;
+  const plainWords = text.split(/\s+/u).filter((word) => /^\p{L}+$/u.test(word));
+  if (plainWords.length >= 4 && !codePunctuation.test(text)) return false;
+
+  // Whole statements/calls, not keyword prefixes. Ambiguous lines remain spoken.
+  return /^(?:import\s+(?:[\w$]+|\{[^}]+\}|\*\s+as\s+[\w$]+)\s+from\s+["'][^"']+["']|import\s+["'][^"']+["'])\s*;?$/.test(text) ||
+    /^from\s+[\w.]+\s+import\s+\([^()]+\)\s*;?$/.test(text) ||
+    /^(?:(?:const|let|var)\s+)?[\w$]+(?:\.[\w$]+|\[[^\]]+\])*\s*(?:[+*/-]?=|:=)\s*\S.*(?:;|,|[\]}])$/.test(text) ||
+    /^(?:[\w$]+\.)*[\w$]+\([^\n]*\)\s*;?$/.test(text) ||
+    /^(?:if|for|while|switch|catch)\s*\([^\n]*\)\s*\{$/.test(text) ||
+    /^(?:function\s+[\w$]+\([^\n]*\)|class\s+[\w$]+)\s*\{$/.test(text) ||
+    /^def\s+\w+\([^\n]*\)\s*:$/.test(text) ||
+    /^(?:\[[^\n]*\]|\{[^\n]*\})\s*[,;]?$/.test(text) ||
+    /^[{}[\]);,]+$/.test(text);
 }
 
 /**
