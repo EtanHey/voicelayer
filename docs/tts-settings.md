@@ -79,3 +79,42 @@ Each successful player spawn logs one line:
 Latency includes synthesis and queue wait; rejected, disabled, failed, or
 cancelled-before-playback requests do not replace the last successful value.
 This core change does not supply a Swift settings screen or native acceptance.
+
+VoiceBar Settings → Speech (also `voicebar://settings/speech`) presents separate
+Short speaks and Long reads cards. Each shows the engine, its available voices,
+rate, and the last first-audio latency. Environment overrides disable the matching
+fields and show `Set by <VAR>`. The threshold selects when automatic long reads
+use LONG. Changes apply to the next speak; the UI never writes settings files.
+
+The Preview button sends `{"cmd":"preview_tts_profile","profile":"short","id":"preview-1"}`
+(or `long`). The daemon speaks a fixed sample using that profile and acknowledges
+with fresh `tts_controls` when playback finishes. Recording, playback, an active
+voice operation, or another owner's booking rejects previews without speaking.
+Preview does not start the clone daemon. A clone-down warning explains the fast
+voice fallback; use `voicelayer daemon` to start the clone engine separately.
+
+Switching engines in Speech chooses a voice listed for that engine and sends both
+fields in a single atomic `set_tts_setting` profile command. It never sends a
+standalone engine change or overwrites the rate during an engine switch. Both
+pickers wait for the matching acknowledgment; rejection keeps the daemon's prior
+pair. `engine.source: "environment"` is locked by `QA_VOICE_TTS_VOICE`, just like
+the voice field. An engine without available voices cannot be selected.
+
+The first-sound readout describes the last successful speech request (or Preview)
+from request receipt to player start, including synthesis and queue wait.
+`last_first_audio_ms` remains compatible; additive `last_first_audio` metadata
+contains the actual `engine`, `origin: "preview" | "speak"`, and `fallback` flag.
+The UI names the producing engine category rather than assuming the configured
+engine played. Without attribution it says “Not measured yet. Press Preview.”
+
+`tts_controls.preview_active` stays true throughout preview synthesis/playback
+and becomes false when its reservation is released. A client confirmation timeout
+keeps Preview disabled until its matching late ack or explicit idle daemon health.
+Health repaints Settings once when successfully parsed Speech controls meaningfully
+change (including the first snapshot after reconnect and new latency measurements).
+Identical health never repaints again, so the Settings appearance refresh cannot
+loop. Malformed or absent controls retain the last successfully parsed snapshot.
+Speech admission uses capture/playback and pending speech state; Models refresh
+and Whisper load/unload flags do not block Preview. Preparation and playback
+status share the inline Preview surface, and rejection acks include controls read
+after the preview reservation is released.

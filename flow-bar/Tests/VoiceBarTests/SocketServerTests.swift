@@ -9,6 +9,20 @@ final class SocketServerTests: XCTestCase {
     private var windows: [NSWindow] = []
     deinit {}
 
+    func testSpeakSelectionSendsRawTextAsSpeakTextNDJSONToDaemonOnly() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        let selection = "  **שלום**\n```swift\nprint(\"hi\")\n```  "
+        fixture.state.selectionTextCaptureHandler = { $0(.completed(selection)) }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+        fixture.state.speakSelection()
+        let line = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
+        let command = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String])
+        XCTAssertEqual(command, ["cmd": "speak_text", "text": selection, "profile": "auto",
+                                 "format": "markdown", "source": "selection"])
+        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.1))
+    }
+
     func testUnstartedServerDeinitDoesNotUnlinkSocketPathItDoesNotOwn() throws {
         let directory = URL(fileURLWithPath: "/tmp")
             .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)

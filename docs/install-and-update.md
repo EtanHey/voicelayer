@@ -103,6 +103,8 @@ Requires Input Monitoring permission. Physical F5 is handled natively by VoiceBa
 where the physical key is Apple's Dictation key, the `hidutil` relay maps it to VoiceBar's
 internal F18. The installer preserves non-VoiceBar `hidutil` mappings and is safe to rerun.
 `Shift+F5` re-pastes the latest transcript.
+`Option+F5` speaks selected text in the focused app; press it again while speaking to stop.
+It is ignored during recording or transcription.
 
 ## M1 Pro Homebrew Transfer
 

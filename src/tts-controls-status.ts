@@ -5,8 +5,15 @@ import { buildDaemonRequestHeaders } from "./tts/qwen3";
 import { readTTSSettings, resolveSpeakProfile, ttsSettingEnvVar, type TTSEnv, type SpeakProfileKind, type TTSProfile } from "./tts-settings";
 
 type Setting<T> = { source: "default" | "settings" | "environment"; raw: string | number | null; effective: T; locked?: string };
+export type FirstAudioMeasurement = { engine: string; origin: "preview" | "speak"; fallback: boolean };
+const measurement: Record<SpeakProfileKind, FirstAudioMeasurement | null> = { short: null, long: null };
+let previewActive = false;
+export function setTTSPreviewActive(active: boolean): void { previewActive = active; }
 const latency: Record<SpeakProfileKind, number | null> = { short: null, long: null };
-export function recordFirstAudio(kind: SpeakProfileKind, ms: number): void { latency[kind] = ms; }
+export function recordFirstAudio(kind: SpeakProfileKind, ms: number, details?: FirstAudioMeasurement): void {
+  latency[kind] = ms;
+  measurement[kind] = details ? {...details} : null;
+}
 let cloneState: "up" | "down" = "down";
 let checkedAt = -Infinity;
 let pending: Promise<"up" | "down"> | undefined;
@@ -63,7 +70,7 @@ export function readTTSControlsStatus(env: TTSEnv = process.env) {
       const stored = file.profiles?.[kind]?.[key];
       return { source: raw !== undefined ? "environment" : stored !== undefined ? "settings" : "default", raw: raw !== undefined && key === "engine" ? resolved.engine : raw ?? stored ?? null, effective: resolved[key], ...(raw !== undefined ? {locked: `Set by ${variable}`} : {}) };
     }
-    return {engine: field("engine"), voice: field("voice"), rate: field("rate"), last_first_audio_ms: latency[kind]};
+    return {engine: field("engine"), voice: field("voice"), rate: field("rate"), last_first_audio_ms: latency[kind], last_first_audio: measurement[kind]};
   }
   // Health responses stay synchronous; the next poll observes this cached refresh.
   void probeCloneDaemon();
@@ -72,6 +79,7 @@ export function readTTSControlsStatus(env: TTSEnv = process.env) {
     short_limit_chars: {source: file.short_limit_chars !== undefined ? "settings" : "default", raw: file.short_limit_chars ?? null, effective: file.short_limit_chars ?? 400} as Setting<number>,
     available_voices: availableTTSVoices(env),
     clone_daemon: cloneState,
+    preview_active: previewActive,
   };
 }
 export type TTSControlsStatus = ReturnType<typeof readTTSControlsStatus>;

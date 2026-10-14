@@ -567,9 +567,9 @@ final class HotkeyManagerTests: XCTestCase {
 
     //
     // In plain mode the hotkey is the bare F5 (or F18 from the hidutil relay),
-    // plus the Shift+F5 re-paste chord. Any other modifier+F5 combo (Cmd+F5
-    // toggles VoiceOver, Ctrl+F5 toggles full keyboard access, Option+F5 is a
-    // common user-defined chord) must NOT be consumed by VoiceBar's event tap;
+    // plus Shift+F5 re-paste and Option+F5 speak-selection chords. System chords
+    // (Cmd+F5 toggles VoiceOver, Ctrl+F5 toggles full keyboard access)
+    // must NOT be consumed by VoiceBar's event tap;
     // returning .ignore lets the event reach the OS / focused app.
 
     func testCmdF5InPlainModeIsIgnoredSoVoiceOverShortcutPassesThrough() {
@@ -717,18 +717,78 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testOptF5InPlainModeIsIgnored() {
-        XCTAssertEqual(
-            hotkeyAction(
-                type: .keyDown,
-                keycode: 96,
-                flags: .maskAlternate,
-                autorepeat: 0,
-                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
-                useModifierMode: false
-            ),
-            .ignore
-        )
+    func testOptionOnlyF5AndF18SpeakSelection() {
+        for keycode: Int64 in [96, 79] {
+            let action = hotkeyAction(type: .keyDown, keycode: keycode, flags: .maskAlternate,
+                                      autorepeat: 0, targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                      useModifierMode: false)
+            XCTAssertEqual(action, .speakSelection)
+            XCTAssertTrue(shouldConsumeHotkeyEvent(hotkeyAction: action,
+                          targetKeycodes: HotkeyManager.defaultTargetKeycodes, keycode: keycode))
+        }
+    }
+
+    func testOptionCombinedModifiersStillPassThrough() {
+        for keycode: Int64 in [96, 79] {
+            for flags: CGEventFlags in [[.maskAlternate, .maskCommand], [.maskAlternate, .maskControl],
+                                       [.maskAlternate, .maskShift]] {
+                for type: CGEventType in [.keyDown, .keyUp] {
+                    XCTAssertEqual(hotkeyAction(type: type, keycode: keycode, flags: flags,
+                                                autorepeat: 0, targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                                useModifierMode: false), .ignore)
+                }
+            }
+        }
+    }
+
+    func testSpeakSelectionReleaseCannotUnwindAnotherGestureEvenAfterOptionIsReleased() {
+        var sequence = HotkeySequenceState()
+        _ = sequenceAwareHotkeyAction(type: .keyDown, keycode: 79, flags: .maskAlternate,
+                                     autorepeat: 0, targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                     useModifierMode: false, gestureIsActive: true, sequenceState: &sequence)
+        XCTAssertEqual(sequenceAwareHotkeyAction(type: .keyUp, keycode: 79, flags: [],
+                                                 autorepeat: 0, targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                                 useModifierMode: false, gestureIsActive: true,
+                                                 sequenceState: &sequence), .consume)
+    }
+
+    func testSpeakSelectionHeldKeyCannotRepeatOrFallIntoDictation() {
+        var sequence = HotkeySequenceState()
+        let first = sequenceAwareHotkeyAction(type: .keyDown, keycode: 96, flags: .maskAlternate,
+                                              autorepeat: 0, targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                              useModifierMode: false, sequenceState: &sequence)
+        XCTAssertEqual(first, .speakSelection)
+        for flags: CGEventFlags in [.maskAlternate, []] {
+            XCTAssertEqual(sequenceAwareHotkeyAction(type: .keyDown, keycode: 96, flags: flags,
+                                                    autorepeat: 1, targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                                    useModifierMode: false, sequenceState: &sequence), .consume)
+        }
+        _ = sequenceAwareHotkeyAction(type: .keyUp, keycode: 96, flags: [], autorepeat: 0,
+                                      targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                      useModifierMode: false, sequenceState: &sequence)
+        XCTAssertEqual(sequenceAwareHotkeyAction(type: .keyDown, keycode: 96, flags: [], autorepeat: 0,
+                                                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                                useModifierMode: false, sequenceState: &sequence), .keyDown)
+    }
+
+    func testSpeakSelectionDispatchDoesNotInvokeDictationCallbacks() {
+        let dispatched = expectation(description: "selection callback dispatched on main")
+        dispatchHotkeyAction(.speakSelection,
+                            onKeyDown: { XCTFail("selection must not start dictation") },
+                            onKeyUp: { XCTFail("selection must not release dictation") },
+                            onCancel: { XCTFail("selection must not cancel dictation") },
+                            onSpeakSelection: { XCTAssertTrue(Thread.isMainThread); dispatched.fulfill() })
+        wait(for: [dispatched], timeout: 1)
+    }
+
+    func testDroppedSelectionReleaseCannotSwallowTheNextDeliberatePress() {
+        var sequence = HotkeySequenceState()
+        _ = sequenceAwareHotkeyAction(type: .keyDown, keycode: 79, flags: .maskAlternate,
+                                      autorepeat: 0, targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                      useModifierMode: false, sequenceState: &sequence)
+        XCTAssertEqual(sequenceAwareHotkeyAction(type: .keyDown, keycode: 79, flags: .maskAlternate,
+                                                autorepeat: 0, targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                                                useModifierMode: false, sequenceState: &sequence), .speakSelection)
     }
 
     func testEscapeCancelsWhenGestureOrVoiceBarSessionIsActive() {

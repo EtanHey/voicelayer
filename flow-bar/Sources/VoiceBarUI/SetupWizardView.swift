@@ -263,6 +263,7 @@ private struct SetupWizardDoneBody: View {
                 gestureRow("Double-tap F5", VoiceBarHotkeyContract.doubleTapDescription)
                 gestureRow("Tap F5", VoiceBarHotkeyContract.singleTapDescription)
                 gestureRow(VoiceBarHotkeyContract.repasteShortcutLabel, VoiceBarHotkeyContract.repasteDescription)
+                gestureRow(VoiceBarHotkeyContract.speakSelectionShortcutLabel, VoiceBarHotkeyContract.speakSelectionDescription)
             }
         }
     }

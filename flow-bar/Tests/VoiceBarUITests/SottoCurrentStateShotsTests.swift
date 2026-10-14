@@ -226,7 +226,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         for (suffix, appearance) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
             try shot("settings-models-sidebar-focused\(suffix).png",
                      "Settings: sidebar has keyboard focus (native selection highlight under the row)",
-                     settings(tab: .models, vocabulary: empty),
+                     settings(tab: .transcription, vocabulary: empty),
                      size: CGSize(width: 780, height: 620), appearance: appearance)
         }
         try shot("settings-general-agent-speaking.png", "Settings General: sidebar footer while an agent speaks",
@@ -299,7 +299,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         )
         for (suffix, appearance) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
             try shot("settings-models-unavailable\(suffix).png", "Settings Models: VoiceLayer not connected",
-                     settings(tab: .models, vocabulary: empty, modelState: .disconnected),
+                     settings(tab: .transcription, vocabulary: empty, modelState: .disconnected),
                      size: CGSize(width: 780, height: 620), appearance: appearance)
         }
         for (name, residency, recordingState, queueDepth) in [
@@ -310,7 +310,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         ] {
             try shot("settings-models-\(name).png", "Settings Models: \(name)",
                      settings(
-                         tab: .models,
+                         tab: .transcription,
                          vocabulary: empty,
                          modelState: modelState(
                              residency: residency,
@@ -321,13 +321,13 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                      size: CGSize(width: 780, height: 620))
         }
         try shot("settings-models-processing-light.png", "Settings Models: Processing toggles, light",
-                 settings(tab: .models, vocabulary: empty,
+                 settings(tab: .transcription, vocabulary: empty,
                           modelState: modelState(residency: "loaded", recordingState: "idle", queueDepth: 0)),
                  size: CGSize(width: 780, height: 900), appearance: .aqua)
         for (suffix, appearance) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
             try shot("settings-models-processing-busy\(suffix).png",
                      "Settings Models: Processing while busy (the reason shown in the card)",
-                     settings(tab: .models, vocabulary: empty,
+                     settings(tab: .transcription, vocabulary: empty,
                               modelState: modelState(residency: "loaded", recordingState: "idle", queueDepth: 1)),
                      size: CGSize(width: 780, height: 940), appearance: appearance)
         }

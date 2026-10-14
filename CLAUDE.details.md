@@ -25,14 +25,16 @@
 - The rules engine deterministically turns an ordered run with at least two valued spoken enumerator heads (`One,` / `First,`) into numbered lines before capitalization and polish; sequence/content heads such as `Next,` or `First of all,` may continue a qualified run, content heads stay verbatim, and polish may not renumber or merge an existing list.
 - whisper.cpp binary detection checks `whisper-cli` then `whisper-cpp`.
 - Model search order: `QA_VOICE_WHISPER_MODEL` -> `~/.cache/whisper/ggml-large-v3-turbo.bin` -> any `ggml-*.bin` in `~/.cache/whisper/`.
-- Transcription effort (Settings → Models, code in `src/whisper-performance.ts`): `fast` (`-bo 1 -bs 1`), `balanced` (`-bo 3 -bs 3`), `accurate` (`-bo 5 -bs 5`, default). Same `large-v3-turbo` model for all three — only whisper.cpp beam-search/best-of changes. Persisted to `~/.local/state/voicelayer/whisper-performance.json`; override per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT`. Changing it reloads the model (about 2 s) so the next dictation uses it.
+- Transcription effort (Settings → Transcription, code in `src/whisper-performance.ts`): `fast` (`-bo 1 -bs 1`), `balanced` (`-bo 3 -bs 3`), `accurate` (`-bo 5 -bs 5`, default). Same `large-v3-turbo` model for all three — only whisper.cpp beam-search/best-of changes. Persisted to `~/.local/state/voicelayer/whisper-performance.json`; override per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT`. Changing it reloads the model (about 2 s) so the next dictation uses it.
 
 ## VoiceBar Settings (SwiftUI, `flow-bar/Sources/VoiceBarUI/SettingsView.swift`)
-- Four tabs: **General · Models · Dictionary · History**. Open with ⌘, / right-click → Settings… / the notch gear, or `open voicebar://settings` (`voicebar://settings/<tab>` opens that tab, case-insensitive; an unknown tab still opens Settings; an already-open window switches via `SettingsTabRequest`).
+- Five tabs: **General · Transcription · Dictionary · Speech · History**. Open with ⌘, / right-click → Settings… / the notch gear, or `open voicebar://settings` (`voicebar://settings/<tab>` opens that tab, case-insensitive; `transcription` is canonical and `models` remains a permanent alias; an unknown tab still opens Settings; an already-open window switches via `SettingsTabRequest`).
 - General: shortcut status + Check shortcut; permissions (Microphone, Accessibility, Input Monitoring) with Open links; Visibility (Hide for 1 hour / Show VoiceBar); microphone priority; Advanced (F5 key helper); last dictation.
-- Models: speech model and size, in memory (Load/Unload), transcription effort, and the Processing toggles below.
+- Transcription (`waveform`): transcription model and size, in memory (Load/Unload), transcription effort, and the Processing toggles below.
 - Processing toggles (`src/processing-settings.ts`): model polish, closing-phrase filter, smart chunks, smart boundaries. Persisted to `~/.local/state/voicelayer/processing-settings.json` (override: `VOICELAYER_PROCESSING_SETTINGS_PATH`); precedence is **env (when defined, even empty) > file > default**. A row whose env var is set (`QA_VOICE_STT_POLISH`, `VOICELAYER_STT_OUTRO_GATE`, `VOICELAYER_STT_SMART_CHUNKS`, `VOICELAYER_STT_SMART_BOUNDARIES`) shows "Set by <VAR>" and is locked. Every read site passes `processingEnv()`, never `process.env`.
 - Dictionary: your terms + included terms, search, and the Add term sheet (same store as `voicelayer vocab`). Add to Dictionary lives here only.
+- Speech: Short/Long voice profiles, long-text threshold, clone status, preview, and locked-control explanations.
+- Sidebar status footer: a static accessible button opening General for permissions and setup.
 - History: Recording | Ask, with per-row Play / Copy / Paste / Re-transcribe / Finder.
 
 ## VoiceBar right-click menu (Etan's approved spec §3)
