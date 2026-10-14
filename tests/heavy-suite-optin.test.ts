@@ -29,6 +29,7 @@ function runHook(availability: Availability, status: number, guardStatus = 0) {
       // Only test hook dispatch; the fleet helper's scheduling has its own tests.
       writeFileSync(helper, `import os, subprocess, sys
 assert sys.argv[1:] == ["--", "bash", "scripts/run_tests.sh"]
+assert os.environ.get("GOLEMS_HEAVY_PRE_PUSH") == "1"
 with open(os.environ["HOOK_RECORD"], "a") as f: f.write("helper\\n")
 raise SystemExit(subprocess.call(sys.argv[2:]))
 `);
