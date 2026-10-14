@@ -6,7 +6,7 @@ struct TeleprompterPlaybackScrubBar: View {
     let state: VoiceState
 
     var control: SettingsPlaybackScrubBar {
-        let interactive = state.isTeleprompterPlaybackReady && !state.wordBoundaries.isEmpty
+        let interactive = state.isTeleprompterPlaybackReady
         return SettingsPlaybackScrubBar(
             position: { state.teleprompterPlaybackPosition },
             seek: { seconds in state.seek(offsetMs: Int((seconds * 1000).rounded())) },

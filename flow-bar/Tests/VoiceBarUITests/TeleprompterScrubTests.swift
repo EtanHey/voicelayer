@@ -185,9 +185,21 @@ final class TeleprompterScrubTests: XCTestCase {
         XCTAssertGreaterThan(clockReads, before, "ready timed playback samples the clock")
         state.handleEvent(["type": "state", "state": "speaking", "text": "Cloned reply", "duration_ms": 4000,
                            "long_read": ["chunk_start_ms": 0]])
-        XCTAssertFalse(wrapper.control.isPlaying)
-        XCTAssertFalse(wrapper.control.allowsSeeking)
-        XCTAssertFalse(wrapper.control.isGrowing, "clone presentation stays a plain static line")
+        XCTAssertTrue(state.wordBoundaries.isEmpty)
+        XCTAssertTrue(wrapper.control.isPlaying, "ready clone playback samples the time clock")
+        XCTAssertTrue(wrapper.control.allowsSeeking, "time seeking does not require word timings")
+        XCTAssertTrue(wrapper.control.isGrowing)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        for word in words(for: state) {
+            XCTAssertNil(TeleprompterSeekPolicy.offset(for: word, isReadback: false))
+            TeleprompterSeekPolicy.seek(word, isReadback: false, seek: state.seek)
+        }
+        XCTAssertTrue(commands.isEmpty, "clone words remain non-clickable")
+        wrapper.control.seek(1.5)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "seek")
+        XCTAssertEqual(commands.first?["offset_ms"] as? Int, 1500)
     }
 
 
