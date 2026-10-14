@@ -46,13 +46,14 @@ The additive state field is:
 or inter-chunk waiting time. Existing Swift clients ignore the new field. Playback idle is
 suppressed between chunks. Before first playback, a speaking state with text `Preparing speech…`
 and `long_read.preparing: true` activates the existing Swift Stop/Escape routing. This is preparation,
-not an audio-start claim; actual chunk playback replaces that text and resets the clock/timings. Chunk-only
+not an audio-start claim; actual chunk playback replaces that text and sets the global playback clock while rebasing chunk-local timings. See
+[Playback seek protocol](tts-seek.md) for offsets and retained-chunk replay. Chunk-only
 Replay is refused as busy during a read because restarting one chunk would invalidate its
 global timeline/history. After completion, normal history replay remains available.
 
 The ring receives one concatenated MP3 per read once it completes or is stopped. Only chunks
-that actually started playback contribute audio; the interrupted final chunk is trimmed to its
-reported playback position. Synthesized lookahead that never played is excluded. History
+that actually started playback contribute audio; each interrupted or sought segment is trimmed
+to the range actually heard. Synthesized lookahead that never played is excluded. History
 assembly, synthesis reaping and cleanup finish before a successful stop/cancel acknowledgement
 or voice_ask prompt proceeds. Pending cancelled teardown remains busy, including repeat
 stop/cancel requests. The complete playback wait has a 35-second outer deadline: a warning

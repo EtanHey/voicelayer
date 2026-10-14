@@ -33,6 +33,10 @@ export interface StateEvent {
   text?: string;
   /** Present when state is "speaking" — the voice being used. */
   voice?: string;
+  /** Global utterance position at player start (including normal chunk handoffs). */
+  playback_offset_ms?: number;
+  /** Synthesized duration available for seeking; grows during long reads. */
+  duration_ms?: number;
   /** Chunk-local playback clock; additive global position for future seek clients. */
   long_read?: {
     id: string;
@@ -129,6 +133,8 @@ export interface AudioLevelEvent {
 
 export interface ErrorEvent {
   type: "error";
+  /** A failed seek preserves ongoing playback and its client clock. */
+  source?: "seek";
   message: string;
   /** true = transient error (will recover), false = needs user action. */
   recoverable: boolean;
@@ -234,6 +240,7 @@ export interface ClipMarkerEvent {
 export type IntentOutcome = "accept" | "noop" | "reject" | "loading";
 
 export type AckCommand =
+  | "seek"
   | "speak_text"
   | "stop"
   | "cancel"
@@ -261,6 +268,8 @@ export interface AckEvent {
   outcome: IntentOutcome;
   id?: string;
   reason?: string;
+  offset_ms?: number;
+  clamped?: boolean;
   model_status?: WhisperModelStatus;
   residency?: WhisperModelResidency;
   tts_controls?: import("./tts-controls-status").TTSControlsStatus;
@@ -429,7 +438,14 @@ export interface SetRecordingHoldCommand extends SocketCommandBase {
   engaged: boolean;
 }
 
+export interface SeekCommand extends SocketCommandBase {
+  cmd: "seek";
+  offset_ms: number;
+  scope?: "current";
+}
+
 export type SocketCommand =
+  | SeekCommand
   | SpeakTextCommand
   | { cmd: "history_playback_ready"; id: string }
   | StopCommand
@@ -603,6 +619,11 @@ export function parseCommand(line: string): SocketCommand | null {
         ? Math.round(parsed.playback_elapsed_ms)
         : undefined;
     switch (parsed.cmd) {
+      case "seek":
+        if (typeof parsed.offset_ms !== "number" || !Number.isFinite(parsed.offset_ms) || parsed.offset_ms < 0 ||
+            (parsed.scope !== undefined && parsed.scope !== "current")) return null;
+        return withCommandId<SeekCommand>({ cmd: "seek", offset_ms: parsed.offset_ms,
+          ...(parsed.scope === "current" ? { scope: "current" as const } : {}) }, id);
       case "speak_text": {
         if (typeof parsed.text !== "string" || !parsed.text.trim() || parsed.text.length > SPEAK_TEXT_MAX_CHARS) return null;
         if (parsed.profile !== undefined && !["auto", "short", "long"].includes(parsed.profile)) return null;

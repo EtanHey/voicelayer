@@ -295,6 +295,8 @@ public final class VoiceState {
     private var localRecordingLevel: Double?
     public private(set) var playbackAmplitudeEnvelope: PlaybackAmplitudeEnvelope?
     private var playbackAmplitudeStartedAt: TimeInterval?
+    private var playbackChunkStartMilliseconds = 0
+    public private(set) var playbackDurationMilliseconds: Int?
     private var playbackStartedAt: TimeInterval?
     /// Advances for every speaking receipt, including same-text replay.
     public private(set) var playbackEpoch = 0
@@ -1289,6 +1291,11 @@ public final class VoiceState {
         playbackAudioLevel(atSystemUptime: playbackAmplitudeClock())
     }
 
+    public func seek(offsetMs: Int) {
+        guard mode == .speaking, offsetMs >= 0 else { return }
+        sendCommand?(["cmd": "seek", "offset_ms": offsetMs])
+    }
+
     public func playbackElapsedMilliseconds() -> Int {
         guard mode == .speaking, let playbackStartedAt else { return 0 }
         return max(
@@ -1604,14 +1611,20 @@ public final class VoiceState {
                 transcribingStartedAt = nil
                 resetAudioLevels()
                 let playbackStart = playbackAmplitudeClock()
-                playbackStartedAt = playbackStart
+                let offset = (event["playback_offset_ms"] as? NSNumber)?.doubleValue
+                let validOffset = offset.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+                playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000
+                playbackDurationMilliseconds = (event["duration_ms"] as? NSNumber)?.intValue
+                playbackChunkStartMilliseconds = (event["long_read"] as? [String: Any])?["chunk_start_ms"] as? Int ?? 0
                 playbackEpoch += 1
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
                 clearRetainedTeleprompter()
                 // A speaking event precedes the fresh subtitle payload. Do not let
                 // timings from the previous utterance animate a similar new one.
-                wordBoundaries = []
+                if validOffset == nil || statusText != event["text"] as? String {
+                    wordBoundaries = []
+                }
                 mode = .speaking
                 isTeleprompterDismissed = false
                 statusText = event["text"] as? String ?? ""
@@ -1808,7 +1821,7 @@ public final class VoiceState {
                           let duration = (w["duration_ms"] as? Int) ?? (w["duration_ms"] as? Double).map({ Int($0) }),
                           let text = w["text"] as? String
                     else { return nil }
-                    return (offsetMs: offset, durationMs: duration, text: text)
+                    return (offsetMs: offset + playbackChunkStartMilliseconds, durationMs: duration, text: text)
                 }
             }
 
@@ -1907,6 +1920,10 @@ public final class VoiceState {
             }
 
         case "error":
+            if event["source"] as? String == "seek", mode == .speaking {
+                errorMessage = event["message"] as? String ?? "Seek failed"
+                return
+            }
             let showDuringBarRecording = event["show_during_bar_recording"] as? Bool ?? false
             let shouldShowError = showDuringBarRecording || !barInitiatedRecording
             if shouldShowError {
@@ -2304,6 +2321,8 @@ public final class VoiceState {
         playbackAmplitudeEnvelope = nil
         playbackAmplitudeStartedAt = nil
         playbackStartedAt = nil
+        playbackDurationMilliseconds = nil
+        playbackChunkStartMilliseconds = 0
     }
 
     private func appendRecordingWaveformSample() {

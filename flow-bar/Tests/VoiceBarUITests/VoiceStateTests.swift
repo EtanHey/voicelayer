@@ -139,6 +139,49 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.playbackAudioLevel(), 0.7, accuracy: 0.0001)
     }
 
+    func testFailedSeekPreservesSpeakingClockAndWordBoundaries() {
+        var now = 100.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Still playing", "playback_offset_ms": 300])
+        state.handleEvent(["type": "subtitle", "words": [["offset_ms": 300, "duration_ms": 400, "text": "Still"]]])
+        now += 0.2
+        state.handleEvent(["type": "error", "source": "seek", "recoverable": true, "message": "Conversion failed"])
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 500)
+        XCTAssertEqual(state.wordBoundaries.first?.text, "Still")
+        XCTAssertEqual(state.errorMessage, "Conversion failed")
+    }
+
+    func testSeekResynchronizesClockAndKeepsWordBoundaries() {
+        var now = 100.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world"])
+        state.handleEvent(["type": "subtitle", "words": [["offset_ms": 2000, "duration_ms": 400, "text": "world"]]])
+        now = 105
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world", "playback_offset_ms": 2000, "duration_ms": 4000])
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 2000)
+        XCTAssertEqual(state.wordBoundaries.first?.offsetMs, 2000)
+        XCTAssertEqual(state.playbackDurationMilliseconds, 4000)
+        now += 0.5
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 2500)
+        var command: [String: Any]?
+        state.sendCommand = { command = $0 }
+        state.seek(offsetMs: 2100)
+        XCTAssertEqual(command?["cmd"] as? String, "seek")
+        XCTAssertEqual(command?["offset_ms"] as? Int, 2100)
+    }
+
+    func testLongReadSubtitlesUseGlobalSeekClockAndUntimedChunksClearOldWords() {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Second", "playback_offset_ms": 1250,
+                           "long_read": ["chunk_start_ms": 1000]])
+        state.handleEvent(["type": "subtitle", "words": [["offset_ms": 200, "duration_ms": 100, "text": "Second"]]])
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 1250)
+        XCTAssertEqual(state.wordBoundaries.first?.offsetMs, 1200)
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Untimed", "playback_offset_ms": 2000])
+        XCTAssertTrue(state.wordBoundaries.isEmpty)
+    }
+
     func testPlaybackElapsedClockSurvivesTeleprompterHideShowWhileSpeaking() {
         var now = 100.0
         let state = VoiceState(playbackAmplitudeClock: { now })

@@ -55,7 +55,8 @@ import type {
 import { applyPronunciation } from "./pronunciation";
 import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
-import { runLongRead } from "./tts/long-read";
+import { prepareSeekSlice, disposeSeekSlice } from "./tts/seek-audio";
+import { runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
 import { getEffectiveRecordingState } from "./recording-state";
@@ -733,6 +734,12 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   text: string;
   voice: string;
   longRead?: StateEvent["long_read"];
+  playbackOffsetMs?: number;
+  utteranceDurationMs?: number;
+  getUtteranceDurationMs?(): number;
+  localOffsetMs?: number;
+  seekSliceFile?: string;
+  isSeek?: boolean;
   wordBoundaries?: WordBoundary[];
   priority?: PlaybackPriority;
   durationMs?: number;
@@ -747,6 +754,8 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
 interface PlaybackJob {
   id: string;
   audioFile: string;
+  sliceFile?: string;
+  skipAmplitudeDecode?: boolean;
   metadata?: PlaybackMetadata;
   playbackAmplitude?: PlaybackAmplitudeEnvelope;
   priority: PlaybackPriority;
@@ -859,6 +868,7 @@ function buildPlaybackOutcome(
 function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
   if (job.completed) return;
   job.completed = true;
+  if (job.sliceFile) { try { unlinkSync(job.sliceFile); } catch {} job.sliceFile = undefined; }
   broadcast(outcome);
   try {
     job.metadata?.onCompleted?.(outcome);
@@ -878,6 +888,8 @@ class PlaybackQueueManager {
   private restartAfterTermination: PlaybackJob | null = null;
   private replayPreparingJob: PlaybackJob | null = null;
   private drainWaiters = new Set<() => void>();
+  private conversions = new Set<Promise<void>>();
+  private seekPreparation?: { job: PlaybackJob; controller: AbortController };
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
   enqueue(
@@ -893,7 +905,9 @@ class PlaybackQueueManager {
     const job: PlaybackJob = {
       id: nextPlaybackId(),
       audioFile,
-      metadata,
+      sliceFile: metadata?.seekSliceFile,
+      skipAmplitudeDecode: metadata?.isSeek,
+      metadata: metadata ? { ...metadata } : undefined,
       priority,
       enqueuedAt: Date.now(),
       expiresAt: Date.now() + ttlForPriority(priority),
@@ -916,14 +930,18 @@ class PlaybackQueueManager {
   }
 
   async awaitDrained(): Promise<void> {
-    if (this.depth() === 0) return;
-    await new Promise<void>((resolve) => {
-      this.drainWaiters.add(resolve);
-    });
+    while (this.depth() > 0 || this.conversions.size > 0) {
+      if (this.depth() > 0) await new Promise<void>((resolve) => { this.drainWaiters.add(resolve); });
+      await Promise.all([...this.conversions]);
+    }
   }
 
   stop(playbackElapsedMs?: number): boolean {
+    this.cancelSeekPreparation();
     const active = this.current;
+    if (playbackElapsedMs !== undefined) {
+      playbackElapsedMs = Math.max(0, playbackElapsedMs - (active?.job.metadata?.longRead?.chunk_start_ms ?? 0));
+    }
     const preparing = this.preparing;
     const restarting = this.restartAfterTermination;
     const hadActivity =
@@ -987,6 +1005,10 @@ class PlaybackQueueManager {
   }
 
   restart(): boolean {
+    this.cancelSeekPreparation();
+    if ((this.current?.job ?? this.restartAfterTermination ?? this.preparing?.job)?.metadata?.localOffsetMs !== undefined) {
+      return this.seek(0).outcome === "accept";
+    }
     if (this.restartAfterTermination) return true;
     // The replacement has already reset to the beginning once it reaches
     // preparation. Collapse another rapid Replay into that same job so a
@@ -1015,6 +1037,78 @@ class PlaybackQueueManager {
     this.terminate(active);
     this.emitQueueSnapshot();
     return true;
+  }
+
+  private cancelSeekPreparation(): void {
+    this.seekPreparation?.controller.abort();
+    this.seekPreparation = undefined;
+  }
+
+  seek(offsetMs: number): SeekResult {
+    const job = this.current?.job ?? this.restartAfterTermination ?? this.preparing?.job;
+    if (!job || job.completed) return { outcome: "noop", reason: "nothing playing" };
+    const duration = job.metadata?.durationMs;
+    if (!duration || !job.metadata) return { outcome: "noop", reason: "duration unavailable" };
+    const offset = Math.min(offsetMs, duration);
+    this.cancelSeekPreparation();
+    if (offset === 0 || offset === duration) {
+      this.commitSeek(job, offset);
+    } else {
+      const preparation = { job, controller: new AbortController() };
+      this.seekPreparation = preparation;
+      const conversion = (async () => {
+        try {
+          const slice = await prepareSeekSlice(job.audioFile, offset, preparation.controller.signal);
+          if (this.seekPreparation !== preparation || job.completed) { disposeSeekSlice(slice); return; }
+          this.seekPreparation = undefined;
+          this.commitSeek(job, offset, slice);
+        } catch (error) {
+          if (this.seekPreparation === preparation) {
+            this.seekPreparation = undefined;
+            broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true });
+          }
+        }
+      })();
+      this.conversions.add(conversion);
+      void conversion.then(() => this.conversions.delete(conversion));
+    }
+    return { outcome: "accept", offset_ms: offset, clamped: offsetMs > duration };
+  }
+
+  private commitSeek(job: PlaybackJob, offset: number, slice?: string): void {
+    if (job.completed || (this.current?.job !== job && this.preparing?.job !== job && this.restartAfterTermination !== job)) {
+      disposeSeekSlice(slice); return;
+    }
+    disposeSeekSlice(job.sliceFile);
+    job.sliceFile = slice;
+    job.skipAmplitudeDecode = true;
+    job.metadata!.localOffsetMs = offset;
+    job.metadata!.playbackOffsetMs = offset;
+    if (this.current?.job === job) {
+      const active = this.current; this.current = null;
+      this.restartAfterTermination = job; this.stopProgressTimer(); this.terminate(active);
+    } else if (this.preparing?.job === job) {
+      const preparing = this.preparing; this.preparing = null; preparing.cancel();
+      this.pending.unshift(job); this.processNext();
+    }
+  }
+
+  interrupt(id: string): void {
+    // Long-read cursor replacement settles this chunk without aborting synthesis.
+    if (this.current?.job.id === id) {
+      const active = this.current; this.current = null; this.stopProgressTimer();
+      this.terminate(active);
+      completeJob(active.job, buildPlaybackOutcome(active.job, "interrupted", "stopped", Date.now() - active.startedAt));
+    } else if (this.preparing?.job.id === id) {
+      const preparing = this.preparing; this.preparing = null; preparing.cancel();
+      completeJob(preparing.job, buildPlaybackOutcome(preparing.job, "skipped", "stopped"));
+    } else {
+      this.pending = this.pending.filter(job => {
+        if (job.id !== id) return true;
+        completeJob(job, buildPlaybackOutcome(job, "skipped", "stopped")); return false;
+      });
+    }
+    this.processNext();
   }
 
   private refuseQueuedPlayback(job: PlaybackJob, error: unknown): void {
@@ -1051,6 +1145,15 @@ class PlaybackQueueManager {
         continue;
       }
 
+      if (next.metadata?.localOffsetMs !== undefined && next.metadata.localOffsetMs >= (next.metadata.durationMs ?? Infinity)) {
+        completeJob(next, buildPlaybackOutcome(next, "completed"));
+        if (this.depth() === 0) broadcastPlaybackIdleIfSpeakerClear(next.metadata.nextState);
+        continue;
+      }
+      if (next.skipAmplitudeDecode) {
+        this.preparing = { job: next, cancel: () => {} };
+        this.startPreparedPlayback(next, undefined); return;
+      }
       if (!next.metadata) {
         this.preparing = { job: next, cancel: () => {} };
         this.emitQueueSnapshot();
@@ -1060,11 +1163,12 @@ class PlaybackQueueManager {
       const extraction = startPlaybackAmplitudeEnvelopeExtraction(
         next.audioFile,
       );
-      this.preparing = { job: next, cancel: extraction.cancel };
+      const preparation = { job: next, cancel: extraction.cancel };
+      this.preparing = preparation;
       this.emitQueueSnapshot();
       void extraction.result.then(
         (playbackAmplitude) => {
-          this.startPreparedPlayback(next, playbackAmplitude);
+          if (this.preparing === preparation) this.startPreparedPlayback(next, playbackAmplitude);
         },
       );
       return;
@@ -1119,7 +1223,7 @@ class PlaybackQueueManager {
     next.playbackAmplitude = playbackAmplitude;
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn(buildPlaybackArgv(getAudioPlayer(), next.audioFile), {
+      proc = Bun.spawn(buildPlaybackArgv(getAudioPlayer(), next.sliceFile ?? next.audioFile), {
         stdout: "ignore",
         stderr: "ignore",
       });
@@ -1137,21 +1241,24 @@ class PlaybackQueueManager {
       return;
     }
 
-    this.current = { job: next, proc, startedAt: Date.now() };
+    this.current = { job: next, proc, startedAt: Date.now() - (next.metadata?.localOffsetMs ?? 0) };
     if (next.metadata) {
+      const durationMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ?? next.metadata.durationMs;
       broadcast({
         type: "state",
         state: "speaking",
         text: next.metadata.text,
         voice: next.metadata.voice,
         ...(next.metadata.longRead ? { long_read: next.metadata.longRead } : {}),
+        ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
+        ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
         playback_amplitude: next.playbackAmplitude,
       });
       if (next.metadata.wordBoundaries?.length) {
         broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
       }
     }
-    next.metadata?.onStarted?.(this.current.startedAt);
+    next.metadata?.onStarted?.(Date.now());
     this.startProgressTimer();
     this.emitQueueSnapshot();
 
@@ -1166,6 +1273,7 @@ class PlaybackQueueManager {
 
   private finish(job: PlaybackJob, pid: number, succeeded: boolean) {
     if (this.current?.proc.pid !== pid) return;
+    if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
     const elapsedMs = Date.now() - this.current.startedAt;
     this.stopProgressTimer();
     this.current = null;
@@ -1186,6 +1294,7 @@ class PlaybackQueueManager {
   }
 
   private bargeIn(job: PlaybackJob) {
+    this.cancelSeekPreparation();
     // ASYNC SAFETY: Cancel the decoder and clear its ownership before any late
     // result can attempt to start playback.
     const active = this.current;
@@ -1459,6 +1568,18 @@ export function getPlaybackQueueDepth(): number {
     (activeLongRead && !activeLongRead.controller.signal.aborted ? 1 : 0);
 }
 
+/** Seek only the currently owned utterance; never enqueue a stopped generation. */
+export function seekPlayback(offsetMs: number): SeekResult {
+  if (!Number.isFinite(offsetMs) || offsetMs < 0) return { outcome: "reject", reason: "invalid offset" };
+  if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
+  if (activeLongRead) {
+    if (activeLongRead.controller.signal.aborted) return { outcome: "noop", reason: "nothing playing" };
+    if (!activeLongRead.seek) return { outcome: "noop", reason: "not ready" };
+    return activeLongRead.seek.seek(offsetMs);
+  }
+  return playbackQueueManager.seek(offsetMs);
+}
+
 /** Stop current playback if any. */
 export function stopPlayback(playbackElapsedMs?: number): boolean {
   const hadLongRead = cancelLongRead();
@@ -1469,7 +1590,7 @@ export function stopPlayback(playbackElapsedMs?: number): boolean {
 
 export interface LongReadProfile { engine: "edge" | "clone"; voice: string; rate: string; fallbackVoice?: string }
 export interface LongReadHandle { id: string; done: Promise<void> }
-let activeLongRead: (LongReadHandle & { controller: AbortController }) | undefined;
+let activeLongRead: (LongReadHandle & { controller: AbortController; seek?: LongReadSeek }) | undefined;
 const cancelledLongReadTeardowns = new Set<Promise<void>>();
 let longReadCounter = 0;
 
@@ -1528,7 +1649,7 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
   const controller = new AbortController();
   const id = `long-read-${process.pid}-${++longReadCounter}`;
   const texts = chunkTextForTTS(displayText);
-  const handle = { id, controller, done: Promise.resolve() };
+  const handle: LongReadHandle & { controller: AbortController; seek?: LongReadSeek } = { id, controller, done: Promise.resolve() };
   activeLongRead = handle;
   const signal = controller.signal;
   const requireClone = requireClonedVoiceEnabled();
@@ -1542,6 +1663,11 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
     // A recording may have begun while the predecessor was settling.
     assertSpeakerClear();
     await runLongRead(texts, id, signal, {
+      registerSeek: (control) => { handle.seek = control; },
+      prepareSeek: (chunk, offset, seekSignal) => offset < chunk.durationMs
+        ? prepareSeekSlice(chunk.audioFile, offset, seekSignal) : Promise.resolve(undefined),
+      disposeSeek: disposeSeekSlice,
+      seekFailed: (error) => broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true }),
       synthesize: async (displayChunk, _index, signal) => {
         const audioFile = ttsFilePath(process.pid, ttsCounter++);
         const spoken = applyPronunciation(displayChunk);
@@ -1589,7 +1715,7 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
           throw error;
         }
       },
-      play: (chunk, text, info) => {
+      play: (chunk, text, info, position) => {
         signal.throwIfAborted();
         let started = false;
         let resolveStarted!: (value: boolean) => void;
@@ -1597,10 +1723,13 @@ export function speakLongRead(text: string, profile: LongReadProfile): LongReadH
         const playback = playAudioNonBlocking(chunk.audioFile, {
           text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs, longRead: info,
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
+          playbackOffsetMs: info.chunk_start_ms + position.offsetMs,
+          getUtteranceDurationMs: position.getDurationMs,
+          ...(position.isSeek ? { localOffsetMs: position.offsetMs, isSeek: true, seekSliceFile: position.sliceFile } : {}),
           onStarted: () => { started = true; resolveStarted(true); },
           onCompleted: () => { if (!started) resolveStarted(false); },
         });
-        return { started: start, exited: playback.exited };
+        return { started: start, exited: playback.exited, interrupt: () => playbackQueueManager.interrupt(playback.id) };
       },
       saveHistory: async (played) => {
         const combined = ttsFilePath(process.pid, ttsCounter++);
@@ -2008,10 +2137,7 @@ async function speakWithEdgeTTS(
       voice,
       wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
       priority: playbackPriorityForMode(options?.mode),
-      durationMs:
-        wordBoundaries.length > 0
-          ? inferBoundaryEndMs(wordBoundaries)
-          : undefined,
+      durationMs: Math.max(probeAudioDurationMs(ttsFile) ?? 0, inferBoundaryEndMs(wordBoundaries)) || undefined,
       nextState: options?.mode === "converse" ? "recording" : undefined,
       onStarted: options?.onPlaybackStart,
       onCompleted: options?.onPlaybackComplete,
