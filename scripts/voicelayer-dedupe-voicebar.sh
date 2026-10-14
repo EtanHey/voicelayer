@@ -20,6 +20,8 @@
 # backup dir, not deleted.
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/voicebar-launchagent.sh"
+
 CANONICAL_APP="/Applications/VoiceBar.app"
 BUNDLE_ID="com.voicelayer.voicebar"
 REQUIRED_TEAM_ID="${VOICEBAR_REQUIRED_TEAM_ID:-PPN23G925Y}"
@@ -67,11 +69,6 @@ run()  { # run a mutating command, or just print it in dry-run
 }
 
 # --- codesign helpers -------------------------------------------------------
-agent_target() {
-  /usr/libexec/PlistBuddy -c 'Print :Program' "$1" 2>/dev/null ||
-    /usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$1" 2>/dev/null
-}
-
 app_authority() { codesign -dvvv "$1" 2>&1 | awk -F= '/^Authority=/{print $2; exit}'; }
 app_teamid()    { codesign -dvvv "$1" 2>&1 | awk -F= '/^TeamIdentifier=/{print $2; exit}'; }
 app_bundleid()  { defaults read "$1/Contents/Info" CFBundleIdentifier 2>/dev/null || echo "?"; }
@@ -173,16 +170,9 @@ log "-- prune duplicate VoiceBar LaunchAgents (preserve $LABEL and TTS services)
 for f in "${AGENT_FILES[@]:-}"; do
   [[ -n "$f" ]] || continue
   base="$(basename "$f")"
-  agent_label="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$f" 2>/dev/null || echo '')"
   tgt="$(agent_target "$f" || echo '')"
-  # Resource paths inside VoiceBar do not make their service a VoiceBar owner.
-  # Match the plist's exact Label, including when its filename was renamed.
-  if [[ "$agent_label" == "com.golems.tts-daemon" ]]; then
-    log "  keep TTS daemon: $f"
-    continue
-  fi
-  if [[ "$tgt" != */Contents/MacOS/VoiceBar ]]; then
-    log "  skip non-VoiceBar service: $f (target=$tgt)"
+  if ! is_voicebar_agent "$f"; then
+    log "  skip preserved service: $f (target=$tgt)"
     continue
   fi
   if [[ "$base" == "$LABEL.plist" && "$tgt" == "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]]; then
