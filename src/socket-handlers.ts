@@ -128,7 +128,10 @@ export function handleSocketCommand(
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
       stopPlayback(command.playback_elapsed_ms);
-      return awaitCurrentPlayback().then(() => buildAck(command, "accept"));
+      return awaitCurrentPlayback().then(
+        () => buildAck(command, "accept"),
+        (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
+      );
     case "cancel":
       if (recordingState === "idle" && playbackQueueDepth === 0) {
         return buildAck(command, "noop", "already idle");
@@ -143,7 +146,10 @@ export function handleSocketCommand(
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
       stopPlayback(command.playback_elapsed_ms);
-      return awaitCurrentPlayback().then(() => buildAck(command, "accept"));
+      return awaitCurrentPlayback().then(
+        () => buildAck(command, "accept"),
+        (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
+      );
     case "replay": {
       if (recordingState === "recording" || recordingState === "transcribing") {
         return buildAck(command, "reject", "busy");

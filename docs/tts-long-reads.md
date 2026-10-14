@@ -53,13 +53,17 @@ global timeline/history. After completion, normal history replay remains availab
 The ring receives one concatenated MP3 per read once it completes or is stopped. Only chunks
 that actually started playback contribute audio; the interrupted final chunk is trimmed to its
 reported playback position. Synthesized lookahead that never played is excluded. History
-assembly, synthesis reaping and cleanup finish before the stop/cancel acknowledgement or
-voice_ask prompt proceeds. Audio stop and playback idle remain immediate. Replacement long
-reads and ordinary speech also wait for cancelled-generation cleanup before synthesis starts,
+assembly, synthesis reaping and cleanup finish before a successful stop/cancel acknowledgement
+or voice_ask prompt proceeds. Pending cancelled teardown remains busy, including repeat
+stop/cancel requests. The complete playback wait has a 35-second outer deadline: a warning
+is logged and the wait rejects if playback/cleanup still has not settled. Stop/cancel return
+a rejection acknowledgement with the timeout reason; voice_ask returns an error without
+starting its prompt or capture. Pending ownership remains retained for eventual cleanup. Audio stop and playback idle remain
+immediate. Replacement long reads and ordinary speech also wait for cancelled-generation cleanup before synthesis starts,
 so post-stop history ffmpeg never races a replacement. History text labels include only chunks
 that actually played; the final partially played chunk retains its chunk label. The existing
-twenty-slot ring remains bounded. A history conversion failure is logged even for a cancelled read. `done` settles after history/cleanup; synthesis failures are published
-as events rather than rethrown from this background handle.
+twenty-slot ring remains bounded. A history conversion failure is logged even for a cancelled
+read. `done` settles after history/cleanup; synthesis failures are published as events rather than rethrown from this background handle.
 
 ## Profile wiring
 
@@ -75,7 +79,10 @@ heading/inline-code markers, keeps link labels, replaces bare URLs with `link`, 
 list/table rows as sentences. Complete fenced code becomes `code block`. For incomplete
 selections, a bare fence after a code-only prefix or before obvious prose is treated as a
 closing boundary; other unmatched fences suppress only recognizable code syntax and preserve
-unknown/prose lines. Ambiguous content is spoken rather than silently dropped.
+unknown/prose lines. Recovery requires whole statements/calls or strong bracket/punctuation
+evidence; a keyword prefix alone never marks a line as code. Sentences ending in `.`, `?`,
+or `!` (with letters and spaces), and four plain words without code punctuation, are always
+spoken. Ambiguous content is spoken rather than silently dropped.
 
 ## Verification boundary
 
