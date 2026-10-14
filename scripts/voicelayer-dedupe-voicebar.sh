@@ -168,7 +168,18 @@ log "-- prune stray LaunchAgents (keep only $LABEL -> $CANONICAL_APP)"
 for f in "${AGENT_FILES[@]:-}"; do
   [[ -n "$f" ]] || continue
   base="$(basename "$f")"
+  agent_label="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$f" 2>/dev/null || echo '')"
   tgt="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$f" 2>/dev/null || echo '')"
+  # Resource paths inside VoiceBar do not make their service a VoiceBar owner.
+  # Match the plist's exact Label, including when its filename was renamed.
+  if [[ "$agent_label" == "com.golems.tts-daemon" ]]; then
+    log "  keep TTS daemon: $f"
+    continue
+  fi
+  if [[ "$tgt" != */Contents/MacOS/VoiceBar ]]; then
+    log "  skip non-VoiceBar service: $f (target=$tgt)"
+    continue
+  fi
   if [[ "$base" == "$LABEL.plist" && "$tgt" == "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]]; then
     log "  keep: $f"
     continue
