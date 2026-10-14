@@ -77,10 +77,11 @@ are reported by the daemon;
 use `--wait` when the final exit status matters. An older running daemon must be
 updated/restarted to support this command.
 
-The CLI and daemon honor the existing `VOICELAYER_TTS_DAEMON_SECRET_FILE` and
-`VOICELAYER_TTS_AUTH_TOKEN_FILE` overrides. `VOICELAYER_DAEMON_SECRET_PATH` takes precedence
-for a separate speech-control credential; otherwise isolated state/socket paths keep test
-credentials separate. Secret files must be regular, nonempty, non-symlink files with mode 0600.
+Speech credentials resolve in this order: `VOICELAYER_DAEMON_SECRET_PATH`, isolated
+`VOICELAYER_STATE_DIR`, an MCP socket override, `VOICELAYER_TTS_DAEMON_SECRET_FILE`,
+`VOICELAYER_TTS_AUTH_TOKEN_FILE`, then `~/.voicelayer/daemon.secret`. Isolation paths take
+precedence over inherited TTS aliases. Secret files must be regular, nonempty, non-symlink
+files with mode 0600.
 
 ### Point your MCP client at the daemon
 

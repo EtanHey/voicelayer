@@ -8,12 +8,12 @@ import type { LongReadHandle } from "./tts";
 
 export function speechSecretPath(): string {
   if (process.env.VOICELAYER_DAEMON_SECRET_PATH) return process.env.VOICELAYER_DAEMON_SECRET_PATH;
-  // Existing Qwen3 token-file aliases are also honored by the CLI/daemon.
-  const ttsSecret = process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE || process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE;
-  if (ttsSecret) return ttsSecret;
   if (process.env.VOICELAYER_STATE_DIR) return join(process.env.VOICELAYER_STATE_DIR, "daemon.secret");
   const isolatedSocket = getMcpSocketOverridePath();
-  return isolatedSocket ? `${isolatedSocket}.secret` : join(homedir(), ".voicelayer", "daemon.secret");
+  if (isolatedSocket) return `${isolatedSocket}.secret`;
+  // Qwen3 aliases apply only when speech control is not explicitly isolated.
+  const ttsSecret = process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE || process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE;
+  return ttsSecret || join(homedir(), ".voicelayer", "daemon.secret");
 }
 export function loadSpeechSecret(): string {
   const path = speechSecretPath();
