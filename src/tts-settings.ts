@@ -1,7 +1,7 @@
-import { readFileSync, renameSync, rmSync } from "fs";
+import { readFileSync, renameSync, rmSync, mkdtempSync, writeFileSync } from "fs";
 import { join } from "path";
 import { hasClonedProfile } from "./tts/qwen3";
-import { STATE_DIR, safeWriteFileSync } from "./paths";
+import { STATE_DIR } from "./paths";
 
 export type TTSEnv = Record<string, string | undefined>;
 export type SpeakProfileKind = "short" | "long";
@@ -57,9 +57,15 @@ function assertConsistent(kind: SpeakProfileKind, settings: TTSSettings, env: TT
 }
 
 function writeTTSSettings(next: TTSSettings, env: TTSEnv): void {
-  const path = ttsSettingsPath(env), tmp = `${path}.${process.pid}.tmp`;
-  safeWriteFileSync(tmp, JSON.stringify({ version: 1, ...next, updated_at: new Date().toISOString() }, null, 2) + "\n");
-  try { renameSync(tmp, path); } catch (error) { rmSync(tmp, { force: true }); throw error; }
+  const path = ttsSettingsPath(env);
+  const staging = mkdtempSync(`${path}.`);
+  const tmp = join(staging, "settings.json");
+  try {
+    writeFileSync(tmp, JSON.stringify({ version: 1, ...next, updated_at: new Date().toISOString() }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+    renameSync(tmp, path);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 
 export function setTTSSetting(key: TTSSettingKey, value: string | number, env: TTSEnv = process.env): void {
