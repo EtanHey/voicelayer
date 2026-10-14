@@ -22,34 +22,52 @@ export interface LongReadDependencies {
 
 type Synthesis = { chunk: LongReadChunk } | { error: unknown };
 
-/** One playing chunk + at most one synthesizing/ready chunk. No synthesis backlog. */
-export async function runLongRead(texts: string[], id: string, signal: AbortSignal, deps: LongReadDependencies): Promise<void> {
+/** One playing/preparing chunk plus bounded lookahead, with one synthesis in flight. */
+export async function runLongRead(
+  texts: string[], id: string, signal: AbortSignal, deps: LongReadDependencies, lookahead: 1 | 2 = 1,
+): Promise<void> {
   const owned = new Map<number, LongReadChunk>();
+  const ready = new Map<number, Promise<Synthesis>>();
   const played: PlayedChunk[] = [];
-  let pending: Promise<Synthesis> | undefined;
+  let inFlight: Promise<Synthesis> | undefined;
+  let currentIndex = 0;
+  let nextIndex = 0;
+  let closing = false;
+  let synthesisFailed = false;
   let offsetMs = 0;
-  // Attach a rejection handler immediately: lookahead can fail before playback exits.
-  const synthesize = (index: number): Promise<Synthesis> =>
-    deps.synthesize(texts[index], index, signal).then(
+
+  const pump = () => {
+    if (closing || signal.aborted || synthesisFailed || inFlight ||
+        nextIndex >= texts.length || nextIndex > currentIndex + lookahead) return;
+    const index = nextIndex++;
+    // Handle rejection immediately, even while the consumer is preparing/playing.
+    const synthesis: Promise<Synthesis> = deps.synthesize(texts[index], index, signal).then(
       (chunk) => { owned.set(index, chunk); return { chunk }; },
       (error) => ({ error }),
     );
+    ready.set(index, synthesis);
+    inFlight = synthesis;
+    void synthesis.then((result) => {
+      inFlight = undefined;
+      if ("error" in result) synthesisFailed = true;
+      // Refill at synthesis completion, never wait for the player's started signal.
+      pump();
+    });
+  };
+
   try {
     if (signal.aborted || texts.length === 0) return;
-    pending = synthesize(0);
+    pump();
     for (let index = 0; index < texts.length; index++) {
-      const result = await pending!;
-      pending = undefined;
+      const result = await ready.get(index)!;
+      ready.delete(index);
       if (signal.aborted) break;
       if ("error" in result) throw result.error;
-      // This check and play are synchronous, so stop cannot slip between them.
+      // Fence enqueue here; the player/decoder must also enforce its own stop ownership.
       const playback = deps.play(result.chunk, texts[index], {
         id, chunk_index: index, chunk_count: texts.length, chunk_start_ms: offsetMs,
       });
       const started = await playback.started;
-      if (started && !signal.aborted && index + 1 < texts.length) {
-        pending = synthesize(index + 1);
-      }
       const outcome = await playback.exited;
       if (started) {
         const playedMs = outcome.status === "completed"
@@ -59,10 +77,13 @@ export async function runLongRead(texts: string[], id: string, signal: AbortSign
       }
       if (signal.aborted || outcome.status !== "completed") break;
       offsetMs += result.chunk.durationMs;
+      currentIndex = index + 1;
+      pump();
     }
   } finally {
-    // A late result belongs to this generation and must be disposed, never played.
-    if (pending) await pending;
+    closing = true;
+    // Reap the owned synthesis before history/disposal; a late result is never played.
+    if (inFlight) await inFlight;
     try {
       if (played.length > 0) await deps.saveHistory(played);
     } finally {
