@@ -57,6 +57,10 @@ function looksLikeCode(line: string): boolean {
   return /^(?:import\s+(?:[\w$]+|\{[^}]+\}|\*\s+as\s+[\w$]+)\s+from\s+["'][^"']+["']|import\s+["'][^"']+["'])\s*;?$/.test(text) ||
     /^from\s+[\w.]+\s+import\s+\([^()]+\)\s*;?$/.test(text) ||
     /^(?:(?:const|let|var)\s+)?[\w$]+(?:\.[\w$]+|\[[^\]]+\])*\s*(?:[+*/-]?=|:=)\s*\S.*(?:;|,|[\]}])$/.test(text) ||
+    // Literal-only assignments are strong evidence even without a JS semicolon.
+    /^[\w$]+\s*=\s*(?:-?\d+(?:\.\d+)?|true|false|null|None|True|False|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')$/.test(text) ||
+    /^return\s+(?:[\w$]+(?:\.[\w$]+)*|[\w$]+\([^\n]*\))\s*;$/.test(text) ||
+    /^\/\//.test(text) ||
     /^(?:[\w$]+\.)*[\w$]+\([^\n]*\)\s*;?$/.test(text) ||
     /^(?:if|for|while|switch|catch)\s*\([^\n]*\)\s*\{$/.test(text) ||
     /^(?:function\s+[\w$]+\([^\n]*\)|class\s+[\w$]+)\s*\{$/.test(text) ||
@@ -66,9 +70,9 @@ function looksLikeCode(line: string): boolean {
 }
 
 /**
- * Complete fences are unambiguous. For incomplete selections, remove only recognizable
- * code and preserve every unknown/prose line. A code-only prefix before a bare fence is
- * a selection starting inside code: that fence closes the prefix, not the later prose.
+ * Prefer complete fences unless a code-only prefix establishes a selection starting
+ * inside code. After that closing boundary, remain in recovery: omit recognizable
+ * code while preserving unknown/prose lines, even if a later bare fence could pair.
  */
 function speechLinesFromFences(markdown: string): string[] {
   const raw = markdown.replace(/\r\n?/g, "\n").split("\n");
@@ -130,7 +134,7 @@ function speechLinesFromFences(markdown: string): string[] {
       if (codePrefix) output.length = 0;
       output.push("code block");
       hasPrefix = true; codeOnlyPrefix = false;
-      recoverPartialCode = false;
+      recoverPartialCode = codePrefix;
       continue;
     }
     output.push("code block");

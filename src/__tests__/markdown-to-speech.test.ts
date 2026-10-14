@@ -56,6 +56,28 @@ describe("markdownToSpeech", () => {
     expect(markdownToSpeech("x = 1;\ny = 2;\n```\nHere is the explanation.\n```\nsecret()"))
       .toBe("code block Here is the explanation. code block");
   });
+  it("collapses strong code after a recovered prefix closing fence", () => {
+    expect(markdownToSpeech("x = 1;\n```\nfoo();\nbar();\n```\nAfter"))
+      .toBe("code block code block After");
+  });
+  it("retains ambiguous prose while filtering code after a recovered prefix closing fence", () => {
+    expect(markdownToSpeech("x = 1;\n```\nThis looks like prose inside the fence.\nfoo();\n```\nAfter"))
+      .toBe("code block This looks like prose inside the fence. code block After");
+    expect(markdownToSpeech("x = 1;\n```\n- item one\n- item two\n```\nAfter"))
+      .toBe("code block item one. item two. code block After");
+  });
+  for (const [kind, prefix] of [["literal assignments", "x = 1\ny = 2"], ["a return statement", "return 1;"], ["a code comment", "// initialize state\nx = 1;"]]) {
+    it(`retains trailing prose after ${kind} before a bare closing fence`, () => {
+      expect(markdownToSpeech(`${prefix}\n\`\`\`\nHere is the explanation.\n\`\`\`\nsecret()`))
+        .toBe("code block Here is the explanation. code block");
+    });
+  }
+  it("retains sentences and uncertain assignments during prefix recovery", () => {
+    for (const prefix of ["x = one idea among many", "return this idea carefully.", "# This is a heading"]) {
+      expect(markdownToSpeech(`${prefix}\n\`\`\`\nHere is the explanation.`))
+        .toBe(`${prefix.replace(/^# /, "")} code block Here is the explanation.`);
+    }
+  });
   for (const identifier of ["voice_ask", "snake_case_name", "__init__"]) {
     it(`R1-4 preserves identifier ${identifier}`, () => expect(markdownToSpeech(identifier)).toBe(identifier));
   }
