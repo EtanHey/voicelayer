@@ -7,20 +7,30 @@ The optional scope is `"current"`; offsets are finite, nonnegative milliseconds 
 of the current utterance, including chunk zero of a long read. A request ID is echoed in its ack.
 There is no pause state: a playing utterance continues playing from the accepted position.
 
-The ack reports `accept`, `noop` (nothing playing or duration unavailable), or `reject`.
+The ack reports `accept`, `noop` (nothing playing, not ready, or duration unavailable), or
+`reject` (`busy` while recording/transcribing). Before the first synthesized chunk exists,
+`noop` with `reason: "not ready"` tells the scrub client to disable seeking until audio is ready.
 Accepted requests include the effective `offset_ms` and `clamped` flag. Normal speech clamps
 to its duration. Long reads clamp to the end of the synthesized contiguous chunks; they do not
 wait for unsynthesized audio before acknowledging. At that end, playback waits for the next
 chunk rather than starting an empty slice. At the utterance end, playback completes.
 
-The daemon reaps the current player before starting a replacement. ffmpeg resolves through
-`resolveBinaryAsync`, trims with `-ss` before `-i`, and writes an afplay-compatible PCM WAV.
+The daemon prepares the replacement slice while current playback continues. Only after the
+slice succeeds does it reap the current player and start the replacement, bypassing amplitude
+decoding (the seek waveform is unavailable). A conversion/resolution failure emits a recoverable
+error with `source: "seek"` and preserves current playback and the Swift speaking clock.
+ffmpeg resolves through `resolveBinaryAsync`, whose
+ffmpeg candidate probes use `-version`; other binaries still use `--version`. Trimming uses
+`-ss` before `-i` and produces an afplay-compatible PCM WAV. Seeking to zero, including Replay
+after seek, uses the original audio without ffmpeg or amplitude decoding.
 Repeated seeks always slice the original audio, never an earlier slice. Stop/preemption cancels
 owned preparation; late decoder/conversion results cannot restart a stopped utterance.
 Long reads retain synthesized audio until history and cleanup finish. Backward seeks reuse
 those chunks and resume in order, while the single synthesis lookahead remains bounded.
 
 Actual `speaking` events include `duration_ms` (the synthesized seek range for long reads).
+For short speech, duration is the maximum of probed audio duration and the last word boundary,
+so untimed speech is still seekable and timed speech includes its trailing audio.
 Long-read handoffs and all seeks include `playback_offset_ms`, the global playback position.
 `long_read` metadata and chunk-relative subtitle offsets retain their existing wire format.
 Swift rebases those boundaries by `chunk_start_ms`, adjusts its playback clock to the global
