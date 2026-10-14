@@ -577,6 +577,7 @@ public struct BarView: View {
             recordingLevel: { state.recordingWaveformLevel },
             playbackLevel: { state.playbackAudioLevel() }
         )
+        .help("Audio level")
     }
 
     @ViewBuilder
@@ -591,9 +592,14 @@ public struct BarView: View {
                 .padding(.bottom, 12)
                 .transition(.opacity)
         } else if isMorphTeleprompterContentPresented {
-            VStack(spacing: 12) {
+            VStack(spacing: 7) {
                 notchTeleprompterTimeline
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: state.mode == .speaking ? nil : .infinity)
+                    .frame(height: state.mode == .speaking ? Theme.teleprompterViewportHeight : nil)
+                if state.mode == .speaking {
+                    TeleprompterPlaybackScrubBar(state: state)
+                }
+                if state.mode == .speaking { Spacer(minLength: 0) }
                 notchTeleprompterControls
             }
             .padding(
@@ -617,6 +623,8 @@ public struct BarView: View {
                     isReadback: state.isTeleprompterReadback,
                     playbackEpoch: state.playbackEpoch,
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
+                    onSeek: state.seek,
+                    estimatedPlaybackStartMilliseconds: state.playbackChunkStartMilliseconds,
                     wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth
                     ),
@@ -627,6 +635,7 @@ public struct BarView: View {
                         isDismissed: state.isTeleprompterDismissed
                     )
                 )
+                .allowsHitTesting(!state.isTeleprompterDismissed)
                 .accessibilityHidden(state.isTeleprompterDismissed)
 
                 Text("Teleprompter hidden")

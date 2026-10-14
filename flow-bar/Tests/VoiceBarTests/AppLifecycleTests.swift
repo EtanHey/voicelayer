@@ -202,7 +202,8 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
             VoiceBarNotchInteractionConfiguration(
-                lowerControlCount: 3
+                lowerControlCount: 3,
+                lowerSurfaceIsInteractive: true
             )
         )
     }
