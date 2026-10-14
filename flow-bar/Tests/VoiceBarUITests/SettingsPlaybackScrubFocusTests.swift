@@ -115,9 +115,9 @@ final class SettingsPlaybackScrubFocusTests: XCTestCase {
                                 drag.changed(
         """))
         XCTAssertTrue(source.contains("""
-                    .accessibilityAdjustableAction { direction in
-                        SettingsScrubDrag.step(playback: playback, url: url, by: Self.seekDelta(for: direction))
-                    }
+                .accessibilityAdjustableAction { direction in
+                    step(by: Self.seekDelta(for: direction))
+                }
         """))
     }
 

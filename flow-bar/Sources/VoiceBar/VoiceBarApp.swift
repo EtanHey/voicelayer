@@ -1793,7 +1793,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 lowerControlCount += 1
             }
             return VoiceBarNotchInteractionConfiguration(
-                lowerControlCount: lowerControlCount
+                lowerControlCount: lowerControlCount,
+                lowerSurfaceIsInteractive: state.mode == .speaking
             )
         case .history:
             return .historyPanel

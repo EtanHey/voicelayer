@@ -7,9 +7,29 @@ import SwiftUI
 /// that read happened inside SettingsView's body, every tick would re-render the whole Settings
 /// window. Keep position reads in here.
 struct SettingsPlaybackScrubBar: View {
-    let playback: SettingsAudioPlayback
-    let url: URL
+    let position: () -> SettingsAudioPlaybackPosition
+    let seek: (TimeInterval) -> Void
     let accessibilityNoun: String
+    var isPlaying = true
+    var isGrowing = false
+
+    init(playback: SettingsAudioPlayback, url: URL, accessibilityNoun: String) {
+        self.init(
+            position: { playback.position(of: url) ?? SettingsAudioPlaybackPosition(currentTime: 0, duration: 0) },
+            seek: { playback.seek(url, to: $0) },
+            accessibilityNoun: accessibilityNoun
+        )
+    }
+
+    init(position: @escaping () -> SettingsAudioPlaybackPosition,
+         seek: @escaping (TimeInterval) -> Void, accessibilityNoun: String,
+         isPlaying: Bool = true, isGrowing: Bool = false) {
+        self.position = position
+        self.seek = seek
+        self.accessibilityNoun = accessibilityNoun
+        self.isPlaying = isPlaying
+        self.isGrowing = isGrowing
+    }
 
     static let tickInterval: TimeInterval = 0.25
     static let trackHeight: CGFloat = 4
@@ -20,26 +40,13 @@ struct SettingsPlaybackScrubBar: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: Self.tickInterval)) { _ in
-            let position = playback.position(of: url)
-                ?? SettingsAudioPlaybackPosition(currentTime: 0, duration: 0)
-            let shownTime = drag.fraction.map(position.time(atFraction:)) ?? position.currentTime
-            let shown = SettingsAudioPlaybackPosition(currentTime: shownTime, duration: position.duration)
-
-            HStack(spacing: 8) {
-                Text(SettingsAudioPlaybackPosition.clockLabel(shown.currentTime))
-                    .frame(minWidth: 34, alignment: .trailing)
-                track(shown)
-                Text(SettingsAudioPlaybackPosition.clockLabel(shown.duration))
-                    .frame(minWidth: 34, alignment: .leading)
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Playback position, \(accessibilityNoun)")
-            .accessibilityValue(shown.spokenValue)
-            .accessibilityAdjustableAction { direction in
-                SettingsScrubDrag.step(playback: playback, url: url, by: Self.seekDelta(for: direction))
+        Group {
+            if isPlaying {
+                TimelineView(.periodic(from: .now, by: Self.tickInterval)) { _ in
+                    content(position())
+                }
+            } else {
+                content(position())
             }
         }
         .focusable()
@@ -48,10 +55,33 @@ struct SettingsPlaybackScrubBar: View {
         .onChange(of: isFocused) { _, focused in drag.focusChanged(to: focused) }
         .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
             guard let delta = Self.seekDelta(for: press.key) else { return .ignored }
-            SettingsScrubDrag.step(playback: playback, url: url, by: delta)
+            step(by: delta)
             return .handled
         }
         .help("Drag to seek; ← and → step \(Int(SettingsAudioPlayback.keyboardSeekStep)) seconds")
+    }
+
+    private func content(_ position: SettingsAudioPlaybackPosition) -> some View {
+        let shownTime = drag.fraction.map(position.time(atFraction:)) ?? position.currentTime
+        let shown = SettingsAudioPlaybackPosition(currentTime: shownTime, duration: position.duration)
+
+        return HStack(spacing: 8) {
+            Text(SettingsAudioPlaybackPosition.clockLabel(shown.currentTime))
+                .fixedSize()
+                .frame(minWidth: 34, alignment: .trailing)
+            track(shown)
+            Text(SettingsAudioPlaybackPosition.clockLabel(shown.duration) + (isGrowing ? "+" : ""))
+                .fixedSize()
+                .frame(minWidth: 34, alignment: .leading)
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Playback position, \(accessibilityNoun)")
+        .accessibilityValue(shown.spokenValue + (isGrowing ? ", synthesized so far; duration growing" : ""))
+        .accessibilityAdjustableAction { direction in
+            step(by: Self.seekDelta(for: direction))
+        }
     }
 
     private func track(_ position: SettingsAudioPlaybackPosition) -> some View {
@@ -81,22 +111,25 @@ struct SettingsPlaybackScrubBar: View {
                         isFocused = true
                         drag.changed(
                             toFraction: Double(value.location.x / width),
-                            duration: position.duration,
-                            playback: playback,
-                            url: url
+                            duration: position.duration
                         )
                     }
                     .onEnded { value in
                         drag.ended(
                             atFraction: Double(value.location.x / width),
                             duration: position.duration,
-                            playback: playback,
-                            url: url
+                            seek: seek
                         )
                     }
             )
         }
         .frame(height: Self.knobDiameter + 4)
+    }
+
+    private func step(by delta: TimeInterval) {
+        let current = position()
+        guard current.duration > 0 else { return }
+        seek(SettingsScrubDrag.clampedTime(current.currentTime + delta, duration: current.duration))
     }
 
     static func seekDelta(for key: KeyEquivalent) -> TimeInterval? {
@@ -144,8 +177,12 @@ struct SettingsScrubDrag {
         playback _: SettingsAudioPlayback,
         url _: URL
     ) {
+        changed(toFraction: raw, duration: duration)
+    }
+
+    mutating func changed(toFraction raw: Double, duration: TimeInterval) {
         hidesFocusRing = true
-        guard duration.isFinite, duration > 0 else { return }
+        guard duration.isFinite, duration > 0, raw.isFinite else { return }
         fraction = Self.clampedTime(raw * duration, duration: duration) / duration
     }
 
@@ -156,9 +193,13 @@ struct SettingsScrubDrag {
         playback: SettingsAudioPlayback,
         url: URL
     ) {
+        ended(atFraction: raw, duration: duration, seek: { playback.seek(url, to: $0) })
+    }
+
+    mutating func ended(atFraction raw: Double, duration: TimeInterval, seek: (TimeInterval) -> Void) {
         defer { fraction = nil }
         guard duration.isFinite, duration > 0, raw.isFinite else { return }
-        playback.seek(url, to: Self.clampedTime(raw * duration, duration: duration))
+        seek(Self.clampedTime(raw * duration, duration: duration))
     }
 
     mutating func focusChanged(to focused: Bool) {
