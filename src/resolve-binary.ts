@@ -198,7 +198,14 @@ export function resolveBinary(
   if (which.timedOut) timedOut = true;
   if (which.exitCode === 0) {
     const path = which.stdout.trim();
-    if (path) return path;
+    if (path) {
+      if (name !== "ffmpeg") return path;
+      const timeout = nextTimeout();
+      if (timeout === null) return giveUp();
+      const check = runProbe([path, "-version"], timeout);
+      if (check.timedOut) timedOut = true;
+      if (check.exitCode === 0) return path;
+    }
   }
 
   // Probe candidate paths directly
@@ -292,7 +299,7 @@ export async function resolveBinaryAsync(
       ]);
       if (!timedOut && exitCode === 0) {
         const path = out.trim();
-        if (path) return path;
+        if (path && (name !== "ffmpeg" || await probeExitCode([path, "-version"], timeoutMs) === 0)) return path;
       }
     } finally {
       clearTimeout(timer);

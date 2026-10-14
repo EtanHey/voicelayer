@@ -8,6 +8,7 @@ import {
   __setBinarySpawnForTests,
   initEnrichedPATH,
   resolveBinary,
+  resolveBinaryAsync,
   type BinarySpawnSync,
 } from "../resolve-binary";
 
@@ -166,5 +167,28 @@ describe("resolveBinary is bounded", () => {
     });
 
     expect(resolveBinary("thing", ["/fake/candidate"])).toBe("/fake/candidate");
+  });
+});
+
+
+describe("ffmpeg executable validation", () => {
+  afterEach(() => __resetBinarySpawnForTests());
+  it("skips an EBADARCH PATH candidate in the sync resolver", () => {
+    __setBinarySpawnForTests(cmd => {
+      if (cmd[0] === "which") return {exitCode: 0, stdout: "/stale/ffmpeg\n"};
+      if (cmd[0] === "/stale/ffmpeg") throw Object.assign(new Error("Bad CPU type"), {code: "EBADARCH"});
+      return {exitCode: cmd[0] === "/working/ffmpeg" && cmd[1] === "-version" ? 0 : 1};
+    });
+    expect(resolveBinary("ffmpeg", ["/working/ffmpeg"])).toBe("/working/ffmpeg");
+  });
+  it("skips an EBADARCH PATH candidate in the async resolver", async () => {
+    const original = Bun.spawn;
+    Bun.spawn = ((cmd: string[]) => {
+      if (cmd[0] === "/stale/ffmpeg") throw Object.assign(new Error("Bad CPU type"), {code: "EBADARCH"});
+      return {stdout: new Blob([cmd[0] === "which" ? "/stale/ffmpeg\n" : ""]).stream(),
+        exited: Promise.resolve(cmd[0] === "which" || (cmd[0] === "/working/ffmpeg" && cmd[1] === "-version") ? 0 : 1), kill() {}};
+    }) as any;
+    try { expect(await resolveBinaryAsync("ffmpeg", ["/working/ffmpeg"])).toBe("/working/ffmpeg"); }
+    finally { Bun.spawn = original; }
   });
 });

@@ -125,6 +125,8 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     // @ts-ignore — mock Bun.spawnSync for getAudioPlayer + ffprobe
     Bun.spawnSync = (cmd: string[]) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {exitCode: 0, stdout: Buffer.from("ffmpeg\n"), stderr: Buffer.alloc(0)};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0)};
       if (Array.isArray(cmd) && cmd[0] === "which") {
         return {
           exitCode: 1,
@@ -158,6 +160,8 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     // @ts-ignore — mock Bun.spawn: audio players are controllable
     Bun.spawn = (cmd: string[], opts?: unknown) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {pid: 89990, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg\n"]).stream(), kill() {}};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {pid: 89991, exited: Promise.resolve(0), kill() {}};
       const cmdArray = Array.isArray(cmd) ? [...cmd] : [String(cmd)];
       if (cmdArray[0] === "ffmpeg") {
         decoderSpawnOptions = opts;
@@ -598,6 +602,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     });
 
     expect(synchronousDecodeCount).toBe(0);
+    await waitFor(() => decoderMocks.length === 1, "resolved amplitude decoder");
     expect(decoderMocks).toHaveLength(1);
     expect(playerMocks).toHaveLength(0);
     expect(decoderSpawnOptions).toMatchObject({
@@ -624,6 +629,7 @@ describe("playback queue — P0-1 sequential playback", () => {
         text: "Prepared fallback must still play",
         voice: "TestVoice",
       });
+      await waitFor(() => decoderMocks.length === 1, "resolved amplitude decoder");
       expect(decoderMocks).toHaveLength(1);
 
       now += 30_001;
@@ -652,6 +658,7 @@ describe("playback queue — P0-1 sequential playback", () => {
       exited = true;
     });
 
+    await waitFor(() => decoderMocks.length === 1, "resolved amplitude decoder");
     expect(stopPlayback()).toBe(true);
     await playback.exited;
     expect(exited).toBe(true);
@@ -671,6 +678,7 @@ describe("playback queue — P0-1 sequential playback", () => {
       text: "Preparing",
       voice: "TestVoice",
     });
+    await waitFor(() => decoderMocks.length === 1, "resolved amplitude decoder");
     expect(decoderMocks).toHaveLength(1);
 
     playAudioNonBlocking(`${TEST_TMP}/pq-barge-preparing-critical.mp3`, {
@@ -680,6 +688,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     });
 
     expect(decoderMocks[0].killed).toBe(true);
+    await waitFor(() => decoderMocks.length === 2, "replacement amplitude decoder");
     expect(decoderMocks).toHaveLength(2);
     stopPlayback();
     expect(decoderMocks[1].killed).toBe(true);
@@ -1021,6 +1030,8 @@ describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
 
     // @ts-ignore
     Bun.spawnSync = (cmd: string[]) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {exitCode: 0, stdout: Buffer.from("ffmpeg\n"), stderr: Buffer.alloc(0)};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0)};
       if (Array.isArray(cmd) && cmd[0] === "which") {
         return {
           exitCode: 1,
@@ -1033,6 +1044,8 @@ describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
 
     // @ts-ignore
     Bun.spawn = (cmd: string[], _opts?: unknown) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {pid: 89990, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg\n"]).stream(), kill() {}};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {pid: 89991, exited: Promise.resolve(0), kill() {}};
       let resolveExit!: () => void;
       const exited = new Promise<number>((r) => {
         resolveExit = () => r(0);

@@ -20,13 +20,18 @@ beforeEach(()=>{
  process.env.VOICELAYER_TTS_SETTINGS_PATH=join(dir,"settings.json"); delete process.env.QA_VOICE_TTS_VOICE; delete process.env.QA_VOICE_TTS_RATE; delete process.env.QA_VOICE_TTS_REQUIRE_CLONE;
  spies.push(spyOn(recording,"getEffectiveRecordingState").mockReturnValue("idle"),spyOn(socket,"broadcast").mockImplementation(()=>{}));
  spies.push(spyOn(Bun,"spawn").mockImplementation(((cmd: string[])=>{
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {pid: 89990, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg\n"]).stream(), kill() {}};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {pid: 89991, exited: Promise.resolve(0), kill() {}};
    argv.push([...cmd]);
    const media=cmd.find(a=>a.startsWith("--write-media="))?.split("=").slice(1).join("=");
    if(media) writeFileSync(media,"fake mp3");
    if(cmd[0]==="ffmpeg" && cmd.at(-1)?.endsWith(".mp3")) writeFileSync(cmd.at(-1)!,"converted audio");
    return {pid:98765,exited:Promise.resolve(0),stdout:new Blob([new Uint8Array([0,0])]).stream(),kill:()=>{}};
  }) as never));
- spies.push(spyOn(Bun,"spawnSync").mockImplementation(((cmd: string[])=>{argv.push([...cmd]); if(cmd[0]==="ffmpeg" && cmd.includes("-af")) writeFileSync(cmd.at(-1)!,"rate adjusted"); return {exitCode:0,stdout:Buffer.from("1.0"),stderr:Buffer.alloc(0)};}) as never));
+ spies.push(spyOn(Bun,"spawnSync").mockImplementation(((cmd: string[])=>{
+   if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {exitCode: 0, stdout: Buffer.from("ffmpeg\n"), stderr: Buffer.alloc(0)};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0)};
+   argv.push([...cmd]); if(cmd[0]==="ffmpeg" && cmd.includes("-af")) writeFileSync(cmd.at(-1)!,"rate adjusted"); return {exitCode:0,stdout:Buffer.from("1.0"),stderr:Buffer.alloc(0)};}) as never));
 });
 afterEach(async()=>{stopPlayback(); await awaitCurrentPlayback(); for(const s of spies.splice(0))s.mockRestore(); for(const [k,v]of Object.entries(saved)) {if(v===undefined)delete process.env[k];else process.env[k]=v;} rmSync(dir,{recursive:true,force:true});});
 function synthArgs(){return argv.filter(a=>a.some(x=>x.startsWith("--voice="))).map(a=>a.filter(x=>x.startsWith("--voice=")||x.startsWith("--rate=")));}

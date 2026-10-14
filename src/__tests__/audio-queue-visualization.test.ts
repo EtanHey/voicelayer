@@ -28,6 +28,8 @@ describe("audio queue visualization events", () => {
 
     // @ts-ignore
     Bun.spawnSync = (cmd: string[]) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {exitCode: 0, stdout: Buffer.from("ffmpeg\n"), stderr: Buffer.alloc(0)};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0)};
       if (Array.isArray(cmd) && cmd[0] === "which") {
         return {
           exitCode: 1,
@@ -40,6 +42,8 @@ describe("audio queue visualization events", () => {
 
     // @ts-ignore
     Bun.spawn = (cmd: string[], _opts?: unknown) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {pid: 89990, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg\n"]).stream(), kill() {}};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {pid: 89991, exited: Promise.resolve(0), kill() {}};
       if (cmd[0] === "ffmpeg") {
         return {
           exited: Promise.resolve(0),

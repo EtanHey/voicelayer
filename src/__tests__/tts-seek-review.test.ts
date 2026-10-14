@@ -47,7 +47,7 @@ describe("seek review regressions", () => {
     spies.push(spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
       const exit = deferred<number>(); const child = { argv, exit, killed: false };
       const proc = { pid: ++pid, exited: exit.promise, stdout: new Blob(["/fake/ffmpeg"]).stream(), kill: () => { child.killed = true; exit.resolve(143); } };
-      if (argv[0] === "which") exit.resolve(0);
+      if (argv[0] === "which" || argv[1] === "-version") exit.resolve(0);
       else if (argv.includes("concat")) { writeFileSync(argv.at(-1)!, "history"); exit.resolve(0); }
       else if (argv.includes("-ss")) cuts.push(child);
       else players.push(child);

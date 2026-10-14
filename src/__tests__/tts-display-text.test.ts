@@ -80,6 +80,8 @@ describe("TTS display text stays separate from pronunciation text", () => {
 
     // @ts-ignore — deterministic edge-tts and audio-player fixture.
     Bun.spawn = (cmd: string[]) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {pid: 89990, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg\n"]).stream(), kill() {}};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {pid: 89991, exited: Promise.resolve(0), kill() {}};
       const command = [...cmd];
       spawnCalls.push({ cmd: command });
 
@@ -118,6 +120,8 @@ describe("TTS display text stays separate from pronunciation text", () => {
 
     // @ts-ignore — avoid invoking platform probes in this unit fixture.
     Bun.spawnSync = (cmd: string[]) => {
+      if (cmd[0] === "which" && cmd[1] === "ffmpeg") return {exitCode: 0, stdout: Buffer.from("ffmpeg\n"), stderr: Buffer.alloc(0)};
+      if (cmd[0] === "ffmpeg" && cmd[1] === "-version") return {exitCode: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0)};
       if (cmd[0] === "which") {
         return {
           exitCode: 1,
