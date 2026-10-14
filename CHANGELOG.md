@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.43] - 2026-10-14
+
+### Fixed
+- Scrub through cloned-voice playback without losing the selected position (#318).
+- Keep the Qwen3 TTS daemon running when `voicelayer update` removes duplicate VoiceBar launch agents (#319, #320).
+- Record first-sound latency for long reads, including truthful voice fallback reporting (#321).
+- Select working ffmpeg and ffprobe binaries when an incompatible copy appears on PATH, fixing clone previews, audio history and `voicelayer speak --wait` failures (#322).
+- Give audio downloads both validated media tools, even when they are installed in different directories (#323).
+- Keep binary-resolution caches separate for different candidate paths while reusing equivalent lookups (#324).
+
 ## [2.2.42] - 2026-10-14
 
 ### Added
