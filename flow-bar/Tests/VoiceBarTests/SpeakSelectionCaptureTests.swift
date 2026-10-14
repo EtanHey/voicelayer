@@ -59,7 +59,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         XCTAssertEqual(contents(board), original)
     }
 
-    func testFailedRestoreRetriesSnapshotWhileItStillOwnsClipboard() {
+    func testPartialNativeWriteRetriesUsingFreshPasteboardItems() {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         seed(board)
@@ -67,7 +67,13 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         var writes = 0
         let capture = makeCapture(writeRestoredItems: { items in
             writes += 1
-            return writes == 1 ? false : board.writeObjects(items)
+            if writes == 1 {
+                let count = board.changeCount
+                XCTAssertTrue(board.writeObjects([items[0]]))
+                XCTAssertEqual(board.changeCount, count, "our data write keeps the cleared generation")
+                return false // first item accepted before the reported failure
+            }
+            return board.writeObjects(items)
         }, readAXSelection: { nil }, pasteboard: board, postCopy: {
             board.clearContents()
             board.setString("selection", forType: .string)

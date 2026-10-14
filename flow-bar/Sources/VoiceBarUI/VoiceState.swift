@@ -972,6 +972,7 @@ public final class VoiceState {
     }
 
     public func stop() {
+        if selectionCaptureInFlight { selectionCaptureCancelled = true }
         let shouldShowTranscribing = mode == .recording
         let shouldExitInterruptedPlayback = mode == .speaking
         var payload: [String: Any] = ["cmd": "stop"]
@@ -1026,6 +1027,7 @@ public final class VoiceState {
     }
 
     public func cancel() {
+        if selectionCaptureInFlight { selectionCaptureCancelled = true }
         let cancelledTranscription = mode == .transcribing
         barInitiatedRecording = false
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)

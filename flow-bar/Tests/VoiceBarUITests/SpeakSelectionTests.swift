@@ -7,19 +7,12 @@ final class SpeakSelectionTests: XCTestCase {
         state.sendCommand = { _ in XCTFail("capture failure must not speak") }
         for (result, message) in [(SelectionCaptureResult.secureField, "Can't read a secure field"),
                                   (.captureFailed, "Couldn't read the selection, try again"),
-                                  (.clipboardRestoreFailed, "Couldn't restore the clipboard")] {
+                                  (.clipboardRestoreFailed, "Couldn't restore the clipboard"),
+                                  (.clipboardChanged, "Couldn't read the selection, try again")] {
             state.selectionTextCaptureHandler = { $0(result) }
             state.speakSelection()
             XCTAssertEqual(state.confirmationText, message)
         }
-    }
-
-    func testClipboardOwnershipAbortOffersRetryWithoutSpeaking() {
-        let state = VoiceState()
-        state.sendCommand = { _ in XCTFail("ownership abort must not speak") }
-        state.selectionTextCaptureHandler = { $0(.clipboardChanged) }
-        state.speakSelection()
-        XCTAssertEqual(state.confirmationText, "Couldn't read the selection, try again")
     }
 
     func testSecondPressCancelsPendingCaptureAndAFreshPressCanCaptureAgain() {
@@ -39,23 +32,6 @@ final class SpeakSelectionTests: XCTestCase {
         XCTAssertEqual(captures, 2)
         completion?(.completed("fresh selection"))
         XCTAssertEqual(commands, 1)
-    }
-
-    func testStopAlsoCancelsCaptureThatPredatesOtherSpeech() {
-        let state = VoiceState()
-        var completion: ((SelectionCaptureResult) -> Void)?
-        var commands: [[String: String]] = []
-        state.sendCommand = { commands.append($0 as! [String: String]) }
-        state.selectionTextCaptureHandler = { completion = $0 }
-        state.speakSelection()
-        state.mode = .speaking
-        state.speakSelection()
-        state.mode = .idle
-        completion?(.completed("stale selection"))
-        XCTAssertEqual(commands, [["cmd": "stop"]])
-        state.speakSelection()
-        completion?(.completed("fresh selection"))
-        XCTAssertEqual(commands.last?["text"], "fresh selection")
     }
 
     func testSpeakingStopsWithoutCapturing() {

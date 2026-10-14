@@ -120,23 +120,29 @@ final class SpeakSelectionCapture {
     private enum RestorationResult { case restored, changed, failed }
 
     private func restore(_ snapshot: Snapshot, expectedChangeCount: Int) -> RestorationResult {
-        var items: [NSPasteboardItem] = []
-        for values in snapshot {
-            let item = NSPasteboardItem()
-            for (type, data) in values {
-                guard item.setData(data, forType: type) else { return .failed }
+        func prepareItems() -> [NSPasteboardItem]? {
+            var items: [NSPasteboardItem] = []
+            for values in snapshot {
+                let item = NSPasteboardItem()
+                for (type, data) in values {
+                    guard item.setData(data, forType: type) else { return nil }
+                }
+                items.append(item)
             }
-            items.append(item)
+            return items
         }
+        guard let items = prepareItems() else { return .failed }
         // Check immediately before taking ownership, after preparing every item.
         guard pasteboard.changeCount == expectedChangeCount else { return .changed }
         let clearedCount = pasteboard.clearContents()
         if items.isEmpty || writeRestoredItems(items) { return .restored }
-        // A failed write may have partially populated the board. Retry the complete
-        // in-memory snapshot only while we still own the version we cleared.
+        // Our data writes keep the generation; preserve a new clear/declare transaction.
+        guard pasteboard.changeCount == clearedCount else { return .changed }
+        // Reusing accepted items after clearing throws; build fresh items for the retry.
+        guard let retryItems = prepareItems() else { return .failed }
         guard pasteboard.changeCount == clearedCount else { return .changed }
         let retryCount = pasteboard.clearContents()
-        if writeRestoredItems(items) { return .restored }
+        if writeRestoredItems(retryItems) { return .restored }
         return pasteboard.changeCount == retryCount ? .failed : .changed
     }
 

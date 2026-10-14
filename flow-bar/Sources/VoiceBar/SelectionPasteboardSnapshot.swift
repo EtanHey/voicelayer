@@ -1,9 +1,8 @@
 import AppKit
 import Darwin
 
-/// The child only reads. It exits before app startup, singleton election, sockets,
-/// event taps or daemon ownership. Promised-data IPC can block its main thread
-/// without blocking the resident app, and the parent kills only this owned child.
+/// Read-only child exits before app/daemon startup, singleton election, sockets or event taps.
+/// AppKit reads use the child's main thread; the utility parent bounds promised-data IPC.
 enum SelectionPasteboardSnapshot {
     static let argument = "--selection-pasteboard-snapshot"
     private static let maximumBytes = 8 * 1024 * 1024
@@ -60,8 +59,7 @@ enum SelectionPasteboardSnapshot {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { return nil }
-        // SIGKILL cannot be ignored by a stuck provider. This Process is owned here;
-        // neither the resident VoiceBar nor any unrelated daemon is signalled.
+        // SIGKILL bounds a stuck provider and targets only this owned child.
         let timeoutJob = DispatchWorkItem {
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         }

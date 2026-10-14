@@ -30,6 +30,34 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         }
     }
 
+    func testEveryStopPathDiscardsStaleSelectionAndAllowsFreshCapture() {
+        for action in ["option", "stop", "cancel", "escape", "pill"] {
+            let state = VoiceState()
+            state.isConnected = true
+            var completion: ((SelectionCaptureResult) -> Void)?
+            var commands: [String] = []
+            state.sendCommand = { commands.append($0["cmd"] as! String) }
+            state.selectionTextCaptureHandler = { completion = $0 }
+            state.speakSelection()
+            state.mode = .speaking
+            let router = VoiceBarCommandRouter(voiceState: state)
+            switch action {
+            case "option": state.speakSelection()
+            case "stop": state.stop()
+            case "cancel": state.cancel()
+            case "escape": router.handleEscape()
+            default: router.handleStop()
+            }
+            state.mode = .idle // daemon confirms playback stopped
+            completion?(.completed("stale selection"))
+            let command = action == "cancel" ? "cancel" : "stop"
+            XCTAssertEqual(commands, [command], action)
+            state.speakSelection()
+            completion?(.completed("fresh selection"))
+            XCTAssertEqual(commands, [command, "speak_text"], action)
+        }
+    }
+
     func testDeliberateSecondPressAndEscapeCancelTranscribingWithRecoveryNotice() {
         for escape in [false, true] {
             let state = VoiceState(
