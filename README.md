@@ -60,7 +60,7 @@ voicelayer speak --stop
 ```
 
 Speech goes through the running VoiceLayer daemon, sharing Stop and the teleprompter.
-The command returns after the first audio starts; `--wait` waits for completion.
+With the daemon, the command returns after the first audio starts; `--wait` waits for completion.
 `--profile auto` is the default; `short` and `long` select the corresponding profile.
 Profile settings use the current `speak_text` resolver (separate profile settings are pending).
 Markdown conversion defaults on for `.md` files; literal text and stdin are plain unless
@@ -68,11 +68,18 @@ Markdown conversion defaults on for `.md` files; literal text and stdin are plai
 up to the shared 200,000-character safety limit.
 
 If the daemon is unavailable, the CLI reports it on stderr and runs the same streaming
-engine locally. Local fallback has no daemon Stop or teleprompter; `--stop` requires the
-daemon. Authentication, busy, synthesis and playback failures return a nonzero exit code.
-Failures after the default command has returned are reported by the daemon or local worker;
+engine in the foreground, waiting for completion even without `--wait`. Ctrl-C stops
+local synthesis/playback and waits for owned children to exit. Local fallback has no
+teleprompter; `--stop` requires the daemon. Authentication, busy, synthesis and playback
+failures return a nonzero exit code. Failures after an async daemon command has returned
+are reported by the daemon;
 use `--wait` when the final exit status matters. An older running daemon must be
 updated/restarted to support this command.
+
+The CLI and daemon honor the existing `VOICELAYER_TTS_DAEMON_SECRET_FILE` and
+`VOICELAYER_TTS_AUTH_TOKEN_FILE` overrides. `VOICELAYER_DAEMON_SECRET_PATH` takes precedence
+for a separate speech-control credential; otherwise isolated state/socket paths keep test
+credentials separate. Secret files must be regular, nonempty, non-symlink files with mode 0600.
 
 ### Point your MCP client at the daemon
 

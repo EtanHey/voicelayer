@@ -1,9 +1,7 @@
 #!/usr/bin/env bun
-import { readFileSync } from "node:fs";
 import { createConnection } from "node:net";
-import { spawn } from "node:child_process";
 import { getMcpSocketPath } from "../paths";
-import { speechSecretPath } from "../speech-control";
+import { readSpeechSecret } from "../speech-control";
 
 export type SpeechRequest = { cmd: "stop" } | {
   cmd: "speak_text"; text: string; profile: "auto" | "short" | "long";
@@ -20,7 +18,7 @@ const HELP = `Usage: voicelayer speak [text | - | --file path] [options]
   --stop                    Stop daemon speech, including queued chunks
   -                         Read stdin (also the default with no text)
 Markdown defaults on for .md files; stdin and literal text default to plain.
-Returns after first audio starts; falls back locally if the daemon is down.
+Returns after first audio starts with the daemon. Local fallback waits; Ctrl-C stops it.
 `;
 export async function parseSpeakArgs(args: string[], io: IO): Promise<SpeechRequest> {
   let profile: "auto" | "short" | "long" = "auto";
@@ -69,11 +67,11 @@ export function requestSpeech(request: SpeechRequest, options: { socketPath?: st
       connected = true;
       if (request.cmd === "speak_text" && request.wait) clearTimeout(timer);
       try {
-        const token = options.token ?? readFileSync(speechSecretPath(), "utf8").trim();
+        const token = options.token ?? readSpeechSecret();
         socket.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "voicelayer/speech", params: {
           ...request, ...(request.cmd === "speak_text" ? { source: "cli" } : {}), token,
         } }) + "\n");
-      } catch { finish(new Error("Cannot read daemon speech secret; update/restart VoiceLayer")); }
+      } catch (error) { finish(new Error(`Cannot read daemon speech secret: ${error instanceof Error ? error.message : String(error)}; update/restart VoiceLayer`)); }
     });
     socket.on("data", (data) => {
       buffer += data.toString("utf8");
@@ -95,40 +93,30 @@ export function requestSpeech(request: SpeechRequest, options: { socketPath?: st
   });
 }
 
-async function localWorker(request: Extract<SpeechRequest, { cmd: "speak_text" }>): Promise<void> {
-  const { speakText } = await import("../tts");
-  const { markdownToSpeech } = await import("../tts/markdown-to-speech");
-  const read = speakText(request.format === "markdown" ? markdownToSpeech(request.text) : request.text, request.profile);
-  const start = await read.started;
-  if (start.error) throw new Error(start.error);
-  process.stdout.write(JSON.stringify({ status: "started" }) + "\n");
-  const completion = await read.completion;
-  if (completion.error) throw new Error(completion.error);
-}
-
-function speakLocally(request: Extract<SpeechRequest, { cmd: "speak_text" }>): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [new URL("./speak.ts", import.meta.url).pathname, "--local-worker"], {
-      detached: !request.wait, stdio: ["pipe", "pipe", "inherit"], env: process.env,
-    });
-    let started = false, settled = false, output = "";
-    child.stdin.on("error", () => {});
-    child.stdin.end(JSON.stringify(request));
-    child.stdout.on("data", (data) => {
-      output += data.toString();
-      if (!output.includes('{"status":"started"}')) return;
-      started = true;
-      if (!request.wait && !settled) {
-        settled = true; child.stdout.destroy(); child.unref(); resolve();
-      }
-    });
-    child.on("error", (error) => { if (!settled) { settled = true; reject(error); } });
-    child.on("exit", (code) => {
-      if (settled) return;
-      settled = true;
-      if (code === 0 && started) resolve(); else reject(new Error(`Local speech failed (exit ${code ?? "signal"})`));
-    });
-  });
+/** Local fallback stays in the foreground so terminal signals own every child. */
+async function speakLocally(request: Extract<SpeechRequest, { cmd: "speak_text" }>): Promise<void> {
+  let runtime: typeof import("../tts") | undefined;
+  let interrupted: "SIGINT" | "SIGTERM" | undefined;
+  const stop = (signal: "SIGINT" | "SIGTERM") => {
+    interrupted = signal;
+    runtime?.stopPlayback();
+  };
+  const onInt = () => stop("SIGINT"), onTerm = () => stop("SIGTERM");
+  process.on("SIGINT", onInt); process.on("SIGTERM", onTerm);
+  try {
+    runtime = await import("../tts");
+    const { markdownToSpeech } = await import("../tts/markdown-to-speech");
+    if (interrupted) throw new Error(`Local speech interrupted (${interrupted})`);
+    const read = runtime.speakText(request.format === "markdown" ? markdownToSpeech(request.text) : request.text, request.profile);
+    // The foreground fallback always waits, including synthesis/history teardown.
+    const completion = await read.completion;
+    if (interrupted) throw new Error(`Local speech interrupted (${interrupted})`);
+    const start = await read.started;
+    if (start.error || completion.error) throw new Error(start.error ?? completion.error);
+  } finally {
+    if (interrupted && runtime) await runtime.awaitCurrentPlayback();
+    process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
+  }
 }
 export async function runSpeakCli(args: string[], deps: IO & {
   request(request: SpeechRequest): Promise<void>;
@@ -140,9 +128,10 @@ export async function runSpeakCli(args: string[], deps: IO & {
     try { await deps.request(request); }
     catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (request.cmd === "stop" || (code !== "ENOENT" && code !== "ECONNREFUSED")) throw error;
-      deps.stderr("VoiceLayer daemon unavailable; speaking locally (no daemon stop/teleprompter).\n");
-      await deps.local(request);
+      if (code !== "ENOENT" && code !== "ECONNREFUSED") throw error;
+      if (request.cmd === "stop") throw new Error("VoiceLayer daemon isn't running; nothing to stop");
+      deps.stderr("VoiceLayer daemon unavailable; speaking locally in the foreground (Ctrl-C to stop; no teleprompter).\n");
+      await deps.local({ ...request, wait: true });
     }
     return 0;
   } catch (error) {
@@ -151,10 +140,6 @@ export async function runSpeakCli(args: string[], deps: IO & {
   }
 }
 if (import.meta.main) {
-  if (process.argv[2] === "--local-worker") {
-    try { await localWorker(JSON.parse(await Bun.stdin.text())); process.exit(0); }
-    catch (error) { console.error(`Local speech: ${error instanceof Error ? error.message : String(error)}`); process.exit(1); }
-  }
   const code = await runSpeakCli(process.argv.slice(2), {
     readStdin: async () => { if (process.stdin.isTTY) throw new Error("Provide text, --file or piped stdin"); return await Bun.stdin.text(); },
     readFile: async (path) => await Bun.file(path).text(),
