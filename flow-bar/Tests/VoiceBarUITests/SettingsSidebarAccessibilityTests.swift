@@ -76,7 +76,7 @@ final class SettingsSidebarAccessibilityTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/SettingsNavigationShell.swift"), encoding: .utf8)
         XCTAssertTrue(source.contains("Button {"))
-        XCTAssertTrue(source.contains(".accessibilityLabel(\"Open General settings for permissions and setup."))
+        XCTAssertTrue(source.contains(".accessibilityLabel(\"Open General settings\")"))
         XCTAssertFalse(source.contains(".animation("))
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             let event = try XCTUnwrap(NSEvent.mouseEvent(

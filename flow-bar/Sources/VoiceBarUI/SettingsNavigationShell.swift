@@ -4,6 +4,7 @@ import SwiftUI
 /// Native settings navigation shared by the production app and the isolated development host.
 struct SettingsNavigationShell<Detail: View>: View {
     @Binding var selection: SettingsTab
+    @State private var isFooterHovered = false
     let footer: VoiceBarFooterPresentation
     @ViewBuilder let detail: Detail
 
@@ -50,11 +51,16 @@ struct SettingsNavigationShell<Detail: View>: View {
                     selection = .general
                 } label: {
                     VoiceBarStatusFooter(presentation: footer)
-                        .padding(12)
+                        .padding(8)
+                        .background(isFooterHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.clear),
+                                    in: RoundedRectangle(cornerRadius: 8))
+                        .padding(4)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open General settings for permissions and setup. \(footer.status). \(footer.privacy)")
+                .onHover { isFooterHovered = $0 }
+                .accessibilityLabel("Open General settings")
+                .accessibilityValue("\(footer.status). \(footer.privacy)")
                 .help("Open General settings for permissions and setup")
             }
             .frame(width: 172)
