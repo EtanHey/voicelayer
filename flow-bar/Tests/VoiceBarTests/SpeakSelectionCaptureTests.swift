@@ -4,11 +4,134 @@ import VoiceBarUI
 import XCTest
 
 final class SpeakSelectionCaptureTests: XCTestCase {
+    func testSecureInputAndSecureSubroleAreBothRecognized() {
+        XCTAssertTrue(SpeakSelectionCapture.isSecureFocus(role: "AXTextField", subrole: "AXSecureTextField", secureInput: false))
+        XCTAssertTrue(SpeakSelectionCapture.isSecureFocus(role: "AXSecureTextField", subrole: nil, secureInput: false))
+        XCTAssertTrue(SpeakSelectionCapture.isSecureFocus(role: "AXTextArea", subrole: nil, secureInput: true))
+        XCTAssertFalse(SpeakSelectionCapture.isSecureFocus(role: "AXTextArea", subrole: nil, secureInput: false))
+    }
+
+    func testSnapshotHelperDeadlineLeavesClipboardUntouchedAndMainResponsive() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        seed(board)
+        let original = contents(board)
+        let count = board.changeCount
+        let finished = expectation(description: "owned helper timed out")
+        let mainPulse = expectation(description: "main ran while helper was pending")
+        let pasteboardName = board.name.rawValue
+        DispatchQueue.global(qos: .utility).async {
+            let started = ProcessInfo.processInfo.systemUptime
+            let snapshot = SelectionPasteboardSnapshot.readInHelper(
+                name: pasteboardName, executable: URL(fileURLWithPath: "/bin/sleep"),
+                arguments: ["30"], timeout: 0.2)
+            XCTAssertNil(snapshot)
+            XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 2)
+            finished.fulfill()
+        }
+        DispatchQueue.main.async { mainPulse.fulfill() }
+        wait(for: [mainPulse, finished], timeout: 3)
+        XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(contents(board), original)
+    }
+
+    func testExhaustedRestoreFailureHasDedicatedResult() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        seed(board)
+        let capture = makeCapture(writeRestoredItems: { _ in false }, readAXSelection: { nil }, pasteboard: board,
+            postCopy: { board.clearContents(); board.setString("selection", forType: .string); return true })
+        captureAndWait(capture, expectedResult: .clipboardRestoreFailed) { XCTAssertNil($0) }
+    }
+
+    func testSecureFocusNeverReadsSelectionOrPostsCopy() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        seed(board)
+        let original = contents(board)
+        let count = board.changeCount
+        let capture = makeCapture(canCapture: { false }, readAXSelection: {
+            XCTFail("secure focus must not read selected text")
+            return "secret"
+        }, pasteboard: board, postCopy: { XCTFail("secure focus must not copy"); return false })
+        captureAndWait(capture) { XCTAssertNil($0) }
+        XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(contents(board), original)
+    }
+
+    func testPartialNativeWriteRetriesUsingFreshPasteboardItems() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        seed(board)
+        let original = contents(board)
+        var writes = 0
+        let capture = makeCapture(writeRestoredItems: { items in
+            writes += 1
+            if writes == 1 {
+                let count = board.changeCount
+                XCTAssertTrue(board.writeObjects([items[0]]))
+                XCTAssertEqual(board.changeCount, count, "our data write keeps the cleared generation")
+                return false // first item accepted before the reported failure
+            }
+            return board.writeObjects(items)
+        }, readAXSelection: { nil }, pasteboard: board, postCopy: {
+            board.clearContents()
+            board.setString("selection", forType: .string)
+            return true
+        })
+        captureAndWait(capture) { XCTAssertEqual($0, "selection") }
+        XCTAssertEqual(writes, 2)
+        XCTAssertEqual(contents(board), original)
+    }
+
+    func testNewCopyAfterFailedRestoreIsPreservedWithoutRetry() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        seed(board)
+        var writes = 0
+        let capture = makeCapture(writeRestoredItems: { _ in
+            writes += 1
+            board.clearContents()
+            board.setString("newer user copy", forType: .string)
+            return false
+        }, readAXSelection: { nil }, pasteboard: board, postCopy: {
+            board.clearContents()
+            board.setString("selection", forType: .string)
+            return true
+        })
+        captureAndWait(capture, expectedResult: .clipboardChanged) { XCTAssertNil($0) }
+        XCTAssertEqual(writes, 1)
+        XCTAssertEqual(board.string(forType: .string), "newer user copy")
+    }
+
+    func testPendingSnapshotDoesNotBlockMainAndCopyWaitsForSnapshot() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        let release = DispatchSemaphore(value: 0)
+        let finished = expectation(description: "finished")
+        var copies = 0
+        let capture = makeCapture(snapshotReader: {
+            XCTAssertFalse(Thread.isMainThread, "snapshot IPC must not run on the tap loop")
+            DispatchQueue.main.async { release.signal() }
+            XCTAssertEqual(release.wait(timeout: .now() + 0.5), .success)
+            return []
+        }, readAXSelection: { nil }, pasteboard: board, postCopy: {
+            copies += 1
+            board.clearContents()
+            board.setString("selection", forType: .string)
+            return true
+        })
+        capture.capture { XCTAssertEqual($0.text, "selection"); finished.fulfill() }
+        wait(for: [finished], timeout: 2)
+        XCTAssertEqual(copies, 1)
+    }
+
     func testNewerClipboardDuringCopyReadSurvivesAndAbortsSpeech() {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         seed(board)
-        let capture = SpeakSelectionCapture(readAXSelection: { nil }, pasteboard: board, postCopy: {
+        let capture = makeCapture(readAXSelection: { nil }, pasteboard: board, postCopy: {
             board.clearContents()
             board.setString("our selected text", forType: .string)
             return true
@@ -26,7 +149,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         seed(board)
-        let capture = SpeakSelectionCapture(readAXSelection: { nil }, pasteboard: board, postCopy: {
+        let capture = makeCapture(readAXSelection: { nil }, pasteboard: board, postCopy: {
             board.clearContents()
             board.setString("our selected text", forType: .string)
             board.clearContents()
@@ -43,7 +166,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         let releaseReader = DispatchSemaphore(value: 0)
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
-        let capture = SpeakSelectionCapture(readAXSelection: {
+        let capture = makeCapture(readAXSelection: {
             XCTAssertFalse(Thread.isMainThread, "AX must not run on the event-tap run loop")
             readerEntered.fulfill()
             DispatchQueue.main.async { releaseReader.signal() }
@@ -65,7 +188,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         seed(board)
         let original = contents(board)
         let changeCount = board.changeCount
-        let capture = SpeakSelectionCapture(readAXSelection: { "  **שלום**\n[link](https://example.com)  " },
+        let capture = makeCapture(readAXSelection: { "  **שלום**\n[link](https://example.com)  " },
                                             pasteboard: board, postCopy: { XCTFail("AX must not copy"); return false })
         captureAndWait(capture) { XCTAssertEqual($0, "  **שלום**\n[link](https://example.com)  ") }
         XCTAssertEqual(board.changeCount, changeCount)
@@ -87,7 +210,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
             let signalReady = {
                 if !signaledReady { signaledReady = true; ready.fulfill() }
             }
-            let capture = SpeakSelectionCapture(readAXSelection: { outcome == "emptyAX" ? "" : nil },
+            let capture = makeCapture(readAXSelection: { outcome == "emptyAX" ? "" : nil },
                 pasteboard: board, postCopy: {
                     copies += 1
                     if outcome != "timeout", outcome != "copyFailure" {
@@ -127,7 +250,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         var jobs: [(TimeInterval, () -> Void)] = []
         var result: String?
         let polling = expectation(description: "polling yielded")
-        let capture = SpeakSelectionCapture(readAXSelection: { nil }, pasteboard: board, postCopy: { true },
+        let capture = makeCapture(readAXSelection: { nil }, pasteboard: board, postCopy: { true },
                                             schedule: { jobs.append(($0, $1)); polling.fulfill() }, now: { time })
         capture.capture { result = $0.text }
         wait(for: [polling], timeout: 2)
@@ -149,11 +272,29 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         board.writeObjects([item])
         let original = contents(board)
         let count = board.changeCount
-        let capture = SpeakSelectionCapture(readAXSelection: { nil }, pasteboard: board,
+        let capture = makeCapture(readAXSelection: { nil }, pasteboard: board,
                                             postCopy: { XCTFail("cannot replace an unsaved clipboard"); return false })
         captureAndWait(capture) { XCTAssertNil($0) }
         XCTAssertEqual(board.changeCount, count)
         XCTAssertEqual(contents(board), original)
+    }
+
+    private func makeCapture(canCapture: @escaping () -> Bool = { true },
+                             snapshotReader: (() -> SpeakSelectionCapture.Snapshot?)? = nil,
+                             writeRestoredItems: (([NSPasteboardItem]) -> Bool)? = nil,
+                             readAXSelection: @escaping () -> String?, pasteboard: NSPasteboard,
+                             postCopy: @escaping () -> Bool = { false }, readCopiedString: (() -> String?)? = nil,
+                             schedule: ((TimeInterval, @escaping () -> Void) -> Void)? = nil,
+                             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) -> SpeakSelectionCapture {
+        let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".build/debug/VoiceBar")
+        let pasteboardName = pasteboard.name.rawValue
+        return SpeakSelectionCapture(canCapture: canCapture, snapshotReader: snapshotReader ?? {
+            SelectionPasteboardSnapshot.readInHelper(name: pasteboardName, executable: executable)
+        }, writeRestoredItems: writeRestoredItems, readAXSelection: readAXSelection, pasteboard: pasteboard,
+           postCopy: postCopy, readCopiedString: readCopiedString, schedule: schedule ?? {
+               DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + $0, execute: $1)
+           }, now: now)
     }
 
     private func captureAndWait(_ capture: SpeakSelectionCapture, expectedResult: SelectionCaptureResult? = nil,

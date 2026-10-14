@@ -3167,6 +3167,7 @@ func shouldIgnoreHotkeyEvent(
 struct VoiceBarApp {
     @MainActor
     static func main() {
+        if SelectionPasteboardSnapshot.runIfRequested() { return }
         let environment = ProcessInfo.processInfo.environment
         let daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
             from: environment, path: VoiceBarDaemonController.daemonPATH

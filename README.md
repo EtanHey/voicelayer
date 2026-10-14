@@ -14,6 +14,7 @@ On a mouse with side buttons, button 5 (forward) works like F5 and button 4 (bac
 
 Select text in any app and press **Option+F5** to read it aloud; press it again to stop.
 **Shift+F5** re-pastes the last transcript. Option+F5 is ignored during dictation or transcription.
+Secure fields are never read. If a safe clipboard backup is unavailable, the shortcut asks you to retry and leaves the clipboard intact.
 
 ```
   You ──🎤──> whisper.cpp ──> Claude Code ──> edge-tts ──🔊──> You

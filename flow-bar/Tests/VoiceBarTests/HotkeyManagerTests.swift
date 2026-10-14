@@ -881,6 +881,24 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
+    func testDuplicateOptionF5AndF18DispatchOnlyOneSelectionAction() {
+        var sequence = HotkeySequenceState()
+        var debounce = HotkeyDebounceState()
+        var dispatched = 0
+        for (code, time) in [(Int64(96), 1.0), (Int64(79), 1.005), (Int64(96), 1.04)] {
+            let action = sequenceAwareHotkeyAction(
+                type: .keyDown, keycode: code, flags: .maskAlternate, autorepeat: 0,
+                targetKeycodes: [79, 96], useModifierMode: false, sequenceState: &sequence)
+            XCTAssertEqual(action, .speakSelection)
+            if !shouldDebounceHotkeyAction(action: action, debounceState: &debounce,
+                                          clock: DebounceClock(now: { time })) { dispatched += 1 }
+        }
+        XCTAssertEqual(dispatched, 2, "duplicate HID pair is one press; a fresh human re-press still cancels")
+        XCTAssertFalse(shouldDebounceHotkeyAction(action: .keyDown, debounceState: &debounce,
+                                                clock: DebounceClock(now: { 1.045 })),
+                       "selection debounce must not suppress ordinary F5")
+    }
+
     func testDebounceIgnoresRapidRepeatedKeyDown() {
         let clock = DebounceClock(now: { 1.0 })
         var state = HotkeyDebounceState()

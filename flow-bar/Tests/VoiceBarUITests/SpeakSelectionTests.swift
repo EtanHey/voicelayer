@@ -2,12 +2,17 @@
 import XCTest
 
 final class SpeakSelectionTests: XCTestCase {
-    func testClipboardOwnershipAbortOffersRetryWithoutSpeaking() {
+    func testCaptureFailuresHaveSpecificFeedbackAndNeverSpeak() {
         let state = VoiceState()
-        state.sendCommand = { _ in XCTFail("ownership abort must not speak") }
-        state.selectionTextCaptureHandler = { $0(.clipboardChanged) }
-        state.speakSelection()
-        XCTAssertEqual(state.confirmationText, "Couldn't read the selection, try again")
+        state.sendCommand = { _ in XCTFail("capture failure must not speak") }
+        for (result, message) in [(SelectionCaptureResult.secureField, "Can't read a secure field"),
+                                  (.captureFailed, "Couldn't read the selection, try again"),
+                                  (.clipboardRestoreFailed, "Couldn't restore the clipboard"),
+                                  (.clipboardChanged, "Couldn't read the selection, try again")] {
+            state.selectionTextCaptureHandler = { $0(result) }
+            state.speakSelection()
+            XCTAssertEqual(state.confirmationText, message)
+        }
     }
 
     func testSecondPressCancelsPendingCaptureAndAFreshPressCanCaptureAgain() {

@@ -1,9 +1,14 @@
 import AppKit
 import ApplicationServices
+import Carbon
 import VoiceBarUI
 
 final class SpeakSelectionCapture {
     private static let captureQueue = DispatchQueue(label: "com.voicelayer.speak-selection", qos: .utility)
+    typealias Snapshot = [[(NSPasteboard.PasteboardType, Data)]]
+    private let captureBlockReason: () -> SelectionCaptureResult?
+    private let snapshotReader: () -> Snapshot?
+    private let writeRestoredItems: ([NSPasteboardItem]) -> Bool
     private let readAXSelection: () -> String?
     private let pasteboard: NSPasteboard
     private let postCopy: () -> Bool
@@ -11,7 +16,10 @@ final class SpeakSelectionCapture {
     private let schedule: (TimeInterval, @escaping () -> Void) -> Void
     private let now: () -> TimeInterval
 
-    init(readAXSelection: @escaping () -> String? = SpeakSelectionCapture.readFocusedSelectedText,
+    init(canCapture: (() -> Bool)? = nil,
+         snapshotReader: (() -> Snapshot?)? = nil,
+         writeRestoredItems: (([NSPasteboardItem]) -> Bool)? = nil,
+         readAXSelection: @escaping () -> String? = SpeakSelectionCapture.readFocusedSelectedText,
          pasteboard: NSPasteboard = .general,
          postCopy: @escaping () -> Bool = SpeakSelectionCapture.postCopyShortcut,
          readCopiedString: (() -> String?)? = nil,
@@ -19,6 +27,11 @@ final class SpeakSelectionCapture {
              SpeakSelectionCapture.captureQueue.asyncAfter(deadline: .now() + $0, execute: $1)
          },
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.captureBlockReason = canCapture.map { check in { check() ? nil : .secureField } }
+            ?? SpeakSelectionCapture.focusedCaptureBlockReason
+        let pasteboardName = pasteboard.name.rawValue
+        self.snapshotReader = snapshotReader ?? { SelectionPasteboardSnapshot.readInHelper(name: pasteboardName) }
+        self.writeRestoredItems = writeRestoredItems ?? { pasteboard.writeObjects($0) }
         self.readAXSelection = readAXSelection
         self.pasteboard = pasteboard
         self.postCopy = postCopy
@@ -29,6 +42,10 @@ final class SpeakSelectionCapture {
 
     func capture(completion: @escaping (SelectionCaptureResult) -> Void) {
         Self.captureQueue.async {
+            if let reason = self.captureBlockReason() {
+                Self.onMain { completion(reason) }
+                return
+            }
             // AX IPC can take multiple messaging timeouts. Never do it on the tap's run loop.
             if let text = self.readAXSelection(), !text.isEmpty {
                 Self.onMain { completion(.completed(text)) }
@@ -43,10 +60,20 @@ final class SpeakSelectionCapture {
         // Unlike the transcript-paste snapshot, keep dynamic and org.nspasteboard
         // types too. Fail closed if any advertised representation cannot be saved.
         let changeCount = pasteboard.changeCount
-        guard let snapshot = snapshot(), pasteboard.changeCount == changeCount else {
-            completion(.completed(nil))
-            return
+        Self.captureQueue.async {
+            let snapshot = self.snapshotReader()
+            let blockReason = self.captureBlockReason()
+            Self.onMain {
+                guard let snapshot else { completion(.captureFailed); return }
+                guard self.pasteboard.changeCount == changeCount else { completion(.clipboardChanged); return }
+                if let blockReason { completion(blockReason); return }
+                self.copyAndPoll(snapshot: snapshot, changeCount: changeCount, completion: completion)
+            }
         }
+    }
+
+    private func copyAndPoll(snapshot: Snapshot, changeCount: Int,
+                             completion: @escaping (SelectionCaptureResult) -> Void) {
         let deadline = now() + 0.4
         func finish(_ text: String?, expectedChangeCount: Int) {
             switch restore(snapshot, expectedChangeCount: expectedChangeCount) {
@@ -56,7 +83,7 @@ final class SpeakSelectionCapture {
                 completion(.clipboardChanged)
             case .failed:
                 NSLog("[VoiceBar] Selection capture could not restore the pasteboard")
-                completion(.completed(nil))
+                completion(.clipboardRestoreFailed)
             }
         }
         guard postCopy() else { finish(nil, expectedChangeCount: changeCount); return }
@@ -90,39 +117,59 @@ final class SpeakSelectionCapture {
         if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
     }
 
-    private typealias Snapshot = [[(NSPasteboard.PasteboardType, Data)]]
-
-    private func snapshot() -> Snapshot? {
-        guard let items = pasteboard.pasteboardItems else {
-            return (pasteboard.types ?? []).isEmpty ? [] : nil
-        }
-        var saved: Snapshot = []
-        for item in items {
-            var values: [(NSPasteboard.PasteboardType, Data)] = []
-            for type in item.types {
-                guard let data = item.data(forType: type) else { return nil }
-                values.append((type, data))
-            }
-            saved.append(values)
-        }
-        return saved
-    }
-
     private enum RestorationResult { case restored, changed, failed }
 
     private func restore(_ snapshot: Snapshot, expectedChangeCount: Int) -> RestorationResult {
-        var items: [NSPasteboardItem] = []
-        for values in snapshot {
-            let item = NSPasteboardItem()
-            for (type, data) in values {
-                guard item.setData(data, forType: type) else { return .failed }
+        func prepareItems() -> [NSPasteboardItem]? {
+            var items: [NSPasteboardItem] = []
+            for values in snapshot {
+                let item = NSPasteboardItem()
+                for (type, data) in values {
+                    guard item.setData(data, forType: type) else { return nil }
+                }
+                items.append(item)
             }
-            items.append(item)
+            return items
         }
+        guard let items = prepareItems() else { return .failed }
         // Check immediately before taking ownership, after preparing every item.
         guard pasteboard.changeCount == expectedChangeCount else { return .changed }
-        pasteboard.clearContents()
-        return items.isEmpty || pasteboard.writeObjects(items) ? .restored : .failed
+        let clearedCount = pasteboard.clearContents()
+        if items.isEmpty || writeRestoredItems(items) { return .restored }
+        // Our data writes keep the generation; preserve a new clear/declare transaction.
+        guard pasteboard.changeCount == clearedCount else { return .changed }
+        // Reusing accepted items after clearing throws; build fresh items for the retry.
+        guard let retryItems = prepareItems() else { return .failed }
+        guard pasteboard.changeCount == clearedCount else { return .changed }
+        let retryCount = pasteboard.clearContents()
+        if writeRestoredItems(retryItems) { return .restored }
+        return pasteboard.changeCount == retryCount ? .failed : .changed
+    }
+
+    static func isSecureFocus(role: String?, subrole: String?, secureInput: Bool) -> Bool {
+        secureInput || role == (kAXSecureTextFieldSubrole as String) || subrole == (kAXSecureTextFieldSubrole as String)
+    }
+
+    private static func focusedCaptureBlockReason() -> SelectionCaptureResult? {
+        if IsSecureEventInputEnabled() { return .secureField }
+        guard AXIsProcessTrusted() else { return .captureFailed }
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.2)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return .captureFailed }
+        let element = focused as! AXUIElement
+        AXUIElementSetMessagingTimeout(element, 0.2)
+        func attribute(_ key: String) -> String? {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success else { return nil }
+            return value as? String
+        }
+        let role = attribute(kAXRoleAttribute)
+        // An unreadable focus cannot establish permission to synthesize Copy.
+        if isSecureFocus(role: role, subrole: attribute(kAXSubroleAttribute),
+                         secureInput: IsSecureEventInputEnabled()) { return .secureField }
+        return role == nil ? .captureFailed : nil
     }
 
     private static func readFocusedSelectedText() -> String? {
@@ -134,14 +181,20 @@ final class SpeakSelectionCapture {
               let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
         let element = focused as! AXUIElement
         AXUIElementSetMessagingTimeout(element, 0.2)
+        var role: CFTypeRef?
+        var subrole: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success else { return nil }
+        AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole)
+        guard !isSecureFocus(role: role as? String, subrole: subrole as? String,
+                             secureInput: IsSecureEventInputEnabled()) else { return nil }
         var selected: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selected) == .success
         else { return nil }
-        return selected as? String
+        return IsSecureEventInputEnabled() ? nil : selected as? String
     }
 
     private static func postCopyShortcut() -> Bool {
-        guard AXIsProcessTrusted(),
+        guard !IsSecureEventInputEnabled(), AXIsProcessTrusted(),
               let source = CGEventSource(stateID: .privateState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: false) else { return false }

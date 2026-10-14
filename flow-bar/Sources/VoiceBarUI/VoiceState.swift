@@ -28,6 +28,9 @@ public enum VoiceMode: String, CaseIterable {
 public enum SelectionCaptureResult: Equatable {
     case completed(String?)
     case clipboardChanged
+    case secureField
+    case captureFailed
+    case clipboardRestoreFailed
 
     public var text: String? {
         if case let .completed(text) = self { return text }
@@ -774,6 +777,7 @@ public final class VoiceState {
     public func speakSelection() {
         guard mode != .recording, mode != .transcribing, hotkeyPhase == .idle else { return }
         if mode == .speaking {
+            if selectionCaptureInFlight { selectionCaptureCancelled = true }
             sendCommand?(["cmd": "stop"])
             return
         }
@@ -799,8 +803,12 @@ public final class VoiceState {
                   mode != .disconnected, hotkeyPhase == .idle else { return }
             guard let text = result.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 expandFromCollapse()
-                showConfirmation(result == .clipboardChanged
-                    ? "Couldn't read the selection, try again" : "No text selected")
+                switch result {
+                case .secureField: showConfirmation("Can't read a secure field")
+                case .clipboardRestoreFailed: showConfirmation("Couldn't restore the clipboard")
+                case .clipboardChanged, .captureFailed: showConfirmation("Couldn't read the selection, try again")
+                case .completed: showConfirmation("No text selected")
+                }
                 startCollapseTimer()
                 return
             }
@@ -1057,6 +1065,7 @@ public final class VoiceState {
     }
 
     public func stop() {
+        if selectionCaptureInFlight { selectionCaptureCancelled = true }
         let shouldShowTranscribing = mode == .recording
         let shouldExitInterruptedPlayback = mode == .speaking
         var payload: [String: Any] = ["cmd": "stop"]
@@ -1111,6 +1120,7 @@ public final class VoiceState {
     }
 
     public func cancel() {
+        if selectionCaptureInFlight { selectionCaptureCancelled = true }
         let cancelledTranscription = mode == .transcribing
         barInitiatedRecording = false
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)

@@ -337,6 +337,7 @@ struct DebounceClock {
 
 struct HotkeyDebounceState {
     var lastProcessedKeyDownTime: TimeInterval?
+    var lastProcessedSpeakSelectionTime: TimeInterval?
 }
 
 struct HotkeySequenceState {
@@ -351,8 +352,14 @@ func shouldDebounceHotkeyAction(
     debounceState: inout HotkeyDebounceState,
     clock: DebounceClock = DebounceClock()
 ) -> Bool {
-    guard action == .keyDown else { return false }
+    guard action == .keyDown || action == .speakSelection else { return false }
     let timestamp = clock.now()
+    if action == .speakSelection {
+        if let last = debounceState.lastProcessedSpeakSelectionTime,
+           timestamp - last < hotkeyDuplicateEventDebounceSeconds { return true }
+        debounceState.lastProcessedSpeakSelectionTime = timestamp
+        return false
+    }
     if let lastProcessedKeyDownTime = debounceState.lastProcessedKeyDownTime,
        (timestamp - lastProcessedKeyDownTime) < hotkeyDuplicateEventDebounceSeconds {
         return true
