@@ -5,14 +5,27 @@ import SwiftUI
 struct TeleprompterPlaybackScrubBar: View {
     let state: VoiceState
 
-    var body: some View {
-        SettingsPlaybackScrubBar(
+    var control: SettingsPlaybackScrubBar {
+        let interactive = state.isTeleprompterPlaybackReady && !state.wordBoundaries.isEmpty
+        return SettingsPlaybackScrubBar(
             position: { state.teleprompterPlaybackPosition },
             seek: { seconds in state.seek(offsetMs: Int((seconds * 1000).rounded())) },
             accessibilityNoun: "agent speech",
-            isPlaying: state.isTeleprompterPlaybackReady,
-            isGrowing: state.isPlaybackDurationGrowing
+            isPlaying: interactive,
+            isGrowing: interactive && state.isPlaybackDurationGrowing,
+            allowsSeeking: interactive,
+            isTeleprompter: true
         )
-        .disabled(!state.isTeleprompterPlaybackReady)
+    }
+
+    var body: some View {
+        VStack(spacing: 3) {
+            control.disabled(!state.isTeleprompterPlaybackReady)
+            if state.isTeleprompterPlaybackReady && state.wordBoundaries.isEmpty {
+                Text("Cloned voice: no word timing")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color(red: 154/255, green: 154/255, blue: 163/255))
+            }
+        }
     }
 }

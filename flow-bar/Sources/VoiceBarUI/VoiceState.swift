@@ -2338,6 +2338,7 @@ public final class VoiceState {
         playbackStartedAt = nil
         playbackDurationMilliseconds = nil
         playbackChunkStartMilliseconds = 0
+        isPlaybackDurationGrowing = false
     }
 
     private func appendRecordingWaveformSample() {

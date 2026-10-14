@@ -106,6 +106,8 @@ final class TeleprompterScrubTests: XCTestCase {
         XCTAssertTrue(bar.contains("TeleprompterPlaybackScrubBar(state: state)"))
         let scrub = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SettingsPlaybackScrubBar.swift"))
         XCTAssertTrue(scrub.contains("if isPlaying {\n                TimelineView"), "idle has no periodic schedule")
+        let wrapper = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift"))
+        XCTAssertTrue(wrapper.contains("control.disabled(!state.isTeleprompterPlaybackReady)"))
         XCTAssertLessThanOrEqual(1 / SettingsPlaybackScrubBar.tickInterval, 10)
     }
 
@@ -137,20 +139,90 @@ final class TeleprompterScrubTests: XCTestCase {
         XCTAssertEqual(reads, settledReads, "no periodic clock reads while idle")
     }
 
+    func testSeekRestartUsesReceiptClockWordAndScrollsOnPlaybackEpoch() throws {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "one two three", "duration_ms": 4000])
+        state.handleEvent(["type": "subtitle", "words": [
+            ["text": "one", "offset_ms": 0, "duration_ms": 300],
+            ["text": "two", "offset_ms": 1000, "duration_ms": 300],
+            ["text": "three", "offset_ms": 2000, "duration_ms": 300],
+        ]])
+        state.handleEvent(["type": "state", "state": "speaking", "text": "one two three",
+                           "duration_ms": 4000, "playback_offset_ms": 2100])
+        let index = TeleprompterPlaybackPolicy.restartWordIndex(in: words(for: state),
+            elapsedMilliseconds: state.playbackElapsedMilliseconds(), isReadback: false)
+        XCTAssertEqual(index, 2)
+        XCTAssertEqual(TeleprompterScrollPolicy.position(for: index), .center)
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/TeleprompterView.swift"))
+        XCTAssertTrue(source.contains(".onChange(of: playbackEpoch) { _, _ in\n                restart()\n                scrollToCurrentWord(with: proxy, animated: false)"))
+        XCTAssertTrue(source.contains("currentIndex = TeleprompterPlaybackPolicy.restartWordIndex("))
+        XCTAssertTrue(source.contains("TeleprompterScrollPolicy.position(for: currentIndex)"))
+    }
+
+    func testWrapperPreparingReadyAndCloneGateSamplingAndInteraction() async throws {
+        var clockReads = 0
+        let state = VoiceState(playbackAmplitudeClock: { clockReads += 1; return 100 })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
+                           "long_read": ["preparing": true, "chunk_start_ms": 0]])
+        state.handleEvent(["type": "subtitle", "words": [["text": "Preparing", "offset_ms": 0, "duration_ms": 300]]])
+        let wrapper = TeleprompterPlaybackScrubBar(state: state)
+        XCTAssertFalse(wrapper.control.isPlaying)
+        XCTAssertFalse(wrapper.control.allowsSeeking)
+        XCTAssertFalse(wrapper.control.isGrowing)
+        let host = NSHostingView(rootView: wrapper.frame(width: 400, height: 45))
+        host.frame = NSRect(x: 0, y: 0, width: 400, height: 45)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        let before = clockReads
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(clockReads, before, "wrapper must not sample while preparing")
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Ready now", "duration_ms": 4000])
+        state.handleEvent(["type": "subtitle", "words": [["text": "Ready", "offset_ms": 0, "duration_ms": 300]]])
+        XCTAssertTrue(wrapper.control.isPlaying)
+        XCTAssertTrue(wrapper.control.allowsSeeking)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertGreaterThan(clockReads, before, "ready timed playback samples the clock")
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Cloned reply", "duration_ms": 4000,
+                           "long_read": ["chunk_start_ms": 0]])
+        XCTAssertFalse(wrapper.control.isPlaying)
+        XCTAssertFalse(wrapper.control.allowsSeeking)
+        XCTAssertFalse(wrapper.control.isGrowing, "clone presentation stays a plain static line")
+    }
+
+
+    func testGrowingDurationClearsAfterIdleAndPreparationHasNoGrowingAffordance() {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Long reply", "duration_ms": 4000,
+                           "long_read": ["chunk_start_ms": 0]])
+        XCTAssertTrue(state.isPlaybackDurationGrowing)
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertFalse(state.isPlaybackDurationGrowing)
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
+                           "long_read": ["preparing": true, "chunk_start_ms": 0]])
+            XCTAssertFalse(TeleprompterPlaybackScrubBar(state: state).control.isGrowing)
+        }
+
     func testWritesSpeakingLongReadAndCloneArtifacts() async throws {
         try VisualArtifactTestPolicy.requireRegeneration()
         let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("docs.local/teleprompter-scrub")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        for (name, chunkStart, timed) in [("speaking", 0, true), ("long-read", 60000, true), ("clone", 0, false)] {
-            let state = VoiceState(playbackAmplitudeClock: { 100 })
-            let text = "Click a timed word to return to its start or drag the timeline to listen again."
+        for (name, chunkStart, timed, text) in [
+            ("speaking", 0, true, "The build passed. I found the missing callback and wired it to the playback clock. The highlight now follows the audio."),
+            ("long-read", 60000, true, "The next section explains the tradeoff. We can start playing the first paragraph while the remaining paragraphs are still being synthesized."),
+            ("clone", 0, false, "I checked the logs. The service restarted cleanly, and your recordings are intact. The remaining change is ready for review."),
+        ] {
+            let state = VoiceState()
             state.isConnected = true
             state.hotkeyEnabled = true
-            state.handleEvent(["type": "state", "state": "speaking", "text": text,
-                               "playback_offset_ms": chunkStart + 2100, "duration_ms": chunkStart + 7000,
-                               "long_read": chunkStart > 0 ? ["chunk_start_ms": chunkStart] : NSNull()])
+            var event: [String: Any] = ["type": "state", "state": "speaking", "text": text,
+                                       "voice": timed ? "en-US-GuyNeural" : "theo-c4",
+                                       "playback_offset_ms": chunkStart + 2100, "duration_ms": chunkStart + 12000]
+            if chunkStart > 0 { event["long_read"] = ["chunk_start_ms": chunkStart, "chunk_index": 3, "chunk_count": 8] }
+            let envelope = PlaybackAmplitudeEnvelope(source: .decodedRMS, sampleIntervalMilliseconds: 50, samples: (0..<240).map { [0.3, 0.4, 0.5, 0.4][$0 % 4] })
+            state.handleEvent(event, playbackAmplitude: envelope)
             if timed {
                 state.handleEvent(["type": "subtitle", "words": text.split(separator: " ").enumerated().map {
                     ["text": String($0.element), "offset_ms": $0.offset * 350, "duration_ms": 300] as [String: Any]
@@ -172,7 +244,7 @@ final class TeleprompterScrubTests: XCTestCase {
             host.appearance = NSAppearance(named: .darkAqua)
             host.frame = NSRect(x: 0, y: 0, width: 465, height: 228)
             host.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(120))
+            try await Task.sleep(for: .milliseconds(450))
             host.needsLayout = true
             host.layoutSubtreeIfNeeded()
             host.displayIfNeeded()
@@ -191,7 +263,7 @@ final class TeleprompterScrubTests: XCTestCase {
                 XCTAssertGreaterThan(brightTextPixels, 25, "the selected word must remain bright in the mounted notch")
             }
             try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                .write(to: directory.appendingPathComponent("\(name)-verified.png"))
+                .write(to: directory.appendingPathComponent("r1-\(name).png"))
         }
     }
 
