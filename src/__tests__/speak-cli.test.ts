@@ -84,6 +84,7 @@ describe("speak CLI", () => {
       afplay: '#!/bin/bash\nsleep 0.1\n',
     };
     for (const [name, source] of Object.entries(scripts)) writeFileSync(join(dir, name), source, { mode: 0o700 });
+    for (const name of ["mpv", "ffplay", "mpg123"]) writeFileSync(join(dir, name), scripts.afplay, { mode: 0o700 });
     try {
       const child = Bun.spawn([process.execPath, "src/cli/speak.ts", "hello", "--wait"], {
         env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock"), QA_VOICE_TTS_VOICE: "en-US-JennyNeural" }, stdout: "pipe", stderr: "pipe",
@@ -213,12 +214,12 @@ describe("speak CLI review regressions", () => {
       expect((await rpc(socketPath, "tools/list")).result.tools.map((tool: any) => tool.name)).toEqual(["voice_speak", "voice_ask"]);
     } finally { daemon.stop(); }
   });
-  for (const signal of ["SIGINT", "SIGTERM"] as const) for (const phase of ["synth", "player"]) test(`${signal} reaps foreground fallback during ${phase}`, async () => {
+  for (const host of ["native", "linux"]) for (const signal of ["SIGINT", "SIGTERM"] as const) for (const phase of ["synth", "player"]) test(`${signal} reaps foreground fallback during ${phase} (${host})`, async () => {
     const dir = join(STATE_DIR, `r1-${phase}`); mkdirSync(dir, { recursive: true });
     const fixture = `#!${process.execPath}
 import { writeFileSync } from "node:fs";
 const dir = process.env.R1_DIR;
-const kind = process.argv[1].endsWith("afplay") ? "player" : "synth";
+const kind = process.argv[1].endsWith("python3") ? "synth" : "player";
 writeFileSync(dir + "/" + kind + ".pid", String(process.pid));
 writeFileSync(dir + "/owner.pid", String(process.ppid));
 if (kind === "synth" && process.env.R1_PHASE === "player") {
@@ -229,10 +230,12 @@ process.on("SIGTERM", () => { writeFileSync(dir + "/" + kind + ".stopped", "yes"
 writeFileSync(dir + "/" + kind + ".ready", "yes");
 setInterval(() => {}, 1000);
 `;
-    for (const name of ["python3", "afplay"]) writeFileSync(join(dir, name), fixture, { mode: 0o700 });
+    for (const name of ["python3", "afplay", "mpv", "ffplay", "mpg123"]) writeFileSync(join(dir, name), fixture, { mode: 0o700 });
     writeFileSync(join(dir, "ffprobe"), '#!/bin/bash\nprintf "1\\n"\n', { mode: 0o700 });
     writeFileSync(join(dir, "ffmpeg"), '#!/bin/bash\nlast="${@: -1}"\nif [[ "$last" == "pipe:1" ]]; then printf "00000000"; else printf audio > "$last"; fi\n', { mode: 0o700 });
-    const child = Bun.spawn([process.execPath, "src/cli/speak.ts", "hello"], { env: { ...process.env, R1_DIR: dir, R1_PHASE: phase, PATH: `${dir}:${process.env.PATH}`, VOICELAYER_TMP_ROOT: dir, VOICELAYER_STATE_DIR: join(dir, "state"), VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock"), QA_VOICE_TTS_VOICE: "en-US-JennyNeural" }, stdout: "ignore", stderr: Bun.file(join(dir, "stderr")) });
+    const platformPreload = join(dir, "platform.ts");
+    writeFileSync(platformPreload, 'import { mock } from "bun:test"; import * as os from "node:os"; const original = {...os}; mock.module("os", () => ({...original, platform: () => "linux"})); mock.module("node:os", () => ({...original, platform: () => "linux"}));');
+    const child = Bun.spawn([process.execPath, ...(host === "linux" ? ["--preload", platformPreload] : []), "src/cli/speak.ts", "hello"], { env: { ...process.env, R1_DIR: dir, R1_PHASE: phase, PATH: `${dir}:${process.env.PATH}`, VOICELAYER_TMP_ROOT: dir, VOICELAYER_STATE_DIR: join(dir, "state"), VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock"), QA_VOICE_TTS_VOICE: "en-US-JennyNeural" }, stdout: "ignore", stderr: Bun.file(join(dir, "stderr")) });
     const pids: number[] = [];
     try {
       await until(() => existsSync(join(dir, `${phase}.ready`)));
