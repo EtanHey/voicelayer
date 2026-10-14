@@ -63,7 +63,8 @@ voicelayer speak --stop
 Speech goes through the running VoiceLayer daemon, sharing Stop and the teleprompter.
 With the daemon, the command returns after the first audio starts; `--wait` waits for completion.
 `--profile auto` is the default; `short` and `long` select the corresponding profile.
-Profile settings use the current `speak_text` resolver (separate profile settings are pending).
+Auto selects the saved long profile above `short_limit_chars` and the short profile at or below
+the threshold (default: 400 characters). `--profile short|long` overrides that choice.
 Markdown conversion defaults on for `.md` files; literal text and stdin are plain unless
 `--markdown` is supplied. Long reads stream chunks without the MCP tool's text cap,
 up to the shared 200,000-character safety limit.
