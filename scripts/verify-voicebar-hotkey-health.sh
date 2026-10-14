@@ -2,6 +2,8 @@
 # Fail-loud postflight for VoiceBar's canonical app, launchd, remap, and event tap.
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/voicebar-launchagent.sh"
+
 CANONICAL_APP="${VOICEBAR_CANONICAL_APP:-/Applications/VoiceBar.app}"
 BUNDLE_ID="com.voicelayer.voicebar"
 LABEL="com.voicelayer.voicebar"
@@ -76,6 +78,7 @@ noncanonical_launchd_definitions() {
     while IFS= read -r definition; do
         [[ -n "$definition" ]] || continue
         [[ "$definition" = "$canonical_definition" ]] && continue
+        is_voicebar_agent "$definition" || continue
         printf '%s\n' "$definition"
     done <<<"$definitions"
 }
@@ -217,7 +220,7 @@ fi
 
 agent_plist="$HOME/Library/LaunchAgents/$LABEL.plist"
 [[ -f "$agent_plist" ]] || fail "canonical LaunchAgent is missing: $agent_plist"
-agent_program="$("$PLIST_BUDDY" -c 'Print :ProgramArguments:0' "$agent_plist" 2>/dev/null || true)"
+agent_program="$(agent_target "$agent_plist" || true)"
 [[ "$agent_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]] \
     || fail "LaunchAgent targets ${agent_program:-<missing>}, not the canonical app"
 launchd_definitions="$(

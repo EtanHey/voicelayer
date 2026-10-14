@@ -33,13 +33,15 @@ print(value)
     for (const [file, extra] of [["program-only.plist", ""], ["program-wins.plist", "<key>ProgramArguments</key><array><string>/other/resource.py</string></array>"]]) {
       writeFileSync(join(agents, file), `<plist version="1.0"><dict><key>Label</key><string>com.example.${file}</string><key>Program</key><string>/old/VoiceBar.app/Contents/MacOS/VoiceBar</string>${extra}</dict></plist>`);
     }
+    mkdirSync(join(dir, "lib"));
+    writeFileSync(join(dir, "lib/voicebar-launchagent.sh"), readFileSync(new URL("../../scripts/lib/voicebar-launchagent.sh", import.meta.url), "utf8"));
     const script = join(dir, "dedupe.sh");
     writeFileSync(script, readFileSync(new URL("../../scripts/voicelayer-dedupe-voicebar.sh", import.meta.url), "utf8")
       .replaceAll("/usr/libexec/PlistBuddy", join(bin, "PlistBuddy"))
       .replaceAll("/Applications/VoiceBar.app", app)
       .replaceAll("/Library/LaunchAgents /Library/LaunchDaemons", `${dir}/system-agents ${dir}/system-daemons`));
     const result = Bun.spawnSync(["/bin/bash", script, "--apply", "--no-stop", "--no-relaunch"], {
-      env: {...process.env, HOME: dir, PATH: `${bin}:/usr/bin:/bin`},
+      env: {...process.env, HOME: dir, PLIST_BUDDY: join(bin, "PlistBuddy"), PATH: `${bin}:/usr/bin:/bin`},
     });
     expect(result.exitCode).toBe(0);
     expect(existsSync(join(agents, "renamed-tts.plist"))).toBe(true);

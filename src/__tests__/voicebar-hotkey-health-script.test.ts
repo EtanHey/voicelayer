@@ -41,6 +41,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
 
     expect(body).toContain('bundle_search_roots+=("$TMPDIR")');
     expect(body).not.toContain("/var/folders");
+    expect(body).toContain('"$HOME/Library/LaunchAgents" /Library/LaunchAgents /Library/LaunchDaemons');
   });
 
   test("requires both VoiceBar source keys to map to F18", () => {
@@ -115,27 +116,6 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe(
       "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar",
-    );
-  });
-
-  test("rejects VoiceBar launchd definitions outside the canonical user plist", async () => {
-    const canonical =
-      "/Users/test/Library/LaunchAgents/com.voicelayer.voicebar.plist";
-    const stray =
-      "/Library/LaunchDaemons/com.example.stale-voicebar.plist";
-    const result = callFunction(
-      'noncanonical_launchd_definitions "$TEST_DEFINITIONS" "$TEST_CANONICAL"',
-      {
-        TEST_CANONICAL: canonical,
-        TEST_DEFINITIONS: [canonical, stray].join("\n"),
-      },
-    );
-    const body = await healthScriptBody;
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe(stray);
-    expect(body).toContain(
-      '"$HOME/Library/LaunchAgents" /Library/LaunchAgents /Library/LaunchDaemons',
     );
   });
 
@@ -233,7 +213,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(reverse.stdout.trim()).toBe(readyThenFailure);
   });
 
-  test("--allow-stopped tolerates an unloaded agent but rejects a stale loaded program", async () => {
+  test("health exempts TTS resources but rejects executable strays and stale loaded programs", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "voicebar-health-stopped-"));
     const tempHome = join(tempRoot, "home");
     const binDir = join(tempRoot, "bin");
@@ -272,6 +252,20 @@ describe("verify-voicebar-hotkey-health.sh", () => {
         "",
       ].join("\n"),
     );
+    // The real daemon executes Python, with a resource argument inside VoiceBar.
+    const writeAgent = (file: string, label: string, program: string, arg0: string) =>
+      writeFileSync(join(agentDir, file), `<plist version="1.0"><dict>
+        <key>Label</key><string>${label}</string>
+        ${program ? `<key>Program</key><string>${program}</string>` : ""}
+        <key>ProgramArguments</key><array><string>${arg0}</string>
+        <string>${appDir}/Contents/Resources/src/tts-daemon.py</string></array>
+      </dict></plist>`);
+    writeAgent("com.golems.tts-daemon.plist", "com.golems.tts-daemon", "", "/usr/bin/python3");
+    writeAgent("com.voicelayer.voicebar.plist", "com.voicelayer.voicebar", `${appDir}/Contents/MacOS/VoiceBar`, "/usr/bin/python3");
+    // Exact label wins even with a renamed file and a VoiceBar executable.
+    writeAgent("renamed-tts.plist", "com.golems.tts-daemon", "", `${appDir}/Contents/MacOS/VoiceBar`);
+    // Program takes precedence over argv[0] in both directions.
+    writeAgent("resource-helper.plist", "com.example.helper", "/usr/bin/python3", `${appDir}/Contents/MacOS/VoiceBar`);
     const stubs: Record<string, string> = {
       codesign: [
         "#!/usr/bin/env bash",
@@ -283,7 +277,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
       ].join("\n"),
       mdfind: `#!/usr/bin/env bash\nprintf "%s\\n" "$VOICEBAR_CANONICAL_APP"\n`,
       find: `#!/usr/bin/env bash\nprintf "%s\\n" "$VOICEBAR_CANONICAL_APP"\n`,
-      grep: `#!/usr/bin/env bash\nprintf "%s\\n" "$HOME/Library/LaunchAgents/com.voicelayer.voicebar.plist"\n`,
+      grep: `#!/usr/bin/env bash\n/usr/bin/grep -rlE 'VoiceBar|voicelayer\\.voicebar' "$HOME/Library/LaunchAgents"\n`,
       hidutil: [
         "#!/usr/bin/env bash",
         "cat <<'EOF'",
@@ -297,15 +291,14 @@ describe("verify-voicebar-hotkey-health.sh", () => {
         "EOF",
         "",
       ].join("\n"),
-      PlistBuddy: [
-        "#!/usr/bin/env bash",
-        'case "$2" in',
-        '  "Print :CFBundleIdentifier") printf "com.voicelayer.voicebar\\n" ;;',
-        '  "Print :ProgramArguments:0") printf "%s/Contents/MacOS/VoiceBar\\n" "$VOICEBAR_TEST_CANONICAL_APP" ;;',
-        "  *) exit 1 ;;",
-        "esac",
-        "",
-      ].join("\n"),
+      PlistBuddy: `#!/usr/bin/python3
+import plistlib, sys
+with open(sys.argv[-1], "rb") as file:
+    value = plistlib.load(file)
+for key in sys.argv[2].split()[1].split(":")[1:]:
+    value = value[int(key)] if isinstance(value, list) else value[key]
+print(value)
+`,
     };
     for (const [name, body] of Object.entries(stubs)) {
       const path = join(binDir, name);
@@ -345,12 +338,29 @@ describe("verify-voicebar-hotkey-health.sh", () => {
         },
       );
 
+      expect(result.stderr).toBe("");
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("HOTKEY HEALTH OK");
       const unloadedProbes = await Bun.file(probeLog).text();
       expect(unloadedProbes).toContain(join(binDir, "launchctl"));
       expect(unloadedProbes).not.toContain(join(binDir, "ioreg"));
       expect(unloadedProbes).not.toContain(join(binDir, "ps"));
+
+      for (const [file, program, arg0] of [
+        ["stray-argv.plist", "", "/old/VoiceBar.app/Contents/MacOS/VoiceBar"],
+        ["stray-program.plist", "/old/VoiceBar.app/Contents/MacOS/VoiceBar", "/usr/bin/python3"],
+      ]) {
+        writeAgent(file, "com.golems.tts-daemon-copy", program, arg0);
+        const stray = spawnSync("bash", [healthScript, "--allow-stopped"], {
+          encoding: "utf8", env: { ...process.env, HOME: tempHome,
+            PATH: `${binDir}:${process.env.PATH ?? ""}`, VOICEBAR_CANONICAL_APP: appDir,
+            VOICEBAR_PLIST_BUDDY: join(binDir, "PlistBuddy"), VOICEBAR_TEST_LIVE_PROBE_LOG: probeLog },
+        });
+        expect(stray.status).toBe(1);
+        expect(stray.stderr).toContain("Stray VoiceBar launchd definitions found:");
+        expect(stray.stderr).toContain(join(agentDir, file));
+        rmSync(join(agentDir, file));
+      }
 
       writeFileSync(
         join(binDir, "launchctl"),
