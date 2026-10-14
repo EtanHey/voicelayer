@@ -123,10 +123,10 @@ function speechLinesFromFences(markdown: string): string[] {
       }
     }
     const complete = closing >= 0 && !taggedBeforeCloser;
-    // Unmatched bare fences may close a code-only prefix or sit before obvious
-    // prose. Do not treat them as openers that steal a later tagged fence's closer
-    // or leak a complete fence's body.
-    if (!complete && !fence[2].trim() && (codePrefix || obviousProse)) {
+    // A strongly evidenced code-only prefix establishes a closing boundary,
+    // even if the selection ends inside a later bare fence. Otherwise prefer
+    // a complete block; an unmatched bare fence may sit before obvious prose.
+    if (!fence[2].trim() && (codePrefix || (!complete && obviousProse))) {
       if (codePrefix) output.length = 0;
       output.push("code block");
       hasPrefix = true; codeOnlyPrefix = false;

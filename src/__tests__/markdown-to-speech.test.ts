@@ -52,6 +52,10 @@ describe("markdownToSpeech", () => {
     expect(markdownToSpeech("Hi\n```js\nsecret()\n[citation needed]"))
       .toBe("Hi code block [citation needed]");
   });
+  it("retains prose when a mid-code selection ends inside another bare fence", () => {
+    expect(markdownToSpeech("x = 1;\ny = 2;\n```\nHere is the explanation.\n```\nsecret()"))
+      .toBe("code block Here is the explanation. code block");
+  });
   for (const identifier of ["voice_ask", "snake_case_name", "__init__"]) {
     it(`R1-4 preserves identifier ${identifier}`, () => expect(markdownToSpeech(identifier)).toBe(identifier));
   }
