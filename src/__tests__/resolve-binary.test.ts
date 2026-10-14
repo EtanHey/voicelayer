@@ -238,3 +238,54 @@ it("prefers native Homebrew media binaries on arm64 before PATH", async () => {
     expect(calls).toHaveLength(1);
   } finally { platform.mockRestore(); arch.mockRestore(); __resetBinarySpawnForTests(); }
 });
+
+
+describe("candidate-aware resolver cache", () => {
+  it("does not reuse a successful sync path for a different fallback list", () => {
+    const calls: string[][] = [];
+    __setBinarySpawnForTests(cmd => {
+      calls.push(cmd);
+      return {exitCode: cmd[0] === "/fixture/a" || cmd[0] === "/fixture/b" ? 0 : 1};
+    });
+    expect(resolveBinary("candidate-fixture", ["/fixture/a"])).toBe("/fixture/a");
+    expect(resolveBinary("candidate-fixture", ["/fixture/b"])).toBe("/fixture/b");
+    const count = calls.length;
+    expect(resolveBinary("candidate-fixture", ["/fixture/b"])).toBe("/fixture/b");
+    expect(calls).toHaveLength(count);
+  });
+
+  it("coalesces equivalent async inputs but separates different pending candidates", async () => {
+    let release!: (code: number) => void;
+    const gate = new Promise<number>(resolve => { release = resolve; });
+    const calls: string[][] = [];
+    const original = Bun.spawn;
+    const pending: Promise<string | null>[] = [];
+    Bun.spawn = ((cmd: string[]) => {
+      calls.push(cmd);
+      return {stdout: new Blob([]).stream(), exited: cmd[0] === "/fixture/a" ? gate : Promise.resolve(cmd[0] === "/fixture/b" ? 0 : 1), kill() {}};
+    }) as any;
+    try {
+      const a = resolveBinaryAsync("pending-fixture", ["/fixture/a"]); pending.push(a);
+      const same = resolveBinaryAsync("pending-fixture", ["/fixture/a", "/fixture/a"]);
+      expect(same).toBe(a);
+      const b = resolveBinaryAsync("pending-fixture", ["/fixture/b"]); pending.push(b);
+      expect(b).not.toBe(a);
+      release(0);
+      expect(await a).toBe("/fixture/a");
+      expect(await b).toBe("/fixture/b");
+      const count = calls.length;
+      expect(await resolveBinaryAsync("pending-fixture", ["/fixture/b"])).toBe("/fixture/b");
+      expect(calls).toHaveLength(count);
+    } finally { release(0); await Promise.allSettled(pending); Bun.spawn = original; }
+  });
+
+  it("shares the media cache for default and explicit equivalent fallback lists", async () => {
+    __setBinarySpawnForTests(cmd => ({exitCode: cmd[0] === "/opt/homebrew/bin/ffmpeg" ? 0 : 1}));
+    expect(resolveBinary("ffmpeg")).toBe("/opt/homebrew/bin/ffmpeg");
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => { throw new Error("Cache hit must not spawn"); });
+    try {
+      expect(await resolveBinaryAsync("ffmpeg", ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"])).toBe("/opt/homebrew/bin/ffmpeg");
+      expect(spawn).not.toHaveBeenCalled();
+    } finally { spawn.mockRestore(); }
+  });
+});
