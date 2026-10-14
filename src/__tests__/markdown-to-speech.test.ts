@@ -34,6 +34,24 @@ describe("markdownToSpeech", () => {
     expect(markdownToSpeech("```\nHere is the explanation.\n```js\nconst next = 2;\n```\nMore prose."))
       .toBe("code block Here is the explanation. code block More prose.");
   });
+  it("R1-3 a leading unmatched fence keeps unpunctuated prose instead of stealing a later closer", () => {
+    expect(markdownToSpeech("```\nHere is the explanation\n```js\nconst next = 2;\n```\nMore prose."))
+      .toBe("code block Here is the explanation code block More prose.");
+    expect(markdownToSpeech("```\nExplanation continues here forever\n```js\nx\n```\nMore."))
+      .toBe("code block Explanation continues here forever code block More.");
+  });
+  it("keeps a complete bare fence as one code block even when the body starts like a list", () => {
+    expect(markdownToSpeech("Before\n```\n- item one\n- item two\n```\nAfter"))
+      .toBe("Before code block After");
+  });
+  it("keeps a complete bare fence as one code block when the body starts like a sentence", () => {
+    expect(markdownToSpeech("Before\n```\nThis looks like prose inside the fence.\nfoo();\n```\nAfter"))
+      .toBe("Before code block After");
+  });
+  it("N1 retains bracketed citation prose after an incomplete fence", () => {
+    expect(markdownToSpeech("Hi\n```js\nsecret()\n[citation needed]"))
+      .toBe("Hi code block [citation needed]");
+  });
   for (const identifier of ["voice_ask", "snake_case_name", "__init__"]) {
     it(`R1-4 preserves identifier ${identifier}`, () => expect(markdownToSpeech(identifier)).toBe(identifier));
   }
