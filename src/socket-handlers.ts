@@ -26,6 +26,7 @@ import {
   restartPlayback,
   stopPlayback,
   speakText,
+  seekPlayback,
 } from "./tts";
 import {
   waitForInput,
@@ -103,6 +104,11 @@ export function handleSocketCommand(
   const isSpeaking = recordingState === "idle" && playbackQueueDepth > 0;
 
   switch (command.cmd) {
+    case "seek": {
+      const result = seekPlayback(command.offset_ms);
+      return { ...buildAck(command, result.outcome, result.reason),
+        ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms, clamped: result.clamped } : {}) };
+    }
     case "speak_text": {
       if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) {
         return buildAck(command, "reject", "busy");

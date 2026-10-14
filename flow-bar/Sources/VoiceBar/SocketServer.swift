@@ -487,6 +487,10 @@ final class SocketServer {
             [targetFD]
         } else if isInterrupt {
             Array(Set(commandFDs + legacyPlaybackFDs)).sorted()
+        } else if commandName == "seek",
+                  let playbackFD = activePlaybackClientFD,
+                  clients[playbackFD] != nil {
+            [playbackFD]
         } else if commandName == "replay",
                   let playbackFD = lastPlaybackClientFD,
                   clients[playbackFD] != nil {
