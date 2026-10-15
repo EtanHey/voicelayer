@@ -303,36 +303,42 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         XCTAssertEqual(contents(board), original)
     }
 
-    func testAXProvenanceCountsOnlyTheObservedStringAndNeverLogsPayload() {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
-        seed(board)
-        let original = contents(board)
-        let count = board.changeCount
-        let text = "PRIVATE_SENTINEL שלום👩🏽‍💻\r\n\r\n- first\n2. second\n| A | B |\na\tb\n\u{FFFC}"
-        let capture = makeCapture(readAXSelection: { text }, pasteboard: board,
-                                  postCopy: { XCTFail("AX must not copy"); return false })
-        let finished = expectation(description: "AX trace")
-        capture.capture { result in
-            XCTAssertEqual(result.text, text)
-            let report = self.reportToState(result)
-            XCTAssertEqual(report.details["ax_read"], "text")
-            XCTAssertEqual(report.details["path"], "ax")
-            XCTAssertEqual(report.details["outcome"], "completed")
-            XCTAssertEqual(report.details["host_structure"], "not_observed")
-            XCTAssertEqual(report.details["utf16_count"], String(text.utf16.count))
-            XCTAssertEqual(report.details["line_breaks"], "6")
-            XCTAssertEqual(report.details["list_marker_lines"], "2")
-            XCTAssertEqual(report.details["pipe_lines"], "1")
-            XCTAssertEqual(report.details["tabs"], "1")
-            XCTAssertEqual(report.details["object_replacements"], "1")
-            XCTAssertFalse(report.details.values.contains { $0.contains("PRIVATE_SENTINEL") || $0.contains("שלום") })
-            XCTAssertEqual(report.commands, 1)
-            finished.fulfill()
+    func testAXAndCopyProvenanceCountsOnlyTheObservedStringAndNeverLogsPayload() {
+        for usesAX in [true, false] {
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            seed(board)
+            let original = contents(board)
+            let count = board.changeCount
+            let text = "PRIVATE_SENTINEL שלום👩🏽‍💻\r\n\r\n- first\n2. second\n| A | B |\na\tb\n\u{FFFC}"
+            let capture = makeCapture(readAXSelection: { usesAX ? text : nil }, pasteboard: board, postCopy: {
+                if usesAX { XCTFail("AX must not copy"); return false }
+                board.clearContents()
+                board.setString(text, forType: .string)
+                return true
+            })
+            let finished = expectation(description: "AX trace")
+            capture.capture { result in
+                XCTAssertEqual(result.text, text)
+                let report = self.reportToState(result)
+                XCTAssertEqual(report.details["ax_read"], usesAX ? "text" : "unavailable")
+                XCTAssertEqual(report.details["path"], usesAX ? "ax" : "copy")
+                XCTAssertEqual(report.details["outcome"], "completed")
+                XCTAssertEqual(report.details["host_structure"], "not_observed")
+                XCTAssertEqual(report.details["utf16_count"], String(text.utf16.count))
+                XCTAssertEqual(report.details["line_breaks"], "6")
+                XCTAssertEqual(report.details["list_marker_lines"], "2")
+                XCTAssertEqual(report.details["pipe_lines"], "1")
+                XCTAssertEqual(report.details["tabs"], "1")
+                XCTAssertEqual(report.details["object_replacements"], "1")
+                XCTAssertFalse(report.details.values.contains { $0.contains("PRIVATE_SENTINEL") || $0.contains("שלום") })
+                XCTAssertEqual(report.commands, 1)
+                finished.fulfill()
+            }
+            wait(for: [finished], timeout: 2)
+            if usesAX { XCTAssertEqual(board.changeCount, count) }
+            XCTAssertEqual(contents(board), original)
         }
-        wait(for: [finished], timeout: 2)
-        XCTAssertEqual(board.changeCount, count)
-        XCTAssertEqual(contents(board), original)
     }
 
     private func reportToState(_ result: SelectionCaptureResult) -> (details: [String: String], message: String?, commands: Int) {
@@ -370,7 +376,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         let finished = expectation(description: "capture finished")
         capture.capture {
             XCTAssertTrue(Thread.isMainThread)
-            if let expectedResult { XCTAssertEqual($0, expectedResult) }
+            if let expectedResult { XCTAssertEqual($0.outcome, expectedResult.outcome) }
             assertion($0.text)
             finished.fulfill()
         }
