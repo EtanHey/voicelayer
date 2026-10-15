@@ -603,7 +603,8 @@ final class SottoCurrentStateShotsTests: XCTestCase {
 
     private func render(_ view: some View, size: CGSize, to url: URL,
                         settingsWindow: Bool = false, appearance: NSAppearance.Name = .darkAqua) throws {
-        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading))
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading)
+            .environment(\.controlActiveState, settingsWindow ? .key : .inactive))
         host.appearance = NSAppearance(named: appearance)
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame,
@@ -613,7 +614,6 @@ final class SottoCurrentStateShotsTests: XCTestCase {
         window.backgroundColor = .windowBackgroundColor
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        if settingsWindow { window.makeKeyAndOrderFront(nil) }
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         if url.lastPathComponent.contains("sidebar-focused"), let table = firstTable(in: host) {

@@ -28,15 +28,20 @@ let package = Package(
             name: "NotchGlassBackdropFixture",
             path: "Sources/NotchGlassBackdropFixture"
         ),
+        .target(
+            name: "OffscreenTestSupport",
+            path: "Tests/OffscreenTestSupport",
+            publicHeadersPath: "include"
+        ),
         .testTarget(
             name: "VoiceBarTests",
-            dependencies: ["VoiceBar", "VoiceBarUI"],
+            dependencies: ["VoiceBar", "VoiceBarUI", "OffscreenTestSupport"],
             path: "Tests/VoiceBarTests",
             resources: [.process("Fixtures")]
         ),
         .testTarget(
             name: "VoiceBarUITests",
-            dependencies: ["VoiceBarUI"],
+            dependencies: ["VoiceBarUI", "OffscreenTestSupport"],
             path: "Tests/VoiceBarUITests"
         ),
     ]

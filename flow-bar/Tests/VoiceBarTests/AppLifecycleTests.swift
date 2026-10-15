@@ -1,3 +1,4 @@
+import OffscreenTestSupport
 import AppKit
 @testable import VoiceBar
 @testable import VoiceBarUI
@@ -947,7 +948,7 @@ final class AppLifecycleTests: XCTestCase {
         let popover = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 200, height: 100),
                                styleMask: [.borderless], backing: .buffered, defer: false)
         popover.isReleasedWhenClosed = false
-        popover.orderFront(nil)
+        VLOrderTestWindow(popover)
         XCTAssertTrue(popover.isVisible)
 
         app.openSettingsFromMenuBar(popover: popover)

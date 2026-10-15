@@ -1,3 +1,4 @@
+import OffscreenTestSupport
 import AppKit
 import SwiftUI
 @testable import VoiceBarUI
@@ -40,7 +41,7 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         XCTAssertEqual(setup.minX, footer.minX, accuracy: 1)
     }
 
-    func testNoFocusRingWhenPopoverOpensAcrossRebuilds() {
+    func testNoFocusRingWithActiveControlAppearanceAcrossRebuilds() {
         for _ in 0 ..< 2 {
             let (window, host) = makeHost(transcript: "Synthetic", key: true)
             XCTAssertEqual(focusRingCount(in: host), 0)
@@ -89,20 +90,20 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         remoteSTTConfigured: Bool = false,
         key: Bool = false,
         onLayout: @escaping ([String: CGRect]) -> Void = { _ in }
-    ) -> (NSWindow, NSHostingView<MenuBarPopoverView>) {
+    ) -> (NSWindow, NSHostingView<AnyView>) {
         let view = MenuBarPopoverView(
             footer: .resolve(isConnected: true, mode: mode, captureLive: false,
                              errorMessage: nil, remoteSTTConfigured: remoteSTTConfigured, hasFreshHealth: true),
             hotkeyHint: "Hold F5 to dictate", defaultMicrophoneName: "Fixture Microphone",
             transcript: transcript, onLayout: onLayout
         )
-        let host = NSHostingView(rootView: view)
+        let host = NSHostingView(rootView: AnyView(view.environment(\.controlActiveState, key ? .key : .inactive)))
         host.frame = NSRect(x: 0, y: 0, width: 334, height: 300)
         let window = NSWindow(contentRect: host.frame, styleMask: key ? [.titled] : .borderless,
                               backing: .buffered, defer: false)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        if key { window.makeKeyAndOrderFront(nil) }
+        if key { VLOrderTestWindow(window) }
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(key ? 0.3 : 0.05))
         host.layoutSubtreeIfNeeded()
