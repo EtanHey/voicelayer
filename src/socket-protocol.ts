@@ -323,6 +323,8 @@ export interface SpeakTextCommand extends SocketCommandBase {
 
 export interface StopCommand extends SocketCommandBase {
   cmd: "stop";
+  /** Opt-in for a physical stop press; never interpreted as a capture clock. */
+  physical_press?: boolean;
   /** VoiceBar's teleprompter clock at the stop edge. */
   playback_elapsed_ms?: number;
 }
@@ -639,9 +641,11 @@ export function parseCommand(line: string): SocketCommand | null {
       case "history_playback_ready":
         return id ? { cmd: "history_playback_ready", id } : null;
       case "stop":
+        if (parsed.physical_press !== undefined && typeof parsed.physical_press !== "boolean") return null;
         return withCommandId<StopCommand>(
           {
             cmd: "stop",
+            ...(parsed.physical_press !== undefined ? { physical_press: parsed.physical_press } : {}),
             ...(playbackElapsedMs !== undefined
               ? { playback_elapsed_ms: playbackElapsedMs }
               : {}),

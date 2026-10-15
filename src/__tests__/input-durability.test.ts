@@ -324,6 +324,56 @@ describe("input recording durability", () => {
   let savedRecordingStatePath: string | undefined;
   let savedRecordingHoldPath: string | undefined;
 
+  for (const [label, source, pushToEnd, physicalPress] of [
+    ["physical dictation", "voicebar", true, true],
+    ["physical chunked", "voicebar", true, true],
+    ["legacy stop", "voicebar", true, false],
+    ["Ask push_to_end", "voice_ask", true, true],
+    ["VAD dictation", "voicebar", false, true],
+    ["timeout", "voicebar", true, true],
+    ["cancel", "voicebar", true, true],
+  ] as const) {
+    it(`P5b ${label}: STT cutoff is scoped and archive keeps every byte`, async () => {
+      const { waitForInput } = await import("../input");
+      const { handleSocketCommand } = await import("../socket-handlers");
+      const { parseCommand } = await import("../socket-protocol");
+      const pcm = pcmWithConstantSample(1500, 2400);
+      const view = new DataView(pcm.buffer);
+      for (let i = 2000 * 16; i < 2400 * 16; i++) view.setInt16(i * 2, 10, true);
+      for (let i = 0; i < 320; i++) view.setInt16((2150 * 16 + i) * 2, (i % 2 ? -1 : 1) * 9000 * Math.exp(-i / 55), true);
+      const expectedArchive = makeWav(pcm);
+      const recorder = installFakeRecorder([pcm], true);
+      const stopSpy = spyOn(tts, "stopPlayback").mockImplementation(() => {});
+      const playbackSpy = spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(undefined);
+      const savedChunked = process.env.QA_VOICE_CHUNKED_STT;
+      process.env.QA_VOICE_CHUNKED_STT = label === "physical chunked" ? "1" : "0";
+      vadProbabilityForCall = () => 0.95;
+      let archivePath = "";
+      const recording = waitForInput(label === "timeout" ? 80 : 4000, "thoughtful", pushToEnd, {
+        archiveSource: source,
+        ...(source === "voice_ask" ? { voiceAskArtifacts: {
+          agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]), agentAudioFormat: "mp3" as const,
+          agentTranscript: "Synthetic question", agentTtsEngine: "edge-tts" as const, agentTtsVoice: "fixture",
+        } } : {}),
+        onArchiveCreated: path => { archivePath = path; },
+      });
+      try {
+        await recorder.waitForSpawn();
+        await Bun.sleep(20);
+        if (label === "cancel") setCancelSignal();
+        if (label !== "timeout") await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop", ...(physicalPress ? { physical_press: true } : {}) }))!);
+        await recording;
+        expect(readFileSync(join(archivePath, "audio.wav"))).toEqual(Buffer.from(expectedArchive));
+        expect(backendTranscribedDataSize).toBe(label === "cancel" ? undefined : (label.startsWith("physical") ? 2145 : 2400) * 32);
+      } finally {
+        await recording.catch(() => null);
+        stopSpy.mockRestore(); playbackSpy.mockRestore();
+        if (savedChunked === undefined) delete process.env.QA_VOICE_CHUNKED_STT;
+        else process.env.QA_VOICE_CHUNKED_STT = savedChunked;
+      }
+    });
+  }
+
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "voicelayer-input-durability-"));
     retainedPath = join(tmpRoot, "last-recording.wav");

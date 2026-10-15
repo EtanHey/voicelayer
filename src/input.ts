@@ -25,6 +25,7 @@
 
 import { applyPauseParagraphs, MIN_PARAGRAPH_CHARS, pauseParagraphsEnabled } from "./stt-paragraphs";
 import { processingEnv } from "./processing-settings";
+import { physicalStopInput, STOP_CAPTURE_DRAIN_MS as PUSH_TO_END_STOP_CAPTURE_DRAIN_MS, STOP_POLL_MS } from "./physical-stop-input";
 import { createHash, randomBytes } from "crypto";
 import {
   closeSync,
@@ -58,6 +59,7 @@ import {
   retainedRecordingFilePath,
   retainedRecordingMetadataFilePath,
   MIC_DISABLED_FILE,
+  STOP_FILE,
 } from "./paths";
 import {
   processVADChunk,
@@ -144,7 +146,6 @@ const TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_PEAK = 350;
 const TRAILING_SILENCE_TRIM_SPEECHLIKE_MAX_ZCR = 0.12;
 const TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_RMS = 30;
 const TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_PEAK = 400;
-const PUSH_TO_END_STOP_CAPTURE_DRAIN_MS = 250;
 const TRAILING_SILENCE_TRIM_MIN_QUIET_MS = 4000;
 const TRAILING_SILENCE_TRIM_PAD_MS = 1000;
 const PRE_ROLL_MS = 500;
@@ -638,6 +639,7 @@ export interface NoSpeechGateResult {
 }
 
 export interface RecordingCaptureState {
+  physicalPressStop?: boolean;
   vadSpeechDetected?: boolean;
   onCaptureStart?: () => void;
   onSpeechStart?: () => void;
@@ -2420,6 +2422,11 @@ export async function recordToBuffer(
 
     const beginPushToEndStopDrain = () => {
       if (pushToEndStopRequestedAtMs !== null) return;
+      if (captureState?.archiveSource === "voicebar") {
+        try {
+          captureState.physicalPressStop = JSON.parse(readFileSync(STOP_FILE, "utf8")).physical_press === true;
+        } catch { /* Legacy stop files have no physical-press opt-in. */ }
+      }
       pushToEndStopRequestedAtMs = Date.now();
       console.error(
         `[voicelayer] Stop signal received — capturing ${PUSH_TO_END_STOP_CAPTURE_DRAIN_MS}ms push-to-end tail before ending recording`,
@@ -2564,14 +2571,15 @@ export async function recordToBuffer(
       synchronizeRecordingHold();
       if (pushToEnd && finishIfPushToEndStopDrainComplete()) return;
       if (!hasStopSignal()) return;
-      clearStopSignal();
       if (pushToEnd) {
         beginPushToEndStopDrain();
+        clearStopSignal();
         return;
       }
+      clearStopSignal();
       console.error("[voicelayer] Stop signal received — ending recording");
       finish();
-    }, 50);
+    }, STOP_POLL_MS);
     stopSignalPoll.unref?.();
 
     try {
@@ -2726,8 +2734,8 @@ export async function recordToBuffer(
           if (pushToEnd) {
             chunkedSession?.pushChunk(chunk, true);
             if (hasStopSignal()) {
-              clearStopSignal();
               beginPushToEndStopDrain();
+              clearStopSignal();
             }
             if (finishIfPushToEndStopDrainComplete()) {
               return;
@@ -2961,7 +2969,18 @@ export async function waitForInput(
       : undefined;
 
   const retainedWavData = createWavBuffer(pcmData);
-  const sttTrim = trimTrailingSilenceForSTT(pcmData, pushToEnd);
+  const pressInput = physicalStopInput(pcmData,
+    pushToEnd && options.archiveSource === "voicebar" && captureState.physicalPressStop === true && !hasCancelSignal());
+  if (captureState.physicalPressStop) {
+    console.error(`[voicelayer] Physical stop input: ${pressInput.reason}; candidates=${pressInput.candidateFrames.length}`);
+    appendControlLayerEvent("capture.physical_stop_input", {
+      reason: pressInput.reason, candidates: pressInput.candidateFrames.length,
+      removed_frames: (pcmData.byteLength - pressInput.pcmData.byteLength) / 2,
+    });
+  }
+  const silenceTrim = trimTrailingSilenceForSTT(pressInput.pcmData, pushToEnd);
+  const sttTrim = { ...silenceTrim, rawDurationMs: pcmDurationMs(pcmData),
+    trimmed: silenceTrim.trimmed || pressInput.reason === "cut" };
   let voiceAskArchivePath: string | null = null;
   let voiceBarArchivePath: string | null = null;
   // P0: archive completed dictation before any callback, speech gate, or STT.
