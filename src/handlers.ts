@@ -880,10 +880,15 @@ export async function handleConverse(
     if (timer) clearTimeout(timer);
     if (
       !isSpeakerOutputRefusedError(err) &&
-      !isRecordingConflictError(err) &&
-      getEffectiveRecordingState() === "idle"
+      !isRecordingConflictError(err)
     ) {
-      broadcast({ type: "state", state: "idle" });
+      // Errors can return before owned teardown; never idle a foreign/newer owner.
+      void Promise.all(promptPlayers.map(handle => handle.playerExited)).then(() => {
+        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() &&
+            getEffectiveRecordingState() === "idle") {
+          broadcast({ type: "state", state: "idle" });
+        }
+      }, () => {}); // Rejected exit proof cannot authorize idle.
     }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[voicelayer] voice_ask error: ${message}`);
