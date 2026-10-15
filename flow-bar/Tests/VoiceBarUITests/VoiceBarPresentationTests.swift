@@ -5,6 +5,57 @@ import SwiftUI
 import OffscreenTestSupport
 
 final class VoiceBarPresentationTests: XCTestCase {
+    @MainActor
+    func testBusyFooterHasReadablePixelsOnBothWallpaperPolarities() throws {
+        for light in [false, true] {
+            for white in [false, true] {
+                let state = VoiceState()
+                state.mode = .recording
+                state.hotkeyEnabled = true
+                state.isConnected = true
+                state.recordingMode = "ptt"
+                state.sendCommand = { _ in XCTFail("contrast fixture must send no command") }
+                state.selectionTextCaptureHandler = { _ in XCTFail("contrast fixture must not capture") }
+                let name = "contrast-\(light ? "light" : "dark")-\(white ? "white" : "black")"
+                let before = try renderSelectionFooter(state, name: name + "-before", light: light,
+                                                       backdrop: white ? .white : .black)
+                let busy = try renderSelectionFooter(state, name: name + "-busy", light: light,
+                    backdrop: white ? .white : .black, afterMount: { state.speakSelection() })
+                var readableChangedPixels = 0
+                for y in 0..<busy.bitmap.pixelsHigh {
+                    for x in 0..<busy.bitmap.pixelsWide {
+                        let a = try XCTUnwrap(before.bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
+                        let b = try XCTUnwrap(busy.bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
+                        let ratio = VoiceBarContrast.ratio(
+                            foreground: VoiceBarRGB(red: b.redComponent, green: b.greenComponent, blue: b.blueComponent),
+                            background: VoiceBarRGB(red: a.redComponent, green: a.greenComponent, blue: a.blueComponent))
+                        if ratio >= VoiceBarContrast.minimumTextRatio { readableChangedPixels += 1 }
+                    }
+                }
+                XCTAssertGreaterThan(readableChangedPixels, 50, "Busy copy must remain visible: \(name)")
+                XCTAssertEqual(before.size, busy.size)
+                XCTAssertEqual(before.presentation, busy.presentation)
+            }
+        }
+    }
+
+    @MainActor
+    func testEndedBusyRequestDoesNotRenderInANewPreview() throws {
+        let state = VoiceState()
+        state.hotkeyEnabled = true
+        state.isConnected = true
+        state.hotkeyPhase = .pressing
+        state.sendCommand = { _ in XCTFail("UI lifecycle must send no command") }
+        state.selectionTextCaptureHandler = { _ in XCTFail("UI lifecycle must not capture") }
+        let before = try renderSelectionFooter(state, name: "new-session-before")
+        state.speakSelection()
+        state.hotkeyPhase = .idle
+        state.hotkeyPhase = .pressing
+        let next = try renderSelectionFooter(state, name: "new-session-after")
+        XCTAssertEqual(before.pixels, next.pixels, "No new Option+F5 request in this preview")
+        XCTAssertEqual(before.size, next.size)
+    }
+
     func testBusyNoteTracksTheCurrentBusyContextAndStaysAbsentInIdle() {
         for (mode, phase, message) in [(VoiceMode.recording, HotkeyPhase.holding, "Busy recording. Selection not read"),
                                        (.transcribing, .idle, "Busy transcribing. Selection not read"),
@@ -79,9 +130,9 @@ final class VoiceBarPresentationTests: XCTestCase {
     }
 
     @MainActor
-    private func renderSelectionFooter(_ state: VoiceState, name: String, light: Bool = false,
+    private func renderSelectionFooter(_ state: VoiceState, name: String, light: Bool = false, backdrop: Color? = nil,
                                        afterMount: (() -> Void)? = nil) throws
-        -> (pixels: Data, size: CGSize, presentation: VoiceBarNotchPresentation) {
+        -> (pixels: Data, size: CGSize, presentation: VoiceBarNotchPresentation, bitmap: NSBitmapImageRep) {
         // Match the test process before BarView captures its initial appearance, so the
         // appearance reader does not need to mutate SwiftUI state during its first update.
         let app = NSApplication.shared
@@ -96,7 +147,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         let size = VoiceBarPanelLayout.make(presentation: presentation, canvasGeometry: canvas.canvasGeometry).panelSize
         let host = NSHostingView(rootView: ZStack(alignment: .topLeading) {
-            light ? Color(red: 0.88, green: 0.89, blue: 0.91) : Color(red: 0.16, green: 0.17, blue: 0.19)
+            backdrop ?? (light ? Color(red: 0.88, green: 0.89, blue: 0.91) : Color(red: 0.16, green: 0.17, blue: 0.19))
             BarView(state: state, commandRouter: SelectionFixtureRouter(), onOpenSettings: {}, onOpenHistory: {},
                     includesPanelOutsets: true)
         }.frame(width: size.width, height: size.height).transaction { $0.disablesAnimations = true })
@@ -139,7 +190,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             host.cacheDisplay(in: host.bounds, to: full)
             try XCTUnwrap(full.representation(using: .png, properties: [:])).write(to: directory.appendingPathComponent(name + ".png"))
         }
-        return (Data(bytes: bytes, count: bitmap.bytesPerRow * bitmap.pixelsHigh), size, presentation)
+        return (Data(bytes: bytes, count: bitmap.bytesPerRow * bitmap.pixelsHigh), size, presentation, bitmap)
     }
 
     func testNotchPresentationGivesLiveAndRetainedTeleprompterPrecedence() {

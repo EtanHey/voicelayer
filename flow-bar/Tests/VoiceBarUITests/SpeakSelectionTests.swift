@@ -2,6 +2,52 @@
 import XCTest
 
 final class SpeakSelectionTests: XCTestCase {
+    func testBusyRequestEndsWithItsSessionAndCannotReappearInANewSession() {
+        for (mode, phase) in [(VoiceMode.recording, HotkeyPhase.idle), (.transcribing, .idle),
+                              (.idle, .pressing), (.idle, .holding), (.idle, .awaitingSecondTap)] {
+            for endMode in [VoiceMode.idle, .speaking, .disconnected, .error] {
+                let state = VoiceState()
+                state.mode = mode
+                state.hotkeyPhase = phase
+                state.transcript = "Keep every synthetic word שלום 👩‍💻"
+                state.sendCommand = { _ in XCTFail("UI cleanup must send no command") }
+                state.selectionTextCaptureHandler = { _ in XCTFail("UI cleanup must not capture") }
+                state.speakSelection()
+                XCTAssertTrue(state.showsSelectionBusyNote)
+                state.hotkeyPhase = .idle
+                state.mode = endMode
+                XCTAssertFalse(state.showsSelectionBusyNote, "Session ended: \(mode)/\(phase) → \(endMode)")
+                state.mode = .idle
+                state.hotkeyPhase = .pressing
+                XCTAssertNil(VoiceBarPresentation.selectionBusyNote(isRequested: state.showsSelectionBusyNote,
+                    mode: state.mode, hotkeyPhase: state.hotkeyPhase), "No new Option+F5 request")
+                state.hotkeyPhase = .idle
+                state.mode = .recording
+                XCTAssertFalse(state.showsSelectionBusyNote, "A new recording must not inherit the request")
+                XCTAssertEqual(state.transcript, "Keep every synthetic word שלום 👩‍💻")
+            }
+        }
+    }
+
+    @MainActor
+    func testAnEndedSessionTimerCannotClearANewBusyRequest() async throws {
+        let state = VoiceState()
+        state.mode = .recording
+        state.sendCommand = { _ in XCTFail("UI timers must send no command") }
+        state.selectionTextCaptureHandler = { _ in XCTFail("UI timers must not capture") }
+        state.speakSelection()
+        try await Task.sleep(for: .milliseconds(1100))
+        state.mode = .idle
+        XCTAssertFalse(state.showsSelectionBusyNote)
+        state.mode = .recording
+        state.speakSelection()
+        try await Task.sleep(for: .milliseconds(1100))
+        XCTAssertTrue(state.showsSelectionBusyNote, "Old timer must not clear the new request")
+        try await Task.sleep(for: .milliseconds(1100))
+        XCTAssertFalse(state.showsSelectionBusyNote)
+        XCTAssertEqual(state.mode, .recording)
+    }
+
     func testCaptureFailuresHaveSpecificFeedbackAndNeverSpeak() {
         let state = VoiceState()
         state.sendCommand = { _ in XCTFail("capture failure must not speak") }
