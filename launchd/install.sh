@@ -4,14 +4,20 @@
 # Usage:
 #   ./launchd/install.sh          # stop and remove the retired daemon agent
 #   ./launchd/install.sh --uninstall  # same as above, kept for compatibility
+#   ./launchd/install.sh --recordings-backup  # render backup plist, do not load
 set -euo pipefail
+
+# Explicit opt-in; the default retirement path never installs a backup job.
+if [[ "${1:-}" == "--recordings-backup" && "$#" -eq 1 ]]; then
+    exec bash "$(dirname "$0")/../scripts/backup-recordings-icloud.sh" --install
+fi
 
 LABEL="com.voicelayer.mcp-daemon"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DAEMON_DISABLE_FLAG="/tmp/.voicelayer-daemon-disabled"
 
 if [[ "${1:-}" != "" && "${1:-}" != "--uninstall" ]]; then
-    printf 'Usage: %s [--uninstall]\n' "$0" >&2
+    printf 'Usage: %s [--uninstall|--recordings-backup]\n' "$0" >&2
     exit 2
 fi
 
