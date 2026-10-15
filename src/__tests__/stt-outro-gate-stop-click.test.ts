@@ -14,6 +14,7 @@ interface Fixture {
   clickS?: number;
   clickLengthS?: number;
   voicedClick?: boolean;
+  voicedAmp?: number;
   softOnset?: boolean;
   quietOkay?: boolean;
   speechThroughClick?: boolean;
@@ -51,7 +52,8 @@ function wavFixture(options: Fixture = {}): Uint8Array {
     if (!options.noClick && elapsed >= 0 && elapsed < (options.clickLengthS ?? 0.06)) {
       const onset = options.softOnset ? Math.min(1, elapsed / 0.025) : 1;
       const carrier = options.voicedClick ? voiced : noise();
-      sample += 9000 * onset * Math.exp(-elapsed / (options.decayS ?? 0.018)) * carrier;
+      const amplitude = options.voicedClick ? (options.voicedAmp ?? 9000) : 9000;
+      sample += amplitude * onset * Math.exp(-elapsed / (options.decayS ?? 0.018)) * carrier;
     }
     view.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, Math.round(sample))), true);
   }
@@ -82,6 +84,34 @@ describe("outro gate — push-to-end stop click evidence", () => {
     const decision = stripHallucinatedOutro(TEXT, wavFixture({ voicedClick: true }), { segments: segments(3.3) });
     expect(decision.text).toBe(TEXT);
     expect(decision.removed).toEqual([]);
+  });
+
+  // A quiet decaying voice can fall below the periodicity veto's SNR.
+  // These are voiced energy, not click noise, at the exact stop-click offset.
+  for (const voicedAmp of [180, 400, 900]) {
+    test(`keeps a quiet decaying voiced syllable at amplitude ${voicedAmp}`, () => {
+      const decision = stripHallucinatedOutro(TEXT, wavFixture({ voicedClick: true, voicedAmp }), {
+        segments: segments(3.3),
+      });
+      expect(decision.text).toBe(TEXT);
+      expect(decision.removed).toEqual([]);
+    });
+  }
+
+  for (const [startS, endS] of [[3.4, 3.7], [3.83, 4]]) {
+    test(`quiet voiced energy also vetoes clearance at ${startS}-${endS}`, () => {
+      const decision = stripHallucinatedOutro(TEXT, wavFixture({ voicedClick: true, voicedAmp: 400 }), {
+        segments: segments(startS!, endS!),
+      });
+      expect(decision.text).toBe(TEXT);
+      expect(decision.removed).toEqual([]);
+    });
+  }
+
+  test("a quiet event clear of the attributed span does not veto removal", () => {
+    expect(stripHallucinatedOutro(TEXT, wavFixture({ voicedClick: true, voicedAmp: 400 }), {
+      segments: segments(3.3, 3.4),
+    }).text).toBe("Show an example.");
   });
 
   for (const pitchHz of [60, 90, 300, 450]) {

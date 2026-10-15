@@ -564,16 +564,20 @@ function speechThresholdFor(floorDbfs: number): number {
 /**
  * Evidence-only view for an isolated stop-key impulse in the 250 ms end tail.
  * No PCM is changed. Without recording-mode metadata here, timing alone is
- * NEVER evidence: require a sharp onset, <=80 ms decay, quiet surroundings and
+ * NEVER evidence: require a speech-loud sharp onset, <=80 ms decay, quiet surroundings and
  * no voiced periodicity. Uncertain shapes retain the original evidence.
  * Only aligned TAIL candidates use this view; the no-segments fallback and
  * internal phrases continue to use every original window.
  */
-function withoutStopClick(wavData: Uint8Array, windows: WavWindows): WavWindows {
+function withoutStopClick(wavData: Uint8Array, windows: WavWindows): {
+  windows: WavWindows;
+  uncertainImpulse?: { startS: number; endS: number };
+} {
+  const unchanged = { windows };
   const info = parseWavAudioInfo(wavData);
   // Fail closed for channel mixtures: a quiet voice in one channel must not
   // disappear underneath a loud click in another.
-  if (!info || info.channels !== 1 || info.sampleRate < 8000) return windows;
+  if (!info || info.channels !== 1 || info.sampleRate < 8000) return unchanged;
   const view = new DataView(wavData.buffer, wavData.byteOffset, wavData.byteLength);
   const frames = Math.round(windows.durationSeconds * info.sampleRate);
   const step = Math.max(1, Math.round(info.sampleRate * 0.005));
@@ -595,7 +599,13 @@ function withoutStopClick(wavData: Uint8Array, windows: WavWindows): WavWindows 
     const offsetS = windows.durationSeconds - onsetS;
     if (offsetS < 0.18 || offsetS > 0.32) continue;
     const peak = levels[first]!;
-    if (peak < windows.speechThresholdDbfs || peak - levels[first - 1]! < 12) continue;
+    if (peak < decayThreshold || peak - levels[first - 1]! < 12) continue;
+    // Quiet voiced syllables can lose their periodicity in the noise floor.
+    // Never mask them based on shape alone: a stop impulse must first be at
+    // least as loud as the recording's speech, within its existing 6 dB guard.
+    const speechLoud = peak >= windows.speechThresholdDbfs &&
+      Number.isFinite(windows.speechLevelDbfs) &&
+      peak >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB;
     if (levels.slice(first - quietBins, first).some(level => level >= windows.speechThresholdDbfs)) continue;
 
     // Two quiet bins end the event, allowing one small dip in a noisy decay.
@@ -603,14 +613,21 @@ function withoutStopClick(wavData: Uint8Array, windows: WavWindows): WavWindows 
     while (last + 1 < levels.length &&
       (levels[last]! >= decayThreshold || levels[last + 1]! >= decayThreshold)) last++;
     const duration = (last - first) * fineSeconds;
-    if (duration < 0.02 || duration > 0.08 || last + quietBins > levels.length) continue;
+    if (duration > 0.08 || last + quietBins > levels.length) continue;
+    if (levels.slice(last, last + quietBins).some(level => level >= windows.speechThresholdDbfs)) continue;
+    const clickFirst = start + first * step;
+    const clickLast = Math.min(frames, start + last * step);
+    if (!speechLoud) {
+      // Leaving its original windows alone is insufficient: a quiet short
+      // word can also miss the legacy 60 ms energy run or speech threshold.
+      // Even a brief rise above the floor is uncertain at this level. Preserve
+      // any aligned candidate it reaches, including its clearance.
+      return { windows, uncertainImpulse: { startS: onsetS, endS: clickLast / info.sampleRate } };
+    }
+    if (duration < 0.02) continue;
     if (peak - levels[last - 1]! < 12) continue;
     const envelope = levels.slice(first, last);
     if (envelope.some((level, i) => level > peak + 3 || (i > 0 && level > envelope[i - 1]! + 4))) continue;
-    if (levels.slice(last, last + quietBins).some(level => level >= windows.speechThresholdDbfs)) continue;
-
-    const clickFirst = start + first * step;
-    const clickLast = Math.min(frames, start + last * step);
     let mean = 0;
     for (let i = clickFirst; i < clickLast; i++) mean += sampleAt(i);
     mean /= clickLast - clickFirst;
@@ -644,9 +661,9 @@ function withoutStopClick(wavData: Uint8Array, windows: WavWindows): WavWindows 
       const rms = Math.sqrt(power / (to - from));
       dbfs[index] = rms > 0 ? 20 * Math.log10(rms / 32768) : SILENT_WINDOW_DBFS;
     }
-    return { ...windows, dbfs };
+    return { windows: { ...windows, dbfs } };
   }
-  return windows;
+  return unchanged;
 }
 
 function windowIndex(windows: WavWindows, seconds: number): number {
@@ -930,9 +947,9 @@ export function stripHallucinatedOutro(
     [];
   const evaluations: OutroGateEvaluation[] = [];
   let reason: OutroGateReason = "no-candidate";
-  const tailWindows = candidates.some(candidate => candidate.isTail)
+  const tailEvidence = candidates.some(candidate => candidate.isTail)
     ? withoutStopClick(wavData, windows)
-    : windows;
+    : { windows };
 
   for (const candidate of candidates) {
     if (approved.length >= MAX_REMOVALS) break;
@@ -943,7 +960,7 @@ export function stripHallucinatedOutro(
       continue;
     }
 
-    const evidence = candidate.isTail ? tailWindows : windows;
+    const evidence = candidate.isTail ? tailEvidence.windows : windows;
     const measured = measureSpan(evidence, span.startS, span.endS);
     if (!measured) {
       reason = "segment-not-found";
@@ -964,6 +981,20 @@ export function stripHallucinatedOutro(
         reason: evaluationReason,
       });
     };
+    const marginSeconds = candidate.isTail
+      ? SILENCE_MARGIN_SECONDS
+      : INTERNAL_SILENCE_MARGIN_SECONDS;
+    const uncertain = candidate.isTail ? tailEvidence.uncertainImpulse : undefined;
+    // Include the clearance scan's run context and one window for rounded
+    // boundaries. This can only preserve a doubtful word, never delete one.
+    const clearanceSeconds = (Math.round(marginSeconds / windows.windowSeconds) +
+      Math.round(MIN_SPEECH_RUN_SECONDS / windows.windowSeconds)) * windows.windowSeconds;
+    if (uncertain && uncertain.startS < span.endS + clearanceSeconds &&
+      uncertain.endS > span.startS - clearanceSeconds) {
+      reason = "energy-present";
+      recordEvaluation(reason);
+      continue;
+    }
     // (b) No word anywhere under the phrase. Checked as sustained speech, not
     // as a mean: a mean can be dragged below the floor by a long silent pad
     // around a real word, and a peak can be tripped by a lone click.
@@ -985,9 +1016,6 @@ export function stripHallucinatedOutro(
       continue;
     }
     // (c) The silence must extend clear of the span on both sides.
-    const marginSeconds = candidate.isTail
-      ? SILENCE_MARGIN_SECONDS
-      : INTERNAL_SILENCE_MARGIN_SECONDS;
     if (!isClearOfSpeech(evidence, span.startS, span.endS, marginSeconds)) {
       reason = "not-clear-of-speech";
       recordEvaluation(reason);
