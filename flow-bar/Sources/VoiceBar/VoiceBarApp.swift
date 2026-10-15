@@ -3177,6 +3177,11 @@ func shouldIgnoreHotkeyEvent(
 struct VoiceBarApp {
     @MainActor
     static func main() {
+        #if VOICEBAR_QA
+            // UI-only fixture dependencies: never initialize the resident app's audio,
+            // hotkeys, daemon supervisor, singleton election, or socket cleanup.
+            if UIE2EHost.runIfRequested() { return }
+        #endif
         if SelectionPasteboardSnapshot.runIfRequested() { return }
         let environment = ProcessInfo.processInfo.environment
         let daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
