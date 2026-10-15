@@ -28,6 +28,33 @@ final class VoiceStatePasteTests: XCTestCase {
         // Host menu consumption is NOT_PROVEN here; the booked native script checks it.
     }
 
+    func testAutomaticT3AndHeliumDeliveryUsesTheShiftF5TypedPlanWithoutAXOrClipboard() {
+        let text = "ADD שלום 👩‍💻\nsecond line\nship it @main\n/plan"
+        for bundle in ["com.t3tools.t3code", "net.imput.helium"] {
+            let state = deliveryState(bundleIdentifier: bundle)
+            var axAttempts = 0
+            var typed: [String] = []
+            var plans: [[SynthesizedKeystroke]] = []
+            state.asyncDictationInsertionHandlerProvider = { { _, _ in axAttempts += 1; return false } }
+            state.textTypingHandler = {
+                typed.append($0)
+                plans.append(SynthesizedTyping.keystrokes(for: $0))
+                return true
+            }
+            state.pasteboardWriter = { _ in XCTFail("Known rich hosts must never write the clipboard") }
+            state.record()
+            state.handleEvent(["type": "transcription", "text": text])
+            XCTAssertEqual(state.latestDictationInsertionStatus, .unverified, bundle)
+            state.repasteLastTranscript(source: "shift_f5")
+            XCTAssertEqual(typed, [text, text], "One auto delivery and one explicit recovery, no fallback duplicate: \(bundle)")
+            let expected = SynthesizedTyping.keystrokes(for: text)
+            XCTAssertEqual(plans, [expected, expected], bundle)
+            XCTAssertEqual(expected.filter { $0 == .newline }.count, 3)
+            XCTAssertEqual(axAttempts, 0, "Both fresh and captured AX handlers must be bypassed: \(bundle)")
+            XCTAssertEqual(state.latestReusableTranscript, text, bundle)
+        }
+    }
+
     func testFocusChangeDuringDeliveryDelayPostsNoTextAndRetainsTranscript() {
         let state = deliveryState(bundleIdentifier: "com.t3tools.t3code")
         var queued: [() -> Void] = []
@@ -64,7 +91,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
     func testAppliedUnverifiedAXDoesNotClaimInsertedAtCursorOrRetryWholeTranscript() {
         for result: DictationInsertionResult in [.appliedUnverified, .partiallyApplied, .notApplied] {
-            let state = deliveryState(bundleIdentifier: "com.t3tools.t3code")
+            let state = deliveryState(bundleIdentifier: "com.example.Editor")
             var attempts = 0
             state.asyncDictationInsertionHandlerProvider = {
                 { _, completion in attempts += 1; completion(result); return false }
@@ -89,8 +116,8 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.latestReusableTranscript, "ADD שלום 👩‍💻\nsecond line")
     }
 
-    func testAutoPasteUncertifiedRichEditorRetainsTranscriptWithoutTyping() {
-        let state = deliveryState(bundleIdentifier: "com.t3tools.t3code")
+    func testAutoPasteUnknownEditorRetainsTranscriptWithoutTyping() {
+        let state = deliveryState(bundleIdentifier: "com.example.UnknownEditor")
         state.dictationInsertionHandlerProvider = { nil }
         state.asyncDictationInsertionHandlerProvider = { nil }
         var typed: [String] = []

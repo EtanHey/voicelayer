@@ -2960,11 +2960,16 @@ public final class VoiceState {
                     // as a Return and submits the line. They get TYPING below —
                     // see the AIDEV-NOTE there and TerminalPasteTargets.
                     let isTerminalTarget = TerminalPasteTargets.isTerminal(pasteTargetBundleID)
-                    if isTerminalTarget {
+                    // Etan's ruling: automatic delivery in these rich hosts uses the
+                    // working Shift+F5 typing route, never a whole-document AX write.
+                    let usesRichHostTyping = plan == .autoPaste
+                        && ["com.t3tools.t3code", "net.imput.helium"].contains(pasteTargetBundleID)
+                    let skipsAX = isTerminalTarget || usesRichHostTyping
+                    if skipsAX {
                         logDiagnostic("paste_ax_insert_skipped", details: [
                             "plan": String(describing: plan),
                             "targetApp": pasteTargetBundleID,
-                            "reason": "terminal_target",
+                            "reason": isTerminalTarget ? "terminal_target" : "rich_host_typed_delivery",
                         ])
                     }
                     let deliveredText = isTerminalTarget
@@ -2972,7 +2977,7 @@ public final class VoiceState {
                         : text
 
                     let freshInsertionHandler =
-                        !isTerminalTarget
+                        !skipsAX
                             && (plan == .autoPaste || (allowAXInsertion && capturedInsertionHandler == nil))
                             ? captureDictationInsertionHandler()
                             : nil
@@ -2994,7 +2999,7 @@ public final class VoiceState {
                         }
                     }
 
-                    if !isTerminalTarget, let capturedInsertionHandler {
+                    if !skipsAX, let capturedInsertionHandler {
                         let attempt = beginAXInsertion(
                             capturedInsertionHandler,
                             text: text,
@@ -3018,16 +3023,18 @@ public final class VoiceState {
                         return
                     }
 
-                    logDiagnostic("paste_ax_insert_miss", details: [
-                        "plan": String(describing: plan),
-                        "targetApp": pasteTargetBundleID,
-                        "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
-                        "attemptedFreshInsertion": boolString(freshInsertionHandler != nil),
-                        "axTrusted": boolString(accessibilityTrustChecker(false)),
-                    ])
-                    // New rich-editor typing needs native matched-prestate proof.
-                    // An AX miss alone never authorizes automatic global key events.
-                    if plan == .autoPaste, !isTerminalTarget {
+                    if !usesRichHostTyping {
+                        logDiagnostic("paste_ax_insert_miss", details: [
+                            "plan": String(describing: plan),
+                            "targetApp": pasteTargetBundleID,
+                            "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
+                            "attemptedFreshInsertion": boolString(freshInsertionHandler != nil),
+                            "axTrusted": boolString(accessibilityTrustChecker(false)),
+                        ])
+                    }
+                    // An AX miss in any other nonterminal is still insufficient
+                    // permission to dispatch global key events.
+                    if plan == .autoPaste, !skipsAX {
                         finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
                         return
                     }
@@ -3060,8 +3067,8 @@ public final class VoiceState {
                     //
                     // So the transcript is TYPED as printable text only, each line break sent
                     // as Shift+Return (SynthesizedTyping): no control character ever rides in
-                    // a key event. This route serves terminals and explicit re-paste;
-                    // automatic non-terminal AX misses retain the transcript above.
+                    // a key event. This route serves terminals, known rich-host automatic
+                    // delivery and explicit re-paste; other auto AX misses retain text above.
                     // There is no clipboard fallback anywhere, by design: a failed
                     // paste is recoverable with Shift+F5, a paste over his clipboard is not.
                     //
