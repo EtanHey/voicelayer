@@ -911,7 +911,12 @@ public struct SettingsView: View {
                     }
                 }
                 if let hotkeyListenerRestartLine {
-                    HotkeyListenerRestartLineView(line: hotkeyListenerRestartLine)
+                    HStack(alignment: .top) {
+                        HotkeyListenerRestartLineView(line: hotkeyListenerRestartLine)
+                        if !hotkeyListenerRestartLine.succeeded {
+                            SettingsCopyButton(text: hotkeyListenerRestartLine.text, label: "F5 listener error")
+                        }
+                    }
                 }
                 Button("Check shortcut") {
                     shortcutCheckRunning = true
@@ -926,6 +931,9 @@ public struct SettingsView: View {
                         message: shortcutCheckFeedback.message,
                         checkedAt: shortcutCheckFeedback.checkedAt
                     )
+                    if shortcutCheckFeedback.message != SettingsShortcutCheck.readyMessage {
+                        SettingsCopyButton(text: shortcutCheckFeedback.message, label: "shortcut check result")
+                    }
                 }
             }
 
@@ -976,6 +984,7 @@ public struct SettingsView: View {
                                     .foregroundStyle(result.succeeded ? Color.green : Color.red)
                             }
                             .font(.callout)
+                            SettingsCopyButton(text: result.failureCopyText, label: "F5 setup error")
                         } else {
                             Label {
                                 Text(SettingsRelaySetupFeedback.running(action))
@@ -992,6 +1001,10 @@ public struct SettingsView: View {
                         Text(VoiceBarHotkeyContract.remapPlainSummary)
                             .font(.caption).foregroundStyle(.secondary)
                     }
+                    Divider()
+                    LabeledContent("VoiceBar build", value: SettingsDiagnosticSummary.versionLabel())
+                    SettingsCopyButton(text: SettingsDiagnosticSummary.build(models: modelsStatus()),
+                                       label: "build and diagnostic summary")
                     Divider()
                     Text("Gestures").font(.headline)
                     LabeledContent("Single tap", value: VoiceBarHotkeyContract.singleTapDescription)
@@ -1213,17 +1226,33 @@ public struct SettingsView: View {
     }
 
     private var transcriptionTab: some View {
-        ModelsSettingsView(
-            state: modelsStatus(),
-            notice: performanceEffortNotice(),
-            residencyNotice: residencyNotice(),
-            onSelectResidency: onSelectResidency,
-            degradation: polishDegradation(),
-            onDismissDegradation: onDismissPolishDegradation,
-            processingPending: processingPending(),
-            processingNotice: processingNotice(),
-            onToggleProcessing: onToggleProcessing
-        )
+        VStack(spacing: 0) {
+            ModelsSettingsView(
+                state: modelsStatus(),
+                notice: performanceEffortNotice(),
+                residencyNotice: residencyNotice(),
+                onSelectResidency: onSelectResidency,
+                degradation: polishDegradation(),
+                onDismissDegradation: onDismissPolishDegradation,
+                processingPending: processingPending(),
+                processingNotice: processingNotice(),
+                onToggleProcessing: onToggleProcessing
+            )
+            VStack(alignment: .leading, spacing: 4) {
+                if let failure = SettingsCopyPayload.nonempty(residencyNotice()) {
+                    HStack { Text("Recognizer error"); SettingsCopyButton(text: failure, label: "recognizer error") }
+                }
+                if let failure = SettingsCopyPayload.nonempty(processingNotice()) {
+                    HStack { Text("Processing error"); SettingsCopyButton(text: failure, label: "processing error") }
+                }
+                if let degradation = polishDegradation() {
+                    HStack {
+                        Text("Punctuation warning")
+                        SettingsCopyButton(text: degradation.reason + "\n" + degradation.hint, label: "punctuation warning")
+                    }
+                }
+            }.font(.caption).padding(.horizontal).padding(.bottom, 8)
+        }
         .onAppear {
             onRefreshModelsStatus()
         }
@@ -1238,7 +1267,10 @@ public struct SettingsView: View {
                 Text("Voice is busy — wait for the current voice operation to finish")
                     .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
             } else if let failure = historyPlayback.failureMessage {
-                Text(failure).font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
+                HStack(alignment: .top) {
+                    Text(failure).font(.caption).foregroundStyle(.secondary)
+                    SettingsCopyButton(text: failure, label: "History playback error")
+                }.padding(.bottom, 8)
             }
 
             // AIDEV-NOTE: lane E (QA 2.2.25 C10). A `switch` here tore down and rebuilt the whole list on every
@@ -1445,6 +1477,7 @@ public struct SettingsView: View {
             Label("Saved on this Mac", systemImage: "internaldrive")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            SettingsCopyButton(text: SettingsDiagnosticSummary.historyMetadata(entry), label: "recording details")
             let attribution = [entry.inputDeviceLabel, entry.modelLabel, entry.performanceEffort?.displayName]
                 .compactMap { $0 }.joined(separator: " · ")
             if !attribution.isEmpty {
@@ -2174,6 +2207,7 @@ public struct SettingsView: View {
             Text(entry.canonical)
                 .font(.headline)
             Spacer()
+            SettingsCopyButton(text: entry.canonical, label: "term \(entry.canonical)")
             if isEditable {
                 if pendingDeleteCanonical == entry.canonical {
                     deleteDictionaryEntryButton(entry.canonical)
