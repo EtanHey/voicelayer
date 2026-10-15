@@ -243,7 +243,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     }
   });
 
-  function askOnRealQueue(beforeQueue?: Promise<void>) {
+  function askOnRealQueue(beforeQueue?: Promise<void>, afterPrompt?: Promise<void>) {
     const capture = Promise.withResolvers<string>();
     let prompt: ReturnType<typeof tts.playAudioNonBlocking> | undefined;
     const spies = [
@@ -253,10 +253,11 @@ describe("playback queue — P0-1 sequential playback", () => {
       spyOn(tts, "speak").mockImplementation(async (_text, options) => {
         if (beforeQueue) await beforeQueue;
         prompt = tts.playAudioNonBlocking(`${TEST_TMP}/fx1-prompt.mp3`, {
-          text: "Question", voice: "fixture", priority: "critical", nextState: "recording",
+          text: "Question", voice: "fixture", priority: "critical", durationMs: 1_000, nextState: "recording",
           onQueued: options?.onPlaybackQueued,
         });
         const playbackOutcome = await prompt.exited;
+        if (afterPrompt) await afterPrompt;
         return { displayText: "Question", engine: "edge-tts", voice: "fixture", playbackOutcome,
           audioArtifact: { bytes: new Uint8Array([1]), format: "mp3" } };
       }),
@@ -275,17 +276,79 @@ describe("playback queue — P0-1 sequential playback", () => {
     } };
   }
 
-  it("FX-1 timed-out synthesis releases admission and rejects its late queued player", async () => {
-    const synthesis = Promise.withResolvers<void>(); const native = globalThis.setTimeout;
-    let expire: (() => void) | undefined;
-    const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(((fn, ms, ...args) => {
+  function controlAskDeadlines() {
+    const native = globalThis.setTimeout, deadlines = new Map<number, () => void>();
+    const spy = spyOn(globalThis, "setTimeout").mockImplementation(((fn, ms, ...args) => {
       const timer = native(fn, ms, ...args);
-      if (ms === 180_000) expire = () => { clearTimeout(timer); fn(...args); };
+      if (ms === 180_000 || ms === 5_000) deadlines.set(ms, () => { clearTimeout(timer); fn(...args); });
       return timer;
     }) as typeof setTimeout);
+    return { fire: (ms: number) => {
+      const expire = deadlines.get(ms); expect(expire).toBeFunction(); expire!();
+    }, restore: () => spy.mockRestore() };
+  }
+
+  it("FX-1 prompt timeout releases admission within the cleanup bound while retry waits for physical exit", async () => {
+    const deadlines = controlAskDeadlines(), stalled = Promise.withResolvers<void>();
+    const ask = askOnRealQueue(undefined, stalled.promise);
+    let retry: ReturnType<typeof handleVoiceAsk> | undefined;
+    try {
+      await waitFor(() => playerMocks.length === 1, "timed-out prompt");
+      const foreign = tts.playAudioNonBlocking(`${TEST_TMP}/fx1-timeout-foreign.mp3`);
+      deadlines.fire(180_000); await Bun.sleep(0); deadlines.fire(5_000);
+      expect((await ask.request).isError).toBe(true);
+      expect(tts.isCaptureAdmissionReserved()).toBe(false);
+      expect((await ask.prompt.exited).reason).toBe("stopped");
+      retry = handleVoiceAsk({ message: "Retry question" });
+      await Bun.sleep(10);
+      expect(playerMocks).toHaveLength(1);
+      expect(ask.captureSpy).not.toHaveBeenCalled();
+      stalled.resolve(); playerMocks[0].resolveExit();
+      await waitFor(() => playerMocks.length === 2, "preserved foreign speech");
+      expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/fx1-timeout-foreign.mp3`);
+      playerMocks[1].resolveExit(); await foreign.exited;
+      await waitFor(() => playerMocks.length === 3, "retry prompt after reap");
+      playerMocks[2].resolveExit();
+      await waitFor(() => ask.captureSpy.mock.calls.length === 1, "retry capture");
+      ask.capture.resolve("raw retry answer"); expect((await retry).isError).toBeUndefined();
+    } finally { stalled.resolve(); await ask.dispose(); await retry; deadlines.restore(); }
+  });
+
+  for (const duringDecode of [false, true]) {
+    it(`FX-1 endpoint seek emits only the validated handoff after ${duringDecode ? "decoder" : "player"} exit`, async () => {
+      holdDecoderExits = duringDecode; holdKilledDecoderExits = duringDecode;
+      const ask = askOnRealQueue();
+      try {
+        await waitFor(() => duringDecode ? decoderMocks.length === 1 : playerMocks.length === 1, "seek child");
+        expect(tts.seekPlayback(1_000).outcome).toBe("accept");
+        expect(broadcasts.filter((event: any) => event.next_state === "recording")).toHaveLength(0);
+        if (duringDecode) decoderMocks[0].resolveExit(); else playerMocks[0].resolveExit();
+        await waitFor(() => ask.captureSpy.mock.calls.length === 1, "seek capture");
+        expect(broadcasts.filter((event: any) => event.next_state === "recording")).toEqual([
+          { type: "state", state: "idle", source: "playback", next_state: "recording" },
+        ]);
+      } finally { await ask.dispose(); }
+    });
+  }
+
+  it("FX-1 endpoint seek after prompt timeout cannot emit a stale recording hint", async () => {
+    const deadlines = controlAskDeadlines(), stalled = Promise.withResolvers<void>();
+    const ask = askOnRealQueue(undefined, stalled.promise);
+    try {
+      await waitFor(() => playerMocks.length === 1, "expired seek prompt");
+      deadlines.fire(180_000); await Bun.sleep(0); deadlines.fire(5_000);
+      expect((await ask.request).isError).toBe(true);
+      tts.seekPlayback(1_000); playerMocks[0].resolveExit(); await Bun.sleep(10);
+      expect(ask.captureSpy).not.toHaveBeenCalled();
+      expect(broadcasts.filter((event: any) => event.next_state === "recording")).toHaveLength(0);
+    } finally { stalled.resolve(); await ask.dispose(); deadlines.restore(); }
+  });
+
+  it("FX-1 timed-out synthesis releases admission and rejects its late queued player", async () => {
+    const synthesis = Promise.withResolvers<void>(), deadlines = controlAskDeadlines();
     const ask = askOnRealQueue(synthesis.promise);
     try {
-      await Bun.sleep(0); expect(expire).toBeFunction(); expire?.();
+      await Bun.sleep(0); deadlines.fire(180_000);
       expect((await ask.request).isError).toBe(true);
       const foreign = tts.playAudioNonBlocking(`${TEST_TMP}/fx1-after-timeout.mp3`);
       expect(playerMocks).toHaveLength(1);
@@ -293,7 +356,7 @@ describe("playback queue — P0-1 sequential playback", () => {
       expect(playerMocks).toHaveLength(1);
       expect(ask.captureSpy).not.toHaveBeenCalled();
       playerMocks[0].resolveExit(); await foreign.exited;
-    } finally { synthesis.resolve(); await ask.dispose(); timerSpy.mockRestore(); }
+    } finally { synthesis.resolve(); await ask.dispose(); deadlines.restore(); }
   });
 
   it("FX-1 a second Ask cannot clear an active Ask's input", async () => {
@@ -355,26 +418,20 @@ describe("playback queue — P0-1 sequential playback", () => {
   }
 
   it("FX-1 an unconfirmed exit fails within its own bound without capture or a late handoff", async () => {
-    const nativeTimeout = globalThis.setTimeout;
-    let expire: (() => void) | undefined;
-    const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(((fn, ms, ...args) => {
-      const timer = nativeTimeout(fn, ms, ...args);
-      if (ms === 5_000) expire = () => { clearTimeout(timer); fn(...args); };
-      return timer;
-    }) as typeof setTimeout);
+    const deadlines = controlAskDeadlines();
     const ask = askOnRealQueue();
     try {
       await waitFor(() => playerMocks.length === 1, "prompt");
       tts.cancelPlayback({ id: ask.prompt.id });
       await Bun.sleep(10);
-      expect(expire).toBeFunction(); expire?.();
+      deadlines.fire(5_000);
       const result = await ask.request;
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("exit");
       expect(ask.captureSpy).not.toHaveBeenCalled();
       const before = broadcasts.length; playerMocks[0].resolveExit(); await Bun.sleep(10);
       expect(broadcasts.slice(before).some((event: any) => event.next_state === "recording")).toBe(false);
-    } finally { await ask.dispose(); timerSpy.mockRestore(); }
+    } finally { await ask.dispose(); deadlines.restore(); }
   });
 
   it("times out polling independently of the mocked playback clock", async () => {

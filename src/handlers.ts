@@ -591,6 +591,7 @@ export async function handleConverse(
   const inputAbortController = new AbortController();
   let captureAdmission: CaptureAdmission | undefined;
   const promptPlayers: QueuedPlaybackHandle[] = [];
+  let promptTimeoutCleanup: Promise<void> | undefined;
   let admissionFailed = false;
   let noSpeech = false;
   let captureArchivePath: string | null = null;
@@ -661,12 +662,20 @@ export async function handleConverse(
       const abortError = new Error(
         `voice_ask ${stage} stage aborted after hard timeout (${timeoutMs}ms)`,
       );
-      if (stage === "playback-wait" || stage === "prompt" || stage === "capture-start") {
+      if (stage === "prompt") {
+        inputAbortController.abort(abortError);
+        for (const handle of promptPlayers) cancelPlayback({ id: handle.id });
+        promptTimeoutCleanup = waitForPlayerExit(promptPlayers)
+          .catch(error => console.error(`[voicelayer] Prompt timeout cleanup: ${String(error)}`))
+          .finally(() => captureAdmission?.release());
+        // The queue retains physical ownership if this bounded cleanup expires.
+        void promptTimeoutCleanup.then(() => settleTimeout(stage, timeoutMs));
+        return;
+      }
+      if (stage === "playback-wait" || stage === "capture-start") {
         // No mic has opened, so there cannot be captured audio to publish.
         settleTimeout(stage, timeoutMs);
         inputAbortController.abort(abortError);
-        // No admitted prompt exists to reap; reject any late queue callback.
-        if (stage === "prompt" && promptPlayers.length === 0) captureAdmission?.release();
         return;
       }
 
@@ -709,7 +718,7 @@ export async function handleConverse(
       captureAudioArtifact: true,
       onPlaybackQueued: handle => {
         promptPlayers.push(handle);
-        if (!captureAdmission!.admit(handle)) {
+        if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle)) {
           admissionFailed = true;
           cancelPlayback({ id: handle.id });
         }
@@ -832,7 +841,7 @@ export async function handleConverse(
 
   // P0-2: catch pipeline errors cleanly; keep active recording UI intact
   // when v1 refuses voice_ask before question TTS.
-  const flowPromise = withHistoryPlaybackSuspended(converseFlow).finally(() => captureAdmission?.release());
+  const flowPromise = withHistoryPlaybackSuspended(converseFlow).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
   operationLifecycle?.deferReleaseUntil(flowPromise);
   try {
     const result = await Promise.race([flowPromise, timeoutPromise]);

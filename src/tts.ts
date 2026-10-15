@@ -925,6 +925,9 @@ class PlaybackQueueManager {
     return {
       admit: handle => {
         if (released || !this.jobs.has(handle.id) || this.jobs.get(handle.id)!.completed) return false;
+        // The handler owns this handoff on every completion path, even after release.
+        const job = this.jobs.get(handle.id)!;
+        if (job.metadata) job.metadata.nextState = undefined;
         owned.add(handle.id); this.processNext(); return true;
       },
       release: () => {
@@ -1362,7 +1365,7 @@ class PlaybackQueueManager {
     this.current = null;
     if (this.depth() === 0) {
       broadcastPlaybackIdleIfSpeakerClear(
-        succeeded && !this.captureAdmission?.has(job.id) ? job.metadata?.nextState : undefined,
+        succeeded ? job.metadata?.nextState : undefined,
       );
     }
     this.emitQueueSnapshot();
