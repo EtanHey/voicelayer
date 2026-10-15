@@ -167,7 +167,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     m => {
       const pattern = new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "") + "y");
       pattern.lastIndex = m.index;
-      const replaced = m.input.replace(pattern, rule.replacement);
+      const replaced = pattern[Symbol.replace](m.input, rule.replacement);
       return replaced.slice(m.index, replaced.length - (m.input.length - m.index - m[0].length));
     }, true);
   edit(/[A-Za-z0-9\u0590-\u05ff_.-]+/gu, m => /[\u0590-\u05ff]/.test(m[0]) ? m[0] : undefined, true);

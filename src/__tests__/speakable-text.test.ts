@@ -76,6 +76,18 @@ test("only explicit versions expand; Edge leaves initialisms for its frontend", 
   expect(projectSpeakableText("MP3 S3 API XYZ OK", [], "clone").speechText).toBe("M P three S three A P I XYZ OK");
 });
 
+test("sticky replacement preserves a nonzero match offset on Bun 1.3.9", () => {
+  // Bun 1.3.9 String.replace ignores sticky lastIndex; RegExp @@replace honors it.
+  const input = "Read API.";
+  const sticky = /API/y;
+  sticky.lastIndex = 5;
+  expect(sticky[Symbol.replace](input, "custom")).toBe("Read custom.");
+  for (const engine of ["edge", "clone"] as const) {
+    expect(projectSpeakableText(input, [{pattern: /API/g, replacement: "custom"}], engine).speechText)
+      .toBe("Read custom.");
+  }
+});
+
 test("dictionary rules win, including phrases and chained replacements", () => {
   const rules = [{pattern: /\bMP3 audio\b/gi, replacement: "custom voice"},
     {pattern: /\bcustom\b/gi, replacement: "Chosen"}, {pattern: /\bAPI\b/g, replacement: "ay pee eye"}];
