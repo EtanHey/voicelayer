@@ -108,15 +108,15 @@ describe("tts priority queue", () => {
     } catch {}
   });
 
-  it("critical playback barges in and discards stale queued low-priority items", async () => {
+  it("critical playback preempts the active owner and preserves unrelated queued items", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
 
-    playAudioNonBlocking(`${TEST_TMP}/low-current.mp3`, {
+    const current = playAudioNonBlocking(`${TEST_TMP}/low-current.mp3`, {
       text: "low current",
       voice: "voice",
       priority: "low",
     });
-    playAudioNonBlocking(`${TEST_TMP}/low-queued.mp3`, {
+    const queued = playAudioNonBlocking(`${TEST_TMP}/low-queued.mp3`, {
       text: "low queued",
       voice: "voice",
       priority: "low",
@@ -134,13 +134,23 @@ describe("tts priority queue", () => {
     await Bun.sleep(30);
 
     expect(playerMocks[0].killed).toBe(true);
+    expect(await current.exited).toMatchObject({ status: "interrupted", reason: "barge-in" });
     expect(playerMocks.length).toBe(2);
     expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/critical.mp3`);
 
     playerMocks[1].resolveExit();
+    await Bun.sleep(30);
+    expect(playerMocks.length).toBe(3);
+    expect(playerMocks.map(player => player.cmd.at(-1))).toEqual([
+      `${TEST_TMP}/low-current.mp3`, `${TEST_TMP}/critical.mp3`, `${TEST_TMP}/low-queued.mp3`,
+    ]);
+    expect(playerMocks[2].cmd).toContain(`${TEST_TMP}/low-queued.mp3`);
+    expect(playerMocks[2].killed).toBe(false);
+    playerMocks[2].resolveExit();
+    expect((await queued.exited).status).toBe("completed");
     await awaitCurrentPlayback();
 
-    expect(playerMocks.length).toBe(2);
+    expect(playerMocks.length).toBe(3);
     const queueEvents = broadcasts.filter((event: any) => event.type === "queue");
     expect(queueEvents.at(-1)).toMatchObject({ type: "queue", depth: 0 });
   });

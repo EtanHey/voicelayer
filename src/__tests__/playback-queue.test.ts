@@ -90,6 +90,7 @@ describe("playback queue — P0-1 sequential playback", () => {
   let queueEvents: string[];
   let decoderMocks: MockDecoder[];
   let holdDecoderExits: boolean;
+  let holdKilledDecoderExits: boolean;
   let synchronousDecodeCount: number;
   let decoderSpawnOptions: unknown;
 
@@ -111,6 +112,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     queueEvents = [];
     decoderMocks = [];
     holdDecoderExits = false;
+    holdKilledDecoderExits = false;
     synchronousDecodeCount = 0;
     decoderSpawnOptions = undefined;
 
@@ -186,7 +188,7 @@ describe("playback queue — P0-1 sequential playback", () => {
           ]).stream(),
           kill: () => {
             decoder.killed = true;
-            resolveExit();
+            if (!holdKilledDecoderExits) resolveExit();
           },
         };
       }
@@ -726,6 +728,78 @@ describe("playback queue — P0-1 sequential playback", () => {
     await waitFor(() => playerMocks.length === 2, "second prepared player");
     playerMocks[1].resolveExit();
     await second.exited;
+  });
+
+  it("PLAYER0 B0-COLLATERAL: scoped prompt cancellation preserves another agent's queued speech", async () => {
+    const tts = await import("../tts");
+    const prompt = tts.playAudioNonBlocking(`${TEST_TMP}/pq-owned-prompt.mp3`);
+    await waitFor(() => playerMocks.length === 1, "prompt player");
+    const other = tts.playAudioNonBlocking(`${TEST_TMP}/pq-other-agent.mp3`);
+    let otherSettled = false; void other.exited.then(() => { otherSettled = true; });
+    const cancel = tts.cancelPlayback;
+    expect(cancel({ id: prompt.id })).toBe(true);
+    expect(await prompt.exited).toMatchObject({ status: "interrupted", reason: "stopped" });
+    await Bun.sleep(5);
+    expect(otherSettled).toBe(false);
+    playerMocks[0].resolveExit();
+    await waitFor(() => playerMocks.length === 2, "unrelated player");
+    playerMocks[1].resolveExit(); expect((await other.exited).status).toBe("completed");
+  });
+
+  it("PLAYER0 player exit is distinct from logical Stop completion", async () => {
+    const tts = await import("../tts");
+    const h = tts.playAudioNonBlocking(`${TEST_TMP}/pq-reap.mp3`);
+    await waitFor(() => playerMocks.length === 1, "owned player");
+    let reaped = false; void h.playerExited.then(() => { reaped = true; });
+    let attemptExited = false; void h.waitForPlayerExit().then(() => { attemptExited = true; });
+    tts.stopPlayback(); await h.exited; await Bun.sleep(5);
+    expect(reaped).toBe(false); expect(attemptExited).toBe(false);
+    playerMocks[0].resolveExit();
+    await h.playerExited; await Bun.sleep(5); expect(reaped).toBe(true); expect(attemptExited).toBe(true);
+  });
+
+  it("PLAYER0 cancelled decoder remains owned until reaped and cannot start a player", async () => {
+    const tts = await import("../tts");
+    holdDecoderExits = true; holdKilledDecoderExits = true;
+    const h = tts.playAudioNonBlocking(`${TEST_TMP}/pq-decoder-reap.mp3`, { text: "Prompt", voice: "T" });
+    await waitFor(() => decoderMocks.length === 1, "held decoder");
+    let reaped = false; void h.playerExited.then(() => { reaped = true; });
+    tts.stopPlayback(); await h.exited; await Bun.sleep(5);
+    expect(decoderMocks[0].killed).toBe(true);
+    expect(reaped).toBe(false); expect(tts.getPlaybackQueueDepth()).toBeGreaterThan(0);
+    decoderMocks[0].resolveExit(); await h.playerExited;
+    expect(playerMocks).toHaveLength(0);
+  });
+
+  it("PLAYER0 foreign and stale Replay-generation cancels are no-ops", async () => {
+    const tts = await import("../tts");
+    const h = tts.playAudioNonBlocking(`${TEST_TMP}/pq-generation.mp3`);
+    await waitFor(() => playerMocks.length === 1, "first player");
+    const stale = { id: h.id, generation: h.generation };
+    const cancel = tts.cancelPlayback;
+    expect(cancel({ id: "foreign-utterance" })).toBe(false);
+    expect(tts.restartPlayback()).toBe(true);
+    expect(cancel(stale)).toBe(false);
+    playerMocks[0].resolveExit();
+    await waitFor(() => playerMocks.length === 2, "replayed player");
+    expect(cancel(stale)).toBe(false);
+    expect(cancel({ id: h.id, generation: h.generation })).toBe(true);
+    playerMocks[1].resolveExit(); await h.exited;
+    expect(cancel({ id: h.id })).toBe(false);
+  });
+
+  it("PLAYER0 critical barge-in preserves unrelated pending jobs", async () => {
+    const tts = await import("../tts");
+    const current = tts.playAudioNonBlocking(`${TEST_TMP}/pq-preempt-current.mp3`);
+    await waitFor(() => playerMocks.length === 1, "current player");
+    const other = tts.playAudioNonBlocking(`${TEST_TMP}/pq-preempt-other.mp3`);
+    let settled = false; void other.exited.then(() => { settled = true; });
+    const critical = tts.playAudioNonBlocking(`${TEST_TMP}/pq-preempt-critical.mp3`, { text: "Critical", voice: "T", priority: "critical" });
+    await current.exited; await Bun.sleep(5); expect(settled).toBe(false);
+    playerMocks[0].resolveExit(); await waitFor(() => playerMocks.length === 2, "critical player");
+    playerMocks[1].resolveExit(); await critical.exited;
+    await waitFor(() => playerMocks.length === 3, "preserved player");
+    playerMocks[2].resolveExit(); await other.exited;
   });
 
   it("interrupts active playback before decoding a critical barge-in", async () => {

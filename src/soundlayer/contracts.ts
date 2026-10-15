@@ -1,4 +1,5 @@
 import type { SilenceMode } from "../vad";
+import type { PlaybackScope, QueuedPlaybackHandle } from "../tts/playback-lifecycle";
 import type {
   PlaybackOutcomeEvent,
   PlaybackPriority,
@@ -39,6 +40,8 @@ export interface TextToSpeechOptions {
   voice?: string;
   waitForPlayback?: boolean;
   onPlaybackStart?: (startedAtMs: number) => void;
+  /** Called before decoder/player admission, including for blocking prompts. */
+  onPlaybackQueued?: (handle: QueuedPlaybackHandle) => void;
   onPlaybackComplete?: (outcome: PlaybackOutcomeEvent) => void;
   /**
    * Fail-closed gate: when true, a requested cloned voice that is not a
@@ -95,6 +98,7 @@ export interface PlaybackMetadata {
     source?: "tts" | "command";
   };
   onStarted?: (startedAtMs: number) => void;
+  onQueued?: (handle: QueuedPlaybackHandle) => void;
   onCompleted?: (outcome: PlaybackOutcomeEvent) => void;
 }
 
@@ -178,6 +182,8 @@ export interface MicCaptureOptions {
 
 export interface CancellationController {
   stopPlayback(): boolean;
+  /** Legacy adapters without scoped cancellation cannot enable barge-in. */
+  cancelPlayback?(scope: PlaybackScope): boolean;
   consumeRecordingCancel(): boolean;
 }
 

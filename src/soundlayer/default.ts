@@ -7,6 +7,7 @@ import { VoiceLayerSTTBackendSelector } from "../stt";
 import {
   QueuedPlaybackController,
   stopPlayback,
+  cancelPlayback,
   VoiceLayerTextToSpeechBackend,
 } from "../tts";
 import { SileroVoiceActivityDetector } from "../vad";
@@ -22,6 +23,8 @@ import type {
 } from "./contracts";
 
 class VoiceLayerCancellationController implements CancellationController {
+  cancelPlayback(scope: Parameters<typeof cancelPlayback>[0]): boolean { return cancelPlayback(scope); }
+
   stopPlayback(): boolean {
     return stopPlayback();
   }

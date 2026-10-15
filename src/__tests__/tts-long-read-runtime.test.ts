@@ -7,7 +7,7 @@ import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
-import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback } from "../tts";
+import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, playAudioNonBlocking } from "../tts";
 import { handleSocketCommand } from "../socket-handlers";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
@@ -185,6 +185,16 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     });
     const ack = await handleSocketCommand({ cmd: "cancel" }); await h.done;
     expect(ack).toMatchObject({ outcome: "accept" }); expect(players).toHaveLength(0); expect(loadHistory()).toHaveLength(0);
+  });
+
+  it("PLAYER0 new speakLongRead cannot stop another agent's active or queued job", async () => {
+    const other = playAudioNonBlocking("foreign-current.mp3"); await playerBarrier.at(0);
+    const pending = playAudioNonBlocking("foreign-pending.mp3");
+    let skipped = false; void pending.exited.then(o => { skipped = o.status !== "completed"; });
+    start("edge", "New long read."); await fixtureCheckpoint();
+    expect(players[0].killed).toBe(false); expect(skipped).toBe(false);
+    players[0].exit.resolve(0); await other.exited;
+    await playerBarrier.at(1); players[1].exit.resolve(0); await pending.exited;
   });
 
   it("new long read preempts the old generation and stale results never restart it", async () => {
