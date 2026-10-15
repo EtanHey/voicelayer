@@ -92,6 +92,33 @@ public typealias AsyncDictationInsertionHandler = (
     _ completion: @escaping (DictationInsertionResult) -> Void
 ) -> Bool
 
+/// Delivery-time evidence about one focused element, without its private value.
+public struct DictationFocusedTargetEligibility {
+    public let processIdentifier: pid_t
+    public let role: String?
+    public let isEditable: Bool
+    public let isSecure: Bool
+    /// Revalidates the captured element's identity and eligibility before typing.
+    public let matchesCurrentFocus: () -> Bool
+
+    public init(
+        processIdentifier: pid_t, role: String?, isEditable: Bool, isSecure: Bool,
+        matchesCurrentFocus: @escaping () -> Bool
+    ) {
+        self.processIdentifier = processIdentifier
+        self.role = role
+        self.isEditable = isEditable
+        self.isSecure = isSecure
+        self.matchesCurrentFocus = matchesCurrentFocus
+    }
+
+    public func permitsTyping(into processIdentifier: pid_t) -> Bool {
+        self.processIdentifier == processIdentifier
+            && ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? "")
+            && isEditable && !isSecure && matchesCurrentFocus()
+    }
+}
+
 public struct RecentTranscriptionEntry: Codable, Equatable {
     public var text: String
     public var recordingPath: String?
@@ -743,6 +770,9 @@ public final class VoiceState {
 
     /// Completion-aware production seam. The completion must run on the main thread.
     public var asyncDictationInsertionHandlerProvider: () -> AsyncDictationInsertionHandler? = { nil }
+
+    /// Read only at delivery, never while starting capture or handling a hotkey.
+    public var focusedTargetEligibilityProvider: () -> DictationFocusedTargetEligibility? = { nil }
 
     /// Test seam for clipboard writes used by fallback paste.
     public var pasteboardWriter: (String) -> Void = { string in
@@ -1399,7 +1429,8 @@ public final class VoiceState {
                 useSettingsHistoryTarget: usesSettingsHistoryTarget
             ),
             plan: .repaste,
-            allowAXInsertion: usesSettingsHistoryTarget
+            allowAXInsertion: usesSettingsHistoryTarget,
+            requiresEditableTarget: source != "shift_f5"
         )
     }
 
@@ -2854,6 +2885,7 @@ public final class VoiceState {
         for targetApp: NSRunningApplication?,
         plan: VoicePastePlan,
         allowAXInsertion: Bool = false,
+        requiresEditableTarget: Bool = false,
         operationID: UUID? = nil
     ) {
         let recordStartTargetApp = frontmostAppOnRecordStart
@@ -2964,6 +2996,8 @@ public final class VoiceState {
                     // working Shift+F5 typing route, never a whole-document AX write.
                     let usesRichHostTyping = ["com.t3tools.t3code", "net.imput.helium"].contains(pasteTargetBundleID)
                     let skipsAX = isTerminalTarget || usesRichHostTyping
+                    let typingEligibility = requiresEditableTarget && !skipsAX
+                        ? focusedTargetEligibilityProvider() : nil
                     if skipsAX {
                         logDiagnostic("paste_ax_insert_skipped", details: [
                             "plan": String(describing: plan),
@@ -3036,6 +3070,13 @@ public final class VoiceState {
                     if plan == .autoPaste, !skipsAX {
                         finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
                         return
+                    }
+                    if requiresEditableTarget, !skipsAX {
+                        guard frontmostAppProvider()?.processIdentifier == pasteTarget.processIdentifier,
+                              typingEligibility?.permitsTyping(into: pasteTarget.processIdentifier) == true else {
+                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                            return
+                        }
                     }
                     // AIDEV-NOTE: Dictation NEVER touches the pasteboard. This is the third
                     // attempt at this line and the first that does not trade one of Etan's

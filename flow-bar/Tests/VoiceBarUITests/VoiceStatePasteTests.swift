@@ -15,6 +15,161 @@ final class VoiceStatePasteTests: XCTestCase {
         return state
     }
 
+    func testSettingsHistoryAXDeclineNeedsEditableSameElementEligibility() {
+        let text = "ADD שלום 👩‍💻\nsecond line"
+        for reason in ["editable", "file_list", "readonly", "secure", "unknown", "wrong_pid", "focus_changed"] {
+            for hasAXHandler in [true, false] {
+                let state = deliveryState(bundleIdentifier: "com.apple.finder")
+                var focused = true
+                var typed: [String] = []
+                state.focusedTargetEligibilityProvider = {
+                    guard reason != "unknown" else { return nil }
+                    return DictationFocusedTargetEligibility(
+                        processIdentifier: reason == "wrong_pid" ? 62626 : 51515,
+                        role: reason == "file_list" ? "AXOutline" : "AXTextField",
+                        isEditable: reason != "readonly", isSecure: reason == "secure",
+                        matchesCurrentFocus: { focused }
+                    )
+                }
+                state.asyncDictationInsertionHandlerProvider = {
+                    guard hasAXHandler else { return nil }
+                    return { _, _ in
+                        if reason == "focus_changed" { focused = false }
+                        return false // No setter and no completion.
+                    }
+                }
+                if !hasAXHandler && reason == "focus_changed" { focused = false }
+                state.textTypingHandler = { typed.append($0); return true }
+                state.pasteboardWriter = { _ in XCTFail("Do not touch clipboard: \(reason)") }
+                state.handleEvent(["type": "transcription", "text": text])
+                state.captureSettingsHistoryPasteTarget()
+                state.repasteTranscript(text, source: "settings_history")
+                XCTAssertEqual(typed, reason == "editable" ? [text] : [], "\(reason), AX: \(hasAXHandler)")
+                XCTAssertEqual(state.latestReusableTranscript, text, reason)
+                if reason != "editable" {
+                    XCTAssertTrue(state.confirmationText?.contains("Not inserted") == true, reason)
+                    XCTAssertTrue(state.confirmationText?.contains("Shift+F5") == true, reason)
+                }
+            }
+        }
+    }
+
+    func testOtherExplicitEntryPointsRetainUnknownFocusWhileShiftF5IsUnchanged() {
+        let text = "ADD שלום 👩‍💻\nsecond line"
+        for source in ["context_menu_latest", "context_menu_history", "menu_bar", "bar_history", "local_control", "unknown", "shift_f5"] {
+            let state = deliveryState(bundleIdentifier: "com.example.Editor")
+            var typed: [String] = []
+            state.focusedTargetEligibilityProvider = {
+                if source == "shift_f5" { XCTFail("Shift+F5 must not probe eligibility") }
+                return nil
+            }
+            state.textTypingHandler = { typed.append($0); return true }
+            state.pasteboardWriter = { _ in XCTFail("Keep clipboard") }
+            state.repasteTranscript(text, source: source)
+            XCTAssertEqual(typed, source == "shift_f5" ? [text] : [], source)
+        }
+    }
+
+    func testExplicitDeliveryRejectsPIDChangeDuringDelayAndKeepsAllWords() {
+        for source in ["settings_history", "context_menu_history"] {
+            let state = deliveryState(bundleIdentifier: "com.example.Editor")
+            let text = "ADD שלום 👩‍💻\nsecond line"
+            var queued: [() -> Void] = []
+            state.pasteScheduler = { _, work in queued.append(work) }
+            state.focusedTargetEligibilityProvider = {
+                DictationFocusedTargetEligibility(processIdentifier: 51515, role: "AXTextField",
+                                                   isEditable: true, isSecure: false, matchesCurrentFocus: { true })
+            }
+            state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }
+            state.textTypingHandler = { _ in XCTFail("Changed PID must not receive text"); return false }
+            state.pasteboardWriter = { _ in XCTFail("Keep clipboard") }
+            state.handleEvent(["type": "transcription", "text": text])
+            state.repasteTranscript(text, source: source)
+            queued.removeFirst()()
+            state.frontmostAppProvider = { FakeRunningApplication(bundleIdentifier: "com.example.Editor", processIdentifier: 62626) }
+            queued.removeFirst()()
+            XCTAssertEqual(state.latestReusableTranscript, text)
+            XCTAssertTrue(state.confirmationText?.contains("Not inserted") == true, source)
+        }
+    }
+
+    func testKnownRichHostsAndEveryTerminalBypassNewEligibilityForAllDeliveryPlans() {
+        let text = "ADD שלום 👩‍💻\nsecond line"
+        for bundle in TerminalPasteTargets.bundleIdentifiers.union(["com.t3tools.t3code", "net.imput.helium"]) {
+            let state = deliveryState(bundleIdentifier: bundle)
+            var typed: [String] = []
+            state.focusedTargetEligibilityProvider = { XCTFail("Preserve known host: \(bundle)"); return nil }
+            state.textTypingHandler = { typed.append($0); return true }
+            state.pasteboardWriter = { _ in XCTFail("Keep clipboard: \(bundle)") }
+            state.record()
+            state.handleEvent(["type": "transcription", "text": text])
+            state.repasteTranscript(text, source: "settings_history")
+            state.repasteLastTranscript(source: "shift_f5")
+            state.repasteTranscript(text, source: "context_menu_history")
+            XCTAssertEqual(typed, [text, text, text, text], bundle)
+            XCTAssertEqual(state.latestReusableTranscript, text, bundle)
+            if TerminalPasteTargets.isTerminal(bundle) { XCTAssertEqual(state.confirmationText, text, bundle) }
+        }
+    }
+
+    func testAutomaticMissStillRetainsEvenWithEditableEligibility() {
+        let state = deliveryState(bundleIdentifier: "com.example.Editor")
+        state.focusedTargetEligibilityProvider = {
+            DictationFocusedTargetEligibility(processIdentifier: 51515, role: "AXTextField",
+                                               isEditable: true, isSecure: false, matchesCurrentFocus: { true })
+        }
+        state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }
+        state.textTypingHandler = { _ in XCTFail("Auto miss is not a manual request"); return false }
+        state.record()
+        state.handleEvent(["type": "transcription", "text": "retain complete text"])
+        XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
+        XCTAssertEqual(state.latestReusableTranscript, "retain complete text")
+    }
+
+    func testSettingsHistoryPossibleWriteNeverFallsThroughEvenWithEditableEligibility() {
+        for result: DictationInsertionResult in [.notApplied, .appliedUnverified, .partiallyApplied, .verified] {
+            for started in [true, false] {
+                let state = deliveryState(bundleIdentifier: "com.example.Editor")
+                var attempts = 0
+                state.focusedTargetEligibilityProvider = {
+                    DictationFocusedTargetEligibility(processIdentifier: 51515, role: "AXTextField",
+                                                       isEditable: true, isSecure: false, matchesCurrentFocus: { true })
+                }
+                state.asyncDictationInsertionHandlerProvider = { { _, completion in
+                    attempts += 1
+                    completion(result)
+                    return started
+                } }
+                state.textTypingHandler = { _ in XCTFail("Completion consumes the attempt: \(result)"); return false }
+                state.pasteboardWriter = { _ in XCTFail("Keep clipboard") }
+                state.repasteTranscript("preserve all words", source: "settings_history")
+                XCTAssertEqual(attempts, 1)
+            }
+        }
+    }
+
+    func testFinderDeliveryRetainsTranscriptAndSelectionAfterRecordStartInT3() {
+        let state = deliveryState(bundleIdentifier: "com.t3tools.t3code")
+        let finder = FakeRunningApplication(bundleIdentifier: "com.apple.finder", processIdentifier: 62626)
+        let text = "Okay, yeah, it went to the cursor for some reason, let me go somewhere else."
+        let selectedFile = "disposable-fixture-file"
+        var selection = selectedFile
+        state.asyncDictationInsertionHandlerProvider = { { _, _ in false } }
+        state.focusedTargetEligibilityProvider = {
+            DictationFocusedTargetEligibility(processIdentifier: 62626, role: "AXOutline",
+                                               isEditable: false, isSecure: false, matchesCurrentFocus: { true })
+        }
+        state.textTypingHandler = { _ in selection = "changed"; XCTFail("Do not navigate Finder"); return true }
+        state.pasteboardWriter = { _ in XCTFail("Keep clipboard") }
+        state.record()
+        state.frontmostAppProvider = { finder }
+        state.handleEvent(["type": "transcription", "text": text])
+        XCTAssertEqual(selection, selectedFile)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
+        XCTAssertEqual(state.latestReusableTranscript, text)
+        XCTAssertTrue(state.confirmationText?.contains("Shift+F5") == true)
+    }
+
     func testShiftF5T3MultilineRecoveryKeepsExistingTypedDelivery() {
         let state = deliveryState(bundleIdentifier: "com.t3tools.t3code")
         let text = "ship it @main\nnext\n/plan"
@@ -1578,6 +1733,12 @@ final class VoiceStatePasteTests: XCTestCase {
         state.captureSettingsHistoryPasteTarget()
         state.repasteTranscript("streaming transcript", source: "settings_history")
         frontmostApp = otherApp
+        state.focusedTargetEligibilityProvider = {
+            DictationFocusedTargetEligibility(
+                processIdentifier: otherApp.processIdentifier, role: "AXTextField",
+                isEditable: true, isSecure: false, matchesCurrentFocus: { true }
+            )
+        }
         state.repasteTranscript("typed transcript")
 
         // Since 2026-09-13 the non-AX path TYPES; it never touches the pasteboard.
