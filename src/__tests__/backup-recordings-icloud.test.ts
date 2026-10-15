@@ -117,7 +117,8 @@ test("missing iCloud directory skips without creating a lookalike", () => {
 });
 
 test("exclusive publication never overwrites a file appearing during transfer", () => {
-  recording();
+  const folder = recording();
+  rmSync(join(folder, "meta.json")); // target audio regardless of directory order
   writeFileSync(join(bin, "rsync"), `#!/usr/bin/env python3
 import pathlib, subprocess, sys
 subprocess.run(["/bin/cp", "-p", sys.argv[-2], sys.argv[-1]], check=True)
@@ -139,6 +140,7 @@ test("copies nested session sidecars with the same relative tree", () => {
 for (const [label, payload] of [["short", "XX"], ["same-size wrong bytes", "X".repeat(14)]] as const) {
   test(`rejects a successful rsync with ${label} payload`, () => {
     const folder = recording();
+    rmSync(join(folder, "meta.json")); // keep the injected payload audio-sized
     writeFileSync(join(bin, "rsync"), `#!/usr/bin/env python3
 import os, pathlib, sys
 src, staged = map(pathlib.Path, sys.argv[-2:])
@@ -154,7 +156,8 @@ os.utime(staged, ns=(st.st_atime_ns, st.st_mtime_ns))
 }
 
 test("rejects a source changed during the byte comparison", () => {
-  recording();
+  const folder = recording();
+  rmSync(join(folder, "meta.json"));
   writeFileSync(join(bin, "cmp"), `#!/usr/bin/env python3
 import os, sys
 st = os.stat(sys.argv[-1])
