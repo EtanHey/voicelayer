@@ -288,15 +288,19 @@ describe("playback queue — P0-1 sequential playback", () => {
     }, restore: () => spy.mockRestore() };
   }
 
-  it("FX-1 prompt timeout releases admission within the cleanup bound while retry waits for physical exit", async () => {
+  for (const stallBackend of [false, true]) {
+  it(`FX-1 ${stallBackend ? "stalled" : "normal"} prompt timeout releases admission within the cleanup bound while retry waits for physical exit`, async () => {
     const deadlines = controlAskDeadlines(), stalled = Promise.withResolvers<void>();
-    const ask = askOnRealQueue(undefined, stalled.promise);
+    const ask = askOnRealQueue(undefined, stallBackend ? stalled.promise : undefined);
+    let returned = false; void ask.request.then(() => { returned = true; });
     let retry: ReturnType<typeof handleVoiceAsk> | undefined;
     try {
       await waitFor(() => playerMocks.length === 1, "timed-out prompt");
       const foreign = tts.playAudioNonBlocking(`${TEST_TMP}/fx1-timeout-foreign.mp3`);
-      deadlines.fire(180_000); await Bun.sleep(0); deadlines.fire(5_000);
+      deadlines.fire(180_000); await Bun.sleep(10);
+      expect(returned).toBe(false); deadlines.fire(5_000);
       expect((await ask.request).isError).toBe(true);
+      expect((await ask.request).content[0].text).toContain("Hard timeout during prompt stage");
       expect(tts.isCaptureAdmissionReserved()).toBe(false);
       expect((await ask.prompt.exited).reason).toBe("stopped");
       retry = handleVoiceAsk({ message: "Retry question" });
@@ -314,17 +318,23 @@ describe("playback queue — P0-1 sequential playback", () => {
     } finally { stalled.resolve(); await ask.dispose(); await retry; deadlines.restore(); }
   });
 
-  for (const duringDecode of [false, true]) {
-    it(`FX-1 endpoint seek emits only the validated handoff after ${duringDecode ? "decoder" : "player"} exit`, async () => {
+  }
+
+  for (const completion of ["exit", "seek", "seek-decoder", "stop", "cancel", "cancel-decoder"] as const) {
+    it(`FX-1.1 quiet Ask ${completion} emits only its validated playback idle after reap`, async () => {
+      const duringDecode = completion.endsWith("-decoder");
       holdDecoderExits = duringDecode; holdKilledDecoderExits = duringDecode;
       const ask = askOnRealQueue();
       try {
-        await waitFor(() => duringDecode ? decoderMocks.length === 1 : playerMocks.length === 1, "seek child");
-        expect(tts.seekPlayback(1_000).outcome).toBe("accept");
-        expect(broadcasts.filter((event: any) => event.next_state === "recording")).toHaveLength(0);
+        await waitFor(() => duringDecode ? decoderMocks.length === 1 : playerMocks.length === 1, "owned child");
+        if (completion.startsWith("seek")) expect(tts.seekPlayback(1_000).outcome).toBe("accept");
+        if (completion === "stop") expect(tts.stopPlayback()).toBe(true);
+        if (completion.startsWith("cancel")) expect(tts.cancelPlayback({ id: ask.prompt.id })).toBe(true);
+        await Bun.sleep(10); expect(ask.captureSpy).not.toHaveBeenCalled();
+        expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toHaveLength(0);
         if (duringDecode) decoderMocks[0].resolveExit(); else playerMocks[0].resolveExit();
-        await waitFor(() => ask.captureSpy.mock.calls.length === 1, "seek capture");
-        expect(broadcasts.filter((event: any) => event.next_state === "recording")).toEqual([
+        await waitFor(() => ask.captureSpy.mock.calls.length === 1, "capture after reap");
+        expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([
           { type: "state", state: "idle", source: "playback", next_state: "recording" },
         ]);
       } finally { await ask.dispose(); }
@@ -402,21 +412,6 @@ describe("playback queue — P0-1 sequential playback", () => {
   });
   }
 
-  for (const duringDecode of [false, true]) {
-    it(`FX-1 Ask waits for its cancelled ${duringDecode ? "decoder" : "player"} to exit`, async () => {
-      holdDecoderExits = duringDecode; holdKilledDecoderExits = duringDecode;
-      const ask = askOnRealQueue();
-      try {
-        await waitFor(() => duringDecode ? decoderMocks.length === 1 : playerMocks.length === 1, "owned child");
-        expect(tts.cancelPlayback({ id: ask.prompt.id })).toBe(true);
-        await Bun.sleep(10);
-        expect(ask.captureSpy).not.toHaveBeenCalled();
-        if (duringDecode) decoderMocks[0].resolveExit(); else playerMocks[0].resolveExit();
-        await waitFor(() => ask.captureSpy.mock.calls.length === 1, "capture after reap");
-      } finally { await ask.dispose(); }
-    });
-  }
-
   it("FX-1 an unconfirmed exit fails within its own bound without capture or a late handoff", async () => {
     const deadlines = controlAskDeadlines();
     const ask = askOnRealQueue();
@@ -429,6 +424,9 @@ describe("playback queue — P0-1 sequential playback", () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("exit");
       expect(ask.captureSpy).not.toHaveBeenCalled();
+      expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([
+        { type: "state", state: "idle" },
+      ]);
       const before = broadcasts.length; playerMocks[0].resolveExit(); await Bun.sleep(10);
       expect(broadcasts.slice(before).some((event: any) => event.next_state === "recording")).toBe(false);
     } finally { await ask.dispose(); deadlines.restore(); }
