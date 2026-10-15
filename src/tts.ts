@@ -91,6 +91,8 @@ export function isSpeakerOutputRefusedError(error: unknown): boolean {
 
 function broadcastPlaybackIdleIfSpeakerClear(nextState?: "recording"): void {
   if (getEffectiveRecordingState() !== "idle") return;
+  // Ask owns the idle edge until it validates the handoff or reports an error.
+  if (isCaptureAdmissionReserved()) return;
   if (activeLongRead && !activeLongRead.controller.signal.aborted && !nextState) return;
   broadcast({
     type: "state",
