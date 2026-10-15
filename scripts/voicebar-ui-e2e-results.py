@@ -36,6 +36,9 @@ def configure(output, app, sandbox):
 
 
 def report(directory, steps, manifest, recording=None, issues=()):
+    issues = list(issues)
+    if recording is not None and (recording.get('runPassed') is False or recording.get('cancelledSignals')):
+        issues.append('FAIL recording run: ' + recording.get('error', 'test/recording run failed'))
     if not steps or [s['number'] for s in steps] != list(range(1, len(steps) + 1)):
         raise ValueError('Missing, duplicated or out-of-order action receipts')
     attachments = [a for test in manifest for a in test['attachments']]

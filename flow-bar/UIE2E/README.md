@@ -5,7 +5,7 @@ The stacked coverage layer supplies the full flow tests, now enabled in this bra
 The infrastructure base alone is buildable with `--build-only`; an empty run cannot
 pass the result exporter.
 
-On an **unoccupied Mac** with Xcode 16+, Bun, Python 3.9+, FFmpeg (AVFoundation/libx264) and ffprobe:
+On an **unoccupied Mac** with macOS 14+, Xcode 16+, Bun, Python 3.9+ and ffprobe:
 
 ```sh
 bash scripts/voicebar-ui-e2e.sh --output /tmp/voicebar-ui-results-$(date +%s)
@@ -31,25 +31,38 @@ unfinished runs, failed teardown, or unexercised controls cannot pass. An aborte
 with individual receipts still gets a contact sheet marked incomplete. QA-app fixture
 sinks (events/settings/dictionary) remain in its scratch directory. No entitlements change.
 
-Every UI run records the main screen by default before XCTest launches. The Python
-supervisor selects only `Capture screen 0:none` (no microphone or system audio), writes
-one-second fragmented MOV chunks, and waits for recorded frames before starting tests.
-FFmpeg runs in its own session so interrupting the test process group cannot kill it.
+Every UI run records the main screen by default before XCTest launches. The runner
+compiles `voicebar-ui-e2e-capture.swift`, a standalone ScreenCaptureKit helper whose
+filter accepts only the main `SCDisplay`. It registers only a `.screen` stream output,
+disables system audio and microphone capture, and writes a single H.264 video track
+through AVAssetWriter with one-second MOV fragments. There is no camera lookup or
+AVFoundation device-name selection, so a camera named `Capture screen 0` cannot be
+selected. Screen Recording preflight failure stops without requesting/granting access.
+The Python supervisor waits for appended frames and a nonempty MOV before tests start.
+The helper runs in its own session so interrupting the test process group cannot kill it.
 On completion, failure or SIGINT/SIGTERM, the supervisor stops its owned test process,
-asks FFmpeg to quit through stdin, waits for flush, and validates the MOV with ffprobe.
+asks the helper to stop through stdin, waits for `stopCapture` and `finishWriting`
+completion/exit, then validates the MOV with ffprobe. EOF also stops the helper.
 Missing/empty media, no video, any audio, a nonpositive duration, recorder death, or a
 forced recorder stop fails the gate. SIGKILL/power loss cannot run cleanup; completed
 fragments remain recoverable, but that is not a successful run.
 
-`recording.json`, `recording.html`, progress/FFmpeg/ffprobe logs and `run-<UTC>.mov`
+SIGINT/SIGTERM stay latched during flush and ffprobe; cleanup continues, but a cancelled
+run exits nonzero and records `cancelledSignals`, an interruption error and
+`runPassed=false`. A playable finalized movie may still have `valid=true`; that describes
+the media, not a passed run. Cancellation/test failure cannot produce `PASS recording`
+or a passing contact sheet. Previous signal handlers are restored after publication.
+
+`recording.json`, `recording.html`, progress/capture/ffprobe logs and `run-<UTC>.mov`
 are retained even when tests fail. The contact sheet links the verified video with
-its duration and byte size. `--build-only` skips the recorder and its dependencies.
+its duration and byte size. `--build-only` compiles the helper but does not execute it,
+start capture, require ffprobe, or launch tests.
 If macOS blocks screen capture/UI Automation, stop without granting access and have
 the lead arrange a human-present retry. Native capture and playback remain unverified
 until that retry; lifecycle tests use stub processes only.
 
-MOV fragmentation and its interruption behavior follow the
-[FFmpeg muxer documentation](https://ffmpeg.org/ffmpeg-formats.html#Fragmentation).
+Capture uses Apple's [ScreenCaptureKit display filter](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
+and [AVAssetWriter movie fragments](https://developer.apple.com/documentation/avfoundation/avassetwriter/moviefragmentinterval).
 
 The Xcode project contains only a UI-test target. Xcode supplies its XCTest runner;
 `XCUIApplication(url:)` launches the separately built QA bundle. No Xcode project or test-host

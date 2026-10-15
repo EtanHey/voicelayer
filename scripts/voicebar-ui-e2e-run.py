@@ -20,26 +20,20 @@ def test_arguments(output):
 
 
 class Recording:
-    def __init__(self, output, ffmpeg='ffmpeg', ffprobe='ffprobe'):
-        self.output, self.ffmpeg, self.ffprobe = output, ffmpeg, ffprobe
+    def __init__(self, output, capture=None, ffprobe='ffprobe'):
+        self.output, self.capture, self.ffprobe = output, capture or str(output / 'voicebar-ui-e2e-capture'), ffprobe
         self.path = output / ('run-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.mov')
         self.progress = output / 'recording-progress.log'
         self.process = None
         self.files = []
 
     def arguments(self):
-        # Named screen only, no default device/camera fallback; :none never opens audio.
-        # Fragment metadata travels with its packets rather than waiting for a final moov.
-        return [self.ffmpeg, '-hide_banner', '-loglevel', 'warning', '-n', '-stdin',
-                '-f', 'avfoundation', '-framerate', '15', '-capture_cursor', '1',
-                '-i', 'Capture screen 0:none', '-an', '-c:v', 'libx264', '-preset', 'ultrafast',
-                '-crf', '24', '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-pix_fmt', 'yuv420p',
-                '-g', '15', '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-                '-frag_duration', '1000000', '-flush_packets', '1', '-progress', 'pipe:1', str(self.path)]
+        # Typed ScreenCaptureKit display input; no camera/device-name selection API.
+        return [self.capture, str(self.path)]
 
     def start(self):
-        for tool in [self.ffmpeg, self.ffprobe]:
-            subprocess.run([tool, '-version'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5)
+        for tool, option in [(self.capture, '--version'), (self.ffprobe, '-version')]:
+            subprocess.run([tool, option], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5)
         self.files = [self.progress.open('w'), (self.output / 'recording.log').open('w')]
         # A stop of xcodebuild's process group must not terminate the recorder mid-flush.
         self.process = subprocess.Popen(self.arguments(), stdin=subprocess.PIPE, text=True,
@@ -79,7 +73,7 @@ class Recording:
             for file in self.files: file.close()
         result = subprocess.run([self.ffprobe, '-v', 'error', '-show_entries',
             'format=duration:stream=codec_type', '-of', 'json', str(self.path)],
-            capture_output=True, text=True, timeout=10)
+            capture_output=True, text=True, timeout=10, start_new_session=True)
         (self.output / 'recording-ffprobe.json').write_text(result.stdout)
         (self.output / 'recording-ffprobe.log').write_text(result.stderr)
         result.check_returncode()
@@ -108,15 +102,30 @@ def run_suite(output, arguments=None, recording=None):
     test = None
     status = 1
     previous = {sig: signal.getsignal(sig) for sig in [signal.SIGINT, signal.SIGTERM]}
+    cancelled = []
     def interrupted(sig, frame):
-        raise InterruptedError('UI run interrupted by signal ' + str(sig))
+        # Latch throughout startup, execution AND cleanup. Never interrupt media flush.
+        cancelled.append(int(sig))
+    def check_cancelled():
+        if cancelled: raise InterruptedError('UI run interrupted by signal ' + str(cancelled[0]))
+    def publish():
+        info['cancelledSignals'] = list(cancelled)
+        if cancelled: info['error'] = 'UI run interrupted by signal ' + str(cancelled[0])
+        info['runPassed'] = status == 0 and not cancelled
+        (output / 'recording.json').write_text(json.dumps(info, indent=2) + '\n')
+        caption = html.escape(json.dumps(info, indent=2))
+        (output / 'recording.html').write_text('<!doctype html><meta charset="utf-8"><title>UIE2E recording</title>'
+            '<h1>UIE2E recording receipt</h1><a href="' + html.escape(info['path'], quote=True) +
+            '">Screen recording (.mov)</a><pre>' + caption + '</pre>')
     for sig in previous: signal.signal(sig, interrupted)
     try:
         recording.start()  # No test may launch until real frames reach the output file.
+        check_cancelled()
         with (output / 'test.log').open('w') as log:
             test = subprocess.Popen(arguments or test_arguments(output), stdout=log,
                                     stderr=subprocess.STDOUT, start_new_session=True)
             while test.poll() is None:
+                check_cancelled()
                 if recording.process.poll() is not None:
                     raise RuntimeError('Recorder stopped during UI execution; gate aborted')
                 time.sleep(.05)
@@ -126,8 +135,7 @@ def run_suite(output, arguments=None, recording=None):
     except Exception as error:
         info['error'] = str(error)
     finally:
-        # Repeated cancellation cannot interrupt trailer flush / ffprobe / report writing.
-        for sig in previous: signal.signal(sig, signal.SIG_IGN)
+        # Handlers keep latching cancellation while owned children flush / probe.
         try:
             try: stop_test(test)
             except Exception as error: info['testCleanupError'] = str(error); status = 1
@@ -137,16 +145,14 @@ def run_suite(output, arguments=None, recording=None):
                 info['recordingError'] = str(error)
                 status = 1
             info['testExit'] = test.returncode if test is not None else None
-            (output / 'recording.json').write_text(json.dumps(info, indent=2) + '\n')
-            caption = html.escape(json.dumps(info, indent=2))
-            (output / 'recording.html').write_text('<!doctype html><meta charset="utf-8"><title>UIE2E recording</title>'
-                '<h1>UIE2E recording receipt</h1><a href="' + html.escape(info['path'], quote=True) +
-                '">Screen recording (.mov)</a><pre>' + caption + '</pre>')
-            print(f"{'PASS' if info['valid'] else 'FAIL'} recording: {output / info['path']} "
+            publish()
+            print(f"{'PASS' if info['valid'] and info['runPassed'] else 'FAIL'} recording: {output / info['path']} "
                   f"duration={info.get('durationSeconds', 'N/A')}s bytes={info.get('bytes', 0)}", flush=True)
         finally:
+            # Also persist a first cancellation arriving during receipt publication.
+            if cancelled and info.get('runPassed') is not False: publish()
             for sig, handler in previous.items(): signal.signal(sig, handler)
-    return status
+    return 128 + cancelled[0] if cancelled else status
 
 
 if __name__ == '__main__':

@@ -19,8 +19,11 @@ STUB = '''#!/usr/bin/env python3
 import json,pathlib,sys,time
 root=pathlib.Path(__file__).parent
 with (root/'calls').open('a') as log: log.write(pathlib.Path(sys.argv[0]).name+' '+json.dumps(sys.argv[1:])+'\\n')
-if '-version' in sys.argv: sys.exit(0)
+if '-version' in sys.argv or '--version' in sys.argv: sys.exit(0)
 if pathlib.Path(sys.argv[0]).name=='ffprobe':
+ if (root/'delay-probe').exists():
+  (root/'probe-waiting').touch()
+  while not (root/'release').exists(): time.sleep(.01)
  if (root/'invalid-media').exists(): sys.exit(1)
  movie=pathlib.Path(sys.argv[-1])
  if not movie.read_bytes().endswith(b'flushed'): sys.exit(1)
@@ -28,6 +31,10 @@ if pathlib.Path(sys.argv[0]).name=='ffprobe':
  if (root/'audio').exists(): streams.append({'codec_type':'audio'})
  print(json.dumps({'format':{'duration':'1.25'},'streams':streams})); sys.exit(0)
 if (root/'denied').exists(): sys.exit(1)
+if '-i' in sys.argv and (root/'cameras.json').exists():
+ selector=sys.argv[sys.argv.index('-i')+1].split(':')[0]
+ if any(name.startswith(selector) for name in json.loads((root/'cameras.json').read_text())):
+  (root/'camera-opened').touch()
 movie=pathlib.Path(sys.argv[-1]); movie.write_bytes(b'incremental-')
 print('frame=1',flush=True)
 if (root/'early-end').exists():
@@ -36,6 +43,9 @@ if (root/'early-end').exists():
  sys.exit(0)
 for line in sys.stdin:
  if line.strip()=='q':
+  if (root/'delay-flush').exists():
+   (root/'flush-waiting').touch()
+   while not (root/'release').exists(): time.sleep(.01)
   with movie.open('ab') as output: output.write(b'flushed')
   with (root/'calls').open('a') as log: log.write('flushed\\n')
   sys.exit(0)
@@ -48,11 +58,11 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
         self.output = self.root / 'output'; self.output.mkdir()
-        for name in ['ffmpeg', 'ffprobe']:
+        for name in ['capture', 'ffprobe']:
             path = self.root / name; path.write_text(STUB); path.chmod(0o755)
 
     def recorder(self):
-        return runner.Recording(self.output, str(self.root / 'ffmpeg'), str(self.root / 'ffprobe'))
+        return runner.Recording(self.output, str(self.root / 'capture'), str(self.root / 'ffprobe'))
 
     def test_argument_builder_uses_one_serial_run_without_invalid_iteration_option(self):
         args = runner.test_arguments(self.output)
@@ -74,12 +84,18 @@ class RunnerTests(unittest.TestCase):
                 self.assertLess(calls.rindex('flushed'), calls.rindex('ffprobe ['))
                 self.assertIn(info['path'], (self.output / 'recording.html').read_text())
 
-    def test_recording_is_silent_and_incremental(self):
-        args = self.recorder().arguments()
-        self.assertIn('Capture screen 0:none', args)
-        self.assertIn('-an', args)
-        self.assertIn('frag_keyframe+empty_moov+default_base_moof', args)
-        self.assertEqual(args[args.index('-frag_duration') + 1], '1000000')
+    def test_camera_names_cannot_select_a_capture_device(self):
+        for name in ['Capture screen 0', 'Capture screen 0 virtual camera']:
+            with self.subTest(camera=name):
+                (self.root / 'camera-opened').unlink(missing_ok=True)
+                (self.root / 'cameras.json').write_text(json.dumps([name]))
+                self.assertEqual(runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder()), 0)
+                self.assertFalse((self.root / 'camera-opened').exists(), 'AVFoundation prefix selected a camera')
+
+    def test_default_capture_is_the_built_display_only_helper(self):
+        args = runner.Recording(self.output).arguments()
+        self.assertEqual(args[0], str(self.output / 'voicebar-ui-e2e-capture'))
+        self.assertNotIn('avfoundation', args)
 
     def test_runner_source_uses_the_recorded_builder_after_build_only_exit(self):
         source = MODULE.with_name('voicebar-ui-e2e.sh').read_text()
@@ -117,16 +133,64 @@ class RunnerTests(unittest.TestCase):
     def test_process_group_interrupt_cannot_kill_recorder_before_flush(self):
         self.assert_interrupt(signal.SIGINT, True)
 
-    def assert_interrupt(self, sig, whole_group):
-        marker = self.root / 'test-started'
+    def test_cancellation_during_flush_is_latched_and_media_still_finalizes(self):
+        self.assert_cleanup_interrupt('flush', signal.SIGTERM)
+
+    def test_cancellation_during_ffprobe_is_latched_and_probe_still_finishes(self):
+        self.assert_cleanup_interrupt('probe', signal.SIGINT)
+
+    def test_sigint_during_flush_is_latched(self):
+        self.assert_cleanup_interrupt('flush', signal.SIGINT)
+
+    def test_sigterm_during_ffprobe_is_latched(self):
+        self.assert_cleanup_interrupt('probe', signal.SIGTERM)
+
+    def test_process_group_cancel_during_ffprobe_preserves_probe(self):
+        self.assert_cleanup_interrupt('probe', signal.SIGINT, whole_group=True)
+
+    def test_process_group_cancel_during_flush_preserves_recorder(self):
+        self.assert_cleanup_interrupt('flush', signal.SIGTERM, whole_group=True)
+
+    def assert_cleanup_interrupt(self, phase, sig, whole_group=False):
+        (self.root / ('delay-' + phase)).touch()
+        process = self.supervisor('pass')
+        try:
+            deadline = time.monotonic() + 10
+            while not (self.root / (phase + '-waiting')).exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertTrue((self.root / (phase + '-waiting')).exists())
+            for _ in range(2):  # Repeated cancellation must not abort cleanup.
+                if whole_group: os.killpg(process.pid, sig)
+                else: process.send_signal(sig)
+            (self.root / 'release').touch()
+            output = process.communicate(timeout=10)[0].decode()
+            self.assertNotEqual(process.returncode, 0, output)
+            info = json.loads((self.output / 'recording.json').read_text())
+            self.assertTrue(info['valid'], output)
+            self.assertEqual(info['testExit'], 0)
+            self.assertIn('interrupted', info['error'].lower())
+            self.assertFalse(info['runPassed'])
+            self.assertIn(int(sig), info['cancelledSignals'])
+            self.assertIn('interrupted', (self.output / 'recording.html').read_text().lower())
+            self.assertNotIn('PASS recording:', output)
+            self.assertIn('ffprobe [', (self.root / 'calls').read_text())
+        finally:
+            (self.root / 'release').touch()
+            if process.poll() is None: process.kill(); process.wait()
+
+    def supervisor(self, test_code):
         code = (f'import importlib.util,pathlib,sys;'
                 f's=importlib.util.spec_from_file_location("runner",{str(MODULE)!r});'
                 'm=importlib.util.module_from_spec(s);s.loader.exec_module(m);'
                 f'o=pathlib.Path({str(self.output)!r});'
-                f'r=m.Recording(o,{str(self.root / "ffmpeg")!r},{str(self.root / "ffprobe")!r});'
-                f'sys.exit(m.run_suite(o,[sys.executable,"-c",{("import pathlib,time;pathlib.Path(" + repr(str(marker)) + ").touch();time.sleep(60)")!r}],r))')
-        process = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, start_new_session=True)
+                f'r=m.Recording(o,{str(self.root / "capture")!r},{str(self.root / "ffprobe")!r});'
+                f'sys.exit(m.run_suite(o,[sys.executable,"-c",{test_code!r}],r))')
+        return subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, start_new_session=True)
+
+    def assert_interrupt(self, sig, whole_group):
+        marker = self.root / 'test-started'
+        process = self.supervisor(f'import pathlib,time;pathlib.Path({str(marker)!r}).touch();time.sleep(60)')
         try:
             deadline = time.monotonic() + 10
             while not marker.exists() and process.poll() is None and time.monotonic() < deadline: time.sleep(.02)

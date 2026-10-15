@@ -78,6 +78,15 @@ class ReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             results.report(directory, [step], [dict(attachments=[attachment])], dict(recording, valid=False))
 
+    def test_valid_video_from_a_cancelled_run_cannot_pass_the_contact_sheet(self):
+        (self.root / 'a.png').write_bytes(b'png')
+        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
+        recording = dict(path='run.mov', valid=True, durationSeconds=1.25, bytes=123,
+                         runPassed=False, cancelledSignals=[15], error='UI run interrupted by signal 15')
+        self.assertFalse(results.report(self.root, [step], [dict(attachments=[attachment])], recording))
+        self.assertIn('interrupted', (self.root / 'index.html').read_text())
+
     def attachment_run(self, *, complete=True, gaps=None, failures=0):
         directory = self.root / 'screenshots'; directory.mkdir()
         step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
