@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import type { BargeInMonitor, SoundLayer } from "../soundlayer";
+import type { QueuedPlaybackHandle, PlaybackScope } from "../tts/playback-lifecycle";
 import { defaultSoundLayer } from "../soundlayer";
 import {
   serializeVoiceSdkEvent,
@@ -147,6 +148,9 @@ export function createVoiceSdkSessionManager(
     let playbackStartedAtMs = soundLayer.clock?.nowMs() ?? Date.now();
     let reason: VoiceSdkSpeakStopReason = "completed";
     let interrupted = false;
+    let finished = false;
+    const playbacks: QueuedPlaybackHandle[] = [];
+    let scope: PlaybackScope | undefined;
     const bargeInMonitor: { current: BargeInMonitor | null } = {
       current: null,
     };
@@ -170,12 +174,14 @@ export function createVoiceSdkSessionManager(
     });
 
     const startBargeInMonitor = (startedAtMs: number) => {
-      if (!soundLayer.bargeIn || bargeInMonitor.current) return;
+      if (!soundLayer.bargeIn || !soundLayer.cancellation.cancelPlayback || !scope || bargeInMonitor.current) return;
+      const monitorScope = scope;
       playbackStartedAtMs = startedAtMs;
       bargeInMonitor.current = soundLayer.bargeIn.monitorDuringPlayback({
         playbackStartedAtMs,
         onSpeechStart: (onset) => {
-          if (interrupted) return;
+          if (interrupted || finished) return;
+          if (!soundLayer.cancellation.cancelPlayback?.(monitorScope)) return;
           interrupted = true;
           const turnId = `turn-${session.sequence + 1}`;
           emit({
@@ -192,7 +198,6 @@ export function createVoiceSdkSessionManager(
             onset_ms: onset.onset_ms,
             sequence: nextSequence(session),
           });
-          soundLayer.cancellation.stopPlayback();
           const stoppedAtMs = soundLayer.clock?.nowMs() ?? Date.now();
           const onsetAbsoluteMs = playbackStartedAtMs + onset.onset_ms;
           emit({
@@ -213,13 +218,21 @@ export function createVoiceSdkSessionManager(
         mode: "converse",
         waitForPlayback: true,
         onPlaybackStart: startBargeInMonitor,
+        onPlaybackQueued: (handle) => {
+          playbacks.push(handle);
+          scope = { id: handle.id, generation: handle.generation };
+        },
       });
     } catch {
       reason = "error";
     } finally {
+      finished = true;
       bargeInMonitor.current?.stop();
+      // A backend retry must not erase an earlier attempt's physical ownership.
+      const exits = await Promise.allSettled(playbacks.map(handle => handle.playerExited));
+      if (exits.some(exit => exit.status === "rejected")) reason = "error";
     }
-    if (interrupted) {
+    if (interrupted && reason !== "error") {
       reason = "interrupted";
     }
     emit({

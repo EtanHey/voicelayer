@@ -61,8 +61,35 @@ final class SettingsSlopShotsTests: XCTestCase {
         }
     }
 
-    private func render(_ view: some View, appearance: NSAppearance?, to url: URL) throws {
-        let size = CGSize(width: 780, height: 620)
+    func testRenderCopySurfaces() throws {
+        guard let path = ProcessInfo.processInfo.environment["VOICEBAR_SETTINGS_SLOP_SHOTS_DIR"] else {
+            throw XCTSkip("Set VOICEBAR_SETTINGS_SLOP_SHOTS_DIR to render Copy surfaces")
+        }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let preview = STTVocabularyPreview(updatedAt: nil, entries: [], displayEntries: [
+            STTDictionaryDisplayEntry(source: "personal", entry: STTDictionaryEntry(canonical: "שלום world 👋", variants: ["fixture variant"])),
+            STTDictionaryDisplayEntry(source: "bundled", entry: STTDictionaryEntry(canonical: "TypeScript", variants: ["type script"])),
+        ])
+        let failure = SettingsRelaySetupResult.installerRun(exitCode: 7,
+            output: "First diagnostic\nFull fixture setup failure\n", missingAfter: [], finishedAt: Date())
+        for tab in [SettingsTab.general, .dictionary, .transcription] {
+            for (name, scheme, appearance) in [("light", ColorScheme.light, NSAppearance.Name.aqua),
+                                               ("dark", .dark, .darkAqua)] {
+                let view = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] }, selectedDeviceID: { nil },
+                    modelsStatus: { .disconnected }, onRefreshModelsStatus: {}, residencyNotice: { "Full recognizer failure\nSecond line" },
+                    processingNotice: { "Full processing failure" }, vocabularyRevision: { 0 }, initialTab: tab,
+                    initialAdvancedExpanded: true, initialRelaySetupFeedback: (.setUp, failure),
+                    initialHotkeyListenerRestart: .failed(missing: []), initialDictionaryPreview: preview,
+                    initialIncludedTermsExpanded: true)
+                try render(view.environment(\.colorScheme, scheme), appearance: NSAppearance(named: appearance),
+                           size: CGSize(width: 780, height: tab == .general ? 1600 : 620),
+                           to: directory.appendingPathComponent("copy-\(tab.title.lowercased())-\(name).png"))
+            }
+        }
+    }
+
+    private func render(_ view: some View, appearance: NSAppearance?, size: CGSize = CGSize(width: 780, height: 620), to url: URL) throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
             .background(Color(nsColor: .windowBackgroundColor)))
         host.appearance = appearance

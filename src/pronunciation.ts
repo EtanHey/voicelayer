@@ -27,7 +27,7 @@ export function pronunciationFilePath(
   );
 }
 
-interface PronunciationEntry {
+export interface PronunciationEntry {
   pattern: RegExp;
   replacement: string;
 }
@@ -141,4 +141,9 @@ export function applyPronunciation(text: string): string {
     result = result.replace(pattern, replacement);
   }
   return result;
+}
+
+/** Ordered snapshot for mapped speech preprocessing; shares the YAML hot-reload cache. */
+export function pronunciationRules(): readonly PronunciationEntry[] {
+  return loadEntries();
 }

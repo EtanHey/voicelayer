@@ -1,3 +1,4 @@
+import OffscreenTestSupport
 import AppKit
 import SwiftUI
 @testable import VoiceBarUI
@@ -250,7 +251,7 @@ final class TeleprompterScrubTests: XCTestCase {
             window.appearance = NSAppearance(named: .darkAqua)
             window.backgroundColor = .black
             window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-            window.orderFront(nil)
+            VLOrderTestWindow(window)
             window.isReleasedWhenClosed = false
             defer { window.close() }
             host.appearance = NSAppearance(named: .darkAqua)

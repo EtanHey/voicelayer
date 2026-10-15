@@ -40,13 +40,37 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         XCTAssertEqual(setup.minX, footer.minX, accuracy: 1)
     }
 
-    func testNoFocusRingWhenPopoverOpensAcrossRebuilds() {
-        for _ in 0 ..< 2 {
-            let (window, host) = makeHost(transcript: "Synthetic", key: true)
-            XCTAssertEqual(focusRingCount(in: host), 0)
-            window.contentView = nil
-            window.orderOut(nil)
-        }
+    /// Source wiring only. Actual MenuBarExtra opening/keyboard-focus behavior is native acceptance.
+    /// An active control appearance does not prove keyboard focus or exercise its transition.
+    func testProductionPopoverRootDisablesFocusEffects() throws {
+        let source = try popoverSource()
+        XCTAssertTrue(rootSuppressesFocusEffects(source),
+                      "Keep focusEffectDisabled on the production popover root, after padding and before its coordinate space")
+    }
+
+    func testFocusSuppressionContractRejectsRemovalAndNestedOnlySuppression() throws {
+        let source = try popoverSource()
+        let rootWiring = "        .focusEffectDisabled()"
+        XCTAssertEqual(source.components(separatedBy: rootWiring).count - 1, 1)
+        let removed = source.replacingOccurrences(of: rootWiring, with: "")
+        XCTAssertFalse(rootSuppressesFocusEffects(removed), "positive control: removing suppression must be rejected")
+        let nestedOnly = removed.replacingOccurrences(of: "Button(action: onSettings) {",
+            with: "Button(action: onSettings) { EmptyView().focusEffectDisabled();")
+        XCTAssertFalse(rootSuppressesFocusEffects(nestedOnly), "child-only suppression does not protect the popover root")
+    }
+
+    private func popoverSource() throws -> String {
+        let package = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: package.appendingPathComponent("Sources/VoiceBarUI/MenuBarPopoverView.swift"))
+    }
+
+    private func rootSuppressesFocusEffects(_ source: String) -> Bool {
+        // Match the root's modifier chain, not an occurrence on an individual control or in a comment.
+        let code = source.components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
+        let rootChain = #"\.padding\(12\)\s*\.focusEffectDisabled\(\)\s*\.coordinateSpace\(name: "popover"\)"#
+        return code.range(of: rootChain, options: .regularExpression) != nil
     }
 
     func testNumberedListPreviewCollapsesNewlinesWithoutChangingOriginal() {
@@ -87,7 +111,6 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         transcript: String,
         mode: VoiceMode = .idle,
         remoteSTTConfigured: Bool = false,
-        key: Bool = false,
         onLayout: @escaping ([String: CGRect]) -> Void = { _ in }
     ) -> (NSWindow, NSHostingView<MenuBarPopoverView>) {
         let view = MenuBarPopoverView(
@@ -98,19 +121,14 @@ final class MenuBarPopoverLayoutTests: XCTestCase {
         )
         let host = NSHostingView(rootView: view)
         host.frame = NSRect(x: 0, y: 0, width: 334, height: 300)
-        let window = NSWindow(contentRect: host.frame, styleMask: key ? [.titled] : .borderless,
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        if key { window.makeKeyAndOrderFront(nil) }
         host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(key ? 0.3 : 0.05))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         host.layoutSubtreeIfNeeded()
         return (window, host)
     }
 
-    private func focusRingCount(in view: NSView) -> Int {
-        (String(describing: type(of: view)).contains("_FocusRingView") ? 1 : 0)
-            + view.subviews.reduce(0) { $0 + focusRingCount(in: $1) }
-    }
 }
