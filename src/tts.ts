@@ -89,10 +89,12 @@ export function isSpeakerOutputRefusedError(error: unknown): boolean {
   );
 }
 
-function broadcastPlaybackIdleIfSpeakerClear(nextState?: "recording"): void {
+function broadcastPlaybackIdleIfSpeakerClear(nextState?: "recording", intent: "completion" | "stop" = "completion"): void {
   if (getEffectiveRecordingState() !== "idle") return;
   // Ask owns the idle edge until it validates the handoff or reports an error.
   if (isCaptureAdmissionReserved()) return;
+  // Explicit global Stop acknowledges logical cancellation; it is not reap proof.
+  if (getPlaybackQueueDepth() > 0 && intent !== "stop") return;
   if (activeLongRead && !activeLongRead.controller.signal.aborted && !nextState) return;
   broadcast({
     type: "state",
@@ -1087,7 +1089,7 @@ class PlaybackQueueManager {
 
     if (hadActivity) {
       this.stopProgressTimer();
-      broadcastPlaybackIdleIfSpeakerClear();
+      broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
       this.emitQueueSnapshot();
       this.resolveIfIdle();
     }
@@ -1641,7 +1643,7 @@ export function seekPlayback(offsetMs: number): SeekResult {
 export function stopPlayback(playbackElapsedMs?: number): boolean {
   const hadLongRead = cancelLongRead(playbackElapsedMs);
   const stopped = playbackQueueManager.stop(playbackElapsedMs);
-  if (hadLongRead && !stopped) broadcastPlaybackIdleIfSpeakerClear();
+  if (hadLongRead && !stopped) broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
   return hadLongRead || stopped;
 }
 

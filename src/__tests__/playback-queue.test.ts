@@ -12,7 +12,7 @@
  *        is still pending.
  */
 
-import { it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { it, expect, beforeEach, afterEach, spyOn, jest } from "bun:test";
 import { TEST_TMP } from "./setup/test-tmp";
 // AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
 // device probe, or files the resident VoiceBar reads. `describe` is the
@@ -25,6 +25,7 @@ import * as tts from "../tts";
 import * as input from "../input";
 import * as booking from "../session-booking";
 import { handleVoiceAsk } from "../handlers";
+import { hasActiveVoiceOperation } from "../voice-operation-reservation";
 
 // --- Mock helpers ---
 
@@ -288,6 +289,159 @@ describe("playback queue — P0-1 sequential playback", () => {
     }, restore: () => spy.mockRestore() };
   }
 
+  for (const child of ["player", "decoder", "replay"] as const) {
+    it(`FX-2 ${child} timeout never advertises idle before reap or stops foreign speech`, async () => {
+      const stalled = Promise.withResolvers<void>(), deadlines = controlAskDeadlines();
+      holdDecoderExits = child === "decoder"; holdKilledDecoderExits = child === "decoder";
+      const ask = askOnRealQueue(undefined, stalled.promise);
+      try {
+        await waitFor(() => child === "decoder" ? decoderMocks.length === 1 : playerMocks.length === 1, "prompt child");
+        if (child === "replay") {
+          expect(tts.restartPlayback()).toBe(true); playerMocks[0].resolveExit();
+          await waitFor(() => playerMocks.length === 2, "replacement player");
+        }
+        const foreign = tts.playAudioNonBlocking(`${TEST_TMP}/fx2-foreign.mp3`);
+        deadlines.fire(180_000); await Bun.sleep(10);
+        expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([]);
+        expect((await ask.prompt.exited).reason).toBe("stopped");
+        if (child === "decoder") decoderMocks[0].resolveExit(); else playerMocks.at(-1)!.resolveExit();
+        expect((await ask.request).content[0].text).toContain("Hard timeout during prompt stage");
+        await waitFor(() => playerMocks.at(-1)!.cmd.includes(`${TEST_TMP}/fx2-foreign.mp3`), "foreign playback after owned reap");
+        expect(broadcasts.some((event: any) => event.type === "state" && event.state === "idle")).toBe(false);
+        expect(ask.captureSpy).not.toHaveBeenCalled();
+        playerMocks.at(-1)!.resolveExit(); expect((await foreign.exited).status).toBe("completed");
+        expect(broadcasts.some((event: any) => event.next_state === "recording")).toBe(false);
+      } finally { stalled.resolve(); await ask.dispose(); deadlines.restore(); }
+    });
+  }
+
+  for (const synthesisHeld of [false, true]) {
+    it(`FX-2 releases a timed-out ${synthesisHeld ? "synthesis" : "player"} reservation without a backend continuation`, async () => {
+      const stalled = Promise.withResolvers<void>(), synthesis = Promise.withResolvers<void>();
+      const deadlines = controlAskDeadlines();
+      const realHistoryGate = socketClient.withHistoryPlaybackSuspended;
+      let historyReleased = false;
+      const history = spyOn(socketClient, "withHistoryPlaybackSuspended").mockImplementation(work => realHistoryGate(async () => {
+        try { return await work(); } finally { historyReleased = true; }
+      }));
+      const ask = askOnRealQueue(synthesisHeld ? synthesis.promise : undefined, stalled.promise);
+      let retry: ReturnType<typeof handleVoiceAsk> | undefined;
+      try {
+        await waitFor(() => synthesisHeld ? tts.isCaptureAdmissionReserved() : playerMocks.length === 1, "pending prompt");
+        deadlines.fire(180_000); await Bun.sleep(10);
+        if (!synthesisHeld) deadlines.fire(5_000);
+        expect((await ask.request).isError).toBe(true);
+        expect(hasActiveVoiceOperation()).toBe(false);
+        expect(tts.isCaptureAdmissionReserved()).toBe(false);
+        if (!synthesisHeld) {
+          expect(historyReleased).toBe(false);
+          expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([]);
+          playerMocks[0].resolveExit();
+        }
+        await waitFor(() => historyReleased, "History release independently of stalled synthesis/backend");
+        expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([
+          { type: "state", state: "idle", source: "playback" },
+        ]);
+        // A newer Ask retains both leases when the old continuation finally settles.
+        synthesis.resolve();
+        retry = handleVoiceAsk({ message: "Newer question" });
+        await waitFor(() => playerMocks.at(-1)?.exitedSettled === false, "newer prompt");
+        const before = broadcasts.length;
+        stalled.resolve(); await Bun.sleep(10);
+        expect(tts.isCaptureAdmissionReserved()).toBe(true);
+        expect(hasActiveVoiceOperation()).toBe(true);
+        expect(broadcasts.slice(before).some((event: any) => event.type === "state" && event.state === "idle")).toBe(false);
+        playerMocks.at(-1)!.resolveExit();
+        await waitFor(() => ask.captureSpy.mock.calls.length === 1, "newer capture");
+        ask.capture.resolve("full raw answer with a retraction… actually, correction");
+        expect((await retry).content[0].text).toContain("full raw answer with a retraction… actually, correction");
+      } finally {
+        synthesis.resolve(); stalled.resolve(); await ask.dispose(); await retry;
+        history.mockRestore(); deadlines.restore();
+      }
+    });
+  }
+
+  it("FX-2 playback-wait timeout leaves the foreign owner and releases only the waiting request", async () => {
+    const foreign = tts.playAudioNonBlocking(`${TEST_TMP}/fx2-wait-owner.mp3`);
+    const deadlines = controlAskDeadlines(), ask = askOnRealQueue();
+    try {
+      deadlines.fire(180_000);
+      expect((await ask.request).content[0].text).toContain("playback-wait stage");
+      expect(hasActiveVoiceOperation()).toBe(false);
+      expect(queueEvents.some(event => event.startsWith("kill:"))).toBe(false);
+      expect(broadcasts.some((event: any) => event.type === "state" && event.state === "idle")).toBe(false);
+      playerMocks[0].resolveExit(); expect((await foreign.exited).status).toBe("completed");
+      await Bun.sleep(10);
+      expect(ask.captureSpy).not.toHaveBeenCalled();
+      expect(playerMocks).toHaveLength(1);
+    } finally { await ask.dispose(); deadlines.restore(); }
+  });
+
+  it("FX-2 r2 actual 35s queue-wait rejection never marks foreign playback idle", async () => {
+    const foreign = tts.playAudioNonBlocking(`${TEST_TMP}/fx2-35s-owner.mp3`);
+    jest.useFakeTimers();
+    const ask = askOnRealQueue();
+    let returned = false; void ask.request.then(() => { returned = true; });
+    try {
+      jest.advanceTimersByTime(34_999); await Promise.resolve();
+      expect(returned).toBe(false);
+      jest.advanceTimersByTime(1);
+      expect((await ask.request).content[0].text).toContain("Playback wait timed out after 35000ms");
+      expect(tts.getPlaybackQueueDepth()).toBe(1);
+      expect(hasActiveVoiceOperation()).toBe(false);
+      expect(queueEvents.some(event => event.startsWith("kill:"))).toBe(false);
+      expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([]);
+      playerMocks[0].resolveExit(); expect((await foreign.exited).status).toBe("completed");
+      await Promise.resolve();
+      expect(ask.captureSpy).not.toHaveBeenCalled();
+      expect(playerMocks).toHaveLength(1);
+    } finally { jest.useRealTimers(); await ask.dispose(); }
+  });
+
+  it("FX-2 r2 late real speak synthesis failure cannot idle foreign playback", async () => {
+    const synthesis = Promise.withResolvers<number>(), deadlines = controlAskDeadlines();
+    const queueSpawn = Bun.spawn, queueSpawnSync = Bun.spawnSync;
+    let attempts = 0;
+    // Exercise real speak -> Edge retry/failure handling; never launch a synthesizer.
+    Bun.spawn = ((cmd: string[], opts: any) => {
+      if (cmd.some(arg => arg.endsWith("/edge-tts-words.py"))) {
+        attempts++;
+        return { pid: 99700 + attempts, exited: synthesis.promise, kill() {} };
+      }
+      return queueSpawn(cmd, opts);
+    }) as typeof Bun.spawn;
+    Bun.spawnSync = ((cmd: string[], opts: any) => cmd.includes("import edge_tts; print('ok')")
+      ? { exitCode: 0, stdout: Buffer.from("ok"), stderr: Buffer.alloc(0) }
+      : queueSpawnSync(cmd, opts)) as typeof Bun.spawnSync;
+    const capture = spyOn(input, "waitForInput").mockResolvedValue("must not capture");
+    const spies = [capture, spyOn(input, "clearInput").mockImplementation(() => {}),
+      spyOn(booking, "clearStopSignal").mockImplementation(() => {}),
+      spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true } as any)];
+    const request = handleVoiceAsk({ message: "Synthetic late failure", voice: "en-US-JennyNeural" });
+    const failed = () => broadcasts.some((event: any) => event.type === "error" && event.message === "TTS synthesis failed (edge-tts)");
+    try {
+      await waitFor(() => attempts === 1, "real speak synthesis attempt");
+      deadlines.fire(180_000); expect((await request).isError).toBe(true);
+      expect(tts.isCaptureAdmissionReserved()).toBe(false);
+      const foreign = tts.playAudioNonBlocking(`${TEST_TMP}/fx2-late-failure-owner.mp3`);
+      const before = broadcasts.length;
+      synthesis.resolve(2); await waitFor(failed, "real speak failure after deadline");
+      expect(attempts).toBe(2);
+      expect(tts.getPlaybackQueueDepth()).toBe(1);
+      expect(broadcasts.slice(before).filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([]);
+      expect(broadcasts.slice(before).some((event: any) => event.next_state === "recording")).toBe(false);
+      expect(capture).not.toHaveBeenCalled();
+      expect(queueEvents.some(event => event.startsWith("kill:"))).toBe(false);
+      playerMocks[0].resolveExit(); expect((await foreign.exited).status).toBe("completed");
+    } finally {
+      synthesis.resolve(2); await request; await waitFor(failed, "synthesis fixture cleanup");
+      for (const player of playerMocks) player.resolveExit();
+      await Bun.sleep(0); for (const spy of spies.reverse()) spy.mockRestore();
+      Bun.spawn = queueSpawn; Bun.spawnSync = queueSpawnSync; deadlines.restore();
+    }
+  });
+
   for (const stallBackend of [false, true]) {
   it(`FX-1 ${stallBackend ? "stalled" : "normal"} prompt timeout releases admission within the cleanup bound while retry waits for physical exit`, async () => {
     const deadlines = controlAskDeadlines(), stalled = Promise.withResolvers<void>();
@@ -424,10 +578,11 @@ describe("playback queue — P0-1 sequential playback", () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("exit");
       expect(ask.captureSpy).not.toHaveBeenCalled();
-      expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([
+      expect(broadcasts.filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([]);
+      const before = broadcasts.length; playerMocks[0].resolveExit(); await Bun.sleep(10);
+      expect(broadcasts.slice(before).filter((event: any) => event.type === "state" && event.state === "idle")).toEqual([
         { type: "state", state: "idle" },
       ]);
-      const before = broadcasts.length; playerMocks[0].resolveExit(); await Bun.sleep(10);
       expect(broadcasts.slice(before).some((event: any) => event.next_state === "recording")).toBe(false);
     } finally { await ask.dispose(); deadlines.restore(); }
   });
