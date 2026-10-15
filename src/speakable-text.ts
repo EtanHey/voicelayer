@@ -208,6 +208,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   }, true, true);
   edit(/\bHTTP\/(\d+)\b/gi, m => `H T T P ${number(m[1])}`, true, true);
   edit(/(?<![A-Za-z0-9\u0080-\uffff_])(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+/gu, m => filename(m[0].replace(/[.,;:!?]+$/, ""), engine) + (m[0].match(/[.,;:!?]+$/)?.[0] ?? ""), true, true);
+  // Extension components require dots so letter runs have only one partition.
   edit(/(?<![A-Za-z0-9\u0080-\uffff_.])(?:v|V|\^|~)?\d+(?:\.\d+)+(?:-(?:rc|alpha|beta)(?:\.\d+)?)?(?![A-Za-z0-9\u0080-\uffff_])/gu, m => {
     const before = m.input.slice(Math.max(0, m.index - 40), m.index);
     if (/[$€£¥₪]\s*$/.test(before) || (!/^[vV^~]/.test(m[0]) && !/(?:\b(?:version|release|semver)\s+|[<>]=?\s*)$/i.test(before))) return undefined;
@@ -222,7 +223,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     const letters: Record<string, string> = {a: "ay", b: "bee", c: "see", d: "dee", e: "ee", f: "eff"};
     return (hex ? "zero X " : m[0].length === 40 ? "commit " : "") + [...chars.toLowerCase()].map(c => letters[c] ?? number(c)).join(" ");
   }, true, true);
-  edit(/(?<![A-Za-z0-9\u0080-\uffff_])(?:[\w-]+\.(?:[a-zA-Z][\w]*\.?)+|\.[a-zA-Z]+(?:\.[a-zA-Z]+)*)(?![A-Za-z0-9\u0080-\uffff_])/gu, m => {
+  edit(/(?<![A-Za-z0-9\u0080-\uffff_])(?:[\w-]+\.[a-zA-Z][\w]*(?:\.[a-zA-Z][\w]*)*\.?|\.[a-zA-Z]+(?:\.[a-zA-Z]+)*)(?![A-Za-z0-9\u0080-\uffff_])/gu, m => {
     const raw = m[0].replace(/\.$/, "");
     return filename(raw, engine) + (m[0].endsWith(".") ? "." : "");
   }, true, true);

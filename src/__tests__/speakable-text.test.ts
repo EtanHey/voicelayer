@@ -134,6 +134,17 @@ test("range partitions survive combined edits and ordered YAML replacements", ()
   }
 });
 
+test("filename near-misses beside Hebrew stay below 50 ms in-process", () => {
+  // The bounded 24-A case fails first on the old regex before larger cases run.
+  for (const length of [24, 40, 1994]) for (const engine of ["edge", "clone"] as const) {
+    const input = "file." + "A".repeat(length) + "א";
+    const start = performance.now();
+    const result = projectSpeakableText(input, [], engine);
+    expect(performance.now() - start).toBeLessThan(50);
+    expect(result.speechText).toBe(input);
+  }
+});
+
 test("local 2,000-character pass stays below 10 ms at p95 after warmup", () => {
   const input = corpus.map(([text]) => text).join(" ").repeat(3).slice(0, 2000);
   for (const engine of ["edge", "clone"] as const) {
