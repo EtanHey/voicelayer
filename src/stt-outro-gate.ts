@@ -234,9 +234,9 @@ export interface OutroRemoval {
   isTail: boolean;
   startS: number;
   endS: number;
-  /** Mean dBFS over the span whisper attributed to the phrase. */
+  /** Mean evidence dBFS over the attributed span, excluding a proven stop impulse. */
   spanDbfs: number;
-  /** Loudest 20 ms window inside that span, in dBFS. */
+  /** Loudest 20 ms evidence window inside that span, in dBFS. */
   peakDbfs: number;
 }
 
@@ -561,6 +561,94 @@ function speechThresholdFor(floorDbfs: number): number {
   return Math.max(SPEECH_THRESHOLD_MIN_DBFS, floorDbfs + SPEECH_OVER_FLOOR_DB);
 }
 
+/**
+ * Evidence-only view for an isolated stop-key impulse in the 250 ms end tail.
+ * No PCM is changed. Without recording-mode metadata here, timing alone is
+ * NEVER evidence: require a sharp onset, <=80 ms decay, quiet surroundings and
+ * no voiced periodicity. Uncertain shapes retain the original evidence.
+ * Only aligned TAIL candidates use this view; the no-segments fallback and
+ * internal phrases continue to use every original window.
+ */
+function withoutStopClick(wavData: Uint8Array, windows: WavWindows): WavWindows {
+  const info = parseWavAudioInfo(wavData);
+  // Fail closed for channel mixtures: a quiet voice in one channel must not
+  // disappear underneath a loud click in another.
+  if (!info || info.channels !== 1 || info.sampleRate < 8000) return windows;
+  const view = new DataView(wavData.buffer, wavData.byteOffset, wavData.byteLength);
+  const frames = Math.round(windows.durationSeconds * info.sampleRate);
+  const step = Math.max(1, Math.round(info.sampleRate * 0.005));
+  const start = Math.max(0, Math.floor((windows.durationSeconds - 0.5) * info.sampleRate / step) * step);
+  const levels: number[] = [];
+  const sampleAt = (frame: number): number => view.getInt16(info.dataOffset + frame * 2, true);
+  for (let frame = start; frame < frames; frame += step) {
+    const end = Math.min(frames, frame + step);
+    let power = 0;
+    for (let i = frame; i < end; i++) power += sampleAt(i) ** 2;
+    const rms = Math.sqrt(power / (end - frame));
+    levels.push(rms > 0 ? 20 * Math.log10(rms / 32768) : SILENT_WINDOW_DBFS);
+  }
+  const fineSeconds = step / info.sampleRate;
+  const quietBins = Math.ceil(0.1 / fineSeconds);
+  const decayThreshold = Math.max(-60, windows.floorDbfs + 10);
+  for (let first = quietBins; first < levels.length - quietBins; first++) {
+    const onsetS = (start + first * step) / info.sampleRate;
+    const offsetS = windows.durationSeconds - onsetS;
+    if (offsetS < 0.18 || offsetS > 0.32) continue;
+    const peak = levels[first]!;
+    if (peak < windows.speechThresholdDbfs || peak - levels[first - 1]! < 12) continue;
+    if (levels.slice(first - quietBins, first).some(level => level >= windows.speechThresholdDbfs)) continue;
+
+    // Two quiet bins end the event, allowing one small dip in a noisy decay.
+    let last = first + 1;
+    while (last + 1 < levels.length &&
+      (levels[last]! >= decayThreshold || levels[last + 1]! >= decayThreshold)) last++;
+    const duration = (last - first) * fineSeconds;
+    if (duration < 0.02 || duration > 0.08 || last + quietBins > levels.length) continue;
+    if (peak - levels[last - 1]! < 12) continue;
+    const envelope = levels.slice(first, last);
+    if (envelope.some((level, i) => level > peak + 3 || (i > 0 && level > envelope[i - 1]! + 4))) continue;
+    if (levels.slice(last, last + quietBins).some(level => level >= windows.speechThresholdDbfs)) continue;
+
+    const clickFirst = start + first * step;
+    const clickLast = Math.min(frames, start + last * step);
+    let mean = 0;
+    for (let i = clickFirst; i < clickLast; i++) mean += sampleAt(i);
+    mean /= clickLast - clickFirst;
+    // Pitch periods of 1.5-20 ms (about 50-667 Hz). A brief voiced, decaying
+    // syllable can look impulsive in RMS; periodic structure vetoes the mask.
+    let voiced = false;
+    for (let lag = Math.ceil(info.sampleRate * 0.0015); lag <= Math.floor(info.sampleRate * 0.02); lag++) {
+      let cross = 0, aPower = 0, bPower = 0;
+      for (let i = clickFirst; i + lag < clickLast; i++) {
+        const a = sampleAt(i) - mean, b = sampleAt(i + lag) - mean;
+        cross += a * b; aPower += a * a; bPower += b * b;
+      }
+      if (aPower > 0 && bPower > 0 && cross / Math.sqrt(aPower * bPower) >= 0.45) {
+        voiced = true;
+        break;
+      }
+    }
+    if (voiced) continue;
+
+    const dbfs = [...windows.dbfs];
+    const windowFrames = Math.round(windows.windowSeconds * info.sampleRate);
+    const floorPower = (32768 * Math.pow(10, windows.floorDbfs / 20)) ** 2;
+    for (let index = Math.floor(clickFirst / windowFrames); index < Math.ceil(clickLast / windowFrames); index++) {
+      const from = index * windowFrames, to = Math.min(frames, from + windowFrames);
+      let power = 0;
+      for (let i = from; i < to; i++) {
+        // Preserve every surrounding sample, including quiet speech sharing
+        // a 20 ms window. Replace only classified impulse evidence by floor.
+        power += i >= clickFirst && i < clickLast ? floorPower : sampleAt(i) ** 2;
+      }
+      const rms = Math.sqrt(power / (to - from));
+      dbfs[index] = rms > 0 ? 20 * Math.log10(rms / 32768) : SILENT_WINDOW_DBFS;
+    }
+    return { ...windows, dbfs };
+  }
+  return windows;
+}
+
 function windowIndex(windows: WavWindows, seconds: number): number {
   return Math.floor(seconds / windows.windowSeconds);
 }
@@ -842,6 +930,9 @@ export function stripHallucinatedOutro(
     [];
   const evaluations: OutroGateEvaluation[] = [];
   let reason: OutroGateReason = "no-candidate";
+  const tailWindows = candidates.some(candidate => candidate.isTail)
+    ? withoutStopClick(wavData, windows)
+    : windows;
 
   for (const candidate of candidates) {
     if (approved.length >= MAX_REMOVALS) break;
@@ -852,7 +943,8 @@ export function stripHallucinatedOutro(
       continue;
     }
 
-    const measured = measureSpan(windows, span.startS, span.endS);
+    const evidence = candidate.isTail ? tailWindows : windows;
+    const measured = measureSpan(evidence, span.startS, span.endS);
     if (!measured) {
       reason = "segment-not-found";
       continue;
@@ -896,7 +988,7 @@ export function stripHallucinatedOutro(
     const marginSeconds = candidate.isTail
       ? SILENCE_MARGIN_SECONDS
       : INTERNAL_SILENCE_MARGIN_SECONDS;
-    if (!isClearOfSpeech(windows, span.startS, span.endS, marginSeconds)) {
+    if (!isClearOfSpeech(evidence, span.startS, span.endS, marginSeconds)) {
       reason = "not-clear-of-speech";
       recordEvaluation(reason);
       continue;
