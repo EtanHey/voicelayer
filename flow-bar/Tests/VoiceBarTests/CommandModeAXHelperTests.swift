@@ -350,7 +350,8 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertEqual(clipboardWrites, [], "dictation must never write the pasteboard")
         XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
         XCTAssertEqual(typed, [transcript], "the transcript is typed into cmux verbatim")
-        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+        XCTAssertEqual(state.confirmationText, transcript)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .unverified)
     }
 
     /// The regression the cmux test used to guard - a finished F5 transcript

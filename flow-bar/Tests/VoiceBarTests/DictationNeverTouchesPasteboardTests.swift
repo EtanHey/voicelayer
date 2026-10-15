@@ -59,6 +59,44 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
         }
     }
 
+    func testEveryTerminalKeepsTranscriptConfirmationAndUnverifiedStatus() {
+        let text = "ADD שלום 👩‍💻\nsecond line"
+        for bundle in TerminalPasteTargets.bundleIdentifiers.sorted() {
+            let harness = PasteHarness(bundleIdentifier: bundle, pasteboard: "WHAT HE COPIED")
+            harness.state.asyncDictationInsertionHandlerProvider = {
+                { _, _ in XCTFail("Terminals must keep skipping AX: \(bundle)"); return false }
+            }
+            harness.dictate(text)
+            XCTAssertEqual(harness.state.confirmationText, text, "Automatic delivery: \(bundle)")
+            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .unverified, bundle)
+            XCTAssertEqual(harness.typed.map(\.text), [text], "Exactly one automatic delivery: \(bundle)")
+            XCTAssertEqual(harness.state.latestReusableTranscript, text, bundle)
+
+            harness.state.repasteLastTranscript(source: "shift_f5")
+            XCTAssertEqual(harness.state.confirmationText, text, "Explicit recovery: \(bundle)")
+            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .unverified, bundle)
+            XCTAssertEqual(harness.typed.map(\.text), [text, text], "One explicit recovery, no duplicate fallback: \(bundle)")
+            XCTAssertEqual(harness.state.latestReusableTranscript, text, bundle)
+            XCTAssertEqual(harness.pasteboardWrites, [], bundle)
+            XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED", bundle)
+        }
+    }
+
+    func testTerminalTypingFailureKeepsFailureFeedbackAndFullRecovery() {
+        for bundle in TerminalPasteTargets.bundleIdentifiers.sorted() {
+            let harness = PasteHarness(bundleIdentifier: bundle, pasteboard: "WHAT HE COPIED")
+            var attempts = 0
+            harness.state.textTypingHandler = { _ in attempts += 1; return false }
+            harness.dictate("all words stay recoverable")
+            XCTAssertEqual(attempts, 1, bundle)
+            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .failed, bundle)
+            XCTAssertEqual(harness.state.confirmationText, "Paste failed — click input and press Shift+F5", bundle)
+            XCTAssertEqual(harness.state.latestReusableTranscript, "all words stay recoverable", bundle)
+            XCTAssertEqual(harness.pasteboardWrites, [], bundle)
+            XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED", bundle)
+        }
+    }
+
     /// Shift+F5 types the last transcript and leaves whatever he copied since alone.
     func testShiftF5RepasteTypesTheLastTranscriptAndLeavesTheClipboardAlone() {
         let harness = PasteHarness(bundleIdentifier: "com.cmuxterm.app", pasteboard: "EARLIER COPY")

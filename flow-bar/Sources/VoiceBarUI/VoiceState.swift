@@ -3094,7 +3094,8 @@ public final class VoiceState {
                             plan: plan
                         ),
                         text: deliveredText,
-                        operationID: operationID
+                        operationID: operationID,
+                        showsTerminalTranscript: isTerminalTarget
                     )
                 }
             }
@@ -3251,7 +3252,8 @@ public final class VoiceState {
     private func finishPasteConfirmation(
         outcome: VoicePasteOutcome,
         text: String,
-        operationID: UUID? = nil
+        operationID: UUID? = nil,
+        showsTerminalTranscript: Bool = false
     ) {
         if let operationID, operationID == latestDictationOperationID {
             latestDictationInsertionStatus = switch outcome {
@@ -3273,7 +3275,12 @@ public final class VoiceState {
         case .notInserted:
             showConfirmation("Not inserted — transcript kept in History. Click input and press Shift+F5, or Copy.", duration: 5.0)
         case .unverified:
-            showConfirmation("Insertion unverified — transcript kept in History. Check the input before retrying or Copy.", duration: 5.0)
+            // Terminal confirmation keeps the dictated words; the receipt above
+            // still reports posted events as unverified, without claiming readback.
+            showConfirmation(
+                showsTerminalTranscript ? text : "Insertion unverified — transcript kept in History. Check the input before retrying or Copy.",
+                duration: 5.0
+            )
         case .partial:
             showConfirmation("Partially inserted — full transcript kept in History. Check the input before retrying or Copy.", duration: 5.0)
         case let .failed(message):

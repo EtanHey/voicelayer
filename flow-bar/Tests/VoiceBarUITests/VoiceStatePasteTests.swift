@@ -1799,7 +1799,8 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(clipboardWrites, [], "dictation must never write the pasteboard")
         XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
         XCTAssertEqual(typed, [Self.multiLineSpecimen])
-        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+        XCTAssertEqual(state.confirmationText, Self.multiLineSpecimen)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .unverified)
     }
 
     // Transcription cleanup already trims trailing whitespace upstream; the terminal
