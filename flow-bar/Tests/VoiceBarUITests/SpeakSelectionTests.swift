@@ -8,7 +8,7 @@ final class SpeakSelectionTests: XCTestCase {
         for (result, message) in [(SelectionCaptureResult.secureField, "Can't read a secure field"),
                                   (.captureFailed, "Couldn't read the selection, try again"),
                                   (.clipboardRestoreFailed, "Couldn't restore the clipboard"),
-                                  (.clipboardChanged, "Couldn't read the selection, try again")] {
+                                  (.clipboardChanged, "Clipboard changed. Select the text and try again")] {
             state.selectionTextCaptureHandler = { $0(result) }
             state.speakSelection()
             XCTAssertEqual(state.confirmationText, message)

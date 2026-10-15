@@ -141,7 +141,18 @@ final class SpeakSelectionCaptureTests: XCTestCase {
             board.setString("newer user copy", forType: .string)
             return text
         })
-        captureAndWait(capture, expectedResult: .clipboardChanged) { XCTAssertNil($0, "a read spanning two owners is not trustworthy") }
+        let finished = expectation(description: "change-race report")
+        capture.capture { result in
+            XCTAssertNil(result.text, "a read spanning two owners is not trustworthy")
+            let report = self.reportToState(result)
+            XCTAssertEqual(report.details["outcome"], "clipboard_changed")
+            XCTAssertEqual(report.details["ax_read"], "unavailable")
+            XCTAssertEqual(report.details["path"], "copy")
+            XCTAssertEqual(report.message, "Clipboard changed. Select the text and try again")
+            XCTAssertEqual(report.commands, 0)
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
         XCTAssertEqual(board.string(forType: .string), "newer user copy")
     }
 
@@ -228,6 +239,19 @@ final class SpeakSelectionCaptureTests: XCTestCase {
                 signalReady()
                 XCTAssertEqual(selection.text, ["text", "emptyAX"].contains(outcome) ? "raw **selection**" : nil)
                 XCTAssertEqual(self.contents(board), original, "restore must precede completion: \(outcome)")
+                let report = self.reportToState(selection)
+                XCTAssertEqual(report.details["ax_read"], outcome == "emptyAX" ? "empty" : "unavailable", outcome)
+                XCTAssertEqual(report.details["path"], "copy", outcome)
+                let expectedOutcome = ["empty": "copy_empty", "nonstring": "copy_empty",
+                                       "timeout": "copy_timeout", "copyFailure": "copy_failed"][outcome] ?? "completed"
+                XCTAssertEqual(report.details["outcome"], expectedOutcome, outcome)
+                let expectedMessage = ["empty": "Copy returned no text. Select text and try again",
+                                       "nonstring": "Copy returned no text. Select text and try again",
+                                       "timeout": "Copy timed out. Select text and try again",
+                                       "copyFailure": "Couldn't copy. Check Accessibility and try again"][outcome]
+                XCTAssertEqual(report.message, expectedMessage, outcome)
+                XCTAssertEqual(report.commands, ["text", "emptyAX"].contains(outcome) ? 1 : 0)
+                XCTAssertFalse(report.details.values.contains { $0.contains("raw **selection**") || $0.contains("original text") })
             }
             wait(for: [ready], timeout: 2)
             while !jobs.isEmpty, time < 1 {
@@ -277,6 +301,50 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         captureAndWait(capture) { XCTAssertNil($0) }
         XCTAssertEqual(board.changeCount, count)
         XCTAssertEqual(contents(board), original)
+    }
+
+    func testAXProvenanceCountsOnlyTheObservedStringAndNeverLogsPayload() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        seed(board)
+        let original = contents(board)
+        let count = board.changeCount
+        let text = "PRIVATE_SENTINEL שלום👩🏽‍💻\r\n\r\n- first\n2. second\n| A | B |\na\tb\n\u{FFFC}"
+        let capture = makeCapture(readAXSelection: { text }, pasteboard: board,
+                                  postCopy: { XCTFail("AX must not copy"); return false })
+        let finished = expectation(description: "AX trace")
+        capture.capture { result in
+            XCTAssertEqual(result.text, text)
+            let report = self.reportToState(result)
+            XCTAssertEqual(report.details["ax_read"], "text")
+            XCTAssertEqual(report.details["path"], "ax")
+            XCTAssertEqual(report.details["outcome"], "completed")
+            XCTAssertEqual(report.details["host_structure"], "not_observed")
+            XCTAssertEqual(report.details["utf16_count"], String(text.utf16.count))
+            XCTAssertEqual(report.details["line_breaks"], "6")
+            XCTAssertEqual(report.details["list_marker_lines"], "2")
+            XCTAssertEqual(report.details["pipe_lines"], "1")
+            XCTAssertEqual(report.details["tabs"], "1")
+            XCTAssertEqual(report.details["object_replacements"], "1")
+            XCTAssertFalse(report.details.values.contains { $0.contains("PRIVATE_SENTINEL") || $0.contains("שלום") })
+            XCTAssertEqual(report.commands, 1)
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+        XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(contents(board), original)
+    }
+
+    private func reportToState(_ result: SelectionCaptureResult) -> (details: [String: String], message: String?, commands: Int) {
+        let state = VoiceState()
+        var events: [(String, [String: String])] = []
+        var commands = 0
+        state.diagnosticLogger = { events.append(($0, $1)) }
+        state.sendCommand = { _ in commands += 1 }
+        state.selectionTextCaptureHandler = { $0(result) }
+        state.speakSelection()
+        XCTAssertEqual(events.filter { $0.0 == "selection_capture" }.count, 1)
+        return (events.first { $0.0 == "selection_capture" }?.1 ?? [:], state.confirmationText, commands)
     }
 
     private func makeCapture(canCapture: @escaping () -> Bool = { true },
