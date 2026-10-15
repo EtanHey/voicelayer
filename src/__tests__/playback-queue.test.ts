@@ -330,6 +330,7 @@ describe("playback queue — P0-1 sequential playback", () => {
       expect(playerMocks.filter(player => !player.exitedSettled)).toHaveLength(0);
       expect(queueEvents).not.toContain(`decode:${TEST_TMP}/fx1-foreign.mp3`);
       expect(playerMocks).toHaveLength(1);
+      expect(broadcasts).toContainEqual({ type: "state", state: "idle", source: "playback", next_state: "recording" });
       ask.capture.resolve("raw answer"); await ask.request;
       await waitFor(() => playerMocks.length === 2, "preserved speech after capture");
       expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/fx1-foreign.mp3`);

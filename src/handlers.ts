@@ -743,7 +743,7 @@ export async function handleConverse(
 
     // Record mic audio, then transcribe with selected STT backend
     assertSpeakerClear();
-    if (promptPlayers.length) broadcast({ type: "state", state: "idle", next_state: "recording" });
+    if (promptPlayers.length) broadcast({ type: "state", state: "idle", source: "playback", next_state: "recording" });
     const pushToEnd = resolvePushToEnd(validated.push_to_end ?? false, {
       caller: "mcp.voice_ask",
     });
