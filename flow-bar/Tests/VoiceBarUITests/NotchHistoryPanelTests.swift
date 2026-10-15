@@ -1,3 +1,4 @@
+import OffscreenTestSupport
 import AppKit
 import CoreGraphics
 @testable import VoiceBarUI
@@ -95,7 +96,7 @@ final class NotchHistoryPanelTests: XCTestCase {
         let dismissal = NotchHistoryDismissal { closes += 1 }
         let panel = NSPanel(contentRect: NSRect(x: -20000, y: -20000, width: 10, height: 10),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.orderFront(nil)
+        VLOrderTestWindow(panel)
         defer { panel.orderOut(nil) }
         dismissal.panelWindow = panel
 
@@ -123,8 +124,8 @@ final class NotchHistoryPanelTests: XCTestCase {
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         let settings = NSWindow(contentRect: NSRect(x: -20000, y: -19000, width: 10, height: 10),
                                 styleMask: [.titled], backing: .buffered, defer: false)
-        panel.orderFront(nil)
-        settings.orderFront(nil)
+        VLOrderTestWindow(panel)
+        VLOrderTestWindow(settings)
         defer {
             panel.orderOut(nil)
             settings.orderOut(nil)
