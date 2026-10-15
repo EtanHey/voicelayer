@@ -157,10 +157,18 @@ def main():
         with tempfile.TemporaryDirectory(prefix='.backup-', dir=target.parent) as staging:
             staged = Path(staging) / 'payload'
             subprocess.run(['rsync', '--times', '--ignore-existing', '--', str(src), str(staged)], check=True)
+            staged_sig = signature(staged)  # lstat rejects symlinks/non-files
+            # macOS rsync preserves whole-second mtimes. Compare that transport
+            # precision first; restore exact ns only after byte verification.
+            if staged_sig[0] != sig[0] or staged_sig[1] // 1_000_000_000 != sig[1] // 1_000_000_000:
+                raise RuntimeError('Staged verification failed (signature): ' + str(src.relative_to(source)))
+            if subprocess.run(['cmp', '-s', str(staged), str(src)]).returncode != 0:
+                raise RuntimeError('Staged verification failed (bytes): ' + str(src.relative_to(source)))
             if signature(src) != sig or signature(audio) != audio_sig:
-                log('Changed during copy; skipped: ' + str(src.relative_to(source)))
-                continue
+                raise RuntimeError('Staged verification failed (source changed): ' + str(src.relative_to(source)))
             os.utime(staged, ns=(sig[1], sig[1]))
+            if signature(staged) != sig:
+                raise RuntimeError('Staged verification failed (final signature): ' + str(src.relative_to(source)))
             os.chmod(staged, 0o600)
             publish(staged, target)  # EEXIST fails closed, never replaces
         log(('Changed version: ' if '.changed-' in target.name else 'Copied: ') + str(target.relative_to(dest)))

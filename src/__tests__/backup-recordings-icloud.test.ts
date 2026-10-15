@@ -120,7 +120,7 @@ test("exclusive publication never overwrites a file appearing during transfer", 
   recording();
   writeFileSync(join(bin, "rsync"), `#!/usr/bin/env python3
 import pathlib, subprocess, sys
-subprocess.run(["/bin/cp", sys.argv[-2], sys.argv[-1]], check=True)
+subprocess.run(["/bin/cp", "-p", sys.argv[-2], sys.argv[-1]], check=True)
 staged = pathlib.Path(sys.argv[-1])
 (staged.parent.parent / pathlib.Path(sys.argv[-2]).name).write_text("racing writer")
 `, { mode: 0o755 });
@@ -134,4 +134,33 @@ test("copies nested session sidecars with the same relative tree", () => {
   writeFileSync(join(folder, "chunks/part.json"), "timing");
   expect(run().exitCode).toBe(0);
   expect(readFileSync(join(dest, "2026-10-14/session one/chunks/part.json"), "utf8")).toBe("timing");
+});
+
+for (const [label, payload] of [["short", "XX"], ["same-size wrong bytes", "X".repeat(14)]] as const) {
+  test(`rejects a successful rsync with ${label} payload`, () => {
+    const folder = recording();
+    writeFileSync(join(bin, "rsync"), `#!/usr/bin/env python3
+import os, pathlib, sys
+src, staged = map(pathlib.Path, sys.argv[-2:])
+staged.write_bytes(${JSON.stringify(payload)}.encode())
+st = src.stat()
+os.utime(staged, ns=(st.st_atime_ns, st.st_mtime_ns))
+`, { mode: 0o755 });
+    expect(run().exitCode).toBe(1);
+    expect(readdirSync(join(dest, "2026-10-14/session one"))).toEqual([]);
+    expect(readFileSync(join(folder, "audio.wav"), "utf8")).toBe("original audio");
+    expect(readFileSync(join(home, "Library/Logs/voicelayer/recordings-backup.log"), "utf8")).toContain("verification failed");
+  });
+}
+
+test("rejects a source changed during the byte comparison", () => {
+  recording();
+  writeFileSync(join(bin, "cmp"), `#!/usr/bin/env python3
+import os, sys
+st = os.stat(sys.argv[-1])
+os.utime(sys.argv[-1], ns=(st.st_atime_ns, st.st_mtime_ns + 1))
+`, { mode: 0o755 });
+  expect(run().exitCode).toBe(1);
+  expect(readdirSync(join(dest, "2026-10-14/session one"))).toEqual([]);
+  expect(readFileSync(join(home, "Library/Logs/voicelayer/recordings-backup.log"), "utf8")).toContain("source changed");
 });
