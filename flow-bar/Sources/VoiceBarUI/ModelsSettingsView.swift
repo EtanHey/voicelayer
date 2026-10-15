@@ -2,26 +2,20 @@ import SwiftUI
 
 public struct ModelsSettingsView: View {
     public let state: ModelsSettingsState
-    @Binding private var effort: VoiceBarPerformanceEffort
     private let notice: String?
     private let residencyNotice: String?
-    private let lastDictationLabel: String?
     private let degradation: STTPolishDegradation?
     private let onDismissDegradation: () -> Void
     private let processingPending: [ProcessingKey: Bool]
     private let processingNotice: String?
     private let onToggleProcessing: ((ProcessingKey, Bool) -> Void)?
-    private let onSelectEffort: (VoiceBarPerformanceEffort) -> Void
     private let onSelectResidency: ((VoiceModelResidency) -> Void)?
 
     public init(
         state: ModelsSettingsState,
-        effort: Binding<VoiceBarPerformanceEffort>,
         notice: String? = nil,
-        onSelectEffort: @escaping (VoiceBarPerformanceEffort) -> Void,
         residencyNotice: String? = nil,
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil,
-        lastDictationLabel: String? = nil,
         degradation: STTPolishDegradation? = nil,
         onDismissDegradation: @escaping () -> Void = {},
         processingPending: [ProcessingKey: Bool] = [:],
@@ -29,12 +23,9 @@ public struct ModelsSettingsView: View {
         onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil
     ) {
         self.state = state
-        _effort = effort
         self.notice = notice
-        self.onSelectEffort = onSelectEffort
         self.residencyNotice = residencyNotice
         self.onSelectResidency = onSelectResidency
-        self.lastDictationLabel = lastDictationLabel
         self.degradation = degradation
         self.onDismissDegradation = onDismissDegradation
         self.processingPending = processingPending
@@ -57,14 +48,20 @@ public struct ModelsSettingsView: View {
             }
 
             Section {
-                LabeledContent("Transcription model") {
-                    Text(modelSummary)
-                        .accessibilityIdentifier("models-configured-model")
-                }
-                LabeledContent("In memory") {
+                LabeledContent("Local recognizer") {
                     HStack(spacing: 10) {
-                        Text(residencyLabel)
-                            .accessibilityIdentifier("models-residency")
+                        VStack(alignment: .trailing, spacing: 3) {
+                            Text(modelSummary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.trailing)
+                                .accessibilityIdentifier("models-recognizer")
+                            if state.availability == .available {
+                                Text(residencyLabel)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("models-residency")
+                            }
+                        }
                         if state.availability == .available,
                            let onSelectResidency,
                            state.residency != .unknown {
@@ -76,50 +73,28 @@ public struct ModelsSettingsView: View {
                         }
                     }
                 }
-                LabeledContent("Last dictation used") {
-                    Text(lastDictationLabel ?? "Unavailable")
-                        .accessibilityIdentifier("models-last-dictation")
-                }
-                if let residencyNotice {
-                    Text(residencyNotice).font(.caption).foregroundStyle(.orange)
-                }
-            }
-
-            Section("Transcription effort") {
-                Picker("Transcription effort", selection: Binding(
-                    get: { effort },
-                    set: { selected in
-                        effort = selected
-                        onSelectEffort(selected)
-                    }
-                )) {
-                    ForEach(VoiceBarPerformanceEffort.allCases) { option in
-                        Text(option.displayName).tag(option)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("models-effort-picker")
-                .disabled(Self.effortDisabledReason(for: state) != nil)
-                if let reason = Self.effortDisabledReason(for: state) {
+                if state.availability == .available, let reason = Self.effortDisabledReason(for: state) {
                     Text(reason)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("models-busy-reason")
                 }
-                Text(Self.effortExplanation)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let note = Self.effortStatusNote(for: state) {
-                    Text(note)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .accessibilityIdentifier("models-effort-status")
+                if state.availability == .available {
+                    DisclosureGroup("Recognizer details") {
+                        LabeledContent("Configured model", value: VoiceModelDisplayName.normalize(state.configuredModelName) ?? "Unknown")
+                        LabeledContent("Active model", value: VoiceModelDisplayName.normalize(state.activeModelName) ?? "Unknown")
+                        LabeledContent("Configured effort", value: state.configuredEffort?.displayName ?? "Unknown")
+                        LabeledContent("Active effort", value: state.activeEffort?.displayName ?? "Unknown")
+                        if let note = Self.effortStatusNote(for: state) {
+                            Text(note).font(.caption).foregroundStyle(.orange)
+                        }
+                        if let notice {
+                            Text(notice).font(.caption).foregroundStyle(.orange)
+                        }
+                    }
                 }
-                if let notice {
-                    Text(notice).font(.caption).foregroundStyle(.orange)
+                if let residencyNotice {
+                    Text(residencyNotice).font(.caption).foregroundStyle(.orange)
                 }
             }
 
@@ -175,17 +150,6 @@ public struct ModelsSettingsView: View {
         case .disconnected, .available: "Not connected"
         }
     }
-
-    /// Why the effort picker is disabled, shown directly under it (spec §5). nil means it is enabled.
-    /// The daemon owns effort, so the picker stays disabled until VoiceLayer reports it is available.
-    // AIDEV-NOTE: numbers from r4-e1/findings.md (M4 Max, 3 clips): Fast→Accurate
-    // +15–35 % decode time, identical words on 10 s/33 s clips, 2–4 of 158 on 100 s
-    // (inside Balanced's own run-to-run noise). Final wording/placement waits on
-    // Etan (bundled plan, answer A).
-    static let effortExplanation =
-        "Fast is the quickest. Balanced and Accurate use beam search: about 15–35 % slower, "
-            + "with no measurable word difference in our tests. Changing it reloads the model "
-            + "(about 2 s). History shows which one each transcript used."
 
     /// Truth when the running server's effort is not the setting (a server VoiceLayer
     /// did not launch keeps its own flags until it restarts).
@@ -272,7 +236,7 @@ public struct ModelsSettingsView: View {
         }
     }
 
-    /// Spec §5: busy always shows a reason, here as under the effort picker. nil when the
+    /// Busy always shows a reason beside the Processing controls. nil when the
     /// section already shows its own placeholder (status unavailable or still loading).
     static func processingBusyReason(for state: ModelsSettingsState) -> String? {
         state.availability == .available ? effortDisabledReason(for: state) : nil

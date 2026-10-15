@@ -50,79 +50,44 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
         XCTAssertNotEqual(try renderedPixels(host), availablePixels)
     }
 
-    func testProductionSettingsTracksLiveModelsStateAndRoutesEffortSelection() throws {
-        let voiceState = VoiceState()
-        voiceState.setConnectionStatus(true)
-        voiceState.handleEvent(Self.availableHealth)
-        var selectedEffort: VoiceBarPerformanceEffort?
-
-        let host = NSHostingView(rootView: makeSettingsView(
-            voiceState: voiceState,
-            onSelectEffort: { selectedEffort = $0 }
-        ))
-        host.frame = NSRect(origin: .zero, size: Self.productionHostSize)
-        settle(host)
-
-        XCTAssertEqual(voiceState.modelsSettingsState.configuredModelName, "large-v3-turbo")
-        XCTAssertEqual(voiceState.modelsSettingsState.residency, .loaded)
-        let availablePixels = try renderedPixels(host)
-        XCTAssertFalse(availablePixels.isEmpty)
-
-        let picker = try XCTUnwrap(descendants(of: NSSegmentedControl.self, in: host).first)
-        XCTAssertTrue(picker.isEnabled)
-        let fastIndex = try XCTUnwrap(
-            (0 ..< picker.segmentCount).first { picker.label(forSegment: $0) == "Fast" }
-        )
-        picker.selectedSegment = fastIndex
-        _ = picker.sendAction(picker.action, to: picker.target)
-        settle(host)
-        XCTAssertEqual(selectedEffort, .fast)
-
-        voiceState.mode = .recording
-        settle(host)
-        XCTAssertFalse(picker.isEnabled)
-
-        voiceState.mode = .transcribing
-        settle(host)
-        XCTAssertFalse(picker.isEnabled)
-
-        voiceState.mode = .idle
-        settle(host)
-        // Last-known status stays (no "Starting…" flash); the picker waits for fresh health, with a reason.
-        XCTAssertEqual(voiceState.modelsSettingsState.availability, .available)
-        XCTAssertEqual(voiceState.modelsSettingsState.busyReason, "Checking VoiceLayer…")
-        XCTAssertFalse(picker.isEnabled)
-        let loadingPixels = try renderedPixels(host)
-        XCTAssertNotEqual(loadingPixels, availablePixels)
-
-        voiceState.handleEvent(Self.availableHealth)
-        settle(host)
-        XCTAssertEqual(voiceState.modelsSettingsState.configuredModelName, "large-v3-turbo")
-        XCTAssertTrue(picker.isEnabled)
-        let refreshedPixels = try renderedPixels(host)
-        XCTAssertNotEqual(refreshedPixels, loadingPixels)
-
-        voiceState.mode = .recording
-        settle(host)
-        XCTAssertFalse(picker.isEnabled)
-
-        voiceState.setConnectionStatus(false)
-        settle(host)
-        XCTAssertEqual(voiceState.modelsSettingsState.availability, .disconnected)
-        XCTAssertNil(voiceState.modelsSettingsState.configuredModelName)
-        XCTAssertFalse(picker.isEnabled)
-        XCTAssertNotEqual(try renderedPixels(host), refreshedPixels)
-
-        voiceState.setConnectionStatus(true)
-        settle(host)
-        XCTAssertEqual(voiceState.modelsSettingsState.availability, .loading)
-        XCTAssertNil(voiceState.modelsSettingsState.configuredModelName)
-        XCTAssertFalse(picker.isEnabled)
-
-        voiceState.handleEvent(Self.availableHealth)
-        settle(host)
-        XCTAssertEqual(voiceState.modelsSettingsState.configuredModelName, "large-v3-turbo")
-        XCTAssertTrue(picker.isEnabled)
+    func testEffortPickerIsAbsentAcrossHealthAndSessionTransitionsWithoutChangingSavedEffort() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let savedFile = directory.appendingPathComponent("whisper-performance.json")
+        for effort in VoiceBarPerformanceEffort.allCases {
+            let original = Data("{ \"effort\": \"\(effort.rawValue)\" }\n".utf8)
+            try original.write(to: savedFile)
+            let voiceState = VoiceState()
+            voiceState.setConnectionStatus(true)
+            voiceState.handleEvent(Self.availableHealth)
+            var writes: [VoiceBarPerformanceEffort] = []
+            let host = NSHostingView(rootView: makeSettingsView(
+                voiceState: voiceState,
+                effort: effort,
+                onSelectEffort: { selected in
+                    writes.append(selected)
+                    try? Data(selected.rawValue.utf8).write(to: savedFile)
+                }
+            ))
+            host.frame = NSRect(origin: .zero, size: Self.productionHostSize)
+            for mode in [VoiceMode.idle, .recording, .transcribing, .idle] {
+                voiceState.mode = mode
+                settle(host)
+                XCTAssertTrue(descendants(of: NSSegmentedControl.self, in: host).isEmpty)
+            }
+            voiceState.setConnectionStatus(false)
+            settle(host)
+            XCTAssertEqual(voiceState.modelsSettingsState.availability, .disconnected)
+            voiceState.setConnectionStatus(true)
+            settle(host)
+            voiceState.handleEvent(Self.availableHealth)
+            settle(host)
+            XCTAssertTrue(descendants(of: NSSegmentedControl.self, in: host).isEmpty)
+            XCTAssertTrue(writes.isEmpty)
+            XCTAssertEqual(try Data(contentsOf: savedFile), original)
+            XCTAssertEqual(voiceState.modelsSettingsState.configuredEffort, .accurate)
+        }
     }
 
     func testProductionModelsFormUsesTheRemaining780By620HostHeight() throws {
@@ -133,8 +98,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
         host.frame = NSRect(origin: .zero, size: Self.productionHostSize)
         settle(host)
 
-        let picker = try XCTUnwrap(descendants(of: NSSegmentedControl.self, in: host).first)
-        let formScrollView = try XCTUnwrap(firstAncestor(of: NSScrollView.self, from: picker))
+        let formScrollView = try XCTUnwrap(descendants(of: NSScrollView.self, in: host).first { $0.frame.height >= 500 })
 
         XCTAssertGreaterThanOrEqual(formScrollView.frame.height, 500)
         XCTAssertLessThanOrEqual(formScrollView.frame.maxY, host.bounds.maxY)
@@ -143,6 +107,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
 
     private func makeSettingsView(
         voiceState: VoiceState,
+        effort: VoiceBarPerformanceEffort = .accurate,
         onSelectEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
         onSelectResidency: ((VoiceModelResidency) -> Void)? = nil
     ) -> SettingsView {
@@ -151,7 +116,7 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
             missingPermissions: [],
             availableDevices: { [] },
             selectedDeviceID: { nil },
-            performanceEffort: { .accurate },
+            performanceEffort: { effort },
             performanceEffortNotice: { nil },
             onSelectPerformanceEffort: onSelectEffort,
             modelsStatus: { voiceState.modelsSettingsState },
@@ -172,17 +137,6 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
             let match = child as? ViewType
             return (match.map { [$0] } ?? []) + descendants(of: type, in: child)
         }
-    }
-
-    private func firstAncestor<ViewType: NSView>(of type: ViewType.Type, from view: NSView) -> ViewType? {
-        var ancestor = view.superview
-        while let current = ancestor {
-            if let match = current as? ViewType {
-                return match
-            }
-            ancestor = current.superview
-        }
-        return nil
     }
 
     private func renderedPixels(_ host: NSHostingView<SettingsView>) throws -> Data {

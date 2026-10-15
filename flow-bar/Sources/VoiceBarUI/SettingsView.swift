@@ -491,7 +491,6 @@ public struct SettingsView: View {
     @State private var selectedTab: SettingsTab
     @State private var hotkeyListenerRestartLine: HotkeyListenerRestartLine?
     @State private var permissionsRefreshTick = 0
-    @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
     @State private var localVoiceBarHidden: Bool
     @State private var historyDayGroups: [SettingsHistoryDayGroup]
     @State private var historyLoadedEntryCount: Int
@@ -547,7 +546,6 @@ public struct SettingsView: View {
     @State private var isAdvancedExpanded = false
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @State private var microphoneDrag: MicrophoneDragState
-    @State private var lastDictationProvenanceLabel: String?
     @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
@@ -731,7 +729,6 @@ public struct SettingsView: View {
         self.onRevealHistoryFile = onRevealHistoryFile
         self.footerPresentation = footerPresentation
         self.onRunSetup = onRunSetup
-        let initialPerformanceEffort = performanceEffort()
         self.tabRequest = tabRequest
         self.onSelectedTabChange = onSelectedTabChange
         _selectedTab = State(initialValue: tabRequest?.tab ?? initialTab)
@@ -756,7 +753,6 @@ public struct SettingsView: View {
             initialValue: max(Self.historyPageSize, initialAskHistoryPage?.loadedEntryCount ?? 0)
         )
         _askHistoryHasMore = State(initialValue: initialAskHistoryPage?.hasMore ?? false)
-        _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
         _localVoiceBarHidden = State(initialValue: isVoiceBarHidden())
         let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
         _historyDayGroups = State(initialValue: initialHistoryPage?.groups ?? [])
@@ -1219,33 +1215,17 @@ public struct SettingsView: View {
     private var transcriptionTab: some View {
         ModelsSettingsView(
             state: modelsStatus(),
-            effort: $selectedPerformanceEffort,
             notice: performanceEffortNotice(),
-            onSelectEffort: onSelectPerformanceEffort,
             residencyNotice: residencyNotice(),
             onSelectResidency: onSelectResidency,
-            lastDictationLabel: lastDictationProvenanceLabel,
             degradation: polishDegradation(),
             onDismissDegradation: onDismissPolishDegradation,
             processingPending: processingPending(),
             processingNotice: processingNotice(),
             onToggleProcessing: onToggleProcessing
         )
-        // The picker's local state gives one click instant feedback; it follows the app's value
-        // (the selection in flight, else the daemon's effort) so a reject or a daemon-side change
-        // never leaves it stale. There is no persisted copy (E2).
-        .onChange(of: performanceEffort()) { _, current in
-            selectedPerformanceEffort = current
-        }
         .onAppear {
-            selectedPerformanceEffort = performanceEffort()
-            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(
-                for: lastDictationEntry()?.recordingPath
-            )
             onRefreshModelsStatus()
-        }
-        .onChange(of: lastDictationEntry()?.recordingPath) { _, path in
-            lastDictationProvenanceLabel = SettingsHistoryArchive.lastDictationProvenanceLabel(for: path)
         }
     }
 
@@ -1441,11 +1421,6 @@ public struct SettingsView: View {
             if let duration = entry.durationLabel {
                 Text(duration)
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            if let effort = entry.performanceEffort {
-                Text(effort.displayName)
-                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -2592,17 +2567,6 @@ public struct SettingsView: View {
         onRunRelaySetup { result in
             relaySetupFeedback = (action, result)
             relaySetupRunning = false
-        }
-    }
-
-    private func performanceEffortLabel(_ effort: VoiceBarPerformanceEffort) -> String {
-        switch effort {
-        case .fast:
-            "Fast"
-        case .balanced:
-            "Balanced"
-        case .accurate:
-            "Accurate"
         }
     }
 

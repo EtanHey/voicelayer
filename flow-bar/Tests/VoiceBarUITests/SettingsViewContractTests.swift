@@ -9,12 +9,8 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("modelsStatus: @escaping () -> ModelsSettingsState ="))
         XCTAssertTrue(source.contains("ModelsSettingsView("))
         XCTAssertTrue(source.contains("state: modelsStatus()"))
-        XCTAssertTrue(source.contains("effort: $selectedPerformanceEffort"))
-        // E2: the local picker state follows the app/daemon value instead of freezing at init.
-        XCTAssertTrue(source.contains(".onChange(of: performanceEffort())"))
-        XCTAssertTrue(source.contains("selectedPerformanceEffort = current"))
-        XCTAssertTrue(source.contains("notice: performanceEffortNotice()"))
-        XCTAssertTrue(source.contains("onSelectEffort: onSelectPerformanceEffort"))
+        XCTAssertFalse(source.contains("selectedPerformanceEffort"))
+        XCTAssertFalse(source.contains("onSelectEffort: onSelectPerformanceEffort"))
         XCTAssertTrue(source.contains("onRefreshModelsStatus()"))
         XCTAssertFalse(source.contains("Model information unavailable"))
     }
@@ -102,7 +98,7 @@ final class SettingsViewContractTests: XCTestCase {
         let modelSource = try String(contentsOf: URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift"), encoding: .utf8)
-        XCTAssertTrue(modelSource.contains("LabeledContent(\"Transcription model\")"))
+        XCTAssertTrue(modelSource.contains("LabeledContent(\"Local recognizer\")"))
         XCTAssertFalse(modelSource.contains("LabeledContent(\"Speech model\")"))
     }
 
@@ -116,7 +112,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertEqual(SettingsDictionarySource.unknown.title, "Terms")
     }
 
-    func testOnlyModelsOwnsPerformanceEffortPicker() throws {
+    func testSettingsKeepsMicrophonePriorityWithoutEffortPicker() throws {
         let source = try settingsViewSource()
 
         XCTAssertFalse(source.contains("case .audio:"))
