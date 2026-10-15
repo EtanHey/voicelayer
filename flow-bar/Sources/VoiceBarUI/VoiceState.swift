@@ -78,9 +78,18 @@ public struct PasteboardSnapshot: Equatable {
     public var items: [[String: Data]]
 }
 
+public enum DictationInsertionResult: Equatable {
+    case notApplied
+    case appliedUnverified
+    case partiallyApplied
+    case verified
+}
+
+/// False means no dispatch and no completion. Any attempted write must return true,
+/// with its confidence in completion, so possibly applied text is never retried.
 public typealias AsyncDictationInsertionHandler = (
     _ text: String,
-    _ completion: @escaping () -> Void
+    _ completion: @escaping (DictationInsertionResult) -> Void
 ) -> Bool
 
 public struct RecentTranscriptionEntry: Codable, Equatable {
@@ -121,6 +130,9 @@ public struct RecentTranscriptionEntry: Codable, Equatable {
 private enum VoicePasteOutcome: Equatable {
     case insertedAtCursor
     case pasted
+    case notInserted
+    case unverified
+    case partial
     case failed(String)
 }
 
@@ -2930,6 +2942,12 @@ public final class VoiceState {
 
                 pasteScheduler(pasteDelay) { [weak self] in
                     guard let self else { return }
+                    if (plan == .autoPaste || allowAXInsertion),
+                       !TerminalPasteTargets.isTerminal(pasteTargetBundleID),
+                       frontmostAppProvider()?.processIdentifier != pasteTarget.processIdentifier {
+                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                        return
+                    }
                     if plan == .autoPaste, insertionHandler != nil, !targetMatchesRecordStart {
                         logDiagnostic("paste_ax_insert_skipped", details: [
                             "plan": String(describing: plan),
@@ -3007,6 +3025,12 @@ public final class VoiceState {
                         "attemptedFreshInsertion": boolString(freshInsertionHandler != nil),
                         "axTrusted": boolString(accessibilityTrustChecker(false)),
                     ])
+                    // New rich-editor typing needs native matched-prestate proof.
+                    // An AX miss alone never authorizes automatic global key events.
+                    if plan == .autoPaste, !isTerminalTarget {
+                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                        return
+                    }
                     // AIDEV-NOTE: Dictation NEVER touches the pasteboard. This is the third
                     // attempt at this line and the first that does not trade one of Etan's
                     // bugs for another, so the whole history lives here, at the call site:
@@ -3036,8 +3060,9 @@ public final class VoiceState {
                     //
                     // So the transcript is TYPED as printable text only, each line break sent
                     // as Shift+Return (SynthesizedTyping): no control character ever rides in
-                    // a key event. Non-terminals already tried AX above; typing is their
-                    // fallback. There is no clipboard fallback anywhere, by design: a failed
+                    // a key event. This route serves terminals and explicit re-paste;
+                    // automatic non-terminal AX misses retain the transcript above.
+                    // There is no clipboard fallback anywhere, by design: a failed
                     // paste is recoverable with Shift+F5, a paste over his clipboard is not.
                     //
                     // Known limit: Shift+Return is a new line only to an app that tells it
@@ -3081,11 +3106,11 @@ public final class VoiceState {
             return nil
         }
         return { text, completion in
-            let inserted = synchronousHandler(text)
-            if inserted {
-                completion()
-            }
-            return inserted
+            _ = synchronousHandler(text)
+            // A legacy Bool cannot tell rejection from an applied-but-rejected
+            // setter. Invocation therefore consumes this attempt without retry.
+            completion(.appliedUnverified)
+            return true
         }
     }
 
@@ -3104,34 +3129,43 @@ public final class VoiceState {
         isAXInsertionInFlight = true
         activeAXInsertionTargetBundleID = targetBundleID
         var handlerReturned = false
-        var completionArrived = false
+        var completionResult: DictationInsertionResult?
         var didFinish = false
 
-        let finishSuccess = { [weak self] in
+        let finish = { [weak self] (result: DictationInsertionResult) in
             guard let self, !didFinish else { return }
             didFinish = true
             axInsertionWatchdog?.cancel()
             axInsertionWatchdog = nil
             isAXInsertionInFlight = false
             activeAXInsertionTargetBundleID = nil
-            logDiagnostic("paste_ax_insert_success", details: [
+            logDiagnostic("paste_ax_insert_complete", details: [
                 "plan": String(describing: plan),
                 "targetApp": targetBundleID,
                 "source": source,
+                "result": String(describing: result),
             ])
-            finishPasteConfirmation(outcome: .insertedAtCursor, text: text, operationID: operationID)
+            let outcome: VoicePasteOutcome = switch result {
+            case .verified: .insertedAtCursor
+            case .notApplied: .notInserted
+            case .appliedUnverified: .unverified
+            case .partiallyApplied: .partial
+            }
+            finishPasteConfirmation(outcome: outcome, text: text, operationID: operationID)
         }
 
-        let started = handler(text) {
+        let started = handler(text) { result in
             if handlerReturned {
-                finishSuccess()
+                finish(result)
             } else {
-                completionArrived = true
+                completionResult = completionResult ?? result
             }
         }
         handlerReturned = true
 
-        guard started else {
+        // A completion carries possible application even if a faulty adapter returns
+        // false. Suppress fallback in that case too.
+        guard started || completionResult != nil else {
             isAXInsertionInFlight = false
             activeAXInsertionTargetBundleID = nil
             return .failed
@@ -3142,8 +3176,8 @@ public final class VoiceState {
             "path": "ax",
             "source": source,
         ])
-        if completionArrived {
-            finishSuccess()
+        if let completionResult {
+            finish(completionResult)
         } else {
             let watchdog = DispatchWorkItem { [weak self] in
                 guard let self, !didFinish, isAXInsertionInFlight else { return }
@@ -3157,7 +3191,7 @@ public final class VoiceState {
                     "source": source,
                 ])
                 finishPasteConfirmation(
-                    outcome: .failed("Text insertion timed out"),
+                    outcome: .unverified,
                     text: text,
                     operationID: operationID
                 )
@@ -3195,7 +3229,7 @@ public final class VoiceState {
         plan: VoicePastePlan
     ) -> VoicePasteOutcome {
         guard pasted else { return .failed(genericPasteFailureMessage) }
-        return .pasted
+        return .unverified
     }
 
     private static func sameApp(_ lhs: NSRunningApplication?, _ rhs: NSRunningApplication?) -> Bool {
@@ -3217,6 +3251,8 @@ public final class VoiceState {
             latestDictationInsertionStatus = switch outcome {
             case .insertedAtCursor: .insertedAtCursor
             case .pasted: .pasted
+            case .notInserted: .notInserted
+            case .unverified, .partial: .unverified
             case .failed: .failed
             }
         }
@@ -3228,6 +3264,12 @@ public final class VoiceState {
             showConfirmation(text, duration: 5.0)
         case .pasted:
             showConfirmation(text, duration: 5.0)
+        case .notInserted:
+            showConfirmation("Not inserted — transcript kept in History. Click input and press Shift+F5, or Copy.", duration: 5.0)
+        case .unverified:
+            showConfirmation("Insertion unverified — transcript kept in History. Check the input before retrying or Copy.", duration: 5.0)
+        case .partial:
+            showConfirmation("Partially inserted — full transcript kept in History. Check the input before retrying or Copy.", duration: 5.0)
         case let .failed(message):
             showConfirmation(Self.failureMessageWithRetryHint(message), duration: 4.0)
         }

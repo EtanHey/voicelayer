@@ -16,6 +16,8 @@ enum AXWriteDisposition: Equatable {
 
 enum AXInsertionStrategy: Equatable {
     case valueRewrite
+    case selectionLocal
+    case requiresNativeProof
     case selectedTextStreaming(maxChunkUTF16Length: Int, interChunkDelay: TimeInterval)
 }
 
@@ -33,13 +35,6 @@ final class CommandModeAXHelper {
     private static let atomicValueRewriteBundleIdentifiers = Set([
         "com.cmuxterm.app",
     ])
-    private static let selectedTextStreamingChunkMaxUTF16Length = 240
-    private static let selectedTextStreamingInterChunkDelay: TimeInterval = 0.012
-    private static let valueRewriteMaxTextUTF16Length = 2048
-    private static let valueRewriteMaxFocusedValueUTF16Length = 32768
-    private static let selectedTextStreamingQueue = DispatchQueue(
-        label: "com.voicelayer.voicebar.ax-selected-text-streaming"
-    )
 
     private let readSelection: () -> CommandModeSelectionSnapshot?
     private let writeValue: (String) -> Bool
@@ -94,8 +89,8 @@ final class CommandModeAXHelper {
     static func captureFocusedInsertionHandler() -> AsyncDictationInsertionHandler? {
         guard AXIsProcessTrusted(), let element = focusedElement() else { return nil }
         return { text, completion in
-            insertText(text, into: element) {
-                DispatchQueue.main.async(execute: completion)
+            insertText(text, into: element) { result in
+                DispatchQueue.main.async { completion(result) }
             }
         }
     }
@@ -139,63 +134,93 @@ final class CommandModeAXHelper {
     private static func insertText(
         _ text: String,
         into element: AXUIElement,
-        completion: @escaping () -> Void
+        completion: @escaping (DictationInsertionResult) -> Void
     ) -> Bool {
-        let targetBundleIdentifier = targetBundleIdentifier(for: element)
-        let earlyStrategy = insertionStrategy(
-            text: text,
-            focusedValueLength: 0,
-            targetBundleIdentifier: targetBundleIdentifier
+        guard let window = readElement(element, attribute: kAXWindowAttribute as CFString) else {
+            completion(.notApplied)
+            return true
+        }
+        return beginSelectionLocalInsertion(
+            text,
+            readSnapshot: { selectionSnapshot(element) },
+            isEligible: {
+                guard insertionStrategy(text: text, focusedValueLength: 0,
+                                        targetBundleIdentifier: targetBundleIdentifier(for: element)) == .selectionLocal,
+                      isCurrentTarget(element, window: window) else { return false }
+                var ancestor: AXUIElement? = element
+                var reachedWindow = false
+                for _ in 0..<32 {
+                    guard let current = ancestor else { return false }
+                    if readAttributeString(current, attribute: kAXRoleAttribute as CFString) == "AXWebArea" {
+                        // AX text/ranges do not certify rich nodes or browser selection.
+                        // Native matched-prestate proof must precede enabling this route.
+                        return false
+                    }
+                    if CFEqual(current, window) { reachedWindow = true; break }
+                    ancestor = readElement(current, attribute: kAXParentAttribute as CFString)
+                }
+                let role = readAttributeString(element, attribute: kAXRoleAttribute as CFString)
+                let subrole = readAttributeString(element, attribute: kAXSubroleAttribute as CFString)
+                return reachedWindow && (role == kAXTextFieldRole || role == kAXTextAreaRole)
+                    && subrole != kAXSecureTextFieldSubrole
+                    && readAttributeBool(element, attribute: kAXEnabledAttribute as CFString) == true
+                    && isSettable(element, attribute: kAXSelectedTextAttribute as CFString)
+                    && isSettable(element, attribute: kAXSelectedTextRangeAttribute as CFString)
+            },
+            isCurrentTarget: { isCurrentTarget(element, window: window) },
+            writeSelection: {
+                AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, $0 as CFTypeRef) == .success
+            },
+            writeCaret: { writeSelectedRange($0, to: element) },
+            observeSettled: { work in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+            },
+            completion: completion
         )
-        if case let .selectedTextStreaming(maxChunkUTF16Length, interChunkDelay) = earlyStrategy {
-            return streamSelectedText(
-                text,
-                into: element,
-                maxChunkUTF16Length: maxChunkUTF16Length,
-                interChunkDelay: interChunkDelay,
-                completion: completion
-            )
-        }
+    }
 
-        guard let value = readAttributeString(element, attribute: kAXValueAttribute as CFString),
-              let selectedRange = readSelectedRange(element),
-              let swiftRange = Range(selectedRange, in: value)
-        else {
-            return false
+    /// The live F5 transport seam: one selection-local write, never whole AXValue.
+    /// Text and caret must match both immediately and after bounded host reconciliation.
+    @discardableResult
+    static func beginSelectionLocalInsertion(
+        _ text: String,
+        readSnapshot: @escaping () -> CommandModeSelectionSnapshot?,
+        isEligible: () -> Bool,
+        isCurrentTarget: @escaping () -> Bool,
+        writeSelection: (String) -> Bool,
+        writeCaret: (NSRange) -> Bool,
+        observeSettled: (@escaping () -> Void) -> Void,
+        completion: @escaping (DictationInsertionResult) -> Void
+    ) -> Bool {
+        guard isEligible(), let before = readSnapshot(),
+              let range = Range(before.selectedRange, in: before.value), isCurrentTarget() else {
+            completion(.notApplied)
+            return true
         }
-
-        let strategy = insertionStrategy(
-            text: text,
-            focusedValueLength: (value as NSString).length,
-            targetBundleIdentifier: targetBundleIdentifier
+        let expected = CommandModeSelectionSnapshot(
+            value: before.value.replacingCharacters(in: range, with: text),
+            selectedRange: NSRange(location: before.selectedRange.location + text.utf16.count, length: 0)
         )
-        if case let .selectedTextStreaming(maxChunkUTF16Length, interChunkDelay) = strategy {
-            return streamSelectedText(
-                text,
-                into: element,
-                maxChunkUTF16Length: maxChunkUTF16Length,
-                interChunkDelay: interChunkDelay,
-                completion: completion
-            )
+        guard isCurrentTarget(), readSnapshot() == before else {
+            completion(.notApplied)
+            return true
         }
-
-        let updatedValue = value.replacingCharacters(in: swiftRange, with: text)
-        let disposition = assessAXWrite(
-            expectedValue: updatedValue,
-            didWrite: AXUIElementSetAttributeValue(
-                element,
-                kAXValueAttribute as CFString,
-                updatedValue as CFTypeRef
-            ) == .success,
-            readBackValue: readAttributeString(element, attribute: kAXValueAttribute as CFString)
-        )
-        guard disposition != .failed else {
-            return false
+        // A rejected setter can still have changed the host. Never return false after
+        // attempting a write and never dispatch a full retry from uncertain readback.
+        guard writeSelection(text) else {
+            completion(.appliedUnverified)
+            return true
         }
-
-        let insertionLocation = selectedRange.location + (text as NSString).length
-        _ = writeSelectedRange(NSRange(location: insertionLocation, length: 0), to: element)
-        completion()
+        guard isCurrentTarget(), readSnapshot()?.value == expected.value else {
+            completion(.appliedUnverified)
+            return true
+        }
+        let caretAccepted = writeCaret(expected.selectedRange)
+        let immediateMatches = caretAccepted && readSnapshot() == expected && isCurrentTarget()
+        observeSettled {
+            completion(immediateMatches && isCurrentTarget() && readSnapshot() == expected
+                       ? .verified : .appliedUnverified)
+        }
         return true
     }
 
@@ -204,19 +229,50 @@ final class CommandModeAXHelper {
         focusedValueLength: Int,
         targetBundleIdentifier: String?
     ) -> AXInsertionStrategy {
+        // These recorded rich hosts cannot certify node/caret mapping from AX text,
+        // even if their accessibility tree omits an AXWebArea ancestor.
+        if targetBundleIdentifier == "com.t3tools.t3code" || targetBundleIdentifier == "net.imput.helium" {
+            return .requiresNativeProof
+        }
         if let targetBundleIdentifier,
            atomicValueRewriteBundleIdentifiers.contains(targetBundleIdentifier) {
             return .valueRewrite
         }
-        let textLength = (text as NSString).length
-        if textLength > valueRewriteMaxTextUTF16Length ||
-            focusedValueLength > valueRewriteMaxFocusedValueUTF16Length {
-            return .selectedTextStreaming(
-                maxChunkUTF16Length: selectedTextStreamingChunkMaxUTF16Length,
-                interChunkDelay: selectedTextStreamingInterChunkDelay
-            )
-        }
-        return .valueRewrite
+        return .selectionLocal
+    }
+
+    private static func selectionSnapshot(_ element: AXUIElement) -> CommandModeSelectionSnapshot? {
+        guard let value = readAttributeString(element, attribute: kAXValueAttribute as CFString),
+              let selectedRange = readSelectedRange(element) else { return nil }
+        return CommandModeSelectionSnapshot(value: value, selectedRange: selectedRange)
+    }
+
+    private static func isCurrentTarget(_ element: AXUIElement, window: AXUIElement) -> Bool {
+        var pid = pid_t()
+        guard AXUIElementGetPid(element, &pid) == .success,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+              let focused = focusedElement(), CFEqual(focused, element),
+              let currentWindow = readElement(focused, attribute: kAXWindowAttribute as CFString)
+        else { return false }
+        return CFEqual(currentWindow, window)
+    }
+
+    private static func readElement(_ element: AXUIElement, attribute: CFString) -> AXUIElement? {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &raw) == .success,
+              let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+        return (raw as! AXUIElement)
+    }
+
+    private static func readAttributeBool(_ element: AXUIElement, attribute: CFString) -> Bool? {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &raw) == .success else { return nil }
+        return raw as? Bool
+    }
+
+    private static func isSettable(_ element: AXUIElement, attribute: CFString) -> Bool {
+        var settable = DarwinBoolean(false)
+        return AXUIElementIsAttributeSettable(element, attribute, &settable) == .success && settable.boolValue
     }
 
     static func selectedTextChunks(
@@ -245,45 +301,6 @@ final class CommandModeAXHelper {
             chunks.append(current)
         }
         return chunks
-    }
-
-    private static func streamSelectedText(
-        _ text: String,
-        into element: AXUIElement,
-        maxChunkUTF16Length: Int,
-        interChunkDelay: TimeInterval,
-        completion: @escaping () -> Void
-    ) -> Bool {
-        beginSelectedTextStreaming(
-            for: text,
-            maxUTF16Length: maxChunkUTF16Length,
-            interChunkDelay: interChunkDelay,
-            writeChunk: { chunk in
-                AXUIElementSetAttributeValue(
-                    element,
-                    kAXSelectedTextAttribute as CFString,
-                    chunk as CFTypeRef
-                ) == .success
-            },
-            enqueueRemainder: { work in
-                selectedTextStreamingQueue.async {
-                    work()
-                }
-            },
-            sleep: Thread.sleep(forTimeInterval:),
-            onCompletion: { disposition in
-                if case let .partiallyApplied(writtenChunkCount, totalChunkCount) = disposition {
-                    NSLog(
-                        "[VoiceBar] AX selected-text streaming stopped after %d/%d chunks; suppressing whole-transcript fallback",
-                        writtenChunkCount,
-                        totalChunkCount
-                    )
-                }
-                if disposition.suppressesWholeTranscriptFallback {
-                    completion()
-                }
-            }
-        )
     }
 
     static func beginSelectedTextStreaming(
@@ -389,7 +406,7 @@ final class CommandModeAXHelper {
             kAXSelectedTextRangeAttribute as CFString,
             &raw
         )
-        guard status == .success, let axValue = raw else { return nil }
+        guard status == .success, let axValue = raw, CFGetTypeID(axValue) == AXValueGetTypeID() else { return nil }
         let value = axValue as! AXValue
         var range = CFRange()
         guard AXValueGetType(value) == .cfRange,

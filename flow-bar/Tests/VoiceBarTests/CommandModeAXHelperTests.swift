@@ -4,6 +4,180 @@ import AppKit
 import XCTest
 
 final class CommandModeAXHelperTests: XCTestCase {
+    private func localInsertion(
+        text: String = "ADD",
+        value: String = "seed\n\n",
+        range: NSRange = NSRange(location: 6, length: 0),
+        acceptsCaret: Bool = true,
+        settledRange: NSRange? = nil,
+        readable: Bool = true,
+        mismatchedReadback: Bool = false,
+        eligible: Bool = true
+    ) -> (DictationInsertionResult?, CommandModeSelectionSnapshot, Int) {
+        var document = CommandModeSelectionSnapshot(value: value, selectedRange: range)
+        var writes = 0
+        var result: DictationInsertionResult?
+        var settled: (() -> Void)?
+        let started = CommandModeAXHelper.beginSelectionLocalInsertion(
+            text,
+            readSnapshot: {
+                if writes > 0, !readable { return nil }
+                if writes > 0, mismatchedReadback { return CommandModeSelectionSnapshot(value: "stale", selectedRange: document.selectedRange) }
+                return document
+            },
+            isEligible: { eligible },
+            isCurrentTarget: { true },
+            writeSelection: {
+                writes += 1
+                document.value = (document.value as NSString).replacingCharacters(in: document.selectedRange, with: $0)
+                return true
+            },
+            writeCaret: { document.selectedRange = acceptsCaret ? $0 : NSRange(location: 0, length: 0); return acceptsCaret },
+            observeSettled: { settled = $0 },
+            completion: { result = $0 }
+        )
+        XCTAssertTrue(started, "A possibly applied write must suppress full fallback")
+        if let settledRange { document.selectedRange = settledRange }
+        settled?()
+        return (result, document, writes)
+    }
+
+    func testAcceptedValueWriteWithRejectedCaretIsUnverifiedWithoutRetyping() {
+        let (result, document, writes) = localInsertion(acceptsCaret: false)
+        XCTAssertEqual(result, .appliedUnverified)
+        XCTAssertEqual(document.value, "seed\n\nADD")
+        XCTAssertEqual(document.selectedRange, NSRange(location: 0, length: 0))
+        XCTAssertEqual(writes, 1)
+    }
+
+    func testCaretResetAfterAcceptedSetterIsUnverifiedWithoutRetyping() {
+        let (result, document, writes) = localInsertion(settledRange: NSRange(location: 0, length: 0))
+        XCTAssertEqual(result, .appliedUnverified)
+        XCTAssertEqual(document.value, "seed\n\nADD")
+        XCTAssertEqual(document.selectedRange, NSRange(location: 0, length: 0))
+        XCTAssertEqual(writes, 1)
+    }
+
+    func testSelectionLocalInsertionPreservesBlankLinesAndUTF16Replacement() {
+        let text = "ADD שלום 👩‍💻\nsecond line"
+        for range in [NSRange(location: 13, length: 0), NSRange(location: 7, length: 5)] {
+            let (result, document, writes) = localInsertion(text: text, value: "alpha\n\nbeta.\n", range: range)
+            let expected = range.length == 0 ? "alpha\n\nbeta.\n\(text)" : "alpha\n\n\(text)\n"
+            XCTAssertEqual(document.value, expected)
+            XCTAssertEqual(document.selectedRange, NSRange(location: range.location + text.utf16.count, length: 0))
+            XCTAssertEqual(result, .verified)
+            XCTAssertEqual(writes, 1)
+        }
+    }
+
+    func testMissingOrMismatchedReadbackCannotVerifyOrRetryAppliedText() {
+        for (readable, mismatch) in [(false, false), (true, true)] {
+            let (result, document, writes) = localInsertion(readable: readable, mismatchedReadback: mismatch)
+            XCTAssertEqual(result, .appliedUnverified)
+            XCTAssertEqual(document.value, "seed\n\nADD")
+            XCTAssertEqual(writes, 1)
+        }
+    }
+
+    func testValueSetterErrorWithMatchingReadbackDoesNotRetype() {
+        var document = CommandModeSelectionSnapshot(value: "seed\n\n", selectedRange: NSRange(location: 6, length: 0))
+        var result: DictationInsertionResult?
+        var writes = 0
+        let started = CommandModeAXHelper.beginSelectionLocalInsertion(
+            "ADD", readSnapshot: { document }, isEligible: { true }, isCurrentTarget: { true },
+            writeSelection: { _ in writes += 1; document.value += "ADD"; document.selectedRange.location = 9; return false },
+            writeCaret: { _ in XCTFail("Do not move caret after setter error"); return false },
+            observeSettled: { _ in XCTFail("No second write or retry") }, completion: { result = $0 }
+        )
+        XCTAssertTrue(started)
+        XCTAssertEqual(result, .appliedUnverified)
+        XCTAssertEqual(document.value, "seed\n\nADD")
+        XCTAssertEqual(writes, 1)
+    }
+
+    func testSetterErrorWithUnchangedReadbackIsStillUnverified() {
+        var result: DictationInsertionResult?
+        CommandModeAXHelper.beginSelectionLocalInsertion(
+            "ADD", readSnapshot: { CommandModeSelectionSnapshot(value: "seed\n\n", selectedRange: NSRange(location: 6, length: 0)) },
+            isEligible: { true }, isCurrentTarget: { true }, writeSelection: { _ in false },
+            writeCaret: { _ in XCTFail("No caret write after rejected setter"); return false },
+            observeSettled: { _ in XCTFail("No retry") }, completion: { result = $0 }
+        )
+        XCTAssertEqual(result, .appliedUnverified, "A setter may apply later despite an immediate error")
+    }
+
+    func testSelectionChangeBeforeDispatchReceivesNoWrite() {
+        var reads = 0
+        var result: DictationInsertionResult?
+        CommandModeAXHelper.beginSelectionLocalInsertion(
+            "ADD", readSnapshot: {
+                reads += 1
+                return CommandModeSelectionSnapshot(value: "seed\n\n", selectedRange: NSRange(location: reads == 1 ? 6 : 0, length: 0))
+            }, isEligible: { true }, isCurrentTarget: { true },
+            writeSelection: { _ in XCTFail("Do not write after selection changes"); return false },
+            writeCaret: { _ in XCTFail("Do not move caret"); return false },
+            observeSettled: { _ in XCTFail("No dispatch") }, completion: { result = $0 }
+        )
+        XCTAssertEqual(result, .notApplied)
+    }
+
+    func testEmptyT3ComposerWithSettledCaretAtOpeningIsUnverified() {
+        let (result, document, writes) = localInsertion(text: String(repeating: "a", count: 875), value: "",
+                                                      range: NSRange(location: 0, length: 0),
+                                                      settledRange: NSRange(location: 0, length: 0))
+        XCTAssertEqual(document.value.utf16.count, 875)
+        XCTAssertEqual(result, .appliedUnverified)
+        XCTAssertEqual(writes, 1)
+    }
+
+    func testHeliumGeminiCorrectAppendWithResetCaretIsUnverified() {
+        let (result, document, writes) = localInsertion(value: "Well seed.\n\n", range: NSRange(location: 12, length: 0),
+                                                      settledRange: NSRange(location: 0, length: 0))
+        XCTAssertEqual(document.value, "Well seed.\n\nADD")
+        XCTAssertEqual(result, .appliedUnverified)
+        XCTAssertEqual(writes, 1)
+    }
+
+    func testUncertifiedRichTargetReceivesNoWriteAndPreservesNodeIdentity() {
+        let nodes = ["text:alpha", "screenshot:fixture-image-1", "break", "text:beta.", "break"]
+        let strategy = CommandModeAXHelper.insertionStrategy(text: "ADD", focusedValueLength: 64, targetBundleIdentifier: "com.t3tools.t3code")
+        let (result, document, writes) = localInsertion(value: nodes.joined(separator: "\n"), eligible: strategy == .selectionLocal)
+        XCTAssertEqual(result, .notApplied)
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(document.value.components(separatedBy: "\n"), nodes)
+        // Withholding unsafe delivery proves preservation, not native insertion acceptance.
+    }
+
+    func testHeliumRichHostRequiresNativeProofEvenWithoutWebAreaMetadata() {
+        XCTAssertEqual(CommandModeAXHelper.insertionStrategy(text: "ADD", focusedValueLength: 12,
+                                                            targetBundleIdentifier: "net.imput.helium"), .requiresNativeProof)
+    }
+
+    func testFocusChangeAfterWriteDoesNotMoveCaretOrRetry() {
+        var focused = true
+        var writes = 0
+        var result: DictationInsertionResult?
+        CommandModeAXHelper.beginSelectionLocalInsertion(
+            "ADD", readSnapshot: { CommandModeSelectionSnapshot(value: "seed\n\n", selectedRange: NSRange(location: 6, length: 0)) },
+            isEligible: { true }, isCurrentTarget: { focused },
+            writeSelection: { _ in writes += 1; focused = false; return true },
+            writeCaret: { _ in XCTFail("Never change selection after focus moves"); return false },
+            observeSettled: { $0() }, completion: { result = $0 }
+        )
+        XCTAssertEqual(result, .appliedUnverified)
+        XCTAssertEqual(writes, 1)
+    }
+
+    func testT3RichComposerMustNotSelectWholeValueRewrite() {
+        let strategy = CommandModeAXHelper.insertionStrategy(
+            text: "ADD שלום 👩‍💻",
+            focusedValueLength: 64,
+            targetBundleIdentifier: "com.t3tools.t3code"
+        )
+        XCTAssertNotEqual(strategy, .valueRewrite,
+                          "A plain string cannot certify rich-node and boundary preservation")
+    }
+
     private final class FakeRunningApplication: NSRunningApplication, @unchecked Sendable {
         private let bundleID: String
         private let pid: pid_t
@@ -101,7 +275,7 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertEqual(strategy, .valueRewrite)
     }
 
-    func testVeryLongNonterminalInsertionKeepsSelectedTextStreamingPlan() {
+    func testVeryLongNonterminalInsertionUsesSelectionLocalPlan() {
         let strategy = CommandModeAXHelper.insertionStrategy(
             text: String(repeating: "very long transcript chunk ", count: 500),
             focusedValueLength: 120_000,
@@ -110,7 +284,7 @@ final class CommandModeAXHelperTests: XCTestCase {
 
         XCTAssertEqual(
             strategy,
-            .selectedTextStreaming(maxChunkUTF16Length: 240, interChunkDelay: 0.012)
+            .selectionLocal
         )
     }
 
@@ -176,7 +350,7 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertEqual(clipboardWrites, [], "dictation must never write the pasteboard")
         XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
         XCTAssertEqual(typed, [transcript], "the transcript is typed into cmux verbatim")
-        XCTAssertEqual(state.confirmationText, transcript)
+        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
     }
 
     /// The regression the cmux test used to guard - a finished F5 transcript
@@ -214,7 +388,7 @@ final class CommandModeAXHelperTests: XCTestCase {
             return { text, completion in
                 insertionAttempts += 1
                 scratchDocument.append(text)
-                completion()
+                completion(.verified)
                 return true
             }
         }

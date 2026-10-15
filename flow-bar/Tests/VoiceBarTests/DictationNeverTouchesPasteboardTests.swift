@@ -35,14 +35,28 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
         XCTAssertEqual(harness.pasteboardWrites, [])
     }
 
-    /// A non-terminal whose AX insertion misses falls back to typing — never the clipboard.
-    func testNonTerminalAXMissFallsBackToTypingNeverTheClipboard() {
+    /// Missing AX focus does not authorize global typing into an unknown target.
+    func testNonTerminalAXMissRetainsTranscriptWithoutTypingOrClipboardWrites() {
         let harness = PasteHarness(bundleIdentifier: "com.apple.TextEdit", pasteboard: "WHAT HE COPIED")
         harness.dictate("into an ordinary text field")
 
         XCTAssertEqual(harness.pasteboardWrites, [], "the clipboard is never a fallback")
         XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED")
-        XCTAssertEqual(harness.typed.map(\.text), ["into an ordinary text field"])
+        XCTAssertEqual(harness.typed, [])
+        XCTAssertEqual(harness.state.latestReusableTranscript, "into an ordinary text field")
+        XCTAssertEqual(harness.state.latestDictationInsertionStatus, .notInserted)
+    }
+
+    func testTerminalAgentSurfacesKeepAutomaticTypedDeliveryAfterAXMiss() {
+        for bundle in ["com.cmuxterm.app", "com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty"] {
+            let harness = PasteHarness(bundleIdentifier: bundle, pasteboard: "WHAT HE COPIED")
+            harness.state.asyncDictationInsertionHandlerProvider = { { _, _ in XCTFail("Terminals must keep skipping AX"); return false } }
+            harness.dictate("ADD שלום 👩‍💻\nsecond line")
+            XCTAssertEqual(harness.typed.map(\.text), ["ADD שלום 👩‍💻\nsecond line"], bundle)
+            XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED", bundle)
+            XCTAssertEqual(harness.pasteboardWrites, [], bundle)
+            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .unverified, "Posted events are not readback")
+        }
     }
 
     /// Shift+F5 types the last transcript and leaves whatever he copied since alone.
