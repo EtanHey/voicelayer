@@ -25,16 +25,65 @@ public enum VoiceMode: String, CaseIterable {
     case disconnected
 }
 
-public enum SelectionCaptureResult: Equatable {
-    case completed(String?)
-    case clipboardChanged
-    case secureField
-    case captureFailed
-    case clipboardRestoreFailed
+public struct SelectionCaptureResult: Equatable {
+    public enum Outcome: String {
+        case completed
+        case clipboardChanged = "clipboard_changed"
+        case secureField = "secure_field"
+        case captureFailed = "capture_failed"
+        case clipboardRestoreFailed = "clipboard_restore_failed"
+        case copyTimedOut = "copy_timeout"
+        case copyEmpty = "copy_empty"
+        case copyFailed = "copy_failed"
+    }
+    public enum AXRead: String { case notAttempted = "not_attempted", unavailable, empty, text }
+    public enum Path: String { case unknown, ax, copy }
 
-    public var text: String? {
-        if case let .completed(text) = self { return text }
-        return nil
+    public let outcome: Outcome
+    public let text: String?
+    public private(set) var axRead: AXRead = .notAttempted
+    public private(set) var path: Path = .unknown
+
+    private init(_ outcome: Outcome, text: String? = nil) {
+        self.outcome = outcome
+        self.text = text
+    }
+
+    public static func completed(_ text: String?) -> Self { Self(.completed, text: text) }
+    public static let clipboardChanged = Self(.clipboardChanged)
+    public static let secureField = Self(.secureField)
+    public static let captureFailed = Self(.captureFailed)
+    public static let clipboardRestoreFailed = Self(.clipboardRestoreFailed)
+    public static let copyTimedOut = Self(.copyTimedOut)
+    public static let copyEmpty = Self(.copyEmpty)
+    public static let copyFailed = Self(.copyFailed)
+
+    public func observed(axRead: AXRead, path: Path) -> Self {
+        var result = self
+        result.axRead = axRead
+        result.path = path
+        return result
+    }
+
+    /// Counts describe the observed String, never host blocks, list items or table nodes.
+    /// Do not serialize this result or its text into diagnostics.
+    public var diagnosticDetails: [String: String] {
+        var fields = ["outcome": outcome.rawValue, "ax_read": axRead.rawValue,
+                      "path": path.rawValue, "host_structure": "not_observed",
+                      // The app's generic logger merges in a window title; never include it here.
+                      "appKeyWindowTitle": "not_recorded"]
+        if let text {
+            let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: .newlines)
+            fields["utf16_count"] = String(text.utf16.count)
+            fields["line_breaks"] = String(lines.count - 1)
+            fields["tabs"] = String(text.filter { $0 == "\t" }.count)
+            fields["object_replacements"] = String(text.unicodeScalars.filter { $0.value == 0xFFFC }.count)
+            fields["list_marker_lines"] = String(lines.filter {
+                $0.range(of: #"^\s*(?:[-+*•]|[0-9]+[.)])\s+"#, options: .regularExpression) != nil
+            }.count)
+            fields["pipe_lines"] = String(lines.filter { $0.filter { $0 == "|" }.count >= 2 }.count)
+        }
+        return fields
     }
 }
 
@@ -838,6 +887,7 @@ public final class VoiceState {
         selectionCaptureCancelled = false
         selectionTextCaptureHandler { [weak self] result in
             guard let self else { return }
+            logDiagnostic("selection_capture", details: result.diagnosticDetails)
             selectionCaptureInFlight = false
             guard !selectionCaptureCancelled else {
                 selectionCaptureCancelled = false
@@ -848,10 +898,14 @@ public final class VoiceState {
                   mode != .disconnected, hotkeyPhase == .idle else { return }
             guard let text = result.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 expandFromCollapse()
-                switch result {
+                switch result.outcome {
                 case .secureField: showConfirmation("Can't read a secure field")
                 case .clipboardRestoreFailed: showConfirmation("Couldn't restore the clipboard")
-                case .clipboardChanged, .captureFailed: showConfirmation("Couldn't read the selection, try again")
+                case .clipboardChanged: showConfirmation("Clipboard changed. Select the text and try again")
+                case .copyTimedOut: showConfirmation("Copy timed out. Select text and try again")
+                case .copyEmpty: showConfirmation("Copy returned no text. Select text and try again")
+                case .copyFailed: showConfirmation("Couldn't copy. Check Accessibility and try again")
+                case .captureFailed: showConfirmation("Couldn't read the selection, try again")
                 case .completed: showConfirmation("No text selected")
                 }
                 startCollapseTimer()

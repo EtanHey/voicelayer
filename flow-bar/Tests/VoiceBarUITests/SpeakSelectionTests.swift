@@ -8,11 +8,35 @@ final class SpeakSelectionTests: XCTestCase {
         for (result, message) in [(SelectionCaptureResult.secureField, "Can't read a secure field"),
                                   (.captureFailed, "Couldn't read the selection, try again"),
                                   (.clipboardRestoreFailed, "Couldn't restore the clipboard"),
-                                  (.clipboardChanged, "Couldn't read the selection, try again")] {
+                                  (.copyTimedOut, "Copy timed out. Select text and try again"),
+                                  (.copyEmpty, "Copy returned no text. Select text and try again"),
+                                  (.copyFailed, "Couldn't copy. Check Accessibility and try again"),
+                                  (.clipboardChanged, "Clipboard changed. Select the text and try again")] {
             state.selectionTextCaptureHandler = { $0(result) }
             state.speakSelection()
             XCTAssertEqual(state.confirmationText, message)
         }
+    }
+
+    func testDiagnosticsContainOnlyMetadataAndForwardTheFullSelectionOnce() {
+        let state = VoiceState()
+        let text = "PRIVATE_SELECTION שלום👩🏽‍💻\n\n  tail…  "
+        var events: [(String, [String: String])] = []
+        var commands: [[String: Any]] = []
+        state.diagnosticLogger = { events.append(($0, $1)) }
+        state.sendCommand = { commands.append($0) }
+        state.selectionTextCaptureHandler = { $0(.completed(text).observed(axRead: .empty, path: .copy)) }
+        state.speakSelection()
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["text"] as? String, text)
+        XCTAssertEqual(commands.first?["source"] as? String, "selection")
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events.first?.0, "selection_capture")
+        let details = events.first?.1 ?? [:]
+        XCTAssertEqual(Set(details.keys), Set(["outcome", "ax_read", "path", "host_structure", "appKeyWindowTitle",
+                                             "utf16_count", "line_breaks", "tabs", "object_replacements", "list_marker_lines", "pipe_lines"]))
+        XCTAssertEqual(details["appKeyWindowTitle"], "not_recorded")
+        XCTAssertFalse(details.values.contains { $0.contains("PRIVATE_SELECTION") || $0.contains("שלום") })
     }
 
     func testSecondPressCancelsPendingCaptureAndAFreshPressCanCaptureAgain() {
