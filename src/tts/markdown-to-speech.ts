@@ -1,26 +1,40 @@
 /** Convert markdown to speech text without fetching links or evaluating code. */
 export function markdownToSpeech(markdown: string): string {
-  const lines: string[] = [];
-  for (const raw of speechLinesFromFences(markdown)) {
-    if (/^\s*\[[^\]]+\]:\s*\S+/.test(raw) || /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(raw) || /^\s*=+\s*$/.test(raw)) continue;
-    let line = raw.replace(/^\s{0,3}#{1,6}\s+/, "").replace(/\s+#+\s*$/, "").replace(/^\s*>\s?/, "");
-    if (/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)) continue;
-    const list = /^\s*(?:[-+*]|\d+[.)])\s+/.test(line);
-    line = line.replace(/^\s*(?:[-+*]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, "");
-    line = stripInlineLinkTargets(line)
-      .replace(/!?\[([^\]]+)\]\[[^\]]*\]/g, "$1")
-      .replace(/<https?:\/\/[^>]+>/gi, "link")
-      .replace(/(?:https?:\/\/|www\.)[^\s<>]+/gi, (url) => `link${url.match(/[.,!?;:]+$/)?.[0] ?? ""}`)
-      .replace(/`+/g, "").replace(/\*\*/g, "").replace(/\*([^*]+)\*/g, "$1")
-      // Prefer identifiers for ambiguous __word__; strip underscores only at boundaries.
-      .replace(/(?<![\p{L}\p{N}_])__([^_\n]*\s[^_\n]*)__(?![\p{L}\p{N}_])/gu, "$1")
-      .replace(/(?<![\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])/gu, "$1");
-    if (line.includes("|")) line = line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()).filter(Boolean).join(", ");
-    line = line.trim();
-    if (line && (list || raw.includes("|")) && !/[.!?…。！？]$/.test(line)) line += ".";
-    if (line) lines.push(line);
-  }
-  return lines.join(" ").replace(/\s+/g, " ").trim();
+  return markdownSpeechLines(markdown).map(line => line.text).filter(Boolean).join(" ");
+}
+
+/** Internal projection seam: offsets refer to the unmodified UTF-16 input. */
+export interface MarkdownSpeechLine {
+  text: string;
+  sourceStart: number;
+  sourceEnd: number;
+  kind?: "code";
+}
+
+export function markdownSpeechLines(markdown: string): MarkdownSpeechLine[] {
+  return speechLinesFromFences(markdown).map(line => ({
+    ...line, text: speechLineText(line.text),
+  }));
+}
+
+function speechLineText(raw: string): string {
+  if (/^\s*\[[^\]]+\]:\s*\S+/.test(raw) || /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(raw) || /^\s*=+\s*$/.test(raw)) return "";
+  let line = raw.replace(/^\s{0,3}#{1,6}\s+/, "").replace(/\s+#+\s*$/, "").replace(/^\s*>\s?/, "");
+  if (/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)) return "";
+  const list = /^\s*(?:[-+*]|\d+[.)])\s+/.test(line);
+  line = line.replace(/^\s*(?:[-+*]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, "");
+  line = stripInlineLinkTargets(line)
+    .replace(/!?\[([^\]]+)\]\[[^\]]*\]/g, "$1")
+    .replace(/<https?:\/\/[^>]+>/gi, "link")
+    .replace(/(?:https?:\/\/|www\.)[^\s<>]+/gi, (url) => `link${url.match(/[.,!?;:]+$/)?.[0] ?? ""}`)
+    .replace(/`+/g, "").replace(/\*\*/g, "").replace(/\*([^*]+)\*/g, "$1")
+    // Prefer identifiers for ambiguous __word__; strip underscores only at boundaries.
+    .replace(/(?<![\p{L}\p{N}_])__([^_\n]*\s[^_\n]*)__(?![\p{L}\p{N}_])/gu, "$1")
+    .replace(/(?<![\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])/gu, "$1");
+  if (line.includes("|")) line = line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()).filter(Boolean).join(", ");
+  line = line.trim();
+  if (line && (list || raw.includes("|")) && !/[.!?…。！？]$/.test(line)) line += ".";
+  return line.replace(/\s+/g, " ").trim();
 }
 
 function stripInlineLinkTargets(line: string): string {
@@ -74,9 +88,15 @@ function looksLikeCode(line: string): boolean {
  * inside code. After that closing boundary, remain in recovery: omit recognizable
  * code while preserving unknown/prose lines, even if a later bare fence could pair.
  */
-function speechLinesFromFences(markdown: string): string[] {
-  const raw = markdown.replace(/\r\n?/g, "\n").split("\n");
-  const output: string[] = [];
+function speechLinesFromFences(markdown: string): MarkdownSpeechLine[] {
+  const sourceLines: MarkdownSpeechLine[] = [];
+  const pattern = /([^\r\n]*)(?:\r\n|\r|\n|$)/g;
+  for (let match = pattern.exec(markdown); match; match = pattern.exec(markdown)) {
+    sourceLines.push({ text: match[1], sourceStart: match.index, sourceEnd: match.index + match[1].length });
+    if (!match[0].length) break;
+  }
+  const raw = sourceLines.map(line => line.text);
+  const output: MarkdownSpeechLine[] = [];
   const fencePattern = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
   const fences = raw.map((line) => line.match(fencePattern));
   const closingCache = new Map<string, number[]>();
@@ -87,7 +107,7 @@ function speechLinesFromFences(markdown: string): string[] {
     const fence = fences[index];
     if (!fence) {
       if (!recoverPartialCode || !looksLikeCode(raw[index])) {
-        output.push(raw[index]);
+        output.push(sourceLines[index]);
         if (raw[index].trim()) { hasPrefix = true; codeOnlyPrefix &&= looksLikeCode(raw[index]); }
       }
       continue;
@@ -132,12 +152,12 @@ function speechLinesFromFences(markdown: string): string[] {
     // a complete block; an unmatched bare fence may sit before obvious prose.
     if (!fence[2].trim() && (codePrefix || (!complete && obviousProse))) {
       if (codePrefix) output.length = 0;
-      output.push("code block");
+      output.push({ kind: "code", text: "code block", sourceStart: codePrefix ? 0 : sourceLines[index].sourceStart, sourceEnd: sourceLines[index].sourceEnd });
       hasPrefix = true; codeOnlyPrefix = false;
       recoverPartialCode = codePrefix;
       continue;
     }
-    output.push("code block");
+    output.push({ kind: "code", text: "code block", sourceStart: sourceLines[index].sourceStart, sourceEnd: sourceLines[complete ? closing : index].sourceEnd });
     hasPrefix = true; codeOnlyPrefix = false;
     if (complete) { index = closing; recoverPartialCode = false; }
     else recoverPartialCode = true;
