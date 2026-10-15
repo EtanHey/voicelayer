@@ -116,27 +116,39 @@ test("PID reuse between the final liveness check and deletion cannot erase the n
     await import(${JSON.stringify(preload)});
     const root = process.env.VOICELAYER_TEST_RUN_ROOT;
     fs.writeFileSync(root + "/active-evidence", "active run");
-    console.log(JSON.stringify(root));
+    fs.writeFileSync(process.cwd() + "/replacement.json", JSON.stringify(root));
+    setInterval(() => {}, 1000);
   `;
   const sweeper = `
     import * as fs from "fs";
     import { mock } from "bun:test";
-    let adopted;
+    let adopted, replacementProcess;
     const remove = fs.rmSync;
     mock.module("fs", () => ({ ...fs, rmSync(path, options) {
       if (path === ${JSON.stringify(old)}) {
         // Pause A after its final liveness check. B starts with the recycled
         // PID and writes evidence before A resumes the pending deletion.
-        const b = Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(replacement)}], {
-          cwd: process.cwd(), env: process.env, stdout: "pipe", stderr: "pipe",
+        replacementProcess = Bun.spawn([process.execPath, "-e", ${JSON.stringify(replacement)}], {
+          cwd: process.cwd(), env: process.env, stdout: "ignore", stderr: "ignore",
         });
-        if (b.exitCode !== 0) throw new Error(b.stderr.toString());
-        adopted = JSON.parse(b.stdout.toString().trim());
+        const marker = process.cwd() + "/replacement.json";
+        const deadline = Date.now() + 2000;
+        while (!fs.existsSync(marker) && Date.now() < deadline) Bun.sleepSync(5);
+        adopted = JSON.parse(fs.readFileSync(marker, "utf8"));
+        // Verify B is still running when A resumes deletion.
+        process.kill(replacementProcess.pid, 0);
       }
       return remove(path, options);
     }}));
-    await import(${JSON.stringify(preload)});
-    console.log(JSON.stringify({ adopted }));
+    try {
+      await import(${JSON.stringify(preload)});
+      console.log(JSON.stringify({ adopted }));
+    } finally {
+      if (replacementProcess) {
+        replacementProcess.kill("SIGTERM");
+        await replacementProcess.exited;
+      }
+    }
   `;
   const result = Bun.spawnSync([process.execPath, "-e", sweeper], {
     cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe",
