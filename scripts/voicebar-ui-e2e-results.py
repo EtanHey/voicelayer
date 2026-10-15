@@ -34,7 +34,7 @@ def configure(output, app, sandbox):
     (output / 'UIE2E.xctestrun').write_bytes(plistlib.dumps(resolve(data)))
 
 
-def report(directory, steps, manifest):
+def report(directory, steps, manifest, recording=None):
     if not steps or [s['number'] for s in steps] != list(range(1, len(steps) + 1)):
         raise ValueError('Missing, duplicated or out-of-order action receipts')
     attachments = [a for test in manifest for a in test['attachments']]
@@ -54,9 +54,16 @@ def report(directory, steps, manifest):
         caption = f"{step['number']:04d} {status} {step['name']}"
         print(caption)
         figures.append(f'<figure><a href="{html.escape(name, quote=True)}"><img loading="lazy" src="{html.escape(name, quote=True)}"></a><figcaption>{html.escape(caption)}</figcaption></figure>')
+    video = ''
+    if recording is not None:
+        name = recording['path']
+        if recording.get('valid') is not True or pathlib.Path(name).name != name:
+            raise ValueError('Missing/invalid recording proof')
+        video = (f'<p><a href="../{html.escape(name, quote=True)}">Screen recording (.mov)</a> — '
+                 f'{recording["durationSeconds"]} s · {recording["bytes"]} bytes · no audio</p>')
     (directory / 'index.html').write_text('<!doctype html><meta charset="utf-8"><title>VoiceBar UI E2E</title>'
         '<style>body{font:16px system-ui;background:#16181d;color:#eee}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}figure{margin:0}img{width:100%}figcaption{padding:8px}</style>'
-        '<h1>VoiceBar UI E2E — synthetic UI fixtures, no audio</h1><main>' + ''.join(figures) + '</main>')
+        '<h1>VoiceBar UI E2E — synthetic UI fixtures, no audio</h1>' + video + '<main>' + ''.join(figures) + '</main>')
     return all_passed
 
 
@@ -71,7 +78,10 @@ def export(output, sandbox):
         if (sandbox / name).is_file():
             shutil.copy2(sandbox / name, output / name)
     # Completion receipt comes only after the final assertion; an aborted/empty run cannot pass.
-    passed = report(directory, steps, manifest)
+    recording = json.loads((output / 'recording.json').read_text())
+    if pathlib.Path(recording['path']).name != recording['path'] or not (output / recording['path']).is_file():
+        raise ValueError('Recording file missing/unsafe')
+    passed = report(directory, steps, manifest, recording)
     complete = (sandbox / 'completed').is_file() and (sandbox / 'completed').read_text().strip() == 'complete'
     if not complete:
         print('FAIL suite completion receipt missing')

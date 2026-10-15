@@ -62,6 +62,20 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(target['EnvironmentVariables']['VOICEBAR_UIE2E_APP'], str(self.root / 'QA.app'))
         self.assertEqual(target['TestBundlePath'], str(products / 'Debug/Test.xctest'))
 
+    def test_contact_sheet_links_the_validated_recording_and_metadata(self):
+        directory = self.root / 'screenshots'; directory.mkdir()
+        (directory / 'a.png').write_bytes(b'png')
+        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
+        recording = dict(path='run.mov', valid=True, durationSeconds=1.25, bytes=123)
+        self.assertTrue(results.report(directory, [step], [dict(attachments=[attachment])], recording))
+        page = (directory / 'index.html').read_text()
+        self.assertIn('../run.mov', page)
+        self.assertIn('1.25 s', page)
+        self.assertIn('123 bytes', page)
+        with self.assertRaises(ValueError):
+            results.report(directory, [step], [dict(attachments=[attachment])], dict(recording, valid=False))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+import importlib.util
+import json
+import os
+import pathlib
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+MODULE = pathlib.Path(__file__).with_name('voicebar-ui-e2e-run.py')
+spec = importlib.util.spec_from_file_location('runner', MODULE)
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+
+STUB = '''#!/usr/bin/env python3
+import json,pathlib,sys,time
+root=pathlib.Path(__file__).parent
+with (root/'calls').open('a') as log: log.write(pathlib.Path(sys.argv[0]).name+' '+json.dumps(sys.argv[1:])+'\\n')
+if '-version' in sys.argv: sys.exit(0)
+if pathlib.Path(sys.argv[0]).name=='ffprobe':
+ if (root/'invalid-media').exists(): sys.exit(1)
+ movie=pathlib.Path(sys.argv[-1])
+ if not movie.read_bytes().endswith(b'flushed'): sys.exit(1)
+ streams=[{'codec_type':'video'}]
+ if (root/'audio').exists(): streams.append({'codec_type':'audio'})
+ print(json.dumps({'format':{'duration':'1.25'},'streams':streams})); sys.exit(0)
+if (root/'denied').exists(): sys.exit(1)
+movie=pathlib.Path(sys.argv[-1]); movie.write_bytes(b'incremental-')
+print('frame=1',flush=True)
+if (root/'early-end').exists():
+ time.sleep(.2)
+ with movie.open('ab') as output: output.write(b'flushed')
+ sys.exit(0)
+for line in sys.stdin:
+ if line.strip()=='q':
+  with movie.open('ab') as output: output.write(b'flushed')
+  with (root/'calls').open('a') as log: log.write('flushed\\n')
+  sys.exit(0)
+'''
+
+
+class RunnerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+        self.output = self.root / 'output'; self.output.mkdir()
+        for name in ['ffmpeg', 'ffprobe']:
+            path = self.root / name; path.write_text(STUB); path.chmod(0o755)
+
+    def recorder(self):
+        return runner.Recording(self.output, str(self.root / 'ffmpeg'), str(self.root / 'ffprobe'))
+
+    def test_argument_builder_uses_one_serial_run_without_invalid_iteration_option(self):
+        args = runner.test_arguments(self.output)
+        self.assertEqual(args[:2], ['xcodebuild', 'test-without-building'])
+        self.assertNotIn('-test-iterations', args)
+        self.assertEqual(args[args.index('-parallel-testing-enabled') + 1], 'NO')
+        self.assertEqual(args[args.index('-resultBundlePath') + 1], str(self.output / 'VoiceBar.xcresult'))
+
+    def test_success_and_test_failure_both_flush_before_ffprobe(self):
+        for code in [0, 7]:
+            with self.subTest(code=code):
+                result = runner.run_suite(self.output, [sys.executable, '-c', f'import sys;sys.exit({code})'], self.recorder())
+                self.assertEqual(result, code)
+                info = json.loads((self.output / 'recording.json').read_text())
+                self.assertTrue(info['valid'])
+                self.assertEqual(info['durationSeconds'], 1.25)
+                self.assertGreater(info['bytes'], 0)
+                calls = (self.root / 'calls').read_text()
+                self.assertLess(calls.rindex('flushed'), calls.rindex('ffprobe ['))
+                self.assertIn(info['path'], (self.output / 'recording.html').read_text())
+
+    def test_recording_is_silent_and_incremental(self):
+        args = self.recorder().arguments()
+        self.assertIn('Capture screen 0:none', args)
+        self.assertIn('-an', args)
+        self.assertIn('frag_keyframe+empty_moov+default_base_moof', args)
+        self.assertEqual(args[args.index('-frag_duration') + 1], '1000000')
+
+    def test_runner_source_uses_the_recorded_builder_after_build_only_exit(self):
+        source = MODULE.with_name('voicebar-ui-e2e.sh').read_text()
+        self.assertNotIn('-test-iterations', source)
+        self.assertLess(source.index('[[ $build_only == 0 ]] || exit 0'), source.index('voicebar-ui-e2e-run.py'))
+
+    def test_early_recorder_exit_cannot_pass_even_with_a_valid_video(self):
+        (self.root / 'early-end').touch()
+        self.assertNotEqual(runner.run_suite(self.output, [sys.executable, '-c', 'import time;time.sleep(5)'], self.recorder()), 0)
+        info = json.loads((self.output / 'recording.json').read_text())
+        self.assertTrue(info['valid'])
+        self.assertIn('Recorder', info['error'])
+
+    def test_no_test_launch_when_capture_is_denied(self):
+        (self.root / 'denied').touch()
+        marker = self.root / 'test-started'
+        result = runner.run_suite(self.output, [sys.executable, '-c', f'open({str(marker)!r},"w").close()'], self.recorder())
+        self.assertNotEqual(result, 0)
+        self.assertFalse(marker.exists())
+        self.assertFalse(json.loads((self.output / 'recording.json').read_text())['valid'])
+
+    def test_ffprobe_audio_rejection_fails_the_gate(self):
+        (self.root / 'audio').touch()
+        self.assertNotEqual(runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder()), 0)
+        self.assertFalse(json.loads((self.output / 'recording.json').read_text())['valid'])
+
+    def test_invalid_ffprobe_media_fails_the_gate(self):
+        (self.root / 'invalid-media').touch()
+        self.assertNotEqual(runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder()), 0)
+        self.assertFalse(json.loads((self.output / 'recording.json').read_text())['valid'])
+
+    def test_interrupt_stops_only_owned_children_and_flushes_the_video(self):
+        self.assert_interrupt(signal.SIGTERM, False)
+
+    def test_process_group_interrupt_cannot_kill_recorder_before_flush(self):
+        self.assert_interrupt(signal.SIGINT, True)
+
+    def assert_interrupt(self, sig, whole_group):
+        marker = self.root / 'test-started'
+        code = (f'import importlib.util,pathlib,sys;'
+                f's=importlib.util.spec_from_file_location("runner",{str(MODULE)!r});'
+                'm=importlib.util.module_from_spec(s);s.loader.exec_module(m);'
+                f'o=pathlib.Path({str(self.output)!r});'
+                f'r=m.Recording(o,{str(self.root / "ffmpeg")!r},{str(self.root / "ffprobe")!r});'
+                f'sys.exit(m.run_suite(o,[sys.executable,"-c",{("import pathlib,time;pathlib.Path(" + repr(str(marker)) + ").touch();time.sleep(60)")!r}],r))')
+        process = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 10
+            while not marker.exists() and process.poll() is None and time.monotonic() < deadline: time.sleep(.02)
+            self.assertTrue(marker.exists())
+            if whole_group: os.killpg(process.pid, sig)
+            else: process.send_signal(sig)
+            output = process.communicate(timeout=10)[0].decode()
+            self.assertNotEqual(process.returncode, 0, output)
+            info = json.loads((self.output / 'recording.json').read_text())
+            self.assertTrue(info['valid'], output)
+            self.assertEqual(info['durationSeconds'], 1.25)
+        finally:
+            if process.poll() is None: process.kill(); process.wait()
+
+
+if __name__ == '__main__':
+    unittest.main()

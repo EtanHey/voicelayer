@@ -58,9 +58,8 @@ python3 "$repo/scripts/voicebar-ui-e2e-results.py" configure "$output" "$app" "$
 # Reconfirm immediately before XCUITest takes the screen. Leave output muted after the run.
 [[ $(/usr/bin/osascript -e 'output muted of (get volume settings)') == true ]] || { echo 'FAIL output mute changed'; exit 1; }
 status=0
-xcodebuild test-without-building -xctestrun "$output/UIE2E.xctestrun" -destination 'platform=macOS' \
-  -parallel-testing-enabled NO -test-iterations 1 -resultBundlePath "$output/VoiceBar.xcresult" \
-  > "$output/test.log" 2>&1 || status=$?
+# Default recording is part of the run, not an optional adapter. Build-only exits above.
+python3 "$repo/scripts/voicebar-ui-e2e-run.py" "$output" || status=$?
 export_status=0
 python3 "$repo/scripts/voicebar-ui-e2e-results.py" export "$output" "$sandbox" || export_status=$?
 [[ $status == 0 && $export_status == 0 ]] || { echo "FAIL UIE2E: xcodebuild=$status export=$export_status"; exit 1; }
