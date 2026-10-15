@@ -36,17 +36,24 @@ const cases: [string, string][] = [
   ['{"text":"Wrong", "name":"hot_location"}', "text: Wrong, name: hot location"],
   ['["שלום", "🙂", "a\\\"b"]', "list: שלום, 🙂, a b"],
   ['{"count":9007199254740993,"value":1.25}', "count: 9007199254740993, value: 1.25"],
+  ['{"text":""} {} []', "text: empty string an empty object an empty list"],
+  ['{"x":1}{"x":2}', "x: 1 x: 2"],
+  ['{}[]', "an empty object an empty list"],
+  ['{"text":"a\\u0000b"}', "text: a control zero b"],
   ['`items[0]` and `{"tickets":`', "items open bracket 0 close bracket and open brace tickets:"],
-  ['`fn({key: []})`', "fn(open brace key: an empty list close brace )"],
+  ['`fn({key: []})`', "fn( open brace key: an empty list close brace )"],
   ['He said "Wrong"; don\'t drop words.', "He said Wrong; don't drop words."],
   ["part1-prompt/v6/", "part one prompt slash v six"],
+  ["Read part1-prompt/v6/.", "Read part one prompt slash v six."],
+  ["Read part1-prompt/v6/, then.", "Read part one prompt slash v six, then."],
   ["./part1-prompt/v6/", "dot slash part one prompt slash v six"],
   ["../part1-prompt/v6/", "dot dot slash part one prompt slash v six"],
   ["C:\\part1-prompt\\v6\\", "C: slash part one prompt slash v six"],
   ["part1-prompt/v6/ part1-prompt/v6/", "part one prompt slash v six part one prompt slash v six"],
   ["5,000 mm and 1 mm, 0.5 mm or -5 mm.", "5,000 millimeters and 1 millimeter, 0.5 millimeters or -5 millimeters."],
-  ["5 mmHg, 5 MM, 5 mms, 5 mm2; mmm", "5 mmHg, 5 MM, 5 mms, 5 mm two; mmm"],
+  ["5 mmHg, 5 MM, 5 mms, 5 mm2; mmm", "5 mm hg, 5 MM, 5 mms, 5 mm two; mmm"],
   ["שלום 5,000 mm", "שלום 5,000 millimeters"],
+  ["5,00 mm and 5..0 mm", "5,00 mm and 5..0 mm"],
 ];
 for (const [input, expected] of cases) test(`clone incident family: ${input}`, () => {
   const result = projectSpeakableText(input, [], "clone");
@@ -58,6 +65,8 @@ for (const [input, expected] of cases) test(`clone incident family: ${input}`, (
 test("Edge retains code, directory and measurement policy", () => {
   expect(projectSpeakableText('`{"tickets":[]}` part1-prompt/v6/ 5,000 mm', [], "edge").speechText)
     .toBe('{"tickets":[]} v6 5,000 mm');
+  expect(projectSpeakableText("part1-prompt/v6/", [{pattern: /prompt/g, replacement: "custom instructions"}], "edge").speechText).toBe("v6/");
+  expect(projectSpeakableText("https://github.com/API/", [{pattern: /API/g, replacement: "custom"}], "edge").speechText).toBe("github dot com slash custom/");
 });
 
 test("dictionary overrides inside JSON and directories keep source ownership", () => {
@@ -66,6 +75,29 @@ test("dictionary overrides inside JSON and directories keep source ownership", (
   const result = projectSpeakableText(input, rules, "clone");
   expect(result.speechText).toBe("support requests: an empty list part one instructions slash v six");
   partitions(input, result);
+  expect(projectSpeakableText("part1-prompt/v6/", [{pattern: /part1-prompt\/v6\//g, replacement: "chosen folder"}]).speechText).toBe("chosen folder");
+  expect(projectSpeakableText("part1-prompt/v6/", [{pattern: /part1-prompt/g, replacement: "chosen folder"}]).speechText).toBe("chosen folder slash v six");
+  expect(projectSpeakableText("5,000 mm", [{pattern: /mm/g, replacement: "custom unit"}]).speechText).toBe("5,000 custom unit");
+});
+
+test("clone symbol safety also applies to dictionary output", () => {
+  const input = "Read API now";
+  const rules = [{pattern: /API/g, replacement: '{"tickets":[]}'}];
+  const result = projectSpeakableText(input, rules, "clone");
+  expect(result.speechText).not.toMatch(/[{}\[\]"“”]/);
+  expect(projectSpeakableText(input, rules, "edge").speechText).toBe('Read {"tickets":[]} now');
+  partitions(input, result);
+});
+
+test("clone JSON/code scan stays bounded at 2,000 characters", () => {
+  const inputs = ['{"tickets":[]}'.repeat(140), "[".repeat(999) + "1" + "]".repeat(999), "{".repeat(2000)];
+  for (const input of inputs) {
+    const start = performance.now();
+    const result = projectSpeakableText(input);
+    expect(performance.now() - start).toBeLessThan(50);
+    expect(result.speechText).not.toMatch(/[{}\[\]"]/);
+    partitions(input, result);
+  }
 });
 
 test("expanded JSON, paths, units and repeated words retain click targets", async () => {

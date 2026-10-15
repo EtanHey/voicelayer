@@ -69,6 +69,67 @@ function filename(raw: string, engine: SpeakableEngine): string {
   if (!base.startsWith(".") && !extensions[base.split(".").at(-1)?.toLowerCase() ?? ""]) return identifier(base, false, engine);
   return base.split(".").map((part, i) => i ? `dot ${extensions[part.toLowerCase()] ?? identifier(part, false, engine)}` : identifier(part, false, engine)).filter(Boolean).join(" ");
 }
+function directory(raw: string, rules: readonly PronunciationRule[] = []): string {
+  return raw.split(/[\\/]/).filter(Boolean).map(part => {
+    if (part === "." || part === "..") return part === "." ? "dot" : "dot dot";
+    const wholeOverride = rules.some(rule => {
+      const match = new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "")).exec(part);
+      return match?.index === 0 && match[0].length === part.length;
+    });
+    return (wholeOverride ? [part] : part.split(/[_-]+/)).map(word => projectSpeakableText(word, rules, "clone").speechText).join(" ");
+  }).join(" slash ");
+}
+
+/** Scan balanced JSON once. Parse only to validate; never round-trip numeric values. */
+function jsonEdits(input: string): {start: number; end: number; text: string}[] {
+  const edits: {start: number; end: number; text: string}[] = [];
+  let start = -1, quoted = false, escaped = false;
+  const stack: string[] = [];
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+    if (start < 0) {
+      if ((char !== "{" && char !== "[") || /[\p{L}\p{N}_]/u.test(input[i - 1] ?? "")) continue;
+      start = i; stack.push(char); continue;
+    }
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') { quoted = true; continue; }
+    if (char === "{" || char === "[") stack.push(char);
+    if (char !== "}" && char !== "]") continue;
+    const open = stack.pop();
+    if (open !== (char === "}" ? "{" : "[")) { stack.length = 0; start = -1; continue; }
+    if (stack.length) continue;
+    const end = i + 1, raw = input.slice(start, end);
+    try {
+      JSON.parse(raw);
+      // Keep keys, values and their original positions; only edit syntax/escapes.
+      const tokens = /"(?:[^"\\]|\\[\s\S])*"|\[\s*\]|\{\s*\}|[{}\[\]:,]/g;
+      for (const token of raw.matchAll(tokens)) {
+        const at = start + token.index, text = token[0];
+        const gap = /[{\["“”\p{L}\p{N}_]/u.test(input[at + text.length] ?? "") ? " " : "";
+        if (text.startsWith('"')) {
+          if (text.includes("\\") || text === '""') edits.push({start: at, end: at + text.length,
+            text: (JSON.parse(text) as string).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,
+              char => ` control ${number(String(char.charCodeAt(0)))} `) || "empty string"});
+          else {
+            edits.push({start: at, end: at + 1, text: ""});
+            edits.push({start: at + text.length - 1, end: at + text.length, text: ""});
+          }
+        } else edits.push({start: at, end: at + text.length, text:
+          text.startsWith("[") && text.length > 1 ? " an empty list" + gap :
+          text.startsWith("{") && text.length > 1 ? " an empty object" + gap :
+          text === "[" ? "list: " : text === ":" ? ": " : text === "," ? ", " :
+          text !== "{" ? gap : ""});
+      }
+    } catch { /* Unknown/partial code stays lexical; the clone symbol pass handles it. */ }
+    start = -1;
+  }
+  return edits;
+}
 function url(raw: string, rules: readonly PronunciationRule[] = [], engine: SpeakableEngine = "clone"): string {
   const word = (text: string) => rules.length ? projectSpeakableText(text, rules, engine).speechText : identifier(text, false, engine);
   try {
@@ -160,6 +221,10 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   edit(/^([ \t]*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
   edit(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]*)?)/gm, "");
   edit(/!?\[([^\]\n]+)\]\((?:[^()\n]|\([^()\n]*\))*\)/g, m => m[1]);
+  if (engine === "clone") {
+    const input = pieces.map(p => p.text).join("");
+    applyEdits(pieces, input, jsonEdits(input), false);
+  }
   edit(/`+|\*\*|\*([^*\n]+)\*|~~/g, m => m[1] ?? "");
   edit(/(?<![A-Za-z0-9\u0080-\uffff_])_([^_\n]+)_(?![A-Za-z0-9\u0080-\uffff_])/gu, m => m[1]);
   // Existing YAML rules run in their existing order and remain atomic/protected.
@@ -175,9 +240,20 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   edit(/[$€£¥₪][ \t]*\d[\d,]*(?:\.\d+)?(?:[ \t]?(?:USD|EUR|GBP|ILS))?/g, m => m[0], true);
   edit(/(?<![\w./])\d+(?:\/\d+)+(?![\w./])/g, m => m[0], true);
   edit(/(?<![\w:])(?:\d{1,2}:\d{2}(?::\d{2})?(?:[ \t]?[AP]M)?|\d{1,2}[AP]M)(?![\w:])/gi, m => m[0], true);
+  if (engine === "clone") {
+    // Replace only the unit: the original number keeps its own click/timing span.
+    const input = pieces.map(p => p.text).join("");
+    const units = Array.from(input.matchAll(/(?<![\p{L}\p{N}_.,])(\d+(?:,\d{3})*(?:\.\d+)?)([ \t]+)mm(?![\p{L}\p{N}_])/gu));
+    applyEdits(pieces, input, units.map(m => ({start: m.index + m[1].length + m[2].length,
+      end: m.index + m[0].length, text: Number(m[1].replace(/,/g, "")) === 1 ? "millimeter" : "millimeters"})), false, true);
+  }
   // YAML may add spaces inside a path/file/URL. Revisit those composites in
   // source coordinates so basename/suffix rules still wrap the protected override.
   if (rules.length) for (const match of Array.from(displayText.matchAll(/(?<![A-Za-z0-9\u0080-\uffff_])(?:(?:https?:\/\/|www\.)[^\s<>\])`]+|(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+|[\w-]+\.[a-zA-Z]+)\b/gu)).reverse()) {
+    // Only clone directories extend the source span through a trailing separator.
+    if (engine === "clone" && !/^(?:https?:|www\.)/.test(match[0])) {
+      match[0] += displayText.slice(match.index + match[0].length).match(/^[\\/]+/)?.[0] ?? "";
+    }
     const start = match.index, end = start + match[0].length;
     if (/^\d+(?:\/\d+)+$/.test(match[0])) continue;
     if (!pieces.some(p => p.protected && p.start >= start && p.end <= end)) continue;
@@ -195,7 +271,11 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
       applyEdits(pieces, pieces.map(p => p.text).join(""), [{start: left, end: right, text}], true);
       continue;
     }
-    const base = match[0].split(/[\\/]/).at(-1)!;
+    if (engine === "clone" && /[\\/]$/.test(match[0])) {
+      applyEdits(pieces, pieces.map(p => p.text).join(""), [{start: left, end: right, text: directory(match[0], rules)}], true);
+      continue;
+    }
+    const base = match[0].split(/[\\/]/).filter(Boolean).at(-1)!;
     const dot = base.lastIndexOf("."), extension = dot >= 0 ? extensions[base.slice(dot + 1).toLowerCase()] : undefined;
     if (!extension && base === match[0]) continue;
     const stem = extension ? base.slice(0, dot) : base;
@@ -207,7 +287,11 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     return url(m[0].slice(0, m[0].length - trailing.length), [], engine) + trailing;
   }, true, true);
   edit(/\bHTTP\/(\d+)\b/gi, m => `H T T P ${number(m[1])}`, true, true);
-  edit(/(?<![A-Za-z0-9\u0080-\uffff_])(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+/gu, m => filename(m[0].replace(/[.,;:!?]+$/, ""), engine) + (m[0].match(/[.,;:!?]+$/)?.[0] ?? ""), true, true);
+  edit(/(?<![A-Za-z0-9\u0080-\uffff_])(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+/gu, m => {
+    const raw = m[0].replace(/[.,;:!?]+$/, "");
+    const spoken = engine === "clone" && /[\\/]$/.test(raw) ? directory(raw) : filename(raw, engine);
+    return spoken + (m[0].match(/[.,;:!?]+$/)?.[0] ?? "");
+  }, true, true);
   // Extension components require dots so letter runs have only one partition.
   edit(/(?<![A-Za-z0-9\u0080-\uffff_.])(?:v|V|\^|~)?\d+(?:\.\d+)+(?:-(?:rc|alpha|beta)(?:\.\d+)?)?(?![A-Za-z0-9\u0080-\uffff_])/gu, m => {
     const before = m.input.slice(Math.max(0, m.index - 40), m.index);
@@ -230,6 +314,12 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   edit(/(?<![A-Za-z0-9\u0080-\uffff_])--?[A-Za-z][\w-]*/gu, m => (m[0].startsWith("--") ? "dash dash " : "dash ") + identifier(m[0].replace(/^-+/, ""), false, engine), true, true);
   edit(/[A-Za-z0-9\u0590-\u05ff_]+(?:[.-][A-Za-z0-9\u0590-\u05ff_]+)*/gu, m => identifier(m[0], false, engine), true, true);
   edit(/>=|<=|!==|!=|===|==|=>|->|&&|\|\||\||=/g, m => " " + ({">=": "greater than or equal to", "<=": "less than or equal to", "!==": "not equal", "!=": "not equal", "===": "triple equals", "==": "equals", "=>": "arrow", "->": "arrow", "&&": "and", "||": "or", "|": "pipe", "=": "equals"}[m[0]]) + " ", false, true);
+  if (engine === "clone") {
+    // Even partial code or dictionary output must not send these symbols to Qwen.
+    edit(/\[\s*\]|\{\s*\}/g, m => m[0][0] === "[" ? " an empty list " : " an empty object ");
+    edit(/[{}\[\]]/g, m => " " + ({"{": "open brace", "}": "close brace", "[": "open bracket", "]": "close bracket"}[m[0]]) + " ");
+    edit(/["“”]/g, m => /[\p{L}\p{N}]/u.test(m.input[m.index - 1] ?? "") && /[\p{L}\p{N}]/u.test(m.input[m.index + 1] ?? "") ? " " : "");
+  }
   edit(/\s+/g, " ");
   edit(/^ | $/g, "");
   let speech = 0;
