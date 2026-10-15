@@ -1242,7 +1242,9 @@ public struct SettingsView: View {
                 if let failure = SettingsCopyPayload.nonempty(residencyNotice()) {
                     HStack { Text("Recognizer error"); SettingsCopyButton(text: failure, label: "recognizer error") }
                 }
-                if let failure = SettingsCopyPayload.nonempty(processingNotice()) {
+                if modelsStatus().availability == .available,
+                   modelsStatus().polishControls != nil,
+                   let failure = SettingsCopyPayload.nonempty(processingNotice()) {
                     HStack { Text("Processing error"); SettingsCopyButton(text: failure, label: "processing error") }
                 }
                 if let degradation = polishDegradation() {

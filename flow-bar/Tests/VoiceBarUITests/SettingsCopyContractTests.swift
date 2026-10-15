@@ -13,7 +13,8 @@ final class SettingsCopyContractTests: XCTestCase {
         for site in ["SettingsCopyButton(text: entry.canonical", "SettingsDiagnosticSummary.build(",
                      "SettingsDiagnosticSummary.historyMetadata(entry)", "result.failureCopyText",
                      "SettingsCopyButton(text: failure", "SettingsCopyButton(text: shortcutCheckFeedback.message",
-                     "SettingsCopyButton(text: hotkeyListenerRestartLine.text"] {
+                     "SettingsCopyButton(text: hotkeyListenerRestartLine.text",
+                     "SettingsCopyButton(text: failure, label: \"processing error\")"] {
             XCTAssertTrue(source.contains(site), site)
         }
         let header = try XCTUnwrap(source.range(of: "private func dictionaryEntryHeader"))
@@ -113,6 +114,54 @@ final class SettingsCopyContractTests: XCTestCase {
         let part = SettingsHistoryMediaPart(role: .question, displayText: "Stored question", isPlaceholder: false,
                                            actionableText: nil, audioPath: nil, durationLabel: nil, transcribedDurationLabel: nil)
         XCTAssertEqual(part.actions, [.play])
+    }
+
+    func testDisconnectedProcessingNoticeDoesNotOfferCopyForHiddenText() throws {
+        XCTAssertEqual(try processingNoticePixels(state: .disconnected, notice: nil),
+                       try processingNoticePixels(state: .disconnected, notice: "Hidden processing failure"))
+    }
+
+    func testNoPolishControlsDoesNotOfferCopyForHiddenText() throws {
+        let state = processingState(withControls: false)
+        XCTAssertEqual(state.availability, .available)
+        XCTAssertNil(state.polishControls)
+        XCTAssertEqual(try processingNoticePixels(state: state, notice: nil),
+                       try processingNoticePixels(state: state, notice: "Hidden processing failure"))
+    }
+
+    func testSupportedProcessingNoticeRemainsVisible() throws {
+        let state = processingState(withControls: true)
+        XCTAssertNotNil(state.polishControls)
+        XCTAssertNotEqual(try processingNoticePixels(state: state, notice: nil),
+                          try processingNoticePixels(state: state, notice: "Visible processing failure"))
+    }
+
+    private func processingState(withControls: Bool) -> ModelsSettingsState {
+        var health: [String: Any] = ["type": "health", "recording_state": "idle",
+            "model_status": ["configured_model": ["name": "fixture-model", "installed": true],
+                             "residency": "loaded", "configured_effort": "accurate"]]
+        if withControls {
+            health["polish_controls"] = [
+                "model_polish": ["source": "default", "raw": NSNull(), "effective": "off"],
+                "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
+                "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
+                "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
+            ]
+        }
+        return ModelsSettingsState(healthEvent: health)
+    }
+
+    private func processingNoticePixels(state: ModelsSettingsState, notice: String?) throws -> Data {
+        let view = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
+                                selectedDeviceID: { nil }, modelsStatus: { state }, onRefreshModelsStatus: {},
+                                processingNotice: { notice }, vocabularyRevision: { 0 }, initialTab: .transcription)
+        let host = NSHostingView(rootView: view)
+        host.frame = NSRect(x: 0, y: 0, width: 780, height: 620)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        return Data(bytes: try XCTUnwrap(bitmap.bitmapData), count: bitmap.bytesPerRow * bitmap.pixelsHigh)
     }
 
 }
