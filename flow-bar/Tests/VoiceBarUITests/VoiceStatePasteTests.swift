@@ -3,6 +3,161 @@ import AppKit
 import XCTest
 
 final class VoiceStatePasteTests: XCTestCase {
+    private static let guardedTerminals: Set<String> = [
+        "com.cmuxterm.app", "com.apple.Terminal", "com.googlecode.iterm2",
+        "com.mitchellh.ghostty", "net.kovidgoyal.kitty", "com.github.wez.wezterm", "org.alacritty",
+    ]
+
+    func testAllTerminalsRejectAutomaticAndHistoryDeliveryWhenFocusChangesDuringDelay() {
+        XCTAssertEqual(Self.guardedTerminals, TerminalPasteTargets.bundleIdentifiers)
+        for bundle in Self.guardedTerminals.sorted() {
+            for source in ["auto", "settings_history"] {
+                for focus in TerminalDelayHarness.Focus.allCases where focus != .unchanged {
+                    let harness = TerminalDelayHarness(bundle: bundle)
+                    let context = "\(bundle), \(source), \(focus)"
+                    harness.begin(source: source)
+                    harness.activateThenMoveFocus(to: focus)
+                    harness.deliver()
+
+                    XCTAssertEqual(harness.typed, [], context)
+                    XCTAssertEqual(harness.outcomes, ["notInserted"], context)
+                    if source == "auto" {
+                        XCTAssertEqual(harness.state.latestDictationInsertionStatus, .notInserted, context)
+                    }
+                    XCTAssertTrue(harness.state.confirmationText?.contains("Not inserted") == true, context)
+                    XCTAssertTrue(harness.state.confirmationText?.contains("History") == true, context)
+                    XCTAssertTrue(harness.state.confirmationText?.contains("Click input and press Shift+F5, or Copy") == true, context)
+                    harness.assertRetainedWithoutSideEffects(context)
+                }
+            }
+        }
+    }
+
+    func testAllTerminalsKeepFocusedAutomaticAndHistoryDeliveryUnchanged() {
+        for bundle in Self.guardedTerminals.sorted() {
+            for source in ["auto", "settings_history"] {
+                let harness = TerminalDelayHarness(bundle: bundle)
+                let context = "\(bundle), \(source)"
+                harness.begin(source: source)
+                harness.activateThenMoveFocus(to: .unchanged)
+                harness.deliver()
+                harness.assertOneTypedDelivery(context)
+                if source == "auto" {
+                    XCTAssertEqual(harness.state.latestDictationInsertionStatus, .unverified, context)
+                }
+            }
+        }
+    }
+
+    func testAllTerminalsKeepShiftF5DeliveryAfterAnyDeliveryDelayFocusChange() {
+        for bundle in Self.guardedTerminals.sorted() {
+            for focus in TerminalDelayHarness.Focus.allCases {
+                let harness = TerminalDelayHarness(bundle: bundle)
+                let context = "\(bundle), shift_f5, \(focus)"
+                harness.begin(source: "shift_f5")
+                harness.activateThenMoveFocus(to: focus)
+                harness.deliver()
+                harness.assertOneTypedDelivery(context)
+            }
+        }
+    }
+
+    /// Uses the real delivery scheduler seam; never posts native keys or touches a real clipboard.
+    private final class TerminalDelayHarness {
+        enum Focus: CaseIterable { case unchanged, sameBundleNewPID, otherApp, unavailable }
+        static let raw = "ADD שלום 👩‍💻\nsecond line\n"
+        static let delivered = "ADD שלום 👩‍💻\nsecond line"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+        )
+        let target: FakeRunningApplication
+        var front: NSRunningApplication?
+        var scheduled: [() -> Void] = []
+        var activated: [pid_t] = []
+        var typed: [String] = []
+        var keystrokes: [[SynthesizedKeystroke]] = []
+        var outcomes: [String] = []
+        var axAttempts = 0
+        var clipboardWrites: [String] = []
+        var clipboard = "COPIED BEFORE DICTATION"
+
+        init(bundle: String) {
+            target = FakeRunningApplication(bundleIdentifier: bundle, processIdentifier: 51515)
+            front = target
+            state.sendCommand = { _ in }
+            state.minimumTranscribingDisplayDuration = 0
+            state.pasteConfirmationDelay = 0.25
+            state.frontmostAppProvider = { [unowned self] in front }
+            state.targetAppActivator = { [unowned self] in activated.append($0.processIdentifier) }
+            state.pasteScheduler = { [unowned self] _, work in scheduled.append(work) }
+            state.focusedTargetEligibilityProvider = { XCTFail("Terminals must not gain an AX eligibility probe"); return nil }
+            state.asyncDictationInsertionHandlerProvider = { [unowned self] in
+                { [unowned self] _, _ in axAttempts += 1; return false }
+            }
+            state.textTypingHandler = { [unowned self] in
+                typed.append($0)
+                keystrokes.append(SynthesizedTyping.keystrokes(for: $0))
+                return true
+            }
+            state.pasteboardWriter = { [unowned self] in clipboardWrites.append($0); clipboard = $0 }
+            state.pasteboardStringProvider = { [unowned self] in clipboard }
+            state.simulatedPasteHandler = { XCTFail("No Cmd+V fallback"); return false }
+            state.diagnosticLogger = { [unowned self] event, details in
+                if event == "paste_confirmation", let outcome = details["outcome"] { outcomes.append(outcome) }
+            }
+        }
+
+        func begin(source: String) {
+            if source == "auto" { state.record() }
+            state.handleEvent(["type": "transcription", "text": Self.raw])
+            if source == "settings_history" { state.captureSettingsHistoryPasteTarget() }
+            if source != "auto" { state.repasteLastTranscript(source: source) }
+            XCTAssertEqual(typed, [])
+            XCTAssertEqual(outcomes, [])
+        }
+
+        func activateThenMoveFocus(to focus: Focus) {
+            XCTAssertEqual(scheduled.count, 1)
+            guard !scheduled.isEmpty else { return }
+            scheduled.removeFirst()()
+            XCTAssertEqual(activated, [51515])
+            XCTAssertEqual(scheduled.count, 1, "Delivery must still be pending after activation")
+            XCTAssertEqual(typed, [])
+            switch focus {
+            case .unchanged: break
+            case .sameBundleNewPID: front = FakeRunningApplication(bundleIdentifier: target.bundleIdentifier, processIdentifier: 62626)
+            case .otherApp: front = FakeRunningApplication(bundleIdentifier: "com.example.Other", processIdentifier: 73737)
+            case .unavailable: front = nil
+            }
+        }
+
+        func deliver() {
+            guard !scheduled.isEmpty else { XCTFail("Missing delivery callback"); return }
+            scheduled.removeFirst()()
+        }
+
+        func assertRetainedWithoutSideEffects(_ context: String) {
+            XCTAssertEqual(axAttempts, 0, context)
+            XCTAssertEqual(clipboardWrites, [], context)
+            XCTAssertEqual(clipboard, "COPIED BEFORE DICTATION", context)
+            XCTAssertTrue(scheduled.isEmpty, "No duplicate or retry: \(context)")
+            // The existing transcription event boundary trims outer whitespace, before delivery.
+            XCTAssertEqual(state.transcript, Self.delivered, context)
+            XCTAssertEqual(state.latestReusableTranscript, Self.delivered, context)
+            XCTAssertEqual(state.recentTranscriptions, [Self.delivered], context)
+            XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [Self.delivered], context)
+        }
+
+        func assertOneTypedDelivery(_ context: String) {
+            XCTAssertEqual(typed, [Self.delivered], context)
+            XCTAssertEqual(keystrokes, [[.text("ADD שלום 👩‍💻"), .newline, .text("second line")]], context)
+            XCTAssertEqual(outcomes, ["unverified"], context)
+            XCTAssertEqual(state.confirmationText, Self.delivered, context)
+            assertRetainedWithoutSideEffects(context)
+        }
+    }
+
     private func deliveryState(bundleIdentifier: String) -> VoiceState {
         let state = VoiceState()
         let editor = FakeRunningApplication(bundleIdentifier: bundleIdentifier, processIdentifier: 51515)
