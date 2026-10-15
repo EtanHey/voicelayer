@@ -1,8 +1,9 @@
 # VoiceBar UI E2E (no audio)
 
 Infrastructure layer: bundle/host, Xcode UI-test target, runner and exporter.
-The companion coverage PR supplies the actual flow tests. This layer alone is
-buildable with `--build-only`; an empty run cannot pass the result exporter.
+The stacked coverage layer supplies the full flow tests, now enabled in this branch.
+The infrastructure base alone is buildable with `--build-only`; an empty run cannot
+pass the result exporter.
 
 On an **unoccupied Mac** with Xcode 16+, Bun and Python 3.9+:
 
@@ -58,3 +59,8 @@ UIE2E bundles carry `VoiceBarUIE2EOnly=true` and a distinct bundle identifier be
 signing. The QA entry resolves this persistent identity before AppDelegate/NSApplication:
 missing/invalid UIE2E mode, invalid sandbox or unconfirmed mute refuses startup. Removing
 the mode flag while retaining isolated socket paths cannot enable production hotkeys/daemon.
+
+The coverage ledger keys controls by page plus History scope/selected row or Speech
+profile, not just label. Each History scope is inventoried independently. Ask response
+Paste must add exactly `history-paste:QA response` to the synthetic sink for that click;
+a prior Dictations Paste cannot satisfy either the ledger or payload assertion.
