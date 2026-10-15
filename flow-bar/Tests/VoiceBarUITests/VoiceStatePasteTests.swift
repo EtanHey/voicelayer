@@ -8,6 +8,46 @@ final class VoiceStatePasteTests: XCTestCase {
         "com.mitchellh.ghostty", "net.kovidgoyal.kitty", "com.github.wez.wezterm", "org.alacritty",
     ]
 
+    func testGuardedTerminalTypingReceivesPIDAndDeclinesWithoutManualFallback() {
+        for bundle in Self.guardedTerminals.sorted() {
+            for source in ["auto", "settings_history"] {
+                for result in [GuardedTypingResult.focusChanged, .failed] {
+                    let harness = TerminalDelayHarness(bundle: bundle)
+                    var receivedPIDs: [pid_t] = []
+                    harness.state.guardedTextTypingHandler = { text, pid in
+                        XCTAssertEqual(text, TerminalDelayHarness.delivered)
+                        receivedPIDs.append(pid)
+                        return result
+                    }
+                    harness.begin(source: source)
+                    harness.activateThenMoveFocus(to: .unchanged)
+                    harness.deliver()
+                    XCTAssertEqual(receivedPIDs, [51515], "\(bundle), \(source)")
+                    XCTAssertEqual(harness.typed, [], "A declined guarded post must never retry manually")
+                    XCTAssertEqual(harness.outcomes.count, 1)
+                    if result == .focusChanged {
+                        XCTAssertEqual(harness.outcomes, ["notInserted"])
+                        if source == "auto" { XCTAssertEqual(harness.state.latestDictationInsertionStatus, .notInserted) }
+                        XCTAssertTrue(harness.state.confirmationText?.contains("Shift+F5, or Copy") == true)
+                    } else {
+                        XCTAssertTrue(harness.state.confirmationText?.contains("Paste failed") == true)
+                    }
+                    harness.assertRetainedWithoutSideEffects(bundle)
+                }
+            }
+        }
+    }
+
+    func testOtherManualTerminalRoutesNeverReceiveAPID() {
+        for source in ["context_menu_latest", "context_menu_history", "menu_bar", "bar_history", "local_control", "unknown"] {
+            let harness = TerminalDelayHarness(bundle: "com.cmuxterm.app")
+            harness.begin(source: source)
+            harness.activateThenMoveFocus(to: .unchanged)
+            harness.deliver()
+            harness.assertOneTypedDelivery(source)
+        }
+    }
+
     func testAllTerminalsRejectAutomaticAndHistoryDeliveryWhenFocusChangesDuringDelay() {
         XCTAssertEqual(Self.guardedTerminals, TerminalPasteTargets.bundleIdentifiers)
         for bundle in Self.guardedTerminals.sorted() {
@@ -81,6 +121,8 @@ final class VoiceStatePasteTests: XCTestCase {
         var axAttempts = 0
         var clipboardWrites: [String] = []
         var clipboard = "COPIED BEFORE DICTATION"
+        var guardedPIDs: [pid_t] = []
+        var source = ""
 
         init(bundle: String) {
             target = FakeRunningApplication(bundleIdentifier: bundle, processIdentifier: 51515)
@@ -100,6 +142,10 @@ final class VoiceStatePasteTests: XCTestCase {
                 keystrokes.append(SynthesizedTyping.keystrokes(for: $0))
                 return true
             }
+            state.guardedTextTypingHandler = { [unowned self] text, pid in
+                guardedPIDs.append(pid)
+                return state.textTypingHandler(text) ? .posted : .failed
+            }
             state.pasteboardWriter = { [unowned self] in clipboardWrites.append($0); clipboard = $0 }
             state.pasteboardStringProvider = { [unowned self] in clipboard }
             state.simulatedPasteHandler = { XCTFail("No Cmd+V fallback"); return false }
@@ -109,6 +155,7 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         func begin(source: String) {
+            self.source = source
             if source == "auto" { state.record() }
             state.handleEvent(["type": "transcription", "text": Self.raw])
             if source == "settings_history" { state.captureSettingsHistoryPasteTarget() }
@@ -150,6 +197,7 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         func assertOneTypedDelivery(_ context: String) {
+            XCTAssertEqual(guardedPIDs, ["auto", "settings_history"].contains(source) ? [51515] : [], context)
             XCTAssertEqual(typed, [Self.delivered], context)
             XCTAssertEqual(keystrokes, [[.text("ADD שלום 👩‍💻"), .newline, .text("second line")]], context)
             XCTAssertEqual(outcomes, ["unverified"], context)

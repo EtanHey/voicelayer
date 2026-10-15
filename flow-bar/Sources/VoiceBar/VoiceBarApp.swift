@@ -1219,6 +1219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.textTypingHandler = { text in
             Self.typeText(text)
         }
+        voiceState.guardedTextTypingHandler = { text, pid in
+            Self.typeTextGuarded(text, expectedPID: pid)
+        }
         voiceState.accessibilityTrustChecker = { prompt in
             Self.isAccessibilityTrusted(prompt: prompt)
         }
@@ -1297,6 +1300,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             event.post(tap: .cghidEventTap)
         }
         return true
+    }
+
+    private static func typeTextGuarded(_ text: String, expectedPID: pid_t) -> GuardedTypingResult {
+        guard isAccessibilityTrusted(prompt: false),
+              let source = CGEventSource(stateID: .hidSystemState) else { return .failed }
+        return SynthesizedKeyEvents.postGuardedBatch(
+            expectedPID: expectedPID,
+            buildEvents: {
+                SynthesizedKeyEvents.events(for: SynthesizedTyping.keystrokes(for: text), source: source)
+            },
+            frontmostPID: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
+            postEvent: { $0.post(tap: .cghidEventTap) }
+        )
     }
 
     private static func isAccessibilityTrusted(prompt: Bool) -> Bool {

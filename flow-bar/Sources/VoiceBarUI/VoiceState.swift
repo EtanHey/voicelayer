@@ -25,6 +25,8 @@ public enum VoiceMode: String, CaseIterable {
     case disconnected
 }
 
+public enum GuardedTypingResult: Equatable { case posted, focusChanged, failed }
+
 public struct SelectionCaptureResult: Equatable {
     public enum Outcome: String {
         case completed
@@ -814,6 +816,10 @@ public final class VoiceState {
     /// `SynthesizedTyping`. Returns false when nothing was posted (e.g.
     /// Accessibility not granted). See the AIDEV-NOTE at the paste call site.
     public var textTypingHandler: (_ text: String) -> Bool = { _ in false }
+
+    /// Production installs a batch builder with a final PID check. Nil preserves the legacy
+    /// injection seam for tests/embedders; manual routes always use textTypingHandler directly.
+    public var guardedTextTypingHandler: ((_ text: String, _ expectedPID: pid_t) -> GuardedTypingResult)?
 
     /// Test seam for Accessibility permission checks.
     public var accessibilityTrustChecker: (_ prompt: Bool) -> Bool = { _ in false }
@@ -3204,7 +3210,18 @@ public final class VoiceState {
                         "terminalTarget": boolString(isTerminalTarget),
                         "trailingNewlineStripped": boolString(deliveredText != text),
                     ])
-                    let typed = textTypingHandler(deliveredText)
+                    let typed: Bool
+                    if (plan == .autoPaste || allowAXInsertion), let guardedTextTypingHandler {
+                        switch guardedTextTypingHandler(deliveredText, pasteTarget.processIdentifier) {
+                        case .posted: typed = true
+                        case .failed: typed = false
+                        case .focusChanged:
+                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                            return
+                        }
+                    } else {
+                        typed = textTypingHandler(deliveredText)
+                    }
                     logDiagnostic("paste_typing_result", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
