@@ -4,6 +4,84 @@ import AppKit
 import XCTest
 
 final class CommandModeAXHelperTests: XCTestCase {
+    func testPrewriteRejectionDeclinesWithoutCompletionOrWrites() {
+        for reason in ["ineligible", "missing_snapshot", "invalid_range", "target_changed", "selection_changed"] {
+            var reads = 0
+            var completions = 0
+            var writes = 0
+            let started = CommandModeAXHelper.beginSelectionLocalInsertion(
+                "ADD שלום 👩‍💻\nsecond line",
+                readSnapshot: {
+                    reads += 1
+                    if reason == "missing_snapshot" { return nil }
+                    let location = reason == "invalid_range" ? 99
+                        : reason == "selection_changed" && reads > 1 ? 0 : 4
+                    return CommandModeSelectionSnapshot(
+                        value: "seed", selectedRange: NSRange(location: location, length: 0)
+                    )
+                },
+                isEligible: { reason != "ineligible" },
+                isCurrentTarget: { reason != "target_changed" },
+                writeSelection: { _ in writes += 1; return true },
+                writeCaret: { _ in writes += 1; return true },
+                observeSettled: { _ in XCTFail("No observation without a write: \(reason)") },
+                completion: { _ in completions += 1 }
+            )
+            XCTAssertFalse(started, "No setter was invoked: \(reason)")
+            XCTAssertEqual(completions, 0, "Declined start has no completion: \(reason)")
+            XCTAssertEqual(writes, 0, reason)
+        }
+    }
+
+    func testNativeEligibilityRequiresEnabledEditableTextAndRejectsSecureOrChangedIdentity() {
+        for reason in ["editable", "explicit_editable", "disabled", "unknown_enabled", "readonly", "file_list", "secure", "protected", "identity_changed"] {
+            let eligibility = CommandModeAXHelper.typingEligibility(
+                processIdentifier: 51515, role: reason == "file_list" ? "AXOutline" : "AXTextField",
+                subrole: reason == "secure" ? "AXSecureTextField" : nil,
+                enabled: reason == "unknown_enabled" ? nil : reason != "disabled",
+                editable: reason == "readonly" ? false : reason == "explicit_editable" ? true : nil,
+                selectedTextSettable: false, valueSettable: reason != "explicit_editable",
+                protectedContent: reason == "protected", matchesCurrentFocus: { reason != "identity_changed" }
+            )
+            XCTAssertEqual(eligibility.permitsTyping(into: 51515),
+                           ["editable", "explicit_editable"].contains(reason), reason)
+            XCTAssertFalse(eligibility.permitsTyping(into: 62626), reason)
+        }
+    }
+
+    func testNativePrewriteDeclineAllowsOneEligibleSettingsHistoryDelivery() {
+        let state = VoiceState()
+        let editor = FakeRunningApplication(bundleIdentifier: "com.example.Editor", processIdentifier: 51515)
+        let text = "ADD שלום 👩‍💻\nsecond line"
+        var typed: [String] = []
+        var completions = 0
+        state.frontmostAppProvider = { editor }
+        state.targetAppActivator = { _ in }
+        state.pasteScheduler = { _, work in work() }
+        state.focusedTargetEligibilityProvider = {
+            CommandModeAXHelper.typingEligibility(
+                processIdentifier: 51515, role: "AXTextField", subrole: nil, enabled: true, editable: nil,
+                selectedTextSettable: false, valueSettable: true, protectedContent: false,
+                matchesCurrentFocus: { true }
+            )
+        }
+        state.asyncDictationInsertionHandlerProvider = { { text, completion in
+            CommandModeAXHelper.beginSelectionLocalInsertion(
+                text, readSnapshot: { nil }, isEligible: { true }, isCurrentTarget: { true },
+                writeSelection: { _ in XCTFail("Pre-write rejection"); return false },
+                writeCaret: { _ in XCTFail("No caret write"); return false },
+                observeSettled: { _ in XCTFail("No dispatch") },
+                completion: { completions += 1; completion($0) }
+            )
+        } }
+        state.textTypingHandler = { typed.append($0); return true }
+        state.pasteboardWriter = { _ in XCTFail("Keep clipboard") }
+        state.repasteTranscript(text, source: "settings_history")
+        XCTAssertEqual(typed, [text])
+        XCTAssertEqual(completions, 0)
+        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+    }
+
     private func localInsertion(
         text: String = "ADD",
         value: String = "seed\n\n",
@@ -36,7 +114,7 @@ final class CommandModeAXHelperTests: XCTestCase {
             observeSettled: { settled = $0 },
             completion: { result = $0 }
         )
-        XCTAssertTrue(started, "A possibly applied write must suppress full fallback")
+        XCTAssertEqual(started, eligible, "Only an attempted write consumes insertion")
         if let settledRange { document.selectedRange = settledRange }
         settled?()
         return (result, document, writes)
@@ -118,7 +196,7 @@ final class CommandModeAXHelperTests: XCTestCase {
             writeCaret: { _ in XCTFail("Do not move caret"); return false },
             observeSettled: { _ in XCTFail("No dispatch") }, completion: { result = $0 }
         )
-        XCTAssertEqual(result, .notApplied)
+        XCTAssertNil(result, "A pre-write rejection declines without completing")
     }
 
     func testEmptyT3ComposerWithSettledCaretAtOpeningIsUnverified() {
@@ -142,7 +220,7 @@ final class CommandModeAXHelperTests: XCTestCase {
         let nodes = ["text:alpha", "screenshot:fixture-image-1", "break", "text:beta.", "break"]
         let strategy = CommandModeAXHelper.insertionStrategy(text: "ADD", focusedValueLength: 64, targetBundleIdentifier: "com.t3tools.t3code")
         let (result, document, writes) = localInsertion(value: nodes.joined(separator: "\n"), eligible: strategy == .selectionLocal)
-        XCTAssertEqual(result, .notApplied)
+        XCTAssertNil(result, "Ineligible targets decline without completing")
         XCTAssertEqual(writes, 0)
         XCTAssertEqual(document.value.components(separatedBy: "\n"), nodes)
         // Withholding unsafe delivery proves preservation, not native insertion acceptance.

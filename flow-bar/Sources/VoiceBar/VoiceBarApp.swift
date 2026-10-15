@@ -1224,6 +1224,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.asyncDictationInsertionHandlerProvider = {
             CommandModeAXHelper.captureFocusedInsertionHandler()
         }
+        voiceState.focusedTargetEligibilityProvider = {
+            CommandModeAXHelper.captureFocusedTargetEligibility()
+        }
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
             commandModeAXHelper.applyReplacement(text)
         }

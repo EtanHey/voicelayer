@@ -95,6 +95,53 @@ final class CommandModeAXHelper {
         }
     }
 
+    /// Captures focus identity and metadata only; never reads the element's text.
+    static func captureFocusedTargetEligibility() -> DictationFocusedTargetEligibility? {
+        guard AXIsProcessTrusted(), let element = focusedElement() else { return nil }
+        var pid = pid_t()
+        guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+        let window = readElement(element, attribute: kAXWindowAttribute as CFString)
+        return targetEligibility(element, pid: pid) {
+            guard AXIsProcessTrusted(),
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                  let current = focusedElement(), CFEqual(current, element) else { return false }
+            if let window {
+                guard let currentWindow = readElement(current, attribute: kAXWindowAttribute as CFString),
+                      CFEqual(currentWindow, window) else { return false }
+            }
+            return targetEligibility(current, pid: pid, matchesCurrentFocus: { true }).permitsTyping(into: pid)
+        }
+    }
+
+    static func typingEligibility(
+        processIdentifier: pid_t, role: String?, subrole: String?, enabled: Bool?, editable: Bool?,
+        selectedTextSettable: Bool, valueSettable: Bool, protectedContent: Bool,
+        matchesCurrentFocus: @escaping () -> Bool
+    ) -> DictationFocusedTargetEligibility {
+        DictationFocusedTargetEligibility(
+            processIdentifier: processIdentifier, role: role,
+            isEditable: enabled == true && (editable ?? (selectedTextSettable || valueSettable)),
+            isSecure: subrole == kAXSecureTextFieldSubrole || protectedContent,
+            matchesCurrentFocus: matchesCurrentFocus
+        )
+    }
+
+    private static func targetEligibility(
+        _ element: AXUIElement, pid: pid_t, matchesCurrentFocus: @escaping () -> Bool
+    ) -> DictationFocusedTargetEligibility {
+        typingEligibility(
+            processIdentifier: pid,
+            role: readAttributeString(element, attribute: kAXRoleAttribute as CFString),
+            subrole: readAttributeString(element, attribute: kAXSubroleAttribute as CFString),
+            enabled: readAttributeBool(element, attribute: kAXEnabledAttribute as CFString),
+            editable: readAttributeBool(element, attribute: "AXEditable" as CFString),
+            selectedTextSettable: isSettable(element, attribute: kAXSelectedTextAttribute as CFString),
+            valueSettable: isSettable(element, attribute: kAXValueAttribute as CFString),
+            protectedContent: readAttributeBool(element, attribute: "AXProtectedContent" as CFString) == true,
+            matchesCurrentFocus: matchesCurrentFocus
+        )
+    }
+
     private static func focusedElement() -> AXUIElement? {
         let systemWide = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
@@ -137,8 +184,7 @@ final class CommandModeAXHelper {
         completion: @escaping (DictationInsertionResult) -> Void
     ) -> Bool {
         guard let window = readElement(element, attribute: kAXWindowAttribute as CFString) else {
-            completion(.notApplied)
-            return true
+            return false
         }
         return beginSelectionLocalInsertion(
             text,
@@ -163,6 +209,7 @@ final class CommandModeAXHelper {
                 let subrole = readAttributeString(element, attribute: kAXSubroleAttribute as CFString)
                 return reachedWindow && (role == kAXTextFieldRole || role == kAXTextAreaRole)
                     && subrole != kAXSecureTextFieldSubrole
+                    && readAttributeBool(element, attribute: "AXProtectedContent" as CFString) != true
                     && readAttributeBool(element, attribute: kAXEnabledAttribute as CFString) == true
                     && isSettable(element, attribute: kAXSelectedTextAttribute as CFString)
                     && isSettable(element, attribute: kAXSelectedTextRangeAttribute as CFString)
@@ -194,16 +241,14 @@ final class CommandModeAXHelper {
     ) -> Bool {
         guard isEligible(), let before = readSnapshot(),
               let range = Range(before.selectedRange, in: before.value), isCurrentTarget() else {
-            completion(.notApplied)
-            return true
+            return false
         }
         let expected = CommandModeSelectionSnapshot(
             value: before.value.replacingCharacters(in: range, with: text),
             selectedRange: NSRange(location: before.selectedRange.location + text.utf16.count, length: 0)
         )
         guard isCurrentTarget(), readSnapshot() == before else {
-            completion(.notApplied)
-            return true
+            return false
         }
         // A rejected setter can still have changed the host. Never return false after
         // attempting a write and never dispatch a full retry from uncertain readback.
