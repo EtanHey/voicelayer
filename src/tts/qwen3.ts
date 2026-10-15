@@ -20,9 +20,11 @@ import {
   lstatSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statSync,
 } from "fs";
-import { join } from "path";
+import { isAbsolute, join, relative, sep } from "path";
+import { homedir } from "os";
 
 const DAEMON_URL = "http://127.0.0.1:8880";
 const DAEMON_TIMEOUT_MS = 30_000; // 30s timeout for synthesis
@@ -62,6 +64,37 @@ export interface VoiceProfile {
 }
 
 const VOICES_DIR = join(process.env.HOME || "~", ".voicelayer", "voices");
+
+/** Asset readiness for the curated picker; metadata-only legacy loaders stay compatible.
+ * Mirror the daemon's reference-file boundary without loading a model or synthesizing.
+ * Deliberately uncached: removing a reference must hide it on the next health poll.
+ */
+export function readReadyClonedProfile(name: string, home = process.env.HOME || homedir()): VoiceProfile | null {
+  if (!name || /[/\\]/.test(name) || name.includes("..")) return null;
+  try {
+    const root = realpathSync(join(home, ".voicelayer", "voices"));
+    const inside = (path: string) => {
+      const rel = relative(root, path);
+      return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+    };
+    const yaml = realpathSync(join(root, name, "profile.yaml"));
+    if (!inside(yaml)) return null;
+    const profile = parseProfileYaml(readFileSync(yaml, "utf8"));
+    if (profile.accepted !== true || profile.superseded_by || profile.engine !== "qwen3-tts"
+        || (profile.profile_id || profile.name || name) !== name) return null;
+    // Choose exactly the reference/text pair synthesizeCloned will send.
+    const clip = profile.reference_clip || profile.reference_clips[0]?.path;
+    const text = profile.reference_text || profile.reference_clips[0]?.text;
+    if (!clip || !text?.trim() || !/\.wav$/i.test(clip)) return null;
+    const expanded = clip.replace(/^~(?=\/)/, home);
+    if (!isAbsolute(expanded)) return null;
+    const path = realpathSync(expanded);
+    if (!inside(path)) return null;
+    const file = statSync(path);
+    if (!file.isFile() || file.size === 0 || file.size > 5 * 1024 * 1024) return null;
+    return {...profile, name: profile.name || name, profile_id: name, directory_name: name};
+  } catch { return null; }
+}
 
 /** Cache for loaded voice profiles. */
 const profileCache = new Map<string, VoiceProfile>();

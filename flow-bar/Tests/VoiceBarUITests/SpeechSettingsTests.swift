@@ -222,6 +222,7 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertTrue(source.contains("Section(\"Fast\""))
         XCTAssertTrue(source.contains("Section(\"Cloned\""))
         XCTAssertTrue(source.contains("onSelectEngine?(kind, selected.engine, selected.voice)"))
+        XCTAssertTrue(source.contains("fast voice (fallback)"), "clone-down status must label fallback before a preview")
     }
 
     func testGroupedSelectionLocksBothFieldsAndFiltersLegacyCatalog() throws {
@@ -234,11 +235,35 @@ final class SpeechSettingsTests: XCTestCase {
         raw["profiles"] = profiles
         let controls = try XCTUnwrap(SpeechControlsState(controls: raw))
         XCTAssertEqual(controls.voices(for: "edge"), ["custom"])
-        XCTAssertEqual(controls.voices(for: "clone"), ["theo-c4s"])
+        XCTAssertEqual(controls.voices(for: "clone"), ["theo-c4s", "ben-c1"])
         XCTAssertTrue(SpeechSettingsView.fieldDisabled("short.voice", controls: controls, pending: [:]))
         XCTAssertTrue(SpeechSettingsView.lockFooter(.short, controls: controls)?.contains("QA_VOICE_TTS_VOICE") == true)
         XCTAssertTrue(SpeechSettingsView.fieldDisabled("long.voice", controls: controls, pending: ["long.engine": .string("clone")]))
         XCTAssertTrue(SpeechSettingsView.fieldDisabled("long.voice", controls: controls, pending: [:], callbackAvailable: false))
     }
 
+    func testReadyBenSelectionAndFastFallbackAttribution() throws {
+        var raw = Self.controls()
+        raw["available_voices"] = [["engine": "edge", "voice": "en-US-JennyNeural"],
+                                   ["engine": "clone", "voice": "ben-c1"]]
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "health", "tts_controls": raw])
+        state.setTTSProfile(.short, engine: "clone", voice: "ben-c1")
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["engine"] as? String, "clone")
+        XCTAssertEqual(commands.first?["voice"] as? String, "ben-c1")
+        XCTAssertEqual(SpeechSettingsView.voiceLabel("ben-c1"), "Ben")
+        var profiles = raw["profiles"] as! [String: [String: Any]]
+        profiles["short"]?["engine"] = ["source": "settings", "raw": "clone", "effective": "clone"]
+        profiles["short"]?["voice"] = ["source": "settings", "raw": "ben-c1", "effective": "ben-c1"]
+        profiles["short"]?["last_first_audio"] = ["engine": "edge-tts", "origin": "preview", "fallback": true]
+        raw["profiles"] = profiles
+        let controls = try XCTUnwrap(SpeechControlsState(controls: raw))
+        let display = try XCTUnwrap(SpeechSettingsView.displayProfile(.short, controls: controls, pending: [:]))
+        XCTAssertTrue(display.cloneWarning)
+        XCTAssertTrue(controls.profiles[.short]?.latencyLabel.contains("Fast voice (fallback)") == true)
+    }
 }
