@@ -19,7 +19,9 @@ function check(source: string, budget: number) {
   for (const chunk of map.chunks) {
     const text = projection.speechText.slice(chunk.speech.start, chunk.speech.end);
     expect(text.length).toBeGreaterThan(0);
-    expect(text.length).toBeLessThanOrEqual(budget);
+    if (text.length > budget) {
+      expect([...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)]).toHaveLength(1);
+    } else expect(text.length).toBeLessThanOrEqual(budget);
     expect(/[\uD800-\uDBFF]$/.test(text)).toBe(false);
     expect(/^[\uDC00-\uDFFF]/.test(text)).toBe(false);
     expect(chunk.ranges.map(r => projection.speechText.slice(r.speech.start, r.speech.end)).join("")).toBe(text);
@@ -110,4 +112,28 @@ it("is deterministic and preserves frozen producer metadata", () => {
 it("keeps minimum-size Unicode chunks and long unspaced tokens bounded", () => {
   check("😀שלום".repeat(80), 2);
   check("x".repeat(10000), 64);
+});
+
+// Cursor R1: surrogate-safe cuts still split ZWJ, regional-indicator and modifier clusters.
+for (const atom of ["👨‍👩‍👧‍👦", "🇺🇸", "👍🏽", "👨‍👩‍👧‍👦🇺🇸👍🏽"]) {
+  for (const budget of [10, 13, 17, 23, 50]) {
+    it(`keeps grapheme boundaries for ${atom} at budget ${budget}`, () => {
+      const source = atom.repeat(30);
+      const projection = projectStructuredSpeech(source);
+      const segments = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(projection.speechText)];
+      const boundaries = new Set([0, ...segments.map(s => s.index + s.segment.length)]);
+      const map = check(source, budget);
+      for (const chunk of map.chunks) {
+        expect(boundaries.has(chunk.speech.start)).toBe(true);
+        expect(boundaries.has(chunk.speech.end)).toBe(true);
+      }
+    });
+  }
+}
+
+it("emits one oversized grapheme intact and makes progress", () => {
+  const atom = "👨‍👩‍👧‍👦";
+  const source = atom.repeat(3);
+  const map = check(source, 2);
+  expect(map.chunks.map(c => source.slice(c.speech.start, c.speech.end))).toEqual([atom, atom, atom]);
 });

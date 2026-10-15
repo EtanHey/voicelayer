@@ -24,7 +24,8 @@ export interface SectionMap { sections: SpeechSection[]; chunks: SectionChunk[] 
  * headingless text, use paragraphs/list items/table rows/code blocks as fallback.
  * Separators stay attached to their preceding section (leading ones to the first).
  * The caller supplies its provider's existing UTF-16 chunk budget; no audio/wire
- * state or generation policy is changed here. Input must obey FMT1 partitions.
+ * state or generation policy is changed here. A single oversized grapheme is
+ * emitted intact even if it exceeds that budget. Input must obey FMT1 partitions.
  */
 export function buildSectionMap(projection: StructuredSpeech, maxChunkChars: number): SectionMap {
   if (!Number.isSafeInteger(maxChunkChars) || maxChunkChars < 2) {
@@ -32,6 +33,11 @@ export function buildSectionMap(projection: StructuredSpeech, maxChunkChars: num
   }
   const { blocks, ranges, displayText, speechText } = projection;
   if (!displayText.length) return { sections: [], chunks: [] };
+  // Segment once, not once per hard cut: long unspaced runs stay bounded work.
+  const graphemeEnds = Array.from(
+    new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(speechText),
+    part => part.index + part.segment.length,
+  );
   const firstHeading = blocks.findIndex(block => block.kind === "heading");
   const anchors = blocks.flatMap((block, index) => {
     if (block.kind === "separator" || block.kind === "table-separator") return [];
@@ -79,7 +85,12 @@ export function buildSectionMap(projection: StructuredSpeech, maxChunkChars: num
           // Keep whitespace in the exact slices, including normalized join spaces.
           const space = speechText.slice(cursor, limit).lastIndexOf(" ");
           if (space > 0) end = cursor + space + 1;
-          else if (isHighSurrogate(speechText.charCodeAt(end - 1)) && isLowSurrogate(speechText.charCodeAt(end))) end--;
+          else {
+            const nextGrapheme = lowerBound(graphemeEnds.length, i => graphemeEnds[i] <= limit);
+            const previousEnd = graphemeEnds[nextGrapheme - 1];
+            // No boundary fits: keep the one oversized atom intact and advance.
+            end = previousEnd > cursor ? previousEnd : graphemeEnds[nextGrapheme];
+          }
         }
       }
       section.chunks.push({ sectionId: section.id, speech: { start: cursor, end },
@@ -128,6 +139,3 @@ function chunkRanges(ranges: ProjectionRange[], start: number, end: number, sect
   }
   return result;
 }
-
-function isHighSurrogate(unit: number): boolean { return unit >= 0xD800 && unit <= 0xDBFF; }
-function isLowSurrogate(unit: number): boolean { return unit >= 0xDC00 && unit <= 0xDFFF; }
