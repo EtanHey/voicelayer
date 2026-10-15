@@ -592,6 +592,9 @@ export async function handleConverse(
   let captureAdmission: CaptureAdmission | undefined;
   const promptPlayers: QueuedPlaybackHandle[] = [];
   let promptTimeoutCleanup: Promise<void> | undefined;
+  let beforeCaptureExpired = false;
+  let promptReaped: Promise<void> = Promise.resolve();
+  const abandonedBeforeCapture = Promise.withResolvers<McpResult>();
   let admissionFailed = false;
   let noSpeech = false;
   let captureArchivePath: string | null = null;
@@ -636,15 +639,16 @@ export async function handleConverse(
           : stage === "capture-start"
             ? "the recorder did not start after the prompt finished; the microphone never opened"
             : "the voice pipeline may be stuck with zero recoverable audio";
-    resolveTimeout(
+    const result =
       recovery
         ? textResult(formatAsk(null, { outcome: "captured", recovery }))
         : textResult(
             `[converse] Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s: ` +
               `${cause}.`,
             true,
-          ),
-    );
+          );
+    if (beforeCaptureExpired) abandonedBeforeCapture.resolve(result);
+    resolveTimeout(result);
   };
   const armTimeout = (
     timeoutMs: number,
@@ -658,13 +662,21 @@ export async function handleConverse(
       console.error(
         `[voicelayer] voice_ask ${stage} hard timeout after ${timeoutMs / 1000}s`,
       );
-      broadcast({ type: "state", state: "idle", source: "recording" });
       const abortError = new Error(
         `voice_ask ${stage} stage aborted after hard timeout (${timeoutMs}ms)`,
       );
-      if (stage === "prompt") {
+      if (stage === "prompt" || stage === "playback-wait") {
+        beforeCaptureExpired = true;
         inputAbortController.abort(abortError);
         for (const handle of promptPlayers) cancelPlayback({ id: handle.id });
+        // Logical release is bounded; History must still wait for real silence.
+        // A rejected exit signal cannot authorize History playback or an idle edge.
+        promptReaped = new Promise<void>(resolve => {
+          void Promise.all(promptPlayers.map(handle => handle.playerExited)).then(
+            () => resolve(),
+            error => console.error(`[voicelayer] Prompt exit remains unconfirmed: ${String(error)}`),
+          );
+        });
         promptTimeoutCleanup = waitForPlayerExit(promptPlayers)
           .catch(error => console.error(`[voicelayer] Prompt timeout cleanup: ${String(error)}`))
           .finally(() => captureAdmission?.release());
@@ -672,7 +684,8 @@ export async function handleConverse(
         void promptTimeoutCleanup.then(() => settleTimeout(stage, timeoutMs));
         return;
       }
-      if (stage === "playback-wait" || stage === "capture-start") {
+      broadcast({ type: "state", state: "idle", source: "recording" });
+      if (stage === "capture-start") {
         // No mic has opened, so there cannot be captured audio to publish.
         settleTimeout(stage, timeoutMs);
         inputAbortController.abort(abortError);
@@ -841,8 +854,24 @@ export async function handleConverse(
 
   // P0-2: catch pipeline errors cleanly; keep active recording UI intact
   // when v1 refuses voice_ask before question TTS.
-  const flowPromise = withHistoryPlaybackSuspended(converseFlow).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
-  operationLifecycle?.deferReleaseUntil(flowPromise);
+  const flowPromise = withHistoryPlaybackSuspended(async () => {
+    try {
+      // Do not keep History fenced by a synthesis/backend continuation after abort.
+      return await (beforeCaptureExpired ? abandonedBeforeCapture.promise :
+        Promise.race([converseFlow(), abandonedBeforeCapture.promise]));
+    } finally {
+      if (beforeCaptureExpired) {
+        await promptReaped;
+        await promptTimeoutCleanup;
+        // A late old exit must not mark a newer playback/capture owner idle.
+        if (getPlaybackQueueDepth() === 0 && !isCaptureAdmissionReserved() &&
+            getEffectiveRecordingState() === "idle") {
+          broadcast({ type: "state", state: "idle", source: "playback" });
+        }
+      }
+    }
+  }).finally(() => promptTimeoutCleanup ?? captureAdmission?.release());
+  operationLifecycle?.deferReleaseUntil(Promise.race([flowPromise, abandonedBeforeCapture.promise]));
   try {
     const result = await Promise.race([flowPromise, timeoutPromise]);
     if (timer) clearTimeout(timer);
