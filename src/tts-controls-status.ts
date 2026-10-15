@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { buildDaemonRequestHeaders } from "./tts/qwen3";
@@ -53,9 +53,8 @@ export function availableTTSVoices(env: TTSEnv = process.env): Array<{engine: "e
     }
   } catch {}
   try {
-    for (const entry of readdirSync(join(root, "voices"), {withFileTypes: true})) {
-      if (entry.isDirectory() && existsSync(join(root, "voices", entry.name, "profile.yaml"))) add("clone", entry.name);
-    }
+    // P7 owns Ben readiness; a directory alone must never advertise Ben as runnable.
+    if (existsSync(join(root, "voices", "theo-c4s", "profile.yaml"))) add("clone", "theo-c4s");
   } catch {}
   return [...voices.values()].sort((a, b) => a.engine.localeCompare(b.engine) || a.voice.localeCompare(b.voice));
 }

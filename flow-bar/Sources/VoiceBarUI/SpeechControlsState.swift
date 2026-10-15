@@ -80,7 +80,8 @@ public struct SpeechControlsState: Equatable, Sendable {
         self.profiles = profiles
         shortLimit = limit
         availableVoices = voices.compactMap {
-            guard let engine = $0["engine"], ["edge", "clone"].contains(engine), let voice = $0["voice"] else { return nil }
+            guard let engine = $0["engine"], ["edge", "clone"].contains(engine), let voice = $0["voice"],
+                  engine == "edge" || voice == "theo-c4s" else { return nil }
             return Voice(engine: engine, voice: voice)
         }
         cloneRunning = daemon == "up"

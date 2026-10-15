@@ -10,7 +10,7 @@ Only changed fields need to be stored:
   "version": 1,
   "profiles": {
     "short": { "engine": "edge", "voice": "en-US-JennyNeural", "rate": "+0%" },
-    "long": { "engine": "clone", "voice": "theo-c4", "rate": "+10%" }
+    "long": { "engine": "clone", "voice": "theo-c4s", "rate": "+10%" }
   },
   "short_limit_chars": 400
 }
@@ -51,7 +51,7 @@ Inconsistent effective engine/voice pairs are rejected before writing. To switch
 both fields together, use the additive atomic form (rate and id are optional):
 
 ```json
-{"cmd":"set_tts_setting","profile":"short","engine":"clone","voice":"theo-c4","rate":"+10%","id":"speech-2"}
+{"cmd":"set_tts_setting","profile":"short","engine":"clone","voice":"theo-c4s","rate":"+10%","id":"speech-2"}
 ```
 
 `profile` is `short` or `long`. Both engine and voice are required; omitting rate
@@ -66,8 +66,10 @@ Health includes `tts_controls.profiles.short/long` with engine, voice, and rate
 `last_first_audio_ms`. It also includes the character-limit setting,
 `available_voices` entries `{engine, voice}`, and `clone_daemon: "up" | "down"`.
 Available voices include edge defaults, valid edge preset aliases from
-`~/.voicelayer/voices.json`, and clone directory names actually containing
-`profile.yaml`. No narrationlayer aliases are invented.
+`~/.voicelayer/voices.json`, and only the accepted clone `theo-c4s` when its directory contains
+`profile.yaml`. Theo variants and Huberman are excluded without deleting assets.
+Ben remains hidden until P7 adds accepted asset readiness; a directory alone is
+insufficient. No narrationlayer aliases are invented.
 
 Clone health uses an authenticated, 500ms `/health` probe on localhost:8880,
 coalesced and cached for five seconds. It never starts or loads a model. The
@@ -81,10 +83,19 @@ cancelled-before-playback requests do not replace the last successful value.
 This core change does not supply a Swift settings screen or native acceptance.
 
 VoiceBar Settings → Speech (also `voicebar://settings/speech`) presents separate
-Short speaks and Long reads cards. Each shows the engine, its available voices,
-rate, and the last first-audio latency. Environment overrides disable the matching
+Short speaks and Long reads cards. Each shows one Voice picker grouped into Fast and Cloned,
+rate, and the last first-audio latency. Selecting a voice writes engine and voice
+together; Theo labels `theo-c4s`. The selected pair persists independently for
+each profile across relaunch, with no separate per-engine preference. Environment overrides disable the matching
 fields and show `Set by <VAR>`. The threshold selects when automatic long reads
 use LONG. Changes apply to the next speak; the UI never writes settings files.
+
+Legacy saved pairs retain the same version-1 file and wire format. Compatible
+choices remain selected. Retired Theo variants, Huberman, and unavailable Ben
+clone selections normalize on read to installed `theo-c4s`, or Jenny when Theo
+is absent. The next explicit settings write persists this migration; health
+polls never rewrite the file. Rates and threshold survive. Environment overrides
+keep their exact values and lock explanations.
 
 The Preview button sends `{"cmd":"preview_tts_profile","profile":"short","id":"preview-1"}`
 (or `long`). The daemon speaks a fixed sample using that profile and acknowledges
@@ -93,12 +104,11 @@ voice operation, or another owner's booking rejects previews without speaking.
 Preview does not start the clone daemon. A clone-down warning explains the fast
 voice fallback; use `voicelayer daemon` to start the clone engine separately.
 
-Switching engines in Speech chooses a voice listed for that engine and sends both
-fields in a single atomic `set_tts_setting` profile command. It never sends a
-standalone engine change or overwrites the rate during an engine switch. Both
-pickers wait for the matching acknowledgment; rejection keeps the daemon's prior
-pair. `engine.source: "environment"` is locked by `QA_VOICE_TTS_VOICE`, just like
-the voice field. An engine without available voices cannot be selected.
+Selecting a listed voice in Speech sends its engine and voice in a single atomic
+`set_tts_setting` profile command, preserving the rate. The Voice picker waits for
+the matching acknowledgment; rejection keeps the daemon's prior pair.
+`engine.source: "environment"` locks the combined selection via
+`QA_VOICE_TTS_VOICE`, just like the voice field.
 
 The first-sound readout describes the last successful speech request (or Preview)
 from request receipt to player start, including synthesis and queue wait.

@@ -14,6 +14,8 @@ public struct SpeechSettingsView: View {
 
     public static func fieldDisabled(_ key: String, controls: SpeechControlsState, pending: [String: SpeechValue], callbackAvailable: Bool = true) -> Bool {
         !callbackAvailable || controls.lockReason(for: key) != nil || pending[key] != nil
+            || (key.hasSuffix(".voice") && (controls.lockReason(for: key.replacingOccurrences(of: ".voice", with: ".engine")) != nil
+                || pending[key.replacingOccurrences(of: ".voice", with: ".engine")] != nil))
     }
 
     struct DisplayProfile {
@@ -29,8 +31,7 @@ public struct SpeechSettingsView: View {
             return current
         }
         let engine = value("engine", profile.engine.effective), voice = value("voice", profile.voice.effective)
-        var voices = controls.voices(for: engine)
-        if !voices.contains(voice) { voices.append(voice) }
+        let voices = controls.voices(for: engine)
         return DisplayProfile(engine: engine, voice: voice, voices: voices, cloneWarning: engine == "clone" && !controls.cloneRunning)
     }
 
@@ -48,27 +49,25 @@ public struct SpeechSettingsView: View {
                                     Text("characters").foregroundStyle(.secondary)
                                 }
                             }
-                            field("Engine", key: "\(kind.rawValue).engine", controls: controls) {
-                                if controls.lockReason(for: "\(kind.rawValue).engine") != nil {
-                                    Text(Self.engineLabel(display.engine)).foregroundStyle(.primary)
-                                } else {
-                                    Picker("Engine", selection: Binding(get: { display.engine }, set: { engine in
-                                        if let voice = controls.preferredVoice(for: engine, current: display.voice) {
-                                            onSelectEngine?(kind, engine, voice)
-                                        }
-                                    })) {
-                                        Text("Fast").tag("edge").disabled(controls.voices(for: "edge").isEmpty)
-                                        Text("Cloned voice").tag("clone").disabled(controls.voices(for: "clone").isEmpty)
-                                    }.labelsHidden()
-                                        .disabled(controls.lockReason(for: "\(kind.rawValue).voice") != nil || pending["\(kind.rawValue).voice"] != nil)
-                                }
-                            }
                             field("Voice", key: "\(kind.rawValue).voice", controls: controls) {
-                                if controls.lockReason(for: "\(kind.rawValue).voice") != nil {
+                                if controls.lockReason(for: "\(kind.rawValue).voice") != nil || controls.lockReason(for: "\(kind.rawValue).engine") != nil {
                                     Text(Self.voiceLabel(display.voice)).foregroundStyle(.primary)
                                 } else {
-                                    Picker("Voice", selection: binding("\(kind.rawValue).voice", display.voice)) {
-                                        ForEach(display.voices, id: \.self) { Text(Self.voiceLabel($0)).tag($0) }
+                                    Picker("Voice", selection: Binding(get: { "\(display.engine):\(display.voice)" }, set: { id in
+                                        if let selected = controls.availableVoices.first(where: { "\($0.engine):\($0.voice)" == id }) {
+                                            onSelectEngine?(kind, selected.engine, selected.voice)
+                                        }
+                                    })) {
+                                        Section("Fast") {
+                                            ForEach(controls.voices(for: "edge"), id: \.self) {
+                                                Text(Self.voiceLabel($0)).tag("edge:\($0)")
+                                            }
+                                        }
+                                        Section("Cloned") {
+                                            ForEach(controls.voices(for: "clone"), id: \.self) {
+                                                Text(Self.voiceLabel($0)).tag("clone:\($0)")
+                                            }
+                                        }
                                     }.labelsHidden()
                                 }
                             }
@@ -149,7 +148,7 @@ public struct SpeechSettingsView: View {
 
     static func engineLabel(_ engine: String) -> String { engine == "clone" ? "Cloned voice" : "Fast" }
     static func voiceLabel(_ id: String) -> String {
-        let names = ["en-US-JennyNeural": "Jenny (US)", "en-US-GuyNeural": "Guy (US)",
+        let names = ["theo-c4s": "Theo", "ben-c1": "Ben", "en-US-JennyNeural": "Jenny (US)", "en-US-GuyNeural": "Guy (US)",
                      "en-US-AndrewNeural": "Andrew (US)", "en-US-BrianMultilingualNeural": "Brian (US, multilingual)",
                      "en-US-AvaNeural": "Ava (US)", "en-US-AriaNeural": "Aria (US)"]
         return names[id] ?? id.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ").capitalized
@@ -193,7 +192,7 @@ public struct SpeechSettingsView: View {
             content()
         }
             .disabled(Self.fieldDisabled(key, controls: controls, pending: pending,
-                                        callbackAvailable: key.hasSuffix(".engine") ? onSelectEngine != nil : onChange != nil))
+                                        callbackAvailable: (key.hasSuffix(".engine") || key.hasSuffix(".voice")) ? onSelectEngine != nil : onChange != nil))
             .accessibilityIdentifier("speech-\(key)")
     }
 }

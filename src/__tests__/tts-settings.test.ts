@@ -2,7 +2,7 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, symlinkSync, lstatSync, statSync } from "fs";
 import { join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
-import { resolveSpeakProfile, setTTSSetting } from "../tts-settings";
+import { resolveSpeakProfile, setTTSSetting, setTTSProfile } from "../tts-settings";
 import { readTTSControlsStatus, recordFirstAudio, probeCloneDaemon } from "../tts-controls-status";
 import * as qwen from "../tts/qwen3";
 import { buildHealthResponse } from "../daemon-health";
@@ -37,16 +37,50 @@ test("corrupt and invalid file fields default independently; setter validates", 
   expect(resolveSpeakProfile("auto","x".repeat(401),e)).toMatchObject({engine:"edge",voice:"en-US-JennyNeural",rate:"+0%",kind:"long"});
   for (const [key,value] of [["short.engine","bad"],["short.rate","fast"],["short.voice",""],["short_limit_chars",0]]) expect(()=>setTTSSetting(key as never,value as never,e)).toThrow();
 });
-test("status lists presets and actual installed directories, with per-profile latency", () => {
-  const e=env(); mkdirSync(join(dir,".voicelayer/voices/theo-c4"),{recursive:true});
-  writeFileSync(join(dir,".voicelayer/voices/theo-c4/profile.yaml"),"name: Theo\n");
-  writeFileSync(join(dir,".voicelayer/voices.json"),JSON.stringify({guy:{engine:"edge-tts",voice:"en-US-GuyNeural"}}));
+test("P3 catalog retains every fast voice and only accepted Theo; assets remain intact", () => {
+  const e = env();
+  const names = ["theo-c4s", "theo", "theo-c4", "theo-c3", "huberman", "ben-c1"];
+  for (const name of names) {
+    mkdirSync(join(dir, ".voicelayer/voices", name), {recursive:true});
+    writeFileSync(join(dir, ".voicelayer/voices", name, "profile.yaml"), "name: fixture\n");
+  }
+  writeFileSync(join(dir, ".voicelayer/voices.json"), JSON.stringify({guy:{engine:"edge-tts",voice:"en-US-GuyNeural"},custom:{engine:"edge-tts",voice:"he-IL-AvriNeural"}}));
   recordFirstAudio("long",123);
-  const status=readTTSControlsStatus(e);
-  expect(status.available_voices).toContainEqual({engine:"clone",voice:"theo-c4"});
-  expect(status.available_voices).toContainEqual({engine:"edge",voice:"guy"});
-  expect(status.available_voices.some(v=>v.voice==="theo-c4s")).toBe(false);
+  const status = readTTSControlsStatus(e);
   expect(status.profiles.long.last_first_audio_ms).toBe(123);
+  const voices = status.available_voices;
+  expect(voices.filter(v => v.engine === "clone")).toEqual([{engine:"clone",voice:"theo-c4s"}]);
+  expect(voices.filter(v => v.engine === "edge").map(v => v.voice).sort()).toEqual([
+    "en-US-GuyNeural", "en-US-JennyNeural", "en-US-AndrewNeural", "en-US-BrianMultilingualNeural",
+    "en-US-AvaNeural", "en-US-AriaNeural", "guy", "custom",
+  ].sort());
+  expect(voices).toContainEqual({engine:"edge",voice:"custom"});
+  expect(readdirSync(join(dir, ".voicelayer/voices")).sort()).toEqual(names.sort());
+});
+test("P3 legacy selections migrate on read, preserving rate, threshold and environment locks", () => {
+  const e = env();
+  mkdirSync(join(dir, ".voicelayer/voices/theo-c4s"), {recursive:true});
+  writeFileSync(join(dir, ".voicelayer/voices/theo-c4s/profile.yaml"), "name: Theo\n");
+  for (const voice of ["theo", "theo-c4", "theo-c3", "huberman", "ben-c1"]) {
+    writeFileSync(e.VOICELAYER_TTS_SETTINGS_PATH, JSON.stringify({profiles:{short:{engine:"clone",voice,rate:"+20%"},long:{engine:"edge",voice:"en-US-GuyNeural"}},short_limit_chars:500}));
+    expect(resolveSpeakProfile("short", "", e)).toMatchObject({engine:"clone",voice:"theo-c4s",rate:"+20%"});
+    expect(resolveSpeakProfile("long", "", e)).toMatchObject({engine:"edge",voice:"en-US-GuyNeural"});
+    expect(readTTSControlsStatus(e).short_limit_chars.effective).toBe(500);
+    expect(resolveSpeakProfile("short", "", {...e,QA_VOICE_TTS_VOICE:voice}).voice).toBe(voice);
+    setTTSSetting("short_limit_chars", 600, e);
+    expect(JSON.parse(readFileSync(e.VOICELAYER_TTS_SETTINGS_PATH,"utf8")).profiles.short).toEqual({engine:"clone",voice:"theo-c4s",rate:"+20%"});
+  }
+});
+test("P3 selected voice survives relaunch with one atomic pair and independent profiles", () => {
+  const e = env();
+  const profile = spyOn(qwen,"hasClonedProfile").mockImplementation(v => v === "theo-c4s");
+  try {
+    setTTSSetting("short.rate", "+20%", e);
+    setTTSProfile("short", {engine:"clone",voice:"theo-c4s"}, e);
+    setTTSProfile("long", {engine:"edge",voice:"en-US-GuyNeural"}, e);
+    expect(resolveSpeakProfile("short", "", {...e})).toMatchObject({engine:"clone",voice:"theo-c4s",rate:"+20%"});
+    expect(resolveSpeakProfile("long", "", {...e})).toMatchObject({engine:"edge",voice:"en-US-GuyNeural"});
+  } finally { profile.mockRestore(); }
 });
 test("clone health probe caches success and failure without synthesizing", async () => {
   await probeCloneDaemon();
@@ -126,4 +160,13 @@ test("failed settings rename removes only its own staging directory", () => {
  expect(()=>setTTSSetting("short_limit_chars",123,e)).toThrow();
  expect(readFileSync(join(e.VOICELAYER_TTS_SETTINGS_PATH,"keep"),"utf8")).toBe("original");
  expect(readdirSync(dir)).toEqual(["settings.json"]);
+});
+
+test("P3 unavailable migration falls back without changing private files or locked choices", () => {
+  const e = env();
+  const original = JSON.stringify({profiles:{short:{engine:"clone",voice:"theo-c4",rate:"-10%"}}});
+  writeFileSync(e.VOICELAYER_TTS_SETTINGS_PATH, original);
+  expect(resolveSpeakProfile("short", "", e)).toMatchObject({engine:"edge",voice:"en-US-JennyNeural",rate:"-10%"});
+  expect(readFileSync(e.VOICELAYER_TTS_SETTINGS_PATH,"utf8")).toBe(original);
+  expect(readTTSControlsStatus(e).available_voices.filter(v => v.engine === "clone")).toEqual([]);
 });
