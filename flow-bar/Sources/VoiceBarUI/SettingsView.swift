@@ -457,6 +457,7 @@ public struct SettingsView: View {
     public let microphoneAuthorization: () -> SetupMicrophoneAuthorization
     /// The wizard's request path (`AVCaptureDevice.requestAccess`); calls back on main once the prompt is answered.
     public let onRequestMicrophone: (@escaping () -> Void) -> Void
+    public let onOpenPermissionURL: (URL) -> Void
     public let isVoiceBarHidden: () -> Bool
     public let voiceBarHiddenUntil: () -> Date?
     public let onHideVoiceBar: () -> Void
@@ -590,6 +591,7 @@ public struct SettingsView: View {
         onRestartHotkeyListener: @escaping () -> HotkeyListenerRestartOutcome = { .failed(missing: []) },
         microphoneAuthorization: @escaping () -> SetupMicrophoneAuthorization = { .granted },
         onRequestMicrophone: @escaping (@escaping () -> Void) -> Void = { $0() },
+        onOpenPermissionURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
         isVoiceBarHidden: @escaping () -> Bool = { false },
         voiceBarHiddenUntil: @escaping () -> Date? = { nil },
         onHideVoiceBar: @escaping () -> Void = {},
@@ -694,6 +696,7 @@ public struct SettingsView: View {
         self.onRestartHotkeyListener = onRestartHotkeyListener
         self.microphoneAuthorization = microphoneAuthorization
         self.onRequestMicrophone = onRequestMicrophone
+        self.onOpenPermissionURL = onOpenPermissionURL
         self.isVoiceBarHidden = isVoiceBarHidden
         self.voiceBarHiddenUntil = voiceBarHiddenUntil
         self.onHideVoiceBar = onHideVoiceBar
@@ -2552,7 +2555,7 @@ public struct SettingsView: View {
                     Button(action.title) {
                         SettingsPermissionActions.perform(
                             action,
-                            openURL: { NSWorkspace.shared.open($0) },
+                            openURL: onOpenPermissionURL,
                             requestMicrophone: onRequestMicrophone,
                             refresh: { permissionsRefreshTick &+= 1 }
                         )
