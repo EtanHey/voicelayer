@@ -22,6 +22,15 @@ The output path must be new. The runner leaves output muted, retains the QA app 
 and an ordered `screenshots/index.html`. Failed or missing actions/screenshots fail the run.
 Build-only neither changes volume nor launches any app or test runner.
 
+The signed XCTest runner remains sandboxed. It writes no receipts into the QA app's
+scratch directory: each action emits a retained `UIE2E-RECEIPT-<number>` JSON attachment,
+and teardown emits `UIE2E-LEDGER` after process/clipboard cleanup. The exporter reads
+these from the xcresult, checks their agreement and ordering, and writes `steps.json`,
+`ledger.json` and `coverage.json` beside the result bundle. Missing/duplicate receipts,
+unfinished runs, failed teardown, or unexercised controls cannot pass. An aborted run
+with individual receipts still gets a contact sheet marked incomplete. QA-app fixture
+sinks (events/settings/dictionary) remain in its scratch directory. No entitlements change.
+
 Every UI run records the main screen by default before XCTest launches. The Python
 supervisor selects only `Capture screen 0:none` (no microphone or system audio), writes
 one-second fragmented MOV chunks, and waits for recorded frames before starting tests.
@@ -71,9 +80,17 @@ Speech Copy buttons produce a screenshot and `SKIP S3 not in this build`. Once t
 exist, both profile command copies and the multiline error Copy must preserve exact bytes.
 P1b #338 feedback fixtures become available when its feedback marker is present in the
 compiled source (stamped as `UIE2EPasteFeedback` in the QA bundle); otherwise the run logs
-`SKIP P1b #338 not in this build`. Those steps assert rendered feedback only. Both skip
+`SKIP P1b #338 not in this build`. Both skip
 receipts remain in `steps.json` and the contact sheet. They are not dependency blockers.
 The lead runs the visual gate on the integrated release candidate.
+
+Known visual gap: the native rc-2.2.44 walkthrough showed P1b notes visually truncated
+while AX exposed the full strings. P1b assertions are explicitly **AX content only**.
+When this capability is exercised, the final ledger records this gap and the exporter
+prints/displays `KNOWN VISUAL GAP` and exits nonzero even if all AX assertions pass.
+Full-text readability remains NOT_PROVEN until a separate running-app visual check
+and an appropriate visual regression replace this gap. This harness packet does not
+change the product pill layout.
 
 UIE2E bundles carry `VoiceBarUIE2EOnly=true` and a distinct bundle identifier before
 signing. The QA entry resolves this persistent identity before AppDelegate/NSApplication:
@@ -84,3 +101,10 @@ The coverage ledger keys controls by page plus History scope/selected row or Spe
 profile, not just label. Each History scope is inventoried independently. Ask response
 Paste must add exactly `history-paste:QA response` to the synthetic sink for that click;
 a prior Dictations Paste cannot satisfy either the ledger or payload assertion.
+The microphone uses its native composite row label (`QA microphone B, Connected,
+Make default`) and reverses the default to A. History controls resolve freshly for
+each inspection/click within the selected scope and a container holding that row's
+static transcript/response; selecting rows, refreshing or clearing search cannot reuse
+a saved detail element. Copy/Paste are checked again after search restoration and
+scope changes. Missing or ambiguous payload containers fail rather than falling back
+to a shared global button. Locator preflight is screenshot/receipt-wrapped too.

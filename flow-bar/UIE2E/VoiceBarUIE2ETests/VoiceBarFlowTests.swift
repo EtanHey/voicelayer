@@ -7,6 +7,8 @@ final class VoiceBarFlowTests: XCTestCase {
     var app: XCUIApplication!
     var root: URL!
     var steps: [[String: Any]] = []
+    var completed = false
+    var knownVisualGaps: [String] = []
     var ledger = UIE2ECoverageLedger()
     var observed: Set<String> { get { ledger.observed } set { ledger.observed = newValue } }
     var exercised: Set<String> { get { ledger.exercised } set { ledger.exercised = newValue } }
@@ -46,6 +48,14 @@ final class VoiceBarFlowTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        // XCTest owns attachment storage, including when its signed runner is sandboxed.
+        // Keep the final snapshot after termination and clipboard restoration assertions.
+        defer {
+            attachJSON("UIE2E-LEDGER", ["version": 1, "steps": steps, "completed": completed,
+                "failures": testRun?.failureCount ?? 1,
+                "coverage": ["observed": observed.sorted(), "exercised": exercised.sorted(), "missing": ledger.missing.sorted()],
+                "knownVisualGaps": knownVisualGaps])
+        }
         if app != nil, app.state != .notRunning { step("terminate QA app") { app.terminate() } }
         guard pasteboardSaved else { return }
         NSPasteboard.general.clearContents()
@@ -55,18 +65,21 @@ final class VoiceBarFlowTests: XCTestCase {
             return item
         }
         if !restored.isEmpty { XCTAssertTrue(NSPasteboard.general.writeObjects(restored)) }
-        try saveSteps()
     }
 
-    func saveSteps() throws {
-        guard root != nil else { return }
-        try JSONSerialization.data(withJSONObject: steps, options: [.prettyPrinted, .sortedKeys])
-            .write(to: root.appendingPathComponent("steps.json"), options: .atomic)
+    func attachJSON(_ name: String, _ object: Any) {
+        do {
+            let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        } catch { XCTFail("Cannot attach receipt: \(error)") }
     }
 
     /// All input operations go through this wrapper, including scrolling, typing and menu dismissal.
     /// A failed assertion/action still produces a keepAlways attachment and a FAIL receipt.
-    func step(_ name: String, _ body: () -> Void) {
+    func step(_ name: String, skipped: String? = nil, _ body: () -> Void) {
         let number = steps.count + 1
         let attachment = String(format: "UIE2E-%04d", number)
         let before = testRun?.failureCount ?? 0
@@ -78,16 +91,32 @@ final class VoiceBarFlowTests: XCTestCase {
             activity.add(screenshot)
         }
         let passed = (testRun?.failureCount ?? 0) == before
-        steps.append(["number": number, "name": name, "attachment": attachment, "passed": passed])
+        var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed]
+        if let skipped { receipt["skipped"] = skipped }
+        steps.append(receipt)
         print("UIE2E \(passed ? "PASS" : "FAIL") \(number) \(name)")
-        do { try saveSteps() } catch { XCTFail("Cannot save action receipt: \(error)") }
+        // Individual receipts survive an aborted method; only the final ledger can complete a run.
+        attachJSON(String(format: "UIE2E-RECEIPT-%04d", number), receipt)
     }
 
     @discardableResult
-    func click(_ element: XCUIElement, _ name: String? = nil) -> Bool {
+    func click(_ resolve: @autoclosure () -> XCUIElement, _ name: String? = nil) -> Bool {
         var clicked = false
-        if !element.isHittable, app.menus.count == 0 { reveal(element) }
-        step(name ?? "click \(element.label)") {
+        var found = false
+        var needsReveal = false
+        var label = "control"
+        step("locate \(name ?? "control")") {
+            let element = resolve()
+            found = element.waitForExistence(timeout: 4)
+            guard found else { XCTFail("Missing control: \(element.debugDescription)"); return }
+            label = element.label
+            needsReveal = !element.isHittable && app.menus.count == 0
+        }
+        guard found else { return false }
+        if needsReveal { reveal(resolve()) }
+        step(name ?? "click \(label)") {
+            // Re-resolve after scrolling/row changes; never click the inspection snapshot.
+            let element = resolve()
             guard element.waitForExistence(timeout: 4), element.isEnabled, element.isHittable else {
                 XCTFail("Missing, disabled or unreachable: \(element.debugDescription)"); return
             }
@@ -116,21 +145,21 @@ final class VoiceBarFlowTests: XCTestCase {
     }
 
     func scroll(_ direction: CGFloat, times: Int = 6) {
-        let area = app.windows["VoiceBar QA Settings"].scrollViews.allElementsBoundByIndex.last
         for index in 1...times {
             step("scroll \(direction > 0 ? "up" : "down") \(index)") {
-                guard let area else { XCTFail("Missing Settings scroll view"); return }
+                guard let area = app.windows["VoiceBar QA Settings"].scrollViews.allElementsBoundByIndex.last
+                else { XCTFail("Missing Settings scroll view"); return }
                 area.scroll(byDeltaX: 0, deltaY: direction * 420)
                 observeControls()
             }
         }
     }
 
-    func assertCopy(_ label: String, equals expected: String? = nil, contains required: String? = nil, target: XCUIElement? = nil) {
+    func assertCopy(_ label: String, equals expected: String? = nil, contains required: String? = nil,
+                    target: XCUIElement? = nil, resolver: (() -> XCUIElement)? = nil) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString("UIE2E clipboard sentinel", forType: .string)
-        let element = target ?? (app.menuItems[label].exists ? app.menuItems[label] : app.buttons[label].firstMatch)
-        guard click(element) else { return }
+        guard click(resolver?() ?? target ?? (app.menuItems[label].exists ? app.menuItems[label] : app.buttons[label].firstMatch)) else { return }
         step("assert pasteboard for \(label)") {
             let actual = NSPasteboard.general.string(forType: .string)
             XCTAssertNotEqual(actual, "UIE2E clipboard sentinel")
@@ -151,12 +180,8 @@ final class VoiceBarFlowTests: XCTestCase {
         step("all observed non-audio Settings controls exercised") {
             let missing = observed.subtracting(exercised).sorted()
             XCTAssertTrue(missing.isEmpty, "Unexercised controls: \(missing.joined(separator: ", "))")
-            let ledger = ["observed": observed.sorted(), "exercised": exercised.sorted(), "missing": missing]
-            do { try JSONSerialization.data(withJSONObject: ledger, options: .prettyPrinted)
-                .write(to: root.appendingPathComponent("coverage.json"), options: .atomic) }
-            catch { XCTFail("Cannot write coverage ledger: \(error)") }
         }
-        try Data("complete\n".utf8).write(to: root.appendingPathComponent("completed"), options: .atomic)
+        completed = true
     }
 }
 
@@ -242,10 +267,15 @@ extension VoiceBarFlowTests {
         }
     }
 
-    func reveal(_ element: XCUIElement) {
+    func reveal(_ resolve: @autoclosure () -> XCUIElement) {
         for direction: CGFloat in [-1, 1] {
             for _ in 0..<7 {
-                if element.exists && element.isHittable { return }
+                var hittable = false
+                step("inspect control visibility") {
+                    let element = resolve()
+                    hittable = element.exists && element.isHittable
+                }
+                if hittable { return }
                 scroll(direction, times: 1)
             }
         }
@@ -303,8 +333,9 @@ extension VoiceBarFlowTests {
         receipt("hide")
         click(app.buttons["Show VoiceBar"])
         receipt("show")
-        click(app.buttons["Make default"].firstMatch)
+        click(app.buttons["QA microphone B, Connected, Make default"], "make QA microphone B default")
         receipt("microphone-order")
+        click(app.buttons["QA microphone A, Connected, Make default"], "restore QA microphone A default")
         click(app.buttons["Advanced"])
         click(app.buttons["Set up"])
         receipt("relay-setup")
@@ -458,10 +489,8 @@ extension VoiceBarFlowTests {
     }
 
     func skipCapability(_ reason: String) {
-        step(reason) {}
-        steps[steps.count - 1]["skipped"] = reason
+        step(reason, skipped: reason) {}
         print("UIE2E SKIP: \(reason)")
-        do { try saveSteps() } catch { XCTFail("Cannot save capability skip") }
     }
 
     func speechCopyFlow() {
@@ -480,13 +509,41 @@ extension VoiceBarFlowTests {
         assertCopy("Copy speech error", equals: "Couldn't complete the speech request - provider unavailable\nFull diagnostic: connection refused · שלום 🎧")
     }
 
+    /// Native evidence: row selection, Refresh and Clear search replace detail views.
+    /// Resolve a new scope + payload container for EVERY inspection/click, never retain a detail element.
+    func historyControl(_ label: String) -> XCUIElement {
+        let window = app.windows["VoiceBar QA Settings"]
+        let selector = window.radioButtons[activeHistoryScope]
+        let payload = activeHistoryScope == "Ask" ? "QA response" :
+            selectedHistoryRow == "qa-older" ? "QA older transcript" : "QA fixture transcript שלום 👋"
+        let missing = window.buttons["UIE2E-missing-\(activeHistoryScope)-\(selectedHistoryRow)-\(label)"]
+        guard selector.exists, selector.isSelected || selector.value as? String == "1" else {
+            XCTFail("History scope \(activeHistoryScope) is not selected"); return missing
+        }
+        // Dictations' list rows are buttons; only its detail has the static transcript.
+        // Ask's matching response text scopes the response controls independently of Dictations.
+        let anchor = NSPredicate(format: "elementType == %d AND label CONTAINS %@",
+                                 XCUIElement.ElementType.staticText.rawValue, payload)
+        let containers = window.descendants(matching: .any).containing(anchor).allElementsBoundByIndex
+            .filter { $0.buttons.matching(identifier: label).count == 1 }
+            .sorted { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+        guard let container = containers.first else {
+            XCTFail("Missing unambiguous \(activeHistoryScope)/\(selectedHistoryRow) \(label)"); return missing
+        }
+        return container.buttons.matching(identifier: label).firstMatch
+    }
+
+    func assertHistoryCopy(_ label: String = "Copy transcript", equals expected: String? = nil, contains required: String? = nil) {
+        assertCopy(label, equals: expected, contains: required, resolver: { self.historyControl(label) })
+    }
+
     func assertHistoryPaste(_ expected: String) {
         var before = 0
         step("snapshot paste sink before \(activeHistoryScope) paste") {
             do { before = try JSONDecoder().decode([String].self, from: Data(contentsOf: root.appendingPathComponent("events.json"))).count }
             catch { XCTFail("Cannot read paste sink: \(error)") }
         }
-        guard click(app.buttons["Paste transcript"], "paste \(activeHistoryScope) \(selectedHistoryRow)") else { return }
+        guard click(historyControl("Paste transcript"), "paste \(activeHistoryScope) \(selectedHistoryRow)") else { return }
         step("assert exact new paste payload \(expected)") {
             do {
                 let events = try JSONDecoder().decode([String].self, from: Data(contentsOf: root.appendingPathComponent("events.json")))
@@ -498,17 +555,17 @@ extension VoiceBarFlowTests {
     func historyFlow() {
         walk("History")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch, "select fixture history row")
-        assertCopy("Copy transcript", equals: "QA fixture transcript שלום 👋")
+        assertHistoryCopy(equals: "QA fixture transcript שלום 👋")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA older transcript'")).firstMatch, "select specific older row")
-        assertCopy("Copy transcript", equals: "QA older transcript")
+        assertHistoryCopy(equals: "QA older transcript")
         assertHistoryPaste("QA older transcript")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch, "restore latest row before metadata assertions")
         assertHistoryPaste("QA fixture transcript שלום 👋")
-        click(app.buttons["Re-transcribe stored audio"])
+        click(historyControl("Re-transcribe stored audio"))
         receipt("history-retranscribe")
-        click(app.buttons["Open stored audio in Finder"])
+        click(historyControl("Open stored audio in Finder"))
         receipt("history-finder")
-        assertCopy("Copy recording details", contains: "Model: QA recognizer\nEffort: accurate")
+        assertHistoryCopy("Copy recording details", contains: "Model: QA recognizer\nEffort: accurate")
         click(app.buttons["Load more"])
         click(app.buttons["Refresh history"])
         click(app.buttons["Jump to latest"])
@@ -516,10 +573,13 @@ extension VoiceBarFlowTests {
         step("recording history search empty state") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "exists == false"), object: app.buttons["Copy transcript"])], timeout: 4), .completed) }
         click(app.buttons["Clear search"].firstMatch)
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch,
+              "select newest row after search recreates detail")
+        assertHistoryCopy(equals: "QA fixture transcript שלום 👋")
         // This is the history scope selector, never an audio Ask operation.
         click(app.radioButtons["Ask"], "open Ask history scope")
         step("inventory Ask response controls") { observeControls() }
-        assertCopy("Copy transcript", equals: "QA response")
+        assertHistoryCopy(equals: "QA response")
         assertHistoryPaste("QA response")
         click(app.buttons["Load older ask history"])
         click(app.buttons["Refresh ask history"])
@@ -527,7 +587,11 @@ extension VoiceBarFlowTests {
         step("ask history search empty state") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "exists == false"), object: app.buttons["Copy transcript"])], timeout: 4), .completed) }
         click(app.buttons["Clear search"].firstMatch)
+        assertHistoryCopy(equals: "QA response")
         click(app.radioButtons["Dictations"])
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch,
+              "reselect Dictations row after Ask scope")
+        assertHistoryCopy(equals: "QA fixture transcript שלום 👋")
     }
 
     func pillFlow() {
@@ -549,9 +613,10 @@ extension VoiceBarFlowTests {
                         ("paste-partial", "Partially inserted — full transcript kept in History. Check the input before retrying or Copy.")]
         if !app.buttons["qa-fixture-paste-not-inserted"].exists { skipCapability("P1b #338 not in this build") }
         else {
+            knownVisualGaps.append("P1b pill feedback visibly truncates despite full AX text (native walkthrough rc-2.2.44). AX assertions below check content only; full-text visual readability is NOT_PROVEN.")
             for (name, expected) in feedback {
                 click(app.buttons["qa-fixture-\(name)"])
-                step("assert P1b paste feedback \(name)") {
+                step("assert P1b AX content only \(name)") {
                     XCTAssertTrue(app.windows["VoiceBar QA Pill"].descendants(matching: .any)
                         .matching(NSPredicate(format: "label CONTAINS %@", expected)).firstMatch.exists)
                 }

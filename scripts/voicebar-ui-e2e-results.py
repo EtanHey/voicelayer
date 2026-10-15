@@ -4,6 +4,7 @@ import html
 import json
 import pathlib
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -34,12 +35,12 @@ def configure(output, app, sandbox):
     (output / 'UIE2E.xctestrun').write_bytes(plistlib.dumps(resolve(data)))
 
 
-def report(directory, steps, manifest, recording=None):
+def report(directory, steps, manifest, recording=None, issues=()):
     if not steps or [s['number'] for s in steps] != list(range(1, len(steps) + 1)):
         raise ValueError('Missing, duplicated or out-of-order action receipts')
     attachments = [a for test in manifest for a in test['attachments']]
     figures = []
-    all_passed = True
+    all_passed = not issues
     for step in steps:
         matches = [a for a in attachments if a['suggestedHumanReadableName'].startswith(step['attachment'])]
         if len(matches) != 1:
@@ -61,31 +62,80 @@ def report(directory, steps, manifest, recording=None):
             raise ValueError('Missing/invalid recording proof')
         video = (f'<p><a href="../{html.escape(name, quote=True)}">Screen recording (.mov)</a> — '
                  f'{recording["durationSeconds"]} s · {recording["bytes"]} bytes · no audio</p>')
+    warnings = ''.join('<p role="alert">' + html.escape(issue) + '</p>' for issue in issues)
     (directory / 'index.html').write_text('<!doctype html><meta charset="utf-8"><title>VoiceBar UI E2E</title>'
         '<style>body{font:16px system-ui;background:#16181d;color:#eee}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}figure{margin:0}img{width:100%}figcaption{padding:8px}</style>'
-        '<h1>VoiceBar UI E2E — synthetic UI fixtures, no audio</h1>' + video + '<main>' + ''.join(figures) + '</main>')
+        '<h1>VoiceBar UI E2E — synthetic UI fixtures, no audio</h1>' + warnings + video + '<main>' + ''.join(figures) + '</main>')
     return all_passed
+
+
+def receipts(directory, manifest):
+    """Read only retained XCTest JSON attachments; the signed runner writes no scratch files."""
+    steps, ledgers, issues = {}, [], []
+    for test in manifest:
+        for attachment in test['attachments']:
+            name = attachment['suggestedHumanReadableName']
+            step_match = re.match(r'^UIE2E-RECEIPT-(\d{4,})(?=[_.]|$)', name)
+            final = re.match(r'^UIE2E-LEDGER(?=[_.]|$)', name)
+            if not (step_match or final):
+                continue
+            path = (directory / attachment['exportedFileName']).resolve()
+            if not path.is_relative_to(directory.resolve()) or not path.is_file():
+                raise ValueError('Missing/unsafe receipt attachment')
+            data = json.loads(path.read_text())
+            if step_match:
+                number = int(step_match[1])
+                if number in steps or data['number'] != number or type(data['passed']) is not bool:
+                    raise ValueError('Duplicate/invalid action receipt')
+                steps[number] = data
+            else:
+                ledgers.append(data)
+            if attachment['isAssociatedWithFailure']:
+                issues.append('FAIL receipt attachment associated with XCTest failure: ' + name)
+    ordered = [steps[n] for n in sorted(steps)]
+    if not ordered or sorted(steps) != list(range(1, len(steps) + 1)):
+        raise ValueError('Missing action receipt attachments')
+    if len(ledgers) > 1:
+        raise ValueError('Duplicate final ledgers')
+    ledger = ledgers[0] if ledgers else None
+    if ledger is None:
+        issues.append('FAIL suite completion receipt missing (aborted run)')
+    else:
+        if ledger['version'] != 1 or ledger['steps'] != ordered:
+            raise ValueError('Final ledger differs from individual action receipts')
+        coverage = ledger['coverage']
+        missing = sorted(set(coverage['observed']) - set(coverage['exercised']))
+        if missing != sorted(coverage['missing']):
+            raise ValueError('Inconsistent coverage ledger')
+        if missing:
+            issues.append('FAIL unexercised controls: ' + ', '.join(missing))
+        if ledger['completed'] is not True or ledger['failures'] != 0:
+            issues.append('FAIL suite completion or teardown assertions failed')
+        issues.extend('KNOWN VISUAL GAP: ' + gap for gap in ledger['knownVisualGaps'])
+    return ordered, ledger, issues
 
 
 def export(output, sandbox):
     directory = output / 'screenshots'
     subprocess.run(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', str(output / 'VoiceBar.xcresult'),
                     '--output-path', str(directory)], check=True)
-    steps = json.loads((sandbox / 'steps.json').read_text())
     manifest = json.loads((directory / 'manifest.json').read_text())
+    steps, ledger, issues = receipts(directory, manifest)
     (output / 'steps.json').write_text(json.dumps(steps, indent=2))
-    for name in ['coverage.json', 'events.json', 'dictionary.json', 'speech.json', 'processing.json']:
+    if ledger is not None:
+        (output / 'ledger.json').write_text(json.dumps(ledger, indent=2))
+        (output / 'coverage.json').write_text(json.dumps(ledger['coverage'], indent=2))
+    # These receipts are written by the isolated QA app, not the sandboxed XCTest runner.
+    for name in ['events.json', 'dictionary.json', 'speech.json', 'processing.json']:
         if (sandbox / name).is_file():
             shutil.copy2(sandbox / name, output / name)
     # Completion receipt comes only after the final assertion; an aborted/empty run cannot pass.
     recording = json.loads((output / 'recording.json').read_text())
     if pathlib.Path(recording['path']).name != recording['path'] or not (output / recording['path']).is_file():
         raise ValueError('Recording file missing/unsafe')
-    passed = report(directory, steps, manifest, recording)
-    complete = (sandbox / 'completed').is_file() and (sandbox / 'completed').read_text().strip() == 'complete'
-    if not complete:
-        print('FAIL suite completion receipt missing')
-    return passed and complete
+    for issue in issues:
+        print(issue)
+    return report(directory, steps, manifest, recording, issues)
 
 
 if __name__ == '__main__':
