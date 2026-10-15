@@ -48,6 +48,11 @@ data['UIE2EPasteFeedback'] = 'Partially inserted — full transcript kept in His
 p.write_bytes(plistlib.dumps(data))
 PYMETA
 /usr/bin/codesign --force --sign - "$app" > "$output/qa-sign.log" 2>&1
+# Compile the display-only recorder in build-only too, without executing it.
+xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos14.0" "$repo/scripts/voicebar-ui-e2e-capture.swift" \
+  -o "$output/voicebar-ui-e2e-capture" > "$output/capture-build.log" 2>&1 || {
+    echo "FAIL screen recorder build (see $output/capture-build.log)"; exit 1;
+  }
 xcodebuild build-for-testing -project "$repo/flow-bar/UIE2E/VoiceBarUIE2E.xcodeproj" -scheme VoiceBarUIE2E \
   -destination 'platform=macOS' -derivedDataPath "$output/DerivedData" > "$output/build-for-testing.log" 2>&1 || {
     echo "FAIL build-for-testing (see $output/build-for-testing.log)"; exit 1;
@@ -58,9 +63,8 @@ python3 "$repo/scripts/voicebar-ui-e2e-results.py" configure "$output" "$app" "$
 # Reconfirm immediately before XCUITest takes the screen. Leave output muted after the run.
 [[ $(/usr/bin/osascript -e 'output muted of (get volume settings)') == true ]] || { echo 'FAIL output mute changed'; exit 1; }
 status=0
-xcodebuild test-without-building -xctestrun "$output/UIE2E.xctestrun" -destination 'platform=macOS' \
-  -parallel-testing-enabled NO -test-iterations 1 -resultBundlePath "$output/VoiceBar.xcresult" \
-  > "$output/test.log" 2>&1 || status=$?
+# Default recording is part of the run, not an optional adapter. Build-only exits above.
+python3 "$repo/scripts/voicebar-ui-e2e-run.py" "$output" || status=$?
 export_status=0
 python3 "$repo/scripts/voicebar-ui-e2e-results.py" export "$output" "$sandbox" || export_status=$?
 [[ $status == 0 && $export_status == 0 ]] || { echo "FAIL UIE2E: xcodebuild=$status export=$export_status"; exit 1; }
