@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "fs";
-import { join, resolve } from "path";
+import { existsSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "fs";
+import { basename, join, resolve } from "path";
 
 const preload = resolve("src/__tests__/setup/preload.ts");
 const fixtures: string[] = [];
@@ -46,7 +46,7 @@ afterEach(() => { for (const dir of fixtures.splice(0)) rmSync(dir, { recursive:
 
 test("startup removes older dead PID directories and keeps the newest two", () => {
   const dir = sandbox();
-  const roots = deadPids(5).map((pid, i) => fixture(dir, pid, 100 - i * 10));
+  const roots = deadPids(5).map((pid, i) => fixture(dir, i % 2 ? `${pid}-cafe` : pid, 100 - i * 10));
   expect(run(dir, true).exitCode).toBe(0);
   expect(roots.map(root => existsSync(root))).toEqual([false, false, false, true, true]);
 });
@@ -54,9 +54,11 @@ test("startup removes older dead PID directories and keeps the newest two", () =
 test("live PID directories are never swept or counted toward the two dead survivors", () => {
   const dir = sandbox();
   const live = fixture(dir, process.pid, 1000);
+  const generation = fixture(dir, `${process.pid}-cafe`, 1000);
   const dead = deadPids(3).map((pid, i) => fixture(dir, pid, 100 - i * 10));
   expect(run(dir).exitCode).toBe(0);
   expect(existsSync(join(live, "evidence"))).toBe(true);
+  expect(existsSync(join(generation, "evidence"))).toBe(true);
   expect(dead.map(root => existsSync(root))).toEqual([false, true, true]);
 });
 
@@ -97,5 +99,79 @@ test("a symlinked .test-tmp root is refused before any outside write or deletion
   const proc = run(dir);
   expect(proc.exitCode).not.toBe(0);
   expect(roots.every(root => existsSync(root))).toBe(true);
-  expect(existsSync(join(outside, ".test-tmp", String(proc.pid)))).toBe(false);
+  expect(readdirSync(join(outside, ".test-tmp")).sort()).toEqual(roots.map(root => basename(root)).sort());
+});
+
+test("PID reuse between the final liveness check and deletion cannot erase the new run", () => {
+  const dir = sandbox();
+  const [reused, newer1, newer2] = deadPids(3);
+  const old = fixture(dir, reused, 1000);
+  fixture(dir, newer1, 20);
+  fixture(dir, newer2, 10);
+  const replacement = `
+    import * as fs from "fs";
+    Object.defineProperty(process, "pid", { value: ${reused} });
+    const kill = process.kill.bind(process);
+    process.kill = (pid, signal) => pid === ${reused} ? true : kill(pid, signal);
+    await import(${JSON.stringify(preload)});
+    const root = process.env.VOICELAYER_TEST_RUN_ROOT;
+    fs.writeFileSync(root + "/active-evidence", "active run");
+    console.log(JSON.stringify(root));
+  `;
+  const sweeper = `
+    import * as fs from "fs";
+    import { mock } from "bun:test";
+    let adopted;
+    const remove = fs.rmSync;
+    mock.module("fs", () => ({ ...fs, rmSync(path, options) {
+      if (path === ${JSON.stringify(old)}) {
+        // Pause A after its final liveness check. B starts with the recycled
+        // PID and writes evidence before A resumes the pending deletion.
+        const b = Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(replacement)}], {
+          cwd: process.cwd(), env: process.env, stdout: "pipe", stderr: "pipe",
+        });
+        if (b.exitCode !== 0) throw new Error(b.stderr.toString());
+        adopted = JSON.parse(b.stdout.toString().trim());
+      }
+      return remove(path, options);
+    }}));
+    await import(${JSON.stringify(preload)});
+    console.log(JSON.stringify({ adopted }));
+  `;
+  const result = Bun.spawnSync([process.execPath, "-e", sweeper], {
+    cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe",
+  });
+  expect(result.exitCode).toBe(0);
+  const { adopted } = JSON.parse(result.stdout.toString().trim());
+  expect(typeof adopted).toBe("string");
+  expect(existsSync(join(adopted, "active-evidence"))).toBe(true);
+  expect(adopted).not.toBe(old);
+  expect(existsSync(old)).toBe(false);
+});
+
+test("a nonce collision fails without adopting the existing directory", () => {
+  const dir = sandbox();
+  const script = `
+    import * as fs from "fs";
+    import { mock } from "bun:test";
+    const mkdir = fs.mkdirSync;
+    let collided = false;
+    mock.module("fs", () => ({ ...fs, mkdirSync(path, options) {
+      if (!collided && String(path).startsWith(process.cwd() + "/.test-tmp/" + process.pid + "-")) {
+        collided = true;
+        mkdir(path, { recursive: true });
+        fs.writeFileSync(path + "/evidence", "original");
+        console.log(path);
+      }
+      return mkdir(path, options);
+    }}));
+    await import(${JSON.stringify(preload)});
+  `;
+  const result = Bun.spawnSync([process.execPath, "-e", script], {
+    cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe",
+  });
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stderr.toString()).toContain("EEXIST");
+  const root = result.stdout.toString().trim();
+  expect(readFileSync(join(root, "evidence"), "utf8")).toBe("original");
 });

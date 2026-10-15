@@ -8,15 +8,18 @@
  * `beforeAll` cannot. Wired from `bunfig.toml`; do not move this into a helper a
  * test imports.
  *
- * Everything lands under <repo>/.test-tmp/<pid>/ — inside the worktree, never
+ * Everything lands under <repo>/.test-tmp/<pid>-<nonce>/ — inside the worktree, never
  * /tmp, so a suite can no longer collide with the resident VoiceBar's files.
  */
 
 import { lstatSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { join } from "path";
+import { randomBytes } from "crypto";
 
 const TEST_ROOT = join(process.cwd(), ".test-tmp");
-const RUN_ROOT = join(TEST_ROOT, String(process.pid));
+// Four hex characters leave room for TEST1 sockets on deep worktree paths.
+// Exclusive mkdir below makes nonce collisions fail safely: never adopt a run.
+const RUN_ROOT = join(TEST_ROOT, `${process.pid}-${randomBytes(2).toString("hex")}`);
 
 // Bun 1.3.9 skips exit/beforeExit during `bun test`. Bound abandoned data at
 // startup instead: preserve the two newest dead runs for failure investigation.
@@ -44,10 +47,13 @@ function isDead(pid: number): boolean {
 
 assertDirectory(TEST_ROOT);
 mkdirSync(TEST_ROOT, { recursive: true, mode: 0o700 });
+mkdirSync(RUN_ROOT, { mode: 0o700 });
 const dead: { path: string; pid: number; modified: number }[] = [];
 for (const entry of readdirSync(TEST_ROOT, { withFileTypes: true })) {
-  if (!entry.isDirectory() || !/^[1-9]\d*$/.test(entry.name)) continue;
-  const pid = Number(entry.name);
+  // Also reclaim legacy PID-only directories left by older preloads.
+  const match = /^([1-9]\d*)(?:-[a-f0-9]{4,6})?$/.exec(entry.name);
+  if (!entry.isDirectory() || !match) continue;
+  const pid = Number(match[1]);
   if (!Number.isSafeInteger(pid) || pid > 2147483647 || !isDead(pid)) continue;
   const path = join(TEST_ROOT, entry.name);
   try {
@@ -62,8 +68,9 @@ for (const entry of readdirSync(TEST_ROOT, { withFileTypes: true })) {
 dead.sort((a, b) => b.modified - a.modified || b.pid - a.pid);
 for (const entry of dead.slice(2)) {
   try {
-    // A parallel startup may already have removed it. Recheck the PID and
-    // entry type immediately before deletion; rmSync does not traverse links.
+    // Recheck liveness/type, but never rely on this to prevent PID reuse:
+    // a new generation exclusively creates a different directory, so this
+    // deletion can only target the old run. rmSync does not traverse links.
     const stat = lstatSync(entry.path);
     if (stat.isDirectory() && !stat.isSymbolicLink() && isDead(entry.pid)) {
       rmSync(entry.path, { recursive: true, force: true });
@@ -72,7 +79,6 @@ for (const entry of dead.slice(2)) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
-assertDirectory(RUN_ROOT);
 
 /** macOS caps sun_path at 104 bytes; a socket longer than this cannot bind. */
 const SUN_PATH_MAX = 104;
@@ -81,7 +87,6 @@ function setIfUnset(name: string, value: string): void {
   if (!process.env[name]?.trim()) process.env[name] = value;
 }
 
-mkdirSync(RUN_ROOT, { recursive: true, mode: 0o700 });
 // Always use this process, even when a child inherits its parent preload env.
 process.env.VOICELAYER_TEST_RUN_ROOT = RUN_ROOT;
 
