@@ -80,6 +80,8 @@ Settings… (⌘,) · Hide for 1 hour · — · Recent Transcriptions › ("2 mi
 - `voicelayer vocab ...` to add/list/remove STT vocabulary aliases.
 
 ## Key Paths
+Recordings backup: `bash scripts/backup-recordings-icloud.sh [--dry-run]` copies stable (≥10 minutes) sessions from `~/.local/share/voicelayer/recordings/` to iCloud Drive `VoiceLayer/recordings/<hostname-short>/`, preserving changed files as suffixed versions and reserving 25 GB free. Requires Python 3 and rsync; logs to `~/Library/Logs/voicelayer/recordings-backup.log`. `bash launchd/install.sh --recordings-backup` renders the nightly 02:00 LaunchAgent without loading it; after a dry run, load explicitly with `launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.voicelayer.recordings-backup.plist"`. No eviction; an iCloud-local copy is not proof of upload. The independent Wispr export job stays in place.
+
 - Socket: `/tmp/voicelayer.sock` (fixed path — Voice Bar listens, MCP connects)
 - Thinking log: `/tmp/voicelayer-thinking.md`
 - TTS/mic disable flags: `/tmp/.claude_tts_disabled`, `/tmp/.claude_mic_disabled`
