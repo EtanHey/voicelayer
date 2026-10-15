@@ -110,7 +110,7 @@ public struct SpeechSettingsView: View {
                             }
                             if display.cloneWarning || Self.cloneStatusOwner(controls: controls, pending: pending) == kind {
                                 if display.cloneWarning {
-                                    Label("Clone engine isn't running, so this will use the fast voice. Start it with `voicelayer daemon`.",
+                                    Label("Clone engine isn't running, so this will use the fast voice (fallback). Start it with `voicelayer daemon`.",
                                           systemImage: "exclamationmark.triangle.fill")
                                         .foregroundStyle(.primary).font(.callout)
                                         .fixedSize(horizontal: false, vertical: true)

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { buildDaemonRequestHeaders } from "./tts/qwen3";
+import { buildDaemonRequestHeaders, readReadyClonedProfile } from "./tts/qwen3";
 import { readTTSSettings, resolveSpeakProfile, ttsSettingEnvVar, type TTSEnv, type SpeakProfileKind, type TTSProfile } from "./tts-settings";
 
 type Setting<T> = { source: "default" | "settings" | "environment"; raw: string | number | null; effective: T; locked?: string };
@@ -53,8 +53,8 @@ export function availableTTSVoices(env: TTSEnv = process.env): Array<{engine: "e
     }
   } catch {}
   try {
-    // P7 owns Ben readiness; a directory alone must never advertise Ben as runnable.
     if (existsSync(join(root, "voices", "theo-c4s", "profile.yaml"))) add("clone", "theo-c4s");
+    if (readReadyClonedProfile("ben-c1", env.HOME || homedir())) add("clone", "ben-c1");
   } catch {}
   return [...voices.values()].sort((a, b) => a.engine.localeCompare(b.engine) || a.voice.localeCompare(b.voice));
 }

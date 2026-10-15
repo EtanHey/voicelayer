@@ -66,10 +66,15 @@ Health includes `tts_controls.profiles.short/long` with engine, voice, and rate
 `last_first_audio_ms`. It also includes the character-limit setting,
 `available_voices` entries `{engine, voice}`, and `clone_daemon: "up" | "down"`.
 Available voices include edge defaults, valid edge preset aliases from
-`~/.voicelayer/voices.json`, and only the accepted clone `theo-c4s` when its directory contains
+`~/.voicelayer/voices.json`, and the accepted clone `theo-c4s` when its directory contains
 `profile.yaml`. Theo variants and Huberman are excluded without deleting assets.
-Ben remains hidden until P7 adds accepted asset readiness; a directory alone is
-insufficient. No narrationlayer aliases are invented.
+Ben (`ben-c1`, alias `ben`) appears only with an accepted, matching Qwen3 profile
+and a nonempty reference transcript plus a nonempty regular WAV inside the voices
+root, at most 5 MiB. Symlink escapes and missing assets are unavailable; a WAV and
+TXT directory alone is insufficient. Readiness is refreshed on each catalog read.
+No narrationlayer aliases are invented. A ready Ben selection survives relaunch;
+when the clone daemon is down, the existing Fast fallback and its `(fallback)`
+measurement label apply.
 
 Clone health uses an authenticated, 500ms `/health` probe on localhost:8880,
 coalesced and cached for five seconds. It never starts or loads a model. The
