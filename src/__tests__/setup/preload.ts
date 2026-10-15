@@ -12,10 +12,67 @@
  * /tmp, so a suite can no longer collide with the resident VoiceBar's files.
  */
 
-import { mkdirSync, rmSync } from "fs";
+import { lstatSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { join } from "path";
 
-const RUN_ROOT = join(process.cwd(), ".test-tmp", String(process.pid));
+const TEST_ROOT = join(process.cwd(), ".test-tmp");
+const RUN_ROOT = join(TEST_ROOT, String(process.pid));
+
+// Bun 1.3.9 skips exit/beforeExit during `bun test`. Bound abandoned data at
+// startup instead: preserve the two newest dead runs for failure investigation.
+// Never follow a symlink out of the worktree's test root.
+function assertDirectory(path: string): void {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`[voicelayer] refusing non-directory test root: ${path}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function isDead(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    // EPERM and any unknown error are not proof of death.
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+assertDirectory(TEST_ROOT);
+mkdirSync(TEST_ROOT, { recursive: true, mode: 0o700 });
+const dead: { path: string; pid: number; modified: number }[] = [];
+for (const entry of readdirSync(TEST_ROOT, { withFileTypes: true })) {
+  if (!entry.isDirectory() || !/^[1-9]\d*$/.test(entry.name)) continue;
+  const pid = Number(entry.name);
+  if (!Number.isSafeInteger(pid) || pid > 2147483647 || !isDead(pid)) continue;
+  const path = join(TEST_ROOT, entry.name);
+  try {
+    const stat = lstatSync(path);
+    if (stat.isDirectory() && !stat.isSymbolicLink()) {
+      dead.push({ path, pid, modified: stat.mtimeMs });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+dead.sort((a, b) => b.modified - a.modified || b.pid - a.pid);
+for (const entry of dead.slice(2)) {
+  try {
+    // A parallel startup may already have removed it. Recheck the PID and
+    // entry type immediately before deletion; rmSync does not traverse links.
+    const stat = lstatSync(entry.path);
+    if (stat.isDirectory() && !stat.isSymbolicLink() && isDead(entry.pid)) {
+      rmSync(entry.path, { recursive: true, force: true });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+assertDirectory(RUN_ROOT);
 
 /** macOS caps sun_path at 104 bytes; a socket longer than this cannot bind. */
 const SUN_PATH_MAX = 104;
@@ -96,10 +153,3 @@ for (const dir of [
 ]) {
   if (dir) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
-
-process.on("exit", () => {
-  if (process.env.VOICELAYER_TEST_KEEP_TMP?.trim() === "1") return;
-  try {
-    rmSync(RUN_ROOT, { recursive: true, force: true });
-  } catch {}
-});
