@@ -1,20 +1,20 @@
 import { expect, test } from "bun:test";
 import { projectSpeakableText } from "../speakable-text";
 
-// Adapted R01 corpus: basename paths, bounded URLs, complete hex literals,
+// Adapted R01 corpus: full clone paths, bounded URLs, complete hex literals,
 // unchanged prose numbers, and ordered table cells (no invented/repeated headers).
 const corpus: [string, string][] = [
   ["INCIDENT-INVENTORY.md", "incident inventory dot M D"],
   ["Export the audio as MP3 or WAV.", "Export the audio as M P three or wave."],
-  ["/Users/dev/app/qwen3_tts/qwen3_tts.py", "qwen three T T S dot P Y"],
-  ["./src/components/TeleprompterView.tsx", "teleprompter view dot T S X"],
-  ["../config/settings.yaml", "settings dot yammel"],
+  ["/Users/dev/app/qwen3_tts/qwen3_tts.py", "slash Users slash dev slash app slash qwen three T T S slash qwen three T T S dot P Y"],
+  ["./src/components/TeleprompterView.tsx", "dot slash src slash components slash teleprompter view dot T S X"],
+  ["../config/settings.yaml", "dot dot slash config slash settings dot yammel"],
   [".env.local and .gitignore", "dot E N V dot local and dot git ignore"],
-  ["mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16", "qwen three T T S twelve hertz zero point six B base B F sixteen"],
+  ["mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16", "M L X community slash qwen three T T S twelve hertz zero point six B base B F sixteen"],
   ["VOICE-CLONE-PROMPT-CACHE", "voice clone prompt cache"],
   ["PYTORCH_ENABLE_MPS_FALLBACK=1", "pytorch enable M P S fallback equals 1"],
   ["generate_custom_voice(ref_audio, ref_text)", "generate custom voice(ref audio, ref text)"],
-  ["parseHTMLAndJSONResponse", "parse H T M L and jason response"],
+  ["parseHTMLAndJSONResponse", "parse H T M L and JSON response"],
   ["Qwen3TTSForConditionalGeneration", "qwen three T T S for conditional generation"],
   ["mlx-audio-io and magic-string", "M L X audio I O and magic string"],
   ["v2.2.43", "version two point two point forty-three"],
@@ -93,7 +93,7 @@ test("dictionary rules win, including phrases and chained replacements", () => {
     {pattern: /\bcustom\b/gi, replacement: "Chosen"}, {pattern: /\bAPI\b/g, replacement: "ay pee eye"}];
   expect(projectSpeakableText("MP3 audio and API", rules).speechText).toBe("Chosen voice and ay pee eye");
   const fileRules = [{pattern: /\bTypeScript\b/gi, replacement: "Type Script"}];
-  expect(projectSpeakableText("/app/src/TypeScript.ts TypeScript.md", fileRules).speechText).toBe("Type Script dot T S Type Script dot M D");
+  expect(projectSpeakableText("/app/src/TypeScript.ts TypeScript.md", fileRules).speechText).toBe("slash app slash src slash Type Script dot T S Type Script dot M D");
   expect(projectSpeakableText("TypeScript.ts", [{pattern: /\bTypeScript\.ts\b/g, replacement: "custom file"}]).speechText).toBe("custom file");
   expect(projectSpeakableText("https://github.com/API", [{pattern: /\bgithub\b/gi, replacement: "git hub"}, {pattern: /\bAPI\b/g, replacement: "custom"}]).speechText).toBe("git hub dot com slash custom");
 });
@@ -101,7 +101,7 @@ test("dictionary rules win, including phrases and chained replacements", () => {
 test("bounded URLs, Windows basenames, Base64, and markdown link labels", () => {
   expect(projectSpeakableText("[API](https://example.com/a) https://example.com/a?q=secret").speechText)
     .toBe("A P I link to example dot com");
-  expect(projectSpeakableText("C:\\app\\foo_bar.ts Base64").speechText).toBe("foo bar dot T S base sixty-four");
+  expect(projectSpeakableText("C:\\app\\foo_bar.ts Base64").speechText).toBe("C: slash app slash foo bar dot T S base sixty-four");
 });
 
 test("table syntax is distinct from code operators and preserves empty cells", () => {

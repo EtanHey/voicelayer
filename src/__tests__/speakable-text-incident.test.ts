@@ -118,3 +118,52 @@ test("expanded JSON, paths, units and repeated words retain click targets", asyn
     partitions(input, result);
   }
 });
+
+// Round 2: every clone path component survives, not only explicit directories.
+for (const [input, clone, edge] of [
+  ["part1-prompt/v6", "part one prompt slash v six", "v6"],
+  ["/app/src/config.json", "slash app slash src slash config dot JSON", "config dot JSON"],
+  ["C:\\app\\src\\config.json", "C: slash app slash src slash config dot JSON", "config dot JSON"],
+  ["./part1-prompt/v6/config.json", "dot slash part one prompt slash v six slash config dot JSON", "config dot JSON"],
+  ["Read /app/src/config.json.", "Read slash app slash src slash config dot JSON.", "Read config dot JSON."],
+] as const) test(`round 2 full path: ${input}`, () => {
+  for (const [engine, expected] of [["clone", clone], ["edge", edge]] as const) {
+    const result = projectSpeakableText(input, [], engine);
+    expect(result.speechText).toBe(expected);
+    partitions(input, result);
+  }
+});
+
+test("round 2 path dictionary overrides preserve the other components", () => {
+  const rules = [{pattern: /config/g, replacement: "settings"}];
+  for (const suffix of ["", "/"]) {
+    const result = projectSpeakableText(`/app/src/config.json${suffix}`, rules);
+    expect(result.speechText).toBe("slash app slash src slash settings dot JSON");
+    partitions(`/app/src/config.json${suffix}`, result);
+  }
+});
+
+test("round 2 JSON spelling follows the dictionary rather than jason", () => {
+  for (const engine of ["clone", "edge"] as const) {
+    expect(projectSpeakableText("JSON json config.json config.jsonl", [], engine).speechText)
+      .toBe("JSON JSON config dot JSON config dot JSON L");
+    expect(projectSpeakableText("JSON config.json", [{pattern: /JSON/gi, replacement: "J S O N"}], engine).speechText)
+      .toBe("J S O N config dot J S O N");
+  }
+});
+
+for (const body of ['hello \\"world\\" after', 'hello wo\\u0072ld after', 'hello \\"world\\" after again']) test(`round 2 granular JSON escapes: ${body}`, async () => {
+  const { alignWordBoundariesToDisplayText: align } = await import("../tts");
+  const input = `Before {"message":"${body}"} tail`;
+  const result = projectSpeakableText(input);
+  const speech = "Before message: hello world after" + (body.endsWith("again") ? " again" : "") + " tail";
+  expect(result.speechText).toBe(speech);
+  const timings = speech.split(/\s+/).map((text, i) => ({text, offset_ms: i * 100, duration_ms: 50}));
+  const aligned = align(input, speech, timings, result.ranges);
+  expect(aligned.map(word => word.text)).toEqual(input.split(/\s+/));
+  expect(aligned[2].offset_ms).toBe(300); // original escaped world token
+  expect(aligned[3].offset_ms).toBe(400); // literal after retains its own onset
+  if (body.endsWith("again")) expect(aligned[4].offset_ms).toBe(500);
+  expect(aligned.at(-1)!.offset_ms).toBe(timings.at(-1)!.offset_ms);
+  partitions(input, result);
+});
