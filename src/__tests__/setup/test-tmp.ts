@@ -7,19 +7,32 @@
  * file order. Reads the env the preload set, and falls back to /tmp for a run
  * that bypassed the preload entirely.
  *
- * Unix domain sockets that a suite binds itself still live under `/tmp`:
- * macOS caps sun_path at 104 bytes and this worktree's own path already spends
- * 68 of them, so a long fixture under the run root cannot bind. Those fixtures
- * are named `*-test-*.sock` and never collide with the live `/tmp/voicelayer.sock`.
- * The preload's own VoiceBar/MCP sockets are short (`v.sock`/`m.sock`) under
- * `.test-tmp/<pid>/`.
+ * Self-binding sockets use testSocket() directly under the preload run root.
+ * Short basenames leave room for deep worktree paths within macOS sun_path.
  */
 
-import { join } from "path";
+import { join, basename } from "path";
 
 export const TEST_TMP: string =
   process.env.VOICELAYER_TMP_ROOT?.trim() || "/tmp";
 
 export function testTmp(...parts: string[]): string {
   return join(TEST_TMP, ...parts);
+}
+
+// Independent of ../paths and its cross-suite mocks, like testTmp above.
+export function testSocket(name: string): string {
+  const root = process.env.VOICELAYER_TEST_RUN_ROOT;
+  if (!root || process.env.VOICELAYER_TEST_ISOLATED !== "1") {
+    throw new Error("testSocket requires the isolated test preload");
+  }
+  if (basename(name) !== name || !/^[a-z0-9-]+\.sock$/.test(name)) {
+    throw new Error("testSocket requires a short socket basename");
+  }
+  const socket = join(root, name);
+  // Reserve one byte for the terminating NUL in macOS's 104-byte sun_path.
+  if (Buffer.byteLength(socket) >= 104) {
+    throw new Error(`Test socket path exceeds macOS sun_path: ${socket}; use a shallower worktree`);
+  }
+  return socket;
 }

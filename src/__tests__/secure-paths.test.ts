@@ -1,3 +1,4 @@
+import { testTmp } from "./setup/test-tmp";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, writeFileSync, unlinkSync } from "fs";
 
@@ -110,7 +111,7 @@ describe("stop signal with session token", () => {
   });
 
   it("rejects stop signal at old predictable path", () => {
-    const oldPath = "/tmp/voicelayer-stop";
+    const oldPath = testTmp("voicelayer-stop");
     try {
       writeFileSync(oldPath, "spoofed stop");
       expect(sessionBooking.hasStopSignal()).toBe(false);

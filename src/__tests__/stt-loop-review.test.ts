@@ -1,3 +1,4 @@
+import { testTmp } from "./setup/test-tmp";
 import { describe, expect, it } from "bun:test";
 import { WhisperServerBackend } from "../stt";
 
@@ -38,7 +39,7 @@ interface ReviewScript {
 }
 
 async function replay(name: string, script: ReviewScript): Promise<string> {
-  const wavPath = `/tmp/voicelayer-p02-${name}.wav`;
+  const wavPath = testTmp(`voicelayer-p02-${name}.wav`);
   await Bun.write(wavPath, makeReviewWav());
   let chunks = 0;
   let later = 0;

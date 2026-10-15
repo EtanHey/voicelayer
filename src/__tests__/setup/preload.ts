@@ -25,6 +25,8 @@ function setIfUnset(name: string, value: string): void {
 }
 
 mkdirSync(RUN_ROOT, { recursive: true, mode: 0o700 });
+// Always use this process, even when a child inherits its parent preload env.
+process.env.VOICELAYER_TEST_RUN_ROOT = RUN_ROOT;
 
 // Git's repository selectors (GIT_DIR, GIT_COMMON_DIR, GIT_CONFIG, GIT_WORK_TREE,
 // GIT_INDEX_FILE, ...) are exported by git hooks and `rebase --exec`. A test

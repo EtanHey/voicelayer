@@ -1,3 +1,4 @@
+import { testTmp } from "./setup/test-tmp";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "path";
 import {
@@ -348,7 +349,7 @@ describe("STT backends", () => {
     });
 
     it("transcribes an existing WAV file through the resident server", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-backend-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-backend-test.wav");
       await Bun.write(wavPath, new Uint8Array([1, 2, 3, 4]));
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
@@ -366,7 +367,7 @@ describe("STT backends", () => {
     });
 
     it("verifies long recordings with a tail decode and merges recovered final words", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-verify-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-tail-verify-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       const requestSizes: number[] = [];
       const prompts: Array<string | undefined> = [];
@@ -394,7 +395,7 @@ describe("STT backends", () => {
 
     it("does not append All right / Thank you from a silent 12s tail on a sub-chunked recording", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-silent-tail-thank-you-test.wav";
+        testTmp("voicelayer-whisper-server-silent-tail-thank-you-test.wav");
       const wav = makePcm16Wav(64.8, 16);
       addWavClick(wav, 35.25, 655);
       addWavClick(wav, 64.5, 413);
@@ -422,7 +423,7 @@ describe("STT backends", () => {
 
     it("still recovers final words when a sub-chunked recording has speech in the last 12s", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-subchunked-energetic-tail-test.wav";
+        testTmp("voicelayer-whisper-server-subchunked-energetic-tail-test.wav");
       await Bun.write(wavPath, makePcm16Wav(64.8));
       const requestSizes: number[] = [];
       const backend = new WhisperServerBackend({
@@ -446,7 +447,7 @@ describe("STT backends", () => {
     });
 
     it("keeps full-window text when tail verification has no overlap", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-no-overlap-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-tail-no-overlap-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
@@ -463,7 +464,7 @@ describe("STT backends", () => {
     });
 
     it("keeps full-window text when tail verification only overlaps one word", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-one-word-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-tail-one-word-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -483,7 +484,7 @@ describe("STT backends", () => {
     });
 
     it("rejects prompted tail verification when it replays an earlier phrase instead of extending the transcript", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-replay-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-tail-replay-test.wav");
       await Bun.write(wavPath, makePcm16Wav(71));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -506,7 +507,7 @@ describe("STT backends", () => {
 
     it("preserves a real tail extension that intentionally repeats an earlier phrase", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-tail-repeat-extension-test.wav";
+        testTmp("voicelayer-whisper-server-tail-repeat-extension-test.wav");
       await Bun.write(wavPath, makePcm16Wav(71));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -529,7 +530,7 @@ describe("STT backends", () => {
 
     it("preserves a one-word tail extension after an intentionally repeated phrase", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-tail-one-word-extension-test.wav";
+        testTmp("voicelayer-whisper-server-tail-one-word-extension-test.wav");
       await Bun.write(wavPath, makePcm16Wav(71));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -552,7 +553,7 @@ describe("STT backends", () => {
 
     it("repairs a leading punctuation-only resident decode when retry preserves the start", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-leading-punctuation-test.wav";
+        testTmp("voicelayer-whisper-server-leading-punctuation-test.wav");
       await Bun.write(wavPath, makePcm16Wav(8));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -573,7 +574,7 @@ describe("STT backends", () => {
 
     it("keeps leading punctuation retry text when the retry does not preserve the start", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-leading-punctuation-no-overlap-test.wav";
+        testTmp("voicelayer-whisper-server-leading-punctuation-no-overlap-test.wav");
       await Bun.write(wavPath, makePcm16Wav(8));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -603,7 +604,7 @@ describe("STT backends", () => {
 
     it("falls back to whisper-cli when resident head retry keeps leading punctuation", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-leading-punctuation-cli-fallback-test.wav";
+        testTmp("voicelayer-whisper-server-leading-punctuation-cli-fallback-test.wav");
       await Bun.write(wavPath, makePcm16Wav(8));
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
@@ -629,7 +630,7 @@ describe("STT backends", () => {
     });
 
     it("trims a short echoed phrase from the end of medium resident decodes", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-echo-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-tail-echo-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
@@ -649,7 +650,7 @@ describe("STT backends", () => {
 
     it("repairs a compressed final sentence when prompted tail decode has no overlap", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-tail-compressed-sentence-test.wav";
+        testTmp("voicelayer-whisper-server-tail-compressed-sentence-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -677,7 +678,7 @@ describe("STT backends", () => {
 
     it("repairs a prompted tail after dropping a repeated non-short orphan", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-tail-prompted-orphan-test.wav";
+        testTmp("voicelayer-whisper-server-tail-prompted-orphan-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -700,7 +701,7 @@ describe("STT backends", () => {
     });
 
     it("verifies medium recordings so live dictation does not lose the final phrase", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-medium-tail-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-medium-tail-test.wav");
       await Bun.write(wavPath, makePcm16Wav(17));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -723,7 +724,7 @@ describe("STT backends", () => {
     });
 
     it("skips unprompted tail retry when prompted tail confirms the current ending", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-confirmed-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-tail-confirmed-test.wav");
       await Bun.write(wavPath, makePcm16Wav(17));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -745,7 +746,7 @@ describe("STT backends", () => {
 
     it("still retries unprompted tail when the confirmed ending is a dangling cue", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-dangling-confirmed-tail-test.wav";
+        testTmp("voicelayer-whisper-server-dangling-confirmed-tail-test.wav");
       await Bun.write(wavPath, makePcm16Wav(17));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -769,7 +770,7 @@ describe("STT backends", () => {
 
     it("refuses to drop a repeated short common word as a tail orphan", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-tail-short-orphan-test.wav";
+        testTmp("voicelayer-whisper-server-tail-short-orphan-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -790,7 +791,7 @@ describe("STT backends", () => {
 
     it("preserves adjacent repeated phrases in long resident decodes when they appear only twice", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-adjacent-tail-echo-test.wav";
+        testTmp("voicelayer-whisper-server-adjacent-tail-echo-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
@@ -810,7 +811,7 @@ describe("STT backends", () => {
 
     it("preserves intentional adjacent repeated phrases in short resident decodes", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-short-intentional-repeat-test.wav";
+        testTmp("voicelayer-whisper-server-short-intentional-repeat-test.wav");
       await Bun.write(wavPath, makePcm16Wav(8));
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
@@ -826,7 +827,7 @@ describe("STT backends", () => {
 
     it("preserves adjacent repeated phrases in medium resident decodes", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-medium-intentional-repeat-test.wav";
+        testTmp("voicelayer-whisper-server-medium-intentional-repeat-test.wav");
       await Bun.write(wavPath, makePcm16Wav(17));
       const repeated = "please repeat after me";
       const backend = new WhisperServerBackend({
@@ -845,7 +846,7 @@ describe("STT backends", () => {
 
     it("still trims separated echoed phrases in medium resident decodes", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-medium-separated-echo-test.wav";
+        testTmp("voicelayer-whisper-server-medium-separated-echo-test.wav");
       await Bun.write(wavPath, makePcm16Wav(17));
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
@@ -865,7 +866,7 @@ describe("STT backends", () => {
 
     it("trims repeated adjacent echoed phrases until only the first dictated phrase remains", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-multi-adjacent-tail-echo-test.wav";
+        testTmp("voicelayer-whisper-server-multi-adjacent-tail-echo-test.wav");
       await Bun.write(wavPath, makePcm16Wav(71));
       const repeated = "I don't want to leave anything for Anthropic";
       const backend = new WhisperServerBackend({
@@ -886,7 +887,7 @@ describe("STT backends", () => {
 
     it("preserves real tail filler when it was already in the full-window decode", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-tail-real-filler-test.wav";
+        testTmp("voicelayer-whisper-server-tail-real-filler-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -904,7 +905,7 @@ describe("STT backends", () => {
     });
 
     it("does not strip dictated filler from chunked long recordings", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-chunked-filler-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-chunked-filler-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -927,7 +928,7 @@ describe("STT backends", () => {
 
     it("repairs leading punctuation in chunked long recordings with a clean head decode", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-leading-punctuation-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-leading-punctuation-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -951,7 +952,7 @@ describe("STT backends", () => {
     });
 
     it("falls back from chunked mode when a chunk decodes empty", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-chunk-empty-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-chunk-empty-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -971,7 +972,7 @@ describe("STT backends", () => {
     });
 
     it("uses overlapping chunk decode for very long recordings instead of a single compressed window", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-chunked-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-chunked-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const requestSizes: number[] = [];
       const prompts: Array<string | undefined> = [];
@@ -1043,7 +1044,7 @@ describe("STT backends", () => {
       }
 
       it("keeps one copy when a prompted chunk decode re-transcribes itself (specimen A: rewind)", async () => {
-        const wavPath = "/tmp/voicelayer-s1-rewind-test.wav";
+        const wavPath = testTmp("voicelayer-s1-rewind-test.wav");
         await Bun.write(wavPath, markedWav());
         const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
         const backend = new WhisperServerBackend({
@@ -1058,7 +1059,7 @@ describe("STT backends", () => {
       });
 
       it("keeps one copy when a prompted chunk decode loops a short phrase (specimen B)", async () => {
-        const wavPath = "/tmp/voicelayer-s1-short-loop-test.wav";
+        const wavPath = testTmp("voicelayer-s1-short-loop-test.wav");
         await Bun.write(wavPath, markedWav());
         const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
         const loop = (clean: string[]) => [
@@ -1084,7 +1085,7 @@ describe("STT backends", () => {
         said.splice(22, 15, ...Array.from({ length: 3 }, () => ["we", "need", "to", "ship", "this"]).flat());
         said.splice(49, 6, "the", "red", "—", "no,", "the", "blue");
         said[77] = "fu…";
-        const wavPath = "/tmp/voicelayer-s1-word-safety-test.wav";
+        const wavPath = testTmp("voicelayer-s1-word-safety-test.wav");
         await Bun.write(wavPath, markedWav());
         const requests: Array<{ start: number; seconds: number; prompt?: string }> = [];
         const backend = new WhisperServerBackend({
@@ -1100,7 +1101,7 @@ describe("STT backends", () => {
 
     it("re-decodes a prompted internal loop with agreeing extended acoustic witnesses", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-internal-loop-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-internal-loop-test.wav");
       const wav = makePcm16Wav(95);
       addWavClick(wav, 52, 12_000);
       addWavClick(wav, 92, 14_000);
@@ -1161,7 +1162,7 @@ describe("STT backends", () => {
 
     it("re-decodes a prompted chunk that drops its overlap and middle words", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-compressed-middle-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-compressed-middle-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -1191,7 +1192,7 @@ describe("STT backends", () => {
 
     it("keeps the original loop when a clean third witness omits its suffix boundary", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-invented-suffix-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-invented-suffix-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "circle arrows keep circling during the transcription";
       let calls = 0;
@@ -1229,7 +1230,7 @@ describe("STT backends", () => {
 
     it("requires a suffix anchor when a suspect loop starts at the chunk head", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-head-loop-coverage-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-head-loop-coverage-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "head loop repeats these six exact spoken words";
       const suspect = `${repeated} ${repeated} ${repeated} original suffix must remain`;
@@ -1261,7 +1262,7 @@ describe("STT backends", () => {
 
     it("preserves original non-loop words when agreeing witnesses omit them", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-word-loss-guard-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-word-loss-guard-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "loop phrase contains these six clearly repeated words";
       const suspect = `boundary unique words must survive context one two three four five six ${repeated} ${repeated} ${repeated} suffix words remain here`;
@@ -1291,7 +1292,7 @@ describe("STT backends", () => {
 
     it("does not reward a witness merely for containing more loop copies", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-loop-inflation-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-loop-inflation-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "repeat this genuine phrase exactly as it was spoken";
       const threeCopies = `${repeated} ${repeated} ${repeated}`;
@@ -1320,7 +1321,7 @@ describe("STT backends", () => {
 
     it("preserves genuine repeated speech when both extended acoustic witnesses repeat it", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-genuine-repeat-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-genuine-repeat-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "please keep every word that I actually repeated";
       const genuine = `${repeated} ${repeated} ${repeated}`;
@@ -1349,7 +1350,7 @@ describe("STT backends", () => {
 
     it("preserves the two genuine repetitions supported by both witnesses", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-two-supported-repeats-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-two-supported-repeats-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "please preserve this exact genuinely repeated phrase";
       const original = `${repeated} ${repeated} ${repeated}`;
@@ -1379,7 +1380,7 @@ describe("STT backends", () => {
 
     it("does not let an empty full-file witness validate one extended decode", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-empty-third-witness-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-empty-third-witness-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "empty evidence cannot authorize removing repeated words";
       const original = `${repeated} ${repeated} ${repeated}`;
@@ -1411,7 +1412,7 @@ describe("STT backends", () => {
 
     it("keeps the original count when agreeing witnesses report different repetition counts", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-count-disagreement-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-count-disagreement-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "count agreement protects genuinely repeated spoken words";
       const original = Array(5).fill(repeated).join(" ");
@@ -1447,7 +1448,7 @@ describe("STT backends", () => {
 
     it("preserves witness-supported primitive copies when the raw loop also has a compound period", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-primitive-loop-period-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-primitive-loop-period-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "primitive period keeps these six spoken words";
       const original = Array(6).fill(repeated).join(" ");
@@ -1479,7 +1480,7 @@ describe("STT backends", () => {
 
     it("counts genuine witness repetitions across tokenization drift", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-loop-tokenization-drift-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-loop-tokenization-drift-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const originalPhrase = "we re test this token drift today";
       const witnessPhrase = "we retest this token drift today";
@@ -1512,7 +1513,7 @@ describe("STT backends", () => {
 
     it("independently repairs two distinct witnessed loops in one chunk", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-two-distinct-loops-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-two-distinct-loops-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const firstLoop = "first acoustic loop repeats these exact spoken words";
       const secondLoop = "second acoustic loop repeats another exact phrase";
@@ -1541,7 +1542,7 @@ describe("STT backends", () => {
 
     it("rescans after collapsing a loop to remove an overlapping connector loop", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-overlapping-loops-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-overlapping-loops-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "core acoustic phrase repeats these exact spoken words";
       const connector = "and I do not know if I should continue";
@@ -1570,7 +1571,7 @@ describe("STT backends", () => {
 
     it("does not count a loop copy after the original-chunk suffix as support", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-witness-extension-count-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-witness-extension-count-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "extension audio repeats these six exact spoken words";
       const original = `${repeated} ${repeated} ${repeated}`;
@@ -1600,7 +1601,7 @@ describe("STT backends", () => {
 
     it("locates the original-chunk suffix after the witnessed loop phrase", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-suffix-before-loop-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-suffix-before-loop-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "suffix ordering keeps these six spoken words";
       const original = Array(3).fill(repeated).join(" ");
@@ -1633,7 +1634,7 @@ describe("STT backends", () => {
 
     it("uses a separate extension decode to bound a loop at the chunk tail", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-tail-loop-boundary-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-tail-loop-boundary-test.wav");
       const wav = makePcm16Wav(95);
       addWavClick(wav, 57, 12_000);
       await Bun.write(wavPath, wav);
@@ -1663,7 +1664,7 @@ describe("STT backends", () => {
     });
 
     it("keeps three spoken tail repetitions when the extension boundary is missing", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-missing-boundary-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-tail-missing-boundary-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "please keep these exact spoken words";
       const spoken = Array(3).fill(repeated).join(" ");
@@ -1688,7 +1689,7 @@ describe("STT backends", () => {
 
     for (const chunkCopies of [4, 3]) {
       it(`collapses ${chunkCopies} tail loop copies to one with an unlocated extension boundary`, async () => {
-        const wavPath = `/tmp/voicelayer-whisper-server-tail-margin-${chunkCopies}-test.wav`;
+        const wavPath = testTmp(`voicelayer-whisper-server-tail-margin-${chunkCopies}-test.wav`);
         await Bun.write(wavPath, makePcm16Wav(95));
         const repeated = "these repeated words are an unsupported loop";
         let calls = 0;
@@ -1715,7 +1716,7 @@ describe("STT backends", () => {
     }
 
     it("collapses a tail loop when two acoustic witnesses agree but the extension wording drifts", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-loop-drift-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-tail-loop-drift-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "the spoken status remains correct today";
       let calls = 0;
@@ -1741,7 +1742,7 @@ describe("STT backends", () => {
     });
 
     it("keeps a retraction and cutoff fragment outside an acoustically rejected loop", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-loop-retraction-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-loop-retraction-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const spoken = "I want the red — no, the blue one fu…";
       const repeated = "the spoken status remains correct today";
@@ -1769,7 +1770,7 @@ describe("STT backends", () => {
     });
 
     it("keeps different consecutive sentences that share a long prefix beside a loop", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-shared-prefix-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-shared-prefix-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "the status remains correct for this recording";
       const different = "the status remains correct for this session";
@@ -1797,7 +1798,7 @@ describe("STT backends", () => {
     });
 
     it("removes acoustically unsupported five-word copies without losing intervening words", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-five-word-loop-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-five-word-loop-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "the status stays correct today";
       const bridges = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
@@ -1826,7 +1827,7 @@ describe("STT backends", () => {
     });
 
     it("keeps five-word repetition when acoustic witnesses hear all copies", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-five-word-genuine-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-five-word-genuine-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "repeat this thought exactly today";
       const spoken = Array(3).fill(repeated).join(" ");
@@ -1851,7 +1852,7 @@ describe("STT backends", () => {
 
     it("preserves a tail loop when the extension boundary repeats the same phrase", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-ambiguous-tail-boundary-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-ambiguous-tail-boundary-test.wav");
       const wav = makePcm16Wav(95);
       addWavClick(wav, 57, 12_000);
       await Bun.write(wavPath, wav);
@@ -1883,7 +1884,7 @@ describe("STT backends", () => {
 
     it("keeps a suspect chunk unchanged when extended acoustic witnesses disagree", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-witness-disagreement-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-witness-disagreement-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       const repeated = "keep this repeated phrase through disagreement";
       const suspect = `boundary ${repeated} ${repeated} ${repeated} preserved suffix`;
@@ -1913,7 +1914,7 @@ describe("STT backends", () => {
 
     it("trims repeated tail loops after chunked long recordings are merged", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-tail-loop-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-tail-loop-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -1937,7 +1938,7 @@ describe("STT backends", () => {
 
     it("ignores non-overlapping hallucinations from a very short final chunk", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-short-final-hallucination-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-short-final-hallucination-test.wav");
       await Bun.write(wavPath, makePcm16Wav(108));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -1965,7 +1966,7 @@ describe("STT backends", () => {
 
     it("rejects hallucinated text from a no-speech low-energy chunk in a long recording", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-silence-reject-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-silence-reject-test.wav");
       await Bun.write(wavPath, makePcm16Wav(95, 16));
       const transcripts: string[] = [];
       const backend = new WhisperServerBackend({
@@ -1992,7 +1993,7 @@ describe("STT backends", () => {
 
     it("keeps a short final chunk when unprompted decode agrees on an inflected last token", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-short-final-gloss-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-short-final-gloss-test.wav");
       await Bun.write(wavPath, makePcm16Wav(108));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -2019,7 +2020,7 @@ describe("STT backends", () => {
 
     it("drops a short final chunk when two tokens only match by independent edits", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-short-final-double-edit-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-short-final-double-edit-test.wav");
       await Bun.write(wavPath, makePcm16Wav(108));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -2046,7 +2047,7 @@ describe("STT backends", () => {
 
     it("keeps non-overlapping speech from a very short final chunk when unprompted decode agrees", async () => {
       const wavPath =
-        "/tmp/voicelayer-whisper-server-chunked-short-final-real-tail-test.wav";
+        testTmp("voicelayer-whisper-server-chunked-short-final-real-tail-test.wav");
       await Bun.write(wavPath, makePcm16Wav(108));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -2071,7 +2072,7 @@ describe("STT backends", () => {
     });
 
     it("keeps short resident recordings on a single decode", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-short-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-short-test.wav");
       await Bun.write(wavPath, makePcm16Wav(8));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -2090,7 +2091,7 @@ describe("STT backends", () => {
     });
 
     it("passes explicit language and prompt context to the resident server", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-language-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-language-test.wav");
       await Bun.write(wavPath, new Uint8Array([1, 2, 3, 4]));
       const savedLang = process.env.QA_VOICE_WHISPER_LANG;
       process.env.QA_VOICE_WHISPER_LANG = "hebrew";
@@ -2120,7 +2121,7 @@ describe("STT backends", () => {
     });
 
     it("falls back to whisper-cli when resident inference fails", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-fallback-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-fallback-test.wav");
       await Bun.write(wavPath, new Uint8Array([5, 6]));
       const fallback = {
         name: "whisper.cpp",
@@ -2210,7 +2211,7 @@ describe("STT backends", () => {
     });
 
     it("falls back to whisper-cli when resident inference returns empty text", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-empty-fallback-test.wav";
+      const wavPath = testTmp("voicelayer-whisper-server-empty-fallback-test.wav");
       await Bun.write(wavPath, new Uint8Array([7, 8]));
       const fallback = {
         name: "whisper.cpp",

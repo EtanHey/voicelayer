@@ -1,3 +1,4 @@
+import { testSocket } from "./setup/test-tmp";
 import { afterEach, beforeEach, it, expect, spyOn } from "bun:test";
 // AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
 // device probe, or files the resident VoiceBar reads. `describe` is the
@@ -1428,7 +1429,7 @@ describe("input module", () => {
       ).toBe("voice_ask");
 
       const tempDir = mkdtempSync(join(tmpdir(), "voicelayer-input-polish-"));
-      const socketPath = join(tempDir, "polish.sock");
+      const socketPath = testSocket("ip.sock");
       const logPath = join(tempDir, "polish.jsonl");
       const controlLayerRoot = join(tempDir, "control-layer");
       const received: string[] = [];

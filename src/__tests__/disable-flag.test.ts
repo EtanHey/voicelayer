@@ -1,3 +1,4 @@
+import { testSocket, testTmp } from "./setup/test-tmp";
 import { afterEach, beforeEach, expect, it } from "bun:test";
 // AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
 // device probe, or files the resident VoiceBar reads. `describe` is the
@@ -5,8 +6,8 @@ import { afterEach, beforeEach, expect, it } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
 
-const TEST_DIR = `/tmp/voicelayer-disable-flag-${process.pid}`;
-const TEST_MCP_SOCKET_PATH = `${TEST_DIR}/voicelayer-mcp.sock`;
+const TEST_DIR = testTmp("disable");
+const TEST_MCP_SOCKET_PATH = testSocket("df.sock");
 const TEST_MCP_PID_PATH = `${TEST_DIR}/voicelayer-mcp.pid`;
 const TEST_DISABLE_FLAG_PATH = `${TEST_DIR}/voice-disabled.flag`;
 

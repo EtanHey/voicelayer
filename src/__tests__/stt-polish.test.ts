@@ -1,3 +1,4 @@
+import { testSocket } from "./setup/test-tmp";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -93,7 +94,7 @@ describe("stt-polish", () => {
 
   beforeEach(() => {
     TEST_DIR = mkdtempSync(join(tmpdir(), "voicelayer-polish-"));
-    TEST_SOCKET = join(TEST_DIR, "polish.sock");
+    TEST_SOCKET = testSocket("p.sock");
     TEST_LOG = join(TEST_DIR, "polish.jsonl");
   });
 
@@ -101,6 +102,7 @@ describe("stt-polish", () => {
     server?.stop();
     server = null;
     await new Promise((resolve) => setTimeout(resolve, 50));
+    if (TEST_SOCKET) rmSync(TEST_SOCKET, { force: true });
     if (TEST_DIR) {
       rmSync(TEST_DIR, { recursive: true, force: true });
       TEST_DIR = "";
@@ -529,7 +531,7 @@ describe("stt-polish", () => {
       },
     });
 
-    TEST_SOCKET = join(TEST_DIR, "timeout.sock");
+    TEST_SOCKET = testSocket("pt.sock");
     server = createMockPolishServer(() => null);
     const failed = await polishTranscriptionText({
       rawText: cleanedText,
