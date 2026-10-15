@@ -12,7 +12,7 @@ function number(raw: string): string {
   return n < 20 ? ones[n] : tens[Math.floor(n / 10)] + (n % 10 ? `-${ones[n % 10]}` : "");
 }
 const lexicon: Record<string, string> = {
-  JSON: "jason", YAML: "yammel", YML: "yammel", TOML: "tommel", REST: "rest", GUI: "gooey",
+  JSON: "JSON", YAML: "yammel", YML: "yammel", TOML: "tommel", REST: "rest", GUI: "gooey",
   RAM: "ram", ROM: "rom", DOM: "dom", CORS: "cors", CUDA: "cooda", ONNX: "onyx",
   README: "read me", CHANGELOG: "change log", WAV: "wave", FLAC: "flack", INT: "int",
   MP3: "M P three", MP4: "M P four", H264: "H two sixty-four", BASE64: "base sixty-four",
@@ -24,7 +24,7 @@ const proseShortForms = new Set("OK US AM PM ID TV".split(" "));
 const ordinary = new Set("AND FOR THE NOT ALL NEW MAX MIN SET GET PUT RUN LOG MAP KEY APP WEB NET DOC RED TOP END OUT LOW RAW TAG ROW COL PIN PAD FIX ADD DEL SUB REF BASE FAST VOICE CLONE PROMPT CACHE AUDIO ENABLE FALLBACK PYTORCH INCIDENT INVENTORY TOKENS POST".split(" "));
 const extensions: Record<string, string> = {
   md: "M D", markdown: "markdown", ts: "T S", tsx: "T S X", js: "J S", jsx: "J S X",
-  json: "jason", jsonl: "jason L", yaml: "yammel", yml: "yammel", toml: "tommel",
+  json: "JSON", jsonl: "JSON L", yaml: "yammel", yml: "yammel", toml: "tommel",
   py: "P Y", rs: "R S", sh: "shell", cpp: "C plus plus", wav: "wave", mp3: "M P three",
   mp4: "M P four", env: "E N V", gitignore: "git ignore", txt: "text", csv: "C S V",
   mjs: "M J S", cjs: "C J S", ipynb: "I python notebook", go: "go", rb: "ruby", php: "P H P", java: "java", kt: "kotlin",
@@ -69,14 +69,15 @@ function filename(raw: string, engine: SpeakableEngine): string {
   if (!base.startsWith(".") && !extensions[base.split(".").at(-1)?.toLowerCase() ?? ""]) return identifier(base, false, engine);
   return base.split(".").map((part, i) => i ? `dot ${extensions[part.toLowerCase()] ?? identifier(part, false, engine)}` : identifier(part, false, engine)).filter(Boolean).join(" ");
 }
-function directory(raw: string, rules: readonly PronunciationRule[] = []): string {
-  return raw.split(/[\\/]/).filter(Boolean).map(part => {
+function clonePath(raw: string, rules: readonly PronunciationRule[] = []): string {
+  return (raw.startsWith("/") ? "slash " : "") + raw.split(/[\\/]/).filter(Boolean).map(part => {
     if (part === "." || part === "..") return part === "." ? "dot" : "dot dot";
     const wholeOverride = rules.some(rule => {
       const match = new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "")).exec(part);
       return match?.index === 0 && match[0].length === part.length;
     });
-    return (wholeOverride ? [part] : part.split(/[_-]+/)).map(word => projectSpeakableText(word, rules, "clone").speechText).join(" ");
+    return (!rules.length || wholeOverride ? [part] : part.split(/[_-]+/))
+      .map(word => projectSpeakableText(word, rules, "clone").speechText).join(" ");
   }).join(" slash ");
 }
 
@@ -112,11 +113,17 @@ function jsonEdits(input: string): {start: number; end: number; text: string}[] 
         const at = start + token.index, text = token[0];
         const gap = /[{\["“”\p{L}\p{N}_]/u.test(input[at + text.length] ?? "") ? " " : "";
         if (text.startsWith('"')) {
-          if (text.includes("\\") || text === '""') edits.push({start: at, end: at + text.length,
-            text: (JSON.parse(text) as string).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,
-              char => ` control ${number(String(char.charCodeAt(0)))} `) || "empty string"});
+          if (text === '""') edits.push({start: at, end: at + text.length, text: "empty string"});
           else {
             edits.push({start: at, end: at + 1, text: ""});
+            // Decode just the escape. Literal words between escapes keep their
+            // own source spans instead of sharing the whole quoted value.
+            for (const escape of text.matchAll(/\\(?:u[0-9a-fA-F]{4}|["\\/bfnrt])/g)) {
+              const decoded = (JSON.parse('"' + escape[0] + '"') as string)
+                .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,
+                  char => ` control ${number(String(char.charCodeAt(0)))} `);
+              edits.push({start: at + escape.index, end: at + escape.index + escape[0].length, text: decoded});
+            }
             edits.push({start: at + text.length - 1, end: at + text.length, text: ""});
           }
         } else edits.push({start: at, end: at + text.length, text:
@@ -235,7 +242,11 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
       const replaced = pattern[Symbol.replace](m.input, rule.replacement);
       return replaced.slice(m.index, replaced.length - (m.input.length - m.index - m[0].length));
     }, true);
-  edit(/[A-Za-z0-9\u0590-\u05ff_.-]+/gu, m => /[\u0590-\u05ff]/.test(m[0]) ? m[0] : undefined, true);
+  edit(/[A-Za-z0-9\u0590-\u05ff_.-]+/gu, m => {
+    // Clone path projection owns the whole path and preserves Hebrew components.
+    if (engine === "clone" && /[\\/]/.test((m.input[m.index - 1] ?? "") + (m.input[m.index + m[0].length] ?? ""))) return undefined;
+    return /[\u0590-\u05ff]/.test(m[0]) ? m[0] : undefined;
+  }, true);
   // Keep numeric prose out of path/identifier rules, including fractions and times.
   edit(/[$€£¥₪][ \t]*\d[\d,]*(?:\.\d+)?(?:[ \t]?(?:USD|EUR|GBP|ILS))?/g, m => m[0], true);
   edit(/(?<![\w./])\d+(?:\/\d+)+(?![\w./])/g, m => m[0], true);
@@ -249,7 +260,10 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   }
   // YAML may add spaces inside a path/file/URL. Revisit those composites in
   // source coordinates so basename/suffix rules still wrap the protected override.
-  if (rules.length) for (const match of Array.from(displayText.matchAll(/(?<![A-Za-z0-9\u0080-\uffff_])(?:(?:https?:\/\/|www\.)[^\s<>\])`]+|(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+|[\w-]+\.[a-zA-Z]+)\b/gu)).reverse()) {
+  const composites = engine === "clone"
+    ? /(?<![A-Za-z0-9\u0080-\uffff_])(?:(?:https?:\/\/|www\.)[^\s<>\])`]+|(?:[A-Za-z]:[\\/]|\.{0,2}[\\/]|[\p{L}\p{M}\p{N}_.-]+[\\/])[\p{L}\p{M}\p{N}_./\\-]+|[\w-]+\.[a-zA-Z]+)(?![\p{L}\p{M}\p{N}_])/gu
+    : /(?<![A-Za-z0-9\u0080-\uffff_])(?:(?:https?:\/\/|www\.)[^\s<>\])`]+|(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+|[\w-]+\.[a-zA-Z]+)\b/gu;
+  if (rules.length) for (const match of Array.from(displayText.matchAll(composites)).reverse()) {
     // Only clone directories extend the source span through a trailing separator.
     if (engine === "clone" && !/^(?:https?:|www\.)/.test(match[0])) {
       match[0] += displayText.slice(match.index + match[0].length).match(/^[\\/]+/)?.[0] ?? "";
@@ -271,15 +285,18 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
       applyEdits(pieces, pieces.map(p => p.text).join(""), [{start: left, end: right, text}], true);
       continue;
     }
-    if (engine === "clone" && /[\\/]$/.test(match[0])) {
-      applyEdits(pieces, pieces.map(p => p.text).join(""), [{start: left, end: right, text: directory(match[0], rules)}], true);
+    if (engine === "clone" && /[\\/]/.test(match[0])) {
+      applyEdits(pieces, pieces.map(p => p.text).join(""), [{start: left, end: right, text: clonePath(match[0], rules)}], true);
       continue;
     }
     const base = match[0].split(/[\\/]/).filter(Boolean).at(-1)!;
     const dot = base.lastIndexOf("."), extension = dot >= 0 ? extensions[base.slice(dot + 1).toLowerCase()] : undefined;
     if (!extension && base === match[0]) continue;
     const stem = extension ? base.slice(0, dot) : base;
-    const spoken = projectSpeakableText(stem, rules, engine).speechText + (extension ? ` dot ${extension}` : "");
+    const suffix = base.slice(dot + 1);
+    const spokenExtension = extension && rules.some(rule => new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "")).test(suffix))
+      ? projectSpeakableText(suffix, rules, engine).speechText : extension;
+    const spoken = projectSpeakableText(stem, rules, engine).speechText + (spokenExtension ? ` dot ${spokenExtension}` : "");
     applyEdits(pieces, pieces.map(p => p.text).join(""), [{start: left, end: right, text: spoken}], true);
   }
   edit(/(?:https?:\/\/|www\.)[^\s<>\])`]+/g, m => {
@@ -287,9 +304,12 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     return url(m[0].slice(0, m[0].length - trailing.length), [], engine) + trailing;
   }, true, true);
   edit(/\bHTTP\/(\d+)\b/gi, m => `H T T P ${number(m[1])}`, true, true);
-  edit(/(?<![A-Za-z0-9\u0080-\uffff_])(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+/gu, m => {
+  const paths = engine === "clone"
+    ? /(?<![A-Za-z0-9\u0080-\uffff_])(?:[A-Za-z]:[\\/]|\.{0,2}[\\/]|[\p{L}\p{M}\p{N}_.-]+[\\/])[\p{L}\p{M}\p{N}_./\\-]+/gu
+    : /(?<![A-Za-z0-9\u0080-\uffff_])(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+/gu;
+  edit(paths, m => {
     const raw = m[0].replace(/[.,;:!?]+$/, "");
-    const spoken = engine === "clone" && /[\\/]$/.test(raw) ? directory(raw) : filename(raw, engine);
+    const spoken = engine === "clone" ? clonePath(raw) : filename(raw, engine);
     return spoken + (m[0].match(/[.,;:!?]+$/)?.[0] ?? "");
   }, true, true);
   // Extension components require dots so letter runs have only one partition.

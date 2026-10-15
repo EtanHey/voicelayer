@@ -124,6 +124,8 @@ for (const [input, clone, edge] of [
   ["part1-prompt/v6", "part one prompt slash v six", "v6"],
   ["/app/src/config.json", "slash app slash src slash config dot JSON", "config dot JSON"],
   ["C:\\app\\src\\config.json", "C: slash app slash src slash config dot JSON", "config dot JSON"],
+  ["C:/app/src/config.json", "C: slash app slash src slash config dot JSON", "C:config dot JSON"],
+  ["app\\src\\config.json", "app slash src slash config dot JSON", "app\\src\\config dot JSON"],
   ["./part1-prompt/v6/config.json", "dot slash part one prompt slash v six slash config dot JSON", "config dot JSON"],
   ["Read /app/src/config.json.", "Read slash app slash src slash config dot JSON.", "Read config dot JSON."],
 ] as const) test(`round 2 full path: ${input}`, () => {
@@ -140,6 +142,15 @@ test("round 2 path dictionary overrides preserve the other components", () => {
     const result = projectSpeakableText(`/app/src/config.json${suffix}`, rules);
     expect(result.speechText).toBe("slash app slash src slash settings dot JSON");
     partitions(`/app/src/config.json${suffix}`, result);
+  }
+});
+
+test("round 2 full clone paths retain Hebrew components verbatim", () => {
+  for (const [input, speech] of [["/app/שלום/config.json", "slash app slash שלום slash config dot JSON"],
+    ["שלום/config.json", "שלום slash config dot JSON"]]) {
+    const result = projectSpeakableText(input);
+    expect(result.speechText).toBe(speech);
+    partitions(input, result);
   }
 });
 
