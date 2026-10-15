@@ -8,6 +8,11 @@ public enum HotkeyPhase: Equatable {
     case awaitingSecondTap
 }
 
+public enum SelectionBusyReason: String {
+    case recording, transcribing
+    case f5Preview = "f5_preview"
+}
+
 public struct VoiceBarRecordingContent: Equatable {
     public var statusText: String
     public var showsWaveform: Bool
@@ -99,6 +104,21 @@ public enum VoiceBarPresentation {
     public static let holdToTalkHint = "Hold to talk"
     public static let releaseToSendHint = "Release to send"
     public static let tapAgainToLockHint = "Tap again to lock"
+
+    public static func selectionBusyReason(mode: VoiceMode, hotkeyPhase: HotkeyPhase) -> SelectionBusyReason? {
+        if mode == .recording { return .recording }
+        if mode == .transcribing { return .transcribing }
+        return hotkeyPhase == .idle ? nil : .f5Preview
+    }
+
+    public static func selectionBusyNote(isRequested: Bool, mode: VoiceMode, hotkeyPhase: HotkeyPhase) -> String? {
+        guard isRequested, let reason = selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) else { return nil }
+        return switch reason {
+        case .recording: "Busy recording. Selection not read"
+        case .transcribing: "Busy transcribing. Selection not read"
+        case .f5Preview: "Busy with F5. Selection not read"
+        }
+    }
 
     public static func notchPresentation(
         from input: VoiceBarNotchOperationalInput

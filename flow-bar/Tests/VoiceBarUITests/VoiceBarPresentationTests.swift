@@ -2,33 +2,66 @@
 import XCTest
 import AppKit
 import SwiftUI
+import Darwin
 
 final class VoiceBarPresentationTests: XCTestCase {
+    func testBusyNoteTracksTheCurrentBusyContextAndStaysAbsentInIdle() {
+        for (mode, phase, message) in [(VoiceMode.recording, HotkeyPhase.holding, "Busy recording. Selection not read"),
+                                       (.transcribing, .idle, "Busy transcribing. Selection not read"),
+                                       (.idle, .pressing, "Busy with F5. Selection not read")] {
+            XCTAssertEqual(VoiceBarPresentation.selectionBusyNote(isRequested: true, mode: mode, hotkeyPhase: phase), message)
+            XCTAssertNil(VoiceBarPresentation.selectionBusyNote(isRequested: false, mode: mode, hotkeyPhase: phase))
+        }
+        XCTAssertNil(VoiceBarPresentation.selectionBusyNote(isRequested: true, mode: .idle, hotkeyPhase: .idle))
+        XCTAssertNil(VoiceBarPresentation.selectionBusyNote(isRequested: true, mode: .speaking, hotkeyPhase: .idle))
+    }
+
     @MainActor
     func testBusySelectionRendersInReservedFooterWithoutChangingTheNotch() throws {
-        for (mode, phase, name) in [(VoiceMode.recording, HotkeyPhase.idle, "recording"),
-                                    (.transcribing, .idle, "transcribing"),
-                                    (.idle, .pressing, "preview-pressing"),
-                                    (.idle, .holding, "preview-holding"),
-                                    (.idle, .awaitingSecondTap, "preview-second-tap")] {
-            let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
-                                   recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in })
-            state.mode = mode
-            state.hotkeyPhase = phase
-            state.hotkeyEnabled = true
-            state.isConnected = true
-            state.recordingMode = "ptt"
-            state.sendCommand = { _ in XCTFail("busy UI must send no command") }
-            state.selectionTextCaptureHandler = { _ in XCTFail("busy UI must post no Copy") }
-            let before = try renderSelectionFooter(state, name: name + "-before")
-            state.speakSelection()
-            let busy = try renderSelectionFooter(state, name: name + "-busy")
-            XCTAssertNotEqual(before.pixels, busy.pixels, "busy feedback must reach the rendered footer: \(name)")
-            XCTAssertEqual(before.size, busy.size, "no notch/panel layout jump")
-            XCTAssertEqual(before.presentation, busy.presentation, "waveform and controls keep their original shell")
-            XCTAssertEqual(state.mode, mode)
-            XCTAssertEqual(state.hotkeyPhase, phase)
+        for light in [false, true] {
+            for (mode, phase, name) in [(VoiceMode.recording, HotkeyPhase.idle, "recording"),
+                                        (.transcribing, .idle, "transcribing"),
+                                        (.idle, .pressing, "preview-pressing"),
+                                        (.idle, .holding, "preview-holding"),
+                                        (.idle, .awaitingSecondTap, "preview-second-tap")] {
+                let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                                       recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in })
+                state.mode = mode
+                state.hotkeyPhase = phase
+                state.hotkeyEnabled = true
+                state.isConnected = true
+                state.recordingMode = "ptt"
+                state.sendCommand = { _ in XCTFail("busy UI must send no command") }
+                state.selectionTextCaptureHandler = { _ in XCTFail("busy UI must post no Copy") }
+                let before = try renderSelectionFooter(state, name: name + (light ? "-light" : "-dark") + "-before", light: light)
+                let busy = try renderSelectionFooter(state, name: name + (light ? "-light" : "-dark") + "-busy",
+                                                     light: light, afterMount: { state.speakSelection() })
+                XCTAssertNotEqual(before.pixels, busy.pixels, "busy feedback must reach the rendered footer: \(name)")
+                XCTAssertEqual(before.size, busy.size, "no notch/panel layout jump")
+                XCTAssertEqual(before.presentation, busy.presentation, "waveform and controls keep their original shell")
+                XCTAssertEqual(state.mode, mode)
+                XCTAssertEqual(state.hotkeyPhase, phase)
+            }
         }
+    }
+
+    @MainActor
+    func testBusyNoteClearsFromTheRenderedFooterAfterTwoSeconds() async throws {
+        let state = VoiceState()
+        state.mode = .recording
+        state.hotkeyEnabled = true
+        state.isConnected = true
+        state.recordingMode = "ptt"
+        state.sendCommand = { _ in XCTFail("expiry must not send commands") }
+        state.selectionTextCaptureHandler = { _ in XCTFail("expiry must not capture") }
+        let before = try renderSelectionFooter(state, name: "expiry-before")
+        let busy = try renderSelectionFooter(state, name: "expiry-busy", afterMount: { state.speakSelection() })
+        XCTAssertNotEqual(before.pixels, busy.pixels)
+        try await Task.sleep(for: .milliseconds(2100))
+        let cleared = try renderSelectionFooter(state, name: "expiry-cleared")
+        XCTAssertEqual(before.pixels, cleared.pixels)
+        XCTAssertEqual(before.presentation, cleared.presentation)
+        XCTAssertEqual(state.mode, .recording)
     }
 
     private final class SelectionFixturePanel: NSPanel {
@@ -46,7 +79,8 @@ final class VoiceBarPresentationTests: XCTestCase {
     }
 
     @MainActor
-    private func renderSelectionFooter(_ state: VoiceState, name: String) throws
+    private func renderSelectionFooter(_ state: VoiceState, name: String, light: Bool = false,
+                                       afterMount: (() -> Void)? = nil) throws
         -> (pixels: Data, size: CGSize, presentation: VoiceBarNotchPresentation) {
         let status = VoiceBarPresentation.liveStatusText(mode: state.mode, transcript: state.transcript,
             confirmationText: state.confirmationText, hotkeyPhase: state.hotkeyPhase, hotkeyEnabled: state.hotkeyEnabled,
@@ -56,11 +90,12 @@ final class VoiceBarPresentationTests: XCTestCase {
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         let size = VoiceBarPanelLayout.make(presentation: presentation, canvasGeometry: canvas.canvasGeometry).panelSize
         let host = NSHostingView(rootView: ZStack(alignment: .topLeading) {
-            Color(red: 0.16, green: 0.17, blue: 0.19)
+            light ? Color(red: 0.88, green: 0.89, blue: 0.91) : Color(red: 0.16, green: 0.17, blue: 0.19)
             BarView(state: state, commandRouter: SelectionFixtureRouter(), onOpenSettings: {}, onOpenHistory: {},
                     includesPanelOutsets: true)
         }.frame(width: size.width, height: size.height).transaction { $0.disablesAnimations = true })
         host.frame = NSRect(origin: .zero, size: size)
+        host.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
         let panel = SelectionFixturePanel(contentRect: NSRect(x: -20000, y: -20000, width: size.width, height: size.height),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
@@ -68,14 +103,30 @@ final class VoiceBarPresentationTests: XCTestCase {
         panel.isExcludedFromWindowsMenu = true
         panel.hidesOnDeactivate = false
         panel.contentView = host
-        panel.orderFront(nil)
-        defer { panel.orderOut(nil); panel.contentView = nil }
+        panel.appearance = host.appearance
+        // HYG2 prefers un-ordered bitmap hosts. The stacked base may predate its package target;
+        // the shot runner can load the exact merged helper without linking production binaries.
+        if ProcessInfo.processInfo.environment["VOICEBAR_P2B_REQUIRE_HYG2"] == "1" {
+            let symbol = try XCTUnwrap(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "VLOffscreenPolicyInstalled"))
+            let installed = unsafeBitCast(symbol, to: (@convention(c) () -> Bool).self)
+            XCTAssertTrue(installed())
+        }
+        defer { panel.contentView = nil }
         XCTAssertLessThan(panel.frame.maxX, 0)
         XCTAssertFalse(panel.isKeyWindow)
         XCTAssertFalse(panel.isMainWindow)
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         host.layoutSubtreeIfNeeded()
+        let initialFrame = panel.frame
+        let initialSize = host.fittingSize
+        if let afterMount {
+            afterMount()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            host.layoutSubtreeIfNeeded()
+        }
+        XCTAssertEqual(panel.frame, initialFrame)
+        XCTAssertEqual(host.fittingSize, initialSize)
         let footer = NSRect(x: 0, y: host.isFlipped ? host.bounds.height - 17 : 0, width: host.bounds.width, height: 17)
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: footer))
         host.cacheDisplay(in: footer, to: bitmap)

@@ -340,6 +340,16 @@ public struct BarView: View {
 
     private var appearanceAwareNotchContent: some View {
         notchContent
+            .overlay(alignment: .bottom) {
+                if let note = VoiceBarPresentation.selectionBusyNote(
+                    isRequested: state.showsSelectionBusyNote, mode: state.mode, hotkeyPhase: state.hotkeyPhase
+                ) {
+                    compactStatusLabel(note)
+                        .frame(height: 17)
+                        .offset(y: 17) // Use the existing panel shadow outset; never resize the notch.
+                        .allowsHitTesting(false)
+                }
+            }
             .environment(\.voiceBarNotchAppearance, notchAppearance)
             .background {
                 VoiceBarNotchAppearanceReader(appearance: $notchAppearance)
@@ -793,7 +803,11 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        Text(statusText)
+        compactStatusLabel(statusText)
+    }
+
+    private func compactStatusLabel(_ text: String) -> some View {
+        Text(text)
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(notchPrimaryLabelColor)
             .lineLimit(1)

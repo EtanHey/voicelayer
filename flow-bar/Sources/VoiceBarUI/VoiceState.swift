@@ -867,9 +867,22 @@ public final class VoiceState {
     public var selectionTextCaptureHandler: (@escaping (SelectionCaptureResult) -> Void) -> Void = { $0(.completed(nil)) }
     private var selectionCaptureInFlight = false
     private var selectionCaptureCancelled = false
+    public private(set) var showsSelectionBusyNote = false
+    @ObservationIgnored private var selectionBusyNoteTask: Task<Void, Never>?
 
     public func speakSelection() {
-        guard mode != .recording, mode != .transcribing, hotkeyPhase == .idle else { return }
+        if let reason = VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) {
+            showsSelectionBusyNote = true
+            selectionBusyNoteTask?.cancel()
+            selectionBusyNoteTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                self?.showsSelectionBusyNote = false
+                self?.selectionBusyNoteTask = nil
+            }
+            logDiagnostic("selection_busy", details: ["reason": reason.rawValue, "appKeyWindowTitle": "not_recorded"])
+            return
+        }
         if mode == .speaking {
             if selectionCaptureInFlight { selectionCaptureCancelled = true }
             sendCommand?(["cmd": "stop"])
