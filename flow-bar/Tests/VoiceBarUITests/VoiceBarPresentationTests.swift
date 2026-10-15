@@ -82,6 +82,12 @@ final class VoiceBarPresentationTests: XCTestCase {
     private func renderSelectionFooter(_ state: VoiceState, name: String, light: Bool = false,
                                        afterMount: (() -> Void)? = nil) throws
         -> (pixels: Data, size: CGSize, presentation: VoiceBarNotchPresentation) {
+        // Match the test process before BarView captures its initial appearance, so the
+        // appearance reader does not need to mutate SwiftUI state during its first update.
+        let app = NSApplication.shared
+        let previousAppearance = app.appearance
+        app.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
+        defer { app.appearance = previousAppearance }
         let status = VoiceBarPresentation.liveStatusText(mode: state.mode, transcript: state.transcript,
             confirmationText: state.confirmationText, hotkeyPhase: state.hotkeyPhase, hotkeyEnabled: state.hotkeyEnabled,
             errorMessage: nil, commandModeState: nil, activeClipMarker: nil)
