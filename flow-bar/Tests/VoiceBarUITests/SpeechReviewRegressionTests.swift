@@ -25,14 +25,14 @@ final class SpeechReviewRegressionTests: XCTestCase {
     func testPendingEngineAndVoiceDrivePickerAndCloneWarning() throws {
         let controls = try XCTUnwrap(SpeechControlsState(controls: SpeechSettingsTests.controls()))
         let row = SpeechSettingsView.displayProfile(.long, controls: controls,
-            pending: ["long.engine": .string("clone"), "long.voice": .string("theo-c4")])
+            pending: ["long.engine": .string("clone"), "long.voice": .string("theo-c4s")])
         XCTAssertEqual(row?.engine, "clone")
-        XCTAssertEqual(row?.voice, "theo-c4")
-        XCTAssertEqual(row?.voices, ["theo-c4"])
+        XCTAssertEqual(row?.voice, "theo-c4s")
+        XCTAssertEqual(row?.voices, ["theo-c4s"])
         XCTAssertTrue(row?.cloneWarning == true)
         let missing = SpeechSettingsView.displayProfile(.long, controls: controls,
             pending: ["long.engine": .string("clone"), "long.voice": .string("new-profile")])
-        XCTAssertTrue(missing?.voices.contains("new-profile") == true, "pending selection always has a picker tag")
+        XCTAssertFalse(missing?.voices.contains("new-profile") == true, "unavailable assets never become selectable")
     }
     @MainActor
     func testPreviewTimeoutKeepsDisabledUntilLateAck() async throws {

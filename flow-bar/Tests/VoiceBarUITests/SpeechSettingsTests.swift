@@ -11,13 +11,13 @@ final class SpeechSettingsTests: XCTestCase {
             "last_first_audio": ["engine": "edge-tts", "origin": "speak", "fallback": false]]
         return ["profiles": ["short": profile, "long": profile], "short_limit_chars": field(400),
                 "clone_daemon": "down", "available_voices": [["engine": "edge", "voice": "en-US-JennyNeural"],
-                                                            ["engine": "clone", "voice": "theo-c4"]]]
+                                                            ["engine": "clone", "voice": "theo-c4s"]]]
     }
     func testParsingAndLockRendering() throws {
         let state = try XCTUnwrap(SpeechControlsState(controls: Self.controls(rateSource: "environment")))
         XCTAssertEqual(state.profiles[.short]?.rate.source, .environment)
         XCTAssertEqual(state.profiles[.short]?.rate.raw, .string("+10%"))
-        XCTAssertEqual(state.voices(for: "clone"), ["theo-c4"])
+        XCTAssertEqual(state.voices(for: "clone"), ["theo-c4s"])
         XCTAssertEqual(state.profiles[.short]?.latencyLabel, "Last speech: first sound after 0.8 s · Fast voice")
         XCTAssertEqual(state.lockReason(for: "short.rate"), "Set by QA_VOICE_TTS_RATE")
         XCTAssertTrue(SpeechSettingsView.fieldDisabled("short.rate", controls: state, pending: [:]))
@@ -45,9 +45,9 @@ final class SpeechSettingsTests: XCTestCase {
     }
     func testEngineChangeChoosesOnlyATargetEngineVoice() throws {
         let state = try XCTUnwrap(SpeechControlsState(controls: Self.controls()))
-        XCTAssertEqual(state.preferredVoice(for: "clone", current: "en-US-JennyNeural"), "theo-c4")
-        XCTAssertEqual(state.preferredVoice(for: "edge", current: "theo-c4"), "en-US-JennyNeural")
-        XCTAssertNil(state.preferredVoice(for: "missing", current: "theo-c4"))
+        XCTAssertEqual(state.preferredVoice(for: "clone", current: "en-US-JennyNeural"), "theo-c4s")
+        XCTAssertEqual(state.preferredVoice(for: "edge", current: "theo-c4s"), "en-US-JennyNeural")
+        XCTAssertNil(state.preferredVoice(for: "missing", current: "theo-c4s"))
     }
     func testLockBlocksSendAndDisconnectClearsPending() {
         let state = VoiceState()
@@ -129,7 +129,7 @@ final class SpeechSettingsTests: XCTestCase {
         state.sendCommand = { commands.append($0) }
         state.setConnectionStatus(true)
         state.handleEvent(["type": "health", "tts_controls": raw])
-        state.setTTSProfile(.short, engine: "clone", voice: "theo-c4")
+        state.setTTSProfile(.short, engine: "clone", voice: "theo-c4s")
         XCTAssertTrue(commands.isEmpty)
     }
 
@@ -140,27 +140,27 @@ final class SpeechSettingsTests: XCTestCase {
             state.sendCommand = { commands.append($0) }
             state.setConnectionStatus(true)
             state.handleEvent(["type": "health", "tts_controls": Self.controls()])
-            state.setTTSProfile(kind, engine: "clone", voice: "theo-c4")
+            state.setTTSProfile(kind, engine: "clone", voice: "theo-c4s")
             XCTAssertEqual(commands.count, 1)
             let command = try XCTUnwrap(commands.first)
             XCTAssertEqual(command["cmd"] as? String, "set_tts_setting")
             XCTAssertEqual(command["profile"] as? String, kind.rawValue)
             XCTAssertEqual(command["engine"] as? String, "clone")
-            XCTAssertEqual(command["voice"] as? String, "theo-c4")
+            XCTAssertEqual(command["voice"] as? String, "theo-c4s")
             XCTAssertNil(command["key"])
             XCTAssertNil(command["rate"], "engine switching must not overwrite a rate")
             XCTAssertEqual(state.speechPending["\(kind.rawValue).engine"], .string("clone"))
-            XCTAssertEqual(state.speechPending["\(kind.rawValue).voice"], .string("theo-c4"))
+            XCTAssertEqual(state.speechPending["\(kind.rawValue).voice"], .string("theo-c4s"))
             var updated = Self.controls()
             var profiles = updated["profiles"] as! [String: [String: Any]]
             profiles[kind.rawValue]?["engine"] = ["source": "settings", "raw": "clone", "effective": "clone"]
-            profiles[kind.rawValue]?["voice"] = ["source": "settings", "raw": "theo-c4", "effective": "theo-c4"]
+            profiles[kind.rawValue]?["voice"] = ["source": "settings", "raw": "theo-c4s", "effective": "theo-c4s"]
             updated["profiles"] = profiles
             state.handleEvent(["type": "ack", "command": "set_tts_setting", "outcome": "accept",
                                "id": command["id"] as Any, "tts_controls": updated])
             XCTAssertTrue(state.speechPending.isEmpty)
             XCTAssertEqual(state.speechControls?.profiles[kind]?.engine.effective, "clone")
-            XCTAssertEqual(state.speechControls?.profiles[kind]?.voice.effective, "theo-c4")
+            XCTAssertEqual(state.speechControls?.profiles[kind]?.voice.effective, "theo-c4s")
         }
     }
     func testAtomicChangeRejectsInvalidPairAndLockedVoice() {
@@ -176,7 +176,7 @@ final class SpeechSettingsTests: XCTestCase {
         profiles["short"]?["voice"] = ["source": "environment", "raw": "en-US-JennyNeural", "effective": "en-US-JennyNeural"]
         raw["profiles"] = profiles
         state.handleEvent(["type": "health", "tts_controls": raw])
-        state.setTTSProfile(.short, engine: "clone", voice: "theo-c4")
+        state.setTTSProfile(.short, engine: "clone", voice: "theo-c4s")
         XCTAssertTrue(commands.isEmpty)
     }
     @MainActor
@@ -186,7 +186,7 @@ final class SpeechSettingsTests: XCTestCase {
         state.speechAckTimeout = .milliseconds(20)
         state.setConnectionStatus(true)
         state.handleEvent(["type": "health", "tts_controls": Self.controls()])
-        state.setTTSProfile(.short, engine: "clone", voice: "theo-c4")
+        state.setTTSProfile(.short, engine: "clone", voice: "theo-c4s")
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertTrue(state.speechPending.isEmpty)
         XCTAssertNotNil(state.speechNotice)
@@ -198,7 +198,7 @@ final class SpeechSettingsTests: XCTestCase {
         state.sendCommand = { commands.append($0) }
         state.setConnectionStatus(true)
         state.handleEvent(["type": "health", "tts_controls": Self.controls()])
-        state.setTTSProfile(.long, engine: "clone", voice: "theo-c4")
+        state.setTTSProfile(.long, engine: "clone", voice: "theo-c4s")
         state.setTTSProfile(.long, engine: "edge", voice: "en-US-JennyNeural")
         state.setTTSSetting("long.voice", .string("en-US-JennyNeural"))
         XCTAssertEqual(commands.count, 1, "neither half may race the atomic request")
@@ -208,6 +208,37 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertEqual(state.speechControls?.profiles[.long]?.engine.effective, "edge")
         XCTAssertEqual(state.speechControls?.profiles[.long]?.voice.effective, "en-US-JennyNeural")
         XCTAssertTrue(state.speechNotice?.contains("invalid pair") == true)
+    }
+
+    func testGroupedVoiceListUsesAtomicCallbackAndKeepsUnlistedSelectionOutOfChoices() throws {
+        let controls = try XCTUnwrap(SpeechControlsState(controls: Self.controls()))
+        let display = try XCTUnwrap(SpeechSettingsView.displayProfile(.short, controls: controls,
+            pending: ["short.engine": .string("clone"), "short.voice": .string("huberman")]))
+        XCTAssertFalse(display.voices.contains("huberman"))
+        XCTAssertEqual(SpeechSettingsView.voiceLabel("theo-c4s"), "Theo")
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SpeechSettingsView.swift"), encoding: .utf8)
+        XCTAssertFalse(source.contains("Picker(\"Engine\""))
+        XCTAssertTrue(source.contains("Section(\"Fast\""))
+        XCTAssertTrue(source.contains("Section(\"Cloned\""))
+        XCTAssertTrue(source.contains("onSelectEngine?(kind, selected.engine, selected.voice)"))
+    }
+
+    func testGroupedSelectionLocksBothFieldsAndFiltersLegacyCatalog() throws {
+        var raw = Self.controls()
+        raw["available_voices"] = [["engine": "edge", "voice": "custom"],
+            ["engine": "clone", "voice": "theo-c4s"], ["engine": "clone", "voice": "theo-c4"],
+            ["engine": "clone", "voice": "huberman"], ["engine": "clone", "voice": "ben-c1"]]
+        var profiles = raw["profiles"] as! [String: [String: Any]]
+        profiles["short"]?["engine"] = ["source": "environment", "raw": "clone", "effective": "clone"]
+        raw["profiles"] = profiles
+        let controls = try XCTUnwrap(SpeechControlsState(controls: raw))
+        XCTAssertEqual(controls.voices(for: "edge"), ["custom"])
+        XCTAssertEqual(controls.voices(for: "clone"), ["theo-c4s"])
+        XCTAssertTrue(SpeechSettingsView.fieldDisabled("short.voice", controls: controls, pending: [:]))
+        XCTAssertTrue(SpeechSettingsView.lockFooter(.short, controls: controls)?.contains("QA_VOICE_TTS_VOICE") == true)
+        XCTAssertTrue(SpeechSettingsView.fieldDisabled("long.voice", controls: controls, pending: ["long.engine": .string("clone")]))
+        XCTAssertTrue(SpeechSettingsView.fieldDisabled("long.voice", controls: controls, pending: [:], callbackAvailable: false))
     }
 
 }

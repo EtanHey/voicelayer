@@ -1,4 +1,5 @@
-import { readFileSync, renameSync, rmSync, mkdtempSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, renameSync, rmSync, mkdtempSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import { hasClonedProfile } from "./tts/qwen3";
 import { STATE_DIR } from "./paths";
@@ -38,6 +39,17 @@ export function readTTSSettings(env: TTSEnv = process.env): TTSSettings {
         settings.profiles ??= {};
         settings.profiles[kind] ??= {};
         Object.assign(settings.profiles[kind]!, { [field]: value });
+      }
+    }
+    // D9 uses one selected engine/voice pair, retaining the v1 file/wire format.
+    // Normalize removed clone choices on read; the next explicit write persists it.
+    // Never rewrite a user's file during a health poll or delete their private assets.
+    for (const kind of ["short", "long"] as const) {
+      const profile = settings.profiles?.[kind];
+      if (profile?.voice && /^(?:theo(?:[-_].*)?|huberman(?:[-_].*)?|ben(?:[-_].*)?)$/i.test(profile.voice)
+          && profile.voice !== "theo-c4s" && profile.engine !== "edge") {
+        const theoInstalled = existsSync(join(env.HOME || homedir(), ".voicelayer", "voices", "theo-c4s", "profile.yaml"));
+        Object.assign(profile, theoInstalled ? {engine: "clone", voice: "theo-c4s"} : {engine: TTS_DEFAULTS.engine, voice: TTS_DEFAULTS.voice});
       }
     }
     if (validTTSSetting("short_limit_chars", raw.short_limit_chars)) settings.short_limit_chars = raw.short_limit_chars;
