@@ -13,8 +13,13 @@ fixtures opened indirectly by production window controllers).
   windows use alpha 1, but cannot be moved/resized onto a display. They never become
   key or activate the process. This preserves the original pixel assertions.
 - `VLPostTestActivation` exercises activation-notification handling without asking
-  macOS to activate the test application. Active visual states use SwiftUI's
-  `controlActiveState` environment instead of acquiring real key focus.
+  macOS to activate the test application. SwiftUI's `controlActiveState` can
+  model appearance, but does not establish keyboard focus.
+
+The popover test pins production root focus-suppression wiring and rejects its
+removal (including a compiled-source mutation run). `controlActiveState` models
+appearance only. Actual MenuBarExtra opening, keyboard-focus transitions, and
+absence of a focus ring on opening remain native acceptance.
 
 AppKit normally constrains titled windows back onto a screen during ordering.
 The test-only frame constraint disables that behavior; ordering and later moves

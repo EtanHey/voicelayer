@@ -343,7 +343,7 @@ final class SottoCurrentStateShotsTests: XCTestCase {
             "- The mic picker is a bordered row with no fill and no selected or highlight state.",
             "- The transcript text and the copy button share a vertical midline (midY equal ± 1 pt).",
             "- Open Settings… and Quit VoiceBar sit side by side in one row, equal width.",
-            "- `.focusEffectDisabled()` is set on the root, so no focus ring draws when the popover opens. The real MenuBarExtra open is still a P10 live check.",
+            "- The production root wires `.focusEffectDisabled()` (source contract plus mutation control). Actual popover-opening keyboard focus and absence of a focus ring remain P10 native acceptance; these offscreen shots do not exercise that transition.",
             "",
             "## Limits",
             "",
@@ -603,8 +603,9 @@ final class SottoCurrentStateShotsTests: XCTestCase {
 
     private func render(_ view: some View, size: CGSize, to url: URL,
                         settingsWindow: Bool = false, appearance: NSAppearance.Name = .darkAqua) throws {
-        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading)
-            .environment(\.controlActiveState, settingsWindow ? .key : .inactive))
+        // Keep the host's natural control appearance; forcing .key changed the Show VoiceBar button.
+        // Key-window focus/activation is native acceptance, not a property of these bitmap shots.
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading))
         host.appearance = NSAppearance(named: appearance)
         host.frame = NSRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame,
