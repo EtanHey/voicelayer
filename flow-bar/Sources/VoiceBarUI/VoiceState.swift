@@ -2960,10 +2960,9 @@ public final class VoiceState {
                     // as a Return and submits the line. They get TYPING below —
                     // see the AIDEV-NOTE there and TerminalPasteTargets.
                     let isTerminalTarget = TerminalPasteTargets.isTerminal(pasteTargetBundleID)
-                    // Etan's ruling: automatic delivery in these rich hosts uses the
+                    // Etan's ruling: delivery in these rich hosts uses the
                     // working Shift+F5 typing route, never a whole-document AX write.
-                    let usesRichHostTyping = plan == .autoPaste
-                        && ["com.t3tools.t3code", "net.imput.helium"].contains(pasteTargetBundleID)
+                    let usesRichHostTyping = ["com.t3tools.t3code", "net.imput.helium"].contains(pasteTargetBundleID)
                     let skipsAX = isTerminalTarget || usesRichHostTyping
                     if skipsAX {
                         logDiagnostic("paste_ax_insert_skipped", details: [

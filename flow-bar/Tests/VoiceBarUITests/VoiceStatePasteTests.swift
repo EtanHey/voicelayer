@@ -55,6 +55,66 @@ final class VoiceStatePasteTests: XCTestCase {
         }
     }
 
+    func testSettingsHistoryT3AndHeliumUsesOneTypedDeliveryWithoutAXOrClipboard() {
+        let text = "ADD שלום 👩‍💻\nsecond line\nship it @main\n/plan"
+        for bundle in ["com.t3tools.t3code", "net.imput.helium"] {
+            for capturesTarget in [true, false] {
+                let state = deliveryState(bundleIdentifier: bundle)
+                let context = "\(bundle), captured target: \(capturesTarget)"
+                var axAttempts = 0
+                var typed: [String] = []
+                var clipboardWrites: [String] = []
+                state.asyncDictationInsertionHandlerProvider = {
+                    { _, completion in
+                        axAttempts += 1
+                        // The live rich-host adapter starts and completes .notApplied.
+                        completion(.notApplied)
+                        return true
+                    }
+                }
+                state.textTypingHandler = { typed.append($0); return true }
+                state.pasteboardWriter = { clipboardWrites.append($0) }
+                state.simulatedPasteHandler = { XCTFail("History must type without Cmd+V: \(context)"); return false }
+                if capturesTarget { state.captureSettingsHistoryPasteTarget() }
+
+                state.repasteTranscript(text, source: "settings_history")
+
+                XCTAssertEqual(typed, [text], "Exactly one delivery, no fallback duplicate: \(context)")
+                XCTAssertEqual(axAttempts, 0, "Bypass both captured and fresh AX: \(context)")
+                XCTAssertEqual(clipboardWrites, [], context)
+                XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true, context)
+            }
+        }
+    }
+
+    func testT3AndHeliumOtherRepasteEntryPointsKeepTypedDeliveryWithoutAXOrClipboard() {
+        let text = "ADD שלום 👩‍💻\nsecond line"
+        let latestSources = ["shift_f5", "context_menu_latest", "menu_bar", "local_control"]
+        let historySources = ["context_menu_history", "bar_history", "unknown"]
+        for bundle in ["com.t3tools.t3code", "net.imput.helium"] {
+            for source in latestSources + historySources {
+                let state = deliveryState(bundleIdentifier: bundle)
+                var typed: [String] = []
+                state.asyncDictationInsertionHandlerProvider = { { _, completion in
+                    XCTFail("Re-paste must bypass AX: \(bundle), \(source)")
+                    completion(.notApplied)
+                    return true
+                } }
+                state.textTypingHandler = { typed.append($0); return true }
+                state.pasteboardWriter = { _ in XCTFail("Keep the clipboard: \(bundle), \(source)") }
+                state.handleEvent(["type": "transcription", "text": text])
+                if latestSources.contains(source) {
+                    state.repasteLastTranscript(source: source)
+                } else {
+                    state.repasteTranscript(text, source: source)
+                }
+                XCTAssertEqual(typed, [text], "\(bundle), \(source)")
+                XCTAssertEqual(state.latestReusableTranscript, text)
+                XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+            }
+        }
+    }
+
     func testFocusChangeDuringDeliveryDelayPostsNoTextAndRetainsTranscript() {
         let state = deliveryState(bundleIdentifier: "com.t3tools.t3code")
         var queued: [() -> Void] = []
