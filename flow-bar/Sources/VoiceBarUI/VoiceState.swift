@@ -3058,7 +3058,6 @@ public final class VoiceState {
                 pasteScheduler(pasteDelay) { [weak self] in
                     guard let self else { return }
                     if (plan == .autoPaste || allowAXInsertion),
-                       !TerminalPasteTargets.isTerminal(pasteTargetBundleID),
                        frontmostAppProvider()?.processIdentifier != pasteTarget.processIdentifier {
                         finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
                         return
