@@ -4,6 +4,35 @@ import AppKit
 import XCTest
 
 final class CommandModeAXHelperTests: XCTestCase {
+    func testPrewriteRejectionDeclinesWithoutCompletionOrWrites() {
+        for reason in ["ineligible", "missing_snapshot", "invalid_range", "target_changed", "selection_changed"] {
+            var reads = 0
+            var completions = 0
+            var writes = 0
+            let started = CommandModeAXHelper.beginSelectionLocalInsertion(
+                "ADD שלום 👩‍💻\nsecond line",
+                readSnapshot: {
+                    reads += 1
+                    if reason == "missing_snapshot" { return nil }
+                    let location = reason == "invalid_range" ? 99
+                        : reason == "selection_changed" && reads > 1 ? 0 : 4
+                    return CommandModeSelectionSnapshot(
+                        value: "seed", selectedRange: NSRange(location: location, length: 0)
+                    )
+                },
+                isEligible: { reason != "ineligible" },
+                isCurrentTarget: { reason != "target_changed" },
+                writeSelection: { _ in writes += 1; return true },
+                writeCaret: { _ in writes += 1; return true },
+                observeSettled: { _ in XCTFail("No observation without a write: \(reason)") },
+                completion: { _ in completions += 1 }
+            )
+            XCTAssertFalse(started, "No setter was invoked: \(reason)")
+            XCTAssertEqual(completions, 0, "Declined start has no completion: \(reason)")
+            XCTAssertEqual(writes, 0, reason)
+        }
+    }
+
     private func localInsertion(
         text: String = "ADD",
         value: String = "seed\n\n",
