@@ -56,7 +56,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       if (argv.some((arg) => arg.startsWith("--text="))) {
         const media = argv.find((arg) => arg.startsWith("--write-media="))!.split("=").slice(1).join("=");
         const metadata = argv.find((arg) => arg.startsWith("--write-metadata="))!.split("=").slice(1).join("=");
-        writeFileSync(media, "fake audio"); writeFileSync(metadata, JSON.stringify({ text: "Sentence", offset: 0, duration: 5000000 }));
+        const spoken = argv.find(a => a.startsWith("--text="))!.slice(7);
+        writeFileSync(media, "fake audio"); writeFileSync(metadata, spoken.split(/\s+/).map((text, i) => JSON.stringify({text, offset: i * 120000, duration: 100000})).join("\n"));
         const exit = deferred<number>(); const item = { argv, exit, killed: false }; synths.push(item); synthBarrier.push(item);
         if (!holdSynth || synths.length === 1) exit.resolve(0);
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
@@ -86,6 +87,22 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+
+  for (const engine of ["edge", "clone", "fallback"] as const) it(`SPK1 normalizes ${engine} long reads while display/history stay original`, async () => {
+    const display = "Play MP3 from INCIDENT-INVENTORY.md.";
+    const spoken = engine === "clone" ? "Play M P three from incident inventory dot M D." : "Play MP3 from incident inventory dot M D.";
+    const calls: string[] = [];
+    if (engine !== "edge") spies.push(spyOn(qwen, "synthesizeCloned").mockImplementation(async part => {
+      calls.push(part); return engine === "fallback" ? null : Buffer.from("fixture audio");
+    }));
+    autoPlay = true; await start(engine === "edge" ? "edge" : "clone", display).done;
+    if (engine === "fallback") expect(calls).toEqual(["Play M P three from incident inventory dot M D."]);
+    expect(engine === "clone" ? calls : synths.map(s => s.argv.find(a => a.startsWith("--text="))!.slice(7))).toEqual([spoken]);
+    expect(events.find(e => e.state === "speaking" && !e.long_read?.preparing).text).toBe(display);
+    expect(loadHistory()[0].text).toBe(display);
+    if (engine === "clone") expect(events.some(e => e.type === "subtitle")).toBe(false);
+    else expect(events.find(e => e.type === "subtitle").words.map((w: any) => w.text)).toEqual(display.split(" "));
+  });
 
   for (const cmd of ["stop", "cancel"] as const) it(`R1-1 ${cmd} ack waits for history and file disposal`, async () => {
     holdSynth = true; holdHistory = true;

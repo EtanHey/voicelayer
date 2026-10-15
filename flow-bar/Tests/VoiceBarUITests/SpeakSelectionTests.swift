@@ -2,6 +2,52 @@
 import XCTest
 
 final class SpeakSelectionTests: XCTestCase {
+    func testBusyRequestEndsWithItsSessionAndCannotReappearInANewSession() {
+        for (mode, phase) in [(VoiceMode.recording, HotkeyPhase.idle), (.transcribing, .idle),
+                              (.idle, .pressing), (.idle, .holding), (.idle, .awaitingSecondTap)] {
+            for endMode in [VoiceMode.idle, .speaking, .disconnected, .error] {
+                let state = VoiceState()
+                state.mode = mode
+                state.hotkeyPhase = phase
+                state.transcript = "Keep every synthetic word שלום 👩‍💻"
+                state.sendCommand = { _ in XCTFail("UI cleanup must send no command") }
+                state.selectionTextCaptureHandler = { _ in XCTFail("UI cleanup must not capture") }
+                state.speakSelection()
+                XCTAssertTrue(state.showsSelectionBusyNote)
+                state.hotkeyPhase = .idle
+                state.mode = endMode
+                XCTAssertFalse(state.showsSelectionBusyNote, "Session ended: \(mode)/\(phase) → \(endMode)")
+                state.mode = .idle
+                state.hotkeyPhase = .pressing
+                XCTAssertNil(VoiceBarPresentation.selectionBusyNote(isRequested: state.showsSelectionBusyNote,
+                    mode: state.mode, hotkeyPhase: state.hotkeyPhase), "No new Option+F5 request")
+                state.hotkeyPhase = .idle
+                state.mode = .recording
+                XCTAssertFalse(state.showsSelectionBusyNote, "A new recording must not inherit the request")
+                XCTAssertEqual(state.transcript, "Keep every synthetic word שלום 👩‍💻")
+            }
+        }
+    }
+
+    @MainActor
+    func testAnEndedSessionTimerCannotClearANewBusyRequest() async throws {
+        let state = VoiceState()
+        state.mode = .recording
+        state.sendCommand = { _ in XCTFail("UI timers must send no command") }
+        state.selectionTextCaptureHandler = { _ in XCTFail("UI timers must not capture") }
+        state.speakSelection()
+        try await Task.sleep(for: .milliseconds(1100))
+        state.mode = .idle
+        XCTAssertFalse(state.showsSelectionBusyNote)
+        state.mode = .recording
+        state.speakSelection()
+        try await Task.sleep(for: .milliseconds(1100))
+        XCTAssertTrue(state.showsSelectionBusyNote, "Old timer must not clear the new request")
+        try await Task.sleep(for: .milliseconds(1100))
+        XCTAssertFalse(state.showsSelectionBusyNote)
+        XCTAssertEqual(state.mode, .recording)
+    }
+
     func testCaptureFailuresHaveSpecificFeedbackAndNeverSpeak() {
         let state = VoiceState()
         state.sendCommand = { _ in XCTFail("capture failure must not speak") }
@@ -68,14 +114,82 @@ final class SpeakSelectionTests: XCTestCase {
         XCTAssertEqual(commands, [["cmd": "stop"]])
     }
 
-    func testRecordingTranscribingAndF5PreviewIgnoreSelection() {
+    func testBusySelectionReportsReasonWithoutChangingDictationOrCapturing() {
+        for (mode, phase, reason) in [(VoiceMode.recording, HotkeyPhase.idle, "recording"),
+                                      (.transcribing, .idle, "transcribing"),
+                                      (.idle, .pressing, "f5_preview"),
+                                      (.idle, .holding, "f5_preview"),
+                                      (.idle, .awaitingSecondTap, "f5_preview")] {
+            let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                                   recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in })
+            state.mode = mode
+            state.hotkeyPhase = phase
+            state.transcript = "Synthetic words still being dictated שלום…"
+            state.confirmationText = "Full previous transcript remains recoverable"
+            state.recordingMode = "ptt"
+            if mode == .recording { state.handleEvent(["type": "audio_level", "rms": 0.6]) }
+            let previousMode = state.previousMode
+            let captureLive = state.captureLive
+            let waveform = state.recordingWaveformLevels
+            let transcript = state.transcript
+            var captures = 0
+            var commands = 0
+            var events: [(String, [String: String])] = []
+            state.sendCommand = { _ in commands += 1 }
+            state.selectionTextCaptureHandler = { _ in captures += 1 }
+            state.diagnosticLogger = { events.append(($0, $1)) }
+            state.speakSelection()
+            XCTAssertEqual(events.count, 1, reason)
+            XCTAssertEqual(events.first?.0, "selection_busy", reason)
+            XCTAssertEqual(events.first?.1["reason"], reason)
+            XCTAssertEqual(events.first?.1["appKeyWindowTitle"], "not_recorded")
+            XCTAssertEqual(captures, 0, "no capture means no Copy event")
+            XCTAssertEqual(commands, 0, "no speech, Stop or recorder command")
+            XCTAssertEqual(state.mode, mode)
+            XCTAssertEqual(state.previousMode, previousMode)
+            XCTAssertEqual(state.hotkeyPhase, phase)
+            XCTAssertEqual(state.transcript, transcript)
+            XCTAssertEqual(state.recordingMode, "ptt")
+            XCTAssertEqual(state.captureLive, captureLive)
+            XCTAssertEqual(state.recordingWaveformLevels, waveform)
+            XCTAssertEqual(state.confirmationText, "Full previous transcript remains recoverable")
+            XCTAssertEqual(Set(events.first?.1.keys.map { $0 } ?? []), Set(["reason", "appKeyWindowTitle"]))
+        }
+    }
+
+    @MainActor
+    func testBusyNoteExpiresAndARepeatedPressRestartsItsTwoSeconds() async throws {
         let state = VoiceState()
-        state.sendCommand = { _ in XCTFail("must not send while dictating") }
-        state.selectionTextCaptureHandler = { _ in XCTFail("must not copy while dictating") }
-        for mode: VoiceMode in [.recording, .transcribing] { state.mode = mode; state.speakSelection() }
-        state.mode = .idle
-        state.hotkeyPhase = .pressing
+        state.mode = .recording
+        state.transcript = "Keep every synthetic word"
+        state.handleEvent(["type": "audio_level", "rms": 0.6])
+        state.sendCommand = { _ in XCTFail("busy expiry must not send commands") }
+        state.selectionTextCaptureHandler = { _ in XCTFail("busy expiry must not capture") }
         state.speakSelection()
+        XCTAssertTrue(state.showsSelectionBusyNote)
+        try await Task.sleep(for: .milliseconds(1100))
+        state.speakSelection()
+        try await Task.sleep(for: .milliseconds(1100))
+        XCTAssertTrue(state.showsSelectionBusyNote, "an old timer must not clear the repeated note early")
+        try await Task.sleep(for: .milliseconds(1100))
+        XCTAssertFalse(state.showsSelectionBusyNote)
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertTrue(state.captureLive)
+        XCTAssertEqual(state.transcript, "Keep every synthetic word")
+    }
+
+    func testBusyNoteDoesNotInterceptTheExistingStopAction() {
+        let state = VoiceState()
+        state.mode = .recording
+        state.isConnected = true
+        var commands: [String] = []
+        state.sendCommand = { commands.append($0["cmd"] as! String) }
+        state.selectionTextCaptureHandler = { _ in XCTFail("busy note must not capture") }
+        state.speakSelection()
+        XCTAssertTrue(commands.isEmpty)
+        state.stop()
+        XCTAssertEqual(commands, ["stop"])
+        XCTAssertEqual(state.mode, .transcribing)
     }
 
     func testEmptySelectionUsesExistingTransientConfirmation() {

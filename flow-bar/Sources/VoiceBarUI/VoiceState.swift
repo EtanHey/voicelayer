@@ -331,6 +331,7 @@ public final class VoiceState {
     public private(set) var previousMode: VoiceMode = .idle
     public var mode: VoiceMode = .idle {
         didSet {
+            clearSelectionBusyNoteIfSessionEnded()
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
@@ -675,7 +676,10 @@ public final class VoiceState {
     /// Global hotkey availability and live gesture hint state.
     public var hotkeyEnabled: Bool = false
     public var hotkeyPhase: HotkeyPhase = .idle {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPhase) }
+        didSet {
+            clearSelectionBusyNoteIfSessionEnded()
+            notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPhase)
+        }
     }
 
     /// Whether the pill is collapsed (idle for too long).
@@ -867,9 +871,30 @@ public final class VoiceState {
     public var selectionTextCaptureHandler: (@escaping (SelectionCaptureResult) -> Void) -> Void = { $0(.completed(nil)) }
     private var selectionCaptureInFlight = false
     private var selectionCaptureCancelled = false
+    public private(set) var showsSelectionBusyNote = false
+    @ObservationIgnored private var selectionBusyNoteTask: Task<Void, Never>?
+
+    private func clearSelectionBusyNoteIfSessionEnded() {
+        guard showsSelectionBusyNote,
+              VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) == nil else { return }
+        selectionBusyNoteTask?.cancel()
+        selectionBusyNoteTask = nil
+        showsSelectionBusyNote = false
+    }
 
     public func speakSelection() {
-        guard mode != .recording, mode != .transcribing, hotkeyPhase == .idle else { return }
+        if let reason = VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) {
+            showsSelectionBusyNote = true
+            selectionBusyNoteTask?.cancel()
+            selectionBusyNoteTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                self?.showsSelectionBusyNote = false
+                self?.selectionBusyNoteTask = nil
+            }
+            logDiagnostic("selection_busy", details: ["reason": reason.rawValue, "appKeyWindowTitle": "not_recorded"])
+            return
+        }
         if mode == .speaking {
             if selectionCaptureInFlight { selectionCaptureCancelled = true }
             sendCommand?(["cmd": "stop"])
@@ -1163,11 +1188,15 @@ public final class VoiceState {
         sendCommand?(["cmd": "health"])
     }
 
-    public func stop() {
+    public func stop(physicalPress: Bool = false) {
         if selectionCaptureInFlight { selectionCaptureCancelled = true }
         let shouldShowTranscribing = mode == .recording
         let shouldExitInterruptedPlayback = mode == .speaking
         var payload: [String: Any] = ["cmd": "stop"]
+        if physicalPress, shouldShowTranscribing, barInitiatedRecording,
+           !remoteOwnedRecording, recordingMode == "ptt" {
+            payload["physical_press"] = true
+        }
         if shouldExitInterruptedPlayback {
             payload["playback_elapsed_ms"] = playbackElapsedMilliseconds()
         }

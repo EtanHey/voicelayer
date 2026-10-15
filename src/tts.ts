@@ -52,7 +52,9 @@ import type {
   TextToSpeechOptions,
   TextToSpeechResult,
 } from "./soundlayer";
-import { applyPronunciation } from "./pronunciation";
+import { pronunciationRules } from "./pronunciation";
+import { projectSpeakableText } from "./speakable-text";
+import type { ProjectionRange } from "./tts/structured-speech";
 import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
 import { prepareSeekSlice, disposeSeekSlice } from "./tts/seek-audio";
@@ -484,56 +486,58 @@ export function alignWordBoundariesToDisplayText(
   displayText: string,
   spokenText: string,
   wordBoundaries: WordBoundary[],
+  ranges?: ProjectionRange[],
 ): WordBoundary[] {
-  if (displayText === spokenText || wordBoundaries.length === 0) {
-    return wordBoundaries;
+  if (displayText === spokenText || !wordBoundaries.length) return wordBoundaries;
+  const projection = ranges ? {speechText: spokenText, ranges} : projectSpeakableText(displayText, pronunciationRules(), "edge");
+  const tokens = Array.from(displayText.matchAll(/\S+/gu));
+  const unknown = (): WordBoundary[] => tokens.length === 1 ? [{
+    text: displayText, offset_ms: wordBoundaries[0].offset_ms,
+    duration_ms: wordBoundaries.at(-1)!.offset_ms + wordBoundaries.at(-1)!.duration_ms - wordBoundaries[0].offset_ms,
+  }] : [];
+  if (projection.speechText !== spokenText) return unknown();
+  // Engine punctuation tokenization may differ. Match the full letter/number
+  // stream before accepting any timings; a partial or stale stream is untimed.
+  const canonical = (text: string) => text.replace(/[^\p{L}\p{M}\p{N}]/gu, "").toLowerCase();
+  const positions: number[] = [];
+  let normalized = "";
+  for (let i = 0; i < spokenText.length;) {
+    const char = String.fromCodePoint(spokenText.codePointAt(i)!);
+    const value = canonical(char);
+    for (let j = 0; j < value.length; j++) positions.push(i);
+    normalized += value; i += char.length;
   }
-
-  const displayTokens = displayText.match(/\S+/gu) ?? [];
-  const spokenTokens = spokenText.match(/\S+/gu) ?? [];
-  if (displayTokens.length === 0) return wordBoundaries;
-
-  const collapseToDisplayText = (): WordBoundary[] => {
-    const first = wordBoundaries[0];
-    const last = wordBoundaries[wordBoundaries.length - 1];
-    return [{
-      offset_ms: first.offset_ms,
-      duration_ms: last.offset_ms + last.duration_ms - first.offset_ms,
-      text: displayText,
-    }];
-  };
-  if (spokenTokens.length !== wordBoundaries.length) {
-    return collapseToDisplayText();
-  }
-
-  const aligned: WordBoundary[] = [];
-  let boundaryIndex = 0;
-
-  for (const displayToken of displayTokens) {
-    const replacementTokenCount =
-      applyPronunciation(displayToken).match(/\S+/gu)?.length ?? 1;
-    const replacementBoundaries = wordBoundaries.slice(
-      boundaryIndex,
-      boundaryIndex + replacementTokenCount,
-    );
-    if (replacementBoundaries.length !== replacementTokenCount) {
-      return collapseToDisplayText();
+  const timing: ({start: number; end: number} | undefined)[] = tokens.map(() => undefined);
+  let cursor = 0;
+  for (const boundary of wordBoundaries) {
+    const value = canonical(boundary.text);
+    if (!value) continue;
+    if (normalized.slice(cursor, cursor + value.length) !== value) return unknown();
+    const start = positions[cursor], final = positions[cursor + value.length - 1];
+    const end = final + (spokenText.codePointAt(final)! > 0xffff ? 2 : 1);
+    cursor += value.length;
+    for (const range of projection.ranges) {
+      const left = Math.max(start, range.speech.start), right = Math.min(end, range.speech.end);
+      if (left >= right || range.display.start === range.display.end) continue;
+      const sourceStart = range.kind === "identity" ? range.display.start + left - range.speech.start : range.display.start;
+      const sourceEnd = range.kind === "identity" ? range.display.start + right - range.speech.start : range.display.end;
+      for (let i = 0; i < tokens.length; i++) {
+        if (tokens[i].index >= sourceEnd || tokens[i].index + tokens[i][0].length <= sourceStart) continue;
+        const previous = timing[i];
+        timing[i] = {start: Math.min(previous?.start ?? Infinity, boundary.offset_ms),
+          end: Math.max(previous?.end ?? 0, boundary.offset_ms + boundary.duration_ms)};
+      }
     }
-
-    const first = replacementBoundaries[0];
-    const last = replacementBoundaries[replacementBoundaries.length - 1];
-    aligned.push({
-      offset_ms: first.offset_ms,
-      duration_ms:
-        last.offset_ms + last.duration_ms - first.offset_ms,
-      text: displayToken,
-    });
-    boundaryIndex += replacementTokenCount;
   }
-
-  return boundaryIndex === wordBoundaries.length
-    ? aligned
-    : collapseToDisplayText();
+  if (cursor !== normalized.length) return unknown();
+  // Keep the existing wire's original whitespace-token identity. Omitted markdown
+  // tokens have zero duration at the next measured onset, never fabricated speech.
+  return tokens.map((token, i) => {
+    const measured = timing[i];
+    const offset = measured?.start ?? timing.slice(i + 1).find(Boolean)?.start ??
+      timing.slice(0, i).reverse().find(Boolean)?.end ?? 0;
+    return {text: token[0], offset_ms: offset, duration_ms: measured ? measured.end - measured.start : 0};
+  });
 }
 
 // --- Ring Buffer ---
@@ -1713,12 +1717,15 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
       seekFailed: (error) => broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true }),
       synthesize: async (displayChunk, _index, signal) => {
         const audioFile = ttsFilePath(process.pid, ttsCounter++);
-        const spoken = applyPronunciation(displayChunk);
+        const rules = pronunciationRules();
+        const projection = projectSpeakableText(displayChunk, rules, profile.engine);
+        const spoken = projection.speechText;
         try {
           const synthesizeEdge = async (voice: string, rate: string) => {
-            const chunk = await synthesizeEdgeChunk(spoken, voice, rate, audioFile,
+            const edge = profile.engine === "edge" ? projection : projectSpeakableText(displayChunk, rules, "edge");
+            const chunk = await synthesizeEdgeChunk(edge.speechText, voice, rate, audioFile,
               new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal);
-            chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, spoken, chunk.wordBoundaries);
+            chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, edge.speechText, chunk.wordBoundaries, edge.ranges);
             chunkVoices.set(audioFile, voice);
             chunkEngines.set(audioFile, "edge-tts");
             return chunk;
@@ -1888,9 +1895,6 @@ export async function speak(
   // form. Keep these values separate for the remainder of the pipeline.
   const displayText = text;
 
-  // Apply pronunciation corrections before any TTS engine
-  const spokenText = applyPronunciation(displayText);
-
   // Check if TTS is disabled
   if (isTTSDisabled()) {
     console.error("[voicelayer] TTS disabled via flag file — skipping speech");
@@ -1910,6 +1914,11 @@ export async function speak(
     console.error(`[voicelayer] ${warning}`);
     resolved = {voice: TTS_DEFAULTS.voice, engine: "edge-tts", warning};
   }
+  // Keep engine-specific text and ranges together, including clone→Edge fallback.
+  const rules = pronunciationRules();
+  const projection = projectSpeakableText(displayText, rules, resolved.engine === "cloned" ? "clone" : "edge");
+  const spokenText = projection.speechText;
+  const edgeProjection = resolved.engine === "edge-tts" ? projection : projectSpeakableText(displayText, rules, "edge");
   const requestedClone = profile.engine === "clone" || resolved.engine === "cloned";
   const cloneRate = options?.rate ??
     (profile.engine === "clone" || profile.rateSource === "environment" ? profile.rate : undefined);
@@ -1958,11 +1967,12 @@ export async function speak(
   ) {
     audioVoice = resolved.fallbackVoice || defaultVoice();
     return speakWithEdgeTTS(
-      spokenText,
+      edgeProjection.speechText,
       resolved.fallbackVoice || defaultVoice(),
       options,
       resolved.warning,
       displayText,
+      edgeProjection.ranges,
     );
   }
 
@@ -2074,21 +2084,23 @@ export async function speak(
     );
     audioVoice = resolved.fallbackVoice || defaultVoice();
     return speakWithEdgeTTS(
-      spokenText,
+      edgeProjection.speechText,
       resolved.fallbackVoice || defaultVoice(),
       options,
       undefined,
       displayText,
+      edgeProjection.ranges,
     );
   }
 
   // Tier 2: Preset/default → edge-tts
   return speakWithEdgeTTS(
-    spokenText,
+    edgeProjection.speechText,
     resolved.voice,
     options,
     resolved.warning,
     displayText,
+    edgeProjection.ranges,
   );
 }
 
@@ -2110,6 +2122,7 @@ async function speakWithEdgeTTS(
   },
   warning?: string,
   displayText: string = spokenText,
+  ranges?: ProjectionRange[],
 ): Promise<TextToSpeechResult> {
   // Profile file rates enter as explicit options; otherwise preserve mode > env > default.
   let rate =
@@ -2186,6 +2199,7 @@ async function speakWithEdgeTTS(
     displayText,
     spokenText,
     wordBoundaries,
+    ranges,
   );
 
   // Pass metadata to queue — broadcasting happens when audio actually starts

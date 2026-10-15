@@ -55,6 +55,7 @@ Settings… (⌘,) · Hide for 1 hour · — · Recent Transcriptions › ("2 mi
 - VoiceBar's trusted F5/tap socket field remains `press_to_talk=true`; do not rename or MCP-gate it.
 - Mouse buttons are kept (Etan ruling 3, 2026-09-24): side button 5 (CGEvent index 4; index 5 too) acts like F5, and button 4 (index 3) sends Return (`HotkeyManager.defaultTargetMouseButtons` / `defaultEnterMouseButtons`).
 - Stop signals: touch `/tmp/voicelayer-stop-{TOKEN}`, VAD silence (VAD mode), timeout (default 30s).
+- A native F5/side-button press stopping a locked VoiceBar PTT capture sends `physical_press: true`. Only its STT input may end 5 ms before one clear sharp transient in the final 350 ms (250 ms drain + 50 ms poll + 50 ms margin); padding cannot cross the window start. Missing/ambiguous transients keep the full input, bypassing the legacy silence trimmer for this opt-in path. This is an audio-relative approximation with accepted tail-clipping risk; the full archived WAV, release/legacy stops, Ask, VAD, timeouts and cancels keep their existing behavior.
 - Session booking uses `/tmp/voicelayer-session-{TOKEN}.lock`; stale locks are cleaned.
 
 ## Ring Buffer and Playback
@@ -79,6 +80,8 @@ Settings… (⌘,) · Hide for 1 hour · — · Recent Transcriptions › ("2 mi
 - `voicelayer vocab ...` to add/list/remove STT vocabulary aliases.
 
 ## Key Paths
+Recordings backup: `bash scripts/backup-recordings-icloud.sh [--dry-run]` copies stable (≥10 minutes) sessions from `~/.local/share/voicelayer/recordings/` to iCloud Drive `VoiceLayer/recordings/<hostname-short>/`, preserving changed files as suffixed versions and reserving 25 GB free. Requires Python 3 and rsync; logs to `~/Library/Logs/voicelayer/recordings-backup.log`. `bash launchd/install.sh --recordings-backup` renders the nightly 02:00 LaunchAgent without loading it; after a dry run, load explicitly with `launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.voicelayer.recordings-backup.plist"`. No eviction; an iCloud-local copy is not proof of upload. The independent Wispr export job stays in place.
+
 - Socket: `/tmp/voicelayer.sock` (fixed path — Voice Bar listens, MCP connects)
 - Thinking log: `/tmp/voicelayer-thinking.md`
 - TTS/mic disable flags: `/tmp/.claude_tts_disabled`, `/tmp/.claude_mic_disabled`

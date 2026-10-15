@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, rmSync, mkdtempSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { hasClonedProfile } from "./tts/qwen3";
+import { hasClonedProfile, readReadyClonedProfile } from "./tts/qwen3";
 import { STATE_DIR } from "./paths";
 
 export type TTSEnv = Record<string, string | undefined>;
@@ -46,6 +46,11 @@ export function readTTSSettings(env: TTSEnv = process.env): TTSSettings {
     // Never rewrite a user's file during a health poll or delete their private assets.
     for (const kind of ["short", "long"] as const) {
       const profile = settings.profiles?.[kind];
+      if (profile?.voice && /^(?:ben|ben-c1)$/i.test(profile.voice) && profile.engine !== "edge"
+          && readReadyClonedProfile("ben-c1", env.HOME || homedir())) {
+        Object.assign(profile, {engine: "clone", voice: "ben-c1"});
+        continue;
+      }
       if (profile?.voice && /^(?:theo(?:[-_].*)?|huberman(?:[-_].*)?|ben(?:[-_].*)?)$/i.test(profile.voice)
           && profile.voice !== "theo-c4s" && profile.engine !== "edge") {
         const theoInstalled = existsSync(join(env.HOME || homedir(), ".voicelayer", "voices", "theo-c4s", "profile.yaml"));
