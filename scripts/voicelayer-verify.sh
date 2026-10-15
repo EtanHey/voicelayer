@@ -315,9 +315,25 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   rm -f "$artifact"
   # shellcheck disable=SC2329 # Invoked indirectly by the trap below.
   cleanup_corpus_verify() {
+    local status=$? logs_dir
+    # The runner flushes combined daemon stdout/stderr before returning. Retain
+    # failures by exact head, but discard staged recordings and ephemeral state.
+    if [ "$status" -ne 0 ] && [ -f "$corpus_work_dir/daemon.log" ]; then
+      if mkdir -p "$VERIFY_DIR" &&
+        logs_dir="$(mktemp -d "$VERIFY_DIR/failed-corpus-${safe_branch}-${short_sha}.XXXXXX")" &&
+        cp "$corpus_work_dir/daemon.log" "$logs_dir/daemon.log"; then
+        printf '[voicelayer-verify] failed-run daemon log retained: %s/daemon.log\n' "$logs_dir" >&2
+      else
+        printf '[voicelayer-verify] log archival failed; retaining work directory: %s\n' "$corpus_work_dir" >&2
+        return "$status"
+      fi
+    fi
     rm -rf "$corpus_work_dir"
+    return "$status"
   }
-  trap cleanup_corpus_verify EXIT INT TERM
+  trap cleanup_corpus_verify EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   export VOICELAYER_SOCKET_PATH="$corpus_work_dir/voicebar.sock"
   export VOICELAYER_MCP_SOCKET_PATH="$corpus_work_dir/mcp.sock"

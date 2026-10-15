@@ -229,6 +229,7 @@ describe("voicelayer-verify.sh", () => {
         'test "$VOICELAYER_MCP_SOCKET_PATH" = "$QA_VOICE_MCP_SOCKET_PATH"',
         'test "$VOICELAYER_SOCKET_PATH" = "$VOICELAYER_VERIFY_WORK_DIR/voicebar.sock"',
         'printf "corpus:%s:%s:%s:%s\\n" "$1" "$2" "$3" "$VOICELAYER_SOCKET_PATH" >> "$RUNNER_LOG"',
+        'printf "successful daemon output\\n" > "$VOICELAYER_VERIFY_WORK_DIR/daemon.log"',
         'CORPUS_RUNNER_ACTIVE=1 "$VOICELAYER_VERIFY_INTERACTION_RUNNER"',
         "",
       ].join("\n"),
@@ -276,6 +277,7 @@ describe("voicelayer-verify.sh", () => {
     );
     expect(runnerOutput).toContain(`corpus:2:${corpusRoot}:${corpusManifest}:`);
     expect(runnerOutput).toContain("interaction:");
+    expect(existsSync(runnerOutput.match(/corpus:2:.*:([^\n]+)\/voicebar.sock/)![1])).toBe(false);
 
     const artifacts = readdirSync(join(tempRoot, ".verified"));
     expect(artifacts).toHaveLength(1);
@@ -295,6 +297,35 @@ describe("voicelayer-verify.sh", () => {
     expect(pidAfter).not.toBeNull();
     expect(pidAfter?.[1]).toBe(pidBefore?.[1]);
   });
+
+  for (const stage of ["corpus", "interaction", "proof"] as const) {
+    test(`FX-3 retains failed ${stage} daemon logs with the original failure status, without retaining staged audio`, async () => {
+      const changed = join(tempRoot, "changed.txt"), runner = join(tempRoot, "corpus-runner.sh");
+      writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+      writeFileSync(runner, [
+        "#!/usr/bin/env bash", "set -euo pipefail",
+        'printf "%s\\n" "$VOICELAYER_VERIFY_WORK_DIR" > "$RUNNER_LOG"',
+        'printf "daemon stdout\\ndaemon stderr\\n" > "$VOICELAYER_VERIFY_WORK_DIR/daemon.log"',
+        'printf "private audio" > "$VOICELAYER_VERIFY_WORK_DIR/staged.wav"',
+        stage === "corpus" ? "exit 7" : stage === "interaction" ? "bash -c 'exit 9'" :
+          'printf "pass\\n" > "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"',
+        "",
+      ].join("\n"), { mode: 0o755 });
+      const result = run(["bash", scriptPath, "--corpus", "1"], { env: {
+        RUNNER_LOG: join(tempRoot, "runner.log"), VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed, VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+      } });
+      expect(result.exitCode).toBe(stage === "corpus" ? 7 : stage === "interaction" ? 9 : 1);
+      expect(existsSync(join(tempRoot, ".verified"))).toBe(true);
+      const entries = readdirSync(join(tempRoot, ".verified"));
+      expect(entries).toHaveLength(1); expect(entries[0]).toStartWith("failed-corpus-");
+      const retained = join(tempRoot, ".verified", entries[0]);
+      expect(readdirSync(retained)).toEqual(["daemon.log"]);
+      expect(await Bun.file(join(retained, "daemon.log")).text()).toBe("daemon stdout\ndaemon stderr\n");
+      expect(text(result.stderr)).toContain(retained);
+      expect(existsSync((await Bun.file(join(tempRoot, "runner.log")).text()).trim())).toBe(false);
+    });
+  }
 
   test("refuses to certify a corpus run that killed the live whisper-server", () => {
     run(["git", "checkout", "-b", "feature/corpus-whisper-pid-hop"]);

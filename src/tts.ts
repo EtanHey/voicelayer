@@ -386,7 +386,7 @@ function inferBoundaryEndMs(wordBoundaries: WordBoundary[]): number {
   );
 }
 
-function probeAudioDurationMs(audioFile: string): number | null {
+function probeAudioDurationMs(audioFile: string, timeoutMs?: number): number | null {
   try {
     const ffprobe = resolveBinary("ffprobe");
     if (!ffprobe) return null;
@@ -399,7 +399,7 @@ function probeAudioDurationMs(audioFile: string): number | null {
       "-of",
       "default=noprint_wrappers=1:nokey=1",
       audioFile,
-    ]);
+    ], { timeout: timeoutMs });
     if (probe.exitCode !== 0) return null;
 
     const durationSeconds = Number(
@@ -794,6 +794,8 @@ interface ActivePlayback {
   job: PlaybackJob;
   proc: ReturnType<typeof Bun.spawn>;
   startedAt: number;
+  watchdog?: ReturnType<typeof setTimeout>;
+  watchdogTimedOut?: boolean;
 }
 
 const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
@@ -806,6 +808,8 @@ const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
 
 const LOW_PRIORITY_TTL_MS = 10_000;
 const NORMAL_PRIORITY_TTL_MS = 30_000;
+// Allow player startup/teardown without mistaking synthesis or decoder time for playback.
+const PLAYER_WATCHDOG_MARGIN_MS = 5_000;
 let playbackIdCounter = 0;
 
 function nextPlaybackId(): string {
@@ -1302,6 +1306,9 @@ class PlaybackQueueManager {
         status: "marked",
       });
     }
+    const expectedDurationMs = next.metadata?.durationMs;
+    const durationMs = expectedDurationMs && Number.isFinite(expectedDurationMs) && expectedDurationMs > 0
+      ? expectedDurationMs : probeAudioDurationMs(next.audioFile, 1_000);
     try {
       assertSpeakerClear();
     } catch (err) {
@@ -1332,6 +1339,7 @@ class PlaybackQueueManager {
 
     next.lifecycle.track(proc.exited);
     this.current = { job: next, proc, startedAt: Date.now() - (next.metadata?.localOffsetMs ?? 0) };
+    this.armPlayerWatchdog(this.current, durationMs);
     if (next.metadata) {
       const durationMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ?? next.metadata.durationMs;
       broadcast({
@@ -1363,6 +1371,7 @@ class PlaybackQueueManager {
 
   private finish(job: PlaybackJob, proc: ActivePlayback["proc"], succeeded: boolean) {
     if (this.current?.proc !== proc || this.current.job !== job) return;
+    clearTimeout(this.current.watchdog);
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
     const elapsedMs = Date.now() - this.current.startedAt;
     this.stopProgressTimer();
@@ -1531,11 +1540,45 @@ class PlaybackQueueManager {
     return Math.max(0, Math.min(1, elapsedMs / durationMs));
   }
 
-  private terminate(active: ActivePlayback): void {
+  private armPlayerWatchdog(active: ActivePlayback, durationMs: number | null): void {
+    if (!durationMs || !Number.isFinite(durationMs) || durationMs <= 0) return;
+    const remainingMs = Math.max(0, durationMs - (active.job.metadata?.localOffsetMs ?? 0));
+    const budgetMs = remainingMs + PLAYER_WATCHDOG_MARGIN_MS;
+    // Node/Bun overflow very long timers to 1 ms; never turn that into an early kill.
+    if (!Number.isFinite(budgetMs) || budgetMs > 2_147_483_647) return;
+    const generation = active.job.lifecycle.generation;
+    active.watchdog = setTimeout(() => {
+      if (active.watchdogTimedOut || (this.current !== active && this.terminating.get(active.proc.pid) !== active)) return;
+      active.watchdogTimedOut = true;
+      if (this.current === active) {
+        if (this.seekPreparation?.job === active.job) this.cancelSeekPreparation();
+        this.current = null;
+        this.stopProgressTimer();
+        this.terminate(active, "SIGKILL");
+        completeJob(active.job, buildPlaybackOutcome(active.job, "failed", "player-error", Date.now() - active.startedAt));
+      } else {
+        // A cancelled/replayed player can ignore SIGTERM. Keep its reap fence held.
+        try { active.proc.kill("SIGKILL"); } catch {}
+      }
+      // A seek decoder can outlive the player; only the terminal work barrier
+      // proves quiet. A continuing Replay retains its normal completion edge.
+      if (active.job.completed) void active.job.lifecycle.playerExited.then(
+        () => broadcastPlaybackIdleIfSpeakerClear(), () => {},
+      );
+      const message = `Playback watchdog: ${active.job.id} generation ${generation} exceeded ${remainingMs}ms + ${PLAYER_WATCHDOG_MARGIN_MS}ms margin; forcing SIGKILL`;
+      console.warn(`[voicelayer] ${message}`);
+      broadcast({ type: "error", message, recoverable: true });
+      this.emitQueueSnapshot();
+      this.resolveIfIdle();
+      this.processNext();
+    }, budgetMs);
+  }
+
+  private terminate(active: ActivePlayback, signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): void {
     const pid = active.proc.pid;
     this.terminating.set(pid, active);
     try {
-      active.proc.kill("SIGTERM");
+      active.proc.kill(signal);
     } catch {}
     void active.proc.exited.then(
       () => this.finishTermination(pid, active),
@@ -1545,6 +1588,7 @@ class PlaybackQueueManager {
 
   private finishTermination(pid: number, active: ActivePlayback): void {
     if (this.terminating.get(pid) !== active) return;
+    clearTimeout(active.watchdog);
     this.terminating.delete(pid);
     if (this.restartAfterTermination === active.job && !active.job.completed) {
       this.restartAfterTermination = null;
