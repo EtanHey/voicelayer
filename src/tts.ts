@@ -47,7 +47,6 @@ import type {
 } from "./socket-protocol";
 import type {
   PlaybackController,
-  PlaybackHandle,
   PlaybackMetadata as SoundLayerPlaybackMetadata,
   TextToSpeechBackend,
   TextToSpeechOptions,
@@ -57,6 +56,8 @@ import { applyPronunciation } from "./pronunciation";
 import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
 import { prepareSeekSlice, disposeSeekSlice } from "./tts/seek-audio";
+import { PlaybackLifecycle, type PlaybackScope, type QueuedPlaybackHandle } from "./tts/playback-lifecycle";
+export type { PlaybackScope, QueuedPlaybackHandle } from "./tts/playback-lifecycle";
 import { runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
@@ -658,6 +659,7 @@ async function playClonedAudio(
     mode?: string;
     waitForPlayback?: boolean;
     onPlaybackStart?: (startedAtMs: number) => void;
+    onPlaybackQueued?: (handle: QueuedPlaybackHandle) => void;
     onPlaybackComplete?: (outcome: PlaybackOutcomeEvent) => void;
     captureAudioArtifact?: boolean;
   },
@@ -686,7 +688,7 @@ async function playClonedAudio(
     try { unlinkSync(ttsFile); } catch {}
     ttsFile = adjusted;
   }
-  let proc: PlaybackHandle;
+  let proc: QueuedPlaybackHandle;
   let audioArtifact: TextToSpeechResult["audioArtifact"];
   try {
     assertSpeakerClear();
@@ -703,6 +705,7 @@ async function playClonedAudio(
       durationMs,
       nextState: options?.mode === "converse" ? "recording" : undefined,
       onStarted: options?.onPlaybackStart,
+      onQueued: options?.onPlaybackQueued,
       onCompleted: options?.onPlaybackComplete,
     });
   } catch (err) {
@@ -711,11 +714,11 @@ async function playClonedAudio(
     } catch {}
     throw err;
   }
-  proc.exited.then(() => {
+  void proc.playerExited.then(() => {
     try {
       unlinkSync(ttsFile);
     } catch {}
-  });
+  }, () => {});
   const playbackOutcome = options?.waitForPlayback
     ? await proc.exited
     : undefined;
@@ -733,7 +736,7 @@ async function playClonedAudio(
  * Phase 8 queue semantics:
  * 1. Speaking/subtitle broadcasts happen INSIDE the queue when playback starts.
  * 2. Queue depth is broadcast to VoiceBar for visible state.
- * 3. Critical items barge in: kill current playback and discard stale pending speech.
+ * 3. Critical items preempt only the current owner; unrelated pending speech survives.
  * 4. Low/background chatter collapses so bursts do not create an audio backlog.
  */
 /** Metadata for deferred broadcasting — fires when playback actually starts. */
@@ -760,6 +763,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
 
 interface PlaybackJob {
   id: string;
+  lifecycle: PlaybackLifecycle;
   audioFile: string;
   sliceFile?: string;
   skipAmplitudeDecode?: boolean;
@@ -875,7 +879,8 @@ function buildPlaybackOutcome(
 function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
   if (job.completed) return;
   job.completed = true;
-  if (job.sliceFile) { try { unlinkSync(job.sliceFile); } catch {} job.sliceFile = undefined; }
+  job.lifecycle.complete();
+  void job.lifecycle.playerExited.then(() => { disposeSeekSlice(job.sliceFile); job.sliceFile = undefined; }, () => {});
   broadcast(outcome);
   try {
     job.metadata?.onCompleted?.(outcome);
@@ -888,6 +893,7 @@ function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
 }
 
 class PlaybackQueueManager {
+  private jobs = new Map<string, PlaybackJob>();
   private pending: PlaybackJob[] = [];
   private preparing: { job: PlaybackJob; cancel: () => void } | null = null;
   private current: ActivePlayback | null = null;
@@ -902,7 +908,7 @@ class PlaybackQueueManager {
   enqueue(
     audioFile: string,
     metadata?: PlaybackMetadata,
-  ): PlaybackHandle {
+  ): QueuedPlaybackHandle {
     const priority = metadata?.priority ?? "normal";
     let resolveExited!: (outcome: PlaybackOutcomeEvent) => void;
     const exited = new Promise<PlaybackOutcomeEvent>((resolve) => {
@@ -911,6 +917,7 @@ class PlaybackQueueManager {
 
     const job: PlaybackJob = {
       id: nextPlaybackId(),
+      lifecycle: new PlaybackLifecycle(),
       audioFile,
       sliceFile: metadata?.seekSliceFile,
       skipAmplitudeDecode: metadata?.isSeek,
@@ -922,10 +929,19 @@ class PlaybackQueueManager {
       completed: false,
       exited,
     };
+    this.jobs.set(job.id, job);
+    void job.lifecycle.playerExited.then(() => this.jobs.delete(job.id), () => this.jobs.delete(job.id));
+    const handle: QueuedPlaybackHandle = { id: job.id, exited,
+      get generation() { return job.lifecycle.generation; },
+      playerExited: job.lifecycle.playerExited,
+      waitForPlayerExit: () => job.lifecycle.waitForPlayerExit() };
+    try { metadata?.onQueued?.(handle); }
+    catch (error) { console.error(`[voicelayer] Playback queue observer failed: ${String(error)}`); }
+    if (job.completed) return handle;
 
     if (priority === "critical") {
       this.bargeIn(job);
-      return { id: job.id, exited };
+      return handle;
     }
 
     this.evictExpired();
@@ -933,7 +949,37 @@ class PlaybackQueueManager {
     this.insert(job);
     this.emitQueueSnapshot();
     this.processNext();
-    return { id: job.id, exited };
+    return handle;
+  }
+
+  cancel(scope: PlaybackScope, elapsedMs?: number, reason: PlaybackOutcomeReason = "stopped"): boolean {
+    const job = this.jobs.get(scope.id);
+    if (!job || job.completed || !job.lifecycle.matches(scope)) return false;
+    if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
+    const active = this.current?.job === job ? this.current
+      : [...this.terminating.values()].find(candidate => candidate.job === job);
+    if (this.current?.job === job) { this.current = null; this.stopProgressTimer(); this.terminate(active!); }
+    if (this.preparing?.job === job) {
+      const preparation = this.preparing; this.preparing = null; preparation.cancel();
+    }
+    if (this.restartAfterTermination === job) this.restartAfterTermination = null;
+    if (this.replayPreparingJob === job) this.replayPreparingJob = null;
+    this.pending = this.pending.filter(candidate => candidate !== job);
+    completeJob(job, buildPlaybackOutcome(job, active ? "interrupted" : "skipped", reason,
+      this.normalizedPlaybackElapsed(elapsedMs) ?? (active ? Date.now() - active.startedAt : 0)));
+    this.emitQueueSnapshot(); this.resolveIfIdle(); this.processNext();
+    return true;
+  }
+
+  cancelUtterance(id: string, elapsedMs?: number): boolean {
+    let cancelled = false;
+    for (const job of this.jobs.values()) {
+      if (job.metadata?.longRead?.id === id) {
+        const localMs = elapsedMs === undefined ? undefined : Math.max(0, elapsedMs - job.metadata.longRead.chunk_start_ms);
+        cancelled = this.cancel({ id: job.id }, localMs) || cancelled;
+      }
+    }
+    return cancelled;
   }
 
   async awaitDrained(): Promise<void> {
@@ -944,7 +990,9 @@ class PlaybackQueueManager {
   }
 
   stop(playbackElapsedMs?: number): boolean {
-    this.cancelSeekPreparation();
+    const seekJob = this.seekPreparation?.job;
+    if (seekJob && (this.current?.job === seekJob || this.preparing?.job === seekJob ||
+      this.restartAfterTermination === seekJob || this.pending.includes(seekJob))) this.cancelSeekPreparation();
     const active = this.current;
     if (playbackElapsedMs !== undefined) {
       playbackElapsedMs = Math.max(0, playbackElapsedMs - (active?.job.metadata?.longRead?.chunk_start_ms ?? 0));
@@ -1026,6 +1074,7 @@ class PlaybackQueueManager {
     const active = this.current;
     if (!active) return false;
 
+    active.job.lifecycle.generation++;
     this.current = null;
     this.pending = this.pending.filter((job) => {
       const isDuplicateReplay =
@@ -1076,8 +1125,11 @@ class PlaybackQueueManager {
           }
         }
       })();
+      job.lifecycle.track(conversion);
       this.conversions.add(conversion);
-      void conversion.then(() => this.conversions.delete(conversion));
+      void conversion.then(() => {
+        this.conversions.delete(conversion); this.emitQueueSnapshot(); this.resolveIfIdle(); this.processNext();
+      });
     }
     return { outcome: "accept", offset_ms: offset, clamped: offsetMs > duration };
   }
@@ -1087,6 +1139,7 @@ class PlaybackQueueManager {
       disposeSeekSlice(slice); return;
     }
     disposeSeekSlice(job.sliceFile);
+    job.lifecycle.generation++;
     job.sliceFile = slice;
     job.skipAmplitudeDecode = true;
     job.metadata!.localOffsetMs = offset;
@@ -1102,20 +1155,7 @@ class PlaybackQueueManager {
 
   interrupt(id: string): void {
     // Long-read cursor replacement settles this chunk without aborting synthesis.
-    if (this.current?.job.id === id) {
-      const active = this.current; this.current = null; this.stopProgressTimer();
-      this.terminate(active);
-      completeJob(active.job, buildPlaybackOutcome(active.job, "interrupted", "stopped", Date.now() - active.startedAt));
-    } else if (this.preparing?.job.id === id) {
-      const preparing = this.preparing; this.preparing = null; preparing.cancel();
-      completeJob(preparing.job, buildPlaybackOutcome(preparing.job, "skipped", "stopped"));
-    } else {
-      this.pending = this.pending.filter(job => {
-        if (job.id !== id) return true;
-        completeJob(job, buildPlaybackOutcome(job, "skipped", "stopped")); return false;
-      });
-    }
-    this.processNext();
+    this.cancel({ id });
   }
 
   private refuseQueuedPlayback(job: PlaybackJob, error: unknown): void {
@@ -1136,7 +1176,7 @@ class PlaybackQueueManager {
   }
 
   private processNext() {
-    if (this.current || this.preparing || this.terminating.size > 0) return;
+    if (this.current || this.preparing || this.terminating.size > 0 || this.orphanedWorkCount() > 0) return;
 
     while (this.pending.length > 0) {
       const next = this.pending.shift()!;
@@ -1170,12 +1210,14 @@ class PlaybackQueueManager {
       const extraction = startPlaybackAmplitudeEnvelopeExtraction(
         next.audioFile,
       );
+      next.lifecycle.track(extraction.result);
       const preparation = { job: next, cancel: extraction.cancel };
       this.preparing = preparation;
       this.emitQueueSnapshot();
       void extraction.result.then(
         (playbackAmplitude) => {
           if (this.preparing === preparation) this.startPreparedPlayback(next, playbackAmplitude);
+          else { this.emitQueueSnapshot(); this.resolveIfIdle(); this.processNext(); }
         },
       );
       return;
@@ -1248,6 +1290,7 @@ class PlaybackQueueManager {
       return;
     }
 
+    next.lifecycle.track(proc.exited);
     this.current = { job: next, proc, startedAt: Date.now() - (next.metadata?.localOffsetMs ?? 0) };
     if (next.metadata) {
       const durationMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ?? next.metadata.durationMs;
@@ -1271,15 +1314,15 @@ class PlaybackQueueManager {
 
     proc.exited
       .then((exitCode) => {
-        this.finish(next, proc.pid, exitCode === 0);
+        this.finish(next, proc, exitCode === 0);
       })
       .catch(() => {
-        this.finish(next, proc.pid, false);
+        this.finish(next, proc, false);
       });
   }
 
-  private finish(job: PlaybackJob, pid: number, succeeded: boolean) {
-    if (this.current?.proc.pid !== pid) return;
+  private finish(job: PlaybackJob, proc: ActivePlayback["proc"], succeeded: boolean) {
+    if (this.current?.proc !== proc || this.current.job !== job) return;
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
     const elapsedMs = Date.now() - this.current.startedAt;
     this.stopProgressTimer();
@@ -1301,57 +1344,10 @@ class PlaybackQueueManager {
   }
 
   private bargeIn(job: PlaybackJob) {
-    this.cancelSeekPreparation();
-    // ASYNC SAFETY: Cancel the decoder and clear its ownership before any late
-    // result can attempt to start playback.
-    const active = this.current;
-    const preparing = this.preparing;
-    const restarting = this.restartAfterTermination;
-    this.current = null;
-    this.preparing = null;
-    this.restartAfterTermination = null;
-    this.replayPreparingJob = null;
-    preparing?.cancel();
-
-    for (const queued of this.pending.splice(0)) {
-      completeJob(
-        queued,
-        buildPlaybackOutcome(queued, "skipped", "barge-in"),
-      );
-    }
-    if (preparing) {
-      completeJob(
-        preparing.job,
-        buildPlaybackOutcome(preparing.job, "skipped", "barge-in"),
-      );
-    }
-
-    if (active) {
-      const outcome = buildPlaybackOutcome(
-        active.job,
-        "interrupted",
-        "barge-in",
-        Date.now() - active.startedAt,
-      );
-      this.terminate(active);
-      completeJob(active.job, outcome);
-    }
-    if (restarting) {
-      const terminatingActive = Array.from(this.terminating.values()).find(
-        (candidate) => candidate.job === restarting,
-      );
-      completeJob(
-        restarting,
-        buildPlaybackOutcome(
-          restarting,
-          "interrupted",
-          "barge-in",
-          terminatingActive ? Date.now() - terminatingActive.startedAt : 0,
-        ),
-      );
-    }
-
-    this.pending = [job];
+    const owner = this.current?.job ?? this.preparing?.job ?? this.restartAfterTermination;
+    // Insert first so cancelling preparation cannot promote unrelated pending speech.
+    this.insert(job);
+    if (owner) this.cancel({ id: owner.id }, undefined, "barge-in");
     this.stopProgressTimer();
     this.emitQueueSnapshot();
     this.processNext();
@@ -1459,8 +1455,14 @@ class PlaybackQueueManager {
       this.pending.length +
       (this.preparing ? 1 : 0) +
       (this.current ? 1 : 0) +
-      this.terminating.size
+      this.terminating.size + this.orphanedWorkCount()
     );
+  }
+
+  private orphanedWorkCount(): number {
+    const admitted = new Set([...this.pending, this.current?.job, this.preparing?.job,
+      ...[...this.terminating.values()].map(active => active.job)]);
+    return [...this.jobs.values()].filter(job => job.completed && job.lifecycle.hasWork && !admitted.has(job)).length;
   }
 
   getDepthForHealth() {
@@ -1528,7 +1530,7 @@ const playbackQueueManager = new PlaybackQueueManager();
 export function playAudioNonBlocking(
   audioFile: string,
   metadata?: PlaybackMetadata,
-): PlaybackHandle {
+): QueuedPlaybackHandle {
   assertSpeakerClear();
   return playbackQueueManager.enqueue(audioFile, metadata);
 }
@@ -1589,39 +1591,54 @@ export function seekPlayback(offsetMs: number): SeekResult {
 
 /** Stop current playback if any. */
 export function stopPlayback(playbackElapsedMs?: number): boolean {
-  const hadLongRead = cancelLongRead();
+  const hadLongRead = cancelLongRead(playbackElapsedMs);
   const stopped = playbackQueueManager.stop(playbackElapsedMs);
   if (hadLongRead && !stopped) broadcastPlaybackIdleIfSpeakerClear();
   return hadLongRead || stopped;
 }
 
+/** Internal cancellation is utterance-scoped; foreign, terminal and stale intents are no-ops. */
+export function cancelPlayback(scope: PlaybackScope, playbackElapsedMs?: number): boolean {
+  const read = longReads.get(scope.id);
+  if (read) {
+    if (scope.generation !== undefined && scope.generation !== read.generation) return false;
+    return cancelLongRead(playbackElapsedMs, read);
+  }
+  return playbackQueueManager.cancel(scope, playbackElapsedMs);
+}
+
 export interface LongReadProfile { requestedClone?: boolean; kind?: "short" | "long"; engine: "edge" | "clone"; voice: string; rate: string; fallbackVoice?: string }
 export interface LongReadHandle {
   id: string; done: Promise<void>;
+  readonly generation: number;
+  playerExited: Promise<void>;
   started: Promise<{ error?: string }>;
   completion: Promise<{ error?: string }>;
 }
-let activeLongRead: (LongReadHandle & { controller: AbortController; seek?: LongReadSeek }) | undefined;
+type OwnedLongRead = LongReadHandle & { controller: AbortController; seek?: LongReadSeek };
+let activeLongRead: OwnedLongRead | undefined;
+// Retention registry is separate from the audible owner; P12 can detach a parked read.
+const longReads = new Map<string, OwnedLongRead>();
 const cancelledLongReadTeardowns = new Set<Promise<void>>();
 let longReadCounter = 0;
 
 /** Preempt only a long read; ordinary short speech retains its existing queue policy. */
 export function preemptLongRead(): boolean {
   if (!cancelLongRead()) return false;
-  playbackQueueManager.stop();
-  broadcastPlaybackIdleIfSpeakerClear();
+  if (playbackQueueManager.getDepthForHealth() === 0) broadcastPlaybackIdleIfSpeakerClear();
   return true;
 }
 
-function cancelLongRead(): boolean {
-  if (!activeLongRead) return false;
-  const done = activeLongRead.done;
+function cancelLongRead(playbackElapsedMs?: number, read = activeLongRead): boolean {
+  if (!read) return false;
+  const done = read.done;
   if (!cancelledLongReadTeardowns.has(done)) {
     cancelledLongReadTeardowns.add(done);
     void done.then(() => cancelledLongReadTeardowns.delete(done));
   }
-  if (activeLongRead.controller.signal.aborted) return false;
-  activeLongRead.controller.abort();
+  if (read.controller.signal.aborted) return false;
+  read.controller.abort();
+  playbackQueueManager.cancelUtterance(read.id, playbackElapsedMs);
   return true;
 }
 
@@ -1659,7 +1676,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   if (isTTSDisabled()) throw new Error("TTS is disabled");
   const displayText = sanitizeTtsText(text);
   if (!displayText.trim()) throw new Error("Speech text is empty after sanitizing");
-  stopPlayback();
+  preemptLongRead();
   const predecessors = [...cancelledLongReadTeardowns];
   const controller = new AbortController();
   const id = `long-read-${process.pid}-${++longReadCounter}`;
@@ -1668,9 +1685,12 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   const started = new Promise<{ error?: string }>((resolve) => { resolveStarted = resolve; });
   let failure: string | undefined;
   let audioStarted = false;
+  let generation = 1;
+  const playerExits: Promise<void>[] = [];
   const handleStarted = () => resolveStarted({});
-  const handle: LongReadHandle & { controller: AbortController; seek?: LongReadSeek } = { id, controller, started, done: Promise.resolve(), completion: Promise.resolve({} as { error?: string }) };
+  const handle: OwnedLongRead = { id, get generation() { return generation; }, controller, started, done: Promise.resolve(), playerExited: Promise.resolve(), completion: Promise.resolve({} as { error?: string }) };
   activeLongRead = handle;
+  longReads.set(id, handle);
   const signal = controller.signal;
   const requireClone = requireClonedVoiceEnabled();
   const edgeFallbackRate = defaultRate();
@@ -1684,7 +1704,9 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     // A recording may have begun while the predecessor was settling.
     assertSpeakerClear();
     await runLongRead(texts, id, signal, {
-      registerSeek: (control) => { handle.seek = control; },
+      registerSeek: (control) => { handle.seek = { seek: offset => {
+        const result = control.seek(offset); if (result.outcome === "accept") generation++; return result;
+      } }; },
       prepareSeek: (chunk, offset, seekSignal) => offset < chunk.durationMs
         ? prepareSeekSlice(chunk.audioFile, offset, seekSignal) : Promise.resolve(undefined),
       disposeSeek: disposeSeekSlice,
@@ -1765,7 +1787,9 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
             if (outcome.status === "failed") failure = `Speech playback failed: ${outcome.reason ?? "player-error"}`;
           },
         });
-        return { started: start, exited: playback.exited, interrupt: () => playbackQueueManager.interrupt(playback.id) };
+        playerExits.push(playback.playerExited); void playback.playerExited.catch(() => {});
+        return { started: start, exited: playback.exited.then(async outcome => { await playback.playerExited; return outcome; }),
+          interrupt: () => playbackQueueManager.interrupt(playback.id) };
       },
       saveHistory: async (played) => {
         const combined = ttsFilePath(process.pid, ttsCounter++);
@@ -1786,10 +1810,11 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     failure = error instanceof Error ? error.message : String(error);
     if (activeLongRead === handle) {
       controller.abort();
-      playbackQueueManager.stop();
+      playbackQueueManager.cancelUtterance(id);
       broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
     }
   }).finally(() => {
+    longReads.delete(id);
     if (!audioStarted) resolveStarted({ error: failure ?? "Speech stopped before playback" });
     if (activeLongRead === handle) {
       activeLongRead = undefined;
@@ -1797,7 +1822,9 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     }
   });
   handle.completion = handle.done.then(() => failure ? { error: failure } : {});
-  return { id, done: handle.done, started, completion: handle.completion };
+  handle.playerExited = handle.done.then(async () => { await Promise.all(playerExits); });
+  void handle.playerExited.catch(() => {});
+  return { id, get generation() { return handle.generation; }, done: handle.done, playerExited: handle.playerExited, started, completion: handle.completion };
 }
 
 /** Restart the active audio job without resolving its blocking playback handle. */
@@ -1808,7 +1835,7 @@ export function restartPlayback(): boolean {
 }
 
 export class QueuedPlaybackController implements PlaybackController {
-  play(audioFile: string, metadata?: PlaybackMetadata): PlaybackHandle {
+  play(audioFile: string, metadata?: PlaybackMetadata): QueuedPlaybackHandle {
     return playAudioNonBlocking(audioFile, metadata);
   }
 
@@ -2077,6 +2104,7 @@ async function speakWithEdgeTTS(
     mode?: string;
     waitForPlayback?: boolean;
     onPlaybackStart?: (startedAtMs: number) => void;
+    onPlaybackQueued?: (handle: QueuedPlaybackHandle) => void;
     onPlaybackComplete?: (outcome: PlaybackOutcomeEvent) => void;
     captureAudioArtifact?: boolean;
   },
@@ -2161,7 +2189,7 @@ async function speakWithEdgeTTS(
   );
 
   // Pass metadata to queue — broadcasting happens when audio actually starts
-  let proc: PlaybackHandle;
+  let proc: QueuedPlaybackHandle;
   let audioArtifact: TextToSpeechResult["audioArtifact"];
   try {
     assertSpeakerClear();
@@ -2178,6 +2206,7 @@ async function speakWithEdgeTTS(
       durationMs: Math.max(probeAudioDurationMs(ttsFile) ?? 0, inferBoundaryEndMs(wordBoundaries)) || undefined,
       nextState: options?.mode === "converse" ? "recording" : undefined,
       onStarted: options?.onPlaybackStart,
+      onQueued: options?.onPlaybackQueued,
       onCompleted: options?.onPlaybackComplete,
     });
   } catch (err) {
@@ -2186,11 +2215,11 @@ async function speakWithEdgeTTS(
     } catch {}
     throw err;
   }
-  proc.exited.then(() => {
+  void proc.playerExited.then(() => {
     try {
       unlinkSync(ttsFile);
     } catch {}
-  });
+  }, () => {});
 
   const playbackOutcome = options?.waitForPlayback
     ? await proc.exited
