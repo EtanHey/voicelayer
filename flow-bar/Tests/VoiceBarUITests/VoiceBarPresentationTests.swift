@@ -1,7 +1,95 @@
 @testable import VoiceBarUI
 import XCTest
+import AppKit
+import SwiftUI
 
 final class VoiceBarPresentationTests: XCTestCase {
+    @MainActor
+    func testBusySelectionRendersInReservedFooterWithoutChangingTheNotch() throws {
+        for (mode, phase, name) in [(VoiceMode.recording, HotkeyPhase.idle, "recording"),
+                                    (.transcribing, .idle, "transcribing"),
+                                    (.idle, .pressing, "preview-pressing"),
+                                    (.idle, .holding, "preview-holding"),
+                                    (.idle, .awaitingSecondTap, "preview-second-tap")] {
+            let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                                   recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in })
+            state.mode = mode
+            state.hotkeyPhase = phase
+            state.hotkeyEnabled = true
+            state.isConnected = true
+            state.recordingMode = "ptt"
+            state.sendCommand = { _ in XCTFail("busy UI must send no command") }
+            state.selectionTextCaptureHandler = { _ in XCTFail("busy UI must post no Copy") }
+            let before = try renderSelectionFooter(state, name: name + "-before")
+            state.speakSelection()
+            let busy = try renderSelectionFooter(state, name: name + "-busy")
+            XCTAssertNotEqual(before.pixels, busy.pixels, "busy feedback must reach the rendered footer: \(name)")
+            XCTAssertEqual(before.size, busy.size, "no notch/panel layout jump")
+            XCTAssertEqual(before.presentation, busy.presentation, "waveform and controls keep their original shell")
+            XCTAssertEqual(state.mode, mode)
+            XCTAssertEqual(state.hotkeyPhase, phase)
+        }
+    }
+
+    private final class SelectionFixturePanel: NSPanel {
+        override var canBecomeKey: Bool { false }
+        override var canBecomeMain: Bool { false }
+        override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+    }
+
+    private final class SelectionFixtureRouter: BarCommandRouting {
+        func handlePrimaryTap() {}
+        func handleCancel() {}
+        func handleStop() {}
+        func handleReplay() {}
+        func handleRetranscribeHistoryEntry(recordingPath: String) {}
+    }
+
+    @MainActor
+    private func renderSelectionFooter(_ state: VoiceState, name: String) throws
+        -> (pixels: Data, size: CGSize, presentation: VoiceBarNotchPresentation) {
+        let status = VoiceBarPresentation.liveStatusText(mode: state.mode, transcript: state.transcript,
+            confirmationText: state.confirmationText, hotkeyPhase: state.hotkeyPhase, hotkeyEnabled: state.hotkeyEnabled,
+            errorMessage: nil, commandModeState: nil, activeClipMarker: nil)
+        let presentation = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
+            mode: state.mode, hotkeyPhase: state.hotkeyPhase, statusText: status))
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        let size = VoiceBarPanelLayout.make(presentation: presentation, canvasGeometry: canvas.canvasGeometry).panelSize
+        let host = NSHostingView(rootView: ZStack(alignment: .topLeading) {
+            Color(red: 0.16, green: 0.17, blue: 0.19)
+            BarView(state: state, commandRouter: SelectionFixtureRouter(), onOpenSettings: {}, onOpenHistory: {},
+                    includesPanelOutsets: true)
+        }.frame(width: size.width, height: size.height).transaction { $0.disablesAnimations = true })
+        host.frame = NSRect(origin: .zero, size: size)
+        let panel = SelectionFixturePanel(contentRect: NSRect(x: -20000, y: -20000, width: size.width, height: size.height),
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.hasShadow = false
+        panel.isExcludedFromWindowsMenu = true
+        panel.hidesOnDeactivate = false
+        panel.contentView = host
+        panel.orderFront(nil)
+        defer { panel.orderOut(nil); panel.contentView = nil }
+        XCTAssertLessThan(panel.frame.maxX, 0)
+        XCTAssertFalse(panel.isKeyWindow)
+        XCTAssertFalse(panel.isMainWindow)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        host.layoutSubtreeIfNeeded()
+        let footer = NSRect(x: 0, y: host.isFlipped ? host.bounds.height - 17 : 0, width: host.bounds.width, height: 17)
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: footer))
+        host.cacheDisplay(in: footer, to: bitmap)
+        let bytes = try XCTUnwrap(bitmap.bitmapData)
+        if let output = ProcessInfo.processInfo.environment["VOICEBAR_P2B_SHOTS_DIR"] {
+            let directory = URL(fileURLWithPath: output, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let full = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: full)
+            try XCTUnwrap(full.representation(using: .png, properties: [:])).write(to: directory.appendingPathComponent(name + ".png"))
+        }
+        return (Data(bytes: bytes, count: bitmap.bytesPerRow * bitmap.pixelsHigh), size, presentation)
+    }
+
     func testNotchPresentationGivesLiveAndRetainedTeleprompterPrecedence() {
         XCTAssertEqual(
             VoiceBarPresentation.notchPresentation(

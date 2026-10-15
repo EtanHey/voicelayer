@@ -68,14 +68,44 @@ final class SpeakSelectionTests: XCTestCase {
         XCTAssertEqual(commands, [["cmd": "stop"]])
     }
 
-    func testRecordingTranscribingAndF5PreviewIgnoreSelection() {
-        let state = VoiceState()
-        state.sendCommand = { _ in XCTFail("must not send while dictating") }
-        state.selectionTextCaptureHandler = { _ in XCTFail("must not copy while dictating") }
-        for mode: VoiceMode in [.recording, .transcribing] { state.mode = mode; state.speakSelection() }
-        state.mode = .idle
-        state.hotkeyPhase = .pressing
-        state.speakSelection()
+    func testBusySelectionReportsReasonWithoutChangingDictationOrCapturing() {
+        for (mode, phase, reason) in [(VoiceMode.recording, HotkeyPhase.idle, "recording"),
+                                      (.transcribing, .idle, "transcribing"),
+                                      (.idle, .pressing, "f5_preview"),
+                                      (.idle, .holding, "f5_preview"),
+                                      (.idle, .awaitingSecondTap, "f5_preview")] {
+            let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+                                   recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in })
+            state.mode = mode
+            state.hotkeyPhase = phase
+            state.transcript = "Synthetic words still being dictated שלום…"
+            state.recordingMode = "ptt"
+            if mode == .recording { state.handleEvent(["type": "audio_level", "rms": 0.6]) }
+            let previousMode = state.previousMode
+            let captureLive = state.captureLive
+            let waveform = state.recordingWaveformLevels
+            let transcript = state.transcript
+            var captures = 0
+            var commands = 0
+            var events: [(String, [String: String])] = []
+            state.sendCommand = { _ in commands += 1 }
+            state.selectionTextCaptureHandler = { _ in captures += 1 }
+            state.diagnosticLogger = { events.append(($0, $1)) }
+            state.speakSelection()
+            XCTAssertEqual(events.count, 1, reason)
+            XCTAssertEqual(events.first?.0, "selection_busy", reason)
+            XCTAssertEqual(events.first?.1["reason"], reason)
+            XCTAssertEqual(events.first?.1["appKeyWindowTitle"], "not_recorded")
+            XCTAssertEqual(captures, 0, "no capture means no Copy event")
+            XCTAssertEqual(commands, 0, "no speech, Stop or recorder command")
+            XCTAssertEqual(state.mode, mode)
+            XCTAssertEqual(state.previousMode, previousMode)
+            XCTAssertEqual(state.hotkeyPhase, phase)
+            XCTAssertEqual(state.transcript, transcript)
+            XCTAssertEqual(state.recordingMode, "ptt")
+            XCTAssertEqual(state.captureLive, captureLive)
+            XCTAssertEqual(state.recordingWaveformLevels, waveform)
+        }
     }
 
     func testEmptySelectionUsesExistingTransientConfirmation() {
