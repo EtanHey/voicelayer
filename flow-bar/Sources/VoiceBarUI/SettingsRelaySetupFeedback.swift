@@ -15,10 +15,13 @@ public struct SettingsRelaySetupResult: Equatable, Sendable {
 
     public let outcome: Outcome
     public let finishedAt: Date
+    /// Report text only; never used to drive setup or probes.
+    public let installerOutput: String?
 
-    public init(outcome: Outcome, finishedAt: Date) {
+    public init(outcome: Outcome, finishedAt: Date, installerOutput: String? = nil) {
         self.outcome = outcome
         self.finishedAt = finishedAt
+        self.installerOutput = installerOutput
     }
 
     /// Reads an installer run: its exit code, its combined output, and what the probes found missing after it.
@@ -33,12 +36,25 @@ public struct SettingsRelaySetupResult: Equatable, Sendable {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .last { !$0.isEmpty }
             let reason = lastLine.map { "installer exited \(exitCode): \($0)" } ?? "installer exited \(exitCode)"
-            return SettingsRelaySetupResult(outcome: .failed(reason: reason), finishedAt: finishedAt)
+            return SettingsRelaySetupResult(outcome: .failed(reason: reason), finishedAt: finishedAt, installerOutput: output)
         }
         return SettingsRelaySetupResult(
             outcome: missingAfter.isEmpty ? .ready : .needsAttention(missing: missingAfter),
-            finishedAt: finishedAt
+            finishedAt: finishedAt, installerOutput: output
         )
+    }
+
+    /// Copy the full retained report, without changing the concise visible result line.
+    public var failureCopyText: String? {
+        guard !succeeded else { return nil }
+        let summary: String
+        switch outcome {
+        case .ready: return nil
+        case let .needsAttention(missing): summary = missing.joined(separator: "\n")
+        case let .failed(reason): summary = reason
+        }
+        guard let output = SettingsCopyPayload.nonempty(installerOutput) else { return summary }
+        return summary + "\n\nInstaller output:\n" + output
     }
 
     public var succeeded: Bool {
