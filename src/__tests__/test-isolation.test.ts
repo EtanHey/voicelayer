@@ -1,3 +1,4 @@
+import { testSocket, testTmp } from "./setup/test-tmp";
 /**
  * R-014 — test isolation on a live host.
  *
@@ -178,9 +179,9 @@ describe("R-014 live-host guard", () => {
   });
 
   it("recognises a real bound socket, not merely an existing file", async () => {
-    const dir = join(ISOLATION_ROOT, `guard-${process.pid}`);
+    const dir = testTmp("guard");
     mkdirSync(dir, { recursive: true });
-    const socketPath = join(dir, "g.sock");
+    const socketPath = testSocket("g.sock");
     const plainFile = join(dir, "not-a-socket");
     await Bun.write(plainFile, "");
 
@@ -199,6 +200,7 @@ describe("R-014 live-host guard", () => {
       ).toBeNull();
     } finally {
       server.stop(true);
+      rmSync(socketPath, { force: true });
       rmSync(dir, { recursive: true, force: true });
     }
   });

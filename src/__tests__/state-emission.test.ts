@@ -1,3 +1,4 @@
+import { testSocket } from "./setup/test-tmp";
 /**
  * Tests for state emission via socket broadcast (inverted architecture).
  *
@@ -8,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { unlinkSync } from "fs";
 import type { SocketEvent } from "../socket-protocol";
 
-const TEST_SOCKET = "/tmp/voicelayer-test-emission.sock";
+const TEST_SOCKET = testSocket("e.sock");
 
 // --- Mock VoiceBar server ---
 

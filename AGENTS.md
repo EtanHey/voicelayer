@@ -106,8 +106,9 @@ dictating** — that flag is the only way a test opens the device. If the preloa
 is ever bypassed, mic-touching suites skip loudly rather than race the live app
 (`src/__tests__/setup/live-host-guard.ts`). Preload sockets are `v.sock`/`m.sock`
 under `.test-tmp/<pid>/` (short names: macOS caps `sun_path` at 104 bytes).
-Suites that bind their own sockets still use `/tmp/*-test-*.sock` and never
-collide with the live `/tmp/voicelayer.sock`.
+Suites that bind their own sockets use `testSocket()` with short basenames under
+the same `.test-tmp/<pid>/` root, so concurrent processes never share fixtures or
+touch the live `/tmp/voicelayer.sock` or `/tmp/voicelayer-mcp.sock`.
 
 ## PR Workflow
 

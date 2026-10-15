@@ -1,3 +1,4 @@
+import { testSocket } from "./setup/test-tmp";
 import { mkdtempSync, rmSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -6,7 +7,7 @@ import { createVoiceSdkSessionManager } from "../voicesdk/session";
 import { createVoiceSdkSocketServer } from "../voicesdk/socket-server";
 import type { SoundLayer } from "../soundlayer";
 
-const TEST_SOCKET = "/tmp/voicesdk-test.sock";
+const TEST_SOCKET = testSocket("s.sock");
 
 function fakeSoundLayer(): SoundLayer {
   return {

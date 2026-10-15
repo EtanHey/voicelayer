@@ -1,3 +1,4 @@
+import { testSocket } from "./setup/test-tmp";
 /**
  * Integration tests for the MCP daemon — a Bun Unix socket server
  * that accepts both MCP (Content-Length) and NDJSON clients on the same socket.
@@ -17,8 +18,8 @@ import {
 import { join } from "path";
 import { serializeMcpFrame, parseMcpFrames } from "../mcp-framing";
 
-const TEST_SOCKET = "/tmp/voicelayer-test-daemon.sock";
-const TEST_SOCKET_2 = "/tmp/voicelayer-test-daemon-2.sock";
+const TEST_SOCKET = testSocket("d.sock");
+const TEST_SOCKET_2 = testSocket("d2.sock");
 const packageJson = JSON.parse(
   readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf-8"),
 );
@@ -755,7 +756,7 @@ describe("mcp-daemon resilience", () => {
 
   it("isSocketLive returns false for non-existent socket", async () => {
     const { isSocketLive } = await import("../mcp-daemon");
-    const live = await isSocketLive("/tmp/voicelayer-test-nonexistent.sock");
+    const live = await isSocketLive(testSocket("no.sock"));
     expect(live).toBe(false);
   });
 

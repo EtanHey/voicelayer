@@ -1,3 +1,4 @@
+import { testSocket } from "./setup/test-tmp";
 /**
  * Tests for socket-client.ts — MCP server as client connecting to VoiceBar server.
  *
@@ -12,7 +13,7 @@ import { existsSync, unlinkSync } from "fs";
 import type { SocketEvent, SocketCommand } from "../socket-protocol";
 
 // Use a unique test socket path to avoid conflicts with real VoiceBar
-const TEST_SOCKET = "/tmp/voicelayer-test-client.sock";
+const TEST_SOCKET = testSocket("c.sock");
 
 // --- Mock VoiceBar server helper ---
 
