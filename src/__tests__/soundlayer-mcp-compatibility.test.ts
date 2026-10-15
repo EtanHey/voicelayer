@@ -221,6 +221,7 @@ describe("SoundLayer MCP compatibility regression", () => {
     expect(result.content[0].text).toContain("answer");
     expect(calls).toEqual(["awaitCurrentPlayback", "speak", "waitForInput"]);
     expect(speakSpy).toHaveBeenCalledWith("What changed?", {
+      onPlaybackQueued: expect.any(Function),
       mode: "converse",
       waitForPlayback: true,
       voice: "theo",
