@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { createVoiceSdkSessionManager } from "../voicesdk/session";
 import type { BargeInMonitorOptions, SoundLayer } from "../soundlayer";
 import type { PlaybackScope, QueuedPlaybackHandle } from "../tts/playback-lifecycle";
@@ -144,6 +144,17 @@ function promptHandle(id: string, playerExited = Promise.resolve()): QueuedPlayb
   return { id, generation: 4,
     exited: Promise.resolve({ type: "playback_outcome", playback_id: id, status: "completed", stopped_at_ms: 0, progress: 1 }),
     playerExited, waitForPlayerExit: () => playerExited };
+}
+
+function captureDeadline(budget: number) {
+  const native = globalThis.setTimeout;
+  let fire: (() => void) | undefined;
+  const spy = spyOn(globalThis, "setTimeout").mockImplementation(((fn, ms, ...args) => {
+    const timer = native(fn, ms, ...args);
+    if (ms === budget) fire = () => { clearTimeout(timer); fn(...args); };
+    return timer;
+  }) as typeof setTimeout);
+  return { get fire() { return fire; }, restore: () => spy.mockRestore() };
 }
 
 function ownedPromptFixture(playerExited = Promise.resolve()) {
@@ -431,5 +442,48 @@ describe("VoiceSDK session manager", () => {
     physical.reject(new Error("Child exit could not be observed")); await task;
     expect(manager.replay(session.session_id).at(-1)).toMatchObject({ type: "speak.stopped", reason: "error" });
     expect(fixture.globalStops).toBe(0);
+  });
+
+  for (const physicalOnly of [true, false]) {
+    it(`FX-1 SDK bounds ${physicalOnly ? "physical teardown" : "a prompt whose player never completes"}`, async () => {
+      tempDir = mkdtempSync(join(tmpdir(), "voicesdk-bounded-"));
+      const pending = Promise.withResolvers<void>();
+      const fixture = ownedPromptFixture(physicalOnly ? pending.promise : Promise.resolve());
+      if (!physicalOnly) {
+        const speak = fixture.layer.tts.speak;
+        fixture.layer.tts.speak = async (...args) => { await speak(...args); await pending.promise; return {}; };
+      }
+      const deadline = captureDeadline(physicalOnly ? 5_000 : 180_000);
+      const manager = createVoiceSdkSessionManager({ soundLayer: fixture.layer, logDir: tempDir });
+      const session = await manager.startSession({ product: "Fixture" });
+      const task = manager.speak(session.session_id, { text: "Prompt" });
+      try {
+        await Bun.sleep(0); expect(deadline.fire).toBeFunction(); deadline.fire?.();
+        await task;
+        expect(manager.replay(session.session_id).at(-1)).toMatchObject({ type: "speak.stopped", reason: "error" });
+        expect(fixture.globalStops).toBe(0);
+        expect(fixture.scopes).toEqual([{ id: "owned-sdk-1" }]);
+      } finally { pending.resolve(); await task; deadline.restore(); }
+    });
+  }
+
+  it("FX-1 late SDK synthesis cannot start another player after its deadline", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "voicesdk-late-deadline-"));
+    const fixture = ownedPromptFixture(); const synthesis = Promise.withResolvers<void>();
+    let queueLate: (() => void) | undefined;
+    fixture.layer.tts.speak = async (_text, options) => {
+      queueLate = () => { options?.onPlaybackQueued?.(promptHandle("late-sdk")); options?.onPlaybackStart?.(1000); };
+      await synthesis.promise; return {};
+    };
+    const deadline = captureDeadline(180_000);
+    const manager = createVoiceSdkSessionManager({ soundLayer: fixture.layer, logDir: tempDir });
+    const session = await manager.startSession({ product: "Fixture" });
+    const task = manager.speak(session.session_id, { text: "Prompt" });
+    try {
+      await Bun.sleep(0); deadline.fire?.(); await task; queueLate?.();
+      expect(fixture.scopes).toEqual([{ id: "late-sdk" }]);
+      expect(fixture.monitors).toHaveLength(0);
+      expect(fixture.globalStops).toBe(0);
+    } finally { synthesis.resolve(); await task; deadline.restore(); }
   });
 });

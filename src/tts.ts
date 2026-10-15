@@ -765,6 +765,11 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   };
 }
 
+export interface CaptureAdmission {
+  admit(handle: QueuedPlaybackHandle): boolean;
+  release(): void;
+}
+
 interface PlaybackJob {
   id: string;
   lifecycle: PlaybackLifecycle;
@@ -897,6 +902,7 @@ function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
 }
 
 class PlaybackQueueManager {
+  private captureAdmission?: Set<string>;
   private jobs = new Map<string, PlaybackJob>();
   private pending: PlaybackJob[] = [];
   private preparing: { job: PlaybackJob; cancel: () => void } | null = null;
@@ -908,6 +914,27 @@ class PlaybackQueueManager {
   private conversions = new Set<Promise<void>>();
   private seekPreparation?: { job: PlaybackJob; controller: AbortController };
   private progressTimer: ReturnType<typeof setInterval> | null = null;
+
+  hasCaptureAdmission(): boolean { return this.captureAdmission !== undefined; }
+
+  reserveCaptureAdmission(): CaptureAdmission | undefined {
+    if (this.captureAdmission || this.depth() > 0 || this.conversions.size > 0) return;
+    const owned = new Set<string>();
+    this.captureAdmission = owned;
+    let released = false;
+    return {
+      admit: handle => {
+        if (released || !this.jobs.has(handle.id) || this.jobs.get(handle.id)!.completed) return false;
+        owned.add(handle.id); this.processNext(); return true;
+      },
+      release: () => {
+        if (released) return;
+        released = true;
+        if (this.captureAdmission === owned) this.captureAdmission = undefined;
+        this.processNext();
+      },
+    };
+  }
 
   enqueue(
     audioFile: string,
@@ -943,7 +970,7 @@ class PlaybackQueueManager {
     catch (error) { console.error(`[voicelayer] Playback queue observer failed: ${String(error)}`); }
     if (job.completed) return handle;
 
-    if (priority === "critical") {
+    if (priority === "critical" && (!this.captureAdmission || this.captureAdmission.has(job.id))) {
       this.bargeIn(job);
       return handle;
     }
@@ -1183,7 +1210,9 @@ class PlaybackQueueManager {
     if (this.current || this.preparing || this.terminating.size > 0 || this.orphanedWorkCount() > 0) return;
 
     while (this.pending.length > 0) {
-      const next = this.pending.shift()!;
+      const index = this.captureAdmission ? this.pending.findIndex(job => this.captureAdmission!.has(job.id)) : 0;
+      if (index < 0) return;
+      const [next] = this.pending.splice(index, 1);
       if (next.expiresAt <= Date.now()) {
         completeJob(next, buildPlaybackOutcome(next, "skipped", "expired"));
         continue;
@@ -1333,7 +1362,7 @@ class PlaybackQueueManager {
     this.current = null;
     if (this.depth() === 0) {
       broadcastPlaybackIdleIfSpeakerClear(
-        succeeded ? job.metadata?.nextState : undefined,
+        succeeded && !this.captureAdmission?.has(job.id) ? job.metadata?.nextState : undefined,
       );
     }
     this.emitQueueSnapshot();
@@ -1529,6 +1558,16 @@ class PlaybackQueueManager {
 }
 
 const playbackQueueManager = new PlaybackQueueManager();
+
+/** Claim a quiet queue synchronously; a race refuses Ask instead of overlapping capture. */
+export function reserveCaptureAdmission(): CaptureAdmission | undefined {
+  if (getPlaybackQueueDepth() > 0) return;
+  return playbackQueueManager.reserveCaptureAdmission();
+}
+
+export function isCaptureAdmissionReserved(): boolean {
+  return playbackQueueManager.hasCaptureAdmission();
+}
 
 /** Play an audio file, queued after any currently playing audio. */
 export function playAudioNonBlocking(
