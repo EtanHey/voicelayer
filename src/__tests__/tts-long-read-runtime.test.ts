@@ -7,7 +7,7 @@ import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
-import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, playAudioNonBlocking } from "../tts";
+import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand } from "../socket-handlers";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
@@ -192,17 +192,28 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(loadHistory()).toHaveLength(1); expect(historyInputs[0]).toHaveLength(1);
   });
 
-  it("cancel is active during initial synthesis even with no queued player", async () => {
-    holdSynth = true;
-    // First request is held too: consume the auto-complete slot before starting.
-    synths.push({ argv: [], exit: deferred<number>(), killed: false });
-    const h = start(); expect(getPlaybackQueueDepth()).toBe(1);
-    expect(events.find((event) => event.state === "speaking")).toMatchObject({
-      text: "Preparing speech…", long_read: { id: h.id, preparing: true },
+  for (const cmd of ["stop", "cancel"] as const) for (const guard of ["clear", "recording", "admission"] as const)
+    it(`FX-2.1 ${cmd} during initial synthesis preserves idle ownership (${guard})`, async () => {
+      const admission = guard === "admission" ? reserveCaptureAdmission() : undefined;
+      if (guard === "admission") expect(admission).toBeDefined();
+      try {
+        holdSynth = true;
+        // First request is held too: consume the auto-complete slot before starting.
+        synths.push({ argv: [], exit: deferred<number>(), killed: false });
+        const h = start(); const synth = await synthBarrier.at(0);
+        expect(getPlaybackQueueDepth()).toBe(1);
+        expect(events.find((event) => event.state === "speaking")).toMatchObject({
+          text: "Preparing speech…", long_read: { id: h.id, preparing: true },
+        });
+        if (guard === "recording") spies[2].mockReturnValue("recording");
+        const ack = await handleSocketCommand({ cmd }); await h.done; await awaitCurrentPlayback();
+        expect(ack).toMatchObject({ outcome: "accept" }); expect(synth.killed).toBe(true);
+        expect(players).toHaveLength(0); expect(loadHistory()).toHaveLength(0); expect(getPlaybackQueueDepth()).toBe(0);
+        const states = events.filter((event) => event.type === "state");
+        expect(states.filter((event) => event.state === "idle")).toHaveLength(guard === "clear" ? 1 : 0);
+        if (guard === "clear") expect(states.at(-1)).toEqual({ type: "state", state: "idle", source: "playback" });
+      } finally { admission?.release(); }
     });
-    const ack = await handleSocketCommand({ cmd: "cancel" }); await h.done;
-    expect(ack).toMatchObject({ outcome: "accept" }); expect(players).toHaveLength(0); expect(loadHistory()).toHaveLength(0);
-  });
 
   it("PLAYER0 new speakLongRead cannot stop another agent's active or queued job", async () => {
     const other = playAudioNonBlocking("foreign-current.mp3"); await playerBarrier.at(0);
