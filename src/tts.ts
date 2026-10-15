@@ -24,6 +24,7 @@ import {
   unlinkSync,
 } from "fs";
 import { resolveBinary } from "./resolve-binary";
+import { throwIfAbortedSafe } from "./abort";
 import { platform } from "os";
 import {
   ttsFilePath,
@@ -1778,7 +1779,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
             return await synthesizeEdge(profile.voice, profile.rate);
           }
           const audio = await synthesizeCloned(spoken, profile.voice, signal);
-          signal.throwIfAborted();
+          throwIfAbortedSafe(signal);
           if (!audio) {
             if (requireClone) throw new VoiceProfileUnavailableError(profile.voice, "synthesis-failed");
             const voice = resolveVoice(profile.fallbackVoice || loadProfile(profile.voice)?.fallback || defaultVoice(), "edge").voice;
@@ -1801,7 +1802,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
               copyFileSync(adjusted, audioFile);
             } finally { try { unlinkSync(adjusted); } catch {} }
           }
-          signal.throwIfAborted();
+          throwIfAbortedSafe(signal);
           const durationMs = probeAudioDurationMs(audioFile);
           if (!durationMs || durationMs <= 0) throw new Error("Cloned audio has no readable duration");
           return { audioFile, durationMs, wordBoundaries: [] };
@@ -1812,7 +1813,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         }
       },
       play: (chunk, text, info, position) => {
-        signal.throwIfAborted();
+        throwIfAbortedSafe(signal);
         let started = false;
         let resolveStarted!: (value: boolean) => void;
         const start = new Promise<boolean>((resolve) => { resolveStarted = resolve; });

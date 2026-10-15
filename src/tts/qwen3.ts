@@ -25,6 +25,7 @@ import {
 } from "fs";
 import { isAbsolute, join, relative, sep } from "path";
 import { homedir } from "os";
+import { abortErrorFor, throwIfAbortedSafe } from "../abort";
 
 const DAEMON_URL = "http://127.0.0.1:8880";
 const DAEMON_TIMEOUT_MS = 30_000; // 30s timeout for synthesis
@@ -571,7 +572,7 @@ export async function synthesizeCloned(
   voiceName: string,
   signal?: AbortSignal,
 ): Promise<Buffer | null> {
-  signal?.throwIfAborted();
+  throwIfAbortedSafe(signal);
   const profile = loadProfile(voiceName);
   if (!profile) {
     console.error(`[voicelayer] No voice profile found for "${voiceName}"`);
@@ -638,13 +639,13 @@ export async function synthesizeCloned(
       audio_b64: string;
       duration_ms: number;
     };
-    signal?.throwIfAborted();
+    throwIfAbortedSafe(signal);
     console.error(
       `[voicelayer] Cloned voice synthesis: ${data.duration_ms.toFixed(0)}ms`,
     );
     return Buffer.from(data.audio_b64, "base64");
   } catch (err) {
-    if (signal?.aborted) throw signal.reason;
+    if (signal?.aborted) throw abortErrorFor(signal);
     if (err instanceof DaemonModelError) throw err;
     if (err instanceof Error && err.name === "AbortError") {
       console.error("[voicelayer] Daemon synthesis timed out");
