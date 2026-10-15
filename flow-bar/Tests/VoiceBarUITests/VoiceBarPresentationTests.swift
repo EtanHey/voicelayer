@@ -2,7 +2,7 @@
 import XCTest
 import AppKit
 import SwiftUI
-import Darwin
+import OffscreenTestSupport
 
 final class VoiceBarPresentationTests: XCTestCase {
     func testBusyNoteTracksTheCurrentBusyContextAndStaysAbsentInIdle() {
@@ -104,13 +104,8 @@ final class VoiceBarPresentationTests: XCTestCase {
         panel.hidesOnDeactivate = false
         panel.contentView = host
         panel.appearance = host.appearance
-        // HYG2 prefers un-ordered bitmap hosts. The stacked base may predate its package target;
-        // the shot runner can load the exact merged helper without linking production binaries.
-        if ProcessInfo.processInfo.environment["VOICEBAR_P2B_REQUIRE_HYG2"] == "1" {
-            let symbol = try XCTUnwrap(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "VLOffscreenPolicyInstalled"))
-            let installed = unsafeBitCast(symbol, to: (@convention(c) () -> Bool).self)
-            XCTAssertTrue(installed())
-        }
+        // The merged HYG2 test policy is installed before any fixture window exists.
+        XCTAssertTrue(VLOffscreenPolicyInstalled())
         defer { panel.contentView = nil }
         XCTAssertLessThan(panel.frame.maxX, 0)
         XCTAssertFalse(panel.isKeyWindow)
