@@ -327,6 +327,7 @@ describe("input recording durability", () => {
   for (const [label, source, pushToEnd, physicalPress] of [
     ["physical dictation", "voicebar", true, true],
     ["physical chunked", "voicebar", true, true],
+    ["physical no click", "voicebar", true, true],
     ["legacy stop", "voicebar", true, false],
     ["Ask push_to_end", "voice_ask", true, true],
     ["VAD dictation", "voicebar", false, true],
@@ -337,10 +338,11 @@ describe("input recording durability", () => {
       const { waitForInput } = await import("../input");
       const { handleSocketCommand } = await import("../socket-handlers");
       const { parseCommand } = await import("../socket-protocol");
-      const pcm = pcmWithConstantSample(1500, 2400);
+      const durationMs = label === "physical no click" ? 11000 : 2400;
+      const pcm = pcmWithConstantSample(1500, durationMs);
       const view = new DataView(pcm.buffer);
-      for (let i = 2000 * 16; i < 2400 * 16; i++) view.setInt16(i * 2, 10, true);
-      for (let i = 0; i < 320; i++) view.setInt16((2150 * 16 + i) * 2, (i % 2 ? -1 : 1) * 9000 * Math.exp(-i / 55), true);
+      for (let i = 2000 * 16; i < durationMs * 16; i++) view.setInt16(i * 2, 10, true);
+      if (label !== "physical no click") for (let i = 0; i < 320; i++) view.setInt16((2150 * 16 + i) * 2, (i % 2 ? -1 : 1) * 9000 * Math.exp(-i / 55), true);
       const expectedArchive = makeWav(pcm);
       const recorder = installFakeRecorder([pcm], true);
       const stopSpy = spyOn(tts, "stopPlayback").mockImplementation(() => {});
@@ -364,7 +366,8 @@ describe("input recording durability", () => {
         if (label !== "timeout") await handleSocketCommand(parseCommand(JSON.stringify({ cmd: "stop", ...(physicalPress ? { physical_press: true } : {}) }))!);
         await recording;
         expect(readFileSync(join(archivePath, "audio.wav"))).toEqual(Buffer.from(expectedArchive));
-        expect(backendTranscribedDataSize).toBe(label === "cancel" ? undefined : (label.startsWith("physical") ? 2145 : 2400) * 32);
+        expect(backendTranscribedDataSize).toBe(label === "cancel" ? undefined :
+          (label === "physical no click" ? durationMs : label.startsWith("physical") ? 2145 : 2400) * 32);
       } finally {
         await recording.catch(() => null);
         stopSpy.mockRestore(); playbackSpy.mockRestore();

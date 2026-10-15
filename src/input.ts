@@ -2969,8 +2969,9 @@ export async function waitForInput(
       : undefined;
 
   const retainedWavData = createWavBuffer(pcmData);
-  const pressInput = physicalStopInput(pcmData,
-    pushToEnd && options.archiveSource === "voicebar" && captureState.physicalPressStop === true && !hasCancelSignal());
+  const isPhysicalStop = pushToEnd && options.archiveSource === "voicebar" &&
+    captureState.physicalPressStop === true && !hasCancelSignal();
+  const pressInput = physicalStopInput(pcmData, isPhysicalStop);
   if (captureState.physicalPressStop) {
     console.error(`[voicelayer] Physical stop input: ${pressInput.reason}; candidates=${pressInput.candidateFrames.length}`);
     appendControlLayerEvent("capture.physical_stop_input", {
@@ -2978,9 +2979,13 @@ export async function waitForInput(
       removed_frames: (pcmData.byteLength - pressInput.pcmData.byteLength) / 2,
     });
   }
-  const silenceTrim = trimTrailingSilenceForSTT(pressInput.pcmData, pushToEnd);
-  const sttTrim = { ...silenceTrim, rawDurationMs: pcmDurationMs(pcmData),
-    trimmed: silenceTrim.trimmed || pressInput.reason === "cut" };
+  // Physical-stop fallback must really keep everything. The legacy silence
+  // trimmer could otherwise cut seconds before this feature's bounded window.
+  const sttTrim = isPhysicalStop ? {
+    pcmData: pressInput.pcmData, trimmed: pressInput.reason === "cut",
+    rawDurationMs: pcmDurationMs(pcmData),
+    transcribedDurationMs: pcmDurationMs(pressInput.pcmData),
+  } : trimTrailingSilenceForSTT(pcmData, pushToEnd);
   let voiceAskArchivePath: string | null = null;
   let voiceBarArchivePath: string | null = null;
   // P0: archive completed dictation before any callback, speech gate, or STT.
@@ -3099,7 +3104,7 @@ export async function waitForInput(
 
   if (sttTrim.trimmed) {
     console.error(
-      `[voicelayer] Trimmed trailing silence before STT: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
+      `[voicelayer] ${isPhysicalStop ? "Physical-stop cutoff" : "Trimmed trailing silence"} before STT: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
     );
     appendControlLayerEvent("capture.stt_trim", {
       raw_duration_ms: sttTrim.rawDurationMs,
