@@ -9,6 +9,53 @@ import XCTest
 final class SynthesizedKeyEventsTests: XCTestCase {
     private let list = "Three things:\n1. the bar\n2. the pill\r\n3. the paste"
 
+    func testGuardedBatchChecksFocusAfterBuildingAndPostsNothingIfItChanged() throws {
+        for changedPID: pid_t? in [62626, nil] {
+            var front: pid_t? = 51515
+            var built: [CGEvent] = []
+            var posted: [CGEvent] = []
+            var focusReads = 0
+            let result = SynthesizedKeyEvents.postGuardedBatch(
+                expectedPID: 51515,
+                buildEvents: {
+                    built = SynthesizedKeyEvents.events(for: SynthesizedTyping.keystrokes(for: self.list), source: nil) ?? []
+                    front = changedPID // The VoiceState preflight has already passed.
+                    return built
+                },
+                frontmostPID: { focusReads += 1; XCTAssertFalse(built.isEmpty); return front },
+                postEvent: { posted.append($0) }
+            )
+            XCTAssertFalse(built.isEmpty)
+            XCTAssertEqual(result, .focusChanged)
+            XCTAssertEqual(focusReads, 1)
+            XCTAssertTrue(posted.isEmpty, "No transcript or tail may post after a build-time focus change")
+        }
+    }
+
+    func testGuardedBatchPostsOnceWithoutPerEventAbortIfFocusChangesInsidePost() throws {
+        let events = try XCTUnwrap(SynthesizedKeyEvents.events(for: SynthesizedTyping.keystrokes(for: list), source: nil))
+        var front: pid_t? = 51515
+        var focusReads = 0
+        var posted: [CGEvent] = []
+        let result = SynthesizedKeyEvents.postGuardedBatch(
+            expectedPID: 51515, buildEvents: { events },
+            frontmostPID: { focusReads += 1; return front },
+            postEvent: { posted.append($0); front = 62626 }
+        )
+        XCTAssertEqual(result, .posted)
+        XCTAssertEqual(focusReads, 1, "Accepted synchronous-post window: never abort a partial batch")
+        XCTAssertEqual(posted.map(ObjectIdentifier.init), events.map(ObjectIdentifier.init))
+    }
+
+    func testGuardedBatchBuildFailurePostsNothingAndDoesNotCheckFocus() {
+        let result = SynthesizedKeyEvents.postGuardedBatch(
+            expectedPID: 51515, buildEvents: { nil },
+            frontmostPID: { XCTFail("No complete batch"); return 51515 },
+            postEvent: { _ in XCTFail("No complete batch") }
+        )
+        XCTAssertEqual(result, .failed)
+    }
+
     /// The events actually posted: keycode 0 only ever carries printable text, and
     /// a line break is Shift+Return — never a bare Return, which submits.
     func testPostedEventsNeverTypeTheCarrierKeyAndBreakLinesWithShiftReturn() throws {

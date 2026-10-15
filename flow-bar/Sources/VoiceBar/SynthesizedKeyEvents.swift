@@ -6,6 +6,20 @@ import VoiceBarUI
 /// VoiceBarUI; constructing and posting events is kept here, in the executable,
 /// so VoiceBarUI stays presentation-only (BoundaryContractTests).
 enum SynthesizedKeyEvents {
+    static func postGuardedBatch(
+        expectedPID: pid_t,
+        buildEvents: () -> [CGEvent]?,
+        frontmostPID: () -> pid_t?,
+        postEvent: (CGEvent) -> Void
+    ) -> GuardedTypingResult {
+        guard let events = buildEvents() else { return .failed }
+        guard frontmostPID() == expectedPID else { return .focusChanged }
+        // Lead accepts the residual final-check/synchronous-post window. Keep the
+        // existing global transport and never abort a partially posted batch.
+        for event in events { postEvent(event) }
+        return .posted
+    }
+
     /// kVK_Return.
     static let returnKeyCode: CGKeyCode = 36
     /// Carrier key for Unicode-string events. The receiving app types the string,
