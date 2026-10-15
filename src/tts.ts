@@ -1643,7 +1643,7 @@ export function seekPlayback(offsetMs: number): SeekResult {
 export function stopPlayback(playbackElapsedMs?: number): boolean {
   const hadLongRead = cancelLongRead(playbackElapsedMs);
   const stopped = playbackQueueManager.stop(playbackElapsedMs);
-  if (hadLongRead && !stopped) broadcastPlaybackIdleIfSpeakerClear();
+  if (hadLongRead && !stopped) broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
   return hadLongRead || stopped;
 }
 
