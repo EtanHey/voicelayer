@@ -331,6 +331,7 @@ public final class VoiceState {
     public private(set) var previousMode: VoiceMode = .idle
     public var mode: VoiceMode = .idle {
         didSet {
+            clearSelectionBusyNoteIfSessionEnded()
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
@@ -675,7 +676,10 @@ public final class VoiceState {
     /// Global hotkey availability and live gesture hint state.
     public var hotkeyEnabled: Bool = false
     public var hotkeyPhase: HotkeyPhase = .idle {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPhase) }
+        didSet {
+            clearSelectionBusyNoteIfSessionEnded()
+            notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPhase)
+        }
     }
 
     /// Whether the pill is collapsed (idle for too long).
@@ -869,6 +873,14 @@ public final class VoiceState {
     private var selectionCaptureCancelled = false
     public private(set) var showsSelectionBusyNote = false
     @ObservationIgnored private var selectionBusyNoteTask: Task<Void, Never>?
+
+    private func clearSelectionBusyNoteIfSessionEnded() {
+        guard showsSelectionBusyNote,
+              VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) == nil else { return }
+        selectionBusyNoteTask?.cancel()
+        selectionBusyNoteTask = nil
+        showsSelectionBusyNote = false
+    }
 
     public func speakSelection() {
         if let reason = VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) {

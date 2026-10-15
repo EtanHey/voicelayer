@@ -345,6 +345,7 @@ public struct BarView: View {
                     isRequested: state.showsSelectionBusyNote, mode: state.mode, hotkeyPhase: state.hotkeyPhase
                 ) {
                     compactStatusLabel(note)
+                        .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
                         .frame(height: 17)
                         .offset(y: 17) // Use the existing panel shadow outset; never resize the notch.
                         .allowsHitTesting(false)
