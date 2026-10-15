@@ -19,8 +19,9 @@ Environment variables and test commands.
 
 ## STT performance tiers
 
-VoiceBar's Audio tab exposes three decoding-effort tiers. They trade latency for accuracy on the
-*same* `large-v3-turbo` model — only whisper.cpp's beam search / best-of changes, not the model.
+The backend supports three decoding-effort values for the *same* `large-v3-turbo` model.
+Only whisper.cpp's beam search / best-of changes. Settings has no effort picker; removing it
+does not change existing saved values, environment overrides, or the Accurate default.
 
 | Tier | whisper.cpp args | Notes |
 |------|------------------|-------|
@@ -28,7 +29,7 @@ VoiceBar's Audio tab exposes three decoding-effort tiers. They trade latency for
 | **Balanced** | `-bo 3 -bs 3` | Middle ground |
 | **Accurate** | `-bo 5 -bs 5` | Default; widest beam |
 
-The selection persists to `~/.local/state/voicelayer/whisper-performance.json`. Override
+Saved preferences remain in `~/.local/state/voicelayer/whisper-performance.json`. Override
 per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT=fast|balanced|accurate`.
 
 ## Testing

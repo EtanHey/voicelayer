@@ -519,32 +519,11 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(source.contains("onReorderPriority(visibleFirst)"))
     }
 
-    /// Fold 2 review S3: dictating while Models is open must refresh "Last dictation used", not only on appear.
-    func testModelsLastDictationLabelFollowsTheNextDictation() throws {
+    func testTranscriptionNoLongerLoadsHistoricalProvenanceOrWritesEffort() throws {
         let source = try settingsViewSource()
-        XCTAssertTrue(source.contains(".onChange(of: lastDictationEntry()?.recordingPath) { _, path in"))
-    }
-
-    func testPerformanceEffortPickerUpdatesLocalStateBeforeNotifyingApp() throws {
-        // The one effort control lives in Models (spec §5); it writes SettingsView's state through a binding.
-        let source = try settingsViewSource()
-        XCTAssertTrue(source.contains("effort: $selectedPerformanceEffort"))
-        let modelsURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift")
-        let modelsSource = try String(contentsOf: modelsURL)
-
-        XCTAssertTrue(
-            modelsSource.contains(
-                """
-                set: { selected in
-                                        effort = selected
-                                        onSelectEffort(selected)
-                                    }
-                """
-            ),
-            "A single segmented-picker click must update SettingsView state before AppDelegate refreshes the root view"
-        )
+        XCTAssertFalse(source.contains("lastDictationProvenanceLabel"))
+        XCTAssertFalse(source.contains("selectedPerformanceEffort"))
+        XCTAssertFalse(source.contains("onSelectEffort: onSelectPerformanceEffort"))
     }
 
     /// Bugbot PR #261: the apply script remaps ONLY the dictation key; physical

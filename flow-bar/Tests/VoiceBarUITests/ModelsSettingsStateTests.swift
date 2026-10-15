@@ -406,11 +406,18 @@ final class ModelsSettingsStateTests: XCTestCase {
         XCTAssertNil(ModelsSettingsView.effortStatusNote(for: ModelsSettingsState(healthEvent: health)))
     }
 
-    func testEffortCopySaysWhatChangesAndThatItReloads() {
-        let copy = ModelsSettingsView.effortExplanation
-        XCTAssertTrue(copy.contains("beam search"))
-        XCTAssertTrue(copy.contains("15–35 %"))
-        XCTAssertTrue(copy.contains("reloads the model"))
+    func testEffortFactsRemainAvailableForDiagnosticsWithoutAPicker() throws {
+        let state = ModelsSettingsState(healthEvent: Self.availableHealth)
+        XCTAssertEqual(state.configuredEffort, .accurate)
+        XCTAssertEqual(state.activeEffort, .accurate)
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift")
+        let source = try String(contentsOf: url)
+        XCTAssertTrue(source.contains("Recognizer details"))
+        XCTAssertTrue(source.contains("Configured effort"))
+        XCTAssertTrue(source.contains("Active effort"))
+        XCTAssertFalse(source.contains("no measurable word difference"))
     }
 
     private static let availableHealth: [String: Any] = [
