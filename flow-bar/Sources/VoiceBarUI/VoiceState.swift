@@ -1067,11 +1067,15 @@ public final class VoiceState {
         sendCommand?(["cmd": "health"])
     }
 
-    public func stop() {
+    public func stop(physicalPress: Bool = false) {
         if selectionCaptureInFlight { selectionCaptureCancelled = true }
         let shouldShowTranscribing = mode == .recording
         let shouldExitInterruptedPlayback = mode == .speaking
         var payload: [String: Any] = ["cmd": "stop"]
+        if physicalPress, shouldShowTranscribing, barInitiatedRecording,
+           !remoteOwnedRecording, recordingMode == "ptt" {
+            payload["physical_press"] = true
+        }
         if shouldExitInterruptedPlayback {
             payload["playback_elapsed_ms"] = playbackElapsedMilliseconds()
         }

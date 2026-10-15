@@ -107,6 +107,12 @@ class VoiceBarCommandRouter: BarCommandRouting {
         }
     }
 
+    func handlePhysicalPressStop() {
+        guard voiceState.mode == .recording else { handleStop(); return }
+        resetHotkeyState()
+        voiceState.stop(physicalPress: true)
+    }
+
     func handleReplay() {
         guard voiceState.mode == .idle || voiceState.mode == .speaking else { return }
         voiceState.replay()
