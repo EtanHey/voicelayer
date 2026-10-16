@@ -354,6 +354,66 @@ final class SpeakSelectionTests: XCTestCase {
         completion?(.completed("stale selection"))
     }
 
+    @MainActor
+    func testLatestCaptureSurvivesPendingSubmissionsFirstReceipt() async throws {
+        for ackBeforeReceipt in [false, true] {
+            for (result, expected) in [(SelectionCaptureResult.completed("pending B"), "stop"),
+                                       (.completed("different C"), "speak_text"),
+                                       (.completed(nil), "stop"), (.copyTimedOut, "stop"), (.captureFailed, "stop")] {
+                let state = speakingState("playing A")
+                var commands: [[String: Any]] = []
+                state.sendCommand = { commands.append($0) }
+                state.selectionTextCaptureHandler = { $0(.completed("pending B")) }
+                state.speakSelection()
+                let id = try XCTUnwrap(commands.first?["id"] as? String)
+                var completion: ((SelectionCaptureResult) -> Void)?
+                state.selectionTextCaptureHandler = { completion = $0 }
+                state.speakSelection()
+                await Task.yield()
+                if ackBeforeReceipt {
+                    state.handleEvent(["type": "ack", "command": "speak_text", "outcome": "accept", "id": id])
+                }
+                state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
+                                   "long_read": ["id": "pending-read-B", "preparing": true]])
+                await Task.yield()
+                try XCTUnwrap(completion)(result)
+                XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text", expected],
+                               "ackBeforeReceipt=\(ackBeforeReceipt), outcome=\(result.outcome)")
+                if expected == "speak_text" { XCTAssertEqual(commands.last?["text"] as? String, "different C") }
+            }
+        }
+    }
+
+    func testUnrelatedReadStillInvalidatesLatestCaptureWhileSubmissionIsPending() {
+        let state = speakingState("playing A")
+        var commands: [String] = []
+        state.sendCommand = { commands.append($0["cmd"] as! String) }
+        state.selectionTextCaptureHandler = { $0(.completed("pending B")) }
+        state.speakSelection()
+        var completion: ((SelectionCaptureResult) -> Void)?
+        state.selectionTextCaptureHandler = { completion = $0 }
+        state.speakSelection()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "unrelated D",
+                           "long_read": ["id": "unrelated-read-D", "preparing": false]])
+        completion?(.completed("stale C"))
+        XCTAssertEqual(commands, ["speak_text"])
+    }
+
+    func testDaemonRejectionNoteSurvivesSpeakingRebroadcastAndChunkChange() throws {
+        let state = speakingState()
+        var request: [String: Any] = [:]
+        state.sendCommand = { request = $0 }
+        state.selectionTextCaptureHandler = { $0(.completed("new selection")) }
+        state.speakSelection()
+        state.handleEvent(["type": "ack", "command": "speak_text", "outcome": "reject", "reason": "busy",
+                           "id": try XCTUnwrap(request["id"] as? String)])
+        for readID in ["old-read", "next-chunk-read"] {
+            state.handleEvent(["type": "state", "state": "speaking", "text": "ongoing speech",
+                               "long_read": ["id": readID, "preparing": false]])
+            XCTAssertEqual(state.selectionFeedbackNote, "Busy. Selection not read")
+        }
+    }
+
     func testSameSelectionStopsBeforePreparationReceiptAndOldAckIsIgnored() {
         let state = VoiceState()
         var commands: [[String: Any]] = []

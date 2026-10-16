@@ -904,7 +904,7 @@ public final class VoiceState {
     }
 
     private func clearSelectionBusyNoteIfSessionEnded() {
-        guard showsSelectionBusyNote,
+        guard showsSelectionBusyNote, selectionRejectionMessage == nil,
               VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) == nil else { return }
         selectionBusyNoteTask?.cancel()
         selectionBusyNoteTask = nil
@@ -1807,12 +1807,19 @@ public final class VoiceState {
             case "speaking":
                 selectionReadIsPreparing = (event["long_read"] as? [String: Any])?["preparing"] as? Bool == true
                 let readID = (event["long_read"] as? [String: Any])?["id"] as? String
+                let acknowledgesSubmission = selectionSubmittedText.map { submitted in
+                    selectionReadIsPreparing || (event["text"] as? String).map {
+                        Self.normalizedSelection($0) == Self.normalizedSelection(submitted)
+                    } == true
+                } ?? false
                 if readID == nil || readID != selectionReadID {
-                    selectionSpeechEpoch += 1
+                    // A newer press may already be capturing against this pending submission.
+                    // Its first receipt acknowledges that read; only an unrelated owner invalidates it.
+                    if !acknowledgesSubmission { selectionSpeechEpoch += 1 }
                     selectionReadID = readID
-                    selectionReadText = selectionSubmittedText
-                    selectionReadRequestID = selectionSubmittedText == nil ? nil : selectionSpeechRequestID
-                    selectionSubmittedText = nil
+                    selectionReadText = acknowledgesSubmission ? selectionSubmittedText : nil
+                    selectionReadRequestID = acknowledgesSubmission ? selectionSpeechRequestID : nil
+                    if acknowledgesSubmission { selectionSubmittedText = nil }
                 }
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 pendingRecordingIdleAfterFinal = false
