@@ -40,6 +40,12 @@ cleanup() {
     kill "$supervisor_pid" 2>/dev/null
     wait "$supervisor_pid" 2>/dev/null
   fi
+  # The detached supervisor may itself have been SIGKILLed. Read its child's
+  # persisted identity and reap the verified run group BEFORE deleting state.
+  if ! python3 "$ROOT_DIR/scripts/supervise-test-daemon.py" --cleanup "$RUN_DIR"; then
+    printf '[fail] daemon cleanup failed; retaining %s\n' "$RUN_DIR" >&2
+    exit 1
+  fi
   # Opt in to retaining logs/state for debugging; never retain processes.
   if [ "${VOICELAYER_RUN_TESTS_KEEP_RUN_DIR:-0}" != "1" ]; then
     rm -rf "$RUN_DIR"
@@ -59,6 +65,7 @@ print_log_tail() {
 
 # Never adopt another run's directory (including after PID reuse). Establish
 # detached cleanup ownership before any Swift phase can run.
+python3 "$ROOT_DIR/scripts/supervise-test-daemon.py" --sweep || exit 1
 mkdir -m 700 "$RUN_DIR" || exit 1
 trap cleanup EXIT
 trap 'exit 129' HUP
@@ -153,6 +160,10 @@ kill -USR1 "$supervisor_pid" 2>/dev/null
 while [ ! -f "$RUN_DIR/daemon-reaped" ] && kill -0 "$supervisor_pid" 2>/dev/null; do
   sleep 0.05
 done
+if ! kill -0 "$supervisor_pid" 2>/dev/null; then
+  printf '[fail] cleanup supervisor exited during daemon smoke\n'
+  exit_status=$((exit_status | 1))
+fi
 
 printf '\n== F5 hidutil LaunchAgent smoke ==\n'
 hidutil_plist_status=0

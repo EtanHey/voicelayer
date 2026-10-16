@@ -46,7 +46,7 @@ record = pathlib.Path(os.environ["HOOK_RECORD"])
 if case == "real":
     record.write_text(str(os.getpid()))
     os.execv(os.environ["HOOK_REAL_BUN"], [os.environ["HOOK_REAL_BUN"], *sys.argv[1:]])
-if case == "stubborn":
+if case in ("stubborn", "KILL-supervisor"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     child = subprocess.Popen([sys.executable, "-c",
         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)", run_dir])
@@ -55,9 +55,11 @@ else:
     record.write_text(str(os.getpid()))
 if case == "failure":
     raise SystemExit(7)
-if case in ("success", "debug", "stubborn", "suite-failure", "KILL-late"):
+if case in ("success", "debug", "stubborn", "suite-failure", "KILL-late", "KILL-supervisor"):
     sock = socket.socket(socket.AF_UNIX)
     sock.bind(os.environ["VOICELAYER_MCP_SOCKET_PATH"])
+if case == "KILL-supervisor":
+    os.kill(os.getppid(), signal.SIGKILL)
 while True:
     time.sleep(0.05)
 ''')
@@ -78,18 +80,59 @@ def alive(pid):
         return False
 
 failures = []
+protected = []
+orphan_pids = []
 try:
     def interrupted(signum, _frame):
         raise SystemExit(128 + signum)
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, interrupted)
-    cases = ("KILL-group", "KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test",
+    # Real PPID-1 fixtures, all owned by this test. Never signal resident processes.
+    def fixture(name, run_dir, orphan=True):
+        env = dict(os.environ, VOICELAYER_TMP_ROOT=str(run_dir),
+                   VOICELAYER_MCP_SOCKET_PATH=str(run_dir / "voicelayer-mcp.sock"),
+                   VOICELAYER_SOCKET_PATH=str(run_dir / "voicelayer.sock"))
+        record = base / (name + ".pid")
+        code = '''
+import os, pathlib, signal, sys, time
+if sys.argv[2] == "orphan" and os.fork():
+    raise SystemExit(0)
+os.setsid()
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+while True: time.sleep(.05)
+'''
+        proc = subprocess.Popen([sys.executable, "-c", code, str(record),
+                                 "orphan" if orphan else "parented", "src/mcp-server-daemon.ts"], env=env)
+        if orphan:
+            proc.wait(timeout=5)
+        else:
+            protected.append(proc)
+        assert wait_until(lambda: record.exists() and record.stat().st_size > 0)
+        pid = int(record.read_text())
+        orphan_pids.append(pid)
+        if orphan:
+            assert wait_until(lambda: subprocess.check_output(["ps", "-p", str(pid), "-o", "ppid="], text=True).strip() == "1")
+        return pid
+
+    stale_dir = base / "voicelayer-run-tests.900001"
+    stale_dir.mkdir()
+    stale = fixture("stale", stale_dir)
+    stale_dir.rmdir()
+    concurrent_dir = base / "voicelayer-run-tests.900002"
+    concurrent_dir.mkdir()
+    concurrent = fixture("concurrent", concurrent_dir)
+    parented = fixture("parented", base / "voicelayer-run-tests.900003", orphan=False)
+    live = fixture("live", Path("/tmp"))
+    unrelated = fixture("unrelated", base / "unrelated-run.900004")
+
+    cases = ("KILL-supervisor", "KILL-group", "KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test",
              "success", "failure", "timeout", "INT", "TERM", "HUP", "KILL", "KILL-late", "stubborn", "debug", "suite-failure", "real")
     for case in cases:
         lane = base / case
         lane.mkdir()
         record = lane / "pids"
-        env = dict(os.environ, PATH=str(bin_dir) + ":" + os.environ["PATH"], TMPDIR=str(lane),
+        env = dict(os.environ, PATH=str(bin_dir) + ":" + os.environ["PATH"], TMPDIR=str(lane) + "/",
                    HOOK_CASE=case, HOOK_RECORD=str(record), HOOK_REAL_BUN=real_bun)
         env["VOICELAYER_RUN_TESTS_KEEP_RUN_DIR"] = "1" if case == "debug" else "0"
         for kind in ("SWIFT", "BUN"):
@@ -110,7 +153,7 @@ try:
                 else:
                     assert wait_until(lambda: record.exists() and record.stat().st_size > 0), "daemon never started"
                     pids = [int(p) for p in record.read_text().split()]
-                if case == "KILL-group":
+                if case in ("KILL-group", "KILL-supervisor"):
                     daemon_group = os.getpgid(pids[0])
                     assert daemon_group != runner.pid, "daemon shares caller group"
                 if "group" in case:
@@ -127,11 +170,13 @@ try:
                 status = runner.wait(timeout=22)
                 expected = {"failure": 1, "timeout": 1, "suite-failure": 1, "INT": 130, "TERM": 143,
                             "HUP": 129, "KILL": -9, "KILL-late": -9}.get(case, 0)
-                if case.startswith("KILL"):
+                if case.startswith("KILL") and case != "KILL-supervisor":
                     expected = -9
-                assert status == expected, f"exit {status}, expected {expected}"
+                if case == "KILL-supervisor":
+                    expected = 1
                 daemon_pids = [] if "swift" in case else pids
                 assert wait_until(lambda: all(not alive(p) for p in daemon_pids)), f"surviving daemon/descendants: {daemon_pids}"
+                assert status == expected, f"exit {status}, expected {expected}"
                 if daemon_group is not None:
                     def group_gone():
                         try:
@@ -177,7 +222,35 @@ try:
                         except ProcessLookupError:
                             pass
                     runner.wait()
+        if case == "success":
+            try:
+                assert wait_until(lambda: not alive(stale)), "deleted-run orphan was not swept"
+                assert all(alive(p) for p in (concurrent, parented, live, unrelated)), "sweep killed a protected daemon"
+                # A stale/forged persisted PID cannot authorize killing a different run.
+                import fcntl, json
+                state_dir = base / "voicelayer-run-tests.900005"
+                state_dir.mkdir()
+                with (state_dir / "daemon-spawn.lock").open("a") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_SH)
+                    cleanup = subprocess.Popen([sys.executable, str(root / "scripts/supervise-test-daemon.py"),
+                                                "--cleanup", str(state_dir)])
+                    time.sleep(.15)
+                    assert cleanup.poll() is None, "cleanup raced unfinished group publication"
+                    (state_dir / "daemon-group.json").write_text(json.dumps({"pid": concurrent, "pgid": concurrent}))
+                assert cleanup.wait(timeout=5) == 0
+                assert alive(concurrent), "stale group identity killed a concurrent run"
+                print("PASS sweep: missing-dir orphan reaped; live, concurrent, parented, unrelated and reused-group identities protected", flush=True)
+            except Exception as error:
+                failures.append("sweep")
+                print(f"FAIL sweep: {error}", flush=True)
 finally:
+    for pid in orphan_pids:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    for proc in protected:
+        proc.wait(timeout=5)
     shutil.rmtree(base)
 if failures:
     raise SystemExit("failed cases: " + ", ".join(failures))
