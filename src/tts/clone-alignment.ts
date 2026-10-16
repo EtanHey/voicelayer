@@ -124,8 +124,10 @@ export async function alignCloneAudio(request: CloneAlignmentRequest): Promise<C
   const controller = new AbortController(); let deadline = false, directory: string | undefined;
   const expiresAt = startedAt + input.durationMs / input.playbackRate * .5;
   const expired = () => { if (performance.now() >= expiresAt) { deadline = true; controller.abort(); } return controller.signal.aborted; };
-  let child: ReturnType<typeof Bun.spawn> | undefined;
-  const abort = () => controller.abort(), stop = () => { if (child?.exitCode === null) child.kill("SIGKILL"); };
+  let child: ReturnType<typeof Bun.spawn> | undefined, stopFailed = false;
+  const abort = () => controller.abort(), stop = () => {
+    try { if (child?.exitCode === null) child.kill("SIGKILL"); } catch { stopFailed = true; }
+  };
   input.signal?.addEventListener("abort", abort, { once: true });
   controller.signal.addEventListener("abort", stop);
   const timer = setTimeout(() => { deadline = true; controller.abort(); }, Math.max(0, expiresAt - performance.now()));
@@ -182,9 +184,12 @@ export async function alignCloneAudio(request: CloneAlignmentRequest): Promise<C
     return untimed(controller.signal.aborted ? deadline ? "deadline" : "cancelled" : "unavailable");
   } finally {
     clearTimeout(timer); input.signal?.removeEventListener("abort", abort); controller.signal.removeEventListener("abort", stop);
-    if (child?.exitCode === null) child.kill("SIGKILL");
-    if (child) await child.exited;
-    if (directory) await rm(directory, { recursive: true, force: true });
+    let cleanupFailed = stopFailed;
+    // Every cleanup step still runs if killing or reaping the child fails.
+    try { if (child?.exitCode === null) child.kill("SIGKILL"); } catch { cleanupFailed = true; }
+    try { if (child) await child.exited; } catch { cleanupFailed = true; }
+    try { if (directory) await rm(directory, { recursive: true, force: true }); } catch { cleanupFailed = true; }
+    if (cleanupFailed) untimed(controller.signal.aborted ? deadline ? "deadline" : "cancelled" : "unavailable");
     // Include cleanup in the deadline, and reject cancellation during cleanup.
     if (input.signal?.aborted) untimed("cancelled");
     else if (performance.now() >= expiresAt) untimed("deadline");
