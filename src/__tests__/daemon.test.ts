@@ -24,10 +24,12 @@ import { spawnSync } from "child_process";
 import {
   acquireProcessLock,
   releaseProcessLock,
-  MCP_PID_FILE,
+  getMcpPidFilePath,
 } from "../process-lock";
 import { DAEMON_PID_FILE } from "../paths";
 import { createShutdownHandler, getServeSocketPath } from "../daemon";
+
+const MCP_PID_FILE = getMcpPidFilePath();
 
 // --- Helpers ---
 

@@ -12,11 +12,38 @@
  * servers are the root cause of most voice_speak/voice_ask failures.
  */
 
-import { existsSync, readFileSync, unlinkSync } from "fs";
+import { existsSync, lstatSync, readFileSync, unlinkSync } from "fs";
+import { isAbsolute, join, relative, resolve, sep } from "path";
 import { safeWriteFileSync } from "./paths";
 
 export const MCP_PID_FILE = "/tmp/voicelayer-mcp.pid";
 const MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
+
+// Capture the preload boundary before tests temporarily change their env.
+// NODE_ENV catches a Bun test runner that bypassed the preload: fail closed.
+const testRunRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
+const testMode = !!testRunRoot || process.env.NODE_ENV === "test";
+
+function assertTestPidPath(pidPath: string): void {
+  if (!testMode) return;
+  const refuse = () => {
+    throw new Error(`[voicelayer] test PID lock refused outside the isolated run: ${pidPath}`);
+  };
+  if (!testRunRoot) return refuse();
+  const root = resolve(testRunRoot);
+  const tail = relative(root, resolve(pidPath));
+  if (!tail || tail === ".." || tail.startsWith(`..${sep}`) || isAbsolute(tail)) return refuse();
+  // A lexical child can still lead to a resident file through a symlink.
+  let component = root;
+  for (const part of ["", ...tail.split(sep)]) {
+    component = join(component, part);
+    try {
+      if (lstatSync(component).isSymbolicLink()) refuse();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
 
 export function getMcpPidFilePath(
   env: NodeJS.ProcessEnv = process.env,
@@ -82,6 +109,7 @@ export function acquireProcessLock(
   pidPath: string = getMcpPidFilePath(),
   options: AcquireProcessLockOptions = {},
 ): AcquireResult {
+  assertTestPidPath(pidPath);
   const killAlive = options.killAlive ?? true;
   const existing = readPidFile(pidPath);
 
@@ -143,6 +171,7 @@ function writePidFile(pidPath: string = getMcpPidFilePath()): void {
  * @param pidPath Optional PID file path. Defaults to MCP_PID_FILE.
  */
 export function releaseProcessLock(pidPath: string = getMcpPidFilePath()): void {
+  assertTestPidPath(pidPath);
   try {
     const existing = readPidFile(pidPath);
     // Only remove if we own it (or it's corrupt/missing)

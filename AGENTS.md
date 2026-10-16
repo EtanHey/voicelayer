@@ -113,6 +113,10 @@ Each run exclusively creates its PID plus a four-hex nonce directory; it never
 adopts an existing directory, even after PID reuse. Startup sweeps older dead-run
 directories (including legacy PID-only names), keeps the two newest dead runs as
 evidence, and leaves live PIDs alone. Cleanup does not depend on Bun exit hooks.
+The preload always sets `QA_VOICE_MCP_PID_PATH` inside the current run, replacing
+inherited overrides. Tests use `getMcpPidFilePath()`, never the raw `MCP_PID_FILE`
+default. Process-lock acquisition and release in test mode throw before reading
+or signalling if the PID path escapes that run (including symlinks).
 
 ## PR Workflow
 
