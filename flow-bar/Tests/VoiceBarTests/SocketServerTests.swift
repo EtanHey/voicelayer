@@ -844,7 +844,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         state.asyncDictationInsertionHandlerProvider = {
             { _, completion in
                 axInsertionFired = true
-                completion()
+                completion(.verified)
                 return true
             }
         }
@@ -935,7 +935,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         veryLongState.asyncDictationInsertionHandlerProvider = {
             { _, completion in
                 veryLongInsertionAttempts += 1
-                completion()
+                completion(.verified)
                 return true
             }
         }
@@ -988,7 +988,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             { text, completion in
                 editorInsertionAttempts += 1
                 editorScratchDocument.append(text)
-                completion()
+                completion(.verified)
                 return true
             }
         }
