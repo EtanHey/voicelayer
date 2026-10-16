@@ -15,7 +15,6 @@ extension VoiceBarFlowTests {
         "selection-copy-empty": "No text\nReselect",
         "selection-copy-failed": "Can't copy\nCheck A11y",
     ]
-    // P1f merged into #338 at fa8c3c44: every feedback fit is a normal assertion.
     static let focused338Families = ["paste-feedback", "terminal", "busy", "selection-error"]
 
     func gallerySnapshot() throws -> [String: Any] {
@@ -37,7 +36,6 @@ extension VoiceBarFlowTests {
         return states
     }
 
-    /// Caller owns the single activity/screenshot for this page or phase.
     func galleryClick(_ identifier: String) throws {
         app.activate()
         let window = app.windows["VoiceBar QA Settings"]
@@ -69,9 +67,6 @@ extension VoiceBarFlowTests {
     }
 
     func galleryText(_ text: String, in panel: XCUIElement) -> XCUIElement? {
-        // A card identifier can bind directly to its StaticText leaf. Include
-        // that root as well as descendants, and support selectable text views.
-        // Containers and numeric controls cannot prove the visible payload.
         var candidates = panel.descendants(matching: .any).matching(UIE2EAXText.predicate(text,
             staticTextRole: XCUIElement.ElementType.staticText.rawValue,
             additionalTextRoles: [XCUIElement.ElementType.textView.rawValue])).allElementsBoundByIndex
@@ -106,12 +101,9 @@ extension VoiceBarFlowTests {
             else { XCTFail("Full rendered BarView text missing in " + id + ": " + panel.debugDescription) }
         }
         var feedbackExpected = expected
-        // Preserve all panel/overlap checks while accepting an intentionally abbreviated terminal preview.
         if let terminal = feedbackExpected["terminal-confirmation"] { feedbackExpected["terminal-confirmation"] = String(terminal.prefix(2)) }
-        let feedbackPanels = panels
-        let feedbackTexts = texts
         let problems = feedbackExpected.isEmpty ? [] : UIE2EGalleryFrames.problems(
-            panels: feedbackPanels, texts: feedbackTexts, expected: feedbackExpected, bounds: bounds)
+            panels: panels, texts: texts, expected: feedbackExpected, bounds: bounds)
         XCTAssertTrue(problems.isEmpty, problems.joined(separator: "; "))
         if ids.contains("terminal-confirmation"), let previewFrame = texts["terminal-confirmation"],
            let panelFrame = panels["terminal-confirmation"] {
@@ -141,11 +133,12 @@ extension VoiceBarFlowTests {
         attachJSON("UIE2E-FOCUSED-FRAMES", ["ids": ids, "family": family,
             "panels": panels.mapValues(NSStringFromRect), "textFrames": texts.mapValues(NSStringFromRect),
             "expectedText": expected, "problems": problems, "oracle": "full text, actual AX frame, screen containment, sibling overlap; system12medium"])
-        for id in UIE2EGalleryFrames.verifiedIDs(panels: feedbackPanels, texts: feedbackTexts, expected: feedbackExpected, bounds: bounds) {
+        for id in UIE2EGalleryFrames.verifiedIDs(panels: panels, texts: texts, expected: feedbackExpected, bounds: bounds) {
             if id != "terminal-confirmation" { ledger.verifiedSurfaces.insert("338:static:" + id) }
         }
         if family, let actual = panels.values.first {
-            let planned = NSRectFromString(try XCTUnwrap(snapshot["familyAXFrame"] as? String))
+            let planned = try XCTUnwrap(UIE2EGalleryFrames.expectedFamilyAX(snapshot,
+                primaryTop: try XCTUnwrap(NSScreen.screens.first).frame.maxY))
             for (a, b) in zip([actual.minX, actual.minY, actual.width, actual.height],
                               [planned.minX, planned.minY, planned.width, planned.height]) {
                 XCTAssertEqual(a, b, accuracy: 1, "Actual notch panel must match production placement")
@@ -161,8 +154,6 @@ extension VoiceBarFlowTests {
         focusedStep("#338 gallery reserves top150pt for OS banners; no foreign controls clicked") {
             let snapshot = try gallerySnapshot()
             XCTAssertTrue(snapshot["pinned"] as? Bool == true)
-            // Every actual gallery panel is checked against this screen band in verifyGalleryFrames.
-            // The real-notch family intentionally keeps production positioning at the housing.
             attachJSON("UIE2E-GALLERY-EXCLUSION", ["topPoints": 150, "familyUsesProductionPlacement": true])
         }
         let initial = try gallerySnapshot()
@@ -172,7 +163,6 @@ extension VoiceBarFlowTests {
         let pageIDs = pages.flatMap { $0["states"] as? [String] ?? [] }
         XCTAssertEqual(pageIDs.count, Self.focused338Text.count)
         XCTAssertEqual(Set(pageIDs), Set(Self.focused338Text.keys))
-
         // Each page's navigation, fresh observation and all variant assertions share ONE screenshot.
         for page in pages {
             let index = try XCTUnwrap(page["index"] as? Int)
@@ -186,7 +176,6 @@ extension VoiceBarFlowTests {
                 try verifyGalleryFrames(ids: ids, snapshot: snapshot)
             }
         }
-
         for family in Self.focused338Families {
             let before = testRun?.failureCount ?? 0
             focusedStep("#338 production notch placement: " + family) {
@@ -199,7 +188,6 @@ extension VoiceBarFlowTests {
             }
             if (testRun?.failureCount ?? 0) == before { ledger.verifiedSurfaces.insert("338:notch:" + family) }
         }
-
         let beforeCopy = testRun?.failureCount ?? 0
         focusedStep("#338 representative production Copy: exact clipboard payload") {
             try galleryClick("qa-gallery-page-0")
@@ -214,10 +202,8 @@ extension VoiceBarFlowTests {
             NSPasteboard.general.setString("UIE2E focused sentinel", forType: .string)
             if button.exists && button.isHittable { button.click() }
             XCTAssertEqual(NSPasteboard.general.string(forType: .string), expected)
-            XCTAssertNotEqual(NSPasteboard.general.string(forType: .string), "UIE2E focused sentinel")
         }
         if (testRun?.failureCount ?? 0) == beforeCopy { ledger.verifiedSurfaces.insert("338:copy") }
-
         var clockSnapshot: [String: Any] = [:]
         focusedStep("#338 start all production expiry clocks together") {
             try galleryClick("qa-gallery-start-clocks")
@@ -248,11 +234,8 @@ extension VoiceBarFlowTests {
                 XCTAssertTrue(state["confirmation"] is NSNull, id + ": feedback did not expire")
                 if id.hasPrefix("busy-") {
                     let effects = try XCTUnwrap(state["effects"] as? [String: Any])
-                    XCTAssertEqual(effects["selectionCaptures"] as? Int, 0)
-                    XCTAssertEqual(effects["commandCount"] as? Int, 0)
-                    XCTAssertEqual(effects["typedCount"] as? Int, 0)
-                    XCTAssertEqual(effects["clipboardWrites"] as? Int, 0)
-                    XCTAssertEqual(effects["pasteShortcuts"] as? Int, 0)
+                    for key in ["selectionCaptures", "commandCount", "typedCount", "clipboardWrites", "pasteShortcuts"] {
+                        XCTAssertEqual(effects[key] as? Int, 0, id + ": " + key) }
                     XCTAssertEqual(state["mode"] as? String,
                         id == "busy-recording" ? "recording" : id == "busy-transcribing" ? "transcribing" : "idle",
                         "Busy expiry must preserve the original active synthetic session")
@@ -272,7 +255,8 @@ extension VoiceBarFlowTests {
                     let panel = galleryPanel("VoiceBar QA Gallery " + id)
                     let bar = panel.descendants(matching: .any).matching(identifier: "qa-gallery-bar-" + id).firstMatch
                     XCTAssertTrue(panel.exists, "Expired instance panel must remain inspectable: " + id)
-                    if bar.exists { XCTAssertNil(galleryText(Self.focused338Text[id]!, in: bar), id + ": stale visible feedback") }
+                    XCTAssertTrue(UIE2EGalleryFrames.expired(renderer: bar.exists ? bar.frame : nil,
+                        feedbackPresent: bar.exists && galleryText(Self.focused338Text[id]!, in: bar) != nil), id + ": missing renderer or stale visible feedback")
                 }
             }
         }
