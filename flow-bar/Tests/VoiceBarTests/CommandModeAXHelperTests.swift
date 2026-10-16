@@ -79,7 +79,7 @@ final class CommandModeAXHelperTests: XCTestCase {
         state.repasteTranscript(text, source: "settings_history")
         XCTAssertEqual(typed, [text])
         XCTAssertEqual(completions, 0)
-        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
     }
 
     private func localInsertion(

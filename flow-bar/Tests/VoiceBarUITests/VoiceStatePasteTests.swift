@@ -28,7 +28,7 @@ final class VoiceStatePasteTests: XCTestCase {
                     if result == .focusChanged {
                         XCTAssertEqual(harness.outcomes, ["notInserted"])
                         if source == "auto" { XCTAssertEqual(harness.state.latestDictationInsertionStatus, .notInserted) }
-                        XCTAssertTrue(harness.state.confirmationText?.contains("Shift+F5, or Copy") == true)
+                        XCTAssertTrue(harness.state.confirmationText?.contains("In History") == true)
                     } else {
                         XCTAssertTrue(harness.state.confirmationText?.contains("Paste failed") == true)
                     }
@@ -64,9 +64,8 @@ final class VoiceStatePasteTests: XCTestCase {
                     if source == "auto" {
                         XCTAssertEqual(harness.state.latestDictationInsertionStatus, .notInserted, context)
                     }
-                    XCTAssertTrue(harness.state.confirmationText?.contains("Not inserted") == true, context)
-                    XCTAssertTrue(harness.state.confirmationText?.contains("History") == true, context)
-                    XCTAssertTrue(harness.state.confirmationText?.contains("Click input and press Shift+F5, or Copy") == true, context)
+                    XCTAssertTrue(harness.state.confirmationText?.contains("Not pasted") == true, context)
+                    XCTAssertTrue(harness.state.confirmationText?.contains("In History") == true, context)
                     harness.assertRetainedWithoutSideEffects(context)
                 }
             }
@@ -250,8 +249,8 @@ final class VoiceStatePasteTests: XCTestCase {
                 XCTAssertEqual(typed, reason == "editable" ? [text] : [], "\(reason), AX: \(hasAXHandler)")
                 XCTAssertEqual(state.latestReusableTranscript, text, reason)
                 if reason != "editable" {
-                    XCTAssertTrue(state.confirmationText?.contains("Not inserted") == true, reason)
-                    XCTAssertTrue(state.confirmationText?.contains("Shift+F5") == true, reason)
+                    XCTAssertTrue(state.confirmationText?.contains("Not pasted") == true, reason)
+                    XCTAssertTrue(state.confirmationText?.contains("In History") == true, reason)
                 }
             }
         }
@@ -292,7 +291,7 @@ final class VoiceStatePasteTests: XCTestCase {
             state.frontmostAppProvider = { FakeRunningApplication(bundleIdentifier: "com.example.Editor", processIdentifier: 62626) }
             queued.removeFirst()()
             XCTAssertEqual(state.latestReusableTranscript, text)
-            XCTAssertTrue(state.confirmationText?.contains("Not inserted") == true, source)
+            XCTAssertTrue(state.confirmationText?.contains("Not pasted") == true, source)
         }
     }
 
@@ -370,7 +369,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(selection, selectedFile)
         XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
         XCTAssertEqual(state.latestReusableTranscript, text)
-        XCTAssertTrue(state.confirmationText?.contains("Shift+F5") == true)
+        XCTAssertTrue(state.confirmationText?.contains("In History") == true)
     }
 
     func testShiftF5T3MultilineRecoveryKeepsExistingTypedDelivery() {
@@ -382,7 +381,7 @@ final class VoiceStatePasteTests: XCTestCase {
         state.pasteboardWriter = { _ in XCTFail("Shift+F5 must preserve the clipboard") }
         state.repasteTranscript(text, source: "shift_f5")
         XCTAssertEqual(typed, [text])
-        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
         // Host menu consumption is NOT_PROVEN here; the booked native script checks it.
     }
 
@@ -440,7 +439,7 @@ final class VoiceStatePasteTests: XCTestCase {
                 XCTAssertEqual(typed, [text], "Exactly one delivery, no fallback duplicate: \(context)")
                 XCTAssertEqual(axAttempts, 0, "Bypass both captured and fresh AX: \(context)")
                 XCTAssertEqual(clipboardWrites, [], context)
-                XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true, context)
+                XCTAssertTrue(state.confirmationText?.contains("Unverified") == true, context)
             }
         }
     }
@@ -468,7 +467,7 @@ final class VoiceStatePasteTests: XCTestCase {
                 }
                 XCTAssertEqual(typed, [text], "\(bundle), \(source)")
                 XCTAssertEqual(state.latestReusableTranscript, text)
-                XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+                XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
             }
         }
     }
@@ -1893,7 +1892,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
         let watchdogFired = expectation(description: "AX insertion watchdog fired")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+            XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
 
             state.repasteTranscript("retry transcript", source: "settings_history")
 
@@ -1948,7 +1947,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(typedTexts, ["typed transcript"])
         XCTAssertEqual(pasteShortcutCount, 0)
         XCTAssertNil(pasteboardString, "the pasteboard is never written")
-        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
     }
 
     func testSettingsHistoryCapturePreservesExternalTargetWhenVoiceBarIsFrontmost() {
@@ -2061,7 +2060,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
         XCTAssertEqual(insertedTexts, ["this is the full transcript ending with wow"])
         XCTAssertFalse(pasteShortcutPosted)
-        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
     }
 
     func testAutoPasteUsesRecordStartInsertionWhenSameTargetIsFrontmostAtPasteTime() {
@@ -2100,7 +2099,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(insertedTexts, ["paste into the focus that is current on release"])
         XCTAssertEqual(clipboardWrites, [])
         XCTAssertFalse(pasteShortcutPosted)
-        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
     }
 
     // AIDEV-NOTE: Lane P — a multi-line transcript pasted into a terminal composer
@@ -2661,7 +2660,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(clipboardWrites, [])
         XCTAssertEqual(restoredSnapshots, [])
         XCTAssertFalse(pasteShortcutPosted)
-        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
     }
 
     func testAutoPasteRetainsTranscriptWhenNoFocusedInputWasCaptured() {
@@ -2691,7 +2690,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(typedTexts, [])
         XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted)
         XCTAssertNil(pasteboardString, "the pasteboard is never written")
-        XCTAssertTrue(state.confirmationText?.contains("Not inserted") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Not pasted") == true)
     }
 
     /// The failure this guarded — Cmd+V posted after a pasteboard write that did
@@ -2731,7 +2730,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
         XCTAssertEqual(clipboardWrites, [], "a failed typing attempt must not fall back to the clipboard")
         XCTAssertFalse(pasteShortcutPosted)
-        XCTAssertTrue(state.confirmationText?.contains("Not inserted") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Not pasted") == true)
         XCTAssertFalse(diagnostics.contains { event, _ in event == "paste_typing_result" })
     }
 
@@ -2878,7 +2877,7 @@ final class VoiceStatePasteTests: XCTestCase {
         )
         XCTAssertNil(pasteboardString, "the pasteboard was never written")
         XCTAssertEqual(restoredSnapshots, [], "so there was never anything to restore")
-        XCTAssertTrue(state.confirmationText?.contains("Not inserted") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Not pasted") == true)
     }
 
     func testDefaultFallbackPasteboardWriterMarksTranscriptAsTransientAndAutoGenerated() {
@@ -2952,7 +2951,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "this is the full transcript ending with wow",
         ])
 
-        XCTAssertTrue(state.confirmationText?.contains("Insertion unverified") == true)
+        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
         XCTAssertFalse(state.confirmationText?.contains("Accessibility") ?? true)
     }
 
