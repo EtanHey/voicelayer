@@ -5,10 +5,118 @@ import { TEST_TMP } from "./setup/test-tmp";
 import { synthesizeWithRetry } from "../tts-health";
 import { runAudioCommand, assembleLongReadHistory } from "../tts/long-read-audio";
 import * as qwen from "../tts/qwen3";
+import * as binaries from "../resolve-binary";
+import { prepareSeekSlice } from "../tts/seek-audio";
 
 const originalSpawn = Bun.spawn;
 const spies: ReturnType<typeof spyOn>[] = [];
 afterEach(() => { Bun.spawn = originalSpawn; for (const spy of spies.splice(0)) spy.mockRestore(); });
+
+// Keep native event/AbortSignal.any behavior for defensive lost-reason tests.
+// The real Bun 1.3.9 default reason getter rebuilds it; the raw throw slot does
+// not. The separate forced-GC Edge test below exercises that actual bug.
+function lostReasonController(): AbortController {
+  const controller = new AbortController();
+  Object.defineProperties(controller.signal, {
+    reason: { get: () => undefined },
+    throwIfAborted: { value: () => { if (controller.signal.aborted) throw undefined; } },
+  });
+  return controller;
+}
+
+function mockQwenProfile(): void {
+  spies.push(spyOn(qwen, "loadProfile").mockReturnValue({ name: "fixture", engine: "qwen3-tts", model_path: "", reference_clips: [], reference_clip: "fixture.wav", reference_text: "reference", fallback: "jenny", created: "" }));
+  spies.push(spyOn(qwen, "buildDaemonRequestHeaders").mockReturnValue({ Authorization: "Bearer fixture" }));
+}
+
+describe("adapters after the abort reason is lost", () => {
+  it("rejects already-aborted Qwen3 work as cancellation without fetching", async () => {
+    const controller = lostReasonController(); controller.abort();
+    const fetch = spyOn(globalThis, "fetch"); spies.push(fetch);
+    await expect(qwen.synthesizeCloned("hello", "fixture", controller.signal)).rejects.toHaveProperty("name", "AbortError");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("Qwen3 normalizes an undefined fetch rejection after cancellation", async () => {
+    mockQwenProfile();
+    let received: AbortSignal | undefined;
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(async (_url, options) => {
+      received = options!.signal as AbortSignal;
+      return await new Promise<Response>((_resolve, reject) => received!.addEventListener("abort", () => reject(undefined), { once: true }));
+    }); spies.push(fetch);
+    const log = spyOn(console, "error").mockImplementation(() => {}); spies.push(log);
+    const controller = lostReasonController();
+    const pending = qwen.synthesizeCloned("hello", "fixture", controller.signal);
+    expect(received).toBeDefined(); controller.abort();
+    await expect(pending).rejects.toHaveProperty("name", "AbortError");
+    expect(received!.aborted).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("Qwen3 rejects cancellation during response parsing", async () => {
+    mockQwenProfile();
+    const controller = lostReasonController();
+    spies.push(spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => {
+      controller.abort(); return { audio_b64: "", duration_ms: 0 };
+    } } as Response));
+    await expect(qwen.synthesizeCloned("hello", "fixture", controller.signal)).rejects.toHaveProperty("name", "AbortError");
+  });
+
+  it("Qwen3 tolerates an undefined non-cancellation failure", async () => {
+    mockQwenProfile();
+    spies.push(spyOn(globalThis, "fetch").mockRejectedValue(undefined));
+    spies.push(spyOn(console, "error").mockImplementation(() => {}));
+    expect(await qwen.synthesizeCloned("hello", "fixture")).toBeNull();
+  });
+
+  it("rejects already-aborted conversion and edge work without spawning", async () => {
+    const controller = lostReasonController(); controller.abort();
+    const spawn = spyOn(Bun, "spawn"); spies.push(spawn);
+    await expect(runAudioCommand(["unused"], controller.signal)).rejects.toHaveProperty("name", "AbortError");
+    await expect(synthesizeWithRetry("hello", "fixture", "+0%", join(TEST_TMP, "lost.mp3"), "fixture.py", 1, controller.signal)).rejects.toHaveProperty("name", "AbortError");
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  for (const adapter of ["conversion", "edge"] as const) {
+    it(`${adapter} reaps its owned child and reports cancellation without retries`, async () => {
+      const controller = lostReasonController();
+      let exit!: (code: number) => void;
+      const kill = spyOn({ kill: () => exit(143) }, "kill"); spies.push(kill);
+      const spawn = spyOn(Bun, "spawn").mockImplementation((() => ({
+        exited: new Promise<number>(resolve => { exit = resolve; }), kill,
+      })) as any); spies.push(spawn);
+      const pending = adapter === "conversion" ? runAudioCommand(["fixture-converter"], controller.signal)
+        : synthesizeWithRetry("hello", "fixture", "+0%", join(TEST_TMP, "lost-running.mp3"), "fixture.py", 1, controller.signal);
+      controller.abort();
+      await expect(pending).rejects.toHaveProperty("name", "AbortError");
+      expect(kill).toHaveBeenCalledWith("SIGTERM");
+      expect(spawn).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it("rejects seek cancellation before even a zero-offset shortcut", async () => {
+    const controller = lostReasonController(); controller.abort();
+    const spawn = spyOn(Bun, "spawn"); spies.push(spawn);
+    await expect(prepareSeekSlice(join(TEST_TMP, "seek.mp3"), 0, controller.signal)).rejects.toHaveProperty("name", "AbortError");
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("conversion and seek recheck cancellation after binary resolution", async () => {
+    for (const adapter of ["conversion", "seek"]) {
+      const controller = lostReasonController();
+      const resolve = spyOn(binaries, "resolveBinaryAsync").mockImplementation(async () => {
+        controller.abort(); return "/fixture/ffmpeg";
+      }); spies.push(resolve);
+      const spawn = spyOn(Bun, "spawn"); spies.push(spawn);
+      const pending = adapter === "conversion" ? runAudioCommand(["ffmpeg"], controller.signal)
+        : prepareSeekSlice(join(TEST_TMP, "seek.mp3"), 200, controller.signal);
+      await expect(pending).rejects.toHaveProperty("name", "AbortError");
+      expect(spawn).not.toHaveBeenCalled();
+      spawn.mockRestore(); resolve.mockRestore();
+    }
+  });
+});
 
 describe("long-read synthesis adapters", () => {
   it("edge abort reaps its exact child and skips all retries", async () => {
@@ -26,6 +134,8 @@ describe("long-read synthesis adapters", () => {
 
   it("already-aborted edge work cannot spawn a child", async () => {
     const controller = new AbortController(); controller.abort();
+    // Exercise the original Bun 1.3.9 flake: classification must survive GC.
+    Bun.gc(true);
     const spawn = spyOn(Bun, "spawn"); spies.push(spawn);
     await expect(synthesizeWithRetry("hello", "fixture", "+0%", join(TEST_TMP, "abort.mp3"), "fixture.py", 1, controller.signal)).rejects.toHaveProperty("name", "AbortError");
     expect(spawn).not.toHaveBeenCalled();

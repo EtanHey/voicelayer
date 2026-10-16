@@ -1,3 +1,4 @@
+import OffscreenTestSupport
 import AppKit
 import Darwin
 import SwiftUI
@@ -663,7 +664,7 @@ final class WaveformViewTests: XCTestCase {
         window.hasShadow = false
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.contentView = host
-        window.orderFrontRegardless()
+        VLOrderCompositorTestWindow(window)
         defer {
             window.orderOut(nil)
             window.contentView = nil

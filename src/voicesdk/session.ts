@@ -2,6 +2,8 @@ import { appendFileSync, mkdirSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import type { BargeInMonitor, SoundLayer } from "../soundlayer";
+import type { QueuedPlaybackHandle, PlaybackScope } from "../tts/playback-lifecycle";
+import { boundedPlaybackWait, waitForPlayerExit } from "../tts/playback-exit";
 import { defaultSoundLayer } from "../soundlayer";
 import {
   serializeVoiceSdkEvent,
@@ -145,8 +147,14 @@ export function createVoiceSdkSessionManager(
     const utteranceId = `utt-${session.sequence + 1}`;
     const voiceId = input.voice_id ?? "default";
     let playbackStartedAtMs = soundLayer.clock?.nowMs() ?? Date.now();
+    // Same conservative cold-synthesis / slow-speech allowance as Ask.
+    const promptBudgetMs = Math.max(180_000, 60_000 + Math.ceil(input.text.length / 13.9) * 3_000);
     let reason: VoiceSdkSpeakStopReason = "completed";
     let interrupted = false;
+    let finished = false;
+    const playbacks: QueuedPlaybackHandle[] = [];
+    const cancelOwned = () => playbacks.forEach(handle => soundLayer.cancellation.cancelPlayback?.({ id: handle.id }));
+    let scope: PlaybackScope | undefined;
     const bargeInMonitor: { current: BargeInMonitor | null } = {
       current: null,
     };
@@ -170,12 +178,14 @@ export function createVoiceSdkSessionManager(
     });
 
     const startBargeInMonitor = (startedAtMs: number) => {
-      if (!soundLayer.bargeIn || bargeInMonitor.current) return;
+      if (finished || !soundLayer.bargeIn || !soundLayer.cancellation.cancelPlayback || !scope || bargeInMonitor.current) return;
+      const monitorScope = scope;
       playbackStartedAtMs = startedAtMs;
       bargeInMonitor.current = soundLayer.bargeIn.monitorDuringPlayback({
         playbackStartedAtMs,
         onSpeechStart: (onset) => {
-          if (interrupted) return;
+          if (interrupted || finished) return;
+          if (!soundLayer.cancellation.cancelPlayback?.(monitorScope)) return;
           interrupted = true;
           const turnId = `turn-${session.sequence + 1}`;
           emit({
@@ -192,7 +202,6 @@ export function createVoiceSdkSessionManager(
             onset_ms: onset.onset_ms,
             sequence: nextSequence(session),
           });
-          soundLayer.cancellation.stopPlayback();
           const stoppedAtMs = soundLayer.clock?.nowMs() ?? Date.now();
           const onsetAbsoluteMs = playbackStartedAtMs + onset.onset_ms;
           emit({
@@ -208,18 +217,27 @@ export function createVoiceSdkSessionManager(
     };
 
     try {
-      await soundLayer.tts.speak(input.text, {
+      await boundedPlaybackWait(soundLayer.tts.speak(input.text, {
         voice: input.voice_id,
         mode: "converse",
         waitForPlayback: true,
         onPlaybackStart: startBargeInMonitor,
-      });
+        onPlaybackQueued: (handle) => {
+          if (finished) { soundLayer.cancellation.cancelPlayback?.({ id: handle.id }); return; }
+          playbacks.push(handle);
+          scope = { id: handle.id, generation: handle.generation };
+        },
+      }), promptBudgetMs, "SDK prompt");
     } catch {
       reason = "error";
+      cancelOwned();
     } finally {
+      finished = true;
       bargeInMonitor.current?.stop();
+      try { await waitForPlayerExit(playbacks); }
+      catch { reason = "error"; cancelOwned(); }
     }
-    if (interrupted) {
+    if (interrupted && reason !== "error") {
       reason = "interrupted";
     }
     emit({

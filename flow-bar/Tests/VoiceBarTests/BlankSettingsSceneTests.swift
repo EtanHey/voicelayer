@@ -1,3 +1,4 @@
+import OffscreenTestSupport
 import AppKit
 import SwiftUI
 @testable import VoiceBar
@@ -31,13 +32,13 @@ final class BlankSettingsSceneTests: XCTestCase {
             application.unhide(nil)
             window.close()
         }
-        window.orderFront(nil)
+        VLOrderTestWindow(window)
         XCTAssertTrue(window.isVisible, "The fixture must be capable of showing before the guard")
         startGuard(app)
         assertSceneHidden(window, after: "launch restoration")
 
         for _ in 0 ..< 2 {
-            application.activate(ignoringOtherApps: true)
+            VLPostTestActivation()
             assertSceneHidden(window, after: "activate")
             application.hide(nil)
             XCTAssertTrue(application.isHidden, "The hide transition must actually occur")
@@ -59,7 +60,7 @@ final class BlankSettingsSceneTests: XCTestCase {
         let application = NSApplication.shared
         let app = AppDelegate()
         let placeholder = sceneWindow(identifier: "com_apple_SwiftUI_Settings_window")
-        placeholder.orderFront(nil)
+        VLOrderTestWindow(placeholder)
         startGuard(app)
         let previousDelegate = application.delegate
         application.delegate = app
@@ -110,7 +111,7 @@ final class BlankSettingsSceneTests: XCTestCase {
         let app = AppDelegate()
         let window = sceneWindow()
         defer { window.close() }
-        window.orderFront(nil)
+        VLOrderTestWindow(window)
         XCTAssertTrue(window.isVisible)
         startGuard(app)
         XCTAssertFalse(window.isVisible, "The restored SwiftUI EmptyView scene must never remain on screen")
@@ -122,7 +123,7 @@ final class BlankSettingsSceneTests: XCTestCase {
         startGuard(app)
         let window = sceneWindow(identifier: "com_apple_SwiftUI_Settings-window-1")
         defer { window.close() }
-        window.orderFront(nil)
+        VLOrderTestWindow(window)
         NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
         XCTAssertFalse(window.isVisible)
     }
@@ -132,7 +133,7 @@ final class BlankSettingsSceneTests: XCTestCase {
         let app = AppDelegate()
         let window = sceneWindow()
         defer { window.close() }
-        window.orderFront(nil)
+        VLOrderTestWindow(window)
         let allowDefault = (app as NSApplicationDelegate).applicationShouldHandleReopen?(
             NSApplication.shared, hasVisibleWindows: true
         ) ?? true
@@ -196,7 +197,7 @@ final class BlankSettingsSceneTests: XCTestCase {
         for name in [NSWindow.didUpdateNotification, NSApplication.didUpdateNotification] {
             let window = sceneWindow(identifier: "pending")
             defer { window.close() }
-            window.orderFront(nil)
+            VLOrderTestWindow(window)
             XCTAssertTrue(window.isVisible)
             window.identifier = NSUserInterfaceItemIdentifier("com_apple_SwiftUI_Settings_window")
             let object: Any = name == NSWindow.didUpdateNotification ? window : NSApplication.shared
@@ -215,7 +216,7 @@ final class BlankSettingsSceneTests: XCTestCase {
         let window = sceneWindow()
         defer { window.close() }
         for _ in 0 ..< 2 {
-            window.orderFront(nil)
+            VLOrderTestWindow(window)
             NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
             XCTAssertFalse(window.isVisible)
         }
@@ -242,7 +243,7 @@ final class BlankSettingsSceneTests: XCTestCase {
         XCTAssertNil(weakApp)
         let window = sceneWindow()
         defer { window.close() }
-        window.orderFront(nil)
+        VLOrderTestWindow(window)
         NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
         XCTAssertTrue(window.isVisible)
     }
@@ -253,7 +254,7 @@ final class BlankSettingsSceneTests: XCTestCase {
         startGuard(app)
         let window = sceneWindow(identifier: "VoiceBar.SettingsWindow")
         defer { window.close() }
-        window.orderFront(nil)
+        VLOrderTestWindow(window)
         NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
         XCTAssertTrue(window.isVisible, "Only the SwiftUI identifier prefix identifies a stray scene")
     }

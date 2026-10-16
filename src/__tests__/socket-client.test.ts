@@ -164,6 +164,41 @@ describe("socket-client", () => {
     }
   });
 
+  it("FX-2 prompt deadline releases its real History gate without waiting for late synthesis", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const client = await import("../socket-client"), tts = await import("../tts");
+    const input = await import("../input"), booking = await import("../session-booking");
+    const { handleVoiceAsk } = await import("../handlers");
+    client.connectToBar(TEST_SOCKET);
+    expect(await waitFor(client.isConnected)).toBe(true);
+    const speech = Promise.withResolvers<any>();
+    const speak = spyOn(tts, "speak").mockImplementation(() => speech.promise);
+    const capture = spyOn(input, "waitForInput").mockResolvedValue(null);
+    const booked = spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true });
+    const nativeTimer = globalThis.setTimeout;
+    let expire!: () => void;
+    const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(((fn, ms, ...args) => {
+      const timer = nativeTimer(fn, ms, ...args);
+      if (ms === 180_000) expire = () => { clearTimeout(timer); fn(...args); };
+      return timer;
+    }) as typeof setTimeout);
+    const request = handleVoiceAsk({ message: "Synthetic deadline question" });
+    try {
+      expect(await waitFor(() => parseReceived(mockServer!).some(e => e.type === "history_playback_gate" && e.busy === true))).toBe(true);
+      const gate = parseReceived(mockServer).find(e => e.type === "history_playback_gate" && e.busy === true)!;
+      mockServer.sendToAll(JSON.stringify({ cmd: "history_playback_ready", id: gate.id }) + "\n");
+      expect(await waitFor(() => speak.mock.calls.length === 1)).toBe(true);
+      expire(); expect((await request).isError).toBe(true);
+      expect(await waitFor(() => parseReceived(mockServer!).some(e => e.type === "history_playback_gate" && e.id === gate.id && e.busy === false), 300)).toBe(true);
+      expect(capture).not.toHaveBeenCalled();
+    } finally {
+      speech.resolve({ displayText: "Synthetic deadline question", engine: "edge-tts", voice: "synthetic",
+        audioArtifact: { bytes: new Uint8Array([0]), format: "mp3" } });
+      await request; await Bun.sleep(20);
+      timerSpy.mockRestore(); speak.mockRestore(); capture.mockRestore(); booked.mockRestore();
+    }
+  });
+
   for (const connected of [true, false]) {
     it(connected ? "Ask captures within one second without a History receipt" : "Ask captures immediately with a disconnected existing socket", async () => {
       mockServer = createMockVoiceBarServer(TEST_SOCKET);

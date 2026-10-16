@@ -689,7 +689,21 @@ notarytool_auth_args() {
     return 1
 }
 
+# Explicit UI-test-only escape hatch for Macs without the release certificate.
+# Never applicable to a resident/release build or a bundle with lifecycle actions.
+allows_uie2e_adhoc_signing() {
+    local parent
+    parent="$(dirname "$APP_DIR")"
+    [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 && "${VOICEBAR_QA_BUILD:-0}" == 1 \
+       && "$SIGN_IDENTITY" == - && "$STOP_RUNNING" == 0 && "$RELAUNCH_APP" == 0 \
+       && "$VOICEBAR_REQUIRE_NOTARIZATION" == 0 && -z "$VOICEBAR_RELEASE_ZIP" \
+       && "${APP_DIR##*/}" == VoiceBarQA.app && "${parent##*/}" == vl-ui-* \
+       && ! -L "$APP_DIR" && -f "$parent/.uie2e-sandbox" \
+       && "$(cat "$parent/.uie2e-sandbox")" == voicebar-ui-e2e-v1 ]]
+}
+
 validate_signing_identity() {
+    if allows_uie2e_adhoc_signing; then return 0; fi
     if is_resident_app_dir && [[ "$SIGN_IDENTITY" == Apple\ Development:* ]] && [ "${VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL:-0}" != "1" ]; then
         echo "[build-app] ERROR: Refusing Apple Development signing for resident /Applications/VoiceBar.app." >&2
         echo "[build-app] This would change the app identity and can invalidate TCC grants." >&2
@@ -751,6 +765,10 @@ sign_nested_native_dependencies() {
 }
 
 verify_developer_id_signature() {
+    if allows_uie2e_adhoc_signing; then
+        codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+        return $?
+    fi
     local requirements
     local details
 
@@ -876,6 +894,10 @@ unregister_throwaway_bundle() {
 }
 
 notarize_and_staple() {
+    if allows_uie2e_adhoc_signing; then
+        echo "[build-app] UIE2E throwaway QA bundle: ad-hoc signing, no notarization."
+        return 0
+    fi
     if ! notary_credentials_available; then
         if [ "$VOICEBAR_REQUIRE_NOTARIZATION" = "1" ] || [ -n "$VOICEBAR_RELEASE_ZIP" ]; then
             echo "[build-app] ERROR: Homebrew release zip requires notarization, but notary credentials are not configured." >&2
@@ -977,6 +999,10 @@ fi
 
 parse_build_app_args "$@"
 normalize_app_dir_path
+if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
+    echo "[build-app] ERROR: UIE2E ad-hoc signing requires a marked scratch QA bundle and --no-stop --no-relaunch." >&2
+    exit 1
+fi
 refuse_brew_managed_install_path
 guard_build_lifecycle_for_running_instances
 
@@ -1114,6 +1140,13 @@ DESCRIBE_REF="$(git_describe)"
 BUILD_UTC="$(build_time_utc)"
 RELEASE_VERSION="$(package_version)"
 stamp_info_plist "$APP_DIR/Contents/Info.plist" "$RELEASE_VERSION" "$COMMIT_SHA" "$DESCRIBE_REF" "$BUILD_UTC"
+if allows_uie2e_adhoc_signing; then
+    # Persistent UI-only identity survives Finder/open launches without the runner environment.
+    "$PLIST_BUDDY" -c 'Add :VoiceBarUIE2EOnly bool true' "$APP_DIR/Contents/Info.plist"
+    "$PLIST_BUDDY" -c 'Set :CFBundleIdentifier com.voicelayer.voicebar.uie2e' "$APP_DIR/Contents/Info.plist"
+    "$PLIST_BUDDY" -c 'Set :CFBundleName VoiceBarQA' "$APP_DIR/Contents/Info.plist"
+    "$PLIST_BUDDY" -c 'Delete :CFBundleURLTypes' "$APP_DIR/Contents/Info.plist"
+fi
 echo "[build-app] Stamped Info.plist:"
 echo "  ReleaseVersion=$RELEASE_VERSION"
 echo "  GitCommit=$COMMIT_SHA"

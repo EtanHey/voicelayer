@@ -1,3 +1,4 @@
+import OffscreenTestSupport
 import AppKit
 import SwiftUI
 @testable import VoiceBarUI
@@ -157,7 +158,7 @@ final class MicrophoneDragIndicatorTests: XCTestCase {
         window.appearance = NSAppearance(named: .aqua)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        window.orderFront(nil)
+        VLOrderTestWindow(window)
         defer {
             window.orderOut(nil)
             window.contentView = nil

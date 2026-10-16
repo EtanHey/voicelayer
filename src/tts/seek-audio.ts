@@ -1,4 +1,5 @@
 import { unlinkSync } from "fs";
+import { throwIfAbortedSafe } from "../abort";
 import { resolveBinaryAsync } from "../resolve-binary";
 import { runAudioCommand } from "./long-read-audio";
 
@@ -9,12 +10,12 @@ export function disposeSeekSlice(file?: string): void {
 
 /** Preflight a replacement without stopping the player that owns the utterance. */
 export async function prepareSeekSlice(file: string, offsetMs: number, signal: AbortSignal): Promise<string | undefined> {
-  signal.throwIfAborted();
+  throwIfAbortedSafe(signal);
   if (offsetMs === 0) return undefined;
   const slice = `${file}.${process.pid}-${++sliceCounter}.seek.wav`;
   try {
     const ffmpeg = await resolveBinaryAsync("ffmpeg");
-    signal.throwIfAborted();
+    throwIfAbortedSafe(signal);
     if (!ffmpeg) throw new Error("ffmpeg unavailable for seek");
     await runAudioCommand([ffmpeg, "-nostdin", "-y", "-ss", String(offsetMs / 1000),
       "-i", file, "-vn", "-c:a", "pcm_s16le", slice], signal);

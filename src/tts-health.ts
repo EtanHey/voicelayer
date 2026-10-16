@@ -12,6 +12,7 @@
  */
 
 import { readFileSync, unlinkSync } from "fs";
+import { abortErrorFor, throwIfAbortedSafe } from "./abort";
 import type { WordBoundary } from "./socket-protocol";
 
 const HEALTH_CACHE_TTL_MS = 60_000;
@@ -203,7 +204,7 @@ export async function synthesizeWithRetry(
   let lastError = "";
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    signal?.throwIfAborted();
+    throwIfAbortedSafe(signal);
     if (attempt > 0) {
       console.error(
         `[voicelayer] edge-tts retry ${attempt}/${maxRetries} for: "${text.slice(0, 50)}..."`,
@@ -237,7 +238,7 @@ export async function synthesizeWithRetry(
         if (signal?.aborted) kill();
         // Reap the child before retry/cleanup; a killed generation cannot write late files.
         exitCode = await synth.exited;
-        signal?.throwIfAborted();
+        throwIfAbortedSafe(signal);
         if (timedOut) exitCode = -1;
       } finally {
         clearTimeout(timeout);
@@ -274,7 +275,7 @@ export async function synthesizeWithRetry(
     } catch (err) {
       if (signal?.aborted) {
         try { unlinkSync(metadataFile); } catch {}
-        throw signal.reason;
+        throw abortErrorFor(signal);
       }
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`[voicelayer] edge-tts spawn error: ${lastError}`);

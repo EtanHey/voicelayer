@@ -1,3 +1,4 @@
+import OffscreenTestSupport
 import AppKit
 import SwiftUI
 @testable import VoiceBarUI
@@ -14,7 +15,7 @@ final class SettingsTabRequestTests: XCTestCase {
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        window.orderFront(nil)
+        VLOrderTestWindow(window)
         defer {
             window.orderOut(nil)
             window.contentView = nil
@@ -48,7 +49,7 @@ final class SettingsTabRequestTests: XCTestCase {
                                   styleMask: [.titled], backing: .buffered, defer: false)
             window.contentView = host
             window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-            window.orderFront(nil)
+            VLOrderTestWindow(window)
             defer {
                 window.orderOut(nil)
                 window.contentView = nil

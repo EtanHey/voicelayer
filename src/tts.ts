@@ -24,6 +24,7 @@ import {
   unlinkSync,
 } from "fs";
 import { resolveBinary } from "./resolve-binary";
+import { throwIfAbortedSafe } from "./abort";
 import { platform } from "os";
 import {
   ttsFilePath,
@@ -52,7 +53,9 @@ import type {
   TextToSpeechOptions,
   TextToSpeechResult,
 } from "./soundlayer";
-import { applyPronunciation } from "./pronunciation";
+import { pronunciationRules } from "./pronunciation";
+import { projectSpeakableText } from "./speakable-text";
+import type { ProjectionRange } from "./tts/structured-speech";
 import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
 import { prepareSeekSlice, disposeSeekSlice } from "./tts/seek-audio";
@@ -87,8 +90,12 @@ export function isSpeakerOutputRefusedError(error: unknown): boolean {
   );
 }
 
-function broadcastPlaybackIdleIfSpeakerClear(nextState?: "recording"): void {
+function broadcastPlaybackIdleIfSpeakerClear(nextState?: "recording", intent: "completion" | "stop" = "completion"): void {
   if (getEffectiveRecordingState() !== "idle") return;
+  // Ask owns the idle edge until it validates the handoff or reports an error.
+  if (isCaptureAdmissionReserved()) return;
+  // Explicit global Stop acknowledges logical cancellation; it is not reap proof.
+  if (getPlaybackQueueDepth() > 0 && intent !== "stop") return;
   if (activeLongRead && !activeLongRead.controller.signal.aborted && !nextState) return;
   broadcast({
     type: "state",
@@ -380,7 +387,7 @@ function inferBoundaryEndMs(wordBoundaries: WordBoundary[]): number {
   );
 }
 
-function probeAudioDurationMs(audioFile: string): number | null {
+function probeAudioDurationMs(audioFile: string, timeoutMs?: number): number | null {
   try {
     const ffprobe = resolveBinary("ffprobe");
     if (!ffprobe) return null;
@@ -393,7 +400,7 @@ function probeAudioDurationMs(audioFile: string): number | null {
       "-of",
       "default=noprint_wrappers=1:nokey=1",
       audioFile,
-    ]);
+    ], { timeout: timeoutMs });
     if (probe.exitCode !== 0) return null;
 
     const durationSeconds = Number(
@@ -484,56 +491,58 @@ export function alignWordBoundariesToDisplayText(
   displayText: string,
   spokenText: string,
   wordBoundaries: WordBoundary[],
+  ranges?: ProjectionRange[],
 ): WordBoundary[] {
-  if (displayText === spokenText || wordBoundaries.length === 0) {
-    return wordBoundaries;
+  if (displayText === spokenText || !wordBoundaries.length) return wordBoundaries;
+  const projection = ranges ? {speechText: spokenText, ranges} : projectSpeakableText(displayText, pronunciationRules(), "edge");
+  const tokens = Array.from(displayText.matchAll(/\S+/gu));
+  const unknown = (): WordBoundary[] => tokens.length === 1 ? [{
+    text: displayText, offset_ms: wordBoundaries[0].offset_ms,
+    duration_ms: wordBoundaries.at(-1)!.offset_ms + wordBoundaries.at(-1)!.duration_ms - wordBoundaries[0].offset_ms,
+  }] : [];
+  if (projection.speechText !== spokenText) return unknown();
+  // Engine punctuation tokenization may differ. Match the full letter/number
+  // stream before accepting any timings; a partial or stale stream is untimed.
+  const canonical = (text: string) => text.replace(/[^\p{L}\p{M}\p{N}]/gu, "").toLowerCase();
+  const positions: number[] = [];
+  let normalized = "";
+  for (let i = 0; i < spokenText.length;) {
+    const char = String.fromCodePoint(spokenText.codePointAt(i)!);
+    const value = canonical(char);
+    for (let j = 0; j < value.length; j++) positions.push(i);
+    normalized += value; i += char.length;
   }
-
-  const displayTokens = displayText.match(/\S+/gu) ?? [];
-  const spokenTokens = spokenText.match(/\S+/gu) ?? [];
-  if (displayTokens.length === 0) return wordBoundaries;
-
-  const collapseToDisplayText = (): WordBoundary[] => {
-    const first = wordBoundaries[0];
-    const last = wordBoundaries[wordBoundaries.length - 1];
-    return [{
-      offset_ms: first.offset_ms,
-      duration_ms: last.offset_ms + last.duration_ms - first.offset_ms,
-      text: displayText,
-    }];
-  };
-  if (spokenTokens.length !== wordBoundaries.length) {
-    return collapseToDisplayText();
-  }
-
-  const aligned: WordBoundary[] = [];
-  let boundaryIndex = 0;
-
-  for (const displayToken of displayTokens) {
-    const replacementTokenCount =
-      applyPronunciation(displayToken).match(/\S+/gu)?.length ?? 1;
-    const replacementBoundaries = wordBoundaries.slice(
-      boundaryIndex,
-      boundaryIndex + replacementTokenCount,
-    );
-    if (replacementBoundaries.length !== replacementTokenCount) {
-      return collapseToDisplayText();
+  const timing: ({start: number; end: number} | undefined)[] = tokens.map(() => undefined);
+  let cursor = 0;
+  for (const boundary of wordBoundaries) {
+    const value = canonical(boundary.text);
+    if (!value) continue;
+    if (normalized.slice(cursor, cursor + value.length) !== value) return unknown();
+    const start = positions[cursor], final = positions[cursor + value.length - 1];
+    const end = final + (spokenText.codePointAt(final)! > 0xffff ? 2 : 1);
+    cursor += value.length;
+    for (const range of projection.ranges) {
+      const left = Math.max(start, range.speech.start), right = Math.min(end, range.speech.end);
+      if (left >= right || range.display.start === range.display.end) continue;
+      const sourceStart = range.kind === "identity" ? range.display.start + left - range.speech.start : range.display.start;
+      const sourceEnd = range.kind === "identity" ? range.display.start + right - range.speech.start : range.display.end;
+      for (let i = 0; i < tokens.length; i++) {
+        if (tokens[i].index >= sourceEnd || tokens[i].index + tokens[i][0].length <= sourceStart) continue;
+        const previous = timing[i];
+        timing[i] = {start: Math.min(previous?.start ?? Infinity, boundary.offset_ms),
+          end: Math.max(previous?.end ?? 0, boundary.offset_ms + boundary.duration_ms)};
+      }
     }
-
-    const first = replacementBoundaries[0];
-    const last = replacementBoundaries[replacementBoundaries.length - 1];
-    aligned.push({
-      offset_ms: first.offset_ms,
-      duration_ms:
-        last.offset_ms + last.duration_ms - first.offset_ms,
-      text: displayToken,
-    });
-    boundaryIndex += replacementTokenCount;
   }
-
-  return boundaryIndex === wordBoundaries.length
-    ? aligned
-    : collapseToDisplayText();
+  if (cursor !== normalized.length) return unknown();
+  // Keep the existing wire's original whitespace-token identity. Omitted markdown
+  // tokens have zero duration at the next measured onset, never fabricated speech.
+  return tokens.map((token, i) => {
+    const measured = timing[i];
+    const offset = measured?.start ?? timing.slice(i + 1).find(Boolean)?.start ??
+      timing.slice(0, i).reverse().find(Boolean)?.end ?? 0;
+    return {text: token[0], offset_ms: offset, duration_ms: measured ? measured.end - measured.start : 0};
+  });
 }
 
 // --- Ring Buffer ---
@@ -761,6 +770,11 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   };
 }
 
+export interface CaptureAdmission {
+  admit(handle: QueuedPlaybackHandle): boolean;
+  release(): void;
+}
+
 interface PlaybackJob {
   id: string;
   lifecycle: PlaybackLifecycle;
@@ -781,6 +795,8 @@ interface ActivePlayback {
   job: PlaybackJob;
   proc: ReturnType<typeof Bun.spawn>;
   startedAt: number;
+  watchdog?: ReturnType<typeof setTimeout>;
+  watchdogTimedOut?: boolean;
 }
 
 const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
@@ -793,6 +809,8 @@ const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
 
 const LOW_PRIORITY_TTL_MS = 10_000;
 const NORMAL_PRIORITY_TTL_MS = 30_000;
+// Allow player startup/teardown without mistaking synthesis or decoder time for playback.
+const PLAYER_WATCHDOG_MARGIN_MS = 5_000;
 let playbackIdCounter = 0;
 
 function nextPlaybackId(): string {
@@ -893,6 +911,7 @@ function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
 }
 
 class PlaybackQueueManager {
+  private captureAdmission?: Set<string>;
   private jobs = new Map<string, PlaybackJob>();
   private pending: PlaybackJob[] = [];
   private preparing: { job: PlaybackJob; cancel: () => void } | null = null;
@@ -904,6 +923,30 @@ class PlaybackQueueManager {
   private conversions = new Set<Promise<void>>();
   private seekPreparation?: { job: PlaybackJob; controller: AbortController };
   private progressTimer: ReturnType<typeof setInterval> | null = null;
+
+  hasCaptureAdmission(): boolean { return this.captureAdmission !== undefined; }
+
+  reserveCaptureAdmission(): CaptureAdmission | undefined {
+    if (this.captureAdmission || this.depth() > 0 || this.conversions.size > 0) return;
+    const owned = new Set<string>();
+    this.captureAdmission = owned;
+    let released = false;
+    return {
+      admit: handle => {
+        if (released || !this.jobs.has(handle.id) || this.jobs.get(handle.id)!.completed) return false;
+        // The handler owns this handoff on every completion path, even after release.
+        const job = this.jobs.get(handle.id)!;
+        if (job.metadata) job.metadata.nextState = undefined;
+        owned.add(handle.id); this.processNext(); return true;
+      },
+      release: () => {
+        if (released) return;
+        released = true;
+        if (this.captureAdmission === owned) this.captureAdmission = undefined;
+        this.processNext();
+      },
+    };
+  }
 
   enqueue(
     audioFile: string,
@@ -939,7 +982,7 @@ class PlaybackQueueManager {
     catch (error) { console.error(`[voicelayer] Playback queue observer failed: ${String(error)}`); }
     if (job.completed) return handle;
 
-    if (priority === "critical") {
+    if (priority === "critical" && (!this.captureAdmission || this.captureAdmission.has(job.id))) {
       this.bargeIn(job);
       return handle;
     }
@@ -1051,7 +1094,7 @@ class PlaybackQueueManager {
 
     if (hadActivity) {
       this.stopProgressTimer();
-      broadcastPlaybackIdleIfSpeakerClear();
+      broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
       this.emitQueueSnapshot();
       this.resolveIfIdle();
     }
@@ -1179,7 +1222,9 @@ class PlaybackQueueManager {
     if (this.current || this.preparing || this.terminating.size > 0 || this.orphanedWorkCount() > 0) return;
 
     while (this.pending.length > 0) {
-      const next = this.pending.shift()!;
+      const index = this.captureAdmission ? this.pending.findIndex(job => this.captureAdmission!.has(job.id)) : 0;
+      if (index < 0) return;
+      const [next] = this.pending.splice(index, 1);
       if (next.expiresAt <= Date.now()) {
         completeJob(next, buildPlaybackOutcome(next, "skipped", "expired"));
         continue;
@@ -1262,6 +1307,9 @@ class PlaybackQueueManager {
         status: "marked",
       });
     }
+    const expectedDurationMs = next.metadata?.durationMs;
+    const durationMs = expectedDurationMs && Number.isFinite(expectedDurationMs) && expectedDurationMs > 0
+      ? expectedDurationMs : probeAudioDurationMs(next.audioFile, 1_000);
     try {
       assertSpeakerClear();
     } catch (err) {
@@ -1292,6 +1340,7 @@ class PlaybackQueueManager {
 
     next.lifecycle.track(proc.exited);
     this.current = { job: next, proc, startedAt: Date.now() - (next.metadata?.localOffsetMs ?? 0) };
+    this.armPlayerWatchdog(this.current, durationMs);
     if (next.metadata) {
       const durationMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ?? next.metadata.durationMs;
       broadcast({
@@ -1323,6 +1372,7 @@ class PlaybackQueueManager {
 
   private finish(job: PlaybackJob, proc: ActivePlayback["proc"], succeeded: boolean) {
     if (this.current?.proc !== proc || this.current.job !== job) return;
+    clearTimeout(this.current.watchdog);
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
     const elapsedMs = Date.now() - this.current.startedAt;
     this.stopProgressTimer();
@@ -1491,11 +1541,45 @@ class PlaybackQueueManager {
     return Math.max(0, Math.min(1, elapsedMs / durationMs));
   }
 
-  private terminate(active: ActivePlayback): void {
+  private armPlayerWatchdog(active: ActivePlayback, durationMs: number | null): void {
+    if (!durationMs || !Number.isFinite(durationMs) || durationMs <= 0) return;
+    const remainingMs = Math.max(0, durationMs - (active.job.metadata?.localOffsetMs ?? 0));
+    const budgetMs = remainingMs + PLAYER_WATCHDOG_MARGIN_MS;
+    // Node/Bun overflow very long timers to 1 ms; never turn that into an early kill.
+    if (!Number.isFinite(budgetMs) || budgetMs > 2_147_483_647) return;
+    const generation = active.job.lifecycle.generation;
+    active.watchdog = setTimeout(() => {
+      if (active.watchdogTimedOut || (this.current !== active && this.terminating.get(active.proc.pid) !== active)) return;
+      active.watchdogTimedOut = true;
+      if (this.current === active) {
+        if (this.seekPreparation?.job === active.job) this.cancelSeekPreparation();
+        this.current = null;
+        this.stopProgressTimer();
+        this.terminate(active, "SIGKILL");
+        completeJob(active.job, buildPlaybackOutcome(active.job, "failed", "player-error", Date.now() - active.startedAt));
+      } else {
+        // A cancelled/replayed player can ignore SIGTERM. Keep its reap fence held.
+        try { active.proc.kill("SIGKILL"); } catch {}
+      }
+      // A seek decoder can outlive the player; only the terminal work barrier
+      // proves quiet. A continuing Replay retains its normal completion edge.
+      if (active.job.completed) void active.job.lifecycle.playerExited.then(
+        () => broadcastPlaybackIdleIfSpeakerClear(), () => {},
+      );
+      const message = `Playback watchdog: ${active.job.id} generation ${generation} exceeded ${remainingMs}ms + ${PLAYER_WATCHDOG_MARGIN_MS}ms margin; forcing SIGKILL`;
+      console.warn(`[voicelayer] ${message}`);
+      broadcast({ type: "error", message, recoverable: true });
+      this.emitQueueSnapshot();
+      this.resolveIfIdle();
+      this.processNext();
+    }, budgetMs);
+  }
+
+  private terminate(active: ActivePlayback, signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): void {
     const pid = active.proc.pid;
     this.terminating.set(pid, active);
     try {
-      active.proc.kill("SIGTERM");
+      active.proc.kill(signal);
     } catch {}
     void active.proc.exited.then(
       () => this.finishTermination(pid, active),
@@ -1505,6 +1589,7 @@ class PlaybackQueueManager {
 
   private finishTermination(pid: number, active: ActivePlayback): void {
     if (this.terminating.get(pid) !== active) return;
+    clearTimeout(active.watchdog);
     this.terminating.delete(pid);
     if (this.restartAfterTermination === active.job && !active.job.completed) {
       this.restartAfterTermination = null;
@@ -1525,6 +1610,16 @@ class PlaybackQueueManager {
 }
 
 const playbackQueueManager = new PlaybackQueueManager();
+
+/** Claim a quiet queue synchronously; a race refuses Ask instead of overlapping capture. */
+export function reserveCaptureAdmission(): CaptureAdmission | undefined {
+  if (getPlaybackQueueDepth() > 0) return;
+  return playbackQueueManager.reserveCaptureAdmission();
+}
+
+export function isCaptureAdmissionReserved(): boolean {
+  return playbackQueueManager.hasCaptureAdmission();
+}
 
 /** Play an audio file, queued after any currently playing audio. */
 export function playAudioNonBlocking(
@@ -1593,7 +1688,7 @@ export function seekPlayback(offsetMs: number): SeekResult {
 export function stopPlayback(playbackElapsedMs?: number): boolean {
   const hadLongRead = cancelLongRead(playbackElapsedMs);
   const stopped = playbackQueueManager.stop(playbackElapsedMs);
-  if (hadLongRead && !stopped) broadcastPlaybackIdleIfSpeakerClear();
+  if (hadLongRead && !stopped) broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
   return hadLongRead || stopped;
 }
 
@@ -1704,21 +1799,26 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     // A recording may have begun while the predecessor was settling.
     assertSpeakerClear();
     await runLongRead(texts, id, signal, {
-      registerSeek: (control) => { handle.seek = { seek: offset => {
-        const result = control.seek(offset); if (result.outcome === "accept") generation++; return result;
-      } }; },
+      registerSeek: (control) => {
+        const advance = (result: SeekResult) => { if (result.outcome === "accept") generation++; return result; };
+        handle.seek = { seek: offset => advance(control.seek(offset)), restart: () => advance(control.restart()) };
+      },
+      canReplay: (chunk) => existsSync(chunk.audioFile),
       prepareSeek: (chunk, offset, seekSignal) => offset < chunk.durationMs
         ? prepareSeekSlice(chunk.audioFile, offset, seekSignal) : Promise.resolve(undefined),
       disposeSeek: disposeSeekSlice,
       seekFailed: (error) => broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true }),
       synthesize: async (displayChunk, _index, signal) => {
         const audioFile = ttsFilePath(process.pid, ttsCounter++);
-        const spoken = applyPronunciation(displayChunk);
+        const rules = pronunciationRules();
+        const projection = projectSpeakableText(displayChunk, rules, profile.engine);
+        const spoken = projection.speechText;
         try {
           const synthesizeEdge = async (voice: string, rate: string) => {
-            const chunk = await synthesizeEdgeChunk(spoken, voice, rate, audioFile,
+            const edge = profile.engine === "edge" ? projection : projectSpeakableText(displayChunk, rules, "edge");
+            const chunk = await synthesizeEdgeChunk(edge.speechText, voice, rate, audioFile,
               new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal);
-            chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, spoken, chunk.wordBoundaries);
+            chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, edge.speechText, chunk.wordBoundaries, edge.ranges);
             chunkVoices.set(audioFile, voice);
             chunkEngines.set(audioFile, "edge-tts");
             return chunk;
@@ -1727,7 +1827,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
             return await synthesizeEdge(profile.voice, profile.rate);
           }
           const audio = await synthesizeCloned(spoken, profile.voice, signal);
-          signal.throwIfAborted();
+          throwIfAbortedSafe(signal);
           if (!audio) {
             if (requireClone) throw new VoiceProfileUnavailableError(profile.voice, "synthesis-failed");
             const voice = resolveVoice(profile.fallbackVoice || loadProfile(profile.voice)?.fallback || defaultVoice(), "edge").voice;
@@ -1750,7 +1850,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
               copyFileSync(adjusted, audioFile);
             } finally { try { unlinkSync(adjusted); } catch {} }
           }
-          signal.throwIfAborted();
+          throwIfAbortedSafe(signal);
           const durationMs = probeAudioDurationMs(audioFile);
           if (!durationMs || durationMs <= 0) throw new Error("Cloned audio has no readable duration");
           return { audioFile, durationMs, wordBoundaries: [] };
@@ -1761,7 +1861,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         }
       },
       play: (chunk, text, info, position) => {
-        signal.throwIfAborted();
+        throwIfAbortedSafe(signal);
         let started = false;
         let resolveStarted!: (value: boolean) => void;
         const start = new Promise<boolean>((resolve) => { resolveStarted = resolve; });
@@ -1829,8 +1929,14 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
 
 /** Restart the active audio job without resolving its blocking playback handle. */
 export function restartPlayback(): boolean {
-  // A chunk-only restart would repeat audio outside the long read's history/timeline.
-  if (activeLongRead && !activeLongRead.controller.signal.aborted) return false;
+  if (activeLongRead) {
+    // Keep the utterance, synthesis, played ranges and physical exit fences owned by
+    // the long-read runner. Restarting only its queued chunk loses global zero.
+    const result = activeLongRead.seek?.restart();
+    if (result?.outcome === "accept") return true;
+    broadcast({ type: "error", source: "seek", message: result?.reason ?? "Replay prefix audio unavailable", recoverable: true });
+    return false;
+  }
   return playbackQueueManager.restart();
 }
 
@@ -1888,9 +1994,6 @@ export async function speak(
   // form. Keep these values separate for the remainder of the pipeline.
   const displayText = text;
 
-  // Apply pronunciation corrections before any TTS engine
-  const spokenText = applyPronunciation(displayText);
-
   // Check if TTS is disabled
   if (isTTSDisabled()) {
     console.error("[voicelayer] TTS disabled via flag file — skipping speech");
@@ -1910,6 +2013,11 @@ export async function speak(
     console.error(`[voicelayer] ${warning}`);
     resolved = {voice: TTS_DEFAULTS.voice, engine: "edge-tts", warning};
   }
+  // Keep engine-specific text and ranges together, including clone→Edge fallback.
+  const rules = pronunciationRules();
+  const projection = projectSpeakableText(displayText, rules, resolved.engine === "cloned" ? "clone" : "edge");
+  const spokenText = projection.speechText;
+  const edgeProjection = resolved.engine === "edge-tts" ? projection : projectSpeakableText(displayText, rules, "edge");
   const requestedClone = profile.engine === "clone" || resolved.engine === "cloned";
   const cloneRate = options?.rate ??
     (profile.engine === "clone" || profile.rateSource === "environment" ? profile.rate : undefined);
@@ -1958,11 +2066,12 @@ export async function speak(
   ) {
     audioVoice = resolved.fallbackVoice || defaultVoice();
     return speakWithEdgeTTS(
-      spokenText,
+      edgeProjection.speechText,
       resolved.fallbackVoice || defaultVoice(),
       options,
       resolved.warning,
       displayText,
+      edgeProjection.ranges,
     );
   }
 
@@ -2074,21 +2183,23 @@ export async function speak(
     );
     audioVoice = resolved.fallbackVoice || defaultVoice();
     return speakWithEdgeTTS(
-      spokenText,
+      edgeProjection.speechText,
       resolved.fallbackVoice || defaultVoice(),
       options,
       undefined,
       displayText,
+      edgeProjection.ranges,
     );
   }
 
   // Tier 2: Preset/default → edge-tts
   return speakWithEdgeTTS(
-    spokenText,
+    edgeProjection.speechText,
     resolved.voice,
     options,
     resolved.warning,
     displayText,
+    edgeProjection.ranges,
   );
 }
 
@@ -2110,6 +2221,7 @@ async function speakWithEdgeTTS(
   },
   warning?: string,
   displayText: string = spokenText,
+  ranges?: ProjectionRange[],
 ): Promise<TextToSpeechResult> {
   // Profile file rates enter as explicit options; otherwise preserve mode > env > default.
   let rate =
@@ -2186,6 +2298,7 @@ async function speakWithEdgeTTS(
     displayText,
     spokenText,
     wordBoundaries,
+    ranges,
   );
 
   // Pass metadata to queue — broadcasting happens when audio actually starts

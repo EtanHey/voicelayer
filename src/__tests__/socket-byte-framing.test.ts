@@ -8,7 +8,7 @@ import { MAX_NDJSON_LINE_BYTES, NDJSONByteFramer } from "../ndjson-byte-framer";
 import { createMcpDaemon } from "../mcp-daemon";
 import { serializeMcpFrame } from "../mcp-framing";
 
-// The preload puts SOCKET_PATH under this worktree's .test-tmp/<pid>/.
+// The preload puts SOCKET_PATH under this worktree's .test-tmp/<pid>-<nonce>/.
 const TEST_SOCKET = join(dirname(SOCKET_PATH), "x.sock");
 if (process.env.VOICELAYER_TEST_ISOLATED !== "1" || !TEST_SOCKET.includes(".test-tmp")) {
   throw new Error("socket byte-framing tests require the isolated preload");

@@ -24,6 +24,9 @@ function runChecker(contents: string) {
 describe("VoiceBar QA probes are dev/CI-only", () => {
   test("the checker fails a binary that still carries a probe", () => {
     for (const marker of [
+      "VoiceBarUIE2EOnly",
+      "VOICEBAR_UIE2E_ROOT",
+      "voicebar-ui-e2e-v1",
       "qa_context_menu_probe",
       "qa_vertical_hit_probe",
       "QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH",

@@ -133,7 +133,9 @@ export function handleSocketCommand(
       }
       safeWriteFileSync(
         STOP_FILE,
-        `stop from voice-bar at ${new Date().toISOString()}`,
+        command.physical_press === true && recordingState === "recording"
+          ? JSON.stringify({ physical_press: true })
+          : `stop from voice-bar at ${new Date().toISOString()}`,
       );
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.

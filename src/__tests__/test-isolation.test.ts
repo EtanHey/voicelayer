@@ -53,6 +53,12 @@ const ISOLATION_ROOT = join(process.cwd(), ".test-tmp");
 describe("R-014 preload isolates every VoiceLayer path", () => {
   it("declares itself isolated", () => {
     expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");
+    expect(process.env.VOICELAYER_TEST_RUN_ROOT).toMatch(
+      new RegExp(`/\\.test-tmp/${process.pid}-[a-f0-9]{4,6}$`),
+    );
+    for (const name of ["v.sock", "m.sock", "df.sock"]) {
+      expect(Buffer.byteLength(join(process.env.VOICELAYER_TEST_RUN_ROOT!, name))).toBeLessThan(104);
+    }
   });
 
   it("resolves every module-level signal, lock and socket path under .test-tmp/", () => {

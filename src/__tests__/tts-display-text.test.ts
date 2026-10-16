@@ -8,6 +8,7 @@ import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as actualPaths from "../paths";
 import * as socketClient from "../socket-client";
 import * as qwen3 from "../tts/qwen3";
+import { projectSpeakableText } from "../speakable-text";
 
 const TEST_DISABLED_FILE = `${TEST_TMP}/voicelayer-display-text-${process.pid}-disabled`;
 const TEST_RECORDING_STATE_FILE = `${TEST_TMP}/voicelayer-display-text-${process.pid}-recording.json`;
@@ -221,6 +222,36 @@ describe("TTS display text stays separate from pronunciation text", () => {
     expect(speaking?.text).toBe("cmuxlayer");
   });
 
+  it("normalizes developer text for Edge while timings still name the original words", async () => {
+    const { speak } = await import("../tts");
+    const display = "Play MP3 from INCIDENT-INVENTORY.md at 3 PM.";
+    await speak(display);
+    await waitFor(() => broadcasts.some(e => e.type === "subtitle"), "mapped subtitles");
+    expect(spawnCalls.find(c => c.cmd[0].includes("python3"))?.cmd)
+      .toContain("--text=Play MP3 from incident inventory dot M D at 3 PM.");
+    expect(broadcasts.find(e => e.type === "subtitle").words.map((w: any) => w.text))
+      .toEqual(display.split(" "));
+    expect(broadcasts.find(e => e.state === "speaking").text).toBe(display);
+  });
+
+  it("maps measured speech spans through contractions, expansion, repeats and omitted markdown", async () => {
+    const { alignWordBoundariesToDisplayText: align } = await import("../tts");
+    const speech = "Play M P three then S three M P three.";
+    const timings = speech.split(" ").map((text, i) => ({text, offset_ms: i * 100, duration_ms: 50}));
+    expect(align("Play MP3 then S3 MP3.", speech, timings, projectSpeakableText("Play MP3 then S3 MP3.").ranges)).toEqual([
+      {text: "Play", offset_ms: 0, duration_ms: 50}, {text: "MP3", offset_ms: 100, duration_ms: 250},
+      {text: "then", offset_ms: 400, duration_ms: 50}, {text: "S3", offset_ms: 500, duration_ms: 150},
+      {text: "MP3.", offset_ms: 700, duration_ms: 250},
+    ]);
+    expect(align("Open /app/src/foo_bar.ts now", "Open foo bar dot T S now", ["Open", "foo", "bar", "dot", "T", "S", "now"].map((text, i) => ({text, offset_ms: i * 100, duration_ms: 50}))))
+      .toEqual([{text: "Open", offset_ms: 0, duration_ms: 50}, {text: "/app/src/foo_bar.ts", offset_ms: 100, duration_ms: 450}, {text: "now", offset_ms: 600, duration_ms: 50}]);
+    const markdown = align("- MP3", "M P three.", ["M", "P", "three", "."].map((text, i) => ({text, offset_ms: i * 100, duration_ms: 50})), projectSpeakableText("- MP3").ranges);
+    expect(markdown.map(w => w.text)).toEqual(["-", "MP3"]);
+    expect(markdown[0].duration_ms).toBe(0);
+    expect(markdown[1]).toEqual({text: "MP3", offset_ms: 0, duration_ms: 250});
+    expect(align("Unrelated words", "wrong text", timings)).toEqual([]);
+  });
+
   it("maps a substituted token to the full spoken timing span", async () => {
     const { speak } = await import("../tts");
 
@@ -291,7 +322,7 @@ describe("TTS display text stays separate from pronunciation text", () => {
     expect(speaking?.text).toBe(displayText);
   });
 
-  it("broadcasts all 2,300 display characters through cloned TTS", async () => {
+  for (const [displayText, route] of [["B".repeat(2_300), "clone"], ["Export MP3 from INCIDENT-INVENTORY.md.", "clone"], ["Is that OK? MP3 API at 3 PM on 2026.10.15.", "fallback"], ["MP3 API", "announce"]] as const) it("keeps original cloned display text while normalizing synthesis input", async () => {
     const profileSpy = spyOn(qwen3, "loadProfile").mockReturnValue({
       profile_id: "long-display-clone",
       name: "long-display-clone",
@@ -303,18 +334,24 @@ describe("TTS display text stays separate from pronunciation text", () => {
       created: "2026-07-28",
     });
     const synthesizeSpy = spyOn(qwen3, "synthesizeCloned").mockResolvedValue(
-      Buffer.from("fake cloned mp3"),
+      route === "fallback" ? null : Buffer.from("fake cloned mp3"),
     );
 
     try {
       const { speak } = await import("../tts");
-      const displayText = "B".repeat(2_300);
-
       const result = await speak(displayText, {
-        voice: "long-display-clone",
+        voice: "long-display-clone", mode: route === "announce" ? "announce" : undefined,
       });
-      expect(synthesizeSpy).toHaveBeenCalledTimes(1);
-      expect(result.engine).toBe("qwen3-tts");
+      expect(synthesizeSpy).toHaveBeenCalledTimes(route === "announce" ? 0 : 1);
+      if (displayText.startsWith("Export")) expect(synthesizeSpy).toHaveBeenCalledWith(
+        "Export M P three from incident inventory dot M D.", "long-display-clone",
+      );
+      expect(result.engine).toBe(route === "clone" ? "qwen3-tts" : "edge-tts");
+      if (route === "announce") expect(spawnCalls.find(c => c.cmd[0].includes("python3"))?.cmd).toContain("--text=MP3 API");
+      if (route === "fallback") {
+        expect(synthesizeSpy).toHaveBeenCalledWith("Is that OK? M P three A P I at 3 PM on 2026.10.15.", "long-display-clone");
+        expect(spawnCalls.find(c => c.cmd[0].includes("python3"))?.cmd).toContain(`--text=${displayText}`);
+      }
       await waitFor(
         () => broadcasts.some(
           (event) =>
