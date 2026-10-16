@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { existsSync, writeFileSync, unlinkSync, readFileSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
+import { TEST_TMP } from "./setup/test-tmp";
 
 import {
   acquireProcessLock,
@@ -10,7 +10,7 @@ import {
 } from "../process-lock";
 
 const TEST_PID_FILE = join(
-  tmpdir(),
+  TEST_TMP,
   `voicelayer-process-lock-test-${process.pid}.pid`,
 );
 
@@ -98,7 +98,7 @@ describe("process lock", () => {
   });
 
   it("attempts SIGTERM on alive stale process before claiming lock", () => {
-    // PID 1 (init/launchd) is always alive but SIGTERM fails with EPERM
+    // Simulate EPERM; never send a real signal to launchd/PID 1.
     writeFileSync(
       TEST_PID_FILE,
       JSON.stringify({
@@ -107,7 +107,17 @@ describe("process lock", () => {
       }),
     );
 
-    const result = acquireProcessLock(TEST_PID_FILE);
+    const kill = spyOn(process, "kill").mockImplementation((_pid, signal) => {
+      if (signal === 0) return true;
+      throw Object.assign(new Error("synthetic EPERM"), { code: "EPERM" });
+    });
+    let result;
+    try {
+      result = acquireProcessLock(TEST_PID_FILE);
+      expect(kill.mock.calls).toEqual([[1, 0], [1, "SIGTERM"]]);
+    } finally {
+      kill.mockRestore();
+    }
     // Should still acquire — PID 1 can't be killed but we claim the lock anyway
     expect(result.acquired).toBe(true);
     // killedStale is false because SIGTERM threw EPERM
