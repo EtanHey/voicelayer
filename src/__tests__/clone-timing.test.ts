@@ -10,11 +10,12 @@ import { TEST_TMP } from "./setup/test-tmp";
 import { recordingStateFilePath } from "../paths";
 import * as fsPromises from "node:fs/promises";
 import { writeFileSync } from "node:fs";
+import { deferredFixture, fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
 let directory: string, model: string | undefined, spy: ReturnType<typeof spyOn> | undefined;
 let jobs: ReturnType<typeof startCloneTiming>[] = [], published = 0;
 afterEach(async () => {
-  for (const job of jobs) job.cancel(); await Promise.all(jobs.map(job => job.done)); jobs = [];
+  for (const job of jobs) job.cancel(); await Promise.all(jobs.map(job => job.cleanupDone)); jobs = [];
   spy?.mockRestore(); recording.setRecordingState("idle");
   if (model === undefined) delete process.env.QA_VOICE_WHISPER_MODEL; else process.env.QA_VOICE_WHISPER_MODEL = model;
   if (directory) await rm(directory, { recursive: true, force: true });
@@ -55,7 +56,7 @@ for (const phase of ["converter", "decoder"] as const) test(`R2 admission rechec
     const kind = argv.includes(f.converter) ? "converter" : "decoder"; spawned.push(kind);
     return { exitCode: 0, exited: Promise.resolve().then(() => { if (phase === "decoder" && kind === "converter") busy(); return 0; }), kill() {} } as any;
   });
-  try { await f.start().done; expect(spawned).toEqual(phase === "converter" ? [] : ["converter"]); }
+  try { await f.start().cleanupDone; expect(spawned).toEqual(phase === "converter" ? [] : ["converter"]); }
   finally { spawn.mockRestore(); write.mockRestore(); poll.mockRestore(); }
 });
 test("R2 native PID readiness waits past an empty file", async () => {
@@ -65,7 +66,7 @@ test("R2 native PID readiness waits past an empty file", async () => {
 });
 test("busy dictation defers alignment without resolving or spawning a decoder", async () => {
   const f = await fixture(); recording.setRecordingState("transcribing");
-  await f.start().done; expect(spy).not.toHaveBeenCalled();
+  await f.start().cleanupDone; expect(spy).not.toHaveBeenCalled();
 });
 for (const state of ["cancel", "recording", "transcribing", "external"] as const)
   test(`native background children run nice 19 and are reaped on ${state}`, async () => {
@@ -75,13 +76,57 @@ for (const state of ["cancel", "recording", "transcribing", "external"] as const
     if (state === "cancel") job.cancel();
     else if (state === "external") await writeFile(recordingStateFilePath(), JSON.stringify({ state: "transcribing", pid: process.pid, updated_at: new Date().toISOString() }));
     else recording.setRecordingState(state);
-    await job.done; expect(() => process.kill(pid, 0)).toThrow();
+    await job.cleanupDone; expect(() => process.kill(pid, 0)).toThrow();
   }, 10000);
 test("native replacement decoder starts only after cancelled child is reaped", async () => {
   const f = await fixture(), first = f.start(), pid = await f.pid();
   const second = f.start(); await Bun.sleep(25);
   expect(Number(await readFile(join(directory, "pid"), "utf8"))).toBe(pid);
-  await rm(join(directory, "pid")); first.cancel(); await first.done;
+  await rm(join(directory, "pid")); first.cancel(); await first.cleanupDone;
   const nextPid = await f.pid(); expect(nextPid).not.toBe(pid);
-  expect(() => process.kill(pid, 0)).toThrow(); second.cancel(); await second.done;
+  expect(() => process.kill(pid, 0)).toThrow(); second.cancel(); await second.cleanupDone;
+}, 10000);
+for (const phase of ["converter", "decoder"] as const) test(`INT1 ${phase} readiness waits for physical exit and queued cancellation cannot bypass it`, async () => {
+  const f = await fixture(), exit = deferredFixture<number>(), spawned = fixtureBarrier<string>();
+  let killed = false, exited = false;
+  const spawn = spyOn(Bun, "spawn").mockImplementation((argv: any) => {
+    const kind = argv.includes(f.converter) ? "converter" : "decoder";
+    spawned.push(kind);
+    if (kind !== phase) return { exitCode: 0, exited: Promise.resolve(0), kill() {} } as any;
+    return { get exitCode() { return exited ? 137 : null; }, exited: exit.promise, kill() { killed = true; } } as any;
+  });
+  const first = f.start();
+  try {
+    await spawned.at(phase === "converter" ? 0 : 1);
+    let ready = false; void first.childReaped.then(() => { ready = true; });
+    first.cancel(); await fixtureCheckpoint(); expect(killed).toBe(true); expect(ready).toBe(false);
+    const second = f.start(); second.cancel(); await second.childReaped;
+    const third = f.start(); await fixtureCheckpoint();
+    expect(spawned.values).toEqual(phase === "converter" ? ["converter"] : ["converter", "decoder"]);
+    exited = true; exit.resolve(137); await first.childReaped; expect(ready).toBe(true);
+    await spawned.at(phase === "converter" ? 1 : 2); third.cancel();
+  } finally { exited = true; exit.resolve(137); for (const job of jobs) job.cancel(); await Promise.all(jobs.map(job => job.cleanupDone)); spawn.mockRestore(); }
+});
+test("INT1 child readiness waits for native reap but never for artifact removal", async () => {
+  const f = await fixture(), originalRm = fsPromises.rm;
+  let release!: () => void, entered!: () => void, artifact = "";
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const cleaning = new Promise<void>(resolve => { entered = resolve; });
+  const removal = spyOn(fsPromises, "rm").mockImplementation(async (path, options) => {
+    if (!artifact && String(path).includes("vl-cln1a-")) { artifact = String(path); entered(); await held; }
+    return originalRm(path, options);
+  });
+  const job = f.start(), pid = await f.pid();
+  let cleaned = false; void job.cleanupDone.then(() => { cleaned = true; });
+  try {
+    job.cancel(); await cleaning;
+    expect(() => process.kill(pid, 0)).toThrow();
+    const readiness = job.childReaped;
+    expect(await Promise.race([readiness.then(() => "reaped"), Bun.sleep(150).then(() => "blocked")])).toBe("reaped");
+    expect(cleaned).toBe(false); expect(await fsPromises.stat(artifact)).toBeDefined();
+    // A replacement's alignment can prepare while the old job still owns rm.
+    await rm(join(directory, "pid")); const replacement = f.start();
+    const nextPid = await f.pid(); expect(nextPid).not.toBe(pid); replacement.cancel();
+  } finally { release(); await job.cleanupDone; removal.mockRestore(); }
+  expect(cleaned).toBe(true); expect(await fsPromises.stat(artifact).catch(() => null)).toBeNull();
 }, 10000);

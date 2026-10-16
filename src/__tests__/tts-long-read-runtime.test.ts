@@ -4,6 +4,7 @@ import * as socket from "../socket-client";
 import * as recording from "../recording-state";
 import * as qwen from "../tts/qwen3";
 import * as alignment from "../tts/clone-alignment";
+import * as binaries from "../resolve-binary";
 import { createHash } from "node:crypto";
 import * as input from "../input";
 import * as booking from "../session-booking";
@@ -100,8 +101,13 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     spies.push(spyOn(qwen, "loadProfile").mockReturnValue({ engine: "qwen3-tts", reference_clips: [], reference_clip: "", fallback: "jenny" } as any));
     const entered = fixtureBarrier<alignment.CloneAlignmentRequest>();
     const pending: ReturnType<typeof deferred<alignment.CloneAlignmentResult>>[] = [];
+    const reaps: ReturnType<typeof deferred<number>>[] = [];
     spies.push(spyOn(alignment, "alignCloneAudio").mockImplementation(request => {
       const result = deferred<alignment.CloneAlignmentResult>(); pending.push(result); entered.push(request);
+      // This pending adapter represents an unreaped native child, not preparation.
+      const reap = deferred<number>(); reaps.push(reap);
+      request.onChildSpawned?.(reap.promise);
+      void result.promise.then(() => reap.resolve(0));
       releaseAlignments.push(() => result.resolve({ status: "untimed", identity: {} as any, words: [] })); return result.promise;
     }));
     const result = (request: alignment.CloneAlignmentRequest): alignment.CloneAlignmentResult => ({
@@ -110,7 +116,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       words: Array.from(request.displayText.matchAll(/\S+/gu), (word, i) => ({ text: word[0], displayRange: { start: word.index, end: word.index + word[0].length },
         offset_ms: i === 1 ? null : i * 100, duration_ms: i === 1 ? null : 80 })),
     });
-    return { entered, pending, result };
+    return { entered, pending, reaps, result };
   }
 
   for (const route of ["speak", "long"] as const) it(`CLN1b ${route}: playback starts before partial timings and preserves display indices`, async () => {
@@ -132,7 +138,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     ] });
   });
 
-  for (const cmd of ["stop", "cancel"] as const) it(`R2 ${cmd} ack retains alignment cleanup after audio exits`, async () => {
+  for (const cmd of ["stop", "cancel"] as const) it(`R2 ${cmd} ack waits for alignment child reap after audio exits`, async () => {
     const f = cloneFixture(), h = start("clone", "Question?"); await playerBarrier.at(0); const request = await f.entered.at(0);
     if (cmd === "cancel") { players[0].exit.resolve(0); await h.done; }
     let acknowledged = false;
@@ -140,7 +146,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     await h.done; await fixtureCheckpoint(); expect(request.signal!.aborted).toBe(true); expect(acknowledged).toBe(false);
     releaseAlignments[0](); await ack; expect(acknowledged).toBe(true);
   });
-  for (const failed of [false, true]) it(`R2 scoped terminal and quiesced-attempt fences include alignment cleanup; failed=${failed}`, async () => {
+  for (const failed of [false, true]) it(`R2 scoped terminal and quiesced-attempt fences include alignment child reap; failed=${failed}`, async () => {
     const f = cloneFixture(); let playback: any;
     await speak("Question?", { voice: "fixture", onPlaybackQueued: handle => { playback = handle; } });
     await playerBarrier.at(0); await f.entered.at(0);
@@ -150,7 +156,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const waits = [mark("terminal", playback.playerExited), mark("snapshot", playback.waitForPlayerExit()), mark("drain", awaitCurrentPlayback())];
     await fixtureCheckpoint(); expect(settled).toEqual([]); releaseAlignments[0](); await Promise.all(waits); expect(settled.sort()).toEqual(["drain", "snapshot", "terminal"]);
   });
-  it("R2 Ask cannot start capture until its clone alignment cleanup finishes", async () => {
+  it("R2 Ask cannot start capture until its clone alignment child is reaped", async () => {
     const f = cloneFixture();
     spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
     const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
@@ -158,6 +164,33 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     await playerBarrier.at(0); await f.entered.at(0); players[0].exit.resolve(0);
     await fixtureCheckpoint(); await Bun.sleep(5); expect(capture).not.toHaveBeenCalled();
     releaseAlignments[0](); await answer; expect(capture).toHaveBeenCalledTimes(1);
+  });
+  it("INT1 Ask starts capture while cancelled binary lookup is still held, with no alignment child", async () => {
+    const f = cloneFixture(), lookup = deferred<string>(), entered = fixtureBarrier<void>();
+    spies.push(spyOn(binaries, "resolveBinaryAsync").mockImplementation(async name => {
+      if (name === "ffmpeg") return "ffmpeg";
+      entered.push(); return lookup.promise;
+    }));
+    releaseAlignments.push(() => lookup.resolve("fixture-binary"));
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
+    await playerBarrier.at(0); await entered.at(0); players[0].exit.resolve(0);
+    try {
+      expect(await Promise.race([answer.then(() => "captured"), Bun.sleep(150).then(() => "blocked")])).toBe("captured");
+      expect(capture).toHaveBeenCalledTimes(1); expect(f.pending).toHaveLength(0);
+    } finally { lookup.resolve("fixture-binary"); await answer; }
+  });
+  it("INT1 Ask waits for the spawned child, then captures while adapter cleanup is still held", async () => {
+    const f = cloneFixture();
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
+    await playerBarrier.at(0); const request = await f.entered.at(0); players[0].exit.resolve(0);
+    await fixtureCheckpoint(); expect(request.signal!.aborted).toBe(true); expect(capture).not.toHaveBeenCalled();
+    f.reaps[0].resolve(137);
+    expect(await Promise.race([answer.then(() => "captured"), Bun.sleep(150).then(() => "blocked")])).toBe("captured");
+    expect(capture).toHaveBeenCalledTimes(1); releaseAlignments[0](); await answer;
   });
   it("R2 replacement audio starts while cancelled alignment cleanup is still held", async () => {
     const f = cloneFixture(), old = start("clone", "Old question?"); await playerBarrier.at(0); await f.entered.at(0);

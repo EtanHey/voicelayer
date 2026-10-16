@@ -21,6 +21,10 @@ export interface CloneAlignmentRequest {
   lowPriority?: boolean;
   /** Synchronous admission immediately before EACH native child; false yields. */
   canSpawn?: () => boolean;
+  /** Observe physical exit independently of preparation and artifact cleanup. */
+  onChildSpawned?: (exited: Promise<number>) => void;
+  /** No further children can spawn; artifact cleanup may still be pending. */
+  onChildrenReaped?: () => void;
   /** Existing whisper.cpp, large-v3-turbo and ffmpeg; no download or daemon. */
   decoder: { binary: string; model: string; ffmpeg: string };
 }
@@ -151,12 +155,14 @@ export async function alignCloneAudio(request: CloneAlignmentRequest): Promise<C
     if (input.canSpawn?.() === false || expired()) return untimed(deadline ? "deadline" : "cancelled");
     child = Bun.spawn([...priority, input.decoder.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", file,
       "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    input.onChildSpawned?.(child.exited);
     const prepared = await child.exited;
     if (expired()) return untimed(deadline ? "deadline" : "cancelled");
     if (prepared !== 0) return untimed("unavailable");
     if (input.canSpawn?.() === false || expired()) return untimed(deadline ? "deadline" : "cancelled");
     child = Bun.spawn([...priority, input.decoder.binary, "-m", input.decoder.model, "-f", wav, "-l", input.language,
       "-dtw", "large.v3.turbo", "-nfa", "-ojf", "-of", output], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    input.onChildSpawned?.(child.exited);
     const code = await child.exited;
     if (expired()) return untimed(deadline ? "deadline" : "cancelled");
     if (code !== 0) return untimed("unavailable");
@@ -194,7 +200,7 @@ export async function alignCloneAudio(request: CloneAlignmentRequest): Promise<C
     let cleanupFailed = stopFailed;
     // Every cleanup step still runs if killing or reaping the child fails.
     try { if (child?.exitCode === null) child.kill("SIGKILL"); } catch { cleanupFailed = true; }
-    try { if (child) await child.exited; } catch { cleanupFailed = true; }
+    try { if (child) await child.exited; input.onChildrenReaped?.(); } catch { cleanupFailed = true; }
     try { if (directory) await rm(directory, { recursive: true, force: true }); } catch { cleanupFailed = true; }
     if (cleanupFailed) untimed(controller.signal.aborted ? deadline ? "deadline" : "cancelled" : "unavailable");
     // Include cleanup in the deadline, and reject cancellation during cleanup.
