@@ -17,6 +17,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var popoverPresenter: MenuBarPopoverPresenter?
     var wizard: NSWindow?
     var contextMenuTracking = false
+#if VOICEBAR_UIE2E_GATE2245
+    var gate2245: UIE2EGate2245?
+#endif
 #if VOICEBAR_UIE2E_FOCUSED_338
     var stateGallery: UIE2EStateGallery?
 #endif
@@ -87,6 +90,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
                 }
             }.padding(6)
+#if VOICEBAR_UIE2E_GATE2245
+            gate2245Controls
+#endif
             if Bundle.main.object(forInfoDictionaryKey: "UIE2EPasteFeedback") as? Bool == true {
                 HStack {
                     ForEach(["paste-not-inserted", "paste-unverified", "paste-partial"], id: \.self) { name in
@@ -238,7 +244,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.receipt("qa-menu-close")
     }
 
-    private func openWizard() {
+    func openWizard() {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: SetupWizardView.contentSize),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "VoiceBar QA Setup"
@@ -488,8 +494,14 @@ final class UIE2EModel {
             voice.isHovering = true
             voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
                 "text": "First QA item\nSecond QA item"])
-            voice.wordBoundaries = [(0, 1000, "First"), (1000, 1000, "QA"), (2000, 1000, "item"),
-                                    (3000, 1000, "Second"), (4000, 1000, "QA"), (5000, 1000, "item")]
+            // Decode the legacy wire shape too: works on both main and CLN1b's typed boundaries.
+            voice.handleEvent(["type": "subtitle", "words": [
+                ["offset_ms": 0, "duration_ms": 1000, "text": "First"],
+                ["offset_ms": 1000, "duration_ms": 1000, "text": "QA"],
+                ["offset_ms": 2000, "duration_ms": 1000, "text": "item"],
+                ["offset_ms": 3000, "duration_ms": 1000, "text": "Second"],
+                ["offset_ms": 4000, "duration_ms": 1000, "text": "QA"],
+                ["offset_ms": 5000, "duration_ms": 1000, "text": "item"]]])
             if name == "readback" { voice.handleEvent(["type": "state", "state": "idle", "source": "playback"]) }
         case "finish": voice.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         case "idle":

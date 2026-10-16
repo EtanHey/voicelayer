@@ -255,3 +255,20 @@ The acceptance receipts use an outer `operator-run.py` beside each result, which
 also verifies the exact QA bundle/head and cleans only that run's QA executable
 paths. The supervisor itself restores the recorded hide-others snapshot. No
 resident app or unrelated process is killed, closed, relaunched or installed.
+
+## Batched GATE2245 candidate
+
+`VOICEBAR_UIE2E_GATE2245=1 bash scripts/voicebar-ui-e2e.sh --output <new-directory>`
+adds HIDE1/SEL1/CLN1b probes to the full recorded flow. Integrate #366, #372,
+#397 and #398 first. The explicit define requires a QA build and its product APIs;
+a normal release cannot enable it. The QA bundle records `UIE2EGate2245=true`.
+
+HIDE1 constructs an unlaunched product AppDelegate using its existing panel and
+wizard test seams: no applicationDidFinishLaunching, services, socket, hotkey,
+permission request or audio. A real FloatingPillPanel/BarView receives each event
+while snoozed; native visibility plus AX absence and post-Show state are asserted.
+The automatic wizard is a real QA wizard with silent dependencies. SEL1 uses real
+selection routing and exact silent commands; its gate assertion permits no XFAIL.
+Partial/untimed/legacy subtitle events exercise the real decoder and teleprompter.
+Movie audits separately judge styling/highlights; AX alone does not prove pixels.
+This remains isolated native UI evidence, with no clone synthesis/installed-app claim.

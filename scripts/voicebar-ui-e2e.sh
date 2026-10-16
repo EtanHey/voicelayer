@@ -61,6 +61,8 @@ data['UIE2EPasteFeedback'] = bool(outcomes and all(
     re.search(r'\bcase\s+' + name + r'\b', outcomes.group(1))
     for name in ('notInserted', 'unverified', 'partial')
 ))
+import os
+data['UIE2EGate2245'] = os.environ.get('VOICEBAR_UIE2E_GATE2245') == '1'
 p.write_bytes(plistlib.dumps(data))
 PYMETA
 /usr/bin/codesign --force --sign - "$app" > "$output/qa-sign.log" 2>&1

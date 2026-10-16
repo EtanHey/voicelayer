@@ -13,6 +13,7 @@ final class VoiceBarFlowTests: XCTestCase {
     var limitations = ["NOT_PROVEN: external T3-client selection Speak is outside this isolated VoiceBar run. SEL1 probes the real VoiceState method with synthetic selection capture only."]
     var ledger = UIE2ECoverageLedger()
     var terminalFullTextProven = false
+    var gate2245Enabled = false
     var observed: Set<String> { get { ledger.observed } set { ledger.observed = newValue } }
     var exercised: Set<String> { get { ledger.exercised } set { ledger.exercised = newValue } }
     var activePage = "General"
@@ -47,11 +48,16 @@ final class VoiceBarFlowTests: XCTestCase {
               Bundle(url: appURL)?.object(forInfoDictionaryKey: "VoiceBarUIE2EOnly") as? Bool == true
         else { throw NSError(domain: "UIE2E unsafe app", code: 1) }
         app = XCUIApplication(url: appURL)
+        gate2245Enabled = Bundle(url: appURL)?.object(forInfoDictionaryKey: "UIE2EGate2245") as? Bool == true
         app.launchEnvironment = ["VOICEBAR_UIE2E": "1", "VOICEBAR_UIE2E_SCENARIO": scenario, "VOICEBAR_UIE2E_ROOT": root.path,
             "HOME": root.appendingPathComponent("home").path, "CFFIXED_USER_HOME": root.appendingPathComponent("home").path,
             "VOICEBAR_USER_DEFAULTS_SUITE": "com.voicelayer.uie2e.\(root.lastPathComponent)",
             "VOICELAYER_SOCKET_PATH": root.appendingPathComponent("v.sock").path,
             "VOICELAYER_MCP_SOCKET_PATH": root.appendingPathComponent("m.sock").path]
+        if gate2245Enabled {
+            app.launchEnvironment["QA_VOICEBAR_CAPTURE_TOP_RIGHT"] = "1"
+            app.launchEnvironment["VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE"] = "1"
+        }
         addUIInterruptionMonitor(withDescription: "Known benign foreign overlay; never grant permissions") { [unowned self] alert in
             switch UIE2EInterruptionPolicy.classify(alertDescription: alert.debugDescription) {
             case .permissionPrompt:
@@ -318,6 +324,7 @@ final class VoiceBarFlowTests: XCTestCase {
             XCTAssertTrue(missing.isEmpty, "Unexercised controls: \(missing.joined(separator: ", "))")
             XCTAssertTrue(ledger.missingSurfaces.isEmpty, "Unverified surfaces: \(ledger.missingSurfaces.sorted())")
         }
+        if gate2245Enabled { gate2245Flow() }
         completed = true
     }
 }
@@ -1115,7 +1122,7 @@ extension VoiceBarFlowTests {
         }
         let commandStart = fixtureEvents().count
         click(app.buttons["qa-fixture-selection-replace"], "invoke real selection method with synthetic replacement")
-        verify("supersede-preparing", expected: .supersedePreparing) {
+        verify("supersede-preparing", expected: gate2245Enabled ? nil : .supersedePreparing) {
             let received = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 self.fixtureEvents().dropFirst(commandStart).contains("command:speak_text") }, object: nil)], timeout: 3)
             guard received == .completed else {
