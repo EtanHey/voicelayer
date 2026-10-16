@@ -61,7 +61,7 @@ import { releaseVoiceSession } from "../session-booking";
         if (argv.at(-1) !== "pipe:1") writeFileSync(argv.at(-1)!, "fake audio");
         return child({ stdout: new Blob([new Uint8Array(8)]).stream() });
       }
-      if (["afplay", "paplay", "aplay"].includes(basename(argv[0]))) { players++; return child(); }
+      if (["afplay", "paplay", "aplay", "mpv", "ffplay", "mpg123"].includes(basename(argv[0]))) { players++; return child(); }
       throw new Error("Unexpected subprocess in privacy fixture: " + argv[0]);
     }) as any;
   });
