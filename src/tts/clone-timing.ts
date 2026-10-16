@@ -22,10 +22,19 @@ export function startCloneTiming(input: TimingInput, isCurrent: () => boolean, p
   };
   const onChildSpawned = (exited: Promise<number>) => {
     childExit = exited;
+    // A rejected watcher needs the adapter's final physical-state check,
+    // including its kill/reap attempt, before readiness can be classified.
     void exited.then(() => {
       if (childExit === exited) childExit = undefined;
       if (controller.signal.aborted) resolveReaped();
-    }, rejectReaped);
+    }, () => {});
+  };
+  const onChildrenReaped = (error?: Error) => {
+    childExit = undefined;
+    if (error) {
+      console.error(`[voicelayer] Alignment child termination unconfirmed: ${String(error)}`);
+      rejectReaped(error);
+    } else resolveReaped();
   };
   const unsubscribe = onRecordingStateChange(state => { if (state !== "idle") cancel(); });
   // Effective state also covers a separate CLI process's capture/transcription.
@@ -39,7 +48,7 @@ export function startCloneTiming(input: TimingInput, isCurrent: () => boolean, p
       resolveBinaryAsync("ffmpeg"),
     ]);
     if (!binary || !ffmpeg || !current()) return;
-    const result = await alignCloneAudio({ ...input, playbackRate: 1, lowPriority: true, canSpawn: current, onChildSpawned, onChildrenReaped: resolveReaped,
+    const result = await alignCloneAudio({ ...input, playbackRate: 1, lowPriority: true, canSpawn: current, onChildSpawned, onChildrenReaped,
       language: /\p{Script=Hebrew}/u.test(input.speechText) ? "he" : "en", signal: controller.signal,
       decoder: { binary, ffmpeg, model: process.env.QA_VOICE_WHISPER_MODEL ?? join(homedir(), ".cache/whisper/ggml-large-v3-turbo.bin") } });
     if (!current() || result.status === "untimed" || result.identity.requestId !== input.requestId ||
@@ -62,7 +71,7 @@ export function startCloneTiming(input: TimingInput, isCurrent: () => boolean, p
   // physical child quiescence, never binary lookup or filesystem completion.
   // A cancelled queued job has no child of its own, but cannot let a later job
   // jump over an older child that is still being reaped.
-  tail = Promise.all([tail, childReaped]).then(() => {});
-  void tail.catch(() => {});
+  // Wait for both settlements, then recover errors for the next admission.
+  tail = Promise.allSettled([tail, childReaped]).then(() => {});
   return { cancel, childReaped, cleanupDone };
 }

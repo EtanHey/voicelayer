@@ -192,6 +192,32 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(await Promise.race([answer.then(() => "captured"), Bun.sleep(150).then(() => "blocked")])).toBe("captured");
     expect(capture).toHaveBeenCalledTimes(1); releaseAlignments[0](); await answer;
   });
+  for (const confirmed of [true, false]) it(`INT1 R2 P1 rejected child exit permits a second alignment and later Ask; confirmed=${confirmed}`, async () => {
+    const f = cloneFixture(), failure = new Error("fixture child exit watcher failed");
+    const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
+    let playback: any;
+    await speak("First question?", { voice: "fixture", onPlaybackQueued: handle => { playback = handle; } });
+    const terminal = playback.playerExited.then(() => "ready", () => "unconfirmed");
+    await playerBarrier.at(0); const request = await f.entered.at(0);
+    f.reaps[0].reject(failure); await fixtureCheckpoint();
+    // The adapter's final reap attempt independently confirms termination, or
+    // reports the physical state as unknown, before artifact cleanup completes.
+    request.onChildrenReaped?.(confirmed ? undefined : failure);
+    releaseAlignments[0](); players[0].exit.resolve(0); await playback.exited;
+    const firstState = await terminal;
+    await speak("Second question?", { voice: "fixture" }); await playerBarrier.at(1);
+    expect(await Promise.race([f.entered.at(1).then(() => "spawned"), Bun.sleep(150).then(() => "missing")])).toBe("spawned");
+    expect(f.reaps).toHaveLength(2);
+    if (confirmed) expect(firstState).toBe("ready");
+    else expect(logs.mock.calls.some(([line]) => /alignment.*unconfirmed/i.test(String(line)))).toBe(true);
+    releaseAlignments[1](); players[1].exit.resolve(0); await awaitCurrentPlayback();
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    autoPlay = true;
+    const answer = await handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
+    expect(answer.isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
+    expect(getPlaybackQueueDepth()).toBe(0);
+  });
   it("R2 replacement audio starts while cancelled alignment cleanup is still held", async () => {
     const f = cloneFixture(), old = start("clone", "Old question?"); await playerBarrier.at(0); await f.entered.at(0);
     const replacement = start("edge", "New answer."); await playerBarrier.at(1); await old.done;

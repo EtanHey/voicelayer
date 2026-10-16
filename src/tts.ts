@@ -1382,10 +1382,11 @@ class PlaybackQueueManager {
       aligned_words => broadcast({ type: "subtitle", words: [], aligned_words }));
       const childReaped = active.timing.childReaped;
       next.alignments.add(childReaped); this.alignments.add(childReaped);
-      void childReaped.then(() => {
+      const forgetAlignment = () => {
         next.alignments.delete(childReaped); this.alignments.delete(childReaped);
         this.resolveIfIdle(); broadcastPlaybackIdleIfSpeakerClear();
-      });
+      };
+      void childReaped.then(forgetAlignment, forgetAlignment);
     }
     this.startProgressTimer();
     this.emitQueueSnapshot();

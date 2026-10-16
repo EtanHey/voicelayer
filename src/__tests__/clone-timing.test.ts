@@ -86,6 +86,37 @@ test("native replacement decoder starts only after cancelled child is reaped", a
   const nextPid = await f.pid(); expect(nextPid).not.toBe(pid);
   expect(() => process.kill(pid, 0)).toThrow(); second.cancel(); await second.cleanupDone;
 }, 10000);
+for (const confirmation of ["exitCode", "signalCode", "kill-requested", "unknown"] as const) test(`INT1 R2 P1 ${confirmation} after rejecting child exit settles readiness before artifact cleanup`, async () => {
+  const f = await fixture(), originalRm = fsPromises.rm;
+  let release!: () => void, entered!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const cleaning = new Promise<void>(resolve => { entered = resolve; });
+  const logs = spyOn(console, "error").mockImplementation(() => {});
+  const removal = spyOn(fsPromises, "rm").mockImplementation(async (path, options) => {
+    if (String(path).includes("vl-cln1a-")) { entered(); await held; }
+    return originalRm(path, options);
+  });
+  let signalCode: string | null = null;
+  const confirmed = confirmation === "exitCode" || confirmation === "signalCode";
+  const spawn = spyOn(Bun, "spawn").mockImplementation(() => ({
+    exitCode: confirmation === "exitCode" ? 1 : null,
+    get signalCode() { return signalCode; },
+    exited: Promise.reject(new Error("fixture exit watcher failed")),
+    // A kill request alone is not confirmation that the child terminated.
+    kill() {
+      if (confirmation === "unknown") throw new Error("fixture kill failed");
+      if (confirmation === "signalCode") signalCode = "SIGKILL";
+    },
+  }) as any);
+  const job = f.start(), readiness = job.childReaped.then(() => "reaped", () => "unconfirmed");
+  try {
+    await cleaning;
+    expect(await readiness).toBe(confirmed ? "reaped" : "unconfirmed");
+    let cleaned = false; void job.cleanupDone.then(() => { cleaned = true; });
+    await fixtureCheckpoint(); expect(cleaned).toBe(false);
+    expect(logs.mock.calls.some(([line]) => /alignment.*unconfirmed/i.test(String(line)))).toBe(!confirmed);
+  } finally { release(); await job.cleanupDone; spawn.mockRestore(); removal.mockRestore(); logs.mockRestore(); }
+});
 for (const phase of ["converter", "decoder"] as const) test(`INT1 ${phase} readiness waits for physical exit and queued cancellation cannot bypass it`, async () => {
   const f = await fixture(), exit = deferredFixture<number>(), spawned = fixtureBarrier<string>();
   let killed = false, exited = false;

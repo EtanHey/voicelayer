@@ -23,8 +23,8 @@ export interface CloneAlignmentRequest {
   canSpawn?: () => boolean;
   /** Observe physical exit independently of preparation and artifact cleanup. */
   onChildSpawned?: (exited: Promise<number>) => void;
-  /** No further children can spawn; artifact cleanup may still be pending. */
-  onChildrenReaped?: () => void;
+  /** Final physical-exit result before artifact cleanup; an error means unknown. */
+  onChildrenReaped?: (error?: Error) => void;
   /** Existing whisper.cpp, large-v3-turbo and ffmpeg; no download or daemon. */
   decoder: { binary: string; model: string; ffmpeg: string };
 }
@@ -200,7 +200,16 @@ export async function alignCloneAudio(request: CloneAlignmentRequest): Promise<C
     let cleanupFailed = stopFailed;
     // Every cleanup step still runs if killing or reaping the child fails.
     try { if (child?.exitCode === null) child.kill("SIGKILL"); } catch { cleanupFailed = true; }
-    try { if (child) await child.exited; input.onChildrenReaped?.(); } catch { cleanupFailed = true; }
+    let reapError: Error | undefined;
+    try { if (child) await child.exited; } catch (error) {
+      cleanupFailed = true;
+      // Exit/signal status can confirm termination when its watcher fails;
+      // merely requesting a kill does not.
+      if (child?.exitCode == null && child?.signalCode == null) {
+        reapError = new Error("Alignment child termination unconfirmed", { cause: error });
+      }
+    }
+    input.onChildrenReaped?.(reapError);
     try { if (directory) await rm(directory, { recursive: true, force: true }); } catch { cleanupFailed = true; }
     if (cleanupFailed) untimed(controller.signal.aborted ? deadline ? "deadline" : "cancelled" : "unavailable");
     // Include cleanup in the deadline, and reject cancellation during cleanup.
