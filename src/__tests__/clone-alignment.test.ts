@@ -94,6 +94,8 @@ test("playback rate scales file-relative timestamps exactly once", async () => {
   expect(result.words.map(w => w.duration_ms)).toEqual([80, 80]);
   expect(result.identity.playbackRate).toBe(2);
 });
+// This test spawns 8 real native decoders; this budget is not a product deadline.
+const INVALID_INPUT_TEST_TIMEOUT_MS = 20_000;
 test("invalid projection, time, confidence, and DTW disagreement never gain offsets", async () => {
   const { input } = await request("hello"); input.ranges[0].speech.end++;
   expect((await alignCloneAudio(input)).status).toBe("untimed");
@@ -106,7 +108,7 @@ test("invalid projection, time, confidence, and DTW disagreement never gain offs
     const row = await request("hello", response);
     expect(offsets(await alignCloneAudio(row.input))).toEqual([null]);
   }
-});
+}, INVALID_INPUT_TEST_TIMEOUT_MS);
 test("request text, audio and identity are snapshotted before asynchronous decoding", async () => {
   const { input, prefix } = await request("hello", payload(["hello"]), 100);
   const pending = alignCloneAudio(input); await started(prefix);
