@@ -35,12 +35,12 @@ final class PasteFeedbackLayoutTests: XCTestCase {
     }
 
     func testEveryRecoveryMessageAndBadgeHasVisibleWordsWhenOCRIsAvailable() throws {
-        try requireOCR()
         try forEveryRender(checksOCR: true) { image, textFrame, message in
             let visible = try [0, 1].map { line in
                 let crop = try XCTUnwrap(image.cropping(to: CGRect(
                     x: textFrame.minX, y: CGFloat(line) * textFrame.height / 2,
                     width: textFrame.width, height: textFrame.height / 2)))
+                try requireOCR(size: CGSize(width: crop.width, height: crop.height), scale: textFrame.height / 32)
                 return try recognize(crop).joined(separator: " ")
             }.joined(separator: " ")
             XCTAssertEqual(words(visible), words(message), "Full feedback must be visible: \(visible)")
@@ -50,7 +50,13 @@ final class PasteFeedbackLayoutTests: XCTestCase {
 
     func testEmptyOCRControlSkipsOnlyTheOCRTest() throws {
         var probed = false
-        XCTAssertThrowsError(try requireOCR { _ in probed = true; return [] }) { error in
+        XCTAssertThrowsError(try requireOCR { image in
+            probed = true
+            // A 12 pt line's 68 × 16 point crop at 1× backing, enlarged 3×.
+            XCTAssertEqual(image.width, 204)
+            XCTAssertEqual(image.height, 48)
+            return []
+        }) { error in
             XCTAssertTrue(error is XCTSkip)
         }
         XCTAssertTrue(probed, "Even the unavailable seam must render and probe a control")
@@ -168,6 +174,8 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                             let badge = try XCTUnwrap(image.cropping(to: CGRect(
                                 x: (textX - cropInset) * scale, y: 0,
                                 width: (queueWidth - 4) * scale, height: 32 * scale)))
+                            try requireOCR(size: CGSize(width: badge.width, height: badge.height), scale: scale,
+                                           font: roundedBadgeFont, text: "12")
                             XCTAssertEqual(try recognize(badge), ["12"], "Badge must remain visible")
                         }
                         if VisualArtifactTestPolicy.isRegenerationEnabled() {
@@ -184,34 +192,49 @@ final class PasteFeedbackLayoutTests: XCTestCase {
         }
     }
 
-    private func requireOCR(read: ((CGImage) throws -> [String])? = nil) throws {
-        // AppKit control rendering avoids classifying a broken feedback crop as a
-        // missing host capability. Vision errors still fail; only empty results skip.
-        let control = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 400, pixelsHigh: 80,
+    private func requireOCR(size: CGSize = CGSize(width: 68, height: 16), scale: CGFloat = 1,
+                            font: NSFont = .systemFont(ofSize: 12, weight: .medium), text: String = "Ready",
+                            read: ((CGImage) throws -> [String])? = nil) throws {
+        // Render independently of the product crop: a broken/blank crop must fail,
+        // not masquerade as missing OCR. Match its exact pixel dimensions, backing
+        // scale and font (12 pt line or rounded 10 pt badge), then use the same OCR path.
+        let control = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: control)
-        NSColor.white.setFill()
-        NSRect(x: 0, y: 0, width: 400, height: 80).fill()
-        ("VoiceBar OCR 123" as NSString).draw(at: NSPoint(x: 12, y: 22), withAttributes: [
-            .font: NSFont.systemFont(ofSize: 28), .foregroundColor: NSColor.black,
+        NSColor.black.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        let transform = NSAffineTransform()
+        transform.scale(by: scale)
+        transform.concat()
+        let textHeight = (text as NSString).size(withAttributes: [.font: font]).height
+        (text as NSString).draw(at: NSPoint(x: 2, y: (size.height / scale - textHeight) / 2), withAttributes: [
+            .font: font, .foregroundColor: NSColor.white,
         ])
         NSGraphicsContext.restoreGraphicsState()
         let image = try XCTUnwrap(control.cgImage)
-        let result: [String]
-        if let read { result = try read(image) }
-        else if ProcessInfo.processInfo.environment["VOICEBAR_TEST_FORCE_OCR_UNAVAILABLE"] == "1" { result = [] }
-        else { result = try recognize(image) }
-        try XCTSkipIf(result.isEmpty, "Vision OCR unavailable on this host")
-        XCTAssertEqual(words(result.joined(separator: " ")), words("VoiceBar OCR 123"))
+        let forcedUnavailable = ProcessInfo.processInfo.environment["VOICEBAR_TEST_FORCE_OCR_UNAVAILABLE"] == "1"
+        let reader = read ?? (forcedUnavailable ? { _ in [] } : nil)
+        let result = try recognize(image, read: reader)
+        try XCTSkipIf(result.isEmpty,
+                      "Vision OCR unavailable for representative \(Int(size.width))×\(Int(size.height)) crop at \(scale)× backing, \(font.pointSize) pt, upscaled 3×")
+        XCTAssertEqual(words(result.joined(separator: " ")), words(text))
     }
 
-    private func recognize(_ image: CGImage) throws -> [String] {
+    private func recognize(_ image: CGImage, read: ((CGImage) throws -> [String])? = nil) throws -> [String] {
+        let context = try XCTUnwrap(CGContext(data: nil, width: image.width * 3, height: image.height * 3,
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: context.width, height: context.height))
+        let enlarged = try XCTUnwrap(context.makeImage())
+        if let read { return try read(enlarged) }
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: image).perform([request])
+        try VNImageRequestHandler(cgImage: enlarged).perform([request])
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
     }
 
