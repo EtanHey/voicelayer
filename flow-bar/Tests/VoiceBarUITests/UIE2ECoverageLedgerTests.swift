@@ -178,6 +178,19 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
             fullFrame: CGRect(x: 20, y: 10, width: 60, height: 15), panel: panel))
     }
 
+    func testKnownFailureRequiresTheMatchingObservedPacketIssue() {
+        var ledger = UIE2ECoverageLedger()
+        XCTAssertFalse(ledger.recordExpected(surface: "notch:list-newlines", issue: .listNewlines, descriptions: []))
+        XCTAssertFalse(ledger.recordExpected(surface: "notch:list-newlines", issue: .listNewlines,
+            descriptions: ["Missing control: unrelated harness locator"]))
+        XCTAssertTrue(ledger.missingSurfaces.contains("notch:list-newlines"))
+        XCTAssertTrue(ledger.recordExpected(surface: "notch:list-newlines", issue: .listNewlines,
+            descriptions: ["[P14b] Second item remains on the first line"]))
+        XCTAssertFalse(ledger.missingSurfaces.contains("notch:list-newlines"))
+        XCTAssertFalse(ledger.verifiedSurfaces.contains("notch:list-newlines"))
+        XCTAssertEqual(ledger.expectedSurfaces["notch:list-newlines"], "P14b")
+        XCTAssertTrue(ledger.missingSurfaces.contains("notch:seek-idle"))
+    }
 
     func testFeedbackMatchesNativeStaticTextValueWithoutReadingNumericControlValues() {
         let predicate = UIE2EAXText.predicate("Pasted", staticTextRole: 48)

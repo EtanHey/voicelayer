@@ -1018,6 +1018,128 @@ extension VoiceBarFlowTests {
         click(app.buttons["qa-fixture-idle"])
     }
 
+    func captureGeometry(_ name: String, speaking: Bool) -> UIE2EControlGeometry? {
+        var geometry: UIE2EControlGeometry?
+        step("GEO0 capture " + name) {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            let replay = pill.buttons["Replay"], eye = pill.buttons["Hide teleprompter"]
+            let terminal = pill.buttons[speaking ? "Stop speaking" : "Dismiss teleprompter"]
+            guard replay.waitForExistence(timeout: 3), eye.exists, terminal.exists else {
+                XCTFail("GEO0 missing controls for " + name); return
+            }
+            // Wait for SwiftUI's transition to settle rather than measure animation.
+            var previous = terminal.frame
+            let started = Date()
+            waitUntil {
+                let next = terminal.frame
+                defer { previous = next }
+                return Date().timeIntervalSince(started) > 0.5 && next == previous && !next.isEmpty
+            }
+            let frames = [replay.frame, eye.frame, terminal.frame]
+            guard frames.allSatisfy({ !$0.isEmpty && !$0.isInfinite && !$0.isNull }) else {
+                XCTFail("GEO0 empty/offscreen geometry for " + name); return
+            }
+            let value = UIE2EControlGeometry(replay: frames[0], eye: frames[1], terminal: frames[2],
+                row: frames.dropFirst().reduce(frames[0]) { $0.union($1) })
+            if let data = try? JSONEncoder().encode(value), let object = try? JSONSerialization.jsonObject(with: data) {
+                attachJSON("GEO0-" + name, ["state": name, "geometry": object, "rowDefinition": "AX three-control envelope"])
+            }
+            let screens = NSScreen.screens.compactMap { screen -> CGRect? in
+                guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { return nil }
+                return CGDisplayBounds(id)
+            }
+            guard frames.allSatisfy({ frame in pill.frame.contains(frame) && screens.contains(where: { $0.contains(frame) }) }),
+                  replay.isHittable, eye.isHittable, terminal.isHittable else {
+                XCTFail("GEO0 QA host controls clipped/off-screen or unreachable: " + name); return
+            }
+            geometry = value
+        }
+        return geometry
+    }
+
+
+    func geometryFlow() {
+        click(app.buttons["qa-fixture-speaking"])
+        guard captureGeometry("speaking-before-stop", speaking: true) != nil else { return }
+        // Stop clears readback in production. Capture that actual outcome rather
+        // than inventing X; completion is the transition that retains the text.
+        click(app.dialogs["VoiceBar QA Pill"].buttons["Stop speaking"])
+        step("GEO0 capture actual post-Stop idle") {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            waitUntil { !pill.buttons["Replay"].exists && !pill.buttons["Stop speaking"].exists &&
+                !pill.buttons["Dismiss teleprompter"].exists }
+            XCTAssertTrue(pill.exists)
+            attachJSON("GEO0-actual-post-stop-idle", ["state": "actual-post-stop-idle", "panelFrame": NSStringFromRect(pill.frame),
+                "controls": ["Replay": pill.buttons["Replay"].exists, "Eye": pill.buttons["Hide teleprompter"].exists,
+                    "Stop": pill.buttons["Stop speaking"].exists, "X": pill.buttons["Dismiss teleprompter"].exists],
+                "AX": pill.debugDescription, "comparison": "No control frames exist after Stop; no no-shift claim"])
+        }
+        click(app.buttons["qa-fixture-speaking"], "start silent playback before natural completion")
+        guard let beforeFinish = captureGeometry("speaking-before-natural-completion", speaking: true) else { return }
+        click(app.buttons["qa-fixture-finish"], "deliver natural playback-completion event")
+        guard let initialReadback = captureGeometry("readback-after-natural-completion", speaking: false) else { return }
+        step("GEO0 natural completion to readback stable") {
+            XCTAssertTrue(initialReadback.differences(from: beforeFinish).isEmpty,
+                "PRODUCT GEO0 natural completion→readback shift: " + initialReadback.differences(from: beforeFinish).joined(separator: ", "))
+        }
+        for index in 1...3 {
+            guard let before = captureGeometry("readback-before-replay-\(index)", speaking: false) else { return }
+            step("GEO0 replay readback \(index)") {
+                let replay = app.dialogs["VoiceBar QA Pill"].buttons["Replay"]
+                guard replay.exists, replay.isHittable else { XCTFail("GEO0 Replay unavailable"); return }
+                let count = fixtureEvents().count
+                replay.click() // Marked silent QA sink only.
+                waitUntil { self.fixtureEvents().dropFirst(count).contains("command:replay") }
+            }
+            let after = captureGeometry("speaking-after-replay-\(index)", speaking: true)
+            if let after {
+                step("GEO0 readback to speaking stable \(index)") { XCTAssertTrue(after.differences(from: before).isEmpty,
+                    "PRODUCT GEO0 readback→Replay→speaking shift: " + after.differences(from: before).joined(separator: ", ")) }
+            }
+            click(app.buttons["qa-fixture-finish"], "synthetic playback finish \(index)")
+            if let finished = captureGeometry("readback-after-finish-\(index)", speaking: false) {
+                step("GEO0 finish and repeated replay stable \(index)") {
+                    if let after { XCTAssertTrue(finished.differences(from: after).isEmpty,
+                        "PRODUCT GEO0 speaking→finish→readback shift: " + finished.differences(from: after).joined(separator: ", ")) }
+                    XCTAssertTrue(finished.differences(from: before).isEmpty,
+                        "PRODUCT GEO0 repeated readback shift: " + finished.differences(from: before).joined(separator: ", "))
+                }
+            }
+        }
+        click(app.dialogs["VoiceBar QA Pill"].buttons["Hide teleprompter"])
+        step("assert Eye really hides the teleprompter") {
+            XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].staticTexts["Teleprompter hidden"].waitForExistence(timeout: 3))
+        }
+        click(app.dialogs["VoiceBar QA Pill"].buttons["Show teleprompter"])
+        step("assert Eye restores teleprompter content") {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            XCTAssertFalse(pill.staticTexts["Teleprompter hidden"].exists)
+            XCTAssertTrue(pill.staticTexts["First"].exists || pill.buttons["First"].exists)
+        }
+        click(app.dialogs["VoiceBar QA Pill"].buttons["Dismiss teleprompter"])
+        step("assert terminal X dismisses retained readback") {
+            waitUntil { !self.app.dialogs["VoiceBar QA Pill"].buttons["Dismiss teleprompter"].exists }
+        }
+        // HIDE0 verifies the same panel in expanded playback and retained readback.
+        for fixture in ["speaking", "readback"] {
+            click(app.buttons["qa-fixture-" + fixture])
+            tab("General")
+            step("HIDE0 \(fixture) starts visible") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].exists) }
+            click(app.buttons["Hide VoiceBar for 1 hour"])
+            step("HIDE0 Settings hides \(fixture)") { waitUntil { !self.app.dialogs["VoiceBar QA Pill"].exists } }
+            click(app.buttons["Show VoiceBar"])
+            step("HIDE0 Settings restores \(fixture)") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].waitForExistence(timeout: 3)) }
+            openContextMenu(); click(app.menuItems["Hide for 1 hour"], "HIDE0 context Hide for 1 hour " + fixture)
+            receipt("menu-hide")
+            step("HIDE0 context hides \(fixture)") { waitUntil { !self.app.dialogs["VoiceBar QA Pill"].exists } }
+            openContextMenu(); click(app.menuItems["Show VoiceBar"], "HIDE0 context Show VoiceBar " + fixture)
+            receipt("menu-show")
+            step("HIDE0 context restores \(fixture)") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].waitForExistence(timeout: 3)) }
+        }
+        click(app.buttons["qa-fixture-idle"])
+    }
+
+
     func openContextMenu() -> Bool {
         var opened = false
         if app.menuItems["Settings…"].exists, app.menuItems["Settings…"].isHittable {

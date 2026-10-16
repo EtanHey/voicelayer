@@ -68,8 +68,61 @@ final class UIE2EFixtureCommandTests: XCTestCase {
     }
 
 
+    func testRecentTranscriptIdentityKeepsTheRealControllerPayloadAndTitle() throws {
+        let controller = PillContextMenuController()
+        controller.recentTranscriptionEntriesProvider = {
+            [.init(text: UIE2EModel.transcript, createdAt: Date(timeIntervalSince1970: 1_790_000_000))]
+        }
+        let menu = controller.makeMenu()
+        let item = try XCTUnwrap(menu.items.flatMap { $0.submenu?.items ?? [] }.first {
+            $0.representedObject as? String == UIE2EModel.transcript
+        })
+        let title = item.title
+        UIE2EHost.identifyRecentMenuItems(menu)
+        XCTAssertEqual(item.accessibilityIdentifier(), "uie2e-recent-qa-recording")
+        XCTAssertEqual(item.title, title)
+        XCTAssertEqual(item.representedObject as? String, UIE2EModel.transcript)
+        XCTAssertNotNil(item.target)
+        XCTAssertNotNil(item.action)
+    }
 
+    func testMicrophoneMenuIdentitySurvivesNativeSubtitleWithoutReplacingItsActions() throws {
+        let controller = PillContextMenuController()
+        controller.defaultMicrophoneNameProvider = { "QA microphone A" }
+        let menu = controller.makeMenu()
+        let parent = try XCTUnwrap(menu.items.first { $0.title == "Microphone" })
+        let children = try XCTUnwrap(parent.submenu).items
+        let change = try XCTUnwrap(children.first { $0.action != nil })
+        let title = change.title, action = change.action
+        UIE2EHost.identifyRecentMenuItems(menu)
+        XCTAssertEqual(parent.accessibilityIdentifier(), "uie2e-microphone-menu")
+        XCTAssertEqual(parent.title, "Microphone")
+        XCTAssertEqual(children.first?.accessibilityIdentifier(), "uie2e-microphone-default")
+        XCTAssertEqual(change.accessibilityIdentifier(), "uie2e-microphone-change")
+        XCTAssertEqual(change.title, title)
+        XCTAssertEqual(change.action, action)
+        XCTAssertNotNil(change.target)
+    }
 
+    func testTrackingMenuKeepsItsAnchorPanelFrameUntilTheMenuCloses() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let host = UIE2EHost(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        host.model.fixture("speaking")
+        let view = NSHostingView(rootView: BarView(state: host.model.voice,
+            commandRouter: VoiceBarCommandRouter(voiceState: host.model.voice), onOpenSettings: {}, onOpenHistory: {}))
+        host.pill = FloatingPillPanel(content: view)
+        host.pill.setFrame(CGRect(x: -1000, y: -1000, width: 680, height: 180), display: false)
+        let anchor = host.pill.frame
+        let menu = NSMenu()
+        host.menuWillOpen(menu)
+        host.updatePillLayout()
+        XCTAssertEqual(host.pill.frame, anchor, "Resizing a tracking menu's anchor can dismiss the real menu")
+        host.menuDidClose(menu)
+        XCTAssertNotEqual(host.pill.frame, anchor, "Deferred layout must be applied after menu close")
+    }
 
     func testQAStatusButtonHasItsOwnAXIdentityRatherThanTheProductionImageName() {
         let button = NSButton()
