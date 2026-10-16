@@ -10,6 +10,25 @@ import subprocess
 import sys
 
 
+def expected_packet(step):
+    expected = step.get('expectedFailure')
+    if expected is None:
+        return None
+    packet = expected.get('packet')
+    descriptions = expected.get('descriptions')
+    if (step.get('passed') is not True or packet not in {'P14b', 'SEEK2', 'SEL1', 'P1e', 'P1f'}
+            or not isinstance(descriptions, list) or not descriptions
+            or not all(isinstance(d, str) and '[' + packet + ']' in d for d in descriptions)):
+        raise ValueError('Invalid or unmatched expected product failure')
+    if 'surfaces' in expected:
+        surfaces = expected['surfaces']
+        if (not isinstance(surfaces, list) or not surfaces
+                or not all(isinstance(s, str) and s.strip() for s in surfaces)
+                or len(surfaces) != len(set(surfaces))):
+            raise ValueError('Invalid expected product-failure surfaces')
+    return packet
+
+
 def configure(output, app, sandbox):
     candidates = list((output / 'DerivedData/Build/Products').glob('*.xctestrun'))
     if len(candidates) != 1:
@@ -52,9 +71,10 @@ def report(directory, steps, manifest, recording=None, issues=()):
         path = (directory / name).resolve()
         if not path.is_relative_to(directory.resolve()) or not path.is_file() or path.stat().st_size == 0:
             raise ValueError('Missing/unsafe screenshot file: ' + name)
-        passed = step['passed'] and not matches[0]['isAssociatedWithFailure']
+        packet = expected_packet(step)
+        passed = step['passed'] and (not matches[0]['isAssociatedWithFailure'] or packet is not None)
         all_passed = all_passed and passed
-        status = 'SKIP' if step.get('skipped') and passed else 'PASS' if passed else 'FAIL'
+        status = ('XFAIL [' + packet + ']') if packet and passed else 'SKIP' if step.get('skipped') and passed else 'PASS' if passed else 'FAIL'
         caption = f"{step['number']:04d} {status} {step['name']}"
         print(caption)
         figures.append(f'<figure><a href="{html.escape(name, quote=True)}"><img loading="lazy" src="{html.escape(name, quote=True)}"></a><figcaption>{html.escape(caption)}</figcaption></figure>')
@@ -91,9 +111,10 @@ def receipts(directory, manifest):
                 if number in steps or data['number'] != number or type(data['passed']) is not bool:
                     raise ValueError('Duplicate/invalid action receipt')
                 steps[number] = data
+                expected_packet(data)
             else:
                 ledgers.append(data)
-            if attachment['isAssociatedWithFailure']:
+            if attachment['isAssociatedWithFailure'] and not (step_match and expected_packet(data)):
                 issues.append('FAIL receipt attachment associated with XCTest failure: ' + name)
     ordered = [steps[n] for n in sorted(steps)]
     if not ordered or sorted(steps) != list(range(1, len(steps) + 1)):
@@ -107,11 +128,27 @@ def receipts(directory, manifest):
         if ledger['version'] != 1 or ledger['steps'] != ordered:
             raise ValueError('Final ledger differs from individual action receipts')
         coverage = ledger['coverage']
+        expected_surfaces = coverage.get('expectedSurfaces', {})
+        for step in ordered:
+            if expected_packet(step) == 'P1f':
+                # One gallery screenshot may prove several required failures, never an unknown scope.
+                if any(expected_surfaces.get(surface) != 'P1f'
+                       for surface in step['expectedFailure'].get('surfaces', [])):
+                    raise ValueError('Aggregate P1f receipt names an unmatched expected surface')
+        for surface, packet in expected_surfaces.items():
+            if (surface in coverage.get('missingSurfaces', []) or surface in coverage.get('verifiedSurfaces', [])
+                    or not any(expected_packet(s) == packet and (
+                        s['expectedFailure'].get('surface') == surface
+                        or (packet == 'P1f' and surface in s['expectedFailure'].get('surfaces', [])))
+                        for s in ordered)):
+                raise ValueError('Expected surface lacks its matching observed product-failure receipt')
         missing = sorted(set(coverage['observed']) - set(coverage['exercised']))
         if missing != sorted(coverage['missing']):
             raise ValueError('Inconsistent coverage ledger')
         if missing:
             issues.append('FAIL unexercised controls: ' + ', '.join(missing))
+        if coverage.get('missingSurfaces'):
+            issues.append('FAIL unverified surfaces: ' + ', '.join(sorted(coverage['missingSurfaces'])))
         if ledger['completed'] is not True or ledger['failures'] != 0:
             issues.append('FAIL suite completion or teardown assertions failed')
         issues.extend('KNOWN VISUAL GAP: ' + gap for gap in ledger['knownVisualGaps'])
