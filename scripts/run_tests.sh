@@ -18,10 +18,7 @@ DAEMON_OUT="$RUN_DIR/mcp-daemon.out.log"
 DAEMON_ERR="$RUN_DIR/mcp-daemon.err.log"
 
 exit_status=0
-daemon_pid=""
-
-# Never adopt another run's directory (including after PID reuse).
-mkdir -m 700 "$RUN_DIR" || exit 1
+supervisor_pid=""
 
 record_status() {
   local label="$1"
@@ -39,9 +36,9 @@ record_status() {
 cleanup() {
   local status=$?
   trap '' HUP INT TERM
-  if [ -n "$daemon_pid" ]; then
-    kill "$daemon_pid" 2>/dev/null
-    wait "$daemon_pid" 2>/dev/null
+  if [ -n "$supervisor_pid" ]; then
+    kill "$supervisor_pid" 2>/dev/null
+    wait "$supervisor_pid" 2>/dev/null
   fi
   # Opt in to retaining logs/state for debugging; never retain processes.
   if [ "${VOICELAYER_RUN_TESTS_KEEP_RUN_DIR:-0}" != "1" ]; then
@@ -60,10 +57,45 @@ print_log_tail() {
   fi
 }
 
+# Never adopt another run's directory (including after PID reuse). Establish
+# detached cleanup ownership before any Swift phase can run.
+mkdir -m 700 "$RUN_DIR" || exit 1
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+(
+  cd "$ROOT_DIR" || exit 1
+  # Keep HOME-derived logs/caches and all runtime state inside this smoke run.
+  exec env HOME="$RUN_DIR" \
+    VOICELAYER_STATE_DIR="$RUN_DIR/state" \
+    VOICELAYER_TMP_ROOT="$RUN_DIR" \
+    VOICELAYER_CONTROL_LAYER_BASE="$RUN_DIR/journal" \
+    VOICELAYER_MCP_SOCKET_PATH="$MCP_SOCKET" \
+    VOICELAYER_SOCKET_PATH="$VOICEBAR_SOCKET" \
+    QA_VOICE_STT_BACKEND=wispr \
+    QA_VOICE_STT_POLISH=off \
+    QA_VOICE_MCP_SOCKET_PATH="$MCP_SOCKET" \
+    QA_VOICE_SOCKET_PATH="$VOICEBAR_SOCKET" \
+    QA_VOICE_MCP_PID_PATH="$MCP_PID_FILE" \
+    QA_VOICE_MCP_HEARTBEAT_PATH="$RUN_DIR/voicelayer-mcp.heartbeat" \
+    QA_VOICE_DISABLE_FLAG_PATH="$DISABLE_FLAG" \
+    VOICELAYER_ALLOW_ORPHAN_DAEMON=1 \
+    python3 "$ROOT_DIR/scripts/supervise-test-daemon.py" "$$" "$RUN_DIR" \
+      bun run src/mcp-server-daemon.ts
+) >"$DAEMON_OUT" 2>"$DAEMON_ERR" &
+supervisor_pid=$!
+for _ in $(seq 1 100); do
+  if [ -f "$RUN_DIR/supervisor-ready" ] || ! kill -0 "$supervisor_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.05
+done
+if [ ! -f "$RUN_DIR/supervisor-ready" ]; then
+  printf '[fail] detached cleanup supervisor did not become ready\n'
+  exit 1
+fi
 
 printf 'VoiceLayer regression gate\n'
 printf 'repo: %s\n' "$ROOT_DIR"
@@ -96,27 +128,8 @@ fi
 record_status "swift test" "$swift_test_status"
 
 printf '\n== Bun MCP daemon boot ==\n'
-(
-  cd "$ROOT_DIR" || exit 1
-  # Keep HOME-derived logs/caches and all runtime state inside this smoke run.
-  exec env HOME="$RUN_DIR" \
-    VOICELAYER_STATE_DIR="$RUN_DIR/state" \
-    VOICELAYER_TMP_ROOT="$RUN_DIR" \
-    VOICELAYER_CONTROL_LAYER_BASE="$RUN_DIR/journal" \
-    VOICELAYER_MCP_SOCKET_PATH="$MCP_SOCKET" \
-    VOICELAYER_SOCKET_PATH="$VOICEBAR_SOCKET" \
-    QA_VOICE_STT_BACKEND=wispr \
-    QA_VOICE_STT_POLISH=off \
-    QA_VOICE_MCP_SOCKET_PATH="$MCP_SOCKET" \
-    QA_VOICE_SOCKET_PATH="$VOICEBAR_SOCKET" \
-    QA_VOICE_MCP_PID_PATH="$MCP_PID_FILE" \
-    QA_VOICE_MCP_HEARTBEAT_PATH="$RUN_DIR/voicelayer-mcp.heartbeat" \
-    QA_VOICE_DISABLE_FLAG_PATH="$DISABLE_FLAG" \
-    VOICELAYER_ALLOW_ORPHAN_DAEMON=1 \
-    python3 "$ROOT_DIR/scripts/supervise-test-daemon.py" "$$" "$RUN_DIR" \
-      bun run src/mcp-server-daemon.ts
-) >"$DAEMON_OUT" 2>"$DAEMON_ERR" &
-daemon_pid=$!
+# Start exactly once, after Swift; the early supervisor has only been cleaning.
+kill -USR2 "$supervisor_pid" 2>/dev/null
 
 daemon_status=1
 for _ in $(seq 1 150); do
@@ -124,7 +137,7 @@ for _ in $(seq 1 150); do
     daemon_status=0
     break
   fi
-  if [ -f "$RUN_DIR/daemon-reaped" ] || ! kill -0 "$daemon_pid" 2>/dev/null; then
+  if [ -f "$RUN_DIR/daemon-reaped" ] || ! kill -0 "$supervisor_pid" 2>/dev/null; then
     daemon_status=1
     break
   fi
@@ -136,8 +149,8 @@ record_status "bun MCP daemon boot" "$daemon_status"
 # Its periodic log rotator still targets production /tmp logs.
 # USR1 stops/reaps the daemon group; the supervisor remains until EXIT so it
 # can remove RUN_DIR even if the shell is killed during the later Bun suite.
-kill -USR1 "$daemon_pid" 2>/dev/null
-while [ ! -f "$RUN_DIR/daemon-reaped" ] && kill -0 "$daemon_pid" 2>/dev/null; do
+kill -USR1 "$supervisor_pid" 2>/dev/null
+while [ ! -f "$RUN_DIR/daemon-reaped" ] && kill -0 "$supervisor_pid" 2>/dev/null; do
   sleep 0.05
 done
 

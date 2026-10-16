@@ -23,7 +23,15 @@ def executable(name, body):
     path.write_text(body)
     path.chmod(0o755)
 
-executable("swift", "#!/bin/sh\nexit 0\n")
+executable("swift", "#!" + sys.executable + "\n" + '''
+import os, pathlib, sys, time
+case = os.environ["HOOK_CASE"]
+if case in ("KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test"):
+    phase = "test" if case == "KILL-swift-test" else "build"
+    if sys.argv[1] == phase:
+        pathlib.Path(os.environ["HOOK_RECORD"] + ".swift").write_text(str(os.getpid()))
+        time.sleep(60)
+''')
 executable("plutil", "#!/bin/sh\nexit 0\n")
 executable("bun", "#!" + sys.executable + "\n" + '''
 import os, pathlib, signal, socket, subprocess, sys, time
@@ -75,7 +83,8 @@ try:
         raise SystemExit(128 + signum)
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, interrupted)
-    cases = ("success", "failure", "timeout", "INT", "TERM", "HUP", "KILL", "KILL-late", "stubborn", "debug", "suite-failure", "real")
+    cases = ("KILL-group", "KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test",
+             "success", "failure", "timeout", "INT", "TERM", "HUP", "KILL", "KILL-late", "stubborn", "debug", "suite-failure", "real")
     for case in cases:
         lane = base / case
         lane.mkdir()
@@ -87,14 +96,30 @@ try:
             env[f"VOICELAYER_RUN_TESTS_FORCE_{kind}_FAIL"] = "1" if case == "suite-failure" else "0"
         runner = None
         pids = []
+        daemon_group = None
         with (lane / "output").open("w+") as output:
             try:
                 runner = subprocess.Popen(["bash", str(root / "scripts/run_tests.sh")], env=env,
                                           stdout=output, stderr=output, start_new_session=True)
                 run_dir = lane / f"voicelayer-run-tests.{runner.pid}"
-                assert wait_until(lambda: record.exists() and record.stat().st_size > 0), "daemon never started"
-                pids = [int(p) for p in record.read_text().split()]
-                if case in ("INT", "TERM", "HUP", "KILL"):
+                if "swift" in case:
+                    swift_record = Path(str(record) + ".swift")
+                    assert wait_until(lambda: swift_record.exists() and swift_record.stat().st_size > 0), "Swift never started"
+                    pids = [int(swift_record.read_text())]
+                    assert run_dir.exists() and not record.exists(), "early test must precede daemon start"
+                else:
+                    assert wait_until(lambda: record.exists() and record.stat().st_size > 0), "daemon never started"
+                    pids = [int(p) for p in record.read_text().split()]
+                if case == "KILL-group":
+                    daemon_group = os.getpgid(pids[0])
+                    assert daemon_group != runner.pid, "daemon shares caller group"
+                if "group" in case:
+                    # runner is our new session/group leader; never signal the caller's group.
+                    assert os.getpgid(runner.pid) == runner.pid
+                    os.killpg(runner.pid, signal.SIGKILL)
+                elif "swift" in case:
+                    os.kill(runner.pid, signal.SIGKILL)
+                elif case in ("INT", "TERM", "HUP", "KILL"):
                     os.kill(runner.pid, getattr(signal, "SIG" + case))
                 if case == "KILL-late":
                     assert wait_until(lambda: Path(str(record) + ".suite").exists()), "suite never started"
@@ -102,8 +127,21 @@ try:
                 status = runner.wait(timeout=22)
                 expected = {"failure": 1, "timeout": 1, "suite-failure": 1, "INT": 130, "TERM": 143,
                             "HUP": 129, "KILL": -9, "KILL-late": -9}.get(case, 0)
+                if case.startswith("KILL"):
+                    expected = -9
                 assert status == expected, f"exit {status}, expected {expected}"
-                assert wait_until(lambda: all(not alive(p) for p in pids)), f"surviving daemon/descendants: {pids}"
+                daemon_pids = [] if "swift" in case else pids
+                assert wait_until(lambda: all(not alive(p) for p in daemon_pids)), f"surviving daemon/descendants: {daemon_pids}"
+                if daemon_group is not None:
+                    def group_gone():
+                        try:
+                            os.killpg(daemon_group, 0)
+                            return False
+                        except ProcessLookupError:
+                            return True
+                        except PermissionError:
+                            return False
+                    assert wait_until(group_gone), "daemon process group remains"
                 assert wait_until(lambda: run_dir.exists() == (case == "debug")), "RUN_DIR retention incorrect"
                 # Supervisor and any descendants bearing the run identity must also be gone.
                 processes = subprocess.check_output(["ps", "-ax", "-o", "pid=,command="], text=True)
@@ -125,6 +163,11 @@ try:
             finally:
                 # RED runs must clean up their own intentionally exposed leaks too.
                 if runner is not None:
+                    if daemon_group is not None:
+                        try:
+                            os.killpg(daemon_group, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
                     suite_pid = Path(str(record) + ".suite")
                     if suite_pid.exists():
                         pids.append(int(suite_pid.read_text()))

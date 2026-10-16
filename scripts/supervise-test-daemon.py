@@ -10,11 +10,20 @@ import time
 
 
 def main():
+    # The hook has job control off. Survive teardown of its entire group,
+    # not just PID-directed termination of the runner shell.
+    os.setsid()
     parent_pid = int(sys.argv[1])
     run_dir = Path(sys.argv[2])
     stopping = False
     exiting = False
     daemon = None
+    start_requested = False
+    started = False
+
+    def request_start(_signum, _frame):
+        nonlocal start_requested
+        start_requested = True
 
     def request_stop(signum, _frame):
         nonlocal stopping, exiting
@@ -24,6 +33,7 @@ def main():
 
     for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGUSR1):
         signal.signal(signum, request_stop)
+    signal.signal(signal.SIGUSR2, request_start)
 
     def stop_group(child):
         def send(signum):
@@ -49,11 +59,18 @@ def main():
         # The parent may already have died before Python installed handlers.
         if os.getppid() != parent_pid or exiting:
             return
-        daemon = subprocess.Popen(sys.argv[3:], start_new_session=True)
+        # Swift must not begin until detached cleanup ownership is established.
+        (run_dir / "supervisor-ready").write_text(str(os.getpid()))
         while not exiting and os.getppid() == parent_pid:
+            if start_requested and not started and not stopping:
+                started = True
+                daemon = subprocess.Popen(sys.argv[3:], start_new_session=True)
             if daemon is not None and (stopping or daemon.poll() is not None):
                 stop_group(daemon)
                 daemon = None
+                (run_dir / "daemon-reaped").touch()
+            elif stopping and not started:
+                started = True
                 (run_dir / "daemon-reaped").touch()
             time.sleep(0.05)
     finally:
