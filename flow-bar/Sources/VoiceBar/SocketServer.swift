@@ -331,7 +331,7 @@ final class SocketServer {
         guard let data = json.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
-            NSLog("[VoiceBar] Bad JSON from client: %@", json)
+            NSLog("[VoiceBar] Bad JSON from client: bytes=%d", json.utf8.count)
             return
         }
 
@@ -501,8 +501,11 @@ final class SocketServer {
 
         guard !targetFDs.isEmpty else {
             NSLog(
-                "[VoiceBar] No command client registered; dropping command %@",
-                jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Only routing metadata is safe to log; commands can carry private selections.
+                "[VoiceBar] No command client registered; dropping command type=%@ id=%@ bytes=%d",
+                String(reflecting: commandName ?? "unknown"),
+                String(reflecting: command["id"] as? String ?? "none"),
+                jsonData.count
             )
             notifyCommandDeliveryFailed(command: command, reason: "VoiceLayer is starting")
             return
