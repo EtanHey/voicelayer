@@ -2769,7 +2769,7 @@ public final class VoiceState {
         guard !isPartial else { return }
         guard !text.isEmpty else {
             _ = historyRetranscriptionRequest.takeArchivedOrigin(for: recordingPath)
-            logDiagnostic("transcription_final_archived_late_empty", details: ["recordingPath": recordingPath])
+            logDiagnostic("transcription_final_archived_late_empty", details: ["hasRecordingPath": boolString(!recordingPath.isEmpty)])
             return
         }
         handleFinalTranscription(text, recordingPath: recordingPath, recordingCreatedAt: recordingCreatedAt,
@@ -2809,7 +2809,7 @@ public final class VoiceState {
             refreshTranscriptionVocabulary()
             logDiagnostic("transcription_final_archived_late", details: [
                 "textLength": String(text.count),
-                "recordingPath": recordingPath ?? "nil",
+                "hasRecordingPath": boolString(recordingPath?.isEmpty == false),
             ])
             return
         }
@@ -2837,7 +2837,7 @@ public final class VoiceState {
             "barInitiatedRecording": boolString(barInitiatedRecording),
             "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
-            "recordingPath": recordingPath ?? "nil",
+            "hasRecordingPath": boolString(recordingPath?.isEmpty == false),
         ])
 
         // AIDEV-NOTE: The effective remote-capture block is an independent second gate on top of
