@@ -26,7 +26,58 @@ final class UIE2ESafetyTests: XCTestCase {
 
 @MainActor
 final class UIE2EFixtureCommandTests: XCTestCase {
+    func testIdleFixtureClearsPreparingPlaybackWithoutSendingHardwareCommands() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
 
+        model.fixture("preparing")
+        XCTAssertEqual(model.voice.mode, .speaking)
+        XCTAssertEqual(model.voice.teleprompterText, "Preparing speech…")
+        XCTAssertTrue(model.commands.contains { $0["cmd"] as? String == "speak_text" &&
+            $0["text"] as? String == "QA original selection" })
+        let commandsBeforeIdleCleanup = model.commands.count
+
+        model.fixture("idle")
+
+        XCTAssertEqual(model.voice.mode, .idle)
+        XCTAssertTrue(model.voice.statusText.isEmpty, "Idle must clear the preparing status text")
+        XCTAssertNil(model.voice.teleprompterText, "Idle must remove stale preparing/readback teleprompter text")
+        XCTAssertFalse(model.voice.isTeleprompterReadback)
+        XCTAssertFalse(model.voice.isPlaybackDurationGrowing)
+        XCTAssertEqual(model.commands.count, commandsBeforeIdleCleanup,
+            "Fixture cleanup must not issue a stop or any other command")
+        XCTAssertEqual(model.events.last, "fixture:idle")
+        XCTAssertTrue(model.commands.allSatisfy { $0["cmd"] as? String == "speak_text" },
+            "The model command sink records only synthetic commands and never reaches hardware")
+    }
+
+    func testIdleFixtureDismissesRetainedReadbackAndClearsHoverWithoutCommand() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        model.voice.isHovering = true
+        model.fixture("readback")
+        XCTAssertEqual(model.voice.mode, .idle)
+        XCTAssertTrue(model.voice.isTeleprompterReadback)
+        XCTAssertEqual(model.voice.teleprompterText, "First QA item\nSecond QA item")
+        let commandsBeforeIdleCleanup = model.commands.count
+
+        model.fixture("idle")
+
+        XCTAssertEqual(model.voice.mode, .idle)
+        XCTAssertTrue(model.voice.statusText.isEmpty)
+        XCTAssertNil(model.voice.teleprompterText, "Idle must dismiss the retained readback")
+        XCTAssertFalse(model.voice.isTeleprompterReadback)
+        XCTAssertFalse(model.voice.isHovering, "Idle fixture cleanup must release the synthetic pointer hold")
+        XCTAssertEqual(model.commands.count, commandsBeforeIdleCleanup,
+            "Dismissing an idle readback is local UI cleanup and must not send a command")
+        XCTAssertEqual(model.events.last, "fixture:idle")
+    }
 
     func testIdleFixtureRestoresTheSyntheticConnectionBaselineWithoutHardware() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
@@ -46,6 +97,22 @@ final class UIE2EFixtureCommandTests: XCTestCase {
             "Refreshing the fixture baseline must not send a command")
     }
 
+    func testFeedbackFixtureHoldsItsPresentationThroughPointerExit() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        model.voice.setHoveringFromDebouncedPointer(false)
+        for name in ["paste-not-inserted", "paste-unverified", "paste-partial"] {
+            model.fixture(name)
+            model.voice.setHoveringFromDebouncedPointer(false)
+            XCTAssertEqual(UIE2EHost.panelLayout(for: model.voice).presentation.visualState, .compactStatus)
+        }
+        model.fixture("idle")
+        model.voice.setHoveringFromDebouncedPointer(false)
+        XCTAssertTrue(model.voice.isCollapsed, "Fixture hold must be released for normal idle")
+    }
 
     func testHistoryPaginationAddsVisibleFixtureRowsInBothScopes() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
@@ -67,6 +134,37 @@ final class UIE2EFixtureCommandTests: XCTestCase {
         XCTAssertTrue(model.events.contains("ask-history-page:200"))
     }
 
+    func testPreparingSelectionProbeUsesTheRealSelectionMethodWithNoNativeCapture() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        model.fixture("preparing")
+        XCTAssertEqual(model.voice.mode, .speaking)
+        XCTAssertEqual(model.voice.statusText, "Preparing speech…")
+        let receipt = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("preparing.json"))) as? [String: Any]
+        XCTAssertEqual(receipt?["mode"] as? String, "speaking")
+        XCTAssertEqual(receipt?["statusText"] as? String, "Preparing speech…")
+        XCTAssertEqual(receipt?["durationGrowing"] as? Bool, true)
+        XCTAssertEqual(receipt?["originalRequested"] as? Bool, true)
+        XCTAssertTrue(model.commands.contains { $0["cmd"] as? String == "speak_text" &&
+            $0["text"] as? String == "QA original selection" },
+            "Preparing must retain a real original selection request before replacement")
+        model.fixture("selection-replace")
+        XCTAssertTrue(model.commands.contains { $0["cmd"] as? String == "stop" },
+            "The current unmerged SEL1 contract stops; the probe must actually invoke speakSelection")
+
+        // Cleanup happens only after the probe has asserted SEL1's real stop behavior.
+        let commandsBeforeIdleCleanup = model.commands.count
+        model.fixture("idle")
+        XCTAssertEqual(model.voice.mode, .idle)
+        XCTAssertTrue(model.voice.statusText.isEmpty)
+        XCTAssertNil(model.voice.teleprompterText)
+        XCTAssertFalse(model.voice.isTeleprompterReadback)
+        XCTAssertEqual(model.commands.count, commandsBeforeIdleCleanup,
+            "Fixture cleanup after the strict SEL1 probe must not issue another command")
+    }
 
     func testRecentTranscriptIdentityKeepsTheRealControllerPayloadAndTitle() throws {
         let controller = PillContextMenuController()
@@ -144,7 +242,61 @@ final class UIE2EFixtureCommandTests: XCTestCase {
         XCTAssertEqual(hidden, [true, false, true])
     }
 
+    func testPillFrameContainsTheEntireRenderedSurfaceAcrossPlaybackStates() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        let view = PillHostingView(rootView: BarView(state: model.voice,
+            commandRouter: VoiceBarCommandRouter(voiceState: model.voice), onOpenSettings: {}, onOpenHistory: {},
+            includesPanelOutsets: true))
+        let panel = FloatingPillPanel(content: view)
+        let screen = CGRect(x: 0, y: 0, width: 1728, height: 1080)
+        var coreX: CGFloat?
+        for state in ["speaking", "readback", "speaking", "finish", "idle"] {
+            model.fixture(state)
+            let layout = UIE2EHost.panelLayout(for: model.voice)
+            UIE2EHost.fitPill(panel, layout: layout, in: screen)
+            let expected = VoiceBarIsolatedCapturePlacement.frame(layout: layout, visibleFrame: screen,
+                environment: [VoiceBarIsolatedCapturePlacement.topRightEnvironmentVariable: "1"])
+            XCTAssertEqual(panel.frame, expected, "QA must use the production canvas and stable core anchor")
+            XCTAssertEqual(panel.frame.size, layout.panelSize)
+            XCTAssertTrue(screen.contains(panel.frame))
+            let nextCoreX = panel.frame.minX + layout.visibleContentRect.minX + layout.presentation.geometry.coreMidX
+            if let coreX { XCTAssertEqual(nextCoreX, coreX, accuracy: 0.01) }
+            coreX = nextCoreX
+        }
+    }
 
+    func testSpeakingFixtureRoutesReplayAndSeekOnlyToSyntheticSink() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        model.voice.controlLayerEventWriter = { _, _ in }
+        model.fixture("speaking")
+        XCTAssertEqual(model.voice.mode, .speaking)
+        XCTAssertTrue(model.voice.statusText.contains("\n"))
+        model.voice.replay()
+        model.voice.seek(offsetMs: 1000)
+        XCTAssertTrue(model.events.contains("command:replay"))
+        XCTAssertTrue(model.events.contains("command:seek"))
+        model.fixture("readback")
+        XCTAssertEqual(model.voice.mode, .idle)
+        model.voice.replay()
+        XCTAssertEqual(model.voice.mode, .speaking, "Silent replay must deliver the fixture speaking event for geometry probes")
+        XCTAssertNil(model.voice.pendingIntent)
+        model.fixture("finish")
+        XCTAssertTrue(model.voice.isTeleprompterReadback)
+        model.voice.replay()
+        XCTAssertEqual(model.voice.mode, .speaking)
+        model.voice.stop()
+        XCTAssertEqual(model.voice.mode, .idle)
+        XCTAssertFalse(model.voice.isTeleprompterReadback, "Production Stop clears retained text; do not fabricate an X state")
+
+    }
 
     func testAskPasteSinkReceivesExactlyTheResponse() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)

@@ -79,6 +79,14 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     }
                 }.padding(6)
             }
+            HStack {
+                ForEach(["speaking", "readback", "finish", "preparing", "selection-replace"], id: \.self) { name in
+                    Button("Silent " + name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
+                }
+                Button("Hidden pill menu") {
+                    self.makeContextMenu().popUp(positioning: nil, at: NSPoint(x: 20, y: 20), in: self.settings.contentView)
+                }.accessibilityIdentifier("qa-fixture-hidden-menu")
+            }
             UIE2ESettings(model: model)
         })
         let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
@@ -302,6 +310,7 @@ final class UIE2EModel {
     var events: [String] = []
     var commands: [[String: Any]] = []
     var selectionText = "QA original selection"
+    private var holdsFixturePresentation = false
     var onRunSetup: () -> Void = {}
     var residency = "loaded"
     var processing: [String: Any] = [:]
@@ -395,10 +404,23 @@ final class UIE2EModel {
                              "configured_model": ["name": "QA recognizer", "installed": true, "size_bytes": 1_000_000]]])
     }
     func command(_ message: [String: Any]) {
+        commands.append(message)
+        sandbox.writeObject(["messages": commands], file: "commands.json")
         let cmd = message["cmd"] as? String ?? ""
         receipt("command:" + cmd)
         switch cmd {
         case "health": refresh(); return
+        case "speak_text":
+            // Real VoiceState selection routing ends here, never at a daemon or AX capture.
+            voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
+                "text": message["text"] as? String ?? ""])
+            return
+        case "replay", "stop":
+            // Synthetic daemon responses only, for native layout transitions. This
+            // proves BarView geometry, never real replay admission or audio lifecycle.
+            voice.handleEvent(["type": "ack", "command": cmd, "id": message["id"] ?? "", "outcome": "accept"])
+            fixture(cmd == "replay" ? "speaking" : "finish")
+            return
         case "set_whisper_residency": residency = message["action"] as? String == "load" ? "loaded" : "not_loaded"
         case "set_processing_setting":
             if let key = message["key"] as? String, let value = message["value"] { let stored: Any = key == "model_polish" ? ((value as? Bool == true) ? "on" : "off") : value
@@ -423,8 +445,40 @@ final class UIE2EModel {
         refresh()
     }
     func fixture(_ name: String) {
+        if holdsFixturePresentation { voice.endModalInteraction(); holdsFixturePresentation = false }
         voice.confirmationText = nil
+        if ["confirmation", "paste-failed", "paste-not-inserted", "paste-unverified", "paste-partial"].contains(name) {
+            // These are held visual fixtures, not a claim about note lifetime.
+            // A real pointer exit must not collapse the fixture before its frame is measured.
+            voice.beginModalInteraction()
+            holdsFixturePresentation = true
+        }
         switch name {
+        case "preparing":
+            // Establish the actual original selection request before the daemon's
+            // Preparing event, then change only the synthetic selection capture.
+            voice.mode = .idle
+            refresh()
+            selectionText = "QA original selection"
+            voice.speakSelection()
+            voice.isHovering = true
+            voice.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
+                "long_read": ["id": "qa-prepare", "chunk_index": 0, "chunk_count": 1,
+                              "chunk_start_ms": 0, "preparing": true]])
+            sandbox.writeObject(["mode": voice.mode.rawValue, "statusText": voice.statusText,
+                "durationGrowing": voice.isPlaybackDurationGrowing,
+                "originalRequested": commands.contains { $0["cmd"] as? String == "speak_text" &&
+                    $0["text"] as? String == "QA original selection" }], file: "preparing.json")
+            selectionText = "QA replacement selection"
+        case "selection-replace": voice.speakSelection()
+        case "speaking", "readback":
+            voice.isHovering = true
+            voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
+                "text": "First QA item\nSecond QA item"])
+            voice.wordBoundaries = [(0, 1000, "First"), (1000, 1000, "QA"), (2000, 1000, "item"),
+                                    (3000, 1000, "Second"), (4000, 1000, "QA"), (5000, 1000, "item")]
+            if name == "readback" { voice.handleEvent(["type": "state", "state": "idle", "source": "playback"]) }
+        case "finish": voice.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         case "idle":
             // Preserve the existing fixture contract: every idle reset restores
             // the synthetic health/connection baseline before clearing playback.
@@ -435,9 +489,9 @@ final class UIE2EModel {
             voice.dismissRetainedTeleprompter()
             voice.setHovering(false)
         case "confirmation": voice.mode = .idle; voice.confirmationText = "Pasted"
-        case "paste-not-inserted": voice.mode = .idle; voice.confirmationText = "Not inserted — transcript kept in History. Click input and press Shift+F5, or Copy."
-        case "paste-unverified": voice.mode = .idle; voice.confirmationText = "Insertion unverified — transcript kept in History. Check the input before retrying or Copy."
-        case "paste-partial": voice.mode = .idle; voice.confirmationText = "Partially inserted — full transcript kept in History. Check the input before retrying or Copy."
+        case "paste-not-inserted": voice.mode = .idle; voice.confirmationText = "Not pasted\nIn History"
+        case "paste-unverified": voice.mode = .idle; voice.confirmationText = "Unverified\nIn History"
+        case "paste-partial": voice.mode = .idle; voice.confirmationText = "Part pasted\nHistory: full"
         case "paste-failed": voice.mode = .idle; voice.confirmationText = "Paste failed — click input and press Shift+F5"
         case "error": voice.handleEvent(["type": "error", "message": "QA fixture failure", "recoverable": true])
         case "transcribing": voice.handleEvent(["type": "state", "state": "transcribing"])
