@@ -1,0 +1,26 @@
+name: FLAKE1 hosted probe
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  clone-reap-repeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - name: Record hosted checkout and runtime
+        run: |
+          git show --no-patch --format=raw HEAD
+          bun --version
+          uname -a
+      - name: Repeat the real decoder deadline and reap assertion 20 times
+        run: bun test src/__tests__/clone-alignment.test.ts --rerun-each 20 -t 'the half-duration deadline kills and reaps a slow decoder'
