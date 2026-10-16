@@ -69,7 +69,7 @@ final class DictationReceiptTests: XCTestCase {
         state.frontmostAppProvider = { NSRunningApplication.current }
         state.targetAppActivator = { _ in }
         state.pasteScheduler = { _, block in block() }
-        var finishFirst: (() -> Void)?
+        var finishFirst: ((DictationInsertionResult) -> Void)?
         state.asyncDictationInsertionHandlerProvider = {
             { _, completion in
                 finishFirst = completion
@@ -90,7 +90,7 @@ final class DictationReceiptTests: XCTestCase {
         state.handleEvent(finalEvent(text: "Same words", path: secondPath))
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.recordingPath), [secondPath, firstPath])
         XCTAssertEqual(state.latestDictationInsertionStatus, .failed)
-        finishFirst?()
+        finishFirst?(.verified)
         XCTAssertEqual(state.latestDictationInsertionStatus, .failed)
         XCTAssertEqual(state.lastDictationCardEntry?.recordingPath, secondPath)
     }
@@ -103,7 +103,7 @@ final class DictationReceiptTests: XCTestCase {
         state.pasteScheduler = { _, block in block() }
         state.asyncDictationInsertionHandlerProvider = {
             { _, completion in
-                completion()
+                completion(.verified)
                 return true
             }
         }
