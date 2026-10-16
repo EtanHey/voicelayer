@@ -117,6 +117,10 @@ The preload always sets `QA_VOICE_MCP_PID_PATH` inside the current run, replacin
 inherited overrides. Tests use `getMcpPidFilePath()`, never the raw `MCP_PID_FILE`
 default. Process-lock acquisition and release in test mode throw before reading
 or signalling if the PID path escapes that run (including symlinks).
+PID fixture setup and cleanup validate both paths before any file access.
+Private archive specimen tests are read-only and require
+`VOICELAYER_TEST_REAL_ARCHIVE=1` or `VOICELAYER_TEST_SPECIMEN_DIR` pointing at a
+private date/session archive tree. Default runs skip them before probing files.
 
 ## PR Workflow
 

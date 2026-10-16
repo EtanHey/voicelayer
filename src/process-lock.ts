@@ -24,8 +24,8 @@ const MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
 const testRunRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
 const testMode = !!testRunRoot || process.env.NODE_ENV === "test";
 
-function assertTestPidPath(pidPath: string): void {
-  if (!testMode) return;
+/** Require a private test PID path, including before fixture setup/cleanup. */
+export function assertTestPidPath(pidPath: string): void {
   const refuse = () => {
     throw new Error(`[voicelayer] test PID lock refused outside the isolated run: ${pidPath}`);
   };
@@ -109,7 +109,7 @@ export function acquireProcessLock(
   pidPath: string = getMcpPidFilePath(),
   options: AcquireProcessLockOptions = {},
 ): AcquireResult {
-  assertTestPidPath(pidPath);
+  if (testMode) assertTestPidPath(pidPath);
   const killAlive = options.killAlive ?? true;
   const existing = readPidFile(pidPath);
 
@@ -171,7 +171,7 @@ function writePidFile(pidPath: string = getMcpPidFilePath()): void {
  * @param pidPath Optional PID file path. Defaults to MCP_PID_FILE.
  */
 export function releaseProcessLock(pidPath: string = getMcpPidFilePath()): void {
-  assertTestPidPath(pidPath);
+  if (testMode) assertTestPidPath(pidPath);
   try {
     const existing = readPidFile(pidPath);
     // Only remove if we own it (or it's corrupt/missing)
