@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "fs";
-import { homedir } from "os";
 import { join } from "path";
 import {
   findCandidateSpan,
@@ -14,7 +13,7 @@ import {
 } from "../stt-outro-gate";
 import { WhisperServerBackend } from "../stt";
 import type { TranscriptSegment } from "../stt-sentence-boundaries";
-import { privateSpecimenRoot } from "./setup/private-specimens";
+import { privateCorpusPaths } from "./setup/private-specimens";
 
 /**
  * The hallucinated-closer gate, against the four real specimens plus synthetic
@@ -23,7 +22,7 @@ import { privateSpecimenRoot } from "./setup/private-specimens";
  * The whole point of this gate is that it decides on the AUDIO, so the cases
  * that matter feed it real WAVs from Etan's recordings archive (gitignored and
  * machine-local, like the #21 and #30 fixtures). They are READ-ONLY and require
- * VOICELAYER_TEST_REAL_ARCHIVE=1, or VOICELAYER_TEST_SPECIMEN_DIR pointing at a
+ * VOICELAYER_TEST_REAL_ARCHIVE=1; VOICELAYER_TEST_SPECIMEN_DIR can select a
  * private root with <date>/<session>/audio.wav (and optional correction-corpus.tsv).
  * No private corpus is copied into this repo. Default/hook/CI runs skip loudly
  * without even probing the archive. Missing opted-in files also skip loudly.
@@ -39,11 +38,9 @@ import { privateSpecimenRoot } from "./setup/private-specimens";
  * the DECISION, given a span.
  */
 
-const SPECIMEN_ROOT = privateSpecimenRoot();
+const PRIVATE_CORPUS = privateCorpusPaths("outro-gate");
+const SPECIMEN_ROOT = PRIVATE_CORPUS?.recordings;
 const RECORDINGS = SPECIMEN_ROOT ?? "";
-if (!SPECIMEN_ROOT) {
-  console.error("[outro-gate] SKIPPING private specimens: set VOICELAYER_TEST_REAL_ARCHIVE=1 or VOICELAYER_TEST_SPECIMEN_DIR (read-only).");
-}
 
 /** Specimen 1 — English tail. `…on Slack. Thank you.` He did not say it. */
 const CLIP_SLACK = join(
@@ -1328,12 +1325,7 @@ describe("WhisperServerBackend with the outro gate", () => {
 
 // --- the corpus gate ---
 
-const CORPUS_TSV = process.env.VOICELAYER_TEST_SPECIMEN_DIR?.trim()
-  ? join(RECORDINGS, "correction-corpus.tsv")
-  : join(
-      homedir(),
-      "Gits/voicelayer/docs.local/recon-2026-09-06/correction-corpus.tsv",
-    );
+const CORPUS_TSV = PRIVATE_CORPUS?.correctionTsv ?? "";
 const hasCorpus = has(CORPUS_TSV);
 if (SPECIMEN_ROOT && !hasCorpus) {
   console.error(

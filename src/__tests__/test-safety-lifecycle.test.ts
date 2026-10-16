@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, spyOn } from "bun:test";
 import { readFileSync } from "fs";
 import { dirname, join, relative, isAbsolute, sep } from "path";
 import ts from "typescript";
-import { privateSpecimenRoot } from "./setup/private-specimens";
+import { privateCorpusEnabled, privateCorpusPaths } from "./setup/private-specimens";
 
 // Execute the actual suite registration/hooks with a virtual filesystem. Test
 // bodies, native imports, private recordings and resident PID files never run.
@@ -51,30 +51,46 @@ describe("TEST3 review: setup and private specimen safety", () => {
     }
   }
 
-  for (const file of ["stt-outro-gate.test.ts", "stt-chunk-segments.test.ts"]) {
-    test(`${file} never probes the private corpus by default, even if every file exists`, () => {
-      const probes: string[] = [];
-      const messages: string[] = [];
-      const noop = Object.assign(() => {}, { skip: () => {}, each: () => () => {} });
-      register(file, {
-        join, homedir: () => "/sandbox/private-home", TEST_TMP: "/sandbox/test-tmp",
-        process: { env: { HOME: "/sandbox/private-home" } },
-        privateSpecimenRoot: () => null,
-        existsSync: (path: string) => { probes.push(path); return true; },
-        readFileSync: () => { throw new Error("unexpected specimen read"); },
-        describe: (_name: string, body: () => void) => body(), test: noop,
-        afterEach: () => {}, Bun: { spawnSync: () => ({ exitCode: 1 }) },
-        console: { error: (...args: unknown[]) => messages.push(args.join(" ")) },
+  const suites = ["stt-outro-gate.test.ts", "stt-chunk-segments.test.ts",
+    "rules-engine-number-audio.test.ts", "rules-engine-prose-guard.test.ts"];
+  for (const file of suites) {
+    for (const override of [false, true]) {
+      test(`${file} never probes without opt-in (overrides=${override}, all files exist)`, () => {
+        const probes: string[] = [];
+        const messages: string[] = [];
+        const env = {
+          ...(override ? { VOICELAYER_TEST_SPECIMEN_DIR: "/sandbox/explicit",
+            VOICELAYER_NUMBERS_CORPUS_PATH: "/sandbox/manifest.json",
+            QA_VOICE_STT_POLISH_LOG_PATH: "/sandbox/shadow.jsonl" } : {}),
+          get HOME(): string { throw new Error("HOME resolved before opt-in"); },
+        };
+        const noop = Object.assign(() => {}, { skip: () => {}, each: () => () => {} });
+        const describeSuite = Object.assign((_name: string, body: () => void) => body(), { skipIf: () => () => {} });
+        const report = spyOn(console, "error").mockImplementation((...args) => messages.push(args.join(" ")));
+        try {
+          register(file, {
+            join, TEST_TMP: "/sandbox/test-tmp", process: { env },
+            homedir: () => { throw new Error("home resolved before opt-in"); },
+            privateCorpusPaths: () => privateCorpusPaths(file, env),
+            existsSync: (path: string) => { probes.push(path); return true; },
+            readFileSync: () => { throw new Error("unexpected specimen read"); },
+            describe: describeSuite, test: noop, it: noop,
+            afterEach: () => {}, Bun: { spawnSync: () => ({ exitCode: 1 }) },
+            console: { error: (...args: unknown[]) => messages.push(args.join(" ")) },
+          });
+        } finally { report.mockRestore(); }
+        expect(probes).toEqual([]);
+        expect(messages.some(message => message.includes("VOICELAYER_TEST_REAL_ARCHIVE"))).toBe(true);
       });
-      expect(probes).toEqual([]);
-      expect(messages.some(message => message.includes("VOICELAYER_TEST_REAL_ARCHIVE"))).toBe(true);
-    });
+    }
 
     for (const explicit of [false, true]) {
-      test(`${file} probes only the explicitly selected private source (${explicit ? "directory" : "archive opt-in"})`, () => {
+      test(`${file} registers private tests only after opt-in (overrides=${explicit})`, () => {
         const env = {
           HOME: "/sandbox/private-home", VOICELAYER_TEST_REAL_ARCHIVE: "1",
-          ...(explicit ? { VOICELAYER_TEST_SPECIMEN_DIR: "/sandbox/private-corpus" } : {}),
+          ...(explicit ? { VOICELAYER_TEST_SPECIMEN_DIR: "/sandbox/private-corpus",
+            VOICELAYER_NUMBERS_CORPUS_PATH: "/sandbox/manifest.json",
+            QA_VOICE_STT_POLISH_LOG_PATH: "/sandbox/shadow.jsonl" } : {}),
         };
         const probes: string[] = [];
         const active: string[] = [];
@@ -82,31 +98,45 @@ describe("TEST3 review: setup and private specimen safety", () => {
         const runnable = Object.assign((name: string) => active.push(`${suite}: ${name}`), {
           skip: () => {}, each: () => () => {},
         });
+        const describeSuite = Object.assign((name: string, body: () => void) => { suite = name; body(); }, {
+          skipIf: (skip: boolean) => (name: string, body: () => void) => { if (!skip) { suite = name; body(); } },
+        });
         register(file, {
-          join, homedir: () => env.HOME, TEST_TMP: "/sandbox/test-tmp", process: { env },
-          privateSpecimenRoot: () => privateSpecimenRoot(env),
+          join, TEST_TMP: "/sandbox/test-tmp", process: { env },
+          privateCorpusPaths: () => privateCorpusPaths(file, env),
           existsSync: (path: string) => { probes.push(path); return true; },
-          readFileSync: () => { throw new Error("registration must never read a recording"); },
-          describe: (name: string, body: () => void) => { suite = name; body(); }, test: runnable,
+          readFileSync: () => { throw new Error("registration must never read private data"); },
+          describe: describeSuite, test: runnable, it: runnable,
           afterEach: () => {}, Bun: { spawnSync: () => ({ exitCode: 1 }) }, console: { error() {} },
         });
         expect(probes.length).toBeGreaterThan(0);
+        const paths = privateCorpusPaths(file, env)!;
         for (const path of probes) {
-          expect(path).toStartWith(explicit ? "/sandbox/private-corpus/" : `${env.HOME}/`);
+          expect([paths.recordings + "/", paths.correctionTsv, paths.numbersManifest,
+            paths.prosePairs, paths.proseGold, paths.polishShadow].some(root => path.startsWith(root))).toBe(true);
         }
-        expect(active.some(name => /specimen|archived long-recording/.test(name))).toBe(true);
+        expect(active.some(name => /specimen|archived long-recording|timestamped audio|never drops a word/.test(name))).toBe(true);
       });
     }
   }
 
-  test("private specimen selection requires the exact opt-in or a nonempty explicit directory", () => {
-    for (const flag of [undefined, "", "0", "true"]) {
-      expect(privateSpecimenRoot({ HOME: "/sandbox/home", VOICELAYER_TEST_REAL_ARCHIVE: flag })).toBeNull();
-    }
-    expect(privateSpecimenRoot({ VOICELAYER_TEST_SPECIMEN_DIR: " " })).toBeNull();
-    expect(privateSpecimenRoot({ HOME: "/sandbox/home", VOICELAYER_TEST_REAL_ARCHIVE: "1" }))
-      .toBe("/sandbox/home/.local/share/voicelayer/recordings");
-    expect(privateSpecimenRoot({ VOICELAYER_TEST_SPECIMEN_DIR: "/sandbox/explicit", VOICELAYER_TEST_REAL_ARCHIVE: "0" }))
+  test("only the exact archive flag enables any private path; overrides cannot authorize it", () => {
+    const report = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const flag of [undefined, "", "0", "true", " 1", "1 ", "yes"]) {
+        const env = { VOICELAYER_TEST_REAL_ARCHIVE: flag, VOICELAYER_TEST_SPECIMEN_DIR: "/sandbox/explicit",
+          VOICELAYER_NUMBERS_CORPUS_PATH: "/sandbox/manifest.json",
+          get HOME(): string { throw new Error("HOME resolved before opt-in"); } };
+        expect(privateCorpusEnabled(env)).toBe(false);
+        expect(privateCorpusPaths("unit", env)).toBeNull();
+      }
+    } finally { report.mockRestore(); }
+    expect(privateCorpusEnabled({ VOICELAYER_TEST_REAL_ARCHIVE: "1" })).toBe(true);
+    const env = { HOME: "/sandbox/home", VOICELAYER_TEST_REAL_ARCHIVE: "1" };
+    expect(privateCorpusPaths("unit", env)?.recordings).toBe("/sandbox/home/.local/share/voicelayer/recordings");
+    expect(privateCorpusPaths("unit", { ...env, VOICELAYER_TEST_SPECIMEN_DIR: "/sandbox/explicit" })?.recordings)
       .toBe("/sandbox/explicit");
+    expect(privateCorpusPaths("unit", { ...env, QA_VOICE_STT_POLISH_LOG_PATH: "/sandbox/shadow.jsonl" })?.polishShadow)
+      .toBe("/sandbox/shadow.jsonl");
   });
 });
