@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.44] - 2026-10-16
+
+### Added
+- Copy dictionary terms, complete errors, recording metadata and daemon diagnostics from Settings, including Speech diagnostics (#333, #342).
+- Opt-in nightly iCloud recordings backups keep existing files and preserve changed recordings as separate versions (#340, #343).
+
+### Changed
+- Simplify Transcription settings and group Fast and locally available Cloned voices in one list per speech profile (#327, #328, #334).
+- Read developer text, paths and inline JSON more clearly while preserving the original displayed text and measured word alignment (#336, #337, #344, #359).
+
+### Fixed
+- Verify transcript delivery at the caret, guard delayed terminal typing against focus changes, and keep the complete transcript available when insertion cannot be confirmed (#338, #345, #355).
+- Keep insertion recovery and selection errors readable; show brief feedback when selection capture is busy (#348, #352, #354, #367, #371).
+- Restart an owned long read from the beginning when Replay is pressed during playback, and let Stop cancel speech preparation before audio starts (#363, #370).
+- Keep Ask admission, timeout cleanup and playback cancellation scoped to the owning operation; reap stuck players before releasing playback ownership (#332, #339, #349, #353, #357, #358, #362).
+- Limit physical-stop click detection to the recording tail while preserving the full archived recording and keeping the full transcription input when no clear click is found (#341).
+- Preserve the TTS daemon during VoiceBar hotkey-health checks and recognize cancellation reliably on Bun 1.3.9 (#326, #360).
+
+Developer groundwork includes structured display projections, stable speech sections and an offline clone-alignment adapter; clone timing integration and section navigation are not enabled by this release (#329, #335, #364, #365). Test infrastructure isolates sockets and offscreen windows, bounds temporary data, and adds synthetic UI coverage (#331, #346, #350, #351, #356, #361, #373, #376).
+
 ## [2.2.43] - 2026-10-14
 
 ### Fixed

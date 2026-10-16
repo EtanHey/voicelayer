@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 14 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const repoRoot = join(import.meta.dir, "..", "..");
 const buildApp = join(repoRoot, "flow-bar", "build-app.sh");
 
@@ -35,7 +38,7 @@ describe("build-app.sh refuses to desynchronise a brew-managed Mac", () => {
     expect(stderr).toContain("voicelayer update");
     // The refusal must precede the build, not follow it.
     expect(decode(result.stdout)).not.toContain("Building VoiceBar");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("an explicit --install-path elsewhere is never refused", () => {
     const result = runBuildApp(
@@ -44,7 +47,7 @@ describe("build-app.sh refuses to desynchronise a brew-managed Mac", () => {
     );
 
     expect(decode(result.stderr)).not.toContain("managed by Homebrew");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a Mac with no cask registration builds into /Applications as before", () => {
     const result = runBuildApp([], {
@@ -53,7 +56,7 @@ describe("build-app.sh refuses to desynchronise a brew-managed Mac", () => {
     });
 
     expect(decode(result.stderr)).not.toContain("managed by Homebrew");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("the deliberate resident-swap override warns that brew's ledger is now stale", () => {
     const body = readFileSync(buildApp, "utf8");

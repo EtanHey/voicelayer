@@ -10,6 +10,7 @@ import { basename, join } from "path";
 import {
   assertSpeakerClear,
   isSpeakerOutputRefusedError,
+  SpeechPreparationStoppedError,
   speak,
   getHistoryEntry,
   playAudioNonBlocking,
@@ -344,6 +345,9 @@ export async function handleVoiceSpeak(
       default:
         return await handleAnnounce({ message, rate, voice }, context);
     }
+  } catch (error) {
+    if (error instanceof SpeechPreparationStoppedError) return textResult(error.message);
+    throw error;
   } finally {
     reservation.release();
   }
@@ -890,8 +894,13 @@ export async function handleConverse(
         }
       }, () => {}); // Rejected exit proof cannot authorize idle.
     }
+    if (err instanceof SpeechPreparationStoppedError) {
+      return textResult(formatAsk(null, { outcome: "stopped-before-prompt" }));
+    }
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[voicelayer] voice_ask error: ${message}`);
+    // Wire/recovery errors stay actionable; provider/filesystem messages can
+    // contain transcript text or private archive paths and must not enter logs.
+    console.error("[voicelayer] voice_ask error: request failed");
     const recovery = recoveryOptions(message);
     if (recovery) {
       return textResult(formatAsk(null, { outcome: "captured", recovery }));

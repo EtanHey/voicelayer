@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 457 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const repoRoot = new URL("../..", import.meta.url).pathname;
 const scriptPath = join(repoRoot, "scripts", "auto-f5-verify.sh");
 
@@ -36,7 +39,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
 
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout).trim()).toBe("swift");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("passes the configured verification tester through to voicelayer-verify", () => {
     const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
@@ -77,7 +80,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
     } finally {
       rmSync(workDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("sends the Swift double-F5 lock gesture from one process", async () => {
     const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
@@ -112,7 +115,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
     } finally {
       rmSync(workDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("matches expected whisper variants of verification test", () => {
     const result = runFunction('sink_contains_verification "$SINK_TEXT"', {
@@ -120,7 +123,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
     });
 
     expect(result.exitCode).toBe(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("rejects sink text without verification test in order", () => {
     const result = runFunction('sink_contains_verification "$SINK_TEXT"', {
@@ -128,14 +131,14 @@ describe("auto-f5-verify.sh pure helpers", () => {
     });
 
     expect(result.exitCode).toBe(1);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("converts HID idle nanoseconds into whole seconds", () => {
     const result = runFunction("hid_idle_ns_to_seconds 120999999999");
 
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout).trim()).toBe("120");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("requires the configured user idle threshold", () => {
     const idleEnough = runFunction("user_idle_ns_meets_threshold 120000000000 120");
@@ -143,7 +146,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
 
     expect(idleEnough.exitCode).toBe(0);
     expect(tooRecent.exitCode).toBe(1);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("formats auto-F5 provenance so artifacts cannot be mistaken for Etan runs", () => {
     const result = runFunction('format_auto_provenance "abc123" "/tmp/verification.wav"');
@@ -153,7 +156,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
     expect(output).toContain("Tester: auto-F5 (programmatic, no human)");
     expect(output).toContain("Loop-Audio-SHA256: abc123");
     expect(output).toContain("Loop-Audio-File: /tmp/verification.wav");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("extracts the runtime artifact path from voicelayer-verify output", () => {
     const result = runFunction('artifact_path_from_verify_log "$VERIFY_LOG"', {
@@ -165,7 +168,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
     expect(text(result.stdout).trim()).toBe(
       "/tmp/repo/.verified/verified-runtime-feat-auto.txt",
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("failed branch cycles restore main build and kickstart VoiceBar services", async () => {
     const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
@@ -227,5 +230,5 @@ describe("auto-f5-verify.sh pure helpers", () => {
     } finally {
       rmSync(workDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

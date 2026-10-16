@@ -124,6 +124,66 @@ describe("socket-client", () => {
     } catch {}
   });
 
+  it("PRIV11 PRIV1 logs speak_text metadata without selected text or extra user fields", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const client = await import("../socket-client");
+    const received: SocketCommand[] = [];
+    const text = process.env.PRIV11_TEXT ?? "PRIVATE_SELECTION_שלום_🔐";
+    const command = { cmd: "speak_text", id: "priv1-command", text,
+      source: "PRIVATE_SOURCE", transcript: "PRIVATE_TRANSCRIPT", selection: "PRIVATE_FIELD" };
+    client.onCommand(c => { received.push(c); });
+    client.connectToBar(TEST_SOCKET);
+    expect(await waitFor(client.isConnected)).toBe(true);
+    const originalError = console.error;
+    const log = spyOn(console, "error").mockImplementation((...args) => {
+      if (process.env.PRIV11_CHILD) originalError(...args);
+    });
+    try {
+      const line = JSON.stringify(command);
+      mockServer.sendToAll(line + "\n");
+      expect(await waitFor(() => received.length === 1)).toBe(true);
+      expect(received[0]).toMatchObject({ cmd: "speak_text", text, id: command.id });
+      const output = log.mock.calls.flat().join("\n");
+      expect(output).toContain("speak_text");
+      expect(output).toContain(command.id);
+      expect(output).toContain(`bytes=${Buffer.byteLength(line, "utf8")}`);
+      for (const secret of [text, "PRIVATE_SOURCE", "PRIVATE_TRANSCRIPT", "PRIVATE_FIELD"]) {
+        expect(output).not.toContain(secret);
+      }
+    } finally { log.mockRestore(); client.onCommand(() => {}); }
+  });
+
+  it("PRIV1 invalid commands never log raw JSON or malformed input", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const client = await import("../socket-client");
+    client.connectToBar(TEST_SOCKET);
+    expect(await waitFor(client.isConnected)).toBe(true);
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const lines = ['{"cmd":"speak_text","text":"PRIVATE_REJECTED","profile":"invalid"}',
+        '{"text":"PRIVATE_MALFORMED"'];
+      mockServer.sendToAll(lines.join("\n") + "\n");
+      expect(await waitFor(() => log.mock.calls.length === 2)).toBe(true);
+      const output = log.mock.calls.flat().join("\n");
+      for (const line of lines) expect(output).toContain(`bytes=${Buffer.byteLength(line, "utf8")}`);
+      expect(output).not.toContain("PRIVATE_");
+    } finally { log.mockRestore(); }
+  });
+
+  it("PRIV1 handler failures do not echo payload-bearing errors", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    const client = await import("../socket-client");
+    client.onCommand(async c => { throw new Error(JSON.stringify(c)); });
+    client.connectToBar(TEST_SOCKET);
+    expect(await waitFor(client.isConnected)).toBe(true);
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mockServer.sendToAll(JSON.stringify({ cmd: "speak_text", text: "PRIVATE_FAILURE" }) + "\n");
+      expect(await waitFor(() => log.mock.calls.some(c => String(c[0]).includes("Command handler failed")))).toBe(true);
+      expect(log.mock.calls.flat().join("\n")).not.toContain("PRIVATE_FAILURE");
+    } finally { log.mockRestore(); client.onCommand(() => {}); }
+  });
+
   it("voice_ask waits for History stop acknowledgement before prompt or capture", async () => {
     mockServer = createMockVoiceBarServer(TEST_SOCKET);
     const client = await import("../socket-client");

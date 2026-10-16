@@ -89,6 +89,8 @@ function setIfUnset(name: string, value: string): void {
 
 // Always use this process, even when a child inherits its parent preload env.
 process.env.VOICELAYER_TEST_RUN_ROOT = RUN_ROOT;
+// Never inherit another run's PID lock or honor a resident-path override.
+process.env.QA_VOICE_MCP_PID_PATH = join(RUN_ROOT, "voicelayer-mcp.pid");
 
 // Git's repository selectors (GIT_DIR, GIT_COMMON_DIR, GIT_CONFIG, GIT_WORK_TREE,
 // GIT_INDEX_FILE, ...) are exported by git hooks and `rebase --exec`. A test
@@ -139,6 +141,14 @@ setIfUnset("QA_VOICE_RECORDINGS_DIR", join(RUN_ROOT, "recordings"));
 
 // Thinking-mode log (src/handlers.ts) — same reason.
 setIfUnset("QA_VOICE_THINK_FILE", join(RUN_ROOT, "thinking.md"));
+
+// These modules resolve their own home-directory defaults instead of paths.ts.
+setIfUnset("QA_VOICE_STT_VOCABULARY_PATH", join(RUN_ROOT, "vocabulary.json"));
+setIfUnset("QA_VOICE_STT_COMMANDS_DIR", join(RUN_ROOT, "commands"));
+setIfUnset("VOICELAYER_WHISPER_OWNERSHIP_DIR", join(RUN_ROOT, "state"));
+setIfUnset("QA_VOICE_STT_POLISH_LOG_PATH", join(RUN_ROOT, "polish-shadow.jsonl"));
+setIfUnset("QA_VOICE_STT_POLISH_SOCKET", join(RUN_ROOT, "p.sock"));
+setIfUnset("QA_VOICE_WISPR_DB_PATH", join(RUN_ROOT, "wispr.sqlite"));
 
 // No test opens the real microphone unless it asks for it by name.
 // REAL_MIC is the only opt-in; a leftover VOICELAYER_TEST_FAKE_REC=0 must not

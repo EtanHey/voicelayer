@@ -4,6 +4,9 @@ import { join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
 import { findDefaultAudio } from "../../scripts/benchmark-stt-decode";
 
+// Real subprocesses: standalone p95 <= 28 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const repoRoot = join(import.meta.dir, "..", "..");
 
 for (const script of ["benchmark-stt-decode.ts", "stt-long-dictation-ab.ts"]) {
@@ -33,14 +36,14 @@ for (const script of ["benchmark-stt-decode.ts", "stt-long-dictation-ab.ts"]) {
       expect(result.output).toContain("Usage:");
       expect(result.output).toContain("No audio recordings found. Pass --audio PATH.");
       expect(result.output).not.toContain("No whisper model found");
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     test("help documents optional archive discovery", () => {
       const result = run(["--help"]);
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("--audio PATH");
       expect(result.output).toContain("~/.local/share/voicelayer/recordings");
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     test("an explicit audio argument overrides empty archive discovery", () => {
       const audio = join(repoRoot, ".test-tmp", "absent-benchmark-fixture.wav");
@@ -48,7 +51,7 @@ for (const script of ["benchmark-stt-decode.ts", "stt-long-dictation-ab.ts"]) {
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain(`Audio not found: ${audio}`);
       expect(result.output).not.toContain("No audio recordings found");
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   });
 }
 

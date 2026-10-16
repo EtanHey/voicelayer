@@ -25,16 +25,67 @@ public enum VoiceMode: String, CaseIterable {
     case disconnected
 }
 
-public enum SelectionCaptureResult: Equatable {
-    case completed(String?)
-    case clipboardChanged
-    case secureField
-    case captureFailed
-    case clipboardRestoreFailed
+public enum GuardedTypingResult: Equatable { case posted, focusChanged, failed }
 
-    public var text: String? {
-        if case let .completed(text) = self { return text }
-        return nil
+public struct SelectionCaptureResult: Equatable {
+    public enum Outcome: String {
+        case completed
+        case clipboardChanged = "clipboard_changed"
+        case secureField = "secure_field"
+        case captureFailed = "capture_failed"
+        case clipboardRestoreFailed = "clipboard_restore_failed"
+        case copyTimedOut = "copy_timeout"
+        case copyEmpty = "copy_empty"
+        case copyFailed = "copy_failed"
+    }
+    public enum AXRead: String { case notAttempted = "not_attempted", unavailable, empty, text }
+    public enum Path: String { case unknown, ax, copy }
+
+    public let outcome: Outcome
+    public let text: String?
+    public private(set) var axRead: AXRead = .notAttempted
+    public private(set) var path: Path = .unknown
+
+    private init(_ outcome: Outcome, text: String? = nil) {
+        self.outcome = outcome
+        self.text = text
+    }
+
+    public static func completed(_ text: String?) -> Self { Self(.completed, text: text) }
+    public static let clipboardChanged = Self(.clipboardChanged)
+    public static let secureField = Self(.secureField)
+    public static let captureFailed = Self(.captureFailed)
+    public static let clipboardRestoreFailed = Self(.clipboardRestoreFailed)
+    public static let copyTimedOut = Self(.copyTimedOut)
+    public static let copyEmpty = Self(.copyEmpty)
+    public static let copyFailed = Self(.copyFailed)
+
+    public func observed(axRead: AXRead, path: Path) -> Self {
+        var result = self
+        result.axRead = axRead
+        result.path = path
+        return result
+    }
+
+    /// Counts describe the observed String, never host blocks, list items or table nodes.
+    /// Do not serialize this result or its text into diagnostics.
+    public var diagnosticDetails: [String: String] {
+        var fields = ["outcome": outcome.rawValue, "ax_read": axRead.rawValue,
+                      "path": path.rawValue, "host_structure": "not_observed",
+                      // The app's generic logger merges in a window title; never include it here.
+                      "appKeyWindowTitle": "not_recorded"]
+        if let text {
+            let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: .newlines)
+            fields["utf16_count"] = String(text.utf16.count)
+            fields["line_breaks"] = String(lines.count - 1)
+            fields["tabs"] = String(text.filter { $0 == "\t" }.count)
+            fields["object_replacements"] = String(text.unicodeScalars.filter { $0.value == 0xFFFC }.count)
+            fields["list_marker_lines"] = String(lines.filter {
+                $0.range(of: #"^\s*(?:[-+*•]|[0-9]+[.)])\s+"#, options: .regularExpression) != nil
+            }.count)
+            fields["pipe_lines"] = String(lines.filter { $0.filter { $0 == "|" }.count >= 2 }.count)
+        }
+        return fields
     }
 }
 
@@ -78,10 +129,46 @@ public struct PasteboardSnapshot: Equatable {
     public var items: [[String: Data]]
 }
 
+public enum DictationInsertionResult: Equatable {
+    case notApplied
+    case appliedUnverified
+    case partiallyApplied
+    case verified
+}
+
+/// False means no dispatch and no completion. Any attempted write must return true,
+/// with its confidence in completion, so possibly applied text is never retried.
 public typealias AsyncDictationInsertionHandler = (
     _ text: String,
-    _ completion: @escaping () -> Void
+    _ completion: @escaping (DictationInsertionResult) -> Void
 ) -> Bool
+
+/// Delivery-time evidence about one focused element, without its private value.
+public struct DictationFocusedTargetEligibility {
+    public let processIdentifier: pid_t
+    public let role: String?
+    public let isEditable: Bool
+    public let isSecure: Bool
+    /// Revalidates the captured element's identity and eligibility before typing.
+    public let matchesCurrentFocus: () -> Bool
+
+    public init(
+        processIdentifier: pid_t, role: String?, isEditable: Bool, isSecure: Bool,
+        matchesCurrentFocus: @escaping () -> Bool
+    ) {
+        self.processIdentifier = processIdentifier
+        self.role = role
+        self.isEditable = isEditable
+        self.isSecure = isSecure
+        self.matchesCurrentFocus = matchesCurrentFocus
+    }
+
+    public func permitsTyping(into processIdentifier: pid_t) -> Bool {
+        self.processIdentifier == processIdentifier
+            && ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? "")
+            && isEditable && !isSecure && matchesCurrentFocus()
+    }
+}
 
 public struct RecentTranscriptionEntry: Codable, Equatable {
     public var text: String
@@ -121,6 +208,9 @@ public struct RecentTranscriptionEntry: Codable, Equatable {
 private enum VoicePasteOutcome: Equatable {
     case insertedAtCursor
     case pasted
+    case notInserted
+    case unverified
+    case partial
     case failed(String)
 }
 
@@ -243,6 +333,7 @@ public final class VoiceState {
     public private(set) var previousMode: VoiceMode = .idle
     public var mode: VoiceMode = .idle {
         didSet {
+            clearSelectionBusyNoteIfSessionEnded()
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
@@ -587,7 +678,10 @@ public final class VoiceState {
     /// Global hotkey availability and live gesture hint state.
     public var hotkeyEnabled: Bool = false
     public var hotkeyPhase: HotkeyPhase = .idle {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPhase) }
+        didSet {
+            clearSelectionBusyNoteIfSessionEnded()
+            notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPhase)
+        }
     }
 
     /// Whether the pill is collapsed (idle for too long).
@@ -723,6 +817,10 @@ public final class VoiceState {
     /// Accessibility not granted). See the AIDEV-NOTE at the paste call site.
     public var textTypingHandler: (_ text: String) -> Bool = { _ in false }
 
+    /// Production installs a batch builder with a final PID check. Nil preserves the legacy
+    /// injection seam for tests/embedders; manual routes always use textTypingHandler directly.
+    public var guardedTextTypingHandler: ((_ text: String, _ expectedPID: pid_t) -> GuardedTypingResult)?
+
     /// Test seam for Accessibility permission checks.
     public var accessibilityTrustChecker: (_ prompt: Bool) -> Bool = { _ in false }
 
@@ -731,6 +829,9 @@ public final class VoiceState {
 
     /// Completion-aware production seam. The completion must run on the main thread.
     public var asyncDictationInsertionHandlerProvider: () -> AsyncDictationInsertionHandler? = { nil }
+
+    /// Read only at delivery, never while starting capture or handling a hotkey.
+    public var focusedTargetEligibilityProvider: () -> DictationFocusedTargetEligibility? = { nil }
 
     /// Test seam for clipboard writes used by fallback paste.
     public var pasteboardWriter: (String) -> Void = { string in
@@ -776,9 +877,30 @@ public final class VoiceState {
     public var selectionTextCaptureHandler: (@escaping (SelectionCaptureResult) -> Void) -> Void = { $0(.completed(nil)) }
     private var selectionCaptureInFlight = false
     private var selectionCaptureCancelled = false
+    public private(set) var showsSelectionBusyNote = false
+    @ObservationIgnored private var selectionBusyNoteTask: Task<Void, Never>?
+
+    private func clearSelectionBusyNoteIfSessionEnded() {
+        guard showsSelectionBusyNote,
+              VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) == nil else { return }
+        selectionBusyNoteTask?.cancel()
+        selectionBusyNoteTask = nil
+        showsSelectionBusyNote = false
+    }
 
     public func speakSelection() {
-        guard mode != .recording, mode != .transcribing, hotkeyPhase == .idle else { return }
+        if let reason = VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) {
+            showsSelectionBusyNote = true
+            selectionBusyNoteTask?.cancel()
+            selectionBusyNoteTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                self?.showsSelectionBusyNote = false
+                self?.selectionBusyNoteTask = nil
+            }
+            logDiagnostic("selection_busy", details: ["reason": reason.rawValue, "appKeyWindowTitle": "not_recorded"])
+            return
+        }
         if mode == .speaking {
             if selectionCaptureInFlight { selectionCaptureCancelled = true }
             sendCommand?(["cmd": "stop"])
@@ -796,6 +918,7 @@ public final class VoiceState {
         selectionCaptureCancelled = false
         selectionTextCaptureHandler { [weak self] result in
             guard let self else { return }
+            logDiagnostic("selection_capture", details: result.diagnosticDetails)
             selectionCaptureInFlight = false
             guard !selectionCaptureCancelled else {
                 selectionCaptureCancelled = false
@@ -806,10 +929,14 @@ public final class VoiceState {
                   mode != .disconnected, hotkeyPhase == .idle else { return }
             guard let text = result.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 expandFromCollapse()
-                switch result {
+                switch result.outcome {
                 case .secureField: showConfirmation("Can't read a secure field")
                 case .clipboardRestoreFailed: showConfirmation("Couldn't restore the clipboard")
-                case .clipboardChanged, .captureFailed: showConfirmation("Couldn't read the selection, try again")
+                case .clipboardChanged: showConfirmation(SelectionErrorFeedback.clipboardChanged)
+                case .copyTimedOut: showConfirmation(SelectionErrorFeedback.copyTimedOut)
+                case .copyEmpty: showConfirmation(SelectionErrorFeedback.copyEmpty)
+                case .copyFailed: showConfirmation(SelectionErrorFeedback.copyFailed)
+                case .captureFailed: showConfirmation("Couldn't read the selection, try again")
                 case .completed: showConfirmation("No text selected")
                 }
                 startCollapseTimer()
@@ -1391,7 +1518,8 @@ public final class VoiceState {
                 useSettingsHistoryTarget: usesSettingsHistoryTarget
             ),
             plan: .repaste,
-            allowAXInsertion: usesSettingsHistoryTarget
+            allowAXInsertion: usesSettingsHistoryTarget,
+            requiresEditableTarget: source != "shift_f5"
         )
     }
 
@@ -2635,7 +2763,7 @@ public final class VoiceState {
         guard !isPartial else { return }
         guard !text.isEmpty else {
             _ = historyRetranscriptionRequest.takeArchivedOrigin(for: recordingPath)
-            logDiagnostic("transcription_final_archived_late_empty", details: ["recordingPath": recordingPath])
+            logDiagnostic("transcription_final_archived_late_empty", details: ["hasRecordingPath": boolString(!recordingPath.isEmpty)])
             return
         }
         handleFinalTranscription(text, recordingPath: recordingPath, recordingCreatedAt: recordingCreatedAt,
@@ -2675,7 +2803,7 @@ public final class VoiceState {
             refreshTranscriptionVocabulary()
             logDiagnostic("transcription_final_archived_late", details: [
                 "textLength": String(text.count),
-                "recordingPath": recordingPath ?? "nil",
+                "hasRecordingPath": boolString(recordingPath?.isEmpty == false),
             ])
             return
         }
@@ -2703,7 +2831,7 @@ public final class VoiceState {
             "barInitiatedRecording": boolString(barInitiatedRecording),
             "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
-            "recordingPath": recordingPath ?? "nil",
+            "hasRecordingPath": boolString(recordingPath?.isEmpty == false),
         ])
 
         // AIDEV-NOTE: The effective remote-capture block is an independent second gate on top of
@@ -2840,6 +2968,7 @@ public final class VoiceState {
         for targetApp: NSRunningApplication?,
         plan: VoicePastePlan,
         allowAXInsertion: Bool = false,
+        requiresEditableTarget: Bool = false,
         operationID: UUID? = nil
     ) {
         let recordStartTargetApp = frontmostAppOnRecordStart
@@ -2928,6 +3057,11 @@ public final class VoiceState {
 
                 pasteScheduler(pasteDelay) { [weak self] in
                     guard let self else { return }
+                    if (plan == .autoPaste || allowAXInsertion),
+                       frontmostAppProvider()?.processIdentifier != pasteTarget.processIdentifier {
+                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                        return
+                    }
                     if plan == .autoPaste, insertionHandler != nil, !targetMatchesRecordStart {
                         logDiagnostic("paste_ax_insert_skipped", details: [
                             "plan": String(describing: plan),
@@ -2940,11 +3074,17 @@ public final class VoiceState {
                     // as a Return and submits the line. They get TYPING below —
                     // see the AIDEV-NOTE there and TerminalPasteTargets.
                     let isTerminalTarget = TerminalPasteTargets.isTerminal(pasteTargetBundleID)
-                    if isTerminalTarget {
+                    // Etan's ruling: delivery in these rich hosts uses the
+                    // working Shift+F5 typing route, never a whole-document AX write.
+                    let usesRichHostTyping = ["com.t3tools.t3code", "net.imput.helium"].contains(pasteTargetBundleID)
+                    let skipsAX = isTerminalTarget || usesRichHostTyping
+                    let typingEligibility = requiresEditableTarget && !skipsAX
+                        ? focusedTargetEligibilityProvider() : nil
+                    if skipsAX {
                         logDiagnostic("paste_ax_insert_skipped", details: [
                             "plan": String(describing: plan),
                             "targetApp": pasteTargetBundleID,
-                            "reason": "terminal_target",
+                            "reason": isTerminalTarget ? "terminal_target" : "rich_host_typed_delivery",
                         ])
                     }
                     let deliveredText = isTerminalTarget
@@ -2952,7 +3092,7 @@ public final class VoiceState {
                         : text
 
                     let freshInsertionHandler =
-                        !isTerminalTarget
+                        !skipsAX
                             && (plan == .autoPaste || (allowAXInsertion && capturedInsertionHandler == nil))
                             ? captureDictationInsertionHandler()
                             : nil
@@ -2974,7 +3114,7 @@ public final class VoiceState {
                         }
                     }
 
-                    if !isTerminalTarget, let capturedInsertionHandler {
+                    if !skipsAX, let capturedInsertionHandler {
                         let attempt = beginAXInsertion(
                             capturedInsertionHandler,
                             text: text,
@@ -2998,13 +3138,28 @@ public final class VoiceState {
                         return
                     }
 
-                    logDiagnostic("paste_ax_insert_miss", details: [
-                        "plan": String(describing: plan),
-                        "targetApp": pasteTargetBundleID,
-                        "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
-                        "attemptedFreshInsertion": boolString(freshInsertionHandler != nil),
-                        "axTrusted": boolString(accessibilityTrustChecker(false)),
-                    ])
+                    if !usesRichHostTyping {
+                        logDiagnostic("paste_ax_insert_miss", details: [
+                            "plan": String(describing: plan),
+                            "targetApp": pasteTargetBundleID,
+                            "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
+                            "attemptedFreshInsertion": boolString(freshInsertionHandler != nil),
+                            "axTrusted": boolString(accessibilityTrustChecker(false)),
+                        ])
+                    }
+                    // An AX miss in any other nonterminal is still insufficient
+                    // permission to dispatch global key events.
+                    if plan == .autoPaste, !skipsAX {
+                        finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                        return
+                    }
+                    if requiresEditableTarget, !skipsAX {
+                        guard frontmostAppProvider()?.processIdentifier == pasteTarget.processIdentifier,
+                              typingEligibility?.permitsTyping(into: pasteTarget.processIdentifier) == true else {
+                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                            return
+                        }
+                    }
                     // AIDEV-NOTE: Dictation NEVER touches the pasteboard. This is the third
                     // attempt at this line and the first that does not trade one of Etan's
                     // bugs for another, so the whole history lives here, at the call site:
@@ -3034,8 +3189,9 @@ public final class VoiceState {
                     //
                     // So the transcript is TYPED as printable text only, each line break sent
                     // as Shift+Return (SynthesizedTyping): no control character ever rides in
-                    // a key event. Non-terminals already tried AX above; typing is their
-                    // fallback. There is no clipboard fallback anywhere, by design: a failed
+                    // a key event. This route serves terminals, known rich-host automatic
+                    // delivery and explicit re-paste; other auto AX misses retain text above.
+                    // There is no clipboard fallback anywhere, by design: a failed
                     // paste is recoverable with Shift+F5, a paste over his clipboard is not.
                     //
                     // Known limit: Shift+Return is a new line only to an app that tells it
@@ -3048,7 +3204,18 @@ public final class VoiceState {
                         "terminalTarget": boolString(isTerminalTarget),
                         "trailingNewlineStripped": boolString(deliveredText != text),
                     ])
-                    let typed = textTypingHandler(deliveredText)
+                    let typed: Bool
+                    if (plan == .autoPaste || allowAXInsertion), let guardedTextTypingHandler {
+                        switch guardedTextTypingHandler(deliveredText, pasteTarget.processIdentifier) {
+                        case .posted: typed = true
+                        case .failed: typed = false
+                        case .focusChanged:
+                            finishPasteConfirmation(outcome: .notInserted, text: text, operationID: operationID)
+                            return
+                        }
+                    } else {
+                        typed = textTypingHandler(deliveredText)
+                    }
                     logDiagnostic("paste_typing_result", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
@@ -3061,7 +3228,8 @@ public final class VoiceState {
                             plan: plan
                         ),
                         text: deliveredText,
-                        operationID: operationID
+                        operationID: operationID,
+                        showsTerminalTranscript: isTerminalTarget
                     )
                 }
             }
@@ -3079,11 +3247,11 @@ public final class VoiceState {
             return nil
         }
         return { text, completion in
-            let inserted = synchronousHandler(text)
-            if inserted {
-                completion()
-            }
-            return inserted
+            _ = synchronousHandler(text)
+            // A legacy Bool cannot tell rejection from an applied-but-rejected
+            // setter. Invocation therefore consumes this attempt without retry.
+            completion(.appliedUnverified)
+            return true
         }
     }
 
@@ -3102,34 +3270,43 @@ public final class VoiceState {
         isAXInsertionInFlight = true
         activeAXInsertionTargetBundleID = targetBundleID
         var handlerReturned = false
-        var completionArrived = false
+        var completionResult: DictationInsertionResult?
         var didFinish = false
 
-        let finishSuccess = { [weak self] in
+        let finish = { [weak self] (result: DictationInsertionResult) in
             guard let self, !didFinish else { return }
             didFinish = true
             axInsertionWatchdog?.cancel()
             axInsertionWatchdog = nil
             isAXInsertionInFlight = false
             activeAXInsertionTargetBundleID = nil
-            logDiagnostic("paste_ax_insert_success", details: [
+            logDiagnostic("paste_ax_insert_complete", details: [
                 "plan": String(describing: plan),
                 "targetApp": targetBundleID,
                 "source": source,
+                "result": String(describing: result),
             ])
-            finishPasteConfirmation(outcome: .insertedAtCursor, text: text, operationID: operationID)
+            let outcome: VoicePasteOutcome = switch result {
+            case .verified: .insertedAtCursor
+            case .notApplied: .notInserted
+            case .appliedUnverified: .unverified
+            case .partiallyApplied: .partial
+            }
+            finishPasteConfirmation(outcome: outcome, text: text, operationID: operationID)
         }
 
-        let started = handler(text) {
+        let started = handler(text) { result in
             if handlerReturned {
-                finishSuccess()
+                finish(result)
             } else {
-                completionArrived = true
+                completionResult = completionResult ?? result
             }
         }
         handlerReturned = true
 
-        guard started else {
+        // A completion carries possible application even if a faulty adapter returns
+        // false. Suppress fallback in that case too.
+        guard started || completionResult != nil else {
             isAXInsertionInFlight = false
             activeAXInsertionTargetBundleID = nil
             return .failed
@@ -3140,8 +3317,8 @@ public final class VoiceState {
             "path": "ax",
             "source": source,
         ])
-        if completionArrived {
-            finishSuccess()
+        if let completionResult {
+            finish(completionResult)
         } else {
             let watchdog = DispatchWorkItem { [weak self] in
                 guard let self, !didFinish, isAXInsertionInFlight else { return }
@@ -3155,7 +3332,7 @@ public final class VoiceState {
                     "source": source,
                 ])
                 finishPasteConfirmation(
-                    outcome: .failed("Text insertion timed out"),
+                    outcome: .unverified,
                     text: text,
                     operationID: operationID
                 )
@@ -3193,7 +3370,7 @@ public final class VoiceState {
         plan: VoicePastePlan
     ) -> VoicePasteOutcome {
         guard pasted else { return .failed(genericPasteFailureMessage) }
-        return .pasted
+        return .unverified
     }
 
     private static func sameApp(_ lhs: NSRunningApplication?, _ rhs: NSRunningApplication?) -> Bool {
@@ -3209,12 +3386,15 @@ public final class VoiceState {
     private func finishPasteConfirmation(
         outcome: VoicePasteOutcome,
         text: String,
-        operationID: UUID? = nil
+        operationID: UUID? = nil,
+        showsTerminalTranscript: Bool = false
     ) {
         if let operationID, operationID == latestDictationOperationID {
             latestDictationInsertionStatus = switch outcome {
             case .insertedAtCursor: .insertedAtCursor
             case .pasted: .pasted
+            case .notInserted: .notInserted
+            case .unverified, .partial: .unverified
             case .failed: .failed
             }
         }
@@ -3226,6 +3406,17 @@ public final class VoiceState {
             showConfirmation(text, duration: 5.0)
         case .pasted:
             showConfirmation(text, duration: 5.0)
+        case .notInserted:
+            showConfirmation(PasteRecoveryFeedback.notInserted, duration: 5.0)
+        case .unverified:
+            // Terminal confirmation keeps the dictated words; the receipt above
+            // still reports posted events as unverified, without claiming readback.
+            showConfirmation(
+                showsTerminalTranscript ? text : PasteRecoveryFeedback.unverified,
+                duration: 5.0
+            )
+        case .partial:
+            showConfirmation(PasteRecoveryFeedback.partial, duration: 5.0)
         case let .failed(message):
             showConfirmation(Self.failureMessageWithRetryHint(message), duration: 4.0)
         }

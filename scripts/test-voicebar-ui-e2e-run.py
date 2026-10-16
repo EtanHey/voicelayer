@@ -20,6 +20,16 @@ import json,pathlib,sys,time
 root=pathlib.Path(__file__).parent
 with (root/'calls').open('a') as log: log.write(pathlib.Path(sys.argv[0]).name+' '+json.dumps(sys.argv[1:])+'\\n')
 if '-version' in sys.argv or '--version' in sys.argv: sys.exit(0)
+if pathlib.Path(sys.argv[0]).name=='voicebar-ui-e2e-visibility':
+ mode=sys.argv[1]; receipt=pathlib.Path(sys.argv[2])
+ if mode=='hide':
+  receipt.write_text(json.dumps({'visibleBefore':['T3 Code','Editor'],'restored':False}))
+  if (root/'visibility-denied').exists(): sys.exit(7)
+  (root/'foreign-overlay').unlink(missing_ok=True)
+ else:
+  data=json.loads(receipt.read_text()) if receipt.exists() else {}
+  data['restored']=True; receipt.write_text(json.dumps(data))
+ sys.exit(0)
 if pathlib.Path(sys.argv[0]).name=='ffprobe':
  if (root/'delay-probe').exists():
   (root/'probe-waiting').touch()
@@ -60,9 +70,28 @@ class RunnerTests(unittest.TestCase):
         self.output = self.root / 'output'; self.output.mkdir()
         for name in ['capture', 'ffprobe']:
             path = self.root / name; path.write_text(STUB); path.chmod(0o755)
+        visibility = self.output / 'voicebar-ui-e2e-visibility'
+        visibility.write_text(STUB.replace("root=pathlib.Path(__file__).parent", "root=pathlib.Path(__file__).parent.parent")); visibility.chmod(0o755)
 
     def recorder(self):
         return runner.Recording(self.output, str(self.root / 'capture'), str(self.root / 'ffprobe'))
+
+    def test_foreign_overlay_is_hidden_before_test_and_exact_visibility_restored(self):
+        overlay = self.root / 'foreign-overlay'; overlay.touch()
+        code = f'import pathlib,sys;sys.exit(8 if pathlib.Path({str(overlay)!r}).exists() else 0)'
+        self.assertEqual(runner.run_suite(self.output, [sys.executable, '-c', code], self.recorder()), 0)
+        receipt = json.loads((self.output / 'visibility.json').read_text())
+        self.assertEqual(receipt['visibleBefore'], ['T3 Code', 'Editor'])
+        self.assertTrue(receipt['restored'])
+
+    def test_failed_hide_refuses_test_and_still_restores_visibility(self):
+        (self.root / 'visibility-denied').touch()
+        marker = self.root / 'test-started'
+        code = f'open({str(marker)!r},"w").close()'
+        self.assertNotEqual(runner.run_suite(self.output, [sys.executable, '-c', code], self.recorder()), 0)
+        self.assertFalse(marker.exists())
+        self.assertTrue(json.loads((self.output / 'visibility.json').read_text())['restored'])
+        self.assertIn('Hide Others', json.loads((self.output / 'recording.json').read_text())['error'])
 
     def test_argument_builder_uses_one_serial_run_without_invalid_iteration_option(self):
         args = runner.test_arguments(self.output)
@@ -70,6 +99,30 @@ class RunnerTests(unittest.TestCase):
         self.assertNotIn('-test-iterations', args)
         self.assertEqual(args[args.index('-parallel-testing-enabled') + 1], 'NO')
         self.assertEqual(args[args.index('-resultBundlePath') + 1], str(self.output / 'VoiceBar.xcresult'))
+
+    def test_each_scenario_selects_exactly_one_method_never_both(self):
+        for scenario, method in [('full', 'testFullUIOnlyFlow'), ('focused-338', 'testFocused338StateGallery')]:
+            with self.subTest(scenario=scenario):
+                args = runner.test_arguments(self.output, scenario)
+                self.assertEqual([a for a in args if a.startswith('-only-testing:')],
+                                 ['-only-testing:VoiceBarUIE2ETests/VoiceBarFlowTests/' + method])
+        with self.assertRaises(ValueError):
+            runner.test_arguments(self.output, 'focused-338,full')
+
+    def test_metadata_preserves_focused_selection_without_explicit_argument(self):
+        (self.output / 'scenario.json').write_text(json.dumps({'scenario': 'focused-338'}))
+        self.assertIn('-only-testing:VoiceBarUIE2ETests/VoiceBarFlowTests/testFocused338StateGallery',
+                      runner.test_arguments(self.output))
+        with self.assertRaises(ValueError):
+            runner.test_arguments(self.output, 'full')
+
+    def test_cli_rejects_unknown_scenario_before_output_or_native_tools(self):
+        result = subprocess.run(['bash', str(MODULE.with_name('voicebar-ui-e2e.sh')),
+                                 '--output', str(self.root / 'never-created'), '--scenario', 'all'],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('scenario', result.stderr)
+        self.assertFalse((self.root / 'never-created').exists())
 
     def test_success_and_test_failure_both_flush_before_ffprobe(self):
         for code in [0, 7]:
@@ -174,6 +227,7 @@ class RunnerTests(unittest.TestCase):
             self.assertIn('interrupted', (self.output / 'recording.html').read_text().lower())
             self.assertNotIn('PASS recording:', output)
             self.assertIn('ffprobe [', (self.root / 'calls').read_text())
+            self.assertTrue(json.loads((self.output / 'visibility.json').read_text())['restored'])
         finally:
             (self.root / 'release').touch()
             if process.poll() is None: process.kill(); process.wait()
@@ -202,6 +256,7 @@ class RunnerTests(unittest.TestCase):
             info = json.loads((self.output / 'recording.json').read_text())
             self.assertTrue(info['valid'], output)
             self.assertEqual(info['durationSeconds'], 1.25)
+            self.assertTrue(json.loads((self.output / 'visibility.json').read_text())['restored'])
         finally:
             if process.poll() is None: process.kill(); process.wait()
 

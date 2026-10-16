@@ -3,6 +3,9 @@ import { TEST_TMP } from "./setup/test-tmp";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as socketClient from "../socket-client";
 
+// Real subprocesses: standalone p95 <= 117 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 interface MockPlayer {
   cmd: string[];
   killed: boolean;
@@ -153,7 +156,7 @@ describe("tts priority queue", () => {
     expect(playerMocks.length).toBe(3);
     const queueEvents = broadcasts.filter((event: any) => event.type === "queue");
     expect(queueEvents.at(-1)).toMatchObject({ type: "queue", depth: 0 });
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("collapses bursty low-priority chatter to the newest queued item", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
@@ -189,7 +192,7 @@ describe("tts priority queue", () => {
 
     playerMocks[1].resolveExit();
     await awaitCurrentPlayback();
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("emits queue depth updates when items enter and leave the queue", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
@@ -220,7 +223,7 @@ describe("tts priority queue", () => {
       .filter((event: any) => event.type === "queue")
       .at(-1);
     expect(lastQueueEvent).toMatchObject({ type: "queue", depth: 0 });
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("starts each queued utterance before publishing its own word timings", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
@@ -255,7 +258,7 @@ describe("tts priority queue", () => {
       expect(stateIndex).toBeGreaterThanOrEqual(0);
       expect(subtitleIndex).toBeGreaterThan(stateIndex);
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("preserves unrelated low-priority chatter when collapse keys differ", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
@@ -296,7 +299,7 @@ describe("tts priority queue", () => {
 
     playerMocks[2].resolveExit();
     await awaitCurrentPlayback();
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("emits a clip marker event when playback metadata marks a clip boundary", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
@@ -325,5 +328,5 @@ describe("tts priority queue", () => {
       source: "tts",
       status: "marked",
     });
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

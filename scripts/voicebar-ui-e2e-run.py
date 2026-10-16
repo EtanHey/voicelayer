@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """One serial UI run, always recorded; imported unit tests use recorder stubs only."""
+import argparse
 import datetime
 import html
 import json
@@ -13,10 +14,36 @@ import sys
 import time
 
 
-def test_arguments(output):
+SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery'}
+
+
+def selected_scenario(output, scenario=None):
+    path = output / 'scenario.json'
+    recorded = json.loads(path.read_text())['scenario'] if path.exists() else None
+    chosen = scenario if scenario is not None else recorded if recorded is not None else 'full'
+    if chosen not in SCENARIOS or (recorded is not None and recorded != chosen):
+        raise ValueError('Invalid or conflicting UIE2E scenario: ' + str(chosen))
+    return chosen
+
+
+def test_arguments(output, scenario=None):
+    scenario = selected_scenario(output, scenario)
     return ['xcodebuild', 'test-without-building', '-xctestrun', str(output / 'UIE2E.xctestrun'),
             '-destination', 'platform=macOS', '-parallel-testing-enabled', 'NO',
+            '-only-testing:VoiceBarUIE2ETests/VoiceBarFlowTests/' + SCENARIOS[scenario],
             '-resultBundlePath', str(output / 'VoiceBar.xcresult')]
+
+
+class Visibility:
+    def __init__(self, output):
+        self.helper = output / 'voicebar-ui-e2e-visibility'
+        self.receipt = output / 'visibility.json'
+
+    def call(self, mode):
+        result = subprocess.run([str(self.helper), mode, str(self.receipt)], capture_output=True,
+                                text=True, timeout=10, start_new_session=True)
+        if result.returncode:
+            raise RuntimeError('Hide Others / restore visibility failed: ' + result.stderr.strip())
 
 
 class Recording:
@@ -97,6 +124,7 @@ def stop_test(process):
 
 def run_suite(output, arguments=None, recording=None):
     recording = recording or Recording(output)
+    visibility = Visibility(output)
     info = dict(path=recording.path.name, valid=False)
     (output / 'recording.json').write_text(json.dumps(info, indent=2) + '\n')
     test = None
@@ -119,6 +147,8 @@ def run_suite(output, arguments=None, recording=None):
             '">Screen recording (.mov)</a><pre>' + caption + '</pre>')
     for sig in previous: signal.signal(sig, interrupted)
     try:
+        visibility.call('hide')
+        check_cancelled()
         recording.start()  # No test may launch until real frames reach the output file.
         check_cancelled()
         with (output / 'test.log').open('w') as log:
@@ -144,6 +174,13 @@ def run_suite(output, arguments=None, recording=None):
             except Exception as error:
                 info['recordingError'] = str(error)
                 status = 1
+            try:
+                visibility.call('restore')
+                info['visibilityRestored'] = json.loads(visibility.receipt.read_text())['restored']
+                if info['visibilityRestored'] is not True: raise RuntimeError('Visibility restoration unconfirmed')
+            except Exception as error:
+                info['visibilityError'] = str(error)
+                status = 1
             info['testExit'] = test.returncode if test is not None else None
             publish()
             print(f"{'PASS' if info['valid'] and info['runPassed'] else 'FAIL'} recording: {output / info['path']} "
@@ -156,4 +193,10 @@ def run_suite(output, arguments=None, recording=None):
 
 
 if __name__ == '__main__':
-    sys.exit(run_suite(pathlib.Path(sys.argv[1]).resolve()))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('output', type=pathlib.Path)
+    parser.add_argument('--scenario', choices=SCENARIOS)
+    args = parser.parse_args()
+    output = args.output.resolve()
+    # Validate selection before changing visibility or starting the recorder.
+    sys.exit(run_suite(output, test_arguments(output, args.scenario)))

@@ -58,8 +58,8 @@ are retained even when tests fail. The contact sheet links the verified video wi
 its duration and byte size. `--build-only` compiles the helper but does not execute it,
 start capture, require ffprobe, or launch tests.
 If macOS blocks screen capture/UI Automation, stop without granting access and have
-the lead arrange a human-present retry. Native capture and playback remain unverified
-until that retry; lifecycle tests use stub processes only.
+the lead arrange a human-present retry. Recording lifecycle unit tests use stub processes; recorded native UI receipts are
+linked from `docs.local/UIE2E.2/DONE.md`. Silent fixtures never prove audio playback.
 
 Capture uses Apple's [ScreenCaptureKit display filter](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
 and [AVAssetWriter movie fragments](https://developer.apple.com/documentation/avfoundation/avassetwriter/moviefragmentinterval).
@@ -81,12 +81,48 @@ physical F5, native AX insertion, STT, TTS, or the resident AppDelegate's wiring
 
 Preview/Play/Speak/Replay/recording controls are excluded from the sweep. General Copy uses the
 real general pasteboard, whose complete materialized contents are saved and restored by XCTest.
+
+UIE2E.2 adds required-surface receipts independently of the discovered-control inventory:
+an empty inventory or a dispatched click cannot prove a completed tab/flow. Tabs verify
+the selected sidebar row and page-specific content. Mic priority clicks the actual right-side
+button and requires a fresh receipt/default change; recognizer disclosure clicks its arrow
+and verifies its value changes. Processing controls use their native Switch role. History's
+General-page shortcut is a Link. Missing switches fail within a screenshot-backed step instead
+of aborting the rest of the suite while reading a nonexistent checkbox value.
+
+The standalone visibility helper snapshots visible regular apps by PID, bundle path and launch
+date, then hides their windows without quitting/closing. The supervisor restores precisely that
+snapshot after recorder flush, including failed preparation/tests and cancellation. Initially
+hidden apps stay hidden; terminated apps are never relaunched and reused PIDs are never adopted.
+`visibility.json` retains the before/restore result; a failed hide or restore fails the run.
+Each tab sweep activates QA and verifies foreground/on-screen/hittable state. The XCTest
+interruption monitor only reactivates QA for known T3/Screenshot overlays; it never clicks a
+foreign control. Permission or unknown/persistent interruptions produce a clear BLOCKED failure.
+
+The QA floating panel now follows the synthetic hidden flag. Its native AX role is Dialog;
+queries and Hide preconditions use that role, so a missing Window cannot vacuously pass Hide. Settings' navigation footer
+remains part of Settings; it is not the floating pill. Hide/Show asserts actual panel absence
+and return. Production AppDelegate already orders its panel out on snooze; this fixes a QA-host
+discrepancy, not production Hide behavior. A fixture-only menu opener exposes the real context
+controller's Show action while the panel is hidden.
+
+The sole audio-label exception is Replay inside a marked silent speaking fixture; all commands
+terminate at the QA in-memory sink. Timed-word seek checks the exact synthetic offset. Required
+idle seek and list-newline frame assertions fail if unsupported rather than claiming coverage.
+The clips also use external T3 text-selection Speak, outside this isolated host;
+that external-client path remains NOT_PROVEN. SEL1 separately probes the real
+VoiceState selection method with synthetic selections and a silent command sink. These requirements come from the 2.2.43
+notch clips; UIE2E does not implement missing product behavior or play audio to validate it.
 A pasteboard item that cannot be materialized must abort before any clipboard mutation.
 
-Do not execute here while Etan is using the Mac. The lead routes execution to the M1 Pro.
-A build-for-testing receipt is compilation evidence only. Contact-sheet layout and native
-interaction remain unverified until that run. The machine-local Ben fixture is a catalog entry
+Do not execute while the Mac is occupied. A build-for-testing receipt is compilation
+evidence only; native acceptance requires an explicitly authorized recorded run.
+The machine-local Ben fixture is a catalog entry
 only; it contains no real profile, reference clip, personal dictionary or recording.
+
+An explicitly authorized free-screen run may use this Mac. Preserve the found output-mute
+state, confirm mute before launch, and restore it afterward. Stop on a permission prompt;
+never grant one. Keep the installed app, resident sockets and global hotkeys untouched.
 
 The integrated-candidate flow has capability checks for UI still in open PRs. Missing S3
 Speech Copy buttons produce a screenshot and `SKIP S3 not in this build`. Once the buttons
@@ -97,13 +133,21 @@ compiled source (stamped as `UIE2EPasteFeedback` in the QA bundle); otherwise th
 receipts remain in `steps.json` and the contact sheet. They are not dependency blockers.
 The lead runs the visual gate on the integrated release candidate.
 
-Known visual gap: the native rc-2.2.44 walkthrough showed P1b notes visually truncated
-while AX exposed the full strings. P1b assertions are explicitly **AX content only**.
-When this capability is exercised, the final ledger records this gap and the exporter
-prints/displays `KNOWN VISUAL GAP` and exits nonzero even if all AX assertions pass.
-Full-text readability remains NOT_PROVEN until a separate running-app visual check
-and an appropriate visual regression replace this gap. This harness packet does not
-change the product pill layout.
+Known product packets use **strict** `XCTExpectFailure`, an assertion-only matcher
+requiring the packet tag, and an explicit XFAIL receipt: P14b (list newline frames),
+SEEK2 (idle readback word seek), and SEL1 (selection replacement while Preparing).
+An unexpected pass or unrelated assertion still fails.
+Expected surfaces are recorded separately from verified coverage and must have their
+matching observed packet receipt. The contact sheet labels each XFAIL and preserves
+the full issue. After the P1e/P1f fixes, feedback readability is a normal assertion.
+It compares the actual StaticText frame with full-text layout at the production
+font; full AX text alone cannot pass readability. Missing fixture content
+or unreachable unowned controls remain harness failures.
+
+SEL1 calls the real `VoiceState.speakSelection` method with synthetic original and
+replacement selections and a silent `speak_text` sink; it requires a fresh exact
+replacement payload and rendered replacement. External T3-client Speak remains a
+separate nonblocking NOT_PROVEN limitation, not an assertion or a fabricated action.
 
 UIE2E bundles carry `VoiceBarUIE2EOnly=true` and a distinct bundle identifier before
 signing. The QA entry resolves this persistent identity before AppDelegate/NSApplication:
@@ -121,3 +165,93 @@ static transcript/response; selecting rows, refreshing or clearing search cannot
 a saved detail element. Copy/Paste are checked again after search restoration and
 scope changes. Missing or ambiguous payload containers fail rather than falling back
 to a shared global button. Locator preflight is screenshot/receipt-wrapped too.
+
+Native numeric radio values and StaticText values are normalized explicitly. History row
+activation must change the actual selected trait before it receives coverage credit; the
+first rendered text line avoids the plain row's inert inter-line centre. Search restoration
+waits for its asynchronously recreated payload. Each exact paste-sink delta is retained as
+an XCTAttachment, so a later QA relaunch cannot erase that evidence. Global navigation
+does not inherit a History row/scope identity.
+
+The real QA status item has an explicit label and identifier rather than inheriting its
+SF Symbol's production accessibility description. Popover navigation checks whether it is
+already open before toggling; microphone uses the native combined row identity, and setup
+uses its actual identifier. QA context menus defer anchor-panel resizing during tracking.
+The real controller's synthetic Recent item receives a QA row identifier without changing
+its title, represented payload or action. Submenu parent activation must expose a hittable child;
+dispatch alone cannot pass. Remaining owned menus are dismissed on early return, never by
+clicking foreign controls. None of these changes alters the production menu controller.
+
+UIE2E.2 opens every setup-wizard page with injected granted permissions and silent dependencies; this is UI coverage, not permission or recording acceptance. HIDE0 checks actual AX Dialog disappearance/restoration from Settings and the real context menu in idle, speaking and readback. GEO0 records the actual post-Stop idle surface (playback controls absent), then attaches exact Replay/Eye/terminal frames and their tight AX row envelope across natural completion, three readback replays, and synthetic playback finishes. These injected state/ack transitions prove layout only, not daemon replay admission. Geometry shifts and absent product states fail explicitly; product layout is untouched.
+
+The QA pill uses PillHostingView, the production morph canvas, panel layout and hit
+configuration, with the stable-core isolated capture placement. Its virtual core has
+no hardware notch occlusion. FittingSize and a width-dependent right anchor cannot
+supply reliable GEO0 evidence. The QA host never constructs AppDelegate or starts
+its services; a pure static interaction-configuration method is reused only.
+
+History's wide metadata row can expose an AX frame spanning a transparent Spacer.
+Its QA hit point targets the leading text and still requires the actual Selected
+trait before context/coverage advances. Jump to latest is a scroll command; it
+must not be treated as a selection. Ask cards use fresh payload-to-next-payload
+screen intervals to require one Copy/Paste action per response, with no borrowing
+from the next card. Missing or ambiguous actions fail with a retained AX snapshot.
+
+Static feedback fixtures hold a modal presentation envelope until the next fixture,
+so pointer-exit collapse cannot erase the note before its readability measurement.
+This tests a held visible state, not real feedback timeout/collapse behavior. Normal
+idle releases the hold. The fixture model disables resident-journal writes before
+any host/window exists, including unit-only construction. Preparing is checked as
+a real state/shell plus reachable controls; missing word content is not invented.
+Setup resolves its unique popover identifier
+without assuming the link-style control has Button role.
+
+
+## Focused #338 state gallery
+
+`bash scripts/voicebar-ui-e2e.sh --output <new-directory> --scenario focused-338`
+selects only `VoiceBarFlowTests/testFocused338StateGallery`; `--build-only` compiles
+without launching. The explicit focused QA define requires the actual #338 product
+APIs. Default `full` still compiles on main without them. No focused build may enter
+a notarized/release path. Run the gallery on an integrated #338 tree with the
+required production APIs and final P1e/P1f copy.
+
+The gallery presents11 variants in real BarView/DictationCard panels, at most6perpage.
+Each page has one aggregate screenshot and frame/readability/overlap assertions.
+Pinned confirmations use synthetic presentation copies of real method outcomes;
+busy admission refreshes the same real state without window/AX identity churn.
+All lifetime instances restart in one MainActor batch; the test waits the longest
+expiry once, then inspects every page without resetting clocks. Session-end clearing
+records genuine busy admission immediately before the transition. One real Copy
+control is exercised with sentinel→exact clipboard equality. Four family renders
+also use actual production screen/notch geometry and measured accessibility frames.
+Gallery placement itself is not evidence of real-notch placement or hardware/audio.
+
+The focused ledger has its own explicit required surface set and scope. `gallery.json`
+is mandatory, all required variants must be present, and no skips or expected-failure
+waivers pass. Normal P1e/P1f frame assertions replace the earlier known-defect XFAILs.
+Exported reports always distinguish focused evidence from full-release coverage.
+Native receipts and their movie audits are linked from `docs.local/UIE2E.2/DONE.md`.
+
+## Review boundary and known limits
+
+The clean recorded full scenario at QA head `93dc8eb5` contains harness code
+`1eef933c`: 738 ordinary PASS, zero FAIL/SKIP, and three strict packet XFAILs.
+This is synthetic UI scenario acceptance, not installed-app or release acceptance.
+The focused #338 gallery independently passed 16/0/0/0 on product `fa8c3c44`.
+The final review receipt records exact commits, media and audit boundaries.
+
+Two audit limits remain explicit: QA Change-microphone callbacks select General
+but omit production's Microphone-priority scroll focus; the existing intent receipt
+does not prove that destination. Dictionary delete clicks lack a dedicated immediate
+inline-confirmation assertion, although the flow checks cancellation/persistence and
+final deletion. Movie evidence and formal review must not silently promote these
+receipts into stronger UI guarantees. Generic Open Settings correctly raises the
+currently selected Settings tab and need not select General.
+
+The shell runner deliberately leaves output muted. Recorded gate operators must
+capture the initial mute state and restore it in a finally/trap, including failure.
+The acceptance receipts use an outer `operator-run.py` beside each result, which
+also verifies the exact QA bundle/head and cleans only that run's QA executable
+paths. The supervisor itself restores the recorded hide-others snapshot. No
+resident app or unrelated process is killed, closed, relaunched or installed.

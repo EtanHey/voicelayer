@@ -8,6 +8,9 @@ import * as qwen from "../tts/qwen3";
 import * as binaries from "../resolve-binary";
 import { prepareSeekSlice } from "../tts/seek-audio";
 
+// Real subprocesses: standalone p95 <= 147 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const originalSpawn = Bun.spawn;
 const spies: ReturnType<typeof spyOn>[] = [];
 afterEach(() => { Bun.spawn = originalSpawn; for (const spy of spies.splice(0)) spy.mockRestore(); });
@@ -163,7 +166,7 @@ describe("long-read synthesis adapters", () => {
     const pending = runAudioCommand([process.execPath, "-e", "setInterval(() => {}, 1000)"], controller.signal);
     controller.abort(); await expect(pending).rejects.toHaveProperty("name", "AbortError");
     expect(() => process.kill(childPid, 0)).toThrow();
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 describe("long-read replay audio with real ffmpeg, no speaker", () => {
@@ -186,7 +189,7 @@ describe("long-read replay audio with real ffmpeg, no speaker", () => {
       expect(rms(400, 2400)).toBeGreaterThan(0.2);
       expect(rms(4000, 6000)).toBeLessThan(0.01);
     } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
   it("concatenates full chunks and trims the stopped tail using an independent duration probe", async () => {
     const dir = mkdtempSync(join(TEST_TMP, "long-read-audio-"));
     try {
@@ -203,5 +206,5 @@ describe("long-read replay audio with real ffmpeg, no speaker", () => {
       const duration = Number(probe.stdout.toString().trim());
       expect(duration).toBeGreaterThanOrEqual(1.25); expect(duration).toBeLessThan(1.35);
     } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

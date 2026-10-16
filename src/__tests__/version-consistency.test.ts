@@ -11,6 +11,9 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 325 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const repoRoot = join(import.meta.dir, "..", "..");
 const script = join(repoRoot, "scripts", "voicelayer-version-check.sh");
 const packageVersion = JSON.parse(
@@ -118,7 +121,7 @@ describe("voicelayer-version-check.sh", () => {
     expect(text(result.stdout)).toContain(
       `PASS: VoiceBar ${packageVersion} version and notarization guard`,
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("fails loudly when the Homebrew cask version drifts", () => {
     const result = run(fixture({ caskVersion: "0.0.0" }).env);
@@ -127,7 +130,7 @@ describe("voicelayer-version-check.sh", () => {
     expect(text(result.stderr)).toContain(
       `Casks/voicebar.rb version is '0.0.0', expected '${packageVersion}'`,
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("fails loudly when the checked-in VoiceBar Info.plist version drifts", () => {
     const result = run(fixture({ plistVersion: "0.0.0" }).env);
@@ -136,7 +139,7 @@ describe("voicelayer-version-check.sh", () => {
     expect(text(result.stderr)).toContain(
       `Info.plist CFBundleShortVersionString is '0.0.0', expected '${packageVersion}'`,
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("fails loudly when the git tag is not the package version", () => {
     const result = run(fixture({ gitTag: "v0.0.0" }).env);
@@ -145,7 +148,7 @@ describe("voicelayer-version-check.sh", () => {
     expect(text(result.stderr)).toContain(
       `git tag is 'v0.0.0', expected 'v${packageVersion}'`,
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("fails loudly when the resident app has no stapled notarization ticket", () => {
     const result = run(fixture({ staplerExit: 1 }).env);
@@ -154,5 +157,5 @@ describe("voicelayer-version-check.sh", () => {
     expect(text(result.stderr)).toContain(
       "resident VoiceBar.app does not have a valid stapled notarization ticket",
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

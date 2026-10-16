@@ -47,11 +47,15 @@ final class SpeakSelectionCapture {
                 return
             }
             // AX IPC can take multiple messaging timeouts. Never do it on the tap's run loop.
-            if let text = self.readAXSelection(), !text.isEmpty {
-                Self.onMain { completion(.completed(text)) }
+            let selectedText = self.readAXSelection()
+            if let text = selectedText, !text.isEmpty {
+                Self.onMain { completion(.completed(text).observed(axRead: .text, path: .ax)) }
             } else {
+                let axRead: SelectionCaptureResult.AXRead = selectedText == nil ? .unavailable : .empty
                 // Keep AppKit pasteboard/item access serialized with the app's other clipboard users.
-                Self.onMain { self.captureUsingPasteboard(completion: completion) }
+                Self.onMain {
+                    self.captureUsingPasteboard { completion($0.observed(axRead: axRead, path: .copy)) }
+                }
             }
         }
     }
@@ -75,10 +79,10 @@ final class SpeakSelectionCapture {
     private func copyAndPoll(snapshot: Snapshot, changeCount: Int,
                              completion: @escaping (SelectionCaptureResult) -> Void) {
         let deadline = now() + 0.4
-        func finish(_ text: String?, expectedChangeCount: Int) {
+        func finish(_ result: SelectionCaptureResult, expectedChangeCount: Int) {
             switch restore(snapshot, expectedChangeCount: expectedChangeCount) {
             case .restored:
-                completion(.completed(text))
+                completion(result)
             case .changed:
                 completion(.clipboardChanged)
             case .failed:
@@ -86,25 +90,25 @@ final class SpeakSelectionCapture {
                 completion(.clipboardRestoreFailed)
             }
         }
-        guard postCopy() else { finish(nil, expectedChangeCount: changeCount); return }
+        guard postCopy() else { finish(.copyFailed, expectedChangeCount: changeCount); return }
         func poll() {
             Self.onMain { [self] in
                 let observedChangeCount = pasteboard.changeCount
                 if observedChangeCount != changeCount {
                     // More than one ownership change before we can read is ambiguous.
                     guard observedChangeCount == changeCount + 1 else {
-                        finish(nil, expectedChangeCount: changeCount)
+                        finish(.clipboardChanged, expectedChangeCount: changeCount)
                         return
                     }
                     let text = readCopiedString()
                     let copiedChangeCount = pasteboard.changeCount
                     guard copiedChangeCount == observedChangeCount else {
-                        finish(nil, expectedChangeCount: observedChangeCount)
+                        finish(.clipboardChanged, expectedChangeCount: observedChangeCount)
                         return
                     }
-                    finish(text?.isEmpty == false ? text : nil, expectedChangeCount: copiedChangeCount)
+                    finish(text?.isEmpty == false ? .completed(text) : .copyEmpty, expectedChangeCount: copiedChangeCount)
                 } else if now() >= deadline {
-                    finish(nil, expectedChangeCount: changeCount)
+                    finish(.copyTimedOut, expectedChangeCount: changeCount)
                 } else {
                     schedule(min(0.02, deadline - now()), poll)
                 }
