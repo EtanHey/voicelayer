@@ -3,6 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 exec python3 - "$ROOT" "$@" <<'PY'
+import fcntl
 import importlib.util
 import json
 import os
@@ -42,6 +43,16 @@ bin_dir.mkdir()
 real_bun = shutil.which("bun")
 nonce = base.name
 os.environ["VOICELAYER_HOOK_TEST_NONCE"] = nonce
+owner_path = base / "fixture-owner.lock"
+owner_lock = owner_path.open("w+")
+fcntl.flock(owner_lock, fcntl.LOCK_EX)
+assert not os.get_inheritable(owner_lock.fileno())
+# Popen closes this non-inheritable FD; SIGKILL of the harness releases the lease.
+owner_started = subprocess.check_output(["ps", "-p", str(os.getpid()), "-o", "lstart="], text=True,
+    env=dict(os.environ, LC_ALL="C", TZ="UTC")).strip()
+owner_lock.write(json.dumps(dict(pid=os.getpid(), nonce=nonce, started=owner_started)))
+owner_lock.flush()
+os.environ["VOICELAYER_HOOK_TEST_OWNER"] = str(owner_path)
 os.environ["VOICELAYER_HOOK_AUDIT_LOG"] = str(base / "decisions.jsonl")
 print("HOOK evidence: " + str(base), flush=True)
 succeeded = False
@@ -208,12 +219,16 @@ try:
     finally:
         zombie.wait()
     # Real PPID-1 fixtures, all owned by this test. Never signal resident processes.
-    def fixture(name, run_dir, orphan=True, impersonate=False, stubborn_child=False, tagged=True):
+    def fixture(name, run_dir, orphan=True, impersonate=False, stubborn_child=False, tagged=True, owner=None):
         env = dict(os.environ, VOICELAYER_TMP_ROOT=str(run_dir),
                    VOICELAYER_MCP_SOCKET_PATH=str(run_dir / "voicelayer-mcp.sock"),
                    VOICELAYER_SOCKET_PATH=str(run_dir / "voicelayer.sock"))
+        if owner is not None:
+            env["VOICELAYER_HOOK_TEST_NONCE"] = owner.parent.name
+            env["VOICELAYER_HOOK_TEST_OWNER"] = str(owner)
         if not tagged:
             env.pop("VOICELAYER_HOOK_TEST_NONCE")
+            env.pop("VOICELAYER_HOOK_TEST_OWNER")
         if impersonate:
             for key in list(env):
                 if key.startswith(("VOICELAYER_", "QA_VOICE_")) and key != "VOICELAYER_HOOK_TEST_NONCE":
@@ -299,8 +314,67 @@ while True: time.sleep(.05)
             print("FAIL foreign sweep touched fixtures", flush=True)
         else:
             print("PASS foreign sweep leaves peer fixtures alive", flush=True)
+    def sweep_selected(pids, sweep_env):
+        selected = base / "selected-pids"
+        selected.write_text(" ".join(map(str, pids)))
+        subprocess.run([str(bin_dir / "python3"), str(root / "scripts/supervise-test-daemon.py"), "--sweep"],
+                       env=dict(sweep_env, HOOK_OWNED_PIDS=str(selected)), check=True, timeout=15)
+
+    def check_case(label, predicate):
+        # sweep_selected is synchronous and waits for reap completion.
+        if wait_until(predicate, 1):
+            print("PASS " + label, flush=True)
+        else:
+            failures.append(label)
+            print("FAIL " + label, flush=True)
+        snapshot(label, orphan_pids)
+
+    # Inherited test state must never exempt an ordinary production orphan.
+    inherited = fixture("inherited-untagged", base / "voicelayer-run-tests.900012", tagged=False)
+    sweep_selected([inherited], env)
+    check_case("inherited-nonce sweeper reaps untagged orphan", lambda: not alive(inherited))
+
+    # A separate owner holds a real lease, then is SIGKILLed like a killed harness.
+    dead_owner_path = base / "dead-owner" / "fixture-owner.lock"
+    dead_owner_path.parent.mkdir()
+    owner_code = """
+import fcntl, json, os, pathlib, subprocess, sys, time
+path = pathlib.Path(sys.argv[1])
+with path.open("w+") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    started = subprocess.check_output(["ps", "-p", str(os.getpid()), "-o", "lstart="], text=True,
+    env=dict(os.environ, LC_ALL="C", TZ="UTC")).strip()
+    lock.write(json.dumps(dict(pid=os.getpid(), nonce=path.parent.name, started=started)))
+    lock.flush()
+    while True: time.sleep(.05)
+"""
+    owner_process = subprocess.Popen([sys.executable, "-c", owner_code, str(dead_owner_path)])
+    try:
+        assert wait_until(lambda: dead_owner_path.exists() and dead_owner_path.stat().st_size > 0)
+        leaked = fixture("dead-owner", base / "voicelayer-run-tests.900013", owner=dead_owner_path)
+        sweep_selected([leaked], env)
+        check_case("tagged orphan protected while owner alive", lambda: alive(leaked) and not (base / "dead-owner.pid.term").exists())
+    finally:
+        signal_reason = "SIGKILL fixture owner to release lease"
+        owner_process.kill()
+        owner_process.wait(timeout=5)
+    sweep_selected([leaked], env)
+    check_case("tagged orphan reaped after owner SIGKILL", lambda: not alive(leaked))
+    # A stray tag with no verifiable owner must not be a permanent exemption.
+    stray = fixture("stray", base / "voicelayer-run-tests.900014", owner=base / "missing-owner" / "fixture-owner.lock")
+    sweep_selected([stray], env)
+    check_case("stray nonce without live owner is reaped", lambda: not alive(stray))
+
+    unheld_owner = base / "unheld-owner" / "fixture-owner.lock"
+    unheld_owner.parent.mkdir()
+    unheld_owner.write_text(json.dumps(dict(pid=os.getpid(), nonce=unheld_owner.parent.name, started=owner_started)))
+    unheld = fixture("unheld-owner", base / "voicelayer-run-tests.900015", owner=unheld_owner)
+    sweep_selected([unheld], env)
+    check_case("live PID without held owner lock is not exempt", lambda: not alive(unheld))
+
     # An ordinary hook has no test nonce and must also leave ALL fixtures alone.
-    tagged_pids = list(orphan_pids)
+    tagged_pids = [stale, concurrent, parented, live, unrelated, impersonator,
+                   terminating_leader, stubborn, unreadable]
     untagged = fixture("untagged", base / "voicelayer-run-tests.900011", tagged=False)
     owned_pid_file.write_text(" ".join(str(p) for p in orphan_pids))
     unscoped_env = dict(env)
@@ -455,7 +529,7 @@ while True: time.sleep(.05)
                         str(row["run_dir"]).startswith(str(base) + "/") for row in sent)
     assert not any(set(row["targets"]) & {impersonator, unreadable} for row in sent)
     assert any(row["signal"] == 9 and stubborn in row["targets"] for row in sent)
-    assert any(row["reason"] == "test nonce mismatch" for row in decisions)
+    assert any(row["reason"] == "fixture owner alive" for row in decisions)
     print("PASS audit records scoped senders, targets, signals, times and reasons", flush=True)
     succeeded = not failures
 finally:
@@ -472,6 +546,7 @@ finally:
             pass
     for proc in protected:
         proc.wait(timeout=5)
+    owner_lock.close()
     if succeeded and os.environ.get("HOOK_KEEP_EVIDENCE") != "1":
         shutil.rmtree(base)
     else:

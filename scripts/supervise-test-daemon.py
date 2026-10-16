@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -90,16 +91,47 @@ def processes():
 
 
 def carries_run(env, run_dir):
-    # Test fixtures deliberately imitate production orphans. Neither an unscoped
-    # hook nor a different test run may adopt them; untagged production ownership
-    # remains unchanged. Apply this again to every survivor before each signal.
-    return (env is not None and
-            env.get("VOICELAYER_HOOK_TEST_NONCE") == os.environ.get("VOICELAYER_HOOK_TEST_NONCE") and
-            all(env.get(key) and os.path.isabs(env[key]) and
+    return env is not None and all(env.get(key) and os.path.isabs(env[key]) and
                                    Path(env[key]) == value
                for key, value in (("VOICELAYER_TMP_ROOT", run_dir),
                                   ("VOICELAYER_MCP_SOCKET_PATH", run_dir / "voicelayer-mcp.sock"),
-                                  ("VOICELAYER_SOCKET_PATH", run_dir / "voicelayer.sock"))))
+                                  ("VOICELAYER_SOCKET_PATH", run_dir / "voicelayer.sock")))
+
+
+def live_peer_fixture(env):
+    """Only a matching, held lease plus a live owner can exempt a tagged fixture."""
+    nonce = (env or {}).get("VOICELAYER_HOOK_TEST_NONCE")
+    owner = (env or {}).get("VOICELAYER_HOOK_TEST_OWNER", "")
+    if not nonce or not os.path.isabs(owner):
+        return False
+    # A run's own sweep intentionally exercises its fixtures. Inheriting these
+    # values never changes eligibility of UNTAGGED or dead-owner real orphans.
+    if (nonce == os.environ.get("VOICELAYER_HOOK_TEST_NONCE") and
+            owner == os.environ.get("VOICELAYER_HOOK_TEST_OWNER")):
+        return False
+    try:
+        fd = os.open(owner, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(fd) as lock:
+            if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
+                return False
+            lease = json.loads(lock.read(4096))
+            pid = lease["pid"]
+            if (lease["nonce"] != nonce or type(pid) is not int or pid <= 1 or
+                    not isinstance(lease["started"], str) or not lease["started"]):
+                return False
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # A stale PID/metadata file without this held lock is never proof.
+                state = subprocess.check_output(
+                    ["ps", "-p", str(pid), "-o", "stat=,lstart="], text=True, timeout=1,
+                    env=dict(os.environ, LC_ALL="C", TZ="UTC")).split(None, 1)
+                return len(state) == 2 and "Z" not in state[0] and state[1].strip() == lease["started"]
+            else:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                return False
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        return False
 
 
 def daemon_argv(argv):
@@ -118,6 +150,9 @@ def reap_group(pgid, run_dir, orphan_only=False):
                 return []
             return None
         if not members:
+            return []
+        if orphan_only and any(live_peer_fixture(p[4]) for p in members):
+            audit("skip", "fixture owner alive", pgid, members)
             return []
         if orphan_only and run_dir.exists():
             audit("skip", "run directory still exists", pgid, members)
@@ -184,10 +219,6 @@ def sweep_orphans():
     seen = set()
     for pid, ppid, pgid, argv, env in processes():
         if ppid != 1 or pgid <= 1 or pgid in seen:
-            continue
-        if env is not None and env.get("VOICELAYER_HOOK_TEST_NONCE") != os.environ.get("VOICELAYER_HOOK_TEST_NONCE"):
-            if daemon_argv(argv):
-                audit("skip", "test nonce mismatch", pgid, [(pid, ppid, pgid, argv, env)])
             continue
         mcp_socket = (env or {}).get("VOICELAYER_MCP_SOCKET_PATH", "")
         run_dir = Path(mcp_socket).parent
