@@ -153,6 +153,12 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         configureStatusItem()
+#if VOICEBAR_UIE2E_GATE2245
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1" {
+            installHide1VisualMenu()
+        }
+#endif
+
         model.onRunSetup = { [weak self] in self?.openWizard() }
         model.receipt("launch")
     }

@@ -14,7 +14,7 @@ import sys
 import time
 
 
-SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery'}
+SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow'}
 
 
 def selected_scenario(output, scenario=None):

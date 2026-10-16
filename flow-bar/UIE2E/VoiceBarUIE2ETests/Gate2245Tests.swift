@@ -2,6 +2,56 @@ import AppKit
 import XCTest
 
 extension VoiceBarFlowTests {
+    func testHide1VisualFlow() throws {
+        guard scenario == "hide1", gate2245Enabled else { throw NSError(domain: "HIDE1VIS requires gate build", code: 1) }
+        limitations = ["HIDE1-only muted native visual gate with injected events; no audio, live daemon, global hotkeys, permissions or installed-app acceptance.",
+            "Panel is positioned below the menu bar for unobstructed evidence; this does not establish notch placement."]
+        ledger.requiredScope = ["gate:HIDE1"]
+        for (index, event) in ["speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard"].enumerated() {
+            app.typeKey("0", modifierFlags: .command)
+            Thread.sleep(forTimeInterval: 1)
+            step("HIDE1VIS " + event + " before") {
+                let receipt = gateRead("gate-hide.json")
+                XCTAssertEqual(receipt["action"] as? String, "start")
+                XCTAssertEqual(receipt["panelVisible"] as? Bool, true)
+                XCTAssertEqual(receipt["settingsVisible"] as? Bool, false)
+                attachJSON("HIDE1VIS-" + event + "-before", receipt)
+            }
+            app.typeKey(String(index + 1), modifierFlags: .command)
+            Thread.sleep(forTimeInterval: 1)
+            step("HIDE1VIS " + event + " hidden") {
+                let receipt = gateRead("gate-hide.json")
+                XCTAssertEqual(receipt["action"] as? String, "hidden:" + event)
+                XCTAssertEqual(receipt["snoozed"] as? Bool, true)
+                XCTAssertEqual(receipt["hidden"] as? Bool, true)
+                XCTAssertEqual(receipt["panelVisible"] as? Bool, false)
+                XCTAssertEqual(receipt["visiblePanels"] as? [String], [])
+                XCTAssertEqual(receipt["wizardVisible"] as? Bool, false)
+                XCTAssertEqual((receipt["ownedVisibleWindows"] as? [[String: Any]])?.count, 0)
+                let screenWindows = receipt["screenWindows"] as? [[String: Any]] ?? []
+                XCTAssertFalse(screenWindows.contains { ($0["owner"] as? String ?? "").lowercased().contains("voicebar") },
+                    "VoiceBar-owned surface from any process remains on screen")
+                attachJSON("HIDE1VIS-" + event + "-hidden", receipt)
+            }
+            app.typeKey("8", modifierFlags: .command)
+            Thread.sleep(forTimeInterval: 1)
+            step("HIDE1VIS " + event + " shown") {
+                let receipt = gateRead("gate-hide.json")
+                XCTAssertEqual(receipt["action"] as? String, "show")
+                XCTAssertEqual(receipt["panelVisible"] as? Bool, true)
+                XCTAssertEqual(receipt["snoozed"] as? Bool, false)
+                var expected = receipt["beforeShow"] as? [String: Any] ?? [:]
+                if expected["mode"] as? String == "disconnected", receipt["connected"] as? Bool == true { expected["mode"] = "idle" }
+                XCTAssertEqual(receipt["state"] as? NSDictionary, expected as NSDictionary)
+                XCTAssertEqual(receipt["wizardVisible"] as? Bool, event == "wizard")
+                attachJSON("HIDE1VIS-" + event + "-shown", receipt)
+            }
+        }
+        app.typeKey("9", modifierFlags: .command)
+        ledger.verifiedSurfaces.insert("gate:HIDE1")
+        completed = true
+    }
+
     func gateRead(_ file: String) -> [String: Any] {
         (try? JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent(file)))) as? [String: Any] ?? [:]
     }

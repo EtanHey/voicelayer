@@ -28,7 +28,7 @@ final class VoiceBarFlowTests: XCTestCase {
         continueAfterFailure = true
         let env = ProcessInfo.processInfo.environment
         scenario = env["VOICEBAR_UIE2E_SCENARIO"] ?? "full"
-        guard ["full", "focused-338"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
+        guard ["full", "focused-338", "hide1"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
         if scenario == "focused-338" {
             limitations = ["Gallery variants use real production BarView/DictationCard in arbitrary page positions; they do not prove notch placement. One actual production-geometry notch render per family is checked separately.",
                 "Static confirmation holds are synthetic presentations of actual production outcomes; synchronized lifetime uses fresh production timers. No real microphone, audio, global hotkey, external insertion or installed-app acceptance is claimed.",
@@ -99,7 +99,9 @@ final class VoiceBarFlowTests: XCTestCase {
         step("launch isolated QA app") {
             app.launch()
             app.activate()
-            XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+            if scenario == "hide1" {
+                XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
+            } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             XCTAssertEqual(app.state, .runningForeground)
         }
     }
@@ -155,10 +157,26 @@ final class VoiceBarFlowTests: XCTestCase {
                 }
                 XCTExpectFailure("Known product packet " + issue.rawValue, options: options) { body() }
             } else { body() }
-            let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            let sample = XCUIScreen.main.screenshot()
+            let screenshot = XCTAttachment(screenshot: sample)
             screenshot.name = attachment
             screenshot.lifetime = .keepAlways
             activity.add(screenshot)
+            if scenario == "hide1", name.hasPrefix("HIDE1VIS ") {
+                // Same lossless sample as the full-screen attachment; CGImage uses top-left pixels.
+                let full = sample.image
+                if let cg = full.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                    let screenSize = NSScreen.main?.frame.size ?? full.size
+                    let scale = CGFloat(cg.width) / screenSize.width
+                    let region = CGRect(x: max(0, screenSize.width / 2 - 500) * scale,
+                        y: 60 * scale, width: min(1000, screenSize.width) * scale, height: 540 * scale)
+                    if let crop = cg.cropping(to: region) {
+                        let attachment = XCTAttachment(image: NSImage(cgImage: crop, size: .zero))
+                        attachment.name = String(format: "HIDE1VIS-CROP-%04d", number)
+                        attachment.lifetime = .keepAlways; activity.add(attachment)
+                    } else { XCTFail("Cannot crop panel screen region") }
+                } else { XCTFail("Cannot read lossless screenshot") }
+            }
         }
         let passed = (testRun?.failureCount ?? 0) == before
         var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed]
@@ -1303,7 +1321,9 @@ extension VoiceBarFlowTests {
     func relaunchQA() {
         step("relaunch isolated QA app") {
             app.launch()
-            XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+            if scenario == "hide1" {
+                XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
+            } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             activePage = "General"; activeHistoryScope = "Dictations"; selectedHistoryRow = "qa-recording"
         }
     }

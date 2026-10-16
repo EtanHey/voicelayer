@@ -11,6 +11,7 @@ final class UIE2EGate2245 {
     let panel: FloatingPillPanel
     unowned let host: UIE2EHost
     var beforeShow: [String: Any] = [:]
+    var placementObservers: [NSObjectProtocol] = []
 
     init(host: UIE2EHost) {
         self.host = host
@@ -28,8 +29,28 @@ final class UIE2EGate2245 {
         if let screen = NSScreen.main {
             UIE2EHost.fitPill(panel, layout: UIE2EHost.panelLayout(for: state), in: screen.visibleFrame)
         }
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1" {
+            for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
+                placementObservers.append(NotificationCenter.default.addObserver(forName: name, object: panel, queue: .main) { [weak self] _ in
+                    Task { @MainActor [weak self] in self?.fitVisualPanel() }
+                })
+            }
+        }
         panel.orderFront(nil)
+        fitVisualPanel()
         snapshot("start")
+    }
+
+    func fitVisualPanel() {
+        guard ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1",
+              let screen = NSScreen.main else { return }
+        let layout = UIE2EHost.panelLayout(for: app.voiceState)
+        panel.contentView?.setFrameSize(layout.panelSize)
+        // Isolated capture placement below the menu bar, away from top-right OS banners.
+        let frame = NSRect(x: screen.frame.midX - layout.panelSize.width / 2,
+            y: screen.frame.maxY - 140 - layout.panelSize.height,
+            width: layout.panelSize.width, height: layout.panelSize.height)
+        if panel.frame != frame { panel.setFrame(frame, display: true) }
     }
 
     func current() -> [String: Any] {
@@ -43,7 +64,14 @@ final class UIE2EGate2245 {
             "snoozed": app.isSnoozed, "hidden": app.voiceState.isHidden, "connected": app.voiceState.isConnected,
             "panelVisible": panel.isVisible, "windowNumber": panel.windowNumber,
             "visiblePanels": NSApp.windows.filter { $0 is NSPanel && $0.isVisible }.map(\.title),
-            "wizardVisible": host.wizard?.isVisible ?? false], file: "gate-hide.json")
+            "wizardVisible": host.wizard?.isVisible ?? false,
+            "screenWindows": (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []).map { window in
+                ["owner": window[kCGWindowOwnerName as String] ?? "", "pid": window[kCGWindowOwnerPID as String] ?? 0,
+                 "number": window[kCGWindowNumber as String] ?? 0, "bounds": window[kCGWindowBounds as String] ?? [:]]
+            },
+            "settingsVisible": host.settings.isVisible,
+            "panelFrame": NSStringFromRect(panel.frame),
+            "ownedVisibleWindows": NSApp.windows.filter { $0.isVisible && !$0.frame.isEmpty }.map { ["title": $0.title, "number": $0.windowNumber, "frame": NSStringFromRect($0.frame)] as [String: Any] }], file: "gate-hide.json")
     }
 
     func hideAndDeliver(_ event: String) {
@@ -66,15 +94,44 @@ final class UIE2EGate2245 {
         // Include deferred layout work in the native visibility readback.
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
+            self?.fitVisualPanel()
             self?.snapshot("hidden:" + event)
         }
     }
 
-    func show() { beforeShow = current(); app.commandRouter.handleShowVoiceBar(); snapshot("show") }
-    func close() { app.unsnoozeNow(); panel.orderOut(nil); host.wizard?.close() }
+    func show() { beforeShow = current(); app.commandRouter.handleShowVoiceBar(); fitVisualPanel(); snapshot("show") }
+    func close() {
+        for observer in placementObservers { NotificationCenter.default.removeObserver(observer) }
+        placementObservers.removeAll()
+        app.unsnoozeNow(); panel.orderOut(nil); host.wizard?.close()
+    }
 }
 
 extension UIE2EHost {
+    func installHide1VisualMenu() {
+        model.hidden = true
+        pill.orderOut(nil)
+        settings.orderOut(nil)
+        statusItem?.isVisible = false
+        let item = NSMenuItem(); let menu = NSMenu(title: "HIDE1VIS")
+        item.title = "HIDE1VIS"; item.submenu = menu
+        for (index, name) in ["start", "speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard", "show", "end"].enumerated() {
+            let command = NSMenuItem(title: "HIDE1VIS " + name, action: #selector(hide1VisualCommand(_:)), keyEquivalent: String(index))
+            command.target = self; command.representedObject = name
+            menu.addItem(command)
+        }
+        NSApp.mainMenu?.addItem(item)
+    }
+
+    @objc func hide1VisualCommand(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        if name == "start" {
+            gateHide("start")
+        } else if name == "show" { gate2245?.show() }
+        else if name == "end" { gateHide("end") }
+        else { gate2245?.hideAndDeliver(name) }
+    }
+
     var gate2245Controls: some View {
         VStack(spacing: 2) {
             HStack {

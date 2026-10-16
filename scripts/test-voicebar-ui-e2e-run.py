@@ -93,6 +93,11 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(json.loads((self.output / 'visibility.json').read_text())['restored'])
         self.assertIn('Hide Others', json.loads((self.output / 'recording.json').read_text())['error'])
 
+    def test_hide1_selects_only_visual_hide_test(self):
+        args = runner.test_arguments(self.output, 'hide1')
+        selected = [arg for arg in args if arg.startswith('-only-testing:')]
+        self.assertEqual(selected, ['-only-testing:VoiceBarUIE2ETests/VoiceBarFlowTests/testHide1VisualFlow'])
+
     def test_argument_builder_uses_one_serial_run_without_invalid_iteration_option(self):
         args = runner.test_arguments(self.output)
         self.assertEqual(args[:2], ['xcodebuild', 'test-without-building'])

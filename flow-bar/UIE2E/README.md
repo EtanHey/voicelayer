@@ -272,3 +272,47 @@ selection routing and exact silent commands; its gate assertion permits no XFAIL
 Partial/untimed/legacy subtitle events exercise the real decoder and teleprompter.
 Movie audits separately judge styling/highlights; AX alone does not prove pixels.
 This remains isolated native UI evidence, with no clone synthesis/installed-app claim.
+
+## Focused HIDE1 visual proof
+
+On an explicitly authorized free-screen Mac, integrate the pinned product candidate,
+then run `bash scripts/voicebar-ui-e2e.sh --scenario hide1 --build-only --output <new-directory>`.
+Run `python3 scripts/voicebar-hide1-visual-run.py <new-directory>` from that same tree.
+The operator monitors output mute, restores its initial value, and uses the existing
+recorded Hide Others/restore supervisor. Never use an installed-app swap for this gate.
+
+Only `testHide1VisualFlow` runs. Settings and the QA status item are hidden; app-local
+Command+0–9 menu commands drive the fixture without bringing Settings into frame.
+Seven independent cases capture before/hidden/Show states, each with a lossless full
+screen and crop from the same sample. The panel is placed below the menu bar at screen
+center; the crop covers x=center−500, y=60, width=min(1000,screen width), height=540 in
+screen points from the top left, scaled to screenshot pixels. This proves isolated
+visibility, not notch placement. The final wizard uses production SetupWizardView with
+synthetic dependencies, triggered by the product's deferred setup presentation seam.
+Empty AppKit status-item frames are excluded from the visible-window inventory.
+Pixel acceptance requires inspecting every exported original PNG, independently of the
+native receipts; the Python scenario result alone is not visual acceptance.
+
+Hide Others also snapshots the installed accessory VoiceBar owner. If macOS refuses
+its hide request, preparation fails closed and restores the snapshot before any QA
+launch. A resident notch strip must not be mistaken for the isolated product panel.
+Capture receipts include on-screen window owner/PID/bounds for this distinction.
+The QA panel move/resize observer preserves capture placement after product layout
+callbacks without changing panel ordering. A failed preparation is not a product failure.
+
+HIDE1-VIS run05 authorization (RULINGS.md, 2026-10-16): the installed resident may
+be hidden only through its own AX “Hide for 1 hour” control, after immediately
+checking no sox/rec descendant of its daemon, no `/tmp/voicelayer-session-*.lock`
+under five minutes old, and a non-recording resident state. A failed condition
+requires a two-minute wait and recheck. No app/daemon stop, relaunch, replacement,
+or socket access is part of this flow. Restore through AX “Show VoiceBar” and
+verify the original notch window and both process identities. If its own hide
+fails, stop without a workaround.
+
+The operator records these actions in a reversible `resident-visibility.json`.
+Pass its absolute path as `VOICEBAR_UIE2E_RESIDENT_SNAPSHOT` to the prepared-run
+operator. `visibility.json` links that snapshot; its `restored` flag covers the
+regular apps hidden by the helper, while resident restoration is confirmed in
+the linked snapshot. The helper never calls application hide/unhide on the
+resident and fails closed if any resident-owned screen window remains. Close
+only operator-opened Settings before capture and return it to its initial state.
