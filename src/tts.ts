@@ -1616,6 +1616,11 @@ const playbackQueueManager = new PlaybackQueueManager();
 // identity alive across every preparation await so global Stop can invalidate it.
 const speechPreparations = new Set<AbortController>();
 
+/** Only an owned global Stop creates this reason; generic AbortErrors remain failures. */
+export class SpeechPreparationStoppedError extends Error {
+  constructor() { super("Stopped by the user before playback."); this.name = "SpeechPreparationStoppedError"; }
+}
+
 export function hasPendingSpeechPreparation(): boolean {
   return speechPreparations.size > 0;
 }
@@ -1696,7 +1701,7 @@ export function seekPlayback(offsetMs: number): SeekResult {
 /** Stop current playback if any. */
 export function stopPlayback(playbackElapsedMs?: number): boolean {
   const hadPreparation = hasPendingSpeechPreparation();
-  for (const controller of speechPreparations) controller.abort();
+  for (const controller of speechPreparations) controller.abort(new SpeechPreparationStoppedError());
   speechPreparations.clear();
   const hadLongRead = cancelLongRead(playbackElapsedMs);
   const stopped = playbackQueueManager.stop(playbackElapsedMs);

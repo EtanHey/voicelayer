@@ -21,7 +21,9 @@ import * as launcher from "../voice-bar-launcher";
 import * as recording from "../recording-state";
 import * as booking from "../session-booking";
 import { hasActiveVoiceOperation } from "../voice-operation-reservation";
-import { handleVoiceSpeak } from "../handlers";
+import * as input from "../input";
+import { handleMcpRequest } from "../mcp-handler";
+import { handleVoiceAsk, handleVoiceSpeak } from "../handlers";
 import { handleSocketCommand } from "../socket-handlers";
 import { STOP_FILE, ttsFilePath } from "../paths";
 
@@ -272,4 +274,60 @@ describe("STOP1 Stop during speech preparation", () => {
     expect(synthesize).toHaveBeenCalledTimes(1);
     expect(players).toHaveLength(0);
   });
+
+  const mcpCall = (name: "voice_speak" | "voice_ask", mode = "announce") => handleMcpRequest({
+    jsonrpc: "2.0", id: 1, method: "tools/call",
+    params: { name, arguments: { message: "Held question or announcement.", ...(name === "voice_speak" ? { mode } : {}) } },
+  }, { executeTool: (name, args, context) => name === "voice_ask" ? handleVoiceAsk(args, context) : handleVoiceSpeak(args, context) });
+
+  for (const [tool, mode] of [["voice_speak", "announce"], ["voice_speak", "brief"], ["voice_speak", "consult"], ["voice_ask", "converse"]] as const) {
+    it(`MCP ${tool}/${mode} treats its owned preparation Stop as a non-error`, async () => {
+      const entered = deferredFixture<void>(), synthesis = deferredFixture<void>();
+      releaseSynthesis = () => synthesis.resolve();
+      const record = spyOn(input, "waitForInput").mockRejectedValue(new Error("Unexpected recorder start")); spies.push(record);
+      synthesize.mockImplementation(async (_text, _voice, _rate, file) => {
+        entered.resolve(); await synthesis.promise; writeFileSync(file, "late fixture audio");
+        return { success: true, attempts: 1, audioFile: file, wordBoundaries: [] };
+      });
+      const pending = mcpCall(tool, mode); speech = pending;
+      await entered.promise;
+      expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
+      releaseSynthesis();
+      const response = await pending;
+      expect(response?.error).toBeUndefined();
+      expect(response?.result?.isError).not.toBe(true);
+      const text = (response?.result?.content as { text: string }[])[0].text;
+      expect(text).toContain(tool === "voice_ask"
+        ? "Stopped by the user before the question was spoken. Nothing was recorded."
+        : "Stopped by the user before playback.");
+      if (tool === "voice_ask") {
+        expect(text).toStartWith("┌─ voice_ask\n");
+        expect(text).not.toMatch(/Archive:|timeout|Error:/);
+      }
+      expect(record).not.toHaveBeenCalled();
+      expect(players).toHaveLength(0);
+      expect(tts.isCaptureAdmissionReserved()).toBe(false);
+      expect(hasActiveVoiceOperation()).toBe(false);
+      await fixtureCheckpoint();
+      expect(events.filter(e => e.type === "state").at(-1)).toMatchObject({ state: "idle" });
+    });
+  }
+
+  for (const tool of ["voice_speak", "voice_ask"] as const) {
+    for (const error of [new Error("Genuine synthesis failure"), new DOMException("Aborted", "AbortError")]) {
+      it(`MCP ${tool} preserves an unowned ${error.message} as an error`, async () => {
+        const record = spyOn(input, "waitForInput").mockRejectedValue(new Error("Unexpected recorder start")); spies.push(record);
+        synthesize.mockRejectedValue(error);
+        const pending = mcpCall(tool); speech = pending;
+        const response = await pending;
+        expect(response?.error).toBeUndefined();
+        expect(response?.result?.isError).toBe(true);
+        expect((response?.result?.content as { text: string }[])[0].text).toContain(error.message);
+        expect(record).not.toHaveBeenCalled();
+        expect(players).toHaveLength(0);
+        expect(tts.isCaptureAdmissionReserved()).toBe(false);
+        expect(hasActiveVoiceOperation()).toBe(false);
+      });
+    }
+  }
 });
