@@ -186,6 +186,7 @@ final class UIE2EModel {
     var tab: SettingsTab = .general
     var requestID = 0
     var events: [String] = []
+    var commands: [[String: Any]] = []
     var selectionText = "QA original selection"
     var onRunSetup: () -> Void = {}
     var residency = "loaded"
