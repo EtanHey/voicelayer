@@ -65,6 +65,7 @@ import { runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
 import { getEffectiveRecordingState } from "./recording-state";
+import { startCloneTiming } from "./tts/clone-timing";
 import {
   startPlaybackAmplitudeEnvelopeExtraction,
   type PlaybackAmplitudeEnvelope,
@@ -663,6 +664,7 @@ async function playClonedAudio(
   voiceLabel: string,
   speakingText: string,
   resolvedVoice: string,
+  projection: ReturnType<typeof projectSpeakableText>,
   options?: {
     rate?: string;
     mode?: string;
@@ -712,6 +714,7 @@ async function playClonedAudio(
       voice: resolvedVoice,
       priority: playbackPriorityForMode(options?.mode),
       durationMs,
+      cloneProjection: projection,
       nextState: options?.mode === "converse" ? "recording" : undefined,
       onStarted: options?.onPlaybackStart,
       onQueued: options?.onPlaybackQueued,
@@ -760,6 +763,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   seekSliceFile?: string;
   isSeek?: boolean;
   wordBoundaries?: WordBoundary[];
+  cloneProjection?: ReturnType<typeof projectSpeakableText>;
   priority?: PlaybackPriority;
   durationMs?: number;
   collapseKey?: string;
@@ -797,6 +801,7 @@ interface ActivePlayback {
   startedAt: number;
   watchdog?: ReturnType<typeof setTimeout>;
   watchdogTimedOut?: boolean;
+  timing?: ReturnType<typeof startCloneTiming>;
 }
 
 const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
@@ -1358,6 +1363,15 @@ class PlaybackQueueManager {
       }
     }
     next.metadata?.onStarted?.(Date.now());
+    const active = this.current;
+    if (active?.job === next && next.metadata?.cloneProjection && durationMs) {
+      const generation = next.lifecycle.generation;
+      active.timing = startCloneTiming({ ...next.metadata.cloneProjection,
+        audioPath: next.audioFile, durationMs, requestId: next.id,
+        chunkId: String(next.metadata.longRead?.chunk_index ?? 0),
+      }, () => this.current === active && !next.completed && next.lifecycle.generation === generation,
+      aligned_words => broadcast({ type: "subtitle", words: [], aligned_words }));
+    }
     this.startProgressTimer();
     this.emitQueueSnapshot();
 
@@ -1372,6 +1386,7 @@ class PlaybackQueueManager {
 
   private finish(job: PlaybackJob, proc: ActivePlayback["proc"], succeeded: boolean) {
     if (this.current?.proc !== proc || this.current.job !== job) return;
+    this.current.timing?.cancel();
     clearTimeout(this.current.watchdog);
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
     const elapsedMs = Date.now() - this.current.startedAt;
@@ -1576,6 +1591,7 @@ class PlaybackQueueManager {
   }
 
   private terminate(active: ActivePlayback, signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): void {
+    active.timing?.cancel();
     const pid = active.proc.pid;
     this.terminating.set(pid, active);
     try {
@@ -1791,6 +1807,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   const edgeFallbackRate = defaultRate();
   const chunkVoices = new Map<string, string>();
   const chunkEngines = new Map<string, string>();
+  const cloneProjections = new Map<string, ReturnType<typeof projectSpeakableText>>();
   // Swift routes Escape only in active modes. Actual playback resets this clock/text.
   broadcast({ type: "state", state: "speaking", text: "Preparing speech…", voice: profile.voice,
     long_read: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0, preparing: true } });
@@ -1853,6 +1870,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
           throwIfAbortedSafe(signal);
           const durationMs = probeAudioDurationMs(audioFile);
           if (!durationMs || durationMs <= 0) throw new Error("Cloned audio has no readable duration");
+          cloneProjections.set(audioFile, projection);
           return { audioFile, durationMs, wordBoundaries: [] };
         } catch (error) {
           try { unlinkSync(audioFile); } catch {}
@@ -1868,6 +1886,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         const playback = playAudioNonBlocking(chunk.audioFile, {
           text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs, longRead: info,
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
+          cloneProjection: cloneProjections.get(chunk.audioFile),
           playbackOffsetMs: info.chunk_start_ms + position.offsetMs,
           getUtteranceDurationMs: position.getDurationMs,
           ...(position.isSeek ? { localOffsetMs: position.offsetMs, isSeek: true, seekSliceFile: position.sliceFile } : {}),
@@ -1901,8 +1920,8 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);
         } finally { try { unlinkSync(combined); } catch {} }
       },
-      dispose: (chunk) => { chunkEngines.delete(chunk.audioFile); chunkVoices.delete(chunk.audioFile); try { unlinkSync(chunk.audioFile); } catch {} },
-    }, profile.engine === "clone" ? 2 : 1);
+      dispose: (chunk) => { cloneProjections.delete(chunk.audioFile); chunkEngines.delete(chunk.audioFile); chunkVoices.delete(chunk.audioFile); try { unlinkSync(chunk.audioFile); } catch {} },
+    }, 1);
   };
   // Preserve stopped audio: finish its history/cleanup before a replacement starts.
   handle.done = (predecessors.length ? Promise.all(predecessors).then(run) : run()).catch((error) => {
@@ -2096,6 +2115,7 @@ export async function speak(
           `xtts:${resolved.voice}`,
           speakingText,
           resolved.voice,
+          projection,
           cloneOptions(),
         );
         return {
@@ -2132,6 +2152,7 @@ export async function speak(
           `f5tts:${resolved.voice}`,
           speakingText,
           resolved.voice,
+          projection,
           cloneOptions(),
         );
         return {
@@ -2159,6 +2180,7 @@ export async function speak(
         `cloned:${resolved.voice}`,
         speakingText,
         resolved.voice,
+        projection,
         cloneOptions(),
       );
       return {

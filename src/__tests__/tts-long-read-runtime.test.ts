@@ -3,6 +3,8 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import * as socket from "../socket-client";
 import * as recording from "../recording-state";
 import * as qwen from "../tts/qwen3";
+import * as alignment from "../tts/clone-alignment";
+import { createHash } from "node:crypto";
 import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
@@ -46,10 +48,12 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
     spies.push(spyOn(socket, "broadcast").mockImplementation((event) => events.push(structuredClone(event))));
     spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
+    spies.push(spyOn(alignment, "alignCloneAudio").mockResolvedValue({ status: "untimed", identity: {} as any, words: [] }));
     // Only platform probing uses spawnSync; all synth/play/decode/conversion spawns are fakes.
     Bun.spawnSync = ((argv: string[]) => {
-      if (argv[0] === "which" && argv[1] === "ffprobe") return {exitCode:0, stdout:Buffer.from("ffprobe"), stderr:Buffer.alloc(0)};
-      return ({ exitCode: argv[0] === "ffprobe" ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
+      if (argv.includes("-af")) { writeFileSync(argv.at(-1)!, "adjusted audio"); return { exitCode: 0 }; }
+      if (argv[0] === "which" && ["ffprobe", "ffmpeg"].includes(argv[1])) return {exitCode:0, stdout:Buffer.from(argv[1]), stderr:Buffer.alloc(0)};
+      return ({ exitCode: ["ffprobe", "ffmpeg"].includes(argv[0]) ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
     Bun.spawn = ((argv: string[]) => {
       if (argv[1] === "-version") return {pid: 70001, exited: Promise.resolve(argv[0] === "ffmpeg" ? 0 : 1), kill() {}};
       if (argv[0] === "which") return { pid: 70000, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg"]).stream(), kill: () => {} };
@@ -63,6 +67,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
       }
       if (argv[0] === "ffmpeg") {
+        if (argv.includes("-af")) writeFileSync(argv.at(-1)!, "adjusted audio");
         if (argv.includes("-ss")) writeFileSync(argv.at(-1)!, "trimmed audio");
         if (argv.includes("concat") && failHistory) throw Object.assign(new Error("EBADARCH"), {code: "EBADARCH"});
         if (argv.includes("concat")) {
@@ -87,6 +92,77 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+
+  function cloneFixture() {
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
+    spies.push(spyOn(qwen, "loadProfile").mockReturnValue({ engine: "qwen3-tts", reference_clips: [], reference_clip: "", fallback: "jenny" } as any));
+    const entered = fixtureBarrier<alignment.CloneAlignmentRequest>();
+    const pending: ReturnType<typeof deferred<alignment.CloneAlignmentResult>>[] = [];
+    spies.push(spyOn(alignment, "alignCloneAudio").mockImplementation(request => {
+      const result = deferred<alignment.CloneAlignmentResult>(); pending.push(result); entered.push(request); return result.promise;
+    }));
+    const result = (request: alignment.CloneAlignmentRequest): alignment.CloneAlignmentResult => ({
+      status: "partial", identity: { requestId: request.requestId, chunkId: request.chunkId, playbackRate: request.playbackRate,
+        audioSha256: createHash("sha256").update(readFileSync(request.audioPath)).digest("hex") },
+      words: Array.from(request.displayText.matchAll(/\S+/gu), (word, i) => ({ text: word[0], displayRange: { start: word.index, end: word.index + word[0].length },
+        offset_ms: i === 1 ? null : i * 100, duration_ms: i === 1 ? null : 80 })),
+    });
+    return { entered, pending, result };
+  }
+
+  for (const route of ["speak", "long"] as const) it(`CLN1b ${route}: playback starts before partial timings and preserves display indices`, async () => {
+    const fixture = cloneFixture(), display = "Export MP3 now.";
+    if (route === "speak") await speak(display, { voice: "fixture", rate: "+50%" });
+    else { const h = speakLongRead(display, { engine: "clone", voice: "fixture", rate: "+50%" }); handles.push(h); }
+    await playerBarrier.at(0);
+    expect(events.some(e => e.type === "subtitle")).toBe(false);
+    const request = await fixture.entered.at(0);
+    expect(request.audioPath).toBe(players[0].argv.at(-1)!);
+    expect(request).toMatchObject({ displayText: display, speechText: "Export M P three now.", playbackRate: 1, lowPriority: true });
+    const published = fixtureBarrier<any>();
+    spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(structuredClone(event)); if (event.type === "subtitle") published.push(event); }));
+    fixture.pending[0].resolve(fixture.result(request));
+    expect(await published.at(0)).toEqual({ type: "subtitle", words: [], aligned_words: [
+      { word_index: 0, text: "Export", offset_ms: 0, duration_ms: 80 },
+      { word_index: 1, text: "MP3", offset_ms: null, duration_ms: null },
+      { word_index: 2, text: "now.", offset_ms: 200, duration_ms: 80 },
+    ] });
+  });
+
+  for (const stale of ["requestId", "chunkId", "audioSha256", "playbackRate", "text", "audio", "stop", "seek", "recording", "transcribing"] as const)
+    it(`CLN1b drops ${stale} alignment and cancels owned work`, async () => {
+      const fixture = cloneFixture(); start("clone", "Export MP3 now."); await playerBarrier.at(0);
+      const request = await fixture.entered.at(0), result = fixture.result(request);
+      if (stale === "stop") stopPlayback();
+      else if (stale === "seek") { seekPlayback(0); await playerBarrier.at(1); }
+      else if (stale === "recording" || stale === "transcribing") {
+        recording.setRecordingState(stale); expect(request.signal!.aborted).toBe(true); recording.setRecordingState("idle");
+      } else if (stale === "text") result.words[0].text = "wrong";
+      else if (stale === "audio") writeFileSync(request.audioPath, "replaced audio");
+      else (result.identity as any)[stale] = stale === "playbackRate" ? 2 : "stale";
+      fixture.pending[0].resolve(result);
+      await fixtureCheckpoint(); await Bun.sleep(25);
+      expect(events.some(e => e.type === "subtitle")).toBe(false);
+      // Release any seek replacement's deferred alignment before teardown.
+      for (let i = 1; i < fixture.pending.length; i++) fixture.pending[i].resolve({ ...result, status: "untimed" });
+    });
+
+  it("CLN1b next chunk playback never waits for old alignment and publishes local offsets", async () => {
+    const fixture = cloneFixture(); start("clone"); await playerBarrier.at(0);
+    const first = await fixture.entered.at(0), oldResult = fixture.result(first);
+    expect(qwen.synthesizeCloned).toHaveBeenCalledTimes(2); // current + one lookahead
+    players[0].exit.resolve(0); await playerBarrier.at(1);
+    expect(first.signal!.aborted).toBe(true);
+    fixture.pending[0].resolve(oldResult);
+    const second = await fixture.entered.at(1);
+    expect(events.some(e => e.type === "subtitle")).toBe(false);
+    expect(events.filter(e => e.state === "speaking").at(-1).long_read.chunk_start_ms).toBe(1000);
+    const published = fixtureBarrier<any>();
+    spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(structuredClone(event)); if (event.type === "subtitle") published.push(event); }));
+    fixture.pending[1].resolve(fixture.result(second));
+    expect((await published.at(0)).aligned_words[0].offset_ms).toBe(0);
+    expect(second.chunkId).toBe("1");
+  });
 
   for (const engine of ["edge", "clone", "fallback"] as const) it(`SPK1 normalizes ${engine} long reads while display/history stay original`, async () => {
     const display = "Play MP3 from INCIDENT-INVENTORY.md.";
