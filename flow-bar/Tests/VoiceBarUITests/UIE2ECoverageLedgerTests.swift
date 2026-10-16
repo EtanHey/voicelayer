@@ -117,6 +117,24 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
             "Overlapping panels cannot earn individual visual coverage")
     }
 
+    func testHistoryHitUsesTheRenderedLeadingTextRatherThanTheWideSpacer() {
+        for frame in [CGRect(x: 265, y: 516, width: 623, height: 50), CGRect(x: 275, y: 577, width: 138, height: 32)] {
+            let point = UIE2EHistoryGeometry.selectionOffset(in: frame)
+            XCTAssertTrue(CGRect(x: 28, y: 2, width: 100, height: 18).contains(CGPoint(x: point.dx, y: point.dy)),
+                "A duration label can widen AX across an inert Spacer; click the leading text")
+        }
+    }
+    func testAskActionsStayInsideTheirOwnPayloadInterval() {
+        let first = CGRect(x: 300, y: 600, width: 500, height: 20)
+        let loaded = CGRect(x: 300, y: 760, width: 500, height: 20)
+        let copies = [CGRect(x: 330, y: 625, width: 20, height: 20), CGRect(x: 330, y: 800, width: 20, height: 20)]
+        XCTAssertEqual(UIE2EHistoryGeometry.actionIndex(after: first, before: loaded.minY, candidates: copies), 0)
+        XCTAssertEqual(UIE2EHistoryGeometry.actionIndex(after: loaded, before: nil, candidates: copies), 1)
+        XCTAssertNil(UIE2EHistoryGeometry.actionIndex(after: first, before: loaded.minY, candidates: [copies[1]]),
+            "A missing first-row action must not borrow the loaded row")
+        XCTAssertNil(UIE2EHistoryGeometry.actionIndex(after: loaded, before: nil, candidates: [copies[1], copies[1]]))
+        XCTAssertNil(UIE2EHistoryGeometry.actionIndex(after: .zero, before: nil, candidates: copies))
+    }
 
     func testFullAXTextCannotProveThatAOneLineFeedbackFrameIsReadable() {
         // Deliberately synthetic overflow stress text; this is not current product copy.
