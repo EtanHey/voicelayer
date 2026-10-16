@@ -12,7 +12,7 @@ final class SpeechSettingsShotsTests: XCTestCase {
         }
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        for name in ["fast", "clone-down-locked", "not-measured", "clone-running"] {
+        for name in ["fast", "clone-down-locked", "not-measured", "clone-running", "copy-error"] {
             let locked = name == "clone-down-locked"
             var raw = SpeechSettingsTests.controls(rateSource: locked ? "environment" : "settings")
             var profiles = raw["profiles"] as! [String: [String: Any]]
@@ -43,6 +43,7 @@ final class SpeechSettingsShotsTests: XCTestCase {
                                          "configured_model": ["installed": true]]]) },
                     onRefreshModelsStatus: {}, speechControls: { controls }, speechConnected: { true },
                     speechBusyReason: { name == "clone-running" ? "Speaking…" : nil },
+                    speechNotice: { name == "copy-error" ? "Couldn't complete the speech request - provider unavailable\nFull diagnostic: connection refused · שלום 🎧" : nil },
                     onChangeSpeech: { _, _ in }, onSelectSpeechEngine: { _, _, _ in }, onPreviewSpeech: { _ in }, vocabularyRevision: { 0 },
                     footerPresentation: { .resolve(isConnected: true, mode: .idle, captureLive: false,
                                                   errorMessage: nil, remoteSTTConfigured: false, hasFreshHealth: true) },

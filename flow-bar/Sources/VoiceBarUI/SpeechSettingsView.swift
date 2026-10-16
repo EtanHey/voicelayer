@@ -18,6 +18,8 @@ public struct SpeechSettingsView: View {
                 || pending[key.replacingOccurrences(of: ".voice", with: ".engine")] != nil))
     }
 
+    static let daemonCommand = "voicelayer daemon"
+
     struct DisplayProfile {
         let engine: String
         let voice: String
@@ -110,10 +112,16 @@ public struct SpeechSettingsView: View {
                             }
                             if display.cloneWarning || Self.cloneStatusOwner(controls: controls, pending: pending) == kind {
                                 if display.cloneWarning {
-                                    Label("Clone engine isn't running, so this will use the fast voice (fallback). Start it with `voicelayer daemon`.",
-                                          systemImage: "exclamationmark.triangle.fill")
-                                        .foregroundStyle(.primary).font(.callout)
-                                        .fixedSize(horizontal: false, vertical: true)
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Label("Clone engine isn't running, so this will use the fast voice (fallback). Start it with:",
+                                              systemImage: "exclamationmark.triangle.fill")
+                                            .foregroundStyle(.primary).font(.callout)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        HStack {
+                                            Text(Self.daemonCommand).font(.system(.callout, design: .monospaced))
+                                            SettingsCopyButton(text: Self.daemonCommand, label: "daemon command")
+                                        }
+                                    }
                                 } else {
                                     Label("Clone engine is running.", systemImage: "checkmark.circle")
                                         .font(.caption).foregroundStyle(.secondary)
@@ -139,7 +147,13 @@ public struct SpeechSettingsView: View {
                 Text(connected ? "Speech settings are not reported by this VoiceLayer version." : "VoiceLayer isn't connected. Speech settings appear when it reconnects.")
                     .foregroundStyle(.secondary)
             }
-            if let notice, pending["preview"] == nil { Text(notice).font(.caption).foregroundStyle(.primary) }
+            if let notice, pending["preview"] == nil {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(notice).font(.caption).foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    SettingsCopyButton(text: notice, label: "speech error")
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

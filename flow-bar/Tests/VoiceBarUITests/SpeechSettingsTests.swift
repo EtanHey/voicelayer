@@ -266,4 +266,18 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertTrue(display.cloneWarning)
         XCTAssertTrue(controls.profiles[.short]?.latencyLabel.contains("Fast voice (fallback)") == true)
     }
+    func testSpeechCopyUsesTheShownCommandAndFullVisibleError() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SpeechSettingsView.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("Text(Self.daemonCommand)"), "The copied command must also be displayed verbatim")
+        XCTAssertTrue(source.contains("SettingsCopyButton(text: Self.daemonCommand, label: \"daemon command\")"))
+        let noticeStart = try XCTUnwrap(source.range(of: "if let notice, pending[\"preview\"] == nil"))
+        let footer = source[noticeStart.lowerBound...]
+        XCTAssertTrue(footer.contains("Text(notice)"))
+        XCTAssertTrue(footer.contains("SettingsCopyButton(text: notice, label: \"speech error\")"),
+                      "Copy must receive the same full error under the same visibility gate")
+        XCTAssertFalse(source.contains("Process("), "Showing or copying the command must never execute it")
+    }
+
 }
