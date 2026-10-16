@@ -232,7 +232,7 @@ function retainedPolishSurfaceForRetranscription(): STTPolishSurface {
     }
   } catch (err) {
     console.error(
-      `[voicelayer] Failed to read retained recording metadata: ${err instanceof Error ? err.message : String(err)}`,
+      `[voicelayer] Failed to read retained recording metadata: ${archiveDiagnosticReason(err)}`,
     );
   }
 
@@ -268,11 +268,20 @@ function readRetainedRecordingMetadata(): RetainedRecordingMetadata | null {
     }
   } catch (err) {
     console.error(
-      `[voicelayer] Failed to read retained recording metadata: ${err instanceof Error ? err.message : String(err)}`,
+      `[voicelayer] Failed to read retained recording metadata: ${archiveDiagnosticReason(err)}`,
     );
   }
 
   return null;
+}
+
+// Archive errors may contain a full path or invalid JSON's private contents.
+// Only fixed categories/codes belong in diagnostics; wire errors stay actionable.
+function archiveDiagnosticReason(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  if (typeof code === "string" && ["ENOENT", "EACCES", "EPERM", "EIO", "ENOSPC",
+    "EEXIST", "ENOTDIR", "EISDIR", "ELOOP", "EROFS", "EMFILE", "ENFILE"].includes(code)) return code;
+  return error instanceof SyntaxError ? "invalid-metadata" : "archive-operation-failed";
 }
 
 export function linkRetainedCaptureToArchive(archiveAudioPath: string): void {
@@ -300,7 +309,7 @@ export function linkRetainedCaptureToArchive(archiveAudioPath: string): void {
     );
   } catch (err) {
     console.error(
-      `[voicelayer] Failed to link retained capture to archive: ${err instanceof Error ? err.message : String(err)}`,
+      `[voicelayer] Failed to link retained capture to archive: ${archiveDiagnosticReason(err)}`,
     );
   }
 }
@@ -325,14 +334,14 @@ function retainedArchiveAudioPath(): string | null {
       metadata.archive_audio_sha256 !== archivedAudioSha256(archivedPath)
     ) {
       console.error(
-        `[voicelayer] Linked archive no longer matches the retained capture; skipping archive update: ${archivedPath}`,
+        "[voicelayer] Linked archive no longer matches the retained capture; skipping archive update",
       );
       return null;
     }
     return metadata.archive_audio_path;
   } catch (err) {
     console.error(
-      `[voicelayer] Ignoring invalid linked archive audio path: ${err instanceof Error ? err.message : String(err)}`,
+      `[voicelayer] Ignoring invalid linked archive audio path: ${archiveDiagnosticReason(err)}`,
     );
     return null;
   }
@@ -2915,7 +2924,7 @@ export async function waitForInput(
             linkRetainedCaptureToArchive(join(archivePath, "audio.wav"));
           } catch (recoveryErr) {
             console.error(
-              `[voicelayer] Failed to retain captured recording for retry: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
+              `[voicelayer] Failed to retain captured recording for retry: ${archiveDiagnosticReason(recoveryErr)}`,
             );
           }
         }
@@ -2926,12 +2935,12 @@ export async function waitForInput(
         appendControlLayerEvent("capture.archive_failed", {
           archive_source: options.archiveSource,
           duration_ms: durationMs,
-          error: detail,
-          recording_error: err.originalError.message,
+          error: archiveDiagnosticReason(archiveErr),
+          recording_error: archiveDiagnosticReason(err.originalError),
         });
         const message = `${options.archiveSource} archive failed after capture abort: ${detail}`;
         if (options.archiveSource === "voice_ask") throw new Error(message);
-        console.error(`[voicelayer] ${message}`);
+        console.error(`[voicelayer] ${options.archiveSource} archive failed after capture abort: ${archiveDiagnosticReason(archiveErr)}`);
       }
     }
     appendControlLayerEvent("capture.recording_failed", {
@@ -3014,9 +3023,9 @@ export async function waitForInput(
       appendControlLayerEvent("capture.archive_failed", {
         archive_source: "voicebar",
         duration_ms: sttTrim.rawDurationMs,
-        error: detail,
+        error: archiveDiagnosticReason(err),
       });
-      console.error(`[voicelayer] ${message}`);
+      console.error(`[voicelayer] voicebar archive failed: ${archiveDiagnosticReason(err)}`);
       broadcast({ type: "error", message, recoverable: true });
     }
   }
@@ -3037,13 +3046,13 @@ export async function waitForInput(
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       console.error(
-        `[voicelayer] Failed to archive voice_ask capture: ${detail}`,
+        `[voicelayer] Failed to archive voice_ask capture: ${archiveDiagnosticReason(err)}`,
       );
       const archiveError = `voice_ask archive failed: ${detail}`;
       appendControlLayerEvent("capture.archive_failed", {
         archive_source: "voice_ask",
         duration_ms: sttTrim.rawDurationMs,
-        error: detail,
+        error: archiveDiagnosticReason(err),
       });
       setRecordingState("idle");
       broadcast({
@@ -3303,7 +3312,7 @@ export async function waitForInput(
       );
       if (result.text.trim() && !finalized.text) {
         console.error(
-          `[voicelayer] Suppressed non-meaningful transcription: ${JSON.stringify(result.text)}`,
+          `[voicelayer] Suppressed non-meaningful transcription: raw_chars=${result.text.length}`,
         );
       }
     }
@@ -3318,7 +3327,7 @@ export async function waitForInput(
       processingStartedAtMs: postCaptureProcessingStartedAtMs,
       finalTranscriptReadyAtMs,
     });
-    console.error(`[voicelayer] Transcription: ${text}`);
+    console.error(`[voicelayer] Transcription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
 
     retainLastCaptureForRecovery(
       sttWavData,
@@ -3381,7 +3390,7 @@ export async function waitForInput(
         }
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
-        console.error(`[voicelayer] Failed to archive recording: ${detail}`);
+        console.error(`[voicelayer] Failed to archive recording: ${archiveDiagnosticReason(err)}`);
         if (options.archiveSource === "voice_ask") {
           throw new Error(`voice_ask archive failed: ${detail}`);
         }
@@ -3432,8 +3441,7 @@ export async function waitForInput(
           // History may have cached this entry between delivery and now; the write is durable, so say so.
           broadcast({ type: "archive_metadata_updated", recording_path: spokenAudioPath });
         } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err);
-          console.error(`[voicelayer] Failed to record spoken length: ${detail}`);
+          console.error(`[voicelayer] Failed to record spoken length: ${archiveDiagnosticReason(err)}`);
         }
       });
     }
@@ -3643,7 +3651,7 @@ function updateArchivedRecordingMetadata(
   } catch (err) {
     if (required) throw err;
     console.error(
-      `[voicelayer] Failed to update archived recording metadata: ${err instanceof Error ? err.message : String(err)}`,
+      `[voicelayer] Failed to update archived recording metadata: ${archiveDiagnosticReason(err)}`,
     );
   }
 }
@@ -4181,7 +4189,7 @@ export async function retranscribeRecordingCapture(
       message: "Transcribing",
     });
     console.error(
-      `[voicelayer] Retranscribing archived recording with ${backend.name}: ${wavPath}`,
+      `[voicelayer] Retranscribing archived recording with ${backend.name}: recording_present=true`,
     );
     const { sttWavPath, cleanup, transcribedDurationMs } =
       prepareRetranscribeWavForSTT(
@@ -4207,10 +4215,10 @@ export async function retranscribeRecordingCapture(
       const text = finalized.text;
       if (result.text.trim() && !text) {
         console.error(
-          `[voicelayer] Suppressed non-meaningful archived retranscription: ${JSON.stringify(result.text)}`,
+          `[voicelayer] Suppressed non-meaningful archived retranscription: raw_chars=${result.text.length}`,
         );
       }
-      console.error(`[voicelayer] Archived retranscription: ${text}`);
+      console.error(`[voicelayer] Archived retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
 
       if (text) {
         updateArchivedTranscript(wavPath, text, {
@@ -4312,10 +4320,10 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       const text = finalized.text;
       if (result.text.trim() && !text) {
         console.error(
-          `[voicelayer] Suppressed non-meaningful retranscription: ${JSON.stringify(result.text)}`,
+          `[voicelayer] Suppressed non-meaningful retranscription: raw_chars=${result.text.length}`,
         );
       }
-      console.error(`[voicelayer] Retranscription: ${text}`);
+      console.error(`[voicelayer] Retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
 
       if (text) {
         if (archivedAudioPath) {

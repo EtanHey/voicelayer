@@ -36,10 +36,28 @@ writeFileSync(${JSON.stringify(prefix + ".hash")},createHash('sha256').update(re
 }
 const offsets = (result: Awaited<ReturnType<typeof alignCloneAudio>>) => result.words.map(w => w.offset_ms);
 async function started(prefix: string) {
-  for (let i = 0; i < 200; i++) { try { return Number(await readFile(prefix + ".pid", "utf8")); } catch { await Bun.sleep(5); } }
+  for (let i = 0; i < 200; i++) {
+    try {
+      const pid = Number(await readFile(prefix + ".pid", "utf8"));
+      // An empty create-before-write read becomes 0, which probes our process
+      // group instead of the decoder and falsely reports it is still alive.
+      if (Number.isSafeInteger(pid) && pid > 0) return pid;
+    } catch {}
+    await Bun.sleep(5);
+  }
   throw new Error("decoder did not start");
 }
 function reaped(pid: number) { expect(() => process.kill(pid, 0)).toThrow(); }
+
+test("decoder PID observation waits for the marker contents", async () => {
+  const prefix = join(root, String(++serial));
+  // writeFileSync creates/truncates the marker before writing the PID bytes.
+  await writeFile(prefix + ".pid", "");
+  const pending = started(prefix);
+  await Bun.sleep(20);
+  await writeFile(prefix + ".pid", String(process.pid));
+  expect(await pending).toBe(process.pid);
+});
 
 test("frozen Edge audio retains only spans corroborated by the same token's DTW anchor", async () => {
   const { input } = await request("Should the company and the project merge, or stay separate?", EDGE_DECODE);
@@ -127,6 +145,8 @@ test("cancellation reaps owned decoding before returning, including pre-abort", 
 });
 test("the half-duration deadline kills and reaps a slow decoder", async () => {
   const { input, prefix } = await request("hello", payload(["hello"]), 5000);
+  // Hold open the create-before-write window in the decoder's PID marker.
+  await writeFile(prefix + ".pid", "");
   const pending = alignCloneAudio(input), pid = await started(prefix);
   expect((await pending).reason).toBe("deadline"); reaped(pid);
 });

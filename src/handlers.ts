@@ -898,7 +898,9 @@ export async function handleConverse(
       return textResult(formatAsk(null, { outcome: "stopped-before-prompt" }));
     }
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[voicelayer] voice_ask error: ${message}`);
+    // Wire/recovery errors stay actionable; provider/filesystem messages can
+    // contain transcript text or private archive paths and must not enter logs.
+    console.error("[voicelayer] voice_ask error: request failed");
     const recovery = recoveryOptions(message);
     if (recovery) {
       return textResult(formatAsk(null, { outcome: "captured", recovery }));
