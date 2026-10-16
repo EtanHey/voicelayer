@@ -92,6 +92,16 @@ public struct TeleprompterBoundary: Equatable {
             // Match the old decoder's Int-first coercion (including JSON booleans)
             // and signed fractional truncation, without trapping on unsafe Doubles.
             func legacyMilliseconds(_ value: Any?) -> Int? {
+                // JSON can retain an out-of-range integer as NSDecimalNumber;
+                // converting it to Double first can round it back into Int's range.
+                if let number = value as? NSDecimalNumber {
+                    var original = number.decimalValue
+                    guard !original.isNaN else { return nil }
+                    var truncated = Decimal()
+                    NSDecimalRound(&truncated, &original, 0, original < 0 ? .up : .down)
+                    guard truncated >= Decimal(Int.min), truncated <= Decimal(Int.max) else { return nil }
+                    return NSDecimalNumber(decimal: truncated).intValue
+                }
                 if let integer = value as? Int { return integer }
                 guard let number = value as? Double, number.isFinite else { return nil }
                 return Int(exactly: number.rounded(.towardZero))

@@ -11,6 +11,13 @@ final class LegacySubtitleParityTests: XCTestCase {
         ["text": "world", "offset_ms": 500, "duration_ms": 100],
     ]
 
+    private var outOfRangeLegacyRows: [String] {
+        ["-9223372036854775809", "9223372036854775808"].flatMap { number in
+            ["{\"text\":\"Hello\",\"offset_ms\":\(number),\"duration_ms\":0}",
+             "{\"text\":\"Hello\",\"offset_ms\":0,\"duration_ms\":\(number)}"]
+        }
+    }
+
     func testLegacyEventTableMatches85a1fa5c() throws {
         // Captured from base's subtitle handler + content/playback policies.
         // Each event follows a valid event: missing/mistyped words are no-ops;
@@ -108,15 +115,47 @@ final class LegacySubtitleParityTests: XCTestCase {
         }
     }
 
+    func testRawJSONOutOfRangeLegacyNumbersDropOnlyUnsafeRows() throws {
+        for chunkStart in [0, 12000] {
+            for row in outOfRangeLegacyRows {
+                for mixed in [false, true] {
+                    let neighbors = #"{"text":"world","offset_ms":500,"duration_ms":100}"#
+                    let raw = "{\"words\":[\(mixed ? neighbors + "," : "")\(row)\(mixed ? "," + neighbors : "")]}"
+                    let event = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+                    let decoded = TeleprompterBoundary.subtitleWords(event, chunkStartMs: chunkStart)
+                    let expected = mixed ? Array(repeating: TeleprompterBoundary(
+                        offsetMs: chunkStart + 500, durationMs: 100, text: "world"), count: 2) : []
+                    XCTAssertEqual(decoded, expected, raw)
+                }
+            }
+        }
+    }
+
+    func testRawJSONLegacyIntegerLimitsRemainExact() throws {
+        for (number, expected) in [("-9223372036854775808", Int.min), ("9223372036854775807", Int.max),
+                                   ("-9223372036854775808.9", Int.min), ("9223372036854775807.9", Int.max)] {
+            for field in ["offset_ms", "duration_ms"] {
+                let offset = field == "offset_ms" ? number : "0"
+                let duration = field == "duration_ms" ? number : "0"
+                let raw = "{\"words\":[{\"text\":\"Hello\",\"offset_ms\":\(offset),\"duration_ms\":\(duration)}]}"
+                let event = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+                let decoded = TeleprompterBoundary.subtitleWords(event, chunkStartMs: 0)
+                XCTAssertEqual(decoded, [TeleprompterBoundary(offsetMs: field == "offset_ms" ? expected : 0,
+                    durationMs: field == "duration_ms" ? expected : 0, text: "Hello")], raw)
+            }
+        }
+    }
+
     func testLegacyOverflowOnlyEventNeverRendersEstimatedKaraoke() async throws {
-        for (offset, duration, chunkStart) in [(Int.max, 1, 0), (Int.max, 0, 12000)] {
+        let arithmeticRows = [("{\"text\":\"Hello\",\"offset_ms\":\(Int.max),\"duration_ms\":1}", 0),
+                              ("{\"text\":\"Hello\",\"offset_ms\":\(Int.max),\"duration_ms\":0}", 12000)]
+        for (row, chunkStart) in arithmeticRows + outOfRangeLegacyRows.map({ ($0, 0) }) {
             let state = VoiceState(playbackAmplitudeClock: { 100 })
             state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world",
                                "long_read": ["chunk_start_ms": chunkStart], "duration_ms": chunkStart + 5000])
             state.handleEvent(["type": "subtitle", "words": valid])
-            let data = try JSONSerialization.data(withJSONObject: ["type": "subtitle", "words": [
-                ["text": "Hello", "offset_ms": offset, "duration_ms": duration]]])
-            let event = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let raw = "{\"type\":\"subtitle\",\"words\":[\(row)]}"
+            let event = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
             state.handleEvent(event)
             XCTAssertTrue(state.wordBoundaries.isEmpty)
             for appearance in [VoiceBarNotchAppearance.dark, .light] {
