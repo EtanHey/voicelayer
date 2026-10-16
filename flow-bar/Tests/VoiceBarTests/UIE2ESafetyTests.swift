@@ -134,6 +134,18 @@ final class UIE2EFixtureCommandTests: XCTestCase {
         XCTAssertTrue(model.events.contains("ask-history-page:200"))
     }
 
+    func testPreparingFixtureKeepsOriginalSelectionIdentityForSameSelectionStop() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        model.fixture("preparing")
+        model.selectionText = "QA original selection"
+        model.fixture("selection-replace")
+        XCTAssertEqual(model.commands.last?["cmd"] as? String, "stop")
+    }
+
     func testPreparingSelectionProbeUsesTheRealSelectionMethodWithNoNativeCapture() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

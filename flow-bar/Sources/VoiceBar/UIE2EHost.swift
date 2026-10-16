@@ -432,7 +432,9 @@ final class UIE2EModel {
         case "speak_text":
             // Real VoiceState selection routing ends here, never at a daemon or AX capture.
             voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
-                "text": message["text"] as? String ?? ""])
+                "text": message["text"] as? String ?? "",
+                "long_read": ["id": message["id"] as? String ?? "qa-selection",
+                              "chunk_start_ms": 0, "estimated_total_ms": 600_000]])
             return
         case "replay", "stop":
             // Synthetic daemon responses only, for native layout transitions. This
@@ -482,7 +484,7 @@ final class UIE2EModel {
             voice.speakSelection()
             voice.isHovering = true
             voice.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
-                "long_read": ["id": "qa-prepare", "chunk_index": 0, "chunk_count": 1,
+                "long_read": ["id": commands.last?["id"] as? String ?? "qa-selection", "chunk_index": 0, "chunk_count": 1,
                               "chunk_start_ms": 0, "preparing": true]])
             sandbox.writeObject(["mode": voice.mode.rawValue, "statusText": voice.statusText,
                 "durationGrowing": voice.isPlaybackDurationGrowing,
