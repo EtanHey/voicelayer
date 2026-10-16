@@ -58,29 +58,35 @@ function matchWords(expected: string[], heard: MeasuredWord[]): (number | null)[
   });
 }
 
+const DTW_ANCHOR_TOLERANCE_MS = 30; // Frozen Edge comparison; never extends a returned span.
 /** whisper.cpp's offsets are estimates and can interpolate silence. DTW supplies
  * a separate acoustic token anchor, NOT a word onset. Never turn that anchor into
- * a fabricated onset/end: retain the original span only when it contains the
- * anchor. This is conservative corroboration, not an acoustic correctness proof. */
+ * a fabricated onset/end: keep the original span when its anchor agrees within
+ * the bounded tolerance. This is corroboration, not acoustic correctness proof. */
 function measuredWords(payload: any, duration: number): MeasuredWord[] {
   if (!Array.isArray(payload?.transcription)) return [];
-  const words: MeasuredWord[] = []; let previousEnd = 0;
+  const spans: (MeasuredWord & { range: TextRange })[] = []; let previousEnd = 0, text = "";
   for (const segment of payload.transcription) {
     if (!Array.isArray(segment?.tokens)) return [];
     for (const token of segment.tokens) {
       if (typeof token?.text !== "string") return [];
-      if (token.text.startsWith("[_") || !lexical(token.text).length) continue;
+      if (token.text.startsWith("[_")) continue;
+      // Reconstruct the literal surface BEFORE lexing: stripping an apostrophe
+      // from "'re", or ignoring a standalone quote/space, changes word identity.
+      const range = { start: text.length, end: text.length + token.text.length }; text += token.text;
       const pieces = lexical(token.text), start = token.offsets?.from, end = token.offsets?.to, anchor = token.t_dtw * 10;
+      if (!pieces.length) continue; // Punctuation has lexical effect, but no acoustic target of its own.
       if (pieces.length !== 1 || !Number.isFinite(start) || !Number.isFinite(end) || start < previousEnd || end < start || end > duration) return [];
-      const valid = end > start && Number.isFinite(token.t_dtw) && anchor >= start && anchor <= end && Number.isFinite(token.p) && token.p >= .9 && token.p <= 1;
-      const previous = words.at(-1);
-      if (previous && !/^\s/u.test(token.text)) {
-        previous.text += pieces[0][0]; previous.end = end; previous.valid &&= valid;
-      } else words.push({ text: pieces[0][0], start, end, valid });
+      const valid = end > start && Number.isFinite(token.t_dtw) && anchor >= 0 && anchor <= duration &&
+        anchor >= start - DTW_ANCHOR_TOLERANCE_MS && anchor <= end + DTW_ANCHOR_TOLERANCE_MS && Number.isFinite(token.p) && token.p >= .9 && token.p <= 1;
+      spans.push({ text: token.text, range, start, end, valid });
       previousEnd = end;
     }
   }
-  return words;
+  return lexical(text).map(word => {
+    const parts = spans.filter(span => overlap(span.range, { start: word.index, end: word.index + word[0].length }));
+    return { text: word[0], start: parts[0].start, end: parts.at(-1)!.end, valid: parts.every(part => part.valid) };
+  });
 }
 
 function validProjection(input: CloneAlignmentRequest): boolean {

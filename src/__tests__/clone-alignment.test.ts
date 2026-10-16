@@ -43,7 +43,7 @@ test("frozen Edge audio retains only spans corroborated by the same token's DTW 
   const { input } = await request("Should the company and the project merge, or stay separate?", EDGE_DECODE);
   const result = await alignCloneAudio(input);
   expect(result.status).toBe("partial");
-  expect(offsets(result)).toEqual([null, null, 640, 1030, 1220, 1410, 1860, null, null, null]);
+  expect(offsets(result)).toEqual([240, 390, 640, 1030, 1220, 1410, 1860, null, null, null]);
   expect(result.identity).toEqual({ requestId: "request-a", chunkId: "chunk-2", playbackRate: 1, audioSha256: EDGE_SHA });
 });
 test("frozen audio maps a multiword SPK replacement and JSON escape without new acoustic times", async () => {
@@ -98,6 +98,7 @@ test("invalid projection, time, confidence, and DTW disagreement never gain offs
   for (const token of [
     { offsets: { from: -1, to: 260 } }, { offsets: { from: 100, to: 90 } },
     { offsets: { from: 100, to: 5000 } }, { t_dtw: -1 }, { t_dtw: 30 }, { p: .2 },
+    { offsets: { from: 0, to: 160 }, t_dtw: -1 }, { offsets: { from: 4240, to: 4340 }, t_dtw: 436 },
   ]) {
     const response = payload(["hello"]); Object.assign(response.transcription[0].tokens[0], token);
     const row = await request("hello", response);
@@ -158,6 +159,39 @@ test("unrecognized output and backward acoustic spans stay untimed", async () =>
   const response = payload(["hello", "world"]); response.transcription[0].tokens[1].offsets.from = 50;
   const backwards = await request("hello world", response);
   expect(offsets(await alignCloneAudio(backwards.input))).toEqual([null, null]);
+});
+
+for (const row of [
+  { name: "straight suffix", parts: ["we", "'re"], duration: 360 },
+  { name: "curly suffix", parts: ["we", "’re"], duration: 360 },
+  { name: "straight apostrophe-only token", parts: ["we", "'", "re"], duration: 560 },
+  { name: "curly apostrophe-only token", parts: ["we", "’", "re"], duration: 560 },
+]) {
+  const contraction = () => {
+    const response = payload(row.parts);
+    response.transcription[0].tokens.forEach((token, i) => {
+      token.text = (i ? "" : " ") + row.parts[i];
+      if (/^['’]$/.test(row.parts[i])) Object.assign(token, { offsets: { from: 0, to: 0 }, t_dtw: -1 });
+    });
+    return response;
+  };
+  test(`BPE ${row.name} cannot falsely time were`, async () => {
+    const { input } = await request("were", contraction());
+    expect(offsets(await alignCloneAudio(input))).toEqual([null]);
+  });
+  test(`BPE ${row.name} times the matching contraction`, async () => {
+    for (const display of ["we're", "we’re"]) {
+      const { input } = await request(display, contraction());
+      expect((await alignCloneAudio(input)).words[0]).toMatchObject({ text: display, offset_ms: 100, duration_ms: row.duration });
+    }
+  });
+}
+test("apostrophe-only tokens preserve whitespace boundaries between different words", async () => {
+  const response = payload(["we", "' ", "re"]);
+  response.transcription[0].tokens[1].text = "' "; response.transcription[0].tokens[2].text = "re";
+  const different = await request("were", response), separate = await request("we re", response);
+  expect(offsets(await alignCloneAudio(different.input))).toEqual([null]);
+  expect(offsets(await alignCloneAudio(separate.input))).toEqual([100, 500]);
 });
 
 // GENERATED_FIXTURE_DATA
