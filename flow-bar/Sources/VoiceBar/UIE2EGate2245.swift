@@ -40,7 +40,7 @@ final class UIE2EGate2245 {
 
     func snapshot(_ action: String) {
         host.sandbox.writeObject(["action": action, "state": current(), "beforeShow": beforeShow,
-            "snoozed": app.isSnoozed, "hidden": app.voiceState.isHidden,
+            "snoozed": app.isSnoozed, "hidden": app.voiceState.isHidden, "connected": app.voiceState.isConnected,
             "panelVisible": panel.isVisible, "windowNumber": panel.windowNumber,
             "visiblePanels": NSApp.windows.filter { $0 is NSPanel && $0.isVisible }.map(\.title),
             "wizardVisible": host.wizard?.isVisible ?? false], file: "gate-hide.json")
@@ -70,7 +70,7 @@ final class UIE2EGate2245 {
         }
     }
 
-    func show() { app.commandRouter.handleShowVoiceBar(); snapshot("show") }
+    func show() { beforeShow = current(); app.commandRouter.handleShowVoiceBar(); snapshot("show") }
     func close() { app.unsnoozeNow(); panel.orderOut(nil); host.wizard?.close() }
 }
 

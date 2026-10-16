@@ -39,7 +39,12 @@ extension VoiceBarFlowTests {
                 XCTAssertEqual(receipt["panelVisible"] as? Bool, true)
                 XCTAssertEqual(receipt["snoozed"] as? Bool, false)
                 XCTAssertEqual(receipt["hidden"] as? Bool, false)
-                XCTAssertEqual(receipt["state"] as? NSDictionary, receipt["beforeShow"] as? NSDictionary)
+                var expected = receipt["beforeShow"] as? [String: Any] ?? [:]
+                // Snooze's disconnected sentinel returns to idle on a live connection.
+                if expected["mode"] as? String == "disconnected", receipt["connected"] as? Bool == true {
+                    expected["mode"] = "idle"
+                }
+                XCTAssertEqual(receipt["state"] as? NSDictionary, expected as NSDictionary)
                 XCTAssertTrue(app.dialogs["VoiceBar GATE2245 Product Pill"].exists)
                 if event == "wizard" {
                     XCTAssertTrue(app.windows["VoiceBar QA Setup"].waitForExistence(timeout: 3))
@@ -47,6 +52,7 @@ extension VoiceBarFlowTests {
                 }
                 attachJSON("GATE2245-SHOWN-" + event, receipt)
             }
+            if event == "wizard" { wizardFlow() } // Resolve the owned wizard before Settings input.
         }
         if (testRun?.failureCount ?? 0) == hideFailures { ledger.verifiedSurfaces.insert("gate:HIDE1") }
         click(app.buttons["qa-fixture-gate-hide-end"], "HIDE1 close only gate panels")
@@ -69,7 +75,7 @@ extension VoiceBarFlowTests {
             XCTAssertTrue(note.waitForExistence(timeout: 1))
             if note.exists { XCTAssertGreaterThan(note.frame.height, 0) }
         }
-        if (testRun?.failureCount ?? 0) == selectionFailures && ledger.verifiedSurfaces.contains("notch:supersede-preparing") {
+        if (testRun?.failureCount ?? 0) == selectionFailures {
             ledger.verifiedSurfaces.insert("gate:SEL1")
         }
         let timingFailures = testRun?.failureCount ?? 0

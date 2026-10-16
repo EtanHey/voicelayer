@@ -306,6 +306,10 @@ final class VoiceBarFlowTests: XCTestCase {
 
     func testFullUIOnlyFlow() throws {
         guard scenario == "full" else { throw NSError(domain: "UIE2E full test selected in focused run", code: 1) }
+        if gate2245Enabled {
+            gate2245Flow()
+            guard (testRun?.failureCount ?? 1) == 0 else { return }
+        }
         // Dictionary's animated top-level edit sheet and inline delete confirmation
         // have separate Cancel controls. Exercise both before the long tab sweeps.
         for (name, run) in [("Dictionary", dictionaryFlow), ("History", historyFlow), ("Pill", pillFlow),
@@ -324,7 +328,6 @@ final class VoiceBarFlowTests: XCTestCase {
             XCTAssertTrue(missing.isEmpty, "Unexercised controls: \(missing.joined(separator: ", "))")
             XCTAssertTrue(ledger.missingSurfaces.isEmpty, "Unverified surfaces: \(ledger.missingSurfaces.sorted())")
         }
-        if gate2245Enabled { gate2245Flow() }
         completed = true
     }
 }
