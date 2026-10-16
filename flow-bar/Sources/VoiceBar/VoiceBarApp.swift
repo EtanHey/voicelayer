@@ -150,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panelDiagnosticObservers: [Any] = []
     private var workspaceNotificationObservers: [Any] = []
     private var snoozeTask: Task<Void, Never>?
+    private var snoozeSleep: () async throws -> Void = { try await Task.sleep(for: .seconds(3600)) }
     private var playbackEdgeLayoutTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
@@ -621,12 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.sendCommand = { [weak server] cmd in
             server?.sendCommandToOwner(command: cmd)
         }
-        voiceState.onModeChange = { [weak self] mode in
-            self?.handleVoiceModeChange(mode)
-        }
-        voiceState.onPanelLayoutChange = { [weak self] in
-            self?.refreshNotchPresentationAndPanelLayout(animated: true)
-        }
+        configurePanelStateObservation()
         voiceState.onHistoryArchiveChange = { path in
             // Drop that entry from the History index first, so the reload the notification triggers can't serve a
             // stale transcript (a re-transcription rewrites an old entry in place).
@@ -737,8 +733,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             reason: "pre_attach",
             forceRerasterization: true
         )
-        pill.orderFront(nil)
-        logDiagnostic(event: "panel_order_front", details: ["reason": "launch"])
+        orderPanelFront(reason: "launch")
         completePanelFirstRender()
         voiceState.beginIdleCollapseCountdown()
         if let panelScreen = pill.screen {
@@ -1155,8 +1150,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel?.orderOut(nil)
         logDiagnostic(event: "panel_order_out", details: ["reason": "snooze"])
 
+        let sleep = snoozeSleep
         snoozeTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(3600))
+            try? await sleep()
             guard let self, !Task.isCancelled else { return }
             unsnoozeNow()
         }
@@ -1164,12 +1160,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func unsnoozeNow() {
         snoozeTask?.cancel()
+        playbackEdgeLayoutTask?.cancel()
         isSnoozed = false
         snoozedUntil = nil
         voiceState.unsnooze()
-        panel?.orderFront(nil)
-        logDiagnostic(event: "panel_order_front", details: ["reason": "unsnooze"])
+        refreshNotchPresentationAndPanelLayout(animated: false)
         reapplyAnchoredPanelPosition()
+        orderPanelFront(reason: "unsnooze")
+    }
+
+    private func orderPanelFront(reason: String, regardless: Bool = false) {
+        guard let panel,
+              NotchPanelVisibility.present(panel, isHidden: isSnoozed || voiceState.isHidden,
+                                             regardless: regardless) else { return }
+        logDiagnostic(event: "panel_order_front", details: ["reason": reason])
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -1404,6 +1408,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configureHotkeyCallbacks()
     }
 
+    private func configurePanelStateObservation() {
+        voiceState.onModeChange = { [weak self] mode in
+            self?.handleVoiceModeChange(mode)
+        }
+        voiceState.onPanelLayoutChange = { [weak self] in
+            self?.refreshNotchPresentationAndPanelLayout(animated: true)
+        }
+    }
+
+    func configurePanelVisibilityForTesting(_ panel: FloatingPillPanel,
+                                           snoozeSleep: @escaping () async throws -> Void = {
+                                               try await Task.sleep(for: .seconds(3600))
+                                           }) {
+        self.panel = panel
+        self.snoozeSleep = snoozeSleep
+        configurePanelStateObservation()
+    }
+
     private func configureHotkeyCallbacks() {
         // Hold start → push-to-talk recording
         gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
@@ -1493,11 +1515,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if !collapsesConverseHandoff {
             if VoiceBarIsolatedCapturePlacement.isEnabled() {
-                panel?.orderFrontRegardless()
-                logDiagnostic(event: "panel_order_front", details: ["reason": "mode-change-isolated"])
+                orderPanelFront(reason: "mode-change-isolated", regardless: true)
             } else if mode != .idle, panel?.isVisible == false {
-                panel?.orderFront(nil)
-                logDiagnostic(event: "panel_order_front", details: ["reason": "mode-change"])
+                orderPanelFront(reason: "mode-change")
             } else if let panel {
                 NotchPanelVisibility.selfHeal(panel, mode: mode, isHidden: isSnoozed || voiceState.isHidden) {
                     logDiagnostic(event: "notch_reorder_selfheal", details:
