@@ -17,6 +17,10 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var popoverPresenter: MenuBarPopoverPresenter?
     var wizard: NSWindow?
     var contextMenuTracking = false
+#if VOICEBAR_UIE2E_FOCUSED_338
+    var stateGallery: UIE2EStateGallery?
+#endif
+
     init(sandbox: UIE2ESandbox) {
         self.sandbox = sandbox
         model = UIE2EModel(sandbox: sandbox)
@@ -51,6 +55,17 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "focused-338" {
+#if VOICEBAR_UIE2E_FOCUSED_338
+            let gallery = UIE2EStateGallery(sandbox: sandbox)
+            stateGallery = gallery
+            gallery.show()
+            NSApp.activate(ignoringOtherApps: true)
+            return
+#else
+            fatalError("focused-338 requires an explicit verified #338-capable QA build")
+#endif
+        }
         // The minimal AppKit host needs standard Edit commands too. Without this,
         // Cmd-A was a no-op and Dictionary rename/search silently appended text.
         let main = NSMenu(), editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
@@ -246,7 +261,6 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.center(); window.makeKeyAndOrderFront(nil)
     }
 
-
     private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem = item
@@ -273,7 +287,6 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.setAccessibilityLabel("VoiceBar QA")
         button.setAccessibilityIdentifier("uie2e-status-item")
     }
-
 
     private func configureMenu() {
         menu.transcriptProvider = { UIE2EModel.transcript }
