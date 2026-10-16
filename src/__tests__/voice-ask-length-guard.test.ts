@@ -133,7 +133,7 @@ describe("voice_ask blocking-length guard", () => {
     expect(waitForInputSpy.mock.calls[0][0]).toBe(5_000);
   });
 
-  it("rearms a full capture timeout after prompt playback completes", async () => {
+  it("PRIV11 rearms a full capture timeout after prompt playback completes", async () => {
     const realSetTimeout = globalThis.setTimeout;
     const timeoutDelays: number[] = [];
     const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
@@ -145,7 +145,7 @@ describe("voice_ask blocking-length guard", () => {
 
     try {
       const result = await handleVoiceAsk({
-        message: "Can you confirm?",
+        message: process.env.PRIV11_TEXT ?? "Can you confirm?",
         timeout_seconds: 5,
       });
 

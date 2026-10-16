@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 // device probe, or files the resident VoiceBar reads. `describe` is the
 // live-host guard, so the suite skips loudly rather than racing the live app.
 import { describeMicTouching as describe } from "./setup/live-host-guard";
+import { diagnosticLeaks } from "./setup/privacy-canary";
 import { createHash } from "crypto";
 import {
   closeSync,
@@ -378,7 +379,8 @@ describe("input recording durability", () => {
   }
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "voicelayer-input-durability-"));
+    tmpRoot = mkdtempSync(join(process.env.PRIV11_PRIVATE_ROOT ?? tmpdir(),
+      process.env.PRIV11_NONCE ? `CANARY-HOME-${process.env.PRIV11_NONCE}-` : "voicelayer-input-durability-"));
     retainedPath = join(tmpRoot, "last-recording.wav");
     savedRetainedPath = process.env.QA_VOICE_RETAINED_RECORDING_PATH;
     savedRecordingsDir = process.env.QA_VOICE_RECORDINGS_DIR;
@@ -476,6 +478,10 @@ describe("input recording durability", () => {
     Bun.spawnSync = originalSpawnSync;
     clearStopSignal();
     clearCancelSignal();
+    if (process.env.PRIV11_NONCE) {
+      const tokens = [`CANARY-TXT-${process.env.PRIV11_NONCE}`, `CANARY-HOME-${process.env.PRIV11_NONCE}`];
+      expect(diagnosticLeaks(tmpRoot, tokens, tmpRoot), "Canary in diagnostics before fixture cleanup").toEqual([]);
+    }
     rmSync(tmpRoot, { recursive: true, force: true });
     if (savedRetainedPath === undefined) {
       delete process.env.QA_VOICE_RETAINED_RECORDING_PATH;
@@ -501,10 +507,13 @@ describe("input recording durability", () => {
 
   for (const surface of ["dictation", "voice_ask", "archived", "retained"] as const) {
     for (const suppressed of [false, true]) {
-      it(`PRIV1 R2 ${surface} ${suppressed ? "suppressed" : "final"} logs metadata while retaining content`, async () => {
+      it(`PRIV11 PRIV1 R2 ${surface} ${suppressed ? "suppressed" : "final"} logs metadata while retaining content`, async () => {
         const input = await import("../input");
-        backendText = suppressed ? "music playing" : "PRIVATE_TRANSCRIPT_שלום keep my words.";
-        const log = spyOn(console, "error").mockImplementation(() => {});
+        backendText = suppressed ? "music playing" : `PRIVATE_TRANSCRIPT_שלום ${process.env.PRIV11_TEXT ?? "keep my words"}.`;
+        const originalError = console.error;
+        const log = spyOn(console, "error").mockImplementation((...args) => {
+          if (process.env.PRIV11_CHILD) originalError(...args);
+        });
         let archiveDir: string | undefined;
         let result: string | null;
         try {
@@ -528,7 +537,7 @@ describe("input recording durability", () => {
               archiveSource: surface === "voice_ask" ? "voice_ask" : "voicebar",
               ...(surface === "voice_ask" ? { voiceAskArtifacts: {
                 agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]), agentAudioFormat: "mp3" as const,
-                agentTranscript: "Synthetic private question", agentTtsEngine: "edge-tts" as const, agentTtsVoice: "fixture",
+                agentTranscript: process.env.PRIV11_TEXT ?? "Synthetic private question", agentTtsEngine: "edge-tts" as const, agentTtsVoice: "fixture",
               } } : {}),
               onArchiveCreated: path => { archiveDir = path; },
             });
@@ -582,6 +591,29 @@ describe("input recording durability", () => {
       } finally { log.mockRestore(); }
     });
   }
+
+  it("PRIV11 archive diagnostics omit corrupt metadata content and filesystem error paths", async () => {
+    const input = await import("../input");
+    backendText = process.env.PRIV11_TEXT ? `${process.env.PRIV11_TEXT}.` : "Synthetic private transcript.";
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    broadcastSpy!.mockImplementation((event: any) => {
+      broadcasts.push(event);
+      if (event.type === "transcription") {
+        const metadata = event.recording_path.replace("audio.wav", "metadata.json");
+        rmSync(metadata); mkdirSync(metadata); // Deferred spoken-duration write must fail.
+      }
+    });
+    const result = await input.waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+    expect(result).toBe(backendText);
+    await Bun.sleep(0);
+    const audioPath = capturedVoiceBarAudio()[0];
+    const metadata = audioPath.replace("audio.wav", "metadata.json");
+    rmSync(metadata, { recursive: true });
+    writeFileSync(metadata, `invalid ${backendText}`);
+    input.updateArchivedTranscript(audioPath, backendText, { backend: "fake-stt", languageMode: "auto" });
+    expect(readFileSync(audioPath.replace("audio.wav", "voicelayer-transcript.txt"), "utf8")).toBe(backendText);
+  });
 
   it("keeps recording idle when stale HOLD cleanup fails before capture", async () => {
     const holdPath = process.env.QA_VOICE_RECORDING_HOLD_PATH!;

@@ -36,12 +36,13 @@ describe("speak_text socket command", () => {
     spies.push(spyOn(reservation, "hasActiveVoiceOperation").mockReturnValue(true));
     expect(handleSocketCommand({ cmd: "speak_text", text: "hello" } as any)).toMatchObject({ outcome: "reject", reason: "busy" });
   });
-  it("normalizes markdown before starting through the profile seam", () => {
+  it("PRIV11 normalizes markdown before starting through the profile seam", () => {
     spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(reservation, "hasActiveVoiceOperation").mockReturnValue(false));
     const start = spyOn(tts, "speakText").mockReturnValue({ id: "test", done: Promise.resolve() }); spies.push(start);
-    expect(handleSocketCommand({ cmd: "speak_text", text: "**Hi**", format: "markdown", profile: "long", id: "s2" } as any)).toMatchObject({ outcome: "accept", id: "s2" });
-    expect(start).toHaveBeenCalledWith("Hi", "long");
+    const text = process.env.PRIV11_TEXT ?? "Hi";
+    expect(handleSocketCommand({ cmd: "speak_text", text: `**${text}**`, format: "markdown", profile: "long", id: "s2" } as any)).toMatchObject({ outcome: "accept", id: "s2" });
+    expect(start).toHaveBeenCalledWith(text, "long");
   });
 });

@@ -475,7 +475,8 @@ describe("archived long-recording gate input", () => {
         const decisionLog = gateLogs.find((line) =>
           line.includes("outro gate: decision"),
         );
-        expect(decisionLog).toContain(specimen.candidate);
+        expect(decisionLog).not.toContain(specimen.candidate);
+        expect(decisionLog).toContain("outro gate: decision energy-present");
         expect(decisionLog).toContain(
           `${specimen.expectedSpan.startS.toFixed(2)}-${specimen.expectedSpan.endS.toFixed(2)}s`,
         );
