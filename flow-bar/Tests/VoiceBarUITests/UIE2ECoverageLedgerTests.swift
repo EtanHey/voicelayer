@@ -289,4 +289,19 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         let rest = source[start.lowerBound...]
         XCTAssertTrue(rest.contains("assertHistoryPaste(\"QA response\")"))
     }
+    func testFocusedPlacementRejectsShiftedOnscreenPanelDespiteMatchingObservations() throws {
+        let intended = CGRect(x: 100, y: 700, width: 300, height: 80)
+        let shifted = CGRect(x: 140, y: 250, width: 300, height: 80)
+        let snapshot = ["familyExpectedFrame": NSStringFromRect(intended), "familyAXFrame": NSStringFromRect(shifted)]
+        let planned = try XCTUnwrap(UIE2EGalleryFrames.expectedFamilyAX(snapshot, primaryTop: 1000))
+        XCTAssertNotEqual(planned, shifted, "Two observations of a shifted panel cannot establish placement")
+        XCTAssertEqual(planned, CGRect(x: 100, y: 220, width: 300, height: 80))
+    }
+    func testFocusedExpiryRejectsMissingOrEmptyRenderer() {
+        XCTAssertFalse(UIE2EGalleryFrames.expired(renderer: nil, feedbackPresent: false))
+        XCTAssertFalse(UIE2EGalleryFrames.expired(renderer: .zero, feedbackPresent: false))
+        let frame = CGRect(x: 100, y: 200, width: 300, height: 80)
+        XCTAssertFalse(UIE2EGalleryFrames.expired(renderer: frame, feedbackPresent: true))
+        XCTAssertTrue(UIE2EGalleryFrames.expired(renderer: frame, feedbackPresent: false))
+    }
 }
