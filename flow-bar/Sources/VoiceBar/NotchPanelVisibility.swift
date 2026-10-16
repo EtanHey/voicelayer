@@ -2,13 +2,25 @@ import AppKit
 import VoiceBarUI
 
 enum NotchPanelVisibility {
+    /// All product pill ordering goes through this gate, including isolated capture and self-heal.
+    @discardableResult
+    static func present(_ panel: NSWindow, isHidden: Bool, regardless: Bool = false) -> Bool {
+        guard !isHidden else {
+            panel.orderOut(nil)
+            return false
+        }
+        if regardless { panel.orderFrontRegardless() }
+        else { panel.orderFront(nil) }
+        return true
+    }
+
     static func selfHeal(_ panel: NSWindow, mode: VoiceMode, isHidden: Bool,
                          log: ([String: String]) -> Void) {
         guard !isHidden, [.recording, .transcribing, .speaking].contains(mode),
               panel.isVisible,
               !panel.isOnActiveSpace || !panel.occlusionState.contains(.visible) else { return }
         let before = diagnosticFields(panel, prefix: "before")
-        panel.orderFrontRegardless()
+        present(panel, isHidden: isHidden, regardless: true)
         log(before.merging(diagnosticFields(panel, prefix: "after")) { _, new in new })
     }
 
