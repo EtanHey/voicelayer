@@ -101,7 +101,9 @@ public struct TeleprompterBoundary: Equatable {
             let index = milliseconds(row["word_index"], integral: true)
             if !indexed, offset == nil || duration == nil { return nil }
             var globalOffset: Int?
-            if let offset, let duration, offset >= 0, duration > 0, chunkStartMs >= 0 {
+            // Edge keeps zero-duration anchors for omitted markdown. Only the
+            // indexed format requires a positive acoustic span.
+            if let offset, let duration, offset >= 0, (!indexed || duration > 0), chunkStartMs >= 0 {
                 let global = offset.addingReportingOverflow(chunkStartMs)
                 if !global.overflow && !global.partialValue.addingReportingOverflow(duration).overflow {
                     globalOffset = global.partialValue
@@ -120,6 +122,8 @@ public struct TeleprompterWord: Equatable, Identifiable {
     public let durationMs: Int?
     /// Rescheduled display words can highlight, but their estimates are never seek targets.
     public var hasEstimatedTiming = false
+    /// Only the indexed format opts into a measured-only partial timeline.
+    public var usesIndexedTiming = false
 }
 
 public enum TeleprompterPacePolicy {
@@ -200,7 +204,7 @@ public enum TeleprompterContentModel {
             return assignStableIDs(to: tokens.enumerated().flatMap { index, token in
                 let boundary = byIndex[index]
                 return splitDisplayToken(TeleprompterWord(id: 0, text: token,
-                    offsetMs: boundary?.offsetMs, durationMs: boundary?.durationMs))
+                    offsetMs: boundary?.offsetMs, durationMs: boundary?.durationMs, usesIndexedTiming: true))
             })
         }
         let textWords = text
@@ -327,7 +331,8 @@ public enum TeleprompterContentModel {
                 text: word.text,
                 offsetMs: word.offsetMs,
                 durationMs: word.durationMs,
-                hasEstimatedTiming: word.hasEstimatedTiming
+                hasEstimatedTiming: word.hasEstimatedTiming,
+                usesIndexedTiming: word.usesIndexedTiming
             )
         }
     }
@@ -348,7 +353,8 @@ public enum TeleprompterContentModel {
                     text: String(word.text[start ..< end]),
                     offsetMs: word.offsetMs,
                     durationMs: word.durationMs,
-                    hasEstimatedTiming: word.hasEstimatedTiming
+                    hasEstimatedTiming: word.hasEstimatedTiming,
+                    usesIndexedTiming: word.usesIndexedTiming
                 )
             )
             start = end
@@ -432,7 +438,8 @@ public enum TeleprompterPlaybackPolicy {
     }
 
     public static func usesServerTimestamps(in words: [TeleprompterWord]) -> Bool {
-        words.contains { $0.offsetMs != nil }
+        if words.contains(where: \.usesIndexedTiming) { return words.contains { $0.offsetMs != nil } }
+        return !words.isEmpty && words.allSatisfy { $0.offsetMs != nil }
     }
 
     public static func animatesTimeline(isReadback: Bool) -> Bool {

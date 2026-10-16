@@ -21,6 +21,27 @@ final class NullableSubtitleTests: XCTestCase {
         TeleprompterContentModel.words(text: state.statusText, wordBoundaries: state.wordBoundaries)
     }
 
+    func testLegacyEdgeZeroDurationKeepsOffsetAndSeekWhileIndexedStaysNull() {
+        for chunkStart in [0, 12000] {
+            let state = receive("- MP3", [row(0, "-", 0, 0), row(1, "MP3", 0, 250)], chunkStart: chunkStart)
+            XCTAssertEqual(words(state).map(\.offsetMs), [nil, chunkStart])
+            state.handleEvent(["type": "subtitle", "words": [["text": "-", "offset_ms": 0, "duration_ms": 0],
+                                                           ["text": "MP3", "offset_ms": 0, "duration_ms": 250]]])
+            XCTAssertEqual(state.wordBoundaries.map(\.offsetMs), [chunkStart, chunkStart])
+            XCTAssertEqual(words(state).map(\.durationMs), [0, 250])
+            XCTAssertEqual(words(state).map { TeleprompterSeekPolicy.offset(for: $0, isReadback: false) }, [chunkStart, chunkStart])
+            XCTAssertTrue(TeleprompterPlaybackPolicy.usesServerTimestamps(in: words(state)))
+        }
+    }
+
+    func testIndexedPartialTimelineUsesOnlyMeasuredWords() {
+        let mapped = words(receive("one two three", [row(0, "one", 0, 200), row(1, "two"), row(2, "three", 700, 200)]))
+        XCTAssertTrue(TeleprompterPlaybackPolicy.usesServerTimestamps(in: mapped))
+        XCTAssertNil(TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(forWordAt: 1, in: mapped))
+        XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: mapped, elapsedMilliseconds: 660), 0)
+        XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: mapped, elapsedMilliseconds: 700), 2)
+    }
+
     func testNullWordsKeepTheirPositionsAndOnlyProvenOccurrencesSeek() {
         let state = receive("go now go home", [row(3, "home", 900, 100), row(1, "now", 200, 100),
                                                 row(0, "go"), row(2, "go")], chunkStart: 12000)
@@ -49,6 +70,7 @@ final class NullableSubtitleTests: XCTestCase {
         let mapped = words(receive(token + " gap end", [row(2, "end", 700, 80), row(0, token, 100, 300)]))
         XCTAssertEqual(mapped.map(\.offsetMs), [100, 100, 100, nil, 700])
         XCTAssertEqual(mapped.map(\.text).joined(), token + "gapend")
+        XCTAssertTrue(TeleprompterPlaybackPolicy.usesServerTimestamps(in: mapped))
     }
 
     func testInvalidIndexedIdentityNeverFallsBackToLegacyTimings() {
