@@ -1,6 +1,18 @@
 import CoreGraphics
 import Foundation
 
+/// Recovery copy shares one identity between the producer and its two-line layout.
+enum PasteRecoveryFeedback {
+    static let notInserted = "Not inserted — transcript kept in History. Click input and press Shift+F5, or Copy."
+    static let unverified = "Insertion unverified — transcript kept in History. Check the input before retrying or Copy."
+    static let partial = "Partially inserted — full transcript kept in History. Check the input before retrying or Copy."
+
+    static func contains(_ text: String?) -> Bool {
+        guard let text else { return false }
+        return [notInserted, unverified, partial].contains(text)
+    }
+}
+
 public enum HotkeyPhase: Equatable {
     case idle
     case pressing
@@ -195,18 +207,22 @@ public enum VoiceBarPresentation {
                 material.compactControlSpacing + material.compactControlSize +
                 visibilityControl
         case .error:
-            return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
+            return min(VoiceBarNotchContract.morphCanvasWingCapacity,
+                insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
                 3 + material.compactControlSize +
-                VoiceBarNotchContract.compactStatusTrailingSafetyInset
+                VoiceBarNotchContract.compactStatusTrailingSafetyInset)
         case .idle:
             let queueWidth = input.queueDepth > 0
                 ? Theme.intrinsicPillStatusWidth(for: "\(input.queueDepth)") + 16
                 : 0
-            return insets + queueWidth + Theme.intrinsicPillStatusWidth(for: input.statusText) +
-                VoiceBarNotchContract.compactStatusTrailingSafetyInset
+            let recovery = PasteRecoveryFeedback.contains(input.confirmationText)
+            let textWidth = recovery ? Theme.pillStatusMaxWidth : Theme.intrinsicPillStatusWidth(for: input.statusText)
+            let width = insets + queueWidth + textWidth + VoiceBarNotchContract.compactStatusTrailingSafetyInset
+            return recovery ? width : min(width, VoiceBarNotchContract.morphCanvasWingCapacity)
         case .disconnected:
-            return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
-                VoiceBarNotchContract.compactStatusTrailingSafetyInset
+            return min(VoiceBarNotchContract.morphCanvasWingCapacity,
+                insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
+                VoiceBarNotchContract.compactStatusTrailingSafetyInset)
         case .recording:
             return nil
         }

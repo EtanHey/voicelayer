@@ -268,10 +268,9 @@ public struct VoiceBarNotchPresentation: Equatable {
                 coreWidth: baseGeometry.coreWidth,
                 topHeight: baseGeometry.topHeight,
                 leadingWingWidth: compactStatusLeadingWingWidth ?? baseGeometry.leadingWingWidth,
-                trailingWingWidth: min(
-                    compactStatusTrailingWingWidth ?? baseGeometry.trailingWingWidth,
-                    VoiceBarNotchContract.morphCanvasWingCapacity
-                ),
+                // Operational presentation bounds ordinary statuses; recovery feedback
+                // can request a wider wing, which the morph canvas must also contain.
+                trailingWingWidth: compactStatusTrailingWingWidth ?? baseGeometry.trailingWingWidth,
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
                 lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
@@ -375,9 +374,8 @@ public enum VoiceBarNotchContract {
     public static let recordingLeadingWingWidthWithHoldControl: CGFloat =
         recordingLeadingWingWidth + material.compactControlSpacing + material.compactControlSize
 
-    /// The fixed morph canvas reserves this much space on either side of the
-    /// hardware core. Dynamic content must lay itself out inside this bound so
-    /// SwiftUI truncates it before the canvas edge clips it.
+    /// The ordinary morph canvas reserves this much space beside the hardware
+    /// core. Recovery feedback may request more; its canvas grows to contain it.
     public static var morphCanvasWingCapacity: CGFloat {
         compactStatusMaximumTrailingWingWidth
     }

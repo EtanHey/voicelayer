@@ -104,7 +104,8 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
             trailingWingWidth: max(
                 teleprompterGeometry.trailingWingWidth,
                 teleprompterGeometry.bodyTrailingExtent,
-                maximumCompactWingWidth
+                maximumCompactWingWidth,
+                presentation.geometry.trailingWingWidth
             ),
             bodyLeadingExtent: max(
                 teleprompterGeometry.bodyLeadingExtent,
@@ -112,7 +113,8 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
             ),
             bodyTrailingExtent: max(
                 teleprompterGeometry.bodyTrailingExtent,
-                maximumCompactWingWidth
+                maximumCompactWingWidth,
+                presentation.geometry.trailingWingWidth
             ),
             lowerSurfaceHeight: presentation.geometry.lowerSurfaceHeight
         )

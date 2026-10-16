@@ -570,6 +570,7 @@ public struct BarView: View {
             HStack(spacing: 4) {
                 if state.queueDepth > 0 {
                     queueBadge
+                        .fixedSize()
                 }
                 statusLabel
             }
@@ -804,14 +805,15 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        compactStatusLabel(statusText)
+        compactStatusLabel(statusText, lineLimit:
+            state.mode == .idle && PasteRecoveryFeedback.contains(state.confirmationText) ? 2 : 1)
     }
 
-    private func compactStatusLabel(_ text: String) -> some View {
+    private func compactStatusLabel(_ text: String, lineLimit: Int = 1) -> some View {
         Text(text)
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(notchPrimaryLabelColor)
-            .lineLimit(1)
+            .lineLimit(lineLimit)
             .truncationMode(.tail)
             .layoutPriority(1)
             .transaction { transaction in
