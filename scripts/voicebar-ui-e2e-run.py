@@ -19,6 +19,18 @@ def test_arguments(output):
             '-resultBundlePath', str(output / 'VoiceBar.xcresult')]
 
 
+class Visibility:
+    def __init__(self, output):
+        self.helper = output / 'voicebar-ui-e2e-visibility'
+        self.receipt = output / 'visibility.json'
+
+    def call(self, mode):
+        result = subprocess.run([str(self.helper), mode, str(self.receipt)], capture_output=True,
+                                text=True, timeout=10, start_new_session=True)
+        if result.returncode:
+            raise RuntimeError('Hide Others / restore visibility failed: ' + result.stderr.strip())
+
+
 class Recording:
     def __init__(self, output, capture=None, ffprobe='ffprobe'):
         self.output, self.capture, self.ffprobe = output, capture or str(output / 'voicebar-ui-e2e-capture'), ffprobe
@@ -97,6 +109,7 @@ def stop_test(process):
 
 def run_suite(output, arguments=None, recording=None):
     recording = recording or Recording(output)
+    visibility = Visibility(output)
     info = dict(path=recording.path.name, valid=False)
     (output / 'recording.json').write_text(json.dumps(info, indent=2) + '\n')
     test = None
@@ -119,6 +132,8 @@ def run_suite(output, arguments=None, recording=None):
             '">Screen recording (.mov)</a><pre>' + caption + '</pre>')
     for sig in previous: signal.signal(sig, interrupted)
     try:
+        visibility.call('hide')
+        check_cancelled()
         recording.start()  # No test may launch until real frames reach the output file.
         check_cancelled()
         with (output / 'test.log').open('w') as log:
@@ -143,6 +158,13 @@ def run_suite(output, arguments=None, recording=None):
                 info.update(recording.stop())
             except Exception as error:
                 info['recordingError'] = str(error)
+                status = 1
+            try:
+                visibility.call('restore')
+                info['visibilityRestored'] = json.loads(visibility.receipt.read_text())['restored']
+                if info['visibilityRestored'] is not True: raise RuntimeError('Visibility restoration unconfirmed')
+            except Exception as error:
+                info['visibilityError'] = str(error)
                 status = 1
             info['testExit'] = test.returncode if test is not None else None
             publish()

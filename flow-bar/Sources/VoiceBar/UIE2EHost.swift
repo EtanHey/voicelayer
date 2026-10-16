@@ -156,6 +156,7 @@ final class UIE2EModel {
             processing[key] = ["source": "settings", "raw": NSNull(), "effective": value]
         }
         // Existing test seams: even accidental paste/record intents cannot reach the host.
+        voice.controlLayerEventWriter = { _, _ in } // Also isolated before any host/window exists.
         voice.pasteHandler = { _ in true }
         voice.frontmostAppProvider = { nil }
         voice.sendCommand = { [weak self] command in self?.command(command) }
