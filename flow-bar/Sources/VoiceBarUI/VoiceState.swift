@@ -417,9 +417,9 @@ public final class VoiceState {
     }
 
     /// Word boundary timestamps from TTS engine (ms offsets from audio start).
-    public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+    public var wordBoundaries: [TeleprompterBoundary] = []
     private var retainedTeleprompterText: String?
-    private var retainedTeleprompterWordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+    private var retainedTeleprompterWordBoundaries: [TeleprompterBoundary] = []
     public private(set) var isTeleprompterDismissed = false
 
     public var teleprompterText: String? {
@@ -432,7 +432,7 @@ public final class VoiceState {
         return nil
     }
 
-    public var teleprompterWordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] {
+    public var teleprompterWordBoundaries: [TeleprompterBoundary] {
         mode == .idle ? retainedTeleprompterWordBoundaries : wordBoundaries
     }
 
@@ -2035,16 +2035,10 @@ public final class VoiceState {
             }
 
         case "subtitle":
-            if let words = event["words"] as? [[String: Any]] {
-                wordBoundaries = words.compactMap { w in
-                    // JSONSerialization may decode numbers as Int or Double
-                    guard let offset = (w["offset_ms"] as? Int) ?? (w["offset_ms"] as? Double).map({ Int($0) }),
-                          let duration = (w["duration_ms"] as? Int) ?? (w["duration_ms"] as? Double).map({ Int($0) }),
-                          let text = w["text"] as? String
-                    else { return nil }
-                    return (offsetMs: offset + playbackChunkStartMilliseconds, durationMs: duration, text: text)
-                }
-            }
+            // Old daemons' missing/mistyped words are a no-op. Indexed payloads
+            // still replace the timeline even when malformed, so they fail closed.
+            guard event["aligned_words"] != nil || event["words"] is [[String: Any]] else { return }
+            wordBoundaries = TeleprompterBoundary.subtitleWords(event, chunkStartMs: playbackChunkStartMilliseconds)
 
         case "queue":
             if let depth = event["depth"] as? Int {
@@ -2843,7 +2837,7 @@ public final class VoiceState {
         guard !isPartial else { return }
         guard !text.isEmpty else {
             _ = historyRetranscriptionRequest.takeArchivedOrigin(for: recordingPath)
-            logDiagnostic("transcription_final_archived_late_empty", details: ["recordingPath": recordingPath])
+            logDiagnostic("transcription_final_archived_late_empty", details: ["hasRecordingPath": boolString(!recordingPath.isEmpty)])
             return
         }
         handleFinalTranscription(text, recordingPath: recordingPath, recordingCreatedAt: recordingCreatedAt,
@@ -2883,7 +2877,7 @@ public final class VoiceState {
             refreshTranscriptionVocabulary()
             logDiagnostic("transcription_final_archived_late", details: [
                 "textLength": String(text.count),
-                "recordingPath": recordingPath ?? "nil",
+                "hasRecordingPath": boolString(recordingPath?.isEmpty == false),
             ])
             return
         }
@@ -2911,7 +2905,7 @@ public final class VoiceState {
             "barInitiatedRecording": boolString(barInitiatedRecording),
             "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
-            "recordingPath": recordingPath ?? "nil",
+            "hasRecordingPath": boolString(recordingPath?.isEmpty == false),
         ])
 
         // AIDEV-NOTE: The effective remote-capture block is an independent second gate on top of

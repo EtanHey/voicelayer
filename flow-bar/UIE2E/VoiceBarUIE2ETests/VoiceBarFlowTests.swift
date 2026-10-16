@@ -97,6 +97,7 @@ final class VoiceBarFlowTests: XCTestCase {
             XCTAssertEqual(app.state, .runningForeground)
         }
     }
+
     override func tearDownWithError() throws {
         // XCTest owns attachment storage, including when its signed runner is sandboxed.
         // Keep the final snapshot after termination and clipboard restoration assertions.
@@ -118,6 +119,7 @@ final class VoiceBarFlowTests: XCTestCase {
         }
         if !restored.isEmpty { XCTAssertTrue(NSPasteboard.general.writeObjects(restored)) }
     }
+
     func attachJSON(_ name: String, _ object: Any) {
         do {
             let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
@@ -130,12 +132,23 @@ final class VoiceBarFlowTests: XCTestCase {
 
     /// All input operations go through this wrapper, including scrolling, typing and menu dismissal.
     /// A failed assertion/action still produces a keepAlways attachment and a FAIL receipt.
-    func step(_ name: String, skipped: String? = nil, _ body: () -> Void) {
+    func step(_ name: String, skipped: String? = nil, expected issue: UIE2EKnownIssue? = nil,
+              surface: String? = nil, surfaces: [String] = [], _ body: () -> Void) {
         let number = steps.count + 1
         let attachment = String(format: "UIE2E-%04d", number)
         let before = testRun?.failureCount ?? 0
+        var matched: [String] = []
         XCTContext.runActivity(named: "\(attachment) \(name)") { activity in
-            body()
+            if let issue {
+                let options = XCTExpectedFailure.Options()
+                options.isStrict = true
+                options.issueMatcher = { recorded in
+                    guard recorded.type == .assertionFailure, issue.matches(recorded.compactDescription) else { return false }
+                    matched.append(recorded.compactDescription)
+                    return true
+                }
+                XCTExpectFailure("Known product packet " + issue.rawValue, options: options) { body() }
+            } else { body() }
             let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             screenshot.name = attachment
             screenshot.lifetime = .keepAlways
@@ -144,8 +157,17 @@ final class VoiceBarFlowTests: XCTestCase {
         let passed = (testRun?.failureCount ?? 0) == before
         var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed]
         if let skipped { receipt["skipped"] = skipped }
+        if let issue, !matched.isEmpty, passed {
+            var expectedReceipt: [String: Any] = ["packet": issue.rawValue, "surface": surface ?? "", "descriptions": matched]
+            if !surfaces.isEmpty {
+                expectedReceipt["surfaces"] = surfaces
+                for id in surfaces { XCTAssertTrue(ledger.recordExpected(surface: id, issue: issue, descriptions: matched)) }
+            }
+            receipt["expectedFailure"] = expectedReceipt
+        }
         steps.append(receipt)
-        print("UIE2E \(passed ? "PASS" : "FAIL") \(number) \(name)")
+        let result = !passed ? "FAIL" : !matched.isEmpty ? "XFAIL [\(issue!.rawValue)]" : "PASS"
+        print("UIE2E \(result) \(number) \(name)")
         // Individual receipts survive an aborted method; only the final ledger can complete a run.
         attachJSON(String(format: "UIE2E-RECEIPT-%04d", number), receipt)
     }
@@ -215,6 +237,7 @@ final class VoiceBarFlowTests: XCTestCase {
         }
         return clicked
     }
+
     func replace(_ field: XCUIElement, _ value: String) {
         guard click(field, "focus \(field.label)") else { return }
         step("select field contents") { field.typeKey("a", modifierFlags: .command) }
@@ -227,6 +250,7 @@ final class VoiceBarFlowTests: XCTestCase {
             XCTAssertEqual(field.value as? String, value, "Text replacement must not append to an old value")
         }
     }
+
     func tab(_ name: String) {
         let sidebar = app.windows["VoiceBar QA Settings"].outlines["Sidebar"]
         click(sidebar.staticTexts[name], "open \(name) tab")
@@ -245,6 +269,7 @@ final class VoiceBarFlowTests: XCTestCase {
             activePage = name
         }
     }
+
     func scroll(_ direction: CGFloat, times: Int = 6) {
         for index in 1...times {
             step("scroll \(direction > 0 ? "up" : "down") \(index)") {
@@ -255,6 +280,7 @@ final class VoiceBarFlowTests: XCTestCase {
             }
         }
     }
+
     func assertCopy(_ label: String, equals expected: String? = nil, contains required: String? = nil,
                     target: XCUIElement? = nil, resolver: (() -> XCUIElement)? = nil) {
         NSPasteboard.general.clearContents()
@@ -267,18 +293,30 @@ final class VoiceBarFlowTests: XCTestCase {
             if let required { XCTAssertTrue(actual?.contains(required) == true, actual ?? "nil") }
         }
     }
+
+    func testFocused338StateGallery() throws {
+        try runFocused338StateGallery()
+    }
+
     func testFullUIOnlyFlow() throws {
-        generalFlow()
-        transcriptionFlow()
-        dictionaryFlow()
-        speechFlow()
-        historyFlow()
-        pillFlow()
-        menuBarFlow()
-        contextMenuFlow()
+        guard scenario == "full" else { throw NSError(domain: "UIE2E full test selected in focused run", code: 1) }
+        // Dictionary's animated top-level edit sheet and inline delete confirmation
+        // have separate Cancel controls. Exercise both before the long tab sweeps.
+        for (name, run) in [("Dictionary", dictionaryFlow), ("History", historyFlow), ("Pill", pillFlow),
+            ("Popover", menuBarFlow), ("Context menu", contextMenuFlow), ("Notch", notchRegressionFlow),
+            ("General", generalFlow), ("Transcription", transcriptionFlow), ("Speech", speechFlow)] {
+            let before = testRun?.failureCount ?? 0
+            run()
+            step("verify completed surface \(name)") {
+                XCTAssertEqual(testRun?.failureCount ?? 0, before, "Surface did not complete successfully")
+                if (testRun?.failureCount ?? 0) == before { ledger.verifiedSurfaces.insert(name) }
+            }
+            if name == "Context menu", app.state == .notRunning { relaunchQA() }
+        }
         step("all observed non-audio Settings controls exercised") {
             let missing = observed.subtracting(exercised).sorted()
             XCTAssertTrue(missing.isEmpty, "Unexercised controls: \(missing.joined(separator: ", "))")
+            XCTAssertTrue(ledger.missingSurfaces.isEmpty, "Unverified surfaces: \(ledger.missingSurfaces.sorted())")
         }
         completed = true
     }
@@ -289,7 +327,6 @@ extension VoiceBarFlowTests {
         if let number = element.value as? NSNumber { return number.stringValue }
         return element.value as? String
     }
-
     func waitUntil(_ predicate: @escaping () -> Bool, timeout: TimeInterval = 3) {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in predicate() }, object: nil)], timeout: timeout), .completed)
@@ -309,28 +346,29 @@ extension VoiceBarFlowTests {
             XCTAssertTrue(NSScreen.screens.contains { $0.frame.intersects(window.frame) }, "QA window is off-screen")
         }
     }
-
     func controlKey(_ element: XCUIElement) -> String {
         let label = element.label
         let section = label.hasPrefix("Your terms") ? "Your terms" : label.hasPrefix("Included terms") ? "Included terms" : nil
         let identity = section ?? (element.identifier.isEmpty ? (element.elementType == .popUpButton ? "voice-picker" : label) : element.identifier)
         var context = UIE2EControlContext(page: activePage)
         if label == "Open General settings" { context.page = "Navigation" }
-        if activePage == "History" {
+        if context.page == "History" {
             let selector = element.elementType == .radioButton && ["Ask", "Dictations"].contains(label)
             context.scope = selector ? "scope-selector" : activeHistoryScope
             if label.hasPrefix("QA fixture transcript") { context.row = "qa-recording" }
+            else if label.hasPrefix("QA loaded transcript") { context.row = "qa-loaded" }
             else if label.hasPrefix("QA older transcript") { context.row = "qa-older" }
             else if ["Copy transcript", "Paste transcript", "Re-transcribe stored audio", "Open stored audio in Finder",
                      "Copy recording details", "Copied recording details"].contains(label) {
-                context.row = activeHistoryScope == "Ask" ? "qa-ask-response" : selectedHistoryRow
+                context.row = activeHistoryScope == "Ask" ? askControlRow(element) : selectedHistoryRow
             }
         }
         if activePage == "Dictionary" {
             for prefix in ["Edit term ", "Delete term ", "Copy term ", "Copied term "] where label.hasPrefix(prefix) {
                 context.row = String(label.dropFirst(prefix.count))
             }
-            if ["Cancel", "Save", "Delete?", "Correct spelling", "Misheard as"].contains(label) {
+            if ["Cancel", "Save", "Delete?", "Correct spelling", "Misheard as"].contains(label) ||
+                label.hasPrefix("Remove misheard spelling ") {
                 context.row = editingDictionaryRow
             }
         }
@@ -341,19 +379,55 @@ extension VoiceBarFlowTests {
     }
 
     func speechProfile(_ element: XCUIElement) -> String {
-        let point = CGPoint(x: element.frame.midX, y: element.frame.midY)
+        // Native CU: the same ID is inherited by Text/Picker/Slider descendants.
+        // Match role + ID instead of evaluating an ambiguous any-element query.
         for kind in ["short", "long"] {
-            for field in ["voice", "rate"] {
-                let group = app.descendants(matching: .any)["speech-\(kind).\(field)"]
-                if group.exists && group.frame.contains(point) { return kind }
+            if element.identifier == "speech-\(kind).voice" || element.identifier == "speech-\(kind).rate" { return kind }
+        }
+        // Section headings are AX headings rather than StaticText. Associate
+        // S3 Copy with its one-picker native section; never use a shared label key.
+        if element.label.lowercased().contains("daemon command") {
+            let window = app.windows["VoiceBar QA Settings"]
+            for kind in ["short", "long"] {
+                let sections = window.descendants(matching: .any)
+                    .containing(.popUpButton, identifier: "speech-\(kind).voice").allElementsBoundByIndex
+                for section in sections where section.popUpButtons.count == 1 {
+                    let copies = section.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'daemon command'"))
+                    if copies.count == 1 && copies.firstMatch.frame == element.frame { return kind }
+                }
             }
         }
-        let long = app.staticTexts["Long reads"].firstMatch
-        if long.exists && !long.frame.isEmpty && point.y >= long.frame.minY { return "long" }
-        let short = app.staticTexts["Short speaks"].firstMatch
-        if short.exists && !short.frame.isEmpty && point.y >= short.frame.minY { return "short" }
         XCTFail("Cannot resolve Speech profile for \(element.label); refusing a shared coverage identity")
         return "unresolved-profile"
+    }
+
+    func askPayloadFrames() -> [String: CGRect] {
+        var frames: [String: CGRect] = [:]
+        for (row, payload) in [("qa-ask-response", "QA response"), ("qa-ask-loaded-response", "QA loaded response")] {
+            let texts = app.windows["VoiceBar QA Settings"].staticTexts.matching(UIE2EAXText.predicate(payload,
+                staticTextRole: XCUIElement.ElementType.staticText.rawValue)).allElementsBoundByIndex
+                .map(\.frame).filter { !$0.isEmpty && !$0.isInfinite && !$0.isNull }
+            frames[row] = texts.min { $0.width * $0.height < $1.width * $1.height }
+        }
+        return frames
+    }
+
+    func askControl(_ label: String, row: String) -> XCUIElement? {
+        let payloads = askPayloadFrames()
+        guard let payload = payloads[row] else { return nil }
+        let nextY = payloads.values.filter { $0.minY > payload.minY }.map(\.minY).min()
+        let buttons = app.windows["VoiceBar QA Settings"].buttons.matching(identifier: label).allElementsBoundByIndex
+        guard let index = UIE2EHistoryGeometry.actionIndex(after: payload, before: nextY, candidates: buttons.map(\.frame)) else { return nil }
+        return buttons[index]
+    }
+
+    func askControlRow(_ element: XCUIElement) -> String {
+        let label = element.identifier.isEmpty ? element.label : element.identifier
+        for row in ["qa-ask-response", "qa-ask-loaded-response"] {
+            if let control = askControl(label, row: row), control.frame == element.frame { return row }
+        }
+        XCTFail("Cannot resolve Ask control row; refusing a shared coverage identity")
+        return "unresolved-ask-row"
     }
 
     func didActivate(label: String, type: XCUIElement.ElementType) {
@@ -368,6 +442,7 @@ extension VoiceBarFlowTests {
         }
         if activePage == "History", label.hasPrefix("QA fixture transcript") { selectedHistoryRow = "qa-recording" }
         if activePage == "History", label.hasPrefix("QA older transcript") { selectedHistoryRow = "qa-older" }
+        if activePage == "History", label.hasPrefix("QA loaded transcript") { selectedHistoryRow = "qa-loaded" }
         if activePage == "Dictionary" {
             for prefix in ["Edit term ", "Delete term "] where label.hasPrefix(prefix) {
                 editingDictionaryRow = String(label.dropFirst(prefix.count))
@@ -380,10 +455,11 @@ extension VoiceBarFlowTests {
     /// passing when a newly added control is absent from this flow. Audio remains excluded.
     func observeControls() {
         let window = app.windows["VoiceBar QA Settings"]
-        for type: XCUIElement.ElementType in [.button, .checkBox, .radioButton, .popUpButton, .slider, .textField, .disclosureTriangle] {
+        for type: XCUIElement.ElementType in [.button, .switch, .checkBox, .link, .radioButton, .popUpButton, .slider, .textField, .disclosureTriangle] {
             for element in window.descendants(matching: type).allElementsBoundByIndex where element.isEnabled && element.isHittable {
                 let label = element.label.lowercased()
                 if element.identifier.hasPrefix("qa-fixture-") || label.hasPrefix("copied") { continue }
+                if element.identifier.hasPrefix("_XCUI:") || label == "windowsharingsessionbutton" { continue }
                 if ["close", "minimize", "zoom", "full screen"].contains(label) { continue }
                 if label.hasPrefix("play ") || ["preview", "play", "replay", "speak", "start voice recording"].contains(label) { continue }
                 observed.insert(controlKey(element))
@@ -412,6 +488,7 @@ extension VoiceBarFlowTests {
         scrollFully(-1)
         scrollFully(1)
     }
+
     func scrollFully(_ direction: CGFloat) {
         let area = app.windows["VoiceBar QA Settings"].scrollViews.allElementsBoundByIndex.last
         func position() -> Double? {
@@ -444,11 +521,12 @@ extension VoiceBarFlowTests {
         }
         step("assert full scroll reached edge") { XCTFail("Scroll did not stabilize within 16 actions") }
     }
+
     func receipt(_ expected: String) {
         step("assert intent \(expected)") {
             do {
                 let events = try JSONDecoder().decode([String].self, from: Data(contentsOf: root.appendingPathComponent("events.json")))
-                XCTAssertTrue(events.contains(expected), "Missing fixture intent: \(expected)")
+                XCTAssertTrue(events.dropFirst(lastActionEventIndex).contains(expected), "Missing fresh fixture intent: \(expected)")
             } catch { XCTFail("Cannot read fixture receipts: \(error)") }
         }
     }
@@ -500,6 +578,7 @@ extension VoiceBarFlowTests {
         // Exercise both disclosure states, keeping the form fully scrollable.
         click(app.buttons["Advanced"])
     }
+
     func transcriptionFlow() {
         walk("Transcription")
         let residency = app.buttons["models-residency-control"]
@@ -529,6 +608,7 @@ extension VoiceBarFlowTests {
         }
         assertCopy("Copy recognizer error", equals: "QA recognizer failure\nSecond line")
     }
+
     func wizardFlow() {
         let before = testRun?.failureCount ?? 0
         let window = app.windows["VoiceBar QA Setup"]
@@ -551,6 +631,80 @@ extension VoiceBarFlowTests {
         catch { XCTFail("Missing fixture dictionary: \(error)"); return [] }
     }
 
+    /// DictionaryAddSheetView is presented as a separate top-level sheet. Do not
+    /// resolve its Cancel/Save/Add controls from the whole application: the
+    /// Dictionary tab also has inline delete-confirmation Cancel/Delete? rows.
+    func dictionaryEditSheet() -> XCUIElement? {
+        let correctField = NSPredicate(format: "label == %@", "Correct spelling")
+        let candidates = app.sheets.allElementsBoundByIndex.filter {
+            $0.textFields.matching(correctField).firstMatch.exists
+        }
+        if candidates.count == 1 { return candidates[0] }
+        if candidates.count > 1 { return nil }
+
+        // Some macOS/XCTest versions expose a SwiftUI sheet as a top-level
+        // window instead of XCUIElementTypeSheet.
+        let windowCandidates = app.windows.allElementsBoundByIndex.filter {
+            $0.textFields.matching(correctField).firstMatch.exists
+        }
+        return windowCandidates.count == 1 ? windowCandidates[0] : nil
+    }
+
+    func dictionarySheetControl(_ role: XCUIElement.ElementType, label: String) -> XCUIElement {
+        guard let sheet = dictionaryEditSheet() else {
+            XCTFail("Expected exactly one open Dictionary edit sheet for control \(label)")
+            return app.descendants(matching: role).matching(identifier: "__missing_uie2e_dictionary_sheet_control__").firstMatch
+        }
+        return sheet.descendants(matching: role)
+            .matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
+    @discardableResult
+    func waitForDictionarySheetStable(action: String) -> Bool {
+        var becameStable = false
+        step("wait for Dictionary sheet to settle before \(action)") {
+            var priorSheetFrame: CGRect?
+            var priorSettingsFrame: CGRect?
+            var stableSamples = 0
+            waitUntil({
+                guard let sheet = self.dictionaryEditSheet() else {
+                    priorSheetFrame = nil
+                    priorSettingsFrame = nil
+                    stableSamples = 0
+                    return false
+                }
+                let sheetFrame = sheet.frame
+                let settingsFrame = self.app.windows["VoiceBar QA Settings"].frame
+                guard !sheetFrame.isEmpty, sheet.isHittable else { return false }
+                if sheetFrame == priorSheetFrame && settingsFrame == priorSettingsFrame {
+                    stableSamples += 1
+                } else {
+                    priorSheetFrame = sheetFrame
+                    priorSettingsFrame = settingsFrame
+                    stableSamples = 0
+                }
+                becameStable = stableSamples >= 2
+                return becameStable
+            }, timeout: 5)
+        }
+        return becameStable
+    }
+
+    @discardableResult
+    func clickDictionarySheetButton(_ label: String) -> Bool {
+        guard waitForDictionarySheetStable(action: label) else { return false }
+        guard click(dictionarySheetControl(.button, label: label), "Dictionary sheet \(label)",
+                    revealPolicy: .explicitlyScoped) else { return false }
+        var dismissed = false
+        step("assert Dictionary sheet dismissed after \(label)") {
+            waitUntil {
+                dismissed = self.dictionaryEditSheet() == nil
+                return dismissed
+            }
+        }
+        return dismissed
+    }
+
     func assertTerm(_ canonical: String, variants: [String]?, exists: Bool = true) {
         step("assert persisted dictionary \(canonical)") {
             let entry = dictionaryEntries().first { $0["canonical"] as? String == canonical }
@@ -563,33 +717,47 @@ extension VoiceBarFlowTests {
         walk("Dictionary")
         // The initial row's controls are part of the inventory too.
         click(app.buttons["Edit term QA initial"])
-        click(app.buttons["Cancel"])
+        guard waitForDictionarySheetStable(action: "edit initial Dictionary term") else { return }
+        replace(dictionarySheetControl(.textField, label: "Correct spelling"), "QA initial")
+        replace(dictionarySheetControl(.textField, label: "Misheard as"), "qa kept variant")
+        click(dictionarySheetControl(.button, label: "Remove misheard spelling initial variant"),
+            "remove initial misheard spelling", revealPolicy: .explicitlyScoped)
+        clickDictionarySheetButton("Save")
+        assertTerm("QA initial", variants: ["qa kept variant"])
+        click(app.buttons["Edit term QA initial"])
+        clickDictionarySheetButton("Cancel")
+        assertTerm("QA initial", variants: ["qa kept variant"])
         click(app.buttons["Delete term QA initial"])
-        click(app.buttons["Cancel"])
+        click(app.windows["VoiceBar QA Settings"].buttons["Cancel"], "cancel inline dictionary delete")
         click(app.buttons["Add term"])
-        replace(app.textFields["Correct spelling"], "QA new term")
-        replace(app.textFields["Misheard as"], "qa misheard")
-        click(app.buttons["Swap correct and misheard text"])
-        click(app.buttons["Swap correct and misheard text"])
-        click(app.buttons["Add"])
+        guard waitForDictionarySheetStable(action: "enter new term") else { return }
+        replace(dictionarySheetControl(.textField, label: "Correct spelling"), "QA new term")
+        replace(dictionarySheetControl(.textField, label: "Misheard as"), "qa misheard")
+        click(dictionarySheetControl(.button, label: "Swap correct and misheard text"))
+        click(dictionarySheetControl(.button, label: "Swap correct and misheard text"))
+        clickDictionarySheetButton("Add")
         assertTerm("QA new term", variants: ["qa misheard"])
         assertCopy("Copy term QA new term", equals: "QA new term")
         click(app.buttons["Edit term QA new term"])
-        replace(app.textFields["Misheard as"], "qa second variant")
-        click(app.buttons["Save"])
+        guard waitForDictionarySheetStable(action: "edit QA new term") else { return }
+        replace(dictionarySheetControl(.textField, label: "Misheard as"), "qa second variant")
+        clickDictionarySheetButton("Save")
         assertTerm("QA new term", variants: ["qa misheard", "qa second variant"])
         click(app.buttons["Edit term QA new term"])
-        replace(app.textFields["Correct spelling"], "QA cancelled rename")
-        click(app.buttons["Cancel"])
+        guard waitForDictionarySheetStable(action: "edit QA new term for cancelled rename") else { return }
+        replace(dictionarySheetControl(.textField, label: "Correct spelling"), "QA cancelled rename")
+        clickDictionarySheetButton("Cancel")
         assertTerm("QA new term", variants: ["qa misheard", "qa second variant"])
         click(app.buttons["Edit term QA new term"])
-        replace(app.textFields["Correct spelling"], "QA renamed term")
-        click(app.buttons["Save"])
+        guard waitForDictionarySheetStable(action: "rename QA new term") else { return }
+        replace(dictionarySheetControl(.textField, label: "Correct spelling"), "QA renamed term")
+        clickDictionarySheetButton("Save")
         assertTerm("QA renamed term", variants: ["qa misheard", "qa second variant"])
         assertTerm("QA new term", variants: nil, exists: false)
         click(app.buttons["Edit term QA renamed term"])
-        click(app.buttons["Remove misheard spelling qa misheard"])
-        click(app.buttons["Save"])
+        guard waitForDictionarySheetStable(action: "remove a misheard spelling") else { return }
+        click(dictionarySheetControl(.button, label: "Remove misheard spelling qa misheard"))
+        clickDictionarySheetButton("Save")
         assertTerm("QA renamed term", variants: ["qa second variant"])
         let search = app.textFields["Search terms and variants"]
         replace(search, "second variant")
@@ -606,14 +774,14 @@ extension VoiceBarFlowTests {
         assertCopy("Copy term QA initial", equals: "QA initial")
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Your terms'")).firstMatch)
         click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Your terms'")).firstMatch)
-        click(app.buttons["Delete term QA renamed term"])
-        click(app.buttons["Cancel"])
+        click(app.windows["VoiceBar QA Settings"].buttons["Delete term QA renamed term"])
+        click(app.windows["VoiceBar QA Settings"].buttons["Cancel"], "cancel renamed-term inline delete")
         assertTerm("QA renamed term", variants: ["qa second variant"])
-        click(app.buttons["Delete term QA renamed term"])
-        click(app.buttons["Delete?"])
+        click(app.windows["VoiceBar QA Settings"].buttons["Delete term QA renamed term"])
+        click(app.windows["VoiceBar QA Settings"].buttons["Delete?"])
         assertTerm("QA renamed term", variants: nil, exists: false)
         click(app.buttons["Add term"])
-        click(app.buttons["Cancel"])
+        clickDictionarySheetButton("Cancel")
     }
 
     func speechFlow() {
@@ -653,6 +821,7 @@ extension VoiceBarFlowTests {
         }
         speechCopyFlow()
     }
+
     func skipCapability(_ reason: String) {
         step(reason, skipped: reason) {}
         print("UIE2E SKIP: \(reason)")
@@ -679,16 +848,35 @@ extension VoiceBarFlowTests {
     func historyControl(_ label: String) -> XCUIElement {
         let window = app.windows["VoiceBar QA Settings"]
         let selector = window.radioButtons[activeHistoryScope]
-        let payload = activeHistoryScope == "Ask" ? "QA response" :
-            selectedHistoryRow == "qa-older" ? "QA older transcript" : "QA fixture transcript שלום 👋"
+        let payload = activeHistoryScope == "Ask" ?
+            (selectedHistoryRow == "qa-ask-loaded-response" ? "QA loaded response" : "QA response") :
+            selectedHistoryRow == "qa-older" ? "QA older transcript" :
+            selectedHistoryRow == "qa-loaded" ? "QA loaded transcript" : "QA fixture transcript שלום 👋"
         let missing = window.buttons["UIE2E-missing-\(activeHistoryScope)-\(selectedHistoryRow)-\(label)"]
-        guard selector.exists, selector.isSelected || selector.value as? String == "1" else {
+        guard selector.exists, UIE2EAXSelection.isSelected(flag: selector.isSelected, value: selector.value) else {
             XCTFail("History scope \(activeHistoryScope) is not selected"); return missing
         }
         // Dictations' list rows are buttons; only its detail has the static transcript.
         // Ask's matching response text scopes the response controls independently of Dictations.
-        let anchor = NSPredicate(format: "elementType == %d AND label CONTAINS %@",
-                                 XCUIElement.ElementType.staticText.rawValue, payload)
+        // Native CU: Dictations combines transcript + Audio length into one AX
+        // StaticText value. Exact label matching loses the fresh detail container.
+        let anchor = NSPredicate(format: "elementType == %d AND (label CONTAINS %@ OR value CONTAINS %@)",
+            XCUIElement.ElementType.staticText.rawValue, payload, payload)
+        // Clearing search recreates the detail after its debounced archive
+        // load. Wait on the real payload before taking a fresh container list.
+        let payloadText = window.descendants(matching: .staticText).matching(anchor).firstMatch
+        guard payloadText.exists || payloadText.waitForExistence(timeout: 4) else {
+            attachJSON("UIE2E-HISTORY-MISSING-DETAIL", ["scope": activeHistoryScope,
+                "row": selectedHistoryRow, "payload": payload, "AX": window.debugDescription])
+            XCTFail("History detail payload did not appear for \(activeHistoryScope)/\(selectedHistoryRow)")
+            return missing
+        }
+        if activeHistoryScope == "Ask" {
+            if let control = askControl(label, row: selectedHistoryRow) { return control }
+            attachJSON("UIE2E-ASK-MISSING-ACTION", ["row": selectedHistoryRow, "label": label, "AX": window.debugDescription])
+            XCTFail("Missing unambiguous Ask row action for " + selectedHistoryRow + "/" + label)
+            return missing
+        }
         let containers = window.descendants(matching: .any).containing(anchor).allElementsBoundByIndex
             .filter { $0.buttons.matching(identifier: label).count == 1 }
             .sorted { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
@@ -712,7 +900,10 @@ extension VoiceBarFlowTests {
         step("assert exact new paste payload \(expected)") {
             do {
                 let events = try JSONDecoder().decode([String].self, from: Data(contentsOf: root.appendingPathComponent("events.json")))
-                XCTAssertEqual(Array(events.dropFirst(before)), ["history-paste:" + expected])
+                let received = Array(events.dropFirst(before))
+                attachJSON("UIE2E-HISTORY-PASTE-\(activeHistoryScope)-\(selectedHistoryRow)",
+                    ["scope": activeHistoryScope, "row": selectedHistoryRow, "expected": expected, "received": received])
+                XCTAssertEqual(received, ["history-paste:" + expected])
             } catch { XCTFail("Cannot read paste sink: \(error)") }
         }
     }
@@ -732,8 +923,31 @@ extension VoiceBarFlowTests {
         receipt("history-finder")
         assertHistoryCopy("Copy recording details", contains: "Model: QA recognizer\nEffort: accurate")
         click(app.buttons["Load more"])
+        step("assert Dictations pagination visibly adds its next row") {
+            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA loaded transcript'")).firstMatch
+            XCTAssertTrue(row.exists || row.waitForExistence(timeout: 4))
+            XCTAssertFalse(app.buttons["Load more"].exists)
+            waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("history-page:200") }
+        }
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA loaded transcript'")).firstMatch,
+              "select the newly loaded Dictations row")
+        assertHistoryCopy(equals: "QA loaded transcript")
+        assertHistoryPaste("QA loaded transcript")
         click(app.buttons["Refresh history"])
+        step("assert Refresh history reloads the active page") {
+            waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("history-page:200") }
+        }
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA older transcript'")).firstMatch,
+              "select older row before Jump to latest")
         click(app.buttons["Jump to latest"])
+        step("assert Jump scroll contract without inventing a selection change") {
+            let latest = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch
+            let older = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA older transcript'")).firstMatch
+            waitUntil { latest.isHittable }
+            XCTAssertTrue(older.isSelected, "Jump scrolls; only a row click changes selection")
+        }
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch,
+              "select newest row explicitly after Jump")
         replace(app.textFields["Search transcripts"], "no-match-uie2e")
         step("recording history search empty state") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "exists == false"), object: app.buttons["Copy transcript"])], timeout: 4), .completed) }
@@ -747,7 +961,21 @@ extension VoiceBarFlowTests {
         assertHistoryCopy(equals: "QA response")
         assertHistoryPaste("QA response")
         click(app.buttons["Load older ask history"])
+        step("assert Ask pagination visibly adds its next row") {
+            let row = app.staticTexts.matching(UIE2EAXText.predicate("QA loaded question",
+                staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+            XCTAssertTrue(row.exists || row.waitForExistence(timeout: 4))
+            XCTAssertFalse(app.buttons["Load older ask history"].exists)
+            waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("ask-history-page:200") }
+        }
+        selectedHistoryRow = "qa-ask-loaded-response"
+        assertHistoryCopy(equals: "QA loaded response")
+        assertHistoryPaste("QA loaded response")
+        selectedHistoryRow = "qa-ask-response"
         click(app.buttons["Refresh ask history"])
+        step("assert Refresh Ask history reloads the active page") {
+            waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("ask-history-page:200") }
+        }
         replace(app.textFields["Search questions and answers"], "no-match-uie2e")
         step("ask history search empty state") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "exists == false"), object: app.buttons["Copy transcript"])], timeout: 4), .completed) }
@@ -762,88 +990,409 @@ extension VoiceBarFlowTests {
     func pillFlow() {
         for (name, text) in [("transcribing", "Cancel transcription"), ("confirmation", "Pasted"),
                              ("paste-failed", "Paste failed — click input and press Shift+F5"),
-                             ("error", "QA fixture failure"), ("disconnected", "VoiceLayer")] {
+                             ("error", "QA fixture failure"), ("disconnected", "Disconnected")] {
             click(app.buttons["qa-fixture-\(name)"])
             receipt("fixture:" + name)
             step("assert actual pill \(name) content") {
-                let pill = app.windows["VoiceBar QA Pill"]
+                let pill = app.dialogs["VoiceBar QA Pill"]
                 XCTAssertTrue(pill.exists)
-                XCTAssertTrue(pill.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
-                              pill.debugDescription)
+                if name == "disconnected" {
+                    attachJSON("UIE2E-DISCONNECTED", ["expected": text, "AX": pill.debugDescription])
+                }
+                let content = pill.descendants(matching: .any).matching(UIE2EAXText.predicate(text,
+                    staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+                XCTAssertTrue(content.exists || content.waitForExistence(timeout: 4), pill.debugDescription)
             }
             if name == "error" { click(app.buttons["Dismiss error"]) }
         }
-        let feedback = [("paste-not-inserted", "Not inserted — transcript kept in History. Click input and press Shift+F5, or Copy."),
-                        ("paste-unverified", "Insertion unverified — transcript kept in History. Check the input before retrying or Copy."),
-                        ("paste-partial", "Partially inserted — full transcript kept in History. Check the input before retrying or Copy.")]
+        let feedback = [("paste-not-inserted", "Not pasted\nIn History"),
+                        ("paste-unverified", "Unverified\nIn History"),
+                        ("paste-partial", "Part pasted\nHistory: full")]
         if !app.buttons["qa-fixture-paste-not-inserted"].exists { skipCapability("P1b #338 not in this build") }
         else {
-            knownVisualGaps.append("P1b pill feedback visibly truncates despite full AX text (native walkthrough rc-2.2.44). AX assertions below check content only; full-text visual readability is NOT_PROVEN.")
             for (name, expected) in feedback {
                 click(app.buttons["qa-fixture-\(name)"])
                 step("assert P1b AX content only \(name)") {
-                    XCTAssertTrue(app.windows["VoiceBar QA Pill"].descendants(matching: .any)
-                        .matching(NSPredicate(format: "label CONTAINS %@", expected)).firstMatch.exists)
+                    let note = app.dialogs["VoiceBar QA Pill"].staticTexts
+                        .matching(UIE2EAXText.predicate(expected, staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+                    XCTAssertTrue(note.exists)
+                    if note.exists {
+                        attachJSON("UIE2E-FEEDBACK-\(name)", ["expected": expected, "label": note.label,
+                            "value": note.value as? String ?? "", "frame": NSStringFromRect(note.frame),
+                            "visualReadability": "AX content only; separate P1e rendered-frame assertion follows"])
+                    }
+                }
+                step("P1e normal visible feedback frame \(name)") {
+                    let note = app.dialogs["VoiceBar QA Pill"].staticTexts
+                        .matching(UIE2EAXText.predicate(expected, staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+                    guard note.exists else { XCTFail("Missing feedback text for visual frame measurement"); return }
+                    let required = UIE2EFeedbackFrame.requiredSize(text: expected, width: note.frame.width)
+                    attachJSON("UIE2E-FEEDBACK-FRAME-\(name)", ["text": expected, "frame": NSStringFromRect(note.frame),
+                        "requiredTextSize": NSStringFromSize(required), "font": "system12medium", "packet": "P1e"])
+                    XCTAssertTrue(UIE2EFeedbackFrame.isReadable(text: expected, frame: note.frame),
+                        "[P1e] Full feedback does not fit its visible text frame: \(note.frame); required \(required)")
                 }
             }
         }
         click(app.buttons["qa-fixture-idle"])
     }
 
-    func openContextMenu() {
-        step("right-click actual pill") {
-            let pill = app.windows["VoiceBar QA Pill"]
+    /// Silent production BarView/VoiceState probes. Missing/unsupported behavior
+    /// fails a required surface; it is never reported as exercised by a fixture click.
+    func notchRegressionFlow() {
+        geometryFlow()
+        func verify(_ name: String, expected issue: UIE2EKnownIssue? = nil, _ body: () -> Void) {
+            let before = testRun?.failureCount ?? 0
+            let surface = "notch:" + name
+            step("required notch flow \(name)", expected: issue, surface: surface, body)
+            guard (testRun?.failureCount ?? 0) == before else { return }
+            if let issue, let expected = steps.last?["expectedFailure"] as? [String: Any],
+               let descriptions = expected["descriptions"] as? [String] {
+                XCTAssertTrue(ledger.recordExpected(surface: surface, issue: issue, descriptions: descriptions))
+            } else {
+                ledger.verifiedSurfaces.insert(surface)
+            }
+        }
+        click(app.buttons["qa-fixture-speaking"])
+        verify("replay-playing") {
+            let replay = app.dialogs["VoiceBar QA Pill"].buttons["Replay"]
+            guard replay.waitForExistence(timeout: 3), replay.isHittable else { XCTFail("Replay not reachable in silent speaking fixture"); return }
+            let before = fixtureEvents().count
+            replay.click() // Only this marked QA fixture; sendCommand is an in-memory sink.
+            waitUntil { self.fixtureEvents().dropFirst(before).contains("command:replay") }
+        }
+        verify("seek-playing") {
+            let word = app.dialogs["VoiceBar QA Pill"].buttons["Second"]
+            guard word.waitForExistence(timeout: 3), word.isHittable else { XCTFail("Timed Second word is not seekable while playing"); return }
+            let before = fixtureEvents().count
+            word.click()
+            waitUntil { self.fixtureEvents().dropFirst(before).contains("command:seek") }
+            let object = try? JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("commands.json"))) as? [String: Any]
+            let messages = object?["messages"] as? [[String: Any]]
+            XCTAssertEqual(messages?.last?["offset_ms"] as? Int, 3000)
+        }
+        verify("list-newlines", expected: .listNewlines) {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            let first = pill.buttons["First"], second = pill.buttons["Second"]
+            guard first.exists, second.exists else { XCTFail("List words not rendered"); return }
+            XCTAssertGreaterThan(second.frame.minY, first.frame.maxY, "[P14b] A list newline must create a new visual line")
+        }
+        click(app.buttons["qa-fixture-readback"])
+        verify("seek-idle", expected: .seekIdle) {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            let content = pill.descendants(matching: .any).matching(UIE2EAXText.predicate("Second",
+                staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+            guard pill.exists, content.exists else { XCTFail("Idle readback fixture content is missing"); return }
+            let word = pill.buttons["Second"]
+            guard word.exists, word.isEnabled else { XCTFail("[SEEK2] Idle readback words are not actionable seek controls"); return }
+            guard word.isHittable else { XCTFail("Idle word exists but is unreachable in QA host"); return }
+            let before = fixtureEvents().count
+            word.click()
+            let received = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                self.fixtureEvents().dropFirst(before).contains("command:seek") }, object: nil)], timeout: 3)
+            XCTAssertEqual(received, .completed, "[SEEK2] Readback word did not dispatch seek")
+        }
+        click(app.buttons["qa-fixture-preparing"])
+        step("assert real Preparing state and visible playback shell before selection probe") {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            // Movie evidence shows a shell/timeline/controls, without word text.
+            // Model receipt establishes Preparing; visible controls establish reachability.
+            do {
+                let data = try Data(contentsOf: root.appendingPathComponent("preparing.json"))
+                let state = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                XCTAssertEqual(state?["mode"] as? String, "speaking")
+                XCTAssertEqual(state?["statusText"] as? String, "Preparing speech…")
+                XCTAssertEqual(state?["durationGrowing"] as? Bool, true)
+                XCTAssertEqual(state?["originalRequested"] as? Bool, true)
+            } catch { XCTFail("Missing actual Preparing state receipt: \(error)") }
             XCTAssertTrue(pill.exists)
-            pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
-            XCTAssertTrue(app.menuItems["Settings…"].waitForExistence(timeout: 3))
+            for label in ["Replay", "Hide teleprompter", "Stop speaking"] {
+                let control = pill.buttons[label]
+                XCTAssertTrue(control.exists && control.isHittable, "Preparing shell control missing: " + label)
+            }
+            attachJSON("UIE2E-PREPARING-PRESENTATION", ["AX": pill.debugDescription,
+                "scope": "Preparing model receipt plus visible shell controls; no word-text claim"])
+        }
+        let commandStart = fixtureEvents().count
+        click(app.buttons["qa-fixture-selection-replace"], "invoke real selection method with synthetic replacement")
+        verify("supersede-preparing", expected: .supersedePreparing) {
+            let received = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                self.fixtureEvents().dropFirst(commandStart).contains("command:speak_text") }, object: nil)], timeout: 3)
+            guard received == .completed else {
+                XCTFail("[SEL1] Preparing selection method stopped without submitting the replacement speak_text")
+                return
+            }
+            let object = try? JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("commands.json"))) as? [String: Any]
+            let messages = object?["messages"] as? [[String: Any]]
+            XCTAssertEqual(messages?.last?["text"] as? String, "QA replacement selection",
+                "[SEL1] Selection replacement payload must be exact")
+            let text = app.dialogs["VoiceBar QA Pill"].descendants(matching: .any).matching(UIE2EAXText.predicate("replacement",
+                staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+            XCTAssertTrue(text.exists || text.waitForExistence(timeout: 3), "[SEL1] Replacement text never reached the UI")
+        }
+        click(app.buttons["qa-fixture-idle"])
+        step("idle fixture clears the Preparing and readback presentation") {
+            waitUntil {
+                let pill = self.app.dialogs["VoiceBar QA Pill"]
+                let preparing = pill.descendants(matching: .any).matching(UIE2EAXText.predicate("Preparing speech…",
+                    staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+                return !preparing.exists && !pill.buttons["Stop speaking"].exists &&
+                    !pill.buttons["Dismiss teleprompter"].exists && !pill.staticTexts["Teleprompter hidden"].exists
+            }
+        }
+    }
+
+    /// Exact AX screen frames are attached per transition, including failures.
+    /// Row means the tight envelope of the three native control frames.
+    func captureGeometry(_ name: String, speaking: Bool) -> UIE2EControlGeometry? {
+        var geometry: UIE2EControlGeometry?
+        step("GEO0 capture " + name) {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            let replay = pill.buttons["Replay"], eye = pill.buttons["Hide teleprompter"]
+            let terminal = pill.buttons[speaking ? "Stop speaking" : "Dismiss teleprompter"]
+            guard replay.waitForExistence(timeout: 3), eye.exists, terminal.exists else {
+                XCTFail("GEO0 missing controls for " + name); return
+            }
+            // Wait for SwiftUI's transition to settle rather than measure animation.
+            var previous = terminal.frame
+            let started = Date()
+            waitUntil {
+                let next = terminal.frame
+                defer { previous = next }
+                return Date().timeIntervalSince(started) > 0.5 && next == previous && !next.isEmpty
+            }
+            let frames = [replay.frame, eye.frame, terminal.frame]
+            guard frames.allSatisfy({ !$0.isEmpty && !$0.isInfinite && !$0.isNull }) else {
+                XCTFail("GEO0 empty/offscreen geometry for " + name); return
+            }
+            let value = UIE2EControlGeometry(replay: frames[0], eye: frames[1], terminal: frames[2],
+                row: frames.dropFirst().reduce(frames[0]) { $0.union($1) })
+            if let data = try? JSONEncoder().encode(value), let object = try? JSONSerialization.jsonObject(with: data) {
+                attachJSON("GEO0-" + name, ["state": name, "geometry": object, "rowDefinition": "AX three-control envelope"])
+            }
+            let screens = NSScreen.screens.compactMap { screen -> CGRect? in
+                guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else { return nil }
+                return CGDisplayBounds(id)
+            }
+            guard frames.allSatisfy({ frame in pill.frame.contains(frame) && screens.contains(where: { $0.contains(frame) }) }),
+                  replay.isHittable, eye.isHittable, terminal.isHittable else {
+                XCTFail("GEO0 QA host controls clipped/off-screen or unreachable: " + name); return
+            }
+            geometry = value
+        }
+        return geometry
+    }
+
+    func geometryFlow() {
+        click(app.buttons["qa-fixture-speaking"])
+        guard captureGeometry("speaking-before-stop", speaking: true) != nil else { return }
+        // Stop clears readback in production. Capture that actual outcome rather
+        // than inventing X; completion is the transition that retains the text.
+        click(app.dialogs["VoiceBar QA Pill"].buttons["Stop speaking"])
+        step("GEO0 capture actual post-Stop idle") {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            waitUntil { !pill.buttons["Replay"].exists && !pill.buttons["Stop speaking"].exists &&
+                !pill.buttons["Dismiss teleprompter"].exists }
+            XCTAssertTrue(pill.exists)
+            attachJSON("GEO0-actual-post-stop-idle", ["state": "actual-post-stop-idle", "panelFrame": NSStringFromRect(pill.frame),
+                "controls": ["Replay": pill.buttons["Replay"].exists, "Eye": pill.buttons["Hide teleprompter"].exists,
+                    "Stop": pill.buttons["Stop speaking"].exists, "X": pill.buttons["Dismiss teleprompter"].exists],
+                "AX": pill.debugDescription, "comparison": "No control frames exist after Stop; no no-shift claim"])
+        }
+        click(app.buttons["qa-fixture-speaking"], "start silent playback before natural completion")
+        guard let beforeFinish = captureGeometry("speaking-before-natural-completion", speaking: true) else { return }
+        click(app.buttons["qa-fixture-finish"], "deliver natural playback-completion event")
+        guard let initialReadback = captureGeometry("readback-after-natural-completion", speaking: false) else { return }
+        step("GEO0 natural completion to readback stable") {
+            XCTAssertTrue(initialReadback.differences(from: beforeFinish).isEmpty,
+                "PRODUCT GEO0 natural completion→readback shift: " + initialReadback.differences(from: beforeFinish).joined(separator: ", "))
+        }
+        for index in 1...3 {
+            guard let before = captureGeometry("readback-before-replay-\(index)", speaking: false) else { return }
+            step("GEO0 replay readback \(index)") {
+                let replay = app.dialogs["VoiceBar QA Pill"].buttons["Replay"]
+                guard replay.exists, replay.isHittable else { XCTFail("GEO0 Replay unavailable"); return }
+                let count = fixtureEvents().count
+                replay.click() // Marked silent QA sink only.
+                waitUntil { self.fixtureEvents().dropFirst(count).contains("command:replay") }
+            }
+            let after = captureGeometry("speaking-after-replay-\(index)", speaking: true)
+            if let after {
+                step("GEO0 readback to speaking stable \(index)") { XCTAssertTrue(after.differences(from: before).isEmpty,
+                    "PRODUCT GEO0 readback→Replay→speaking shift: " + after.differences(from: before).joined(separator: ", ")) }
+            }
+            click(app.buttons["qa-fixture-finish"], "synthetic playback finish \(index)")
+            if let finished = captureGeometry("readback-after-finish-\(index)", speaking: false) {
+                step("GEO0 finish and repeated replay stable \(index)") {
+                    if let after { XCTAssertTrue(finished.differences(from: after).isEmpty,
+                        "PRODUCT GEO0 speaking→finish→readback shift: " + finished.differences(from: after).joined(separator: ", ")) }
+                    XCTAssertTrue(finished.differences(from: before).isEmpty,
+                        "PRODUCT GEO0 repeated readback shift: " + finished.differences(from: before).joined(separator: ", "))
+                }
+            }
+        }
+        click(app.dialogs["VoiceBar QA Pill"].buttons["Hide teleprompter"])
+        step("assert Eye really hides the teleprompter") {
+            XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].staticTexts["Teleprompter hidden"].waitForExistence(timeout: 3))
+        }
+        click(app.dialogs["VoiceBar QA Pill"].buttons["Show teleprompter"])
+        step("assert Eye restores teleprompter content") {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            XCTAssertFalse(pill.staticTexts["Teleprompter hidden"].exists)
+            XCTAssertTrue(pill.staticTexts["First"].exists || pill.buttons["First"].exists)
+        }
+        click(app.dialogs["VoiceBar QA Pill"].buttons["Dismiss teleprompter"])
+        step("assert terminal X dismisses retained readback") {
+            waitUntil { !self.app.dialogs["VoiceBar QA Pill"].buttons["Dismiss teleprompter"].exists }
+        }
+        // HIDE0 verifies the same panel in expanded playback and retained readback.
+        for fixture in ["speaking", "readback"] {
+            click(app.buttons["qa-fixture-" + fixture])
+            tab("General")
+            step("HIDE0 \(fixture) starts visible") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].exists) }
+            click(app.buttons["Hide VoiceBar for 1 hour"])
+            step("HIDE0 Settings hides \(fixture)") { waitUntil { !self.app.dialogs["VoiceBar QA Pill"].exists } }
+            click(app.buttons["Show VoiceBar"])
+            step("HIDE0 Settings restores \(fixture)") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].waitForExistence(timeout: 3)) }
+            openContextMenu(); click(app.menuItems["Hide for 1 hour"], "HIDE0 context Hide for 1 hour " + fixture)
+            receipt("menu-hide")
+            step("HIDE0 context hides \(fixture)") { waitUntil { !self.app.dialogs["VoiceBar QA Pill"].exists } }
+            openContextMenu(); click(app.menuItems["Show VoiceBar"], "HIDE0 context Show VoiceBar " + fixture)
+            receipt("menu-show")
+            step("HIDE0 context restores \(fixture)") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].waitForExistence(timeout: 3)) }
+        }
+        click(app.buttons["qa-fixture-idle"])
+    }
+
+    @discardableResult
+    func openContextMenu() -> Bool {
+        var opened = false
+        if app.menuItems["Settings…"].exists, app.menuItems["Settings…"].isHittable {
+            step("reuse the still-open QA context menu") { opened = true }
+            return opened
+        }
+        step("right-click actual pill") {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            if pill.exists {
+                pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
+            } else {
+                let hiddenMenu = app.buttons["qa-fixture-hidden-menu"]
+                guard hiddenMenu.exists else { XCTFail("Neither pill nor isolated hidden-menu fixture is reachable"); return }
+                hiddenMenu.click() // Real controller's Show action when the actual panel is hidden.
+            }
+            let marker = app.menuItems["Settings…"]
+            guard marker.exists || marker.waitForExistence(timeout: 3), marker.isHittable else {
+                XCTFail("QA context menu did not remain open and reachable; refusing stale/foreign menu controls")
+                return
+            }
+            opened = true
+        }
+        return opened
+    }
+
+    func relaunchQA() {
+        step("relaunch isolated QA app") {
+            app.launch()
+            XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+            activePage = "General"; activeHistoryScope = "Dictations"; selectedHistoryRow = "qa-recording"
         }
     }
 
     func menuBarFlow() {
-        let status = app.menuBars.menuBarItems["VoiceBar QA"]
-        click(status, "open QA menu-bar item")
+        defer {
+            if app.state != .notRunning, app.buttons["popover-settings"].exists {
+                step("dismiss remaining QA popover with Escape") { app.typeKey(.escape, modifierFlags: []) }
+            }
+        }
+        guard openQAPopover() else { return }
         assertCopy("Copy last transcript", equals: "QA fixture transcript שלום 👋")
-        click(app.buttons["popover-settings"])
+        guard click(app.buttons["popover-settings"]) else { return }
         receipt("popover-settings")
-        click(status, "reopen QA menu-bar item")
-        click(app.buttons["popover-microphone-change"])
+        guard openQAPopover() else { return }
+        // Native AX collapses the inner Change identifier into its mic row.
+        guard click(app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@",
+            "popover-microphone", "Change default microphone in Settings")).firstMatch) else { return }
         receipt("popover-microphone")
-        click(status, "reopen QA menu-bar item")
-        click(app.buttons["Run setup…"])
+        guard openQAPopover(), click(app.descendants(matching: .any).matching(identifier: "popover-setup").firstMatch,
+            "popover Run setup") else { return }
         receipt("popover-setup")
-        click(status, "reopen QA menu-bar item")
-        click(app.buttons["popover-quit"])
+        wizardFlow()
+        guard openQAPopover(), click(app.buttons["popover-quit"]) else { return }
         step("assert QA popover Quit") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
         receipt("popover-quit")
-        step("relaunch isolated QA app for context-menu flow") {
-            app.launch()
-            XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+        if app.state == .notRunning { relaunchQA() }
+    }
+
+    func openQAPopover() -> Bool {
+        let marker = app.buttons["popover-settings"]
+        if !marker.exists {
+            guard click(app.statusItems["uie2e-status-item"], "open QA menu-bar item") else { return false }
         }
+        var opened = false
+        step("assert QA popover is open") {
+            opened = (marker.exists || marker.waitForExistence(timeout: 3)) && marker.isHittable
+            XCTAssertTrue(opened, "QA popover did not open; no further popover control will be targeted")
+        }
+        return opened
     }
 
     func contextMenuFlow() {
+        defer {
+            if app.state != .notRunning {
+                let events = fixtureEvents()
+                if let opened = events.lastIndex(of: "qa-menu-open"),
+                   opened > (events.lastIndex(of: "qa-menu-close") ?? -1) {
+                    step("dismiss remaining QA context menu with Escape") { app.typeKey(.escape, modifierFlags: []) }
+                }
+            }
+        }
         for (label, intent) in [("Settings…", "menu-settings"), ("Hide for 1 hour", "menu-hide"),
                                 ("Show VoiceBar", "menu-show"), ("Paste Last Transcript", "menu-paste-last"),
                                 ("Re-transcribe latest", "menu-retranscribe")] {
-            openContextMenu(); click(app.menuItems[label]); receipt(intent)
+            if intent == "menu-hide" {
+                step("assert context Hide starts with visible panel") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].exists) }
+            }
+            guard openContextMenu() else { return }
+            click(app.menuItems[label], "context " + label); receipt(intent)
+            if intent == "menu-hide" { step("assert context Hide removes panel") { waitUntil { !self.app.dialogs["VoiceBar QA Pill"].exists } } }
+            if intent == "menu-show" { step("assert context Show restores panel") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].waitForExistence(timeout: 3)) } }
         }
-        openContextMenu()
+        guard openContextMenu() else { return }
         assertCopy("Copy Last Transcript", equals: "QA fixture transcript שלום 👋")
-        openContextMenu()
-        step("open Recent Transcriptions submenu") { app.menuItems["Recent Transcriptions"].hover() }
-        click(app.menuItems.matching(NSPredicate(format: "label CONTAINS 'QA fixture transcript'")).firstMatch)
+        guard openContextMenu(), openQASubmenu("Recent Transcriptions") else { return }
+        click(app.menuItems["uie2e-recent-qa-recording"], "paste Recent QA fixture transcript")
         receipt("menu-paste-recent:QA fixture transcript שלום 👋")
-        openContextMenu()
-        step("open Microphone submenu") { app.menuItems["Microphone"].hover() }
+        guard openContextMenu(), openQASubmenu("Microphone") else { return }
         step("assert read-only microphone default") {
-            XCTAssertTrue(app.menuItems["Default: QA microphone A"].exists)
-            XCTAssertFalse(app.menuItems["Default: QA microphone A"].isEnabled)
+            XCTAssertTrue(app.menuItems["uie2e-microphone-default"].exists)
+            XCTAssertFalse(app.menuItems["uie2e-microphone-default"].isEnabled)
         }
-        click(app.menuItems["Change default microphone in Settings"])
+        click(app.menuItems["uie2e-microphone-change"], "context Change default microphone in Settings")
         receipt("menu-microphone")
-        openContextMenu()
-        click(app.menuItems["Quit VoiceBar"])
+        guard openContextMenu() else { return }
+        click(app.menuItems["Quit VoiceBar"], "context Quit VoiceBar")
         step("assert QA quit, no resident process targeted") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
         receipt("menu-quit")
+        attachJSON("UIE2E-MENU-LIFECYCLE", fixtureEvents())
+    }
+
+    func openQASubmenu(_ title: String) -> Bool {
+        var opened = false
+        step("open \(title) submenu") {
+            let submenu = app.menuItems[title == "Microphone" ? "uie2e-microphone-menu" : title]
+            guard submenu.exists, submenu.isHittable else {
+                XCTFail("QA context submenu \(title) disappeared or is unreachable; no foreign control touched")
+                return
+            }
+            attachJSON("UIE2E-SUBMENU-\(title)", ["frame": NSStringFromRect(submenu.frame), "AX": submenu.debugDescription])
+            // Native RED: hover only highlighted the parent, then lost tracking.
+            // Click the real submenu parent and require its exposed child before credit.
+            submenu.click()
+            let child = app.menuItems[title == "Recent Transcriptions"
+                ? "uie2e-recent-qa-recording" : "uie2e-microphone-change"]
+            opened = (child.exists || child.waitForExistence(timeout: 3)) && child.isHittable
+            XCTAssertTrue(opened, "QA \(title) submenu child did not appear after parent activation")
+        }
+        return opened
     }
 }

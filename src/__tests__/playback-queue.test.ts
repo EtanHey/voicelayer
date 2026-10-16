@@ -28,6 +28,9 @@ import { handleVoiceAsk } from "../handlers";
 import { hasActiveVoiceOperation } from "../voice-operation-reservation";
 import { fixtureCheckpoint } from "./long-read-fixture-barriers";
 
+// Real subprocesses: standalone p95 <= 335 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // --- Mock helpers ---
 
 interface MockPlayer {
@@ -1739,7 +1742,7 @@ describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
 
     // NOW it should resolve
     expect(awaited).toBe(true);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("awaitCurrentPlayback resolves immediately if queue is empty", async () => {
     const { awaitCurrentPlayback } = await import("../tts");

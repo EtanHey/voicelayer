@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 
+// Real subprocesses: standalone p95 <= 80 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 test("Python extraction validates media binaries, caches success, and normalizes with the resolved path", () => {
   const result = Bun.spawnSync(["python3", "-c", `
 import importlib.util, unittest.mock as mock, subprocess
@@ -22,7 +25,7 @@ with mock.patch.dict("os.environ", {"PATH": "/stale:/working"}), mock.patch("sub
 `], {stdout: "pipe", stderr: "pipe"});
   expect(result.stderr.toString()).toBe("");
   expect(result.exitCode).toBe(0);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 
 test("yt-dlp receives both independently resolved media executables for the entire download", () => {
@@ -54,4 +57,4 @@ with tempfile.TemporaryDirectory() as root:
 `], {stdout:"pipe", stderr:"pipe"});
   expect(result.stderr.toString()).toBe("");
   expect(result.exitCode).toBe(0);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);

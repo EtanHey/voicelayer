@@ -204,7 +204,7 @@ export function handleSocketCommand(
       }
       retranscribeLastCapture().catch((err) => {
         console.error(
-          `[voicelayer] Retranscribe last capture failed: ${err instanceof Error ? err.message : String(err)}`,
+          "[voicelayer] Retranscribe last capture failed: status=failed (details redacted)",
         );
         broadcast({ type: "state", state: "idle" });
       });
@@ -220,7 +220,7 @@ export function handleSocketCommand(
       }
       retranscribeRecordingCapture(command.audio_path).catch((err) => {
         console.error(
-          `[voicelayer] Retranscribe archived recording failed: ${err instanceof Error ? err.message : String(err)}`,
+          "[voicelayer] Retranscribe archived recording failed: status=failed (details redacted)",
         );
         broadcast({ type: "state", state: "idle", source: "recording" });
       });

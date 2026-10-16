@@ -11,6 +11,9 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 1117 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const repoRoot = join(import.meta.dir, "..", "..");
 const retiredDaemonPlist = join(
   repoRoot,
@@ -158,7 +161,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
     expect(launchctlCalls).toContain("bootout gui/");
     expect(launchctlCalls).not.toContain("bootstrap gui/");
     expect(launchctlCalls).not.toContain("kickstart gui/");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("VoiceBar autostart reload waits for asynchronous bootout before bootstrap", () => {
     const tempHome = fixtureHome("voicebar-autostart-wait-");
@@ -222,7 +225,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
     expect(launchctlCalls.indexOf("bootout")).toBeLessThan(
       launchctlCalls.indexOf("bootstrap"),
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("VoiceBar autostart installer can write an unloaded definition without starting it", () => {
     const tempHome = fixtureHome("voicebar-autostart-no-start-");
@@ -281,7 +284,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
       expect(launchctlCalls).not.toContain("kickstart");
       expect(launchctlCalls).not.toMatch(/^(?:load|start|submit)\b/m);
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("VoiceBar build script self-completes live app replacement with precise stop and relaunch", () => {
     const stopIndex = buildScript.indexOf("stop_voicebar_instances");

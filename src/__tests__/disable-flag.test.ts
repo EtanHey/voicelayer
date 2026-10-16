@@ -6,6 +6,9 @@ import { afterEach, beforeEach, expect, it } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
 
+// Real subprocesses: standalone p95 <= 51 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const TEST_DIR = testTmp("disable");
 const TEST_MCP_SOCKET_PATH = testSocket("df.sock");
 const TEST_MCP_PID_PATH = `${TEST_DIR}/voicelayer-mcp.pid`;
@@ -90,7 +93,7 @@ describe("DISABLE_VOICELAYER env", () => {
 
     expect(exitCode).toBe(0);
     expect(existsSync(TEST_MCP_SOCKET_PATH)).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("isVoicelayerDisabled returns true for env or flag file", async () => {
     const pathsModule = (await import("../paths")) as {

@@ -113,6 +113,18 @@ Each run exclusively creates its PID plus a four-hex nonce directory; it never
 adopts an existing directory, even after PID reuse. Startup sweeps older dead-run
 directories (including legacy PID-only names), keeps the two newest dead runs as
 evidence, and leaves live PIDs alone. Cleanup does not depend on Bun exit hooks.
+The preload always sets `QA_VOICE_MCP_PID_PATH` inside the current run, replacing
+inherited overrides. Tests use `getMcpPidFilePath()`, never the raw `MCP_PID_FILE`
+default. Process-lock acquisition and release in test mode throw before reading
+or signalling if the PID path escapes that run (including symlinks).
+PID fixture setup and cleanup validate both paths before any file access.
+Private-corpus tests are read-only and require exactly
+`VOICELAYER_TEST_REAL_ARCHIVE=1`. `VOICELAYER_TEST_SPECIMEN_DIR` can select a
+private date/session archive tree only with that flag; path overrides alone do
+not opt in. Default runs skip loudly before resolving HOME or probing files.
+Shared paths live in `src/__tests__/setup/private-specimens.ts`; the static
+guard in `src/__tests__/private-corpus-guard.test.ts` rejects unreviewed home
+paths in both test roots.
 
 ## PR Workflow
 

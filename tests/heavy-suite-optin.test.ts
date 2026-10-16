@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
+// Real subprocesses: standalone p95 <= 39 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const hook = readFileSync(new URL("../.githooks/pre-push", import.meta.url), "utf8");
 const bash = Bun.which("bash")!;
 const python = Bun.which("python3")!;
@@ -73,13 +76,13 @@ describe("pre-push heavy-suite opt-in", () => {
         else expect(result.stderr).toContain("heavy-suite: helper missing; running unqueued");
         if (status !== 0) expect(result.stdout).toContain("🛑 PUSH BLOCKED — regression harness failed.");
         else expect(result.stdout).not.toContain("PUSH BLOCKED");
-      });
+      }, SUBPROCESS_TEST_TIMEOUT_MS);
     }
     test(`${availability}: failing docs guard never enters helper or suite`, () => {
       const result = runHook(availability, 0, 9);
       expect(result.status).toBe(1);
       expect(result.events).toBe("guard\n");
       expect(result.stderr).toBe("");
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 });

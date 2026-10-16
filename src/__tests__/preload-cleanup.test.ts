@@ -2,6 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "fs";
 import { basename, join, resolve } from "path";
 
+// Real subprocesses: standalone p95 <= 56 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const preload = resolve("src/__tests__/setup/preload.ts");
 const fixtures: string[] = [];
 function sandbox() {
@@ -49,7 +52,7 @@ test("startup removes older dead PID directories and keeps the newest two", () =
   const roots = deadPids(5).map((pid, i) => fixture(dir, i % 2 ? `${pid}-cafe` : pid, 100 - i * 10));
   expect(run(dir, true).exitCode).toBe(0);
   expect(roots.map(root => existsSync(root))).toEqual([false, false, false, true, true]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("live PID directories are never swept or counted toward the two dead survivors", () => {
   const dir = sandbox();
@@ -60,7 +63,7 @@ test("live PID directories are never swept or counted toward the two dead surviv
   expect(existsSync(join(live, "evidence"))).toBe(true);
   expect(existsSync(join(generation, "evidence"))).toBe(true);
   expect(dead.map(root => existsSync(root))).toEqual([false, true, true]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("zero, one and two dead siblings retain all evidence", () => {
   for (const count of [0, 1, 2]) {
@@ -69,7 +72,7 @@ test("zero, one and two dead siblings retain all evidence", () => {
     expect(run(dir).exitCode).toBe(0);
     expect(roots.every(root => existsSync(root))).toBe(true);
   }
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("sweep ignores unrelated entries and never follows sibling symlinks", () => {
   const dir = sandbox();
@@ -88,7 +91,7 @@ test("sweep ignores unrelated entries and never follows sibling symlinks", () =>
   expect(existsSync(unrelated)).toBe(true);
   expect(existsSync(zero)).toBe(true);
   expect(roots.map(root => existsSync(root))).toEqual([false, true, true]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("a symlinked .test-tmp root is refused before any outside write or deletion", () => {
   const dir = sandbox();
@@ -100,7 +103,7 @@ test("a symlinked .test-tmp root is refused before any outside write or deletion
   expect(proc.exitCode).not.toBe(0);
   expect(roots.every(root => existsSync(root))).toBe(true);
   expect(readdirSync(join(outside, ".test-tmp")).sort()).toEqual(roots.map(root => basename(root)).sort());
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("PID reuse between the final liveness check and deletion cannot erase the new run", () => {
   const dir = sandbox();
@@ -159,7 +162,7 @@ test("PID reuse between the final liveness check and deletion cannot erase the n
   expect(existsSync(join(adopted, "active-evidence"))).toBe(true);
   expect(adopted).not.toBe(old);
   expect(existsSync(old)).toBe(false);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("a nonce collision fails without adopting the existing directory", () => {
   const dir = sandbox();
@@ -186,4 +189,4 @@ test("a nonce collision fails without adopting the existing directory", () => {
   expect(result.stderr.toString()).toContain("EEXIST");
   const root = result.stdout.toString().trim();
   expect(readFileSync(join(root, "evidence"), "utf8")).toBe("original");
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);

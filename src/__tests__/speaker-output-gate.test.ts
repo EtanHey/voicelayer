@@ -8,6 +8,9 @@ import * as socketClient from "../socket-client";
 import * as tts from "../tts";
 import * as launcher from "../voice-bar-launcher";
 
+// Real subprocesses: standalone p95 <= 69 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const TEST_RECORDING_STATE_FILE = `${TEST_TMP}/voicelayer-speaker-gate-${process.pid}.json`;
 const TEST_REPLAY_FILE = `${TEST_TMP}/voicelayer-speaker-gate-replay-${process.pid}.mp3`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
@@ -288,7 +291,7 @@ describe("speaker output recording gate", () => {
         } catch {}
       }
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("keeps normal voice_speak playback unchanged while idle", async () => {
     writeRecordingState("idle");
@@ -302,5 +305,5 @@ describe("speaker output recording gate", () => {
     expect(spawnCalls[2]).toContain(
       process.platform === "darwin" ? "afplay" : "mpg123",
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

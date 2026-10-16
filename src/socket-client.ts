@@ -232,7 +232,8 @@ function startConnection(): void {
           }
           if (command) {
             console.error(
-              `[socket-client] Command from VoiceBar: ${JSON.stringify(command)}`,
+              // Allowlist metadata; never serialize a command or its user-content fields.
+              `[socket-client] Command from VoiceBar: ${JSON.stringify({ cmd: command.cmd, id: command.id })} bytes=${Buffer.byteLength(line, "utf8")}`,
             );
             if (commandHandler) {
               const responsePromise = commandHandler(command);
@@ -247,7 +248,7 @@ function startConnection(): void {
                     outcome: "loading",
                   }) + "\n");
                 } catch (error) {
-                  console.error(`[socket-client] Residency loading ack failed: ${String(error)}`);
+                  console.error("[socket-client] Residency loading ack failed (details redacted)");
                 }
               }
               const pending = Promise.resolve(responsePromise)
@@ -267,22 +268,20 @@ function startConnection(): void {
                     }
                   } catch (err) {
                     console.error(
-                      `[socket-client] Failed to write response: ${err instanceof Error ? err.message : String(err)}`,
+                      "[socket-client] Failed to write response (details redacted)",
                     );
                   }
                 })
                 .catch((error) => {
                   console.error(
-                    `[socket-client] Command handler failed: ${
-                      error instanceof Error ? error.message : String(error)
-                    }`,
+                    "[socket-client] Command handler failed (details redacted)",
                   );
                 })
                 .finally(() => socket.data.pendingResponses.delete(pending));
               socket.data.pendingResponses.add(pending);
             }
           } else {
-            console.error(`[socket-client] Invalid command: ${line}`);
+            console.error(`[socket-client] Invalid command: bytes=${Buffer.byteLength(line, "utf8")}`);
           }
         }
         if (overflow) {

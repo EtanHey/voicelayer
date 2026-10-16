@@ -2187,8 +2187,8 @@ export class WhisperServerBackend implements STTBackend {
         for (const evaluation of gated.evaluations ?? []) {
           const action =
             evaluation.reason === "removed"
-              ? `dropped ${JSON.stringify(evaluation.phrase)}`
-              : `decision ${evaluation.reason} for ${JSON.stringify(evaluation.phrase)}`;
+              ? "dropped"
+              : `decision ${evaluation.reason}`;
           console.error(
             `[voicelayer] outro gate: ${action} at ` +
               `${evaluation.startS.toFixed(2)}-${evaluation.endS.toFixed(2)}s ` +
@@ -2304,7 +2304,7 @@ export class WhisperServerBackend implements STTBackend {
       }
       for (const removal of gated.removed) {
         console.error(
-          `[voicelayer] outro gate: dropped ${JSON.stringify(removal.phrase)} at ` +
+          `[voicelayer] outro gate: dropped at ` +
             `${removal.startS.toFixed(2)}-${removal.endS.toFixed(2)}s ` +
             `(${removal.spanDbfs.toFixed(1)} dBFS mean, ${removal.peakDbfs.toFixed(1)} peak)`,
         );

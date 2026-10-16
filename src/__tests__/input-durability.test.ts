@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 // device probe, or files the resident VoiceBar reads. `describe` is the
 // live-host guard, so the suite skips loudly rather than racing the live app.
 import { describeMicTouching as describe } from "./setup/live-host-guard";
+import { diagnosticLeaks } from "./setup/privacy-canary";
 import { createHash } from "crypto";
 import {
   closeSync,
@@ -34,6 +35,9 @@ import * as sttPolish from "../stt-polish";
 import * as tts from "../tts";
 import * as vad from "../vad";
 import * as voiceBarLauncher from "../voice-bar-launcher";
+
+// Real subprocesses: standalone p95 <= 353 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
 
 const VAD_CHUNK_SAMPLES = 512;
 const VAD_CHUNK_BYTES = VAD_CHUNK_SAMPLES * 2;
@@ -374,11 +378,12 @@ describe("input recording durability", () => {
         if (savedChunked === undefined) delete process.env.QA_VOICE_CHUNKED_STT;
         else process.env.QA_VOICE_CHUNKED_STT = savedChunked;
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "voicelayer-input-durability-"));
+    tmpRoot = mkdtempSync(join(process.env.PRIV11_PRIVATE_ROOT ?? tmpdir(),
+      process.env.PRIV11_NONCE ? `CANARY-HOME-${process.env.PRIV11_NONCE}-` : "voicelayer-input-durability-"));
     retainedPath = join(tmpRoot, "last-recording.wav");
     savedRetainedPath = process.env.QA_VOICE_RETAINED_RECORDING_PATH;
     savedRecordingsDir = process.env.QA_VOICE_RECORDINGS_DIR;
@@ -476,6 +481,10 @@ describe("input recording durability", () => {
     Bun.spawnSync = originalSpawnSync;
     clearStopSignal();
     clearCancelSignal();
+    if (process.env.PRIV11_NONCE) {
+      const tokens = [`CANARY-TXT-${process.env.PRIV11_NONCE}`, `CANARY-HOME-${process.env.PRIV11_NONCE}`];
+      expect(diagnosticLeaks(tmpRoot, tokens, tmpRoot), "Canary in diagnostics before fixture cleanup").toEqual([]);
+    }
     rmSync(tmpRoot, { recursive: true, force: true });
     if (savedRetainedPath === undefined) {
       delete process.env.QA_VOICE_RETAINED_RECORDING_PATH;
@@ -497,6 +506,124 @@ describe("input recording durability", () => {
     } else {
       process.env.QA_VOICE_RECORDING_HOLD_PATH = savedRecordingHoldPath;
     }
+  });
+
+  for (const surface of ["dictation", "voice_ask", "archived", "retained"] as const) {
+    for (const suppressed of [false, true]) {
+      it(`PRIV11 PRIV1 R2 ${surface} ${suppressed ? "suppressed" : "final"} logs metadata while retaining content`, async () => {
+        const input = await import("../input");
+        backendText = suppressed ? "music playing" : `PRIVATE_TRANSCRIPT_שלום ${process.env.PRIV11_TEXT ?? "keep my words"}.`;
+        const originalError = console.error;
+        const log = spyOn(console, "error").mockImplementation((...args) => {
+          if (process.env.PRIV11_CHILD) originalError(...args);
+        });
+        let archiveDir: string | undefined;
+        let result: string | null;
+        try {
+          if (surface === "archived") {
+            archiveDir = join(process.env.QA_VOICE_RECORDINGS_DIR!, "2026-06-25", "2026-06-25T10-11-12-000Z-abcd1234");
+            mkdirSync(archiveDir, { recursive: true });
+            const audioPath = join(archiveDir, "audio.wav");
+            writeFileSync(audioPath, makeWav(makePcmChunk()));
+            backendMode = "hang";
+            const pending = input.retranscribeRecordingCapture(audioPath);
+            await waitUntil(() => finishHangingTranscription !== undefined, "private archived result");
+            finishHangingTranscription!();
+            result = await pending;
+          } else if (surface === "retained") {
+            writeFileSync(retainedPath, makeWav(makePcmChunk()));
+            result = await input.retranscribeLastCapture();
+          } else {
+            vadProcessSpy.mockResolvedValue(0.95);
+            installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+            result = await input.waitForInput(2_000, "standard", true, {
+              archiveSource: surface === "voice_ask" ? "voice_ask" : "voicebar",
+              ...(surface === "voice_ask" ? { voiceAskArtifacts: {
+                agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]), agentAudioFormat: "mp3" as const,
+                agentTranscript: process.env.PRIV11_TEXT ?? "Synthetic private question", agentTtsEngine: "edge-tts" as const, agentTtsVoice: "fixture",
+              } } : {}),
+              onArchiveCreated: path => { archiveDir = path; },
+            });
+          }
+          if (surface === "dictation" && !suppressed && archiveDir) {
+            await waitUntil(() => broadcasts.some(e => e.type === "archive_metadata_updated" &&
+              e.recording_path === join(archiveDir!, "audio.wav")), "deferred archive metadata write");
+          }
+          const output = log.mock.calls.flat().join("\n");
+          expect(output).not.toContain(backendText);
+          expect(output).not.toContain("PRIVATE_TRANSCRIPT");
+          expect(output).not.toContain(tmpRoot);
+          expect(output).toContain(`chars=${result?.length ?? 0}`);
+          if (suppressed) {
+            expect(result).toBeNull();
+            expect(output).toContain("Suppressed non-meaningful");
+          } else {
+            expect(result).toContain("PRIVATE_TRANSCRIPT");
+            const event = broadcasts.find(e => e.type === "transcription");
+            expect(event?.text).toBe(result);
+            if (archiveDir) {
+              expect(event?.recording_path).toBe(join(archiveDir, "audio.wav"));
+              expect(readFileSync(join(archiveDir, "voicelayer-transcript.txt"), "utf8")).toBe(result!);
+            }
+          }
+        } finally { log.mockRestore(); }
+      });
+    }
+  }
+
+  for (const failure of ["invalid path", "backend error"] as const) {
+    it(`PRIV1 R2 rejected retranscribe_recording ${failure} never echoes its WAV path`, async () => {
+      const { handleSocketCommand } = await import("../socket-handlers");
+      const { setRecordingState } = await import("../recording-state");
+      setRecordingState("idle");
+      const audioPath = failure === "invalid path"
+        ? join(tmpRoot, "PRIVATE_OWNER", "rejected.wav")
+        : join(process.env.QA_VOICE_RECORDINGS_DIR!, "2026-06-25", "2026-06-25T10-11-12-000Z-abcd1234", "audio.wav");
+      if (failure === "backend error") {
+        mkdirSync(join(audioPath, ".."), { recursive: true });
+        writeFileSync(audioPath, makeWav(makePcmChunk()));
+        backendMode = "throw-on-get";
+      }
+      const log = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(await handleSocketCommand({ cmd: "retranscribe_recording", audio_path: audioPath })).toMatchObject({ outcome: "accept" });
+        await waitUntil(() => log.mock.calls.some(c => String(c[0]).includes("Retranscribe archived recording failed")), "private rejection log");
+        const output = log.mock.calls.flat().join("\n");
+        expect(output).not.toContain(audioPath);
+        expect(output).not.toContain(tmpRoot);
+        expect(output).not.toContain("PRIVATE_OWNER");
+        // Error replies stay actionable; only the console sink is redacted.
+        expect(broadcasts.some(e => e.type === "error" && e.message.includes(audioPath))).toBe(true);
+      } finally { log.mockRestore(); }
+    });
+  }
+
+  it("PRIV11 archive diagnostics omit corrupt metadata content and filesystem error paths", async () => {
+    const input = await import("../input");
+    backendText = process.env.PRIV11_TEXT ? `${process.env.PRIV11_TEXT}.` : "Synthetic private transcript.";
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    broadcastSpy!.mockImplementation((event: any) => {
+      broadcasts.push(event);
+      if (event.type === "transcription") {
+        const metadata = event.recording_path.replace("audio.wav", "metadata.json");
+        rmSync(metadata); mkdirSync(metadata); // Deferred spoken-duration write must fail.
+      }
+    });
+    const originalError = console.error;
+    const log = spyOn(console, "error").mockImplementation((...args) => originalError(...args));
+    try {
+      const result = await input.waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+      expect(result).toBe(backendText);
+      await waitUntil(() => log.mock.calls.some(call => String(call[0]).startsWith(
+        "[voicelayer] Failed to record spoken length:")), "deferred spoken-duration failure");
+    } finally { log.mockRestore(); }
+    const audioPath = capturedVoiceBarAudio()[0];
+    const metadata = audioPath.replace("audio.wav", "metadata.json");
+    rmSync(metadata, { recursive: true });
+    writeFileSync(metadata, `invalid ${backendText}`);
+    input.updateArchivedTranscript(audioPath, backendText, { backend: "fake-stt", languageMode: "auto" });
+    expect(readFileSync(audioPath.replace("audio.wav", "voicelayer-transcript.txt"), "utf8")).toBe(backendText);
   });
 
   it("keeps recording idle when stale HOLD cleanup fails before capture", async () => {

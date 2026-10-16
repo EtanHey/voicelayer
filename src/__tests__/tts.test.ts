@@ -8,6 +8,9 @@ import { platform } from "os";
 import { existsSync, unlinkSync, readFileSync, writeFileSync } from "fs";
 import * as actualPaths from "../paths";
 
+// Real subprocesses: standalone p95 <= 94 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // Mock Bun.spawn and Bun.spawnSync to avoid actually playing audio
 const originalSpawn = Bun.spawn;
 const originalSpawnSync = Bun.spawnSync;
@@ -141,7 +144,7 @@ describe("tts module", () => {
       .slice("--voice=".length);
     expect(result.engine).toBe("edge-tts");
     expect(result.voice).toBe(actualVoice);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("returns the sanitized display transcript paired with synthesized audio", async () => {
     const { speak } = await import("../tts");
@@ -153,7 +156,7 @@ describe("tts module", () => {
     expect(result.displayText).toBe("Hello archive");
     expect(spawnCalls[0].cmd).toContain("--text=Hello archive");
     expect(result.audioArtifact?.format).toBe("mp3");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("speak() uses configured voice and rate", async () => {
     const { speak } = await import("../tts");
@@ -169,7 +172,7 @@ describe("tts module", () => {
     expect(voiceArg).toBeDefined();
     // Default voice should be JennyNeural
     expect(voiceArg).toContain("Jenny");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("speak() passes negative long-text rates as a single --rate= argv token", async () => {
     const { speak } = await import("../tts");
@@ -189,7 +192,7 @@ describe("tts module", () => {
       expect(rateArg).toBeDefined();
       expect(rateArg).toMatch(/^--rate=-\d+%$/);
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("speak() only calls edge-tts and afplay", async () => {
     const { speak } = await import("../tts");
@@ -198,7 +201,7 @@ describe("tts module", () => {
 
     const osascriptCall = spawnCalls.find((c) => c.cmd[0] === "osascript");
     expect(osascriptCall).toBeUndefined();
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("speak() tolerates missing ffprobe", async () => {
     // @ts-ignore — simulate ffprobe missing from PATH
