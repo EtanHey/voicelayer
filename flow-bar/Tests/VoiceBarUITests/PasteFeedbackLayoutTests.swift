@@ -41,6 +41,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                     x: textFrame.minX, y: CGFloat(line) * textFrame.height / 2,
                     width: textFrame.width, height: textFrame.height / 2)))
                 try reportCropInk(crop, label: "line=\(line) message=\(message.debugDescription)")
+                try requireReadableCrop(crop)
                 try requireOCR(size: CGSize(width: crop.width, height: crop.height), scale: textFrame.height / 32)
                 return try recognize(crop).joined(separator: " ")
             }.joined(separator: " ")
@@ -83,6 +84,49 @@ final class PasteFeedbackLayoutTests: XCTestCase {
         XCTAssertGreaterThan(ink.variance, 0)
     }
 
+    func testSubFloorCropSkipsOnlyOnGitHubActions() throws {
+        for range in [0, 23, 63] {
+            let crop = try contrastFixture(range: range)
+            XCTAssertThrowsError(try requireReadableCrop(crop, githubActions: "true")) { error in
+                XCTAssertTrue(error is XCTSkip)
+            }
+            for environment in [nil, "false", "1", "TRUE"] as [String?] {
+                XCTAssertThrowsError(try requireReadableCrop(crop, githubActions: environment)) { error in
+                    XCTAssertFalse(error is XCTSkip)
+                    XCTAssertEqual((error as? CropContrastFailure)?.range, range)
+                }
+            }
+        }
+    }
+
+    func testContrastAtOrAboveFloorStillRequiresOCRInEveryEnvironment() throws {
+        for range in [64, 218, 255] {
+            let crop = try contrastFixture(range: range)
+            for environment in [nil, "false", "true"] as [String?] {
+                XCTAssertNoThrow(try requireReadableCrop(crop, githubActions: environment))
+            }
+        }
+    }
+
+    func testOCRSkipStillChecksEveryRender() throws {
+        var checked = 0
+        XCTAssertThrowsError(try forEveryRender { _, _, _ in
+            checked += 1
+            throw XCTSkip("Synthetic OCR capability skip")
+        }) { error in XCTAssertTrue(error is XCTSkip) }
+        XCTAssertEqual(checked, 84, "A skip must preserve all screen/message/queue/appearance renders")
+    }
+
+    private func contrastFixture(range: Int) throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(data: nil, width: 2, height: 1,
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(red: CGFloat(range) / 255, green: CGFloat(range) / 255,
+                             blue: CGFloat(range) / 255, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        return try XCTUnwrap(context.makeImage())
+    }
+
     func testOrdinaryStatusAndTerminalPreviewRemainOneLine() {
         for message in ["Copied", "Preparing speech…", "QA terminal transcript שלום 👋"] {
             let label = NSHostingView(rootView:
@@ -93,6 +137,12 @@ final class PasteFeedbackLayoutTests: XCTestCase {
     }
 
     private func forEveryRender(checksOCR: Bool = false, checkWords: (CGImage, CGRect, String) throws -> Void) throws {
+        // A capability skip must not bypass later renders, geometry or readable OCR checks.
+        var firstOCRSkip: XCTSkip?
+        func checkOCR(_ check: () throws -> Void) throws {
+            do { try check() }
+            catch let skip as XCTSkip { firstOCRSkip = firstOCRSkip ?? skip }
+        }
         for screenWidth in [800.0, 1024.0, 1728.0] {
             for (index, message) in messages.enumerated() {
                 for queueDepth in [0, 12] {
@@ -188,17 +238,22 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         let cropInset = max(0, queueWidth - 4)
                         let textX = 12 + canvas.canvasGeometry.coreOriginX + geometry.coreWidth
                             + slot.coreInset + cropInset
-                        try checkWords(image, CGRect(x: textX * scale, y: 0,
-                            width: (geometry.trailingWingWidth - slot.coreInset - slot.outerInset - cropInset) * scale,
-                            height: 32 * scale), message)
+                        try checkOCR {
+                            try checkWords(image, CGRect(x: textX * scale, y: 0,
+                                width: (geometry.trailingWingWidth - slot.coreInset - slot.outerInset - cropInset) * scale,
+                                height: 32 * scale), message)
+                        }
                         if queueDepth > 0, checksOCR {
                             let badge = try XCTUnwrap(image.cropping(to: CGRect(
                                 x: (textX - cropInset) * scale, y: 0,
                                 width: (queueWidth - 4) * scale, height: 32 * scale)))
                             try reportCropInk(badge, label: "badge screen=\(screenWidth) message=\(index) light=\(light)")
-                            try requireOCR(size: CGSize(width: badge.width, height: badge.height), scale: scale,
-                                           font: roundedBadgeFont, text: "12")
-                            XCTAssertEqual(try recognize(badge), ["12"], "Badge must remain visible")
+                            try checkOCR {
+                                try requireReadableCrop(badge)
+                                try requireOCR(size: CGSize(width: badge.width, height: badge.height), scale: scale,
+                                               font: roundedBadgeFont, text: "12")
+                                XCTAssertEqual(try recognize(badge), ["12"], "Badge must remain visible")
+                            }
                         }
                         if VisualArtifactTestPolicy.isRegenerationEnabled() {
                             let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -212,6 +267,25 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                 }
             }
         }
+        if let firstOCRSkip { throw firstOCRSkip }
+    }
+
+    // 210 local crops: range 218–226; the same hosted crops: 11–23 (8-bit luminance).
+    nonisolated private static let ocrReadableContrastFloor = 64
+
+    private struct CropContrastFailure: Error, CustomStringConvertible {
+        let range: Int
+        var description: String { "Local crop range \(range) is below OCR contrast floor \(ocrReadableContrastFloor)" }
+    }
+
+    private func requireReadableCrop(_ image: CGImage,
+        githubActions: String? = ProcessInfo.processInfo.environment["GITHUB_ACTIONS"]) throws {
+        let range = try cropInk(image).luminanceRange
+        guard range < Self.ocrReadableContrastFloor else { return }
+        if githubActions == "true" {
+            throw XCTSkip("hosted runner render contrast <\(Self.ocrReadableContrastFloor) (range \(range)): unreadable by OCR")
+        }
+        throw CropContrastFailure(range: range)
     }
 
     private struct CropInk {
