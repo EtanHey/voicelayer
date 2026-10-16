@@ -68,7 +68,21 @@ def main():
         safe(target)
         with open(script.parent.parent / 'launchd/com.voicelayer.recordings-backup.plist', 'rb') as f:
             config = plistlib.load(f)
-        config['ProgramArguments'] = ['/bin/bash', str(script)]
+        job_script = script
+        for keg in script.parents:
+            if keg.parent.name == 'voicelayer' and keg.parent.parent.name == 'Cellar':
+                # Keep the suffix within the keg (e.g. libexec/scripts/...).
+                # Do not resolve opt: Homebrew retargets it on each upgrade.
+                job_script = keg.parent.parent.parent / 'opt/voicelayer' / script.relative_to(keg)
+                break
+        config['ProgramArguments'] = ['/bin/bash', str(job_script)]
+        # Bash exits nonzero if the script disappears. Retain that stderr even
+        # when the script cannot start and open its own application log.
+        error_log = logs / 'recordings-backup.log'
+        safe(error_log)
+        logs.mkdir(parents=True, exist_ok=True)
+        error_log.touch(exist_ok=True)
+        config['StandardErrorPath'] = str(error_log)
         # Render only: loading/running remains a deliberate operator step.
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, 'wb') as f:

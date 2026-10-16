@@ -3303,7 +3303,7 @@ export async function waitForInput(
       );
       if (result.text.trim() && !finalized.text) {
         console.error(
-          `[voicelayer] Suppressed non-meaningful transcription: ${JSON.stringify(result.text)}`,
+          `[voicelayer] Suppressed non-meaningful transcription: raw_chars=${result.text.length}`,
         );
       }
     }
@@ -3318,7 +3318,7 @@ export async function waitForInput(
       processingStartedAtMs: postCaptureProcessingStartedAtMs,
       finalTranscriptReadyAtMs,
     });
-    console.error(`[voicelayer] Transcription: ${text}`);
+    console.error(`[voicelayer] Transcription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
 
     retainLastCaptureForRecovery(
       sttWavData,
@@ -4181,7 +4181,7 @@ export async function retranscribeRecordingCapture(
       message: "Transcribing",
     });
     console.error(
-      `[voicelayer] Retranscribing archived recording with ${backend.name}: ${wavPath}`,
+      `[voicelayer] Retranscribing archived recording with ${backend.name}: recording_present=true`,
     );
     const { sttWavPath, cleanup, transcribedDurationMs } =
       prepareRetranscribeWavForSTT(
@@ -4207,10 +4207,10 @@ export async function retranscribeRecordingCapture(
       const text = finalized.text;
       if (result.text.trim() && !text) {
         console.error(
-          `[voicelayer] Suppressed non-meaningful archived retranscription: ${JSON.stringify(result.text)}`,
+          `[voicelayer] Suppressed non-meaningful archived retranscription: raw_chars=${result.text.length}`,
         );
       }
-      console.error(`[voicelayer] Archived retranscription: ${text}`);
+      console.error(`[voicelayer] Archived retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
 
       if (text) {
         updateArchivedTranscript(wavPath, text, {
@@ -4312,10 +4312,10 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       const text = finalized.text;
       if (result.text.trim() && !text) {
         console.error(
-          `[voicelayer] Suppressed non-meaningful retranscription: ${JSON.stringify(result.text)}`,
+          `[voicelayer] Suppressed non-meaningful retranscription: raw_chars=${result.text.length}`,
         );
       }
-      console.error(`[voicelayer] Retranscription: ${text}`);
+      console.error(`[voicelayer] Retranscription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
 
       if (text) {
         if (archivedAudioPath) {
