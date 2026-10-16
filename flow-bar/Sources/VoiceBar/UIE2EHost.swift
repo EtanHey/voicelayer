@@ -6,7 +6,7 @@ import VoiceBarUI
 /// The real Settings/BarView/menu with fixture dependencies. This entry point intentionally
 /// precedes AppDelegate construction: no daemon, global hotkeys, audio engine or live sockets.
 @MainActor
-final class UIE2EHost: NSObject, NSApplicationDelegate {
+final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let sandbox: UIE2ESandbox
     let model: UIE2EModel
     var settings: NSWindow!
@@ -16,6 +16,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate {
     var statusController: MenuBarStatusItemController?
     var popoverPresenter: MenuBarPopoverPresenter?
     var wizard: NSWindow?
+    var contextMenuTracking = false
     init(sandbox: UIE2ESandbox) {
         self.sandbox = sandbox
         model = UIE2EModel(sandbox: sandbox)
@@ -80,18 +81,44 @@ final class UIE2EHost: NSObject, NSApplicationDelegate {
             }
             UIE2ESettings(model: model)
         })
-        let bar = NSHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
+        let bar = PillHostingView(rootView: BarView(state: model.voice, commandRouter: VoiceBarCommandRouter(voiceState: model.voice),
             onOpenSettings: { self.settings.makeKeyAndOrderFront(nil) },
-            onOpenHistory: { self.model.tab = .history; self.model.requestID += 1 }))
+            onOpenHistory: { self.model.tab = .history; self.model.requestID += 1 },
+            includesPanelOutsets: true))
+        bar.activeHitTestProvider = { [weak self] point in
+            guard let self else { return false }
+            return Self.panelLayout(for: self.model.voice).containsInteractiveContent(point)
+        }
+        bar.renderedSurfaceHitTestProvider = { [weak self] point in
+            guard let self else { return false }
+            return Self.panelLayout(for: self.model.voice).containsVisibleSurface(point)
+        }
+        bar.hoverExpansionHitTestProvider = { [weak self] point in
+            guard let self else { return false }
+            return Self.panelLayout(for: self.model.voice).containsHoverExpansion(point)
+        }
+        bar.hoverRetentionHitTestProvider = { [weak self] point in
+            guard let self else { return false }
+            return Self.panelLayout(for: self.model.voice).containsHoverRetention(point)
+        }
+        bar.onHoverChanged = { [weak self] hovering in
+            self?.model.voice.setHoveringFromDebouncedPointer(hovering)
+        }
+        bar.wantsLayer = true
+        bar.layer?.masksToBounds = true
         bar.frame = NSRect(x: 0, y: 0, width: 680, height: 180)
         pill = FloatingPillPanel(content: bar)
         pill.title = "VoiceBar QA Pill"
         pill.setFrame(NSRect(x: 100, y: 20, width: 680, height: 180), display: false)
+        model.voice.onPanelLayoutChange = { [weak self] in
+            self?.updatePillLayout()
+        }
+        if let screen = NSScreen.main { Self.fitPill(pill, layout: Self.panelLayout(for: model.voice), in: screen.visibleFrame) }
         model.onVisibilityChange = { [weak self] hidden in
             if hidden { self?.pill?.orderOut(nil) } else { self?.pill?.orderFront(nil) }
         }
         configureMenu()
-        pill.contextMenuProvider = { self.menu.makeMenu() }
+        pill.contextMenuProvider = { self.makeContextMenu() }
         pill.contextMenuHitTestProvider = { _ in true }
         pill.orderFront(nil)
         settings.makeKeyAndOrderFront(nil)
@@ -99,6 +126,93 @@ final class UIE2EHost: NSObject, NSApplicationDelegate {
         configureStatusItem()
         model.onRunSetup = { [weak self] in self?.openWizard() }
         model.receipt("launch")
+    }
+
+    /// Same operational input, morph canvas and hit configuration used by the production
+    /// host. The QA-only capture placement keeps its core stable and away from Settings.
+    /// No AppDelegate is constructed and no production services are started.
+    static func panelLayout(for state: VoiceState) -> VoiceBarPanelLayout {
+        let presentation = VoiceBarPresentation.notchPresentation(from: .init(
+            mode: state.mode,
+            showsRecordingHold: state.mode == .recording && state.recordingMode == "vad",
+            hasTeleprompterText: state.teleprompterText != nil,
+            isTeleprompterDismissed: state.isTeleprompterDismissed,
+            isTeleprompterReadback: state.isTeleprompterReadback,
+            confirmationText: state.confirmationText,
+            commandModeState: state.commandModeState,
+            activeClipMarker: state.activeClipMarker,
+            queueDepth: state.queueDepth,
+            keepsPasteFlowEnvelope: state.keepsPasteFlowEnvelope,
+            hotkeyPhase: state.hotkeyPhase,
+            statusText: VoiceBarPresentation.liveStatusText(mode: state.mode, transcript: state.transcript,
+                confirmationText: state.confirmationText, hotkeyPhase: state.hotkeyPhase,
+                hotkeyEnabled: state.hotkeyEnabled, errorMessage: state.errorMessage,
+                transcribingStatusText: state.transcribingStatusText, commandModeState: state.commandModeState,
+                activeClipMarker: state.activeClipMarker),
+            isHovered: state.isHovering,
+            isKeyboardFocused: false,
+            isCollapsed: state.isCollapsed,
+            visibleCoreOcclusionInset: 0))
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        return VoiceBarPanelLayout.make(presentation: presentation,
+            interactionConfiguration: AppDelegate.notchInteractionConfiguration(
+                for: state, visualState: presentation.visualState),
+            canvasGeometry: canvas.canvasGeometry)
+    }
+
+    static func fitPill(_ panel: FloatingPillPanel, layout: VoiceBarPanelLayout, in screen: CGRect) {
+        panel.contentView?.setFrameSize(layout.panelSize)
+        panel.setFrame(VoiceBarIsolatedCapturePlacement.frame(layout: layout, visibleFrame: screen,
+            environment: [VoiceBarIsolatedCapturePlacement.topRightEnvironmentVariable: "1"]), display: true)
+    }
+
+    func updatePillLayout() {
+        guard !contextMenuTracking else {
+            model.receipt("qa-menu-layout-deferred")
+            return
+        }
+        guard let pill, let screen = NSScreen.main else { return }
+        Self.fitPill(pill, layout: Self.panelLayout(for: model.voice), in: screen.visibleFrame)
+    }
+
+    private func makeContextMenu() -> NSMenu {
+        let result = menu.makeMenu()
+        Self.identifyRecentMenuItems(result)
+        result.delegate = self
+        return result
+    }
+
+    static func identifyRecentMenuItems(_ menu: NSMenu) {
+        // Composite native title/subtitle is not a stable XCUITest query key.
+        // Tag only the QA instance while retaining the real titles and actions.
+        for parent in menu.items where parent.title == "Microphone" {
+            parent.setAccessibilityIdentifier("uie2e-microphone-menu")
+            for child in parent.submenu?.items ?? [] {
+                if child.title.hasPrefix("Default:") { child.setAccessibilityIdentifier("uie2e-microphone-default") }
+                if child.title == MicrophoneDefaultPresentation.changeTitle {
+                    child.setAccessibilityIdentifier("uie2e-microphone-change")
+                }
+            }
+        }
+        // Native NSMenuItem's AX title is not its XCUIElement.label. Keep the
+        // production controller/title/action and tag only this synthetic row.
+        for item in menu.items.flatMap({ $0.submenu?.items ?? [] })
+            where item.representedObject as? String == UIE2EModel.transcript {
+            item.setAccessibilityIdentifier("uie2e-recent-qa-recording")
+        }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        contextMenuTracking = true
+        model.voice.beginModalInteraction()
+        model.receipt("qa-menu-open")
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        contextMenuTracking = false
+        model.voice.endModalInteraction()
+        updatePillLayout()
+        model.receipt("qa-menu-close")
     }
 
     private func openWizard() {
