@@ -53,6 +53,9 @@ xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos14.0" "$repo/scrip
   -o "$output/voicebar-ui-e2e-capture" > "$output/capture-build.log" 2>&1 || {
     echo "FAIL screen recorder build (see $output/capture-build.log)"; exit 1;
   }
+xcrun swiftc -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macos14.0" \
+  "$repo/scripts/voicebar-ui-e2e-visibility.swift" -o "$output/voicebar-ui-e2e-visibility" \
+  > "$output/visibility-build.log" 2>&1 || { echo 'FAIL visibility helper build'; exit 1; }
 xcodebuild build-for-testing -project "$repo/flow-bar/UIE2E/VoiceBarUIE2E.xcodeproj" -scheme VoiceBarUIE2E \
   -destination 'platform=macOS' -derivedDataPath "$output/DerivedData" > "$output/build-for-testing.log" 2>&1 || {
     echo "FAIL build-for-testing (see $output/build-for-testing.log)"; exit 1;
