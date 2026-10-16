@@ -100,6 +100,30 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(args[args.index('-parallel-testing-enabled') + 1], 'NO')
         self.assertEqual(args[args.index('-resultBundlePath') + 1], str(self.output / 'VoiceBar.xcresult'))
 
+    def test_each_scenario_selects_exactly_one_method_never_both(self):
+        for scenario, method in [('full', 'testFullUIOnlyFlow'), ('focused-338', 'testFocused338StateGallery')]:
+            with self.subTest(scenario=scenario):
+                args = runner.test_arguments(self.output, scenario)
+                self.assertEqual([a for a in args if a.startswith('-only-testing:')],
+                                 ['-only-testing:VoiceBarUIE2ETests/VoiceBarFlowTests/' + method])
+        with self.assertRaises(ValueError):
+            runner.test_arguments(self.output, 'focused-338,full')
+
+    def test_metadata_preserves_focused_selection_without_explicit_argument(self):
+        (self.output / 'scenario.json').write_text(json.dumps({'scenario': 'focused-338'}))
+        self.assertIn('-only-testing:VoiceBarUIE2ETests/VoiceBarFlowTests/testFocused338StateGallery',
+                      runner.test_arguments(self.output))
+        with self.assertRaises(ValueError):
+            runner.test_arguments(self.output, 'full')
+
+    def test_cli_rejects_unknown_scenario_before_output_or_native_tools(self):
+        result = subprocess.run(['bash', str(MODULE.with_name('voicebar-ui-e2e.sh')),
+                                 '--output', str(self.root / 'never-created'), '--scenario', 'all'],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('scenario', result.stderr)
+        self.assertFalse((self.root / 'never-created').exists())
+
     def test_success_and_test_failure_both_flush_before_ffprobe(self):
         for code in [0, 7]:
             with self.subTest(code=code):

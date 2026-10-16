@@ -255,3 +255,15 @@ enum UIE2EGalleryFrames {
         return issues
     }
 }
+
+extension UIE2EGalleryFrames {
+    static func expectedFamilyAX(_ snapshot: [String: Any], primaryTop: CGFloat) -> CGRect? {
+        guard let value = snapshot["familyExpectedFrame"] as? String else { return nil }
+        let frame = NSRectFromString(value)
+        guard !frame.isEmpty, [frame.minX, frame.minY, frame.width, frame.height, primaryTop].allSatisfy(\.isFinite) else { return nil }
+        return CGRect(x: frame.minX, y: primaryTop - frame.maxY, width: frame.width, height: frame.height)
+    }
+    static func expired(renderer: CGRect?, feedbackPresent: Bool) -> Bool {
+        renderer.map { !$0.isEmpty && [$0.minX, $0.minY, $0.width, $0.height].allSatisfy(\.isFinite) && !feedbackPresent } ?? false
+    }
+}

@@ -24,17 +24,22 @@ import { spawnSync } from "child_process";
 import {
   acquireProcessLock,
   releaseProcessLock,
-  MCP_PID_FILE,
+  getMcpPidFilePath,
+  assertTestPidPath,
 } from "../process-lock";
-import { DAEMON_PID_FILE } from "../paths";
+import { getTmpRoot } from "../paths";
 import { createShutdownHandler, getServeSocketPath } from "../daemon";
 
 // Real subprocesses: standalone p95 <= 36 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
 
+const MCP_PID_FILE = getMcpPidFilePath();
+const DAEMON_PID_FILE = join(getTmpRoot(), "voicelayer-daemon.pid");
+
 // --- Helpers ---
 
 function cleanFile(path: string) {
+  assertTestPidPath(path);
   if (existsSync(path)) {
     try {
       unlinkSync(path);
@@ -45,12 +50,20 @@ function cleanFile(path: string) {
 // --- Tests ---
 
 describe("daemon PID coexistence", () => {
+  function assertPidIsolation() {
+    // Validate the complete fixture before even probing either PID file.
+    assertTestPidPath(DAEMON_PID_FILE);
+    assertTestPidPath(MCP_PID_FILE);
+  }
+
   beforeEach(() => {
+    assertPidIsolation();
     cleanFile(DAEMON_PID_FILE);
     cleanFile(MCP_PID_FILE);
   });
 
   afterEach(() => {
+    assertPidIsolation();
     releaseProcessLock(DAEMON_PID_FILE);
     releaseProcessLock(MCP_PID_FILE);
     cleanFile(DAEMON_PID_FILE);
