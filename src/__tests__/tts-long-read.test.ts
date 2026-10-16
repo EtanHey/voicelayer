@@ -114,3 +114,34 @@ describe("long-read pipeline", () => {
     await done; expect(f.synths).toEqual([0, 1]); expect(f.plays).toEqual([0]); expect(f.saved()).toEqual([]);
   });
 });
+
+describe("REP1 owned long-read restart", () => {
+  for (const stop of [false, true]) it(`replaces a pending seek with global zero; Stop=${stop}`, async () => {
+    const controller = new AbortController(), plays = fixtureBarrier<any>(), preparations = fixtureBarrier<any>();
+    let control: import("../tts/long-read").LongReadSeek;
+    const disposed: string[] = [];
+    const done = runLongRead(["A", "B"], "replay-owner", controller.signal, {
+      registerSeek: value => { control = value; },
+      synthesize: async (_text, i) => chunk(i),
+      prepareSeek: async () => { const result = deferred<string>(); preparations.push(result); return result.promise; },
+      disposeSeek: file => { if (file) disposed.push(file); },
+      play: (_chunk, _text, info, position) => {
+        const exit = deferred<any>(); plays.push({ info, position, exit });
+        return { started: Promise.resolve(true), exited: exit.promise,
+          interrupt: () => exit.resolve({ status: "interrupted", stopped_at_ms: 200 }) };
+      }, saveHistory: async () => {}, dispose: () => {},
+    });
+    try {
+      await plays.at(0); expect(control!.seek(300).outcome).toBe("accept"); await preparations.at(0);
+      expect(control!.restart()).toMatchObject({ outcome: "accept", offset_ms: 0 });
+      if (stop) controller.abort();
+      preparations.values[0].resolve("stale.wav"); await tick();
+      expect(disposed).toContain("stale.wav");
+      expect(plays.values).toHaveLength(stop ? 1 : 2);
+      if (!stop) expect(plays.values[1]).toMatchObject({ info: { id: "replay-owner", chunk_index: 0 }, position: { offsetMs: 0 } });
+    } finally {
+      controller.abort(); for (const prep of preparations.values) prep.resolve("stale.wav");
+      for (const play of plays.values) play.exit.resolve({ status: "interrupted", stopped_at_ms: 200 }); await done;
+    }
+  });
+});

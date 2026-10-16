@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from "bun:test";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import * as socket from "../socket-client";
 import * as recording from "../recording-state";
@@ -7,7 +7,7 @@ import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
-import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
+import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand } from "../socket-handlers";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
@@ -19,9 +19,9 @@ const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough word
 describe("long-read real runtime with owned synth/player fakes", () => {
   const originalSpawn = Bun.spawn, originalSpawnSync = Bun.spawnSync;
   let synths: { argv: string[]; exit: ReturnType<typeof deferred<number>>; killed: boolean }[];
-  let players: { exit: ReturnType<typeof deferred<number>>; killed: boolean; synthCount: number }[];
+  let players: { exit: ReturnType<typeof deferred<number>>; killed: boolean; synthCount: number; argv: string[]; signals: string[] }[];
   let events: any[];
-  let holdSynth: boolean, autoPlay: boolean;
+  let holdSynth: boolean, autoPlay: boolean, holdPlayerExit: boolean;
   let handles: { done: Promise<void> }[];
   let spies: ReturnType<typeof spyOn>[];
   let historyInputs: string[][];
@@ -37,7 +37,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
 
   beforeEach(() => {
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
-    holdSynth = false; autoPlay = false; holdHistory = false; holdDecoder = false;
+    holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false;
     clockMs = 100_000;
     spies.push(spyOn(Date, "now").mockImplementation(() => clockMs));
@@ -76,13 +76,13 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         return { pid: 72000 + decoders.length + histories.length, exited: exit.promise,
           stdout: new Blob([new Uint8Array(8)]).stream(), kill: () => { item.killed = true; exit.resolve(143); } };
       }
-      const exit = deferred<number>(); const item = { exit, killed: false, synthCount: synths.length }; players.push(item); playerBarrier.push(item);
+      const exit = deferred<number>(); const item = { exit, killed: false, synthCount: synths.length, argv, signals: [] as string[] }; players.push(item); playerBarrier.push(item);
       if (autoPlay) exit.resolve(0);
-      return { pid: 73000 + players.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
+      return { pid: 73000 + players.length, exited: exit.promise, kill: (signal: string) => { item.signals.push(signal); item.killed = true; if (!holdPlayerExit) exit.resolve(143); } };
     }) as any;
   });
   afterEach(async () => {
-    stopPlayback(); for (const child of histories) child.exit.resolve(0); for (const h of handles) await h.done; await awaitCurrentPlayback();
+    stopPlayback(); for (const player of players) player.exit.resolve(143); for (const child of histories) child.exit.resolve(0); for (const h of handles) await h.done; await awaitCurrentPlayback();
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
@@ -240,10 +240,118 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(synths[1].killed).toBe(true); stopPlayback(); await old.done;
   });
 
-  it("refuses chunk-only replay during a long read to keep its history and timeline coherent", async () => {
-    holdSynth = true; const h = start(); await synthBarrier.at(1); await playerBarrier.at(0);
-    expect(handleSocketCommand({ cmd: "replay" })).toMatchObject({ outcome: "reject", reason: "busy" });
-    expect(players).toHaveLength(1); stopPlayback(100); await h.done;
+  for (const engine of ["edge", "clone", "fallback"] as const) for (const readText of ["A single sentence.", text])
+    it(`REP1 restarts ${engine} ${readText === text ? "multi" : "one"}-chunk reads at global zero`, async () => {
+    if (engine !== "edge") spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(engine === "clone" ? Buffer.from("fixture audio") : null));
+    holdSynth = true; const h = start(engine === "edge" ? "edge" : "clone", readText); await playerBarrier.at(0);
+    const generation = h.generation;
+    clockMs += 250;
+    expect(handleSocketCommand({ cmd: "replay", id: "restart" })).toMatchObject({ outcome: "accept", id: "restart" });
+    await playerBarrier.at(1);
+    expect(players[0].killed).toBe(true);
+    expect(players[1].argv).toEqual(players[0].argv);
+    expect(h.generation).toBe(generation + 1);
+    expect(cancelPlayback({ id: h.id, generation })).toBe(false);
+    expect(events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1)).toMatchObject({
+      playback_offset_ms: 0, long_read: { id: h.id, chunk_index: 0, chunk_start_ms: 0 },
+    });
+    clockMs += 100; stopPlayback(100); await h.done;
+    expect(loadHistory()).toHaveLength(1); expect(historyInputs[0]).toHaveLength(2);
+  });
+
+  it("REP1 replays the prefix after a cross-chunk seek without resynthesis", async () => {
+    const h = start(); await playerBarrier.at(0); await fixtureCheckpoint();
+    expect(seekPlayback(1250).outcome).toBe("accept"); await playerBarrier.at(1);
+    expect(events.filter(e => e.state === "speaking").at(-1).long_read.chunk_index).toBe(1);
+    const count = synths.length;
+    expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("accept"); await playerBarrier.at(2);
+    expect(players[2].argv).toEqual(players[0].argv); expect(synths).toHaveLength(count);
+    expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ playback_offset_ms: 0, long_read: { id: h.id, chunk_index: 0 } });
+    stopPlayback(100); await h.done;
+  });
+
+  it("REP1 repeated clicks coalesce while reaping and preserve foreign queued work", async () => {
+    holdPlayerExit = true;
+    const h = start("edge", "Owned sentence."); await playerBarrier.at(0);
+    const foreign = playAudioNonBlocking("foreign-pending.mp3", { text: "Foreign" });
+    let settled = false; void foreign.exited.then(() => { settled = true; });
+    for (let i = 0; i < 4; i++) expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("accept");
+    await fixtureCheckpoint(); expect(players).toHaveLength(1); expect(settled).toBe(false);
+    players[0].exit.resolve(143); await playerBarrier.at(1);
+    expect(players[1].argv.at(-1)).toBe("foreign-pending.mp3"); expect(players[1].killed).toBe(false);
+    players[1].exit.resolve(0); await foreign.playerExited; await playerBarrier.at(2);
+    expect(players[2].argv).toEqual(players[0].argv);
+    players[2].exit.resolve(0); await h.done;
+    expect(players).toHaveLength(3); expect(loadHistory()).toHaveLength(1);
+  });
+
+  it("REP1 Stop wins while the old replay player has not physically exited", async () => {
+    holdPlayerExit = true;
+    const h = start("edge", "Owned sentence."); await playerBarrier.at(0);
+    expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("accept");
+    let acknowledged = false;
+    const stopped = Promise.resolve(handleSocketCommand({ cmd: "stop" })).then(ack => { acknowledged = true; return ack; });
+    await fixtureCheckpoint(); expect(acknowledged).toBe(false); expect(players).toHaveLength(1);
+    players[0].exit.resolve(143); expect(await stopped).toMatchObject({ outcome: "accept" }); await h.done;
+    expect(players).toHaveLength(1); expect(getPlaybackQueueDepth()).toBe(0);
+  });
+
+  for (const stop of [false, true]) it(`REP1 restart during amplitude preparation preserves decoder ownership; Stop=${stop}`, async () => {
+    holdDecoder = true;
+    const h = start("edge", "Owned sentence."); const decoder = await decoderBarrier.at(0);
+    expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("accept");
+    if (stop) {
+      stopPlayback(); await h.done;
+      expect(await h.started).toHaveProperty("error"); expect(players).toHaveLength(0);
+      expect(loadHistory()).toHaveLength(0);
+    } else {
+      await playerBarrier.at(0);
+      expect(events.filter(e => e.state === "speaking" && !e.long_read?.preparing).at(-1)).toMatchObject({
+        playback_offset_ms: 0, long_read: { id: h.id, chunk_index: 0 },
+      });
+      stopPlayback(100); await h.done;
+    }
+    expect(decoder.killed).toBe(true); expect(decoders).toHaveLength(1);
+    expect(getPlaybackQueueDepth()).toBe(0);
+  });
+
+  it("REP1 FX-3 replay re-arms the replacement watchdog and retires the old deadline", async () => {
+    jest.useFakeTimers();
+    try {
+      const h = start("edge", "Owned sentence."); await playerBarrier.at(0);
+      jest.advanceTimersByTime(500); clockMs += 500;
+      expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("accept"); await playerBarrier.at(1);
+      expect(players[0].signals).toEqual(["SIGTERM"]);
+      jest.advanceTimersByTime(5500); clockMs += 5500; await fixtureCheckpoint();
+      expect(players[1].signals).toEqual([]); // Original player's 6000ms deadline has passed.
+      jest.advanceTimersByTime(499); clockMs += 499; await fixtureCheckpoint();
+      expect(players[1].signals).toEqual([]);
+      jest.advanceTimersByTime(1); clockMs += 1; await fixtureCheckpoint();
+      expect(players[1].signals).toEqual(["SIGKILL"]); await h.done;
+      expect(await h.completion).toMatchObject({ error: "Speech playback failed: player-error" });
+      expect(events.filter(e => e.type === "error" && /watchdog/.test(e.message))).toHaveLength(1);
+    } finally { jest.useRealTimers(); }
+  });
+
+  it("REP1 explicitly rejects Replay before the prefix is synthesized", async () => {
+    holdSynth = true; synths.push({ argv: [], exit: deferred<number>(), killed: false });
+    const h = start(); await synthBarrier.at(0);
+    expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("reject");
+    expect(events.some(e => e.type === "error" && /Replay prefix audio unavailable/.test(e.message))).toBe(true);
+    expect(synths[1].killed).toBe(false); expect(players).toHaveLength(0);
+    stopPlayback(); await h.done;
+  });
+
+  for (const missingIndex of [0, 1]) it(`REP1 reports unavailable prefix chunk ${missingIndex} and leaves its current player intact`, async () => {
+    const h = start(); await playerBarrier.at(0);
+    for (let i = 0; i <= missingIndex; i++) { players[i].exit.resolve(0); await playerBarrier.at(i + 1); }
+    unlinkSync(players[missingIndex].argv.at(-1)!);
+    const generation = h.generation;
+    expect(handleSocketCommand({ cmd: "replay" }).outcome).toBe("reject"); await fixtureCheckpoint();
+    expect(events.some(e => e.type === "error" && e.source === "seek" && /prefix.*unavailable/i.test(e.message))).toBe(true);
+    expect(h.generation).toBe(generation);
+    expect(players[missingIndex + 1].killed).toBe(false); expect(players).toHaveLength(missingIndex + 2);
+    stopPlayback(100); await h.done;
   });
 
   it("voice_ask preempts synthesis before waiting on its prompt and recording", async () => {
