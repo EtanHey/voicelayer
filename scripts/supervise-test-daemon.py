@@ -3,6 +3,7 @@
 import os
 import json
 import fcntl
+import ctypes
 from pathlib import Path
 import re
 import shutil
@@ -12,44 +13,90 @@ import sys
 import time
 
 
+def process_identity(pid):
+    """Read argv and envp separately; argv text is NEVER ownership evidence."""
+    try:
+        if sys.platform == "darwin":
+            # CTL_KERN / KERN_PROCARGS2: argc, executable path, NUL padding,
+            # exactly argc argv strings, then the NUL-terminated envp strings.
+            libc = ctypes.CDLL(None, use_errno=True)
+            mib = (ctypes.c_int * 3)(1, 49, pid)
+            size = ctypes.c_size_t(os.sysconf("SC_ARG_MAX"))
+            buffer = ctypes.create_string_buffer(size.value)
+            if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+                return None
+            raw = buffer.raw[:size.value]
+            argc = int.from_bytes(raw[:4], sys.byteorder, signed=True)
+            if not 0 < argc < len(raw):
+                return None
+            offset = raw.index(b"\0", 4) + 1
+            while offset < len(raw) and raw[offset] == 0:
+                offset += 1
+            argv = []
+            for _ in range(argc):
+                end = raw.index(b"\0", offset)
+                argv.append(raw[offset:end])
+                offset = end + 1
+            entries = raw[offset:].split(b"\0")
+        elif sys.platform.startswith("linux"):
+            argv = (Path("/proc") / str(pid) / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+            entries = (Path("/proc") / str(pid) / "environ").read_bytes().split(b"\0")
+        else:
+            return None
+        env = {}
+        for entry in entries:
+            if not entry:
+                break
+            key, value = entry.split(b"=", 1)
+            key = os.fsdecode(key)
+            if key in env:
+                return None
+            env[key] = os.fsdecode(value)
+        return [os.fsdecode(arg) for arg in argv], env
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def processes():
-    # Darwin's eww includes the inherited environment without truncating it.
+    # ps supplies only process metadata. Native argv/envp reads are separate.
     rows = subprocess.check_output(
-        ["ps", "eww", "-ax", "-o", "pid=,ppid=,pgid=,uid=,stat=,command="], text=True)
+        ["ps", "-ax", "-o", "pid=,ppid=,pgid=,uid=,stat="], text=True)
     result = []
     for row in rows.splitlines():
-        fields = row.split(None, 5)
-        if len(fields) == 6 and fields[3] == str(os.getuid()) and "Z" not in fields[4]:
-            result.append((int(fields[0]), int(fields[1]), int(fields[2]), fields[5], fields[4]))
+        fields = row.split()
+        if len(fields) == 5 and fields[3] == str(os.getuid()) and "Z" not in fields[4]:
+            pid = int(fields[0])
+            identity = process_identity(pid)
+            argv, env = identity if identity is not None else ([], None)
+            result.append((pid, int(fields[1]), int(fields[2]), argv, env))
     return result
 
 
-def carries_run(command, run_dir):
-    # TMPDIR normally ends in '/' on macOS; the shell's paths can contain '//'
-    # while pathlib normalizes them. Match equivalent repeated separators.
-    return all(re.search(r"(?:^|\s)" + re.escape(key + "=") +
-                         re.escape(str(value)).replace("/", "/+") + r"(?=\s|$)", command)
+def carries_run(env, run_dir):
+    return env is not None and all(env.get(key) and os.path.isabs(env[key]) and
+                                   Path(env[key]) == value
                for key, value in (("VOICELAYER_TMP_ROOT", run_dir),
                                   ("VOICELAYER_MCP_SOCKET_PATH", run_dir / "voicelayer-mcp.sock"),
                                   ("VOICELAYER_SOCKET_PATH", run_dir / "voicelayer.sock")))
 
 
+def daemon_argv(argv):
+    return any(arg == "src/mcp-server-daemon.ts" or arg.endswith("/src/mcp-server-daemon.ts") for arg in argv)
+
+
 def reap_group(pgid, run_dir, orphan_only=False):
     def owned_members():
         members = [p for p in processes() if p[2] == pgid]
-        unverified = [p for p in members if not carries_run(p[3], run_dir)]
+        unverified = [p for p in members if not carries_run(p[4], run_dir)]
         if unverified:
-            # Explicitly different run identities are never ours. Darwin also
-            # briefly hides argv/env during exec/exit (e.g. '(whisper-cli)'),
-            # so an unavailable identity needs another snapshot, not a signal.
-            if any(re.search(r"(?:^|\s)VOICELAYER_TMP_ROOT=", p[3]) for p in unverified):
+            # A different real environment is never ours. An unavailable native
+            # identity can be transient during exec/exit; never signal it.
+            if any(p[4] is not None for p in unverified):
                 return []
             return None
         if not members:
             return []
-        if orphan_only and (run_dir.exists() or not any(
-                p[1] == 1 and re.search(r"(?:^|[\s/])src/mcp-server-daemon\.ts(?=\s|$)", p[3])
-                for p in members)):
+        if orphan_only and run_dir.exists():
             return []
         return members
 
@@ -60,8 +107,15 @@ def reap_group(pgid, run_dir, orphan_only=False):
             if members is not None:
                 return members
             if time.monotonic() >= deadline:
+                if orphan_only:
+                    return []  # Unknown environment: skip the entire group.
                 raise RuntimeError(f"cannot verify test daemon group {pgid}")
             time.sleep(0.05)
+
+    # Establish the orphan candidate once. TERM can remove its leader/entrypoint;
+    # subsequent snapshots still verify EVERY survivor's env and directory.
+    if orphan_only and not any(p[1] == 1 and daemon_argv(p[3]) for p in verified_members()):
+        return
 
     # Revalidate before EACH signal. A stale PID/PGID file is never authority
     # to kill a reused group, a resident daemon, or another test run.
@@ -98,13 +152,16 @@ def cleanup_group(run_dir):
 
 def sweep_orphans():
     seen = set()
-    for pid, ppid, pgid, command, _state in processes():
+    for pid, ppid, pgid, argv, env in processes():
         if ppid != 1 or pgid <= 1 or pgid in seen:
             continue
-        match = re.search(r"(?:^|\s)VOICELAYER_TMP_ROOT=(/[^\n]*?/voicelayer-run-tests\.[0-9]+)(?=\s|$)", command)
-        if match and re.search(r"(?:^|[\s/])src/mcp-server-daemon\.ts(?=\s|$)", command):
+        mcp_socket = (env or {}).get("VOICELAYER_MCP_SOCKET_PATH", "")
+        run_dir = Path(mcp_socket).parent
+        if (os.path.isabs(mcp_socket) and Path(mcp_socket).name == "voicelayer-mcp.sock" and
+                re.fullmatch(r"voicelayer-run-tests\.[0-9]+", run_dir.name) and daemon_argv(argv) and
+                carries_run(env, run_dir)):
             seen.add(pgid)
-            reap_group(pgid, Path(match[1]), orphan_only=True)
+            reap_group(pgid, run_dir, orphan_only=True)
 
 
 def main():
