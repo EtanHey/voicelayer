@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """One serial UI run, always recorded; imported unit tests use recorder stubs only."""
+import argparse
 import datetime
 import html
 import json
@@ -13,9 +14,23 @@ import sys
 import time
 
 
-def test_arguments(output):
+SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery'}
+
+
+def selected_scenario(output, scenario=None):
+    path = output / 'scenario.json'
+    recorded = json.loads(path.read_text())['scenario'] if path.exists() else None
+    chosen = scenario if scenario is not None else recorded if recorded is not None else 'full'
+    if chosen not in SCENARIOS or (recorded is not None and recorded != chosen):
+        raise ValueError('Invalid or conflicting UIE2E scenario: ' + str(chosen))
+    return chosen
+
+
+def test_arguments(output, scenario=None):
+    scenario = selected_scenario(output, scenario)
     return ['xcodebuild', 'test-without-building', '-xctestrun', str(output / 'UIE2E.xctestrun'),
             '-destination', 'platform=macOS', '-parallel-testing-enabled', 'NO',
+            '-only-testing:VoiceBarUIE2ETests/VoiceBarFlowTests/' + SCENARIOS[scenario],
             '-resultBundlePath', str(output / 'VoiceBar.xcresult')]
 
 
@@ -178,4 +193,10 @@ def run_suite(output, arguments=None, recording=None):
 
 
 if __name__ == '__main__':
-    sys.exit(run_suite(pathlib.Path(sys.argv[1]).resolve()))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('output', type=pathlib.Path)
+    parser.add_argument('--scenario', choices=SCENARIOS)
+    args = parser.parse_args()
+    output = args.output.resolve()
+    # Validate selection before changing visibility or starting the recorder.
+    sys.exit(run_suite(output, test_arguments(output, args.scenario)))
