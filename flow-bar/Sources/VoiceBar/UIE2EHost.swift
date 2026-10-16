@@ -87,6 +87,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate {
         pill = FloatingPillPanel(content: bar)
         pill.title = "VoiceBar QA Pill"
         pill.setFrame(NSRect(x: 100, y: 20, width: 680, height: 180), display: false)
+        model.onVisibilityChange = { [weak self] hidden in
+            if hidden { self?.pill?.orderOut(nil) } else { self?.pill?.orderFront(nil) }
+        }
         configureMenu()
         pill.contextMenuProvider = { self.menu.makeMenu() }
         pill.contextMenuHitTestProvider = { _ in true }
@@ -178,10 +181,12 @@ final class UIE2EModel {
         transcriptionVocabularyLoader: { [] }, transcriptionVocabularyAliasLoader: { [] })
     var entries = [STTDictionaryEntry(canonical: "QA initial", variants: ["initial variant"])]
     var revision: UInt64 = 0
-    var hidden = false
+    var hidden = false { didSet { onVisibilityChange?(hidden) } }
+    var onVisibilityChange: ((Bool) -> Void)?
     var tab: SettingsTab = .general
     var requestID = 0
     var events: [String] = []
+    var commands: [[String: Any]] = []
     var selectionText = "QA original selection"
     var onRunSetup: () -> Void = {}
     var residency = "loaded"
@@ -306,6 +311,15 @@ final class UIE2EModel {
     func fixture(_ name: String) {
         voice.confirmationText = nil
         switch name {
+        case "idle":
+            // Preserve the existing fixture contract: every idle reset restores
+            // the synthetic health/connection baseline before clearing playback.
+            refresh()
+            // This is fixture cleanup, not playback completion: omitting the
+            // playback source clears status without retaining it as readback.
+            voice.handleEvent(["type": "state", "state": "idle"])
+            voice.dismissRetainedTeleprompter()
+            voice.setHovering(false)
         case "confirmation": voice.mode = .idle; voice.confirmationText = "Pasted"
         case "paste-not-inserted": voice.mode = .idle; voice.confirmationText = "Not inserted — transcript kept in History. Click input and press Shift+F5, or Copy."
         case "paste-unverified": voice.mode = .idle; voice.confirmationText = "Insertion unverified — transcript kept in History. Check the input before retrying or Copy."

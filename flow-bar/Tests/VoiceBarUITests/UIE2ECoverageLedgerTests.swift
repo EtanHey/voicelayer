@@ -153,6 +153,15 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         }
     }
 
+    func testSelectionFeedbackWaiverRequiresP1fAndActualFailure() {
+        var ledger = UIE2ECoverageLedger()
+        ledger.requiredScope = ["338:static:selection-copy-empty"]
+        XCTAssertFalse(ledger.recordExpected(surface: "338:static:selection-copy-empty", issue: .selectionFeedback,
+            descriptions: ["Missing/unreachable gallery control"]))
+        XCTAssertTrue(ledger.recordExpected(surface: "338:static:selection-copy-empty", issue: .selectionFeedback,
+            descriptions: ["[P1f] full error text cannot fit its visible frame"]))
+        XCTAssertTrue(ledger.missingSurfaces.isEmpty)
+    }
 
     func testTerminalMayShowAnEllipsizedPreviewOnlyWhenFullTextIsVisibleInCard() {
         let full = "QA terminal transcript שלום 👋"

@@ -28,6 +28,23 @@ final class UIE2ESafetyTests: XCTestCase {
 final class UIE2EFixtureCommandTests: XCTestCase {
 
 
+    func testIdleFixtureRestoresTheSyntheticConnectionBaselineWithoutHardware() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        model.fixture("disconnected")
+        XCTAssertFalse(model.voice.isConnected)
+        let commandsBeforeIdleCleanup = model.commands.count
+
+        model.fixture("idle")
+
+        XCTAssertTrue(model.voice.isConnected, "Idle reset must restore the synthetic health baseline")
+        XCTAssertEqual(model.voice.mode, .idle)
+        XCTAssertEqual(model.commands.count, commandsBeforeIdleCleanup,
+            "Refreshing the fixture baseline must not send a command")
+    }
 
 
     func testHistoryPaginationAddsVisibleFixtureRowsInBothScopes() throws {
@@ -62,6 +79,17 @@ final class UIE2EFixtureCommandTests: XCTestCase {
         XCTAssertEqual(button.accessibilityIdentifier(), "uie2e-status-item")
     }
 
+    func testVisibilityChangesReachThePanelOwnerInsteadOfAStaticRootView() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        var hidden: [Bool] = []
+        model.onVisibilityChange = { hidden.append($0) }
+        model.hidden = true; model.hidden = false; model.hidden = true
+        XCTAssertEqual(hidden, [true, false, true])
+    }
 
 
 
