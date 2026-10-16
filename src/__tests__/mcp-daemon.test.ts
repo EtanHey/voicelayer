@@ -7,7 +7,7 @@ import { testSocket } from "./setup/test-tmp";
  * Includes daemon resilience tests: orphan socket detection, health ping/pong,
  * socket permissions, connection tracking, startup validation.
  */
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   unlinkSync,
   existsSync,
@@ -236,6 +236,19 @@ describe("mcp-daemon", () => {
     daemon?.stop();
     daemon = null;
     cleanup(TEST_SOCKET, TEST_SOCKET_2);
+  });
+
+  it("PRIV1 daemon fallback logs no NDJSON content fields", async () => {
+    const { logUnhandledNdjsonMessage } = await import("../mcp-daemon");
+    const msg = { type: "PRIVATE_TYPE", cmd: "speak_text", text: "PRIVATE_SELECTION_שלום",
+      transcript: "PRIVATE_TRANSCRIPT", nested: { content: "PRIVATE_NESTED" } };
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logUnhandledNdjsonMessage(msg);
+      const output = log.mock.calls.flat().join("\n");
+      expect(output).not.toContain("PRIVATE_");
+      expect(output).toContain(`bytes=${Buffer.byteLength(JSON.stringify(msg), "utf8")}`);
+    } finally { log.mockRestore(); }
   });
 
   it("starts and listens on a Unix socket", async () => {
@@ -599,69 +612,76 @@ describe("mcp-daemon", () => {
     ).toBeDefined();
   });
 
-  it("survives malformed Content-Length frame without killing connection", async () => {
-    const { createMcpDaemon } = await import("../mcp-daemon");
-    daemon = await createMcpDaemon({ socketPath: TEST_SOCKET });
+  it("PRIV1 survives malformed Content-Length frames without logging their payloads", async () => {
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { createMcpDaemon } = await import("../mcp-daemon");
+      daemon = await createMcpDaemon({ socketPath: TEST_SOCKET });
 
-    // Send a malformed frame followed by a valid one
-    const responses = await new Promise<Record<string, unknown>[]>(
-      (resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("timeout")), 5000);
-        let buffer = "";
-        const results: Record<string, unknown>[] = [];
+      // Send a malformed frame followed by a valid one
+      const responses = await new Promise<Record<string, unknown>[]>(
+        (resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timeout")), 5000);
+          let buffer = "";
+          const results: Record<string, unknown>[] = [];
 
-        Bun.connect({
-          unix: TEST_SOCKET,
-          socket: {
-            open(socket) {
-              // Malformed: Content-Length header with no number
-              const bad = "Content-Length: \r\n\r\n";
-              // Valid frame after the bad one
-              const good = serializeMcpFrame({
-                jsonrpc: "2.0",
-                id: 99,
-                method: "initialize",
-                params: {
-                  protocolVersion: "2024-11-05",
-                  capabilities: {},
-                  clientInfo: { name: "test", version: "1.0" },
-                },
-              });
-              socket.write(bad + good);
-            },
-            data(_socket, raw) {
-              buffer += raw.toString("utf-8");
-              const { messages, remainder } = parseMcpFrames(buffer);
-              buffer = remainder;
-              results.push(...(messages as Record<string, unknown>[]));
-              if (results.length >= 1) {
+          Bun.connect({
+            unix: TEST_SOCKET,
+            socket: {
+              open(socket) {
+                // Malformed: Content-Length header with no number
+                const body = '{"text":"PRIVATE_MCP_FRAME"';
+                const bad = `Content-Length: \r\n\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+                // Valid frame after the bad one
+                const good = serializeMcpFrame({
+                  jsonrpc: "2.0",
+                  id: 99,
+                  method: "initialize",
+                  params: {
+                    protocolVersion: "2024-11-05",
+                    capabilities: {},
+                    clientInfo: { name: "test", version: "1.0" },
+                  },
+                });
+                socket.write(bad + good);
+              },
+              data(_socket, raw) {
+                buffer += raw.toString("utf-8");
+                const { messages, remainder } = parseMcpFrames(buffer);
+                buffer = remainder;
+                results.push(...(messages as Record<string, unknown>[]));
+                if (results.length >= 1) {
+                  clearTimeout(timeout);
+                  resolve(results);
+                }
+              },
+              close() {
                 clearTimeout(timeout);
                 resolve(results);
-              }
+              },
+              error(_s, err) {
+                clearTimeout(timeout);
+                reject(err);
+              },
+              connectError(_s, err) {
+                clearTimeout(timeout);
+                reject(err);
+              },
+              drain() {},
             },
-            close() {
-              clearTimeout(timeout);
-              resolve(results);
-            },
-            error(_s, err) {
-              clearTimeout(timeout);
-              reject(err);
-            },
-            connectError(_s, err) {
-              clearTimeout(timeout);
-              reject(err);
-            },
-            drain() {},
-          },
-        }).catch(reject);
-      },
-    );
+          }).catch(reject);
+        },
+      );
 
-    // The valid frame should still be processed despite the bad one before it
-    expect(responses.length).toBeGreaterThanOrEqual(1);
-    const valid = responses.find((r) => r.id === 99);
-    expect(valid).toBeDefined();
-    expect(valid!.jsonrpc).toBe("2.0");
+      // The valid frame should still be processed despite the bad one before it
+      expect(responses.length).toBeGreaterThanOrEqual(1);
+      const valid = responses.find((r) => r.id === 99);
+      expect(valid).toBeDefined();
+      expect(valid!.jsonrpc).toBe("2.0");
+      const output = log.mock.calls.flat().join("\n");
+      expect(output).toContain("Frame parse error");
+      expect(output).not.toContain("PRIVATE_MCP_FRAME");
+    } finally { log.mockRestore(); }
   });
 
   it("cleans up socket file on stop", async () => {

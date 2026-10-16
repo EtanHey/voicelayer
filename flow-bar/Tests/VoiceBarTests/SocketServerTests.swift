@@ -9,6 +9,31 @@ final class SocketServerTests: XCTestCase {
     private var windows: [NSWindow] = []
     deinit {}
 
+    func testPRIV1DroppedSpeakTextLogsOnlyMetadata() throws {
+        let server = SocketServer(state: VoiceState())
+        let command: [String: Any] = ["cmd": "speak_text", "id": "priv1-command",
+                                      "text": "PRIVATE_SELECTION_שלום_🔐",
+                                      "transcript": "PRIVATE_TRANSCRIPT", "selection": "PRIVATE_FIELD"]
+        let bytes = try JSONSerialization.data(withJSONObject: command).count
+        let output = try captureSocketStderr {
+            server.sendCommandToOwner(command: command)
+            _ = server.bytesReadForTesting() // Drain the server queue before reading its log.
+        }
+        XCTAssertTrue(output.contains("speak_text"), output)
+        XCTAssertTrue(output.contains("priv1-command"), output)
+        XCTAssertTrue(output.contains("bytes=\(bytes)"), output)
+        XCTAssertFalse(output.contains("PRIVATE_"), output)
+    }
+
+    func testPRIV1BadJSONLogsByteCountWithoutPayload() throws {
+        let server = SocketServer(state: VoiceState())
+        let line = #"{"type":"transcription","text":"PRIVATE_TRANSCRIPT_שלום""#
+        let output = try captureSocketStderr { server.parseLine(line) }
+        XCTAssertTrue(output.contains("Bad JSON"), output)
+        XCTAssertTrue(output.contains("bytes=\(line.utf8.count)"), output)
+        XCTAssertFalse(output.contains("PRIVATE_"), output)
+    }
+
     func testSpeakSelectionSendsRawTextAsSpeakTextNDJSONToDaemonOnly() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }
@@ -844,7 +869,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         state.asyncDictationInsertionHandlerProvider = {
             { _, completion in
                 axInsertionFired = true
-                completion()
+                completion(.verified)
                 return true
             }
         }
@@ -935,7 +960,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         veryLongState.asyncDictationInsertionHandlerProvider = {
             { _, completion in
                 veryLongInsertionAttempts += 1
-                completion()
+                completion(.verified)
                 return true
             }
         }
@@ -988,7 +1013,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             { text, completion in
                 editorInsertionAttempts += 1
                 editorScratchDocument.append(text)
-                completion()
+                completion(.verified)
                 return true
             }
         }
@@ -1554,4 +1579,23 @@ private func readLines(from fd: Int32, count expectedCount: Int, timeout: TimeIn
     }
 
     return lines
+}
+
+/// Capture the real NSLog sink without installing a test-only logging path.
+private func captureSocketStderr(_ body: () -> Void) throws -> String {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("priv1-\(UUID().uuidString).log")
+    FileManager.default.createFile(atPath: url.path, contents: nil)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let file = try FileHandle(forWritingTo: url)
+    defer { try? file.close() }
+    let saved = dup(STDERR_FILENO)
+    guard saved >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    defer { dup2(saved, STDERR_FILENO); close(saved) }
+    fflush(stderr)
+    guard dup2(file.fileDescriptor, STDERR_FILENO) >= 0 else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+    body()
+    fflush(stderr)
+    return String(decoding: try Data(contentsOf: url), as: UTF8.self)
 }

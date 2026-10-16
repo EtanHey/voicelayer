@@ -340,6 +340,17 @@ public struct BarView: View {
 
     private var appearanceAwareNotchContent: some View {
         notchContent
+            .overlay(alignment: .bottom) {
+                if let note = VoiceBarPresentation.selectionBusyNote(
+                    isRequested: state.showsSelectionBusyNote, mode: state.mode, hotkeyPhase: state.hotkeyPhase
+                ) {
+                    compactStatusLabel(note)
+                        .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
+                        .frame(height: 17)
+                        .offset(y: 17) // Use the existing panel shadow outset; never resize the notch.
+                        .allowsHitTesting(false)
+                }
+            }
             .environment(\.voiceBarNotchAppearance, notchAppearance)
             .background {
                 VoiceBarNotchAppearanceReader(appearance: $notchAppearance)
@@ -559,6 +570,7 @@ public struct BarView: View {
             HStack(spacing: 4) {
                 if state.queueDepth > 0 {
                     queueBadge
+                        .fixedSize()
                 }
                 statusLabel
             }
@@ -793,11 +805,12 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        Text(statusText)
-            .font(.system(size: 12, weight: .medium))
+        compactStatusLabel(statusText, confirmationText: state.confirmationText)
+    }
+
+    private func compactStatusLabel(_ text: String, confirmationText: String? = nil) -> some View {
+        CompactStatusLabel(text: text, mode: state.mode, confirmationText: confirmationText)
             .foregroundStyle(notchPrimaryLabelColor)
-            .lineLimit(1)
-            .truncationMode(.tail)
             .layoutPriority(1)
             .transaction { transaction in
                 transaction.animation = nil
@@ -963,5 +976,19 @@ public struct BarView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
         .help(accessibilityLabel)
+    }
+}
+
+/// Shared renderer lets offscreen tests measure the same line limit as the pill.
+struct CompactStatusLabel: View {
+    let text: String
+    let mode: VoiceMode
+    let confirmationText: String?
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium))
+            .lineLimit(mode == .idle && TwoLineStatusFeedback.contains(confirmationText) ? 2 : 1)
+            .truncationMode(.tail)
     }
 }
