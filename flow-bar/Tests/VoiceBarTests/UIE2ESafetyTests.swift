@@ -374,3 +374,124 @@ final class UIE2ELaunchPolicyTests: XCTestCase {
         return root
     }
 }
+
+#if VOICEBAR_UIE2E_FOCUSED_338
+@MainActor
+final class UIE2EFocusedGalleryTests: XCTestCase {
+    private func gallery() throws -> (UIE2EStateGallery, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        return (UIE2EStateGallery(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path])), root)
+    }
+
+    private var desktopMetrics: VoiceBarNotchScreenMetrics {
+        .init(frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1080), safeAreaTop: 37,
+            auxiliaryTopLeftArea: CGRect(x: 0, y: 1080, width: 760, height: 37),
+            auxiliaryTopRightArea: CGRect(x: 968, y: 1080, width: 760, height: 37))
+    }
+
+
+
+    func testRealRoutesProduceEveryFamilyWithoutHardwareOrTransport() throws {
+        let (gallery, root) = try gallery()
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertEqual(gallery.items.count, 11)
+        XCTAssertEqual(Set(gallery.items.map { $0.spec.family }), Set(["paste-feedback", "terminal", "busy", "selection-error"]))
+        for item in gallery.items {
+            XCTAssertEqual(item.actualText, item.spec.expectedText, item.spec.id)
+            XCTAssertTrue(item.voice.isConnected)
+            XCTAssertTrue(item.effects.commands.allSatisfy { $0 == "record" }, item.spec.id)
+            XCTAssertEqual(item.effects.clipboardWrites, 0)
+            XCTAssertEqual(item.effects.pasteShortcuts, 0)
+            XCTAssertEqual(item.effects.selectionCaptures, item.spec.family == "selection-error" ? 1 : 0)
+            XCTAssertEqual(item.effects.typed.count, item.spec.family == "terminal" ? 1 : 0)
+            XCTAssertTrue(item.effects.typed.allSatisfy { $0 == UIE2EStateGallery.transcript })
+        }
+        XCTAssertEqual(gallery.item("paste-not-inserted").voice.latestDictationInsertionStatus, .notInserted)
+        XCTAssertEqual(gallery.item("paste-unverified").voice.latestDictationInsertionStatus, .unverified)
+        XCTAssertEqual(gallery.item("paste-partial").voice.latestDictationInsertionStatus, .unverified)
+        XCTAssertEqual(gallery.item("terminal-confirmation").voice.confirmationText, UIE2EStateGallery.transcript)
+    }
+
+    func testSharedClockGenerationUsesFreshModelsAndRealExpiry() async throws {
+        let (gallery, root) = try gallery()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let previous = gallery.items.map { $0.voice }
+        gallery.startClocks()
+        XCTAssertEqual(gallery.clockGeneration, 1)
+        XCTAssertFalse(gallery.isPinned)
+        let origin = try XCTUnwrap(gallery.clockOrigin)
+        for (index, item) in gallery.items.enumerated() {
+            XCTAssertFalse(previous[index] === item.voice, "Old confirmation timers must not shorten this generation")
+            XCTAssertEqual(item.clockOrigin, origin)
+            XCTAssertEqual(item.clockGeneration, 1)
+        }
+        try await Task.sleep(for: .milliseconds(2250))
+        for item in gallery.items where item.spec.family == "busy" {
+            XCTAssertFalse(item.voice.showsSelectionBusyNote)
+            XCTAssertNotEqual(item.voice.mode, .disconnected)
+        }
+        let unaffected = gallery.items.filter { $0.spec.family != "busy" }.map { ObjectIdentifier($0.voice) }
+        gallery.endSessions() // Re-arm genuinely expired notes and clear in the same MainActor batch.
+        XCTAssertEqual(gallery.sessionEndBefore, Dictionary(uniqueKeysWithValues:
+            gallery.items.filter { $0.spec.family == "busy" }.map { ($0.spec.id, $0.spec.expectedText) }))
+        XCTAssertEqual(gallery.sessionEndGeneration, 1)
+        XCTAssertEqual(gallery.clockGeneration, 1)
+        XCTAssertEqual(gallery.clockOrigin, origin)
+        XCTAssertEqual(gallery.items.filter { $0.spec.family != "busy" }.map { ObjectIdentifier($0.voice) }, unaffected)
+        for item in gallery.items where item.spec.family == "selection-error" { XCTAssertNil(item.voice.confirmationText) }
+        XCTAssertNotNil(gallery.item("terminal-confirmation").voice.confirmationText)
+        try await Task.sleep(for: .milliseconds(3000))
+        for item in gallery.items { XCTAssertNil(item.voice.confirmationText, item.spec.id) }
+        gallery.observe(reason: "expiry-test")
+        let receipt = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("gallery.json"))) as? [String: Any])
+        XCTAssertEqual(receipt["reason"] as? String, "expiry-test")
+        XCTAssertEqual(receipt["clockGeneration"] as? Int, 1)
+    }
+
+    func testPinnedBusyUsesAdmissionAndSessionEndActuallyClears() throws {
+        let (gallery, root) = try gallery()
+        defer { try? FileManager.default.removeItem(at: root) }
+        gallery.refreshPinnedStates()
+        XCTAssertTrue(gallery.isPinned)
+        gallery.startClocks()
+        for item in gallery.items where item.spec.family == "busy" {
+            XCTAssertTrue(item.voice.showsSelectionBusyNote)
+            XCTAssertEqual(item.effects.selectionCaptures, 0)
+            XCTAssertTrue(item.effects.commands.isEmpty)
+        }
+        gallery.endSessions()
+        for item in gallery.items where item.spec.family == "busy" {
+            XCTAssertFalse(item.voice.showsSelectionBusyNote, item.spec.id)
+            XCTAssertEqual(item.voice.hotkeyPhase, .idle)
+            XCTAssertEqual(item.voice.mode, .idle)
+        }
+    }
+
+    func testStaticHoldKeepsModelsAndCapturedProductionTextWithoutRefreshingPanels() async throws {
+        let (gallery, root) = try gallery()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let identities = gallery.items.map { ObjectIdentifier($0.renderedVoice) }
+        try await Task.sleep(for: .milliseconds(1650))
+        XCTAssertNil(gallery.item("selection-copy-empty").voice.confirmationText, "Original genuine timer expires")
+        XCTAssertEqual(gallery.item("selection-copy-empty").renderedVoice.confirmationText,
+            "No text\nReselect", "Separate captured production presentation stays pinned")
+        gallery.refreshPinnedStates()
+        XCTAssertEqual(gallery.items.map { ObjectIdentifier($0.renderedVoice) }, identities)
+        gallery.startClocks()
+        let clockModels = gallery.items.map { ObjectIdentifier($0.renderedVoice) }
+        let origin = gallery.clockOrigin
+        gallery.selectPage(1)
+        XCTAssertEqual(gallery.clockGeneration, 1)
+        XCTAssertEqual(gallery.clockOrigin, origin)
+        XCTAssertEqual(gallery.items.map { ObjectIdentifier($0.renderedVoice) }, clockModels)
+        XCTAssertTrue(gallery.items.allSatisfy { $0.heldPresentation == nil })
+    }
+
+    private static let axTestFrame = CGRect(x: -100, y: 930, width: 300, height: 50)
+
+
+}
+#endif
