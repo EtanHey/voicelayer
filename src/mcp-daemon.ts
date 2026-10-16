@@ -38,6 +38,12 @@ import { SocketOutboundQueue } from "./socket-outbound-queue";
 
 import type { SpeechControl } from "./speech-control";
 
+/** Diagnostic callback for non-MCP NDJSON traffic received by the daemon. */
+export function logUnhandledNdjsonMessage(msg: Record<string, unknown>): void {
+  // Unknown messages have no trusted type/id schema; retain only their encoded size.
+  console.error(`[voicelayer-daemon] NDJSON message: bytes=${Buffer.byteLength(JSON.stringify(msg), "utf8")}`);
+}
+
 export interface McpDaemonOptions {
   speechControl?: SpeechControl;
   /** Unix socket path to listen on. */
@@ -259,7 +265,8 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         // Previously this closed the connection, which caused entire MCP
         // sessions to die on a single bad frame (e.g., buffered double
         // Content-Length from socat). Now we skip and continue.
-        console.error(`[mcp-daemon] Frame parse error (skipping): ${error}`);
+        // Parser errors can embed raw headers and selected/spoken JSON text.
+        console.error("[mcp-daemon] Frame parse error (skipping; details redacted)");
         // There might be valid frames after the error — keep parsing
         // unless buffer is empty
         keepParsing = socket.data.buffer.length > 0;
@@ -313,7 +320,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           }
         })
         .catch((err) => {
-          console.error(`[mcp-daemon] Unhandled error: ${err}`);
+          console.error("[mcp-daemon] Unhandled error (details redacted)");
           try {
             const errResponse = serializeMcpFrame({
               jsonrpc: "2.0",
@@ -359,7 +366,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         // this handler (not handleMcpData which expects Content-Length).
         if (msg.jsonrpc === "2.0" && typeof msg.method === "string") {
           console.error(
-            `[mcp-daemon] MCP-over-NDJSON request (method: ${msg.method})`,
+            `[mcp-daemon] MCP-over-NDJSON request bytes=${Buffer.byteLength(line, "utf8")}`,
           );
           const pending = handleMcpRequest(
             msg as {
@@ -397,7 +404,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
               }
             })
             .catch((err) => {
-              console.error(`[mcp-daemon] MCP-over-NDJSON error: ${err}`);
+              console.error("[mcp-daemon] MCP-over-NDJSON error (details redacted)");
               try {
                 socket.data.writer.enqueue(
                   JSON.stringify({
