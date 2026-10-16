@@ -5,7 +5,7 @@ import Foundation
 enum PasteRecoveryFeedback {
     static let notInserted = "Not pasted\nIn History"
     static let unverified = "Unverified\nIn History"
-    static let partial = "Part pasted\nHistory: all"
+    static let partial = "Part pasted\nHistory: full"
 
     static func contains(_ text: String?) -> Bool {
         guard let text else { return false }

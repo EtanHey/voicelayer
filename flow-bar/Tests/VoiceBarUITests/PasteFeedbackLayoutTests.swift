@@ -10,7 +10,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
     private let messages = [
         PasteRecoveryFeedback.notInserted,
         PasteRecoveryFeedback.unverified,
-        PasteRecoveryFeedback.partial,
+        "Part pasted\nHistory: full",
     ]
 
     private final class Router: BarCommandRouting {
