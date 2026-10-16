@@ -3,6 +3,9 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import * as socket from "../socket-client";
 import * as recording from "../recording-state";
 import * as qwen from "../tts/qwen3";
+import * as alignment from "../tts/clone-alignment";
+import * as binaries from "../resolve-binary";
+import { createHash } from "node:crypto";
 import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
@@ -13,7 +16,7 @@ import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
-function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; }
+function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
 
 describe("long-read real runtime with owned synth/player fakes", () => {
@@ -34,22 +37,26 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let decoderBarrier: ReturnType<typeof fixtureBarrier<Child>>;
   let histories: Child[], decoders: Child[];
   let clockMs: number;
+  let releaseAlignments: (() => void)[];
 
   beforeEach(() => {
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false;
     clockMs = 100_000;
+    releaseAlignments = [];
     spies.push(spyOn(Date, "now").mockImplementation(() => clockMs));
     synthBarrier = fixtureBarrier(); playerBarrier = fixtureBarrier();
     historyBarrier = fixtureBarrier(); decoderBarrier = fixtureBarrier(); histories = []; decoders = [];
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
     spies.push(spyOn(socket, "broadcast").mockImplementation((event) => events.push(structuredClone(event))));
     spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
+    spies.push(spyOn(alignment, "alignCloneAudio").mockResolvedValue({ status: "untimed", identity: {} as any, words: [] }));
     // Only platform probing uses spawnSync; all synth/play/decode/conversion spawns are fakes.
     Bun.spawnSync = ((argv: string[]) => {
-      if (argv[0] === "which" && argv[1] === "ffprobe") return {exitCode:0, stdout:Buffer.from("ffprobe"), stderr:Buffer.alloc(0)};
-      return ({ exitCode: argv[0] === "ffprobe" ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
+      if (argv.includes("-af")) { writeFileSync(argv.at(-1)!, "adjusted audio"); return { exitCode: 0 }; }
+      if (argv[0] === "which" && ["ffprobe", "ffmpeg"].includes(argv[1])) return {exitCode:0, stdout:Buffer.from(argv[1]), stderr:Buffer.alloc(0)};
+      return ({ exitCode: ["ffprobe", "ffmpeg"].includes(argv[0]) ? 0 : 1, stdout: Buffer.from(argv[0] === "ffprobe" ? "1\n" : ""), stderr: Buffer.alloc(0) }); }) as any;
     Bun.spawn = ((argv: string[]) => {
       if (argv[1] === "-version") return {pid: 70001, exited: Promise.resolve(argv[0] === "ffmpeg" ? 0 : 1), kill() {}};
       if (argv[0] === "which") return { pid: 70000, exited: Promise.resolve(0), stdout: new Blob(["ffmpeg"]).stream(), kill: () => {} };
@@ -63,6 +70,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
       }
       if (argv[0] === "ffmpeg") {
+        if (argv.includes("-af")) writeFileSync(argv.at(-1)!, "adjusted audio");
         if (argv.includes("-ss")) writeFileSync(argv.at(-1)!, "trimmed audio");
         if (argv.includes("concat") && failHistory) throw Object.assign(new Error("EBADARCH"), {code: "EBADARCH"});
         if (argv.includes("concat")) {
@@ -82,11 +90,174 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     }) as any;
   });
   afterEach(async () => {
-    stopPlayback(); for (const player of players) player.exit.resolve(143); for (const child of histories) child.exit.resolve(0); for (const h of handles) await h.done; await awaitCurrentPlayback();
+    stopPlayback(); for (const release of releaseAlignments) release(); for (const player of players) player.exit.resolve(143); for (const child of histories) child.exit.resolve(0); for (const h of handles) await h.done; await awaitCurrentPlayback();
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+
+  function cloneFixture() {
+    spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
+    spies.push(spyOn(qwen, "loadProfile").mockReturnValue({ engine: "qwen3-tts", reference_clips: [], reference_clip: "", fallback: "jenny" } as any));
+    const entered = fixtureBarrier<alignment.CloneAlignmentRequest>();
+    const pending: ReturnType<typeof deferred<alignment.CloneAlignmentResult>>[] = [];
+    const reaps: ReturnType<typeof deferred<number>>[] = [];
+    spies.push(spyOn(alignment, "alignCloneAudio").mockImplementation(request => {
+      const result = deferred<alignment.CloneAlignmentResult>(); pending.push(result); entered.push(request);
+      // This pending adapter represents an unreaped native child, not preparation.
+      const reap = deferred<number>(); reaps.push(reap);
+      request.onChildSpawned?.(reap.promise);
+      void result.promise.then(() => reap.resolve(0));
+      releaseAlignments.push(() => result.resolve({ status: "untimed", identity: {} as any, words: [] })); return result.promise;
+    }));
+    const result = (request: alignment.CloneAlignmentRequest): alignment.CloneAlignmentResult => ({
+      status: "partial", identity: { requestId: request.requestId, chunkId: request.chunkId, playbackRate: request.playbackRate,
+        audioSha256: createHash("sha256").update(readFileSync(request.audioPath)).digest("hex") },
+      words: Array.from(request.displayText.matchAll(/\S+/gu), (word, i) => ({ text: word[0], displayRange: { start: word.index, end: word.index + word[0].length },
+        offset_ms: i === 1 ? null : i * 100, duration_ms: i === 1 ? null : 80 })),
+    });
+    return { entered, pending, reaps, result };
+  }
+
+  for (const route of ["speak", "long"] as const) it(`CLN1b ${route}: playback starts before partial timings and preserves display indices`, async () => {
+    const fixture = cloneFixture(), display = "Export MP3 now.";
+    if (route === "speak") await speak(display, { voice: "fixture", rate: "+50%" });
+    else { const h = speakLongRead(display, { engine: "clone", voice: "fixture", rate: "+50%" }); handles.push(h); }
+    await playerBarrier.at(0);
+    expect(events.some(e => e.type === "subtitle")).toBe(false);
+    const request = await fixture.entered.at(0);
+    expect(request.audioPath).toBe(players[0].argv.at(-1)!);
+    expect(request).toMatchObject({ displayText: display, speechText: "Export M P three now.", playbackRate: 1, lowPriority: true });
+    const published = fixtureBarrier<any>();
+    spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(structuredClone(event)); if (event.type === "subtitle") published.push(event); }));
+    fixture.pending[0].resolve(fixture.result(request));
+    expect(await published.at(0)).toEqual({ type: "subtitle", words: [], aligned_words: [
+      { word_index: 0, text: "Export", offset_ms: 0, duration_ms: 80 },
+      { word_index: 1, text: "MP3", offset_ms: null, duration_ms: null },
+      { word_index: 2, text: "now.", offset_ms: 200, duration_ms: 80 },
+    ] });
+  });
+
+  for (const cmd of ["stop", "cancel"] as const) it(`R2 ${cmd} ack waits for alignment child reap after audio exits`, async () => {
+    const f = cloneFixture(), h = start("clone", "Question?"); await playerBarrier.at(0); const request = await f.entered.at(0);
+    if (cmd === "cancel") { players[0].exit.resolve(0); await h.done; }
+    let acknowledged = false;
+    const ack = Promise.resolve(handleSocketCommand({ cmd, playback_elapsed_ms: 250 })).then(() => { acknowledged = true; });
+    await h.done; await fixtureCheckpoint(); expect(request.signal!.aborted).toBe(true); expect(acknowledged).toBe(false);
+    releaseAlignments[0](); await ack; expect(acknowledged).toBe(true);
+  });
+  for (const failed of [false, true]) it(`R2 scoped terminal and quiesced-attempt fences include alignment child reap; failed=${failed}`, async () => {
+    const f = cloneFixture(); let playback: any;
+    await speak("Question?", { voice: "fixture", onPlaybackQueued: handle => { playback = handle; } });
+    await playerBarrier.at(0); await f.entered.at(0);
+    if (failed) players[0].exit.reject(new Error("fixture player exit")); else players[0].exit.resolve(0);
+    await playback.exited;
+    const settled: string[] = [], mark = (label: string, work: Promise<unknown>) => work.then(() => settled.push(label), () => settled.push(label));
+    const waits = [mark("terminal", playback.playerExited), mark("snapshot", playback.waitForPlayerExit()), mark("drain", awaitCurrentPlayback())];
+    await fixtureCheckpoint(); expect(settled).toEqual([]); releaseAlignments[0](); await Promise.all(waits); expect(settled.sort()).toEqual(["drain", "snapshot", "terminal"]);
+  });
+  it("R2 Ask cannot start capture until its clone alignment child is reaped", async () => {
+    const f = cloneFixture();
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
+    await playerBarrier.at(0); await f.entered.at(0); players[0].exit.resolve(0);
+    await fixtureCheckpoint(); await Bun.sleep(5); expect(capture).not.toHaveBeenCalled();
+    releaseAlignments[0](); await answer; expect(capture).toHaveBeenCalledTimes(1);
+  });
+  it("INT1 Ask starts capture while cancelled binary lookup is still held, with no alignment child", async () => {
+    const f = cloneFixture(), lookup = deferred<string>(), entered = fixtureBarrier<void>();
+    spies.push(spyOn(binaries, "resolveBinaryAsync").mockImplementation(async name => {
+      if (name === "ffmpeg") return "ffmpeg";
+      entered.push(); return lookup.promise;
+    }));
+    releaseAlignments.push(() => lookup.resolve("fixture-binary"));
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
+    await playerBarrier.at(0); await entered.at(0); players[0].exit.resolve(0);
+    try {
+      expect(await Promise.race([answer.then(() => "captured"), Bun.sleep(150).then(() => "blocked")])).toBe("captured");
+      expect(capture).toHaveBeenCalledTimes(1); expect(f.pending).toHaveLength(0);
+    } finally { lookup.resolve("fixture-binary"); await answer; }
+  });
+  it("INT1 Ask waits for the spawned child, then captures while adapter cleanup is still held", async () => {
+    const f = cloneFixture();
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
+    await playerBarrier.at(0); const request = await f.entered.at(0); players[0].exit.resolve(0);
+    await fixtureCheckpoint(); expect(request.signal!.aborted).toBe(true); expect(capture).not.toHaveBeenCalled();
+    f.reaps[0].resolve(137);
+    expect(await Promise.race([answer.then(() => "captured"), Bun.sleep(150).then(() => "blocked")])).toBe("captured");
+    expect(capture).toHaveBeenCalledTimes(1); releaseAlignments[0](); await answer;
+  });
+  for (const confirmed of [true, false]) it(`INT1 R2 P1 rejected child exit permits a second alignment and later Ask; confirmed=${confirmed}`, async () => {
+    const f = cloneFixture(), failure = new Error("fixture child exit watcher failed");
+    const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
+    let playback: any;
+    await speak("First question?", { voice: "fixture", onPlaybackQueued: handle => { playback = handle; } });
+    const terminal = playback.playerExited.then(() => "ready", () => "unconfirmed");
+    await playerBarrier.at(0); const request = await f.entered.at(0);
+    f.reaps[0].reject(failure); await fixtureCheckpoint();
+    // The adapter's final reap attempt independently confirms termination, or
+    // reports the physical state as unknown, before artifact cleanup completes.
+    request.onChildrenReaped?.(confirmed ? undefined : failure);
+    releaseAlignments[0](); players[0].exit.resolve(0); await playback.exited;
+    const firstState = await terminal;
+    await speak("Second question?", { voice: "fixture" }); await playerBarrier.at(1);
+    expect(await Promise.race([f.entered.at(1).then(() => "spawned"), Bun.sleep(150).then(() => "missing")])).toBe("spawned");
+    expect(f.reaps).toHaveLength(2);
+    if (confirmed) expect(firstState).toBe("ready");
+    else expect(logs.mock.calls.some(([line]) => /alignment.*unconfirmed/i.test(String(line)))).toBe(true);
+    releaseAlignments[1](); players[1].exit.resolve(0); await awaitCurrentPlayback();
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    autoPlay = true;
+    const answer = await handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
+    expect(answer.isError).not.toBe(true); expect(capture).toHaveBeenCalledTimes(1);
+    expect(getPlaybackQueueDepth()).toBe(0);
+  });
+  it("R2 replacement audio starts while cancelled alignment cleanup is still held", async () => {
+    const f = cloneFixture(), old = start("clone", "Old question?"); await playerBarrier.at(0); await f.entered.at(0);
+    const replacement = start("edge", "New answer."); await playerBarrier.at(1); await old.done;
+    expect(players).toHaveLength(2); releaseAlignments[0](); stopPlayback(); await replacement.done;
+  });
+
+  for (const stale of ["requestId", "chunkId", "audioSha256", "playbackRate", "text", "audio", "stop", "seek", "recording", "transcribing"] as const)
+    it(`CLN1b drops ${stale} alignment and cancels owned work`, async () => {
+      const fixture = cloneFixture(); start("clone", "Export MP3 now."); await playerBarrier.at(0);
+      const request = await fixture.entered.at(0), result = fixture.result(request);
+      if (stale === "stop") stopPlayback();
+      else if (stale === "seek") { seekPlayback(0); await playerBarrier.at(1); }
+      else if (stale === "recording" || stale === "transcribing") {
+        recording.setRecordingState(stale); expect(request.signal!.aborted).toBe(true); recording.setRecordingState("idle");
+      } else if (stale === "text") result.words[0].text = "wrong";
+      else if (stale === "audio") writeFileSync(request.audioPath, "replaced audio");
+      else (result.identity as any)[stale] = stale === "playbackRate" ? 2 : "stale";
+      fixture.pending[0].resolve(result);
+      await fixtureCheckpoint(); await Bun.sleep(25);
+      expect(events.some(e => e.type === "subtitle")).toBe(false);
+      // Release any seek replacement's deferred alignment before teardown.
+      for (let i = 1; i < fixture.pending.length; i++) fixture.pending[i].resolve({ ...result, status: "untimed" });
+    });
+
+  it("CLN1b next chunk playback never waits for old alignment and publishes local offsets", async () => {
+    const fixture = cloneFixture(); start("clone"); await playerBarrier.at(0);
+    const first = await fixture.entered.at(0), oldResult = fixture.result(first);
+    expect(qwen.synthesizeCloned).toHaveBeenCalledTimes(2); // current + one lookahead
+    players[0].exit.resolve(0); await playerBarrier.at(1);
+    expect(first.signal!.aborted).toBe(true);
+    fixture.pending[0].resolve(oldResult);
+    const second = await fixture.entered.at(1);
+    expect(events.some(e => e.type === "subtitle")).toBe(false);
+    expect(events.filter(e => e.state === "speaking").at(-1).long_read.chunk_start_ms).toBe(1000);
+    const published = fixtureBarrier<any>();
+    spies.push(spyOn(socket, "broadcast").mockImplementation(event => { events.push(structuredClone(event)); if (event.type === "subtitle") published.push(event); }));
+    fixture.pending[1].resolve(fixture.result(second));
+    expect((await published.at(0)).aligned_words[0].offset_ms).toBe(0);
+    expect(second.chunkId).toBe("1");
+  });
 
   for (const engine of ["edge", "clone", "fallback"] as const) it(`SPK1 normalizes ${engine} long reads while display/history stay original`, async () => {
     const display = "Play MP3 from INCIDENT-INVENTORY.md.";
