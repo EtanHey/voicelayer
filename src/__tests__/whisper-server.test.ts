@@ -31,6 +31,9 @@ import {
   whisperPerformanceArgsForEffort,
 } from "../whisper-performance";
 
+// Real subprocesses: standalone p95 <= 123 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 describe("whisper-server", () => {
   function makePcm16Wav(durationSeconds: number): Uint8Array {
     const sampleRate = 16_000;
@@ -75,13 +78,13 @@ describe("whisper-server", () => {
     it("returns a boolean", () => {
       const result = isServerAvailable();
       expect(typeof result).toBe("boolean");
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("checks for both binary and model", () => {
       // isServerAvailable is a pure sync check — no side effects
       const result = isServerAvailable();
       expect(typeof result).toBe("boolean");
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   });
 
   describe("isServerHealthy", () => {
@@ -372,7 +375,7 @@ usage: whisper-server [options]
         __resetWhisperServerStateForTests(null);
         __clearWhisperServerLaunchRecordForTests();
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("refuses to launch a bench port while the live VoiceBar stack is resident", async () => {
       // The 2026-09-08 outage lane: three stray bench whisper-servers were
@@ -404,7 +407,7 @@ usage: whisper-server [options]
           process.env.VOICELAYER_ALLOW_LOCAL_BENCH = previousAllow;
         }
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("still launches a bench port when the operator opts in explicitly", async () => {
       const previousAllow = process.env.VOICELAYER_ALLOW_LOCAL_BENCH;
@@ -466,7 +469,7 @@ usage: whisper-server [options]
         __resetWhisperServerStateForTests(null);
         __clearWhisperServerLaunchRecordForTests();
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("publishes the launch record when our own child owns the healthy port", async () => {
       let healthy = false;
@@ -501,7 +504,7 @@ usage: whisper-server [options]
         __resetWhisperServerStateForTests(null);
         __clearWhisperServerLaunchRecordForTests();
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("coalesces concurrent launches for the same port", async () => {
       let healthy = false;
@@ -538,7 +541,7 @@ usage: whisper-server [options]
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("skips help probing when Core ML is not requested", async () => {
       const previousAcceleration = process.env.QA_VOICE_WHISPER_ACCELERATION;
@@ -579,7 +582,7 @@ usage: whisper-server [options]
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("reclaims a wedged whisper-server that fails the health page before launching its own sidecar", async () => {
       // Reclaim survives, but only for an occupant that does NOT answer /health.
@@ -623,7 +626,7 @@ usage: whisper-server [options]
         __resetWhisperServerStateForTests(null);
         __clearWhisperServerLaunchRecordForTests();
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("adopts an unidentified healthy occupant instead of refusing the port", async () => {
       // Previously this threw "already occupied by a non-VoiceLayer process".
@@ -696,7 +699,7 @@ usage: whisper-server [options]
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("reports the active startup timeout in launch failures", async () => {
       __setWhisperServerTestHooksForTests({
@@ -721,7 +724,7 @@ usage: whisper-server [options]
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("waits for a failed Core ML process to exit before Metal retry", async () => {
       const previousAcceleration = process.env.QA_VOICE_WHISPER_ACCELERATION;
@@ -780,7 +783,7 @@ usage: whisper-server [options]
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   });
 
   describe("ownership guard", () => {
@@ -1106,7 +1109,7 @@ usage: whisper-server [options]
         resetWhisperServerModule();
         clearWhisperServerOwnership(18890);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("resolves the listening pid of a port it can see", () => {
       const fake = startFakeHealthyServer();
@@ -1115,7 +1118,7 @@ usage: whisper-server [options]
       } finally {
         fake.stop();
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   });
 
   describe("transcribeViaServer", () => {
@@ -1346,7 +1349,7 @@ usage: whisper-server [options]
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("does not retire a healthy server when an advisory inference times out", async () => {
       const originalFetch = globalThis.fetch;
@@ -1467,7 +1470,7 @@ usage: whisper-server [options]
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("does not retry a timed-out adopted server that is still healthy", async () => {
       // An adopted occupant keeps running the aborted decode: we never kill
@@ -1628,7 +1631,7 @@ usage: whisper-server [options]
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("caps an advisory witness below the overall voice_ask return budget", async () => {
       const originalFetch = globalThis.fetch;
@@ -1725,6 +1728,6 @@ usage: whisper-server [options]
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   });
 });

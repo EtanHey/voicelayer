@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 11 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // The preload is the suite's isolation layer. A run started with git's
 // repository selectors in its environment (a git hook, a rebase --exec) must not
 // hand them to any test, or a helper's `git config` / `git commit` lands in
@@ -26,5 +29,5 @@ describe("preload drops inherited GIT_* variables", () => {
       },
     );
     expect(new TextDecoder().decode(probe.stdout).trim().split("\n").at(-1)).toBe("[]");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

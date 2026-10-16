@@ -10,6 +10,14 @@ import { findCandidateSpan, findOutroCandidates } from "../stt-outro-gate";
 import type { TranscriptSegment } from "../stt-sentence-boundaries";
 import realChunkSegments from "./fixtures/h3-real-chunk-segments.json";
 import { TEST_TMP } from "./setup/test-tmp";
+import { privateSpecimenRoot } from "./setup/private-specimens";
+
+/** Private archived WAVs are READ-ONLY and explicit opt-in only:
+ * VOICELAYER_TEST_REAL_ARCHIVE=1 uses the local recordings archive;
+ * VOICELAYER_TEST_SPECIMEN_DIR uses <root>/<date>/<session>/audio.wav.
+ * Never copy this private corpus into the repo. Default/hook/CI runs skip
+ * loudly before probing it; synthetic and checked-in timing tests still run.
+ */
 
 const OUTRO_FLAG = "VOICELAYER_STT_OUTRO_GATE";
 const BOUNDARIES_FLAG = "VOICELAYER_STT_SMART_BOUNDARIES";
@@ -340,10 +348,11 @@ describe("chunk transcript segment stitching", () => {
   });
 });
 
-const RECORDINGS = join(
-  process.env.HOME ?? "",
-  ".local/share/voicelayer/recordings/2026-09-07",
-);
+const SPECIMEN_ROOT = privateSpecimenRoot();
+const RECORDINGS = join(SPECIMEN_ROOT ?? "", "2026-09-07");
+if (!SPECIMEN_ROOT) {
+  console.error("[chunk-segments] SKIPPING private specimens: set VOICELAYER_TEST_REAL_ARCHIVE=1 or VOICELAYER_TEST_SPECIMEN_DIR (read-only).");
+}
 
 interface Specimen {
   id: string;
@@ -434,7 +443,11 @@ const SPECIMENS: Specimen[] = [
 describe("archived long-recording gate input", () => {
   for (const specimen of SPECIMENS) {
     const wavPath = join(RECORDINGS, specimen.id, "audio.wav");
-    const specimenTest = existsSync(wavPath) ? test : test.skip;
+    const available = Boolean(SPECIMEN_ROOT) && existsSync(wavPath);
+    if (SPECIMEN_ROOT && !available) {
+      console.error(`[chunk-segments] SKIPPING missing private specimen ${specimen.id}.`);
+    }
+    const specimenTest = available ? test : test.skip;
 
     specimenTest(`${specimen.id} supplies the gate an absolute candidate span`, async () => {
       process.env[OUTRO_FLAG] = "1";
@@ -475,7 +488,8 @@ describe("archived long-recording gate input", () => {
         const decisionLog = gateLogs.find((line) =>
           line.includes("outro gate: decision"),
         );
-        expect(decisionLog).toContain(specimen.candidate);
+        expect(decisionLog).not.toContain(specimen.candidate);
+        expect(decisionLog).toContain("outro gate: decision energy-present");
         expect(decisionLog).toContain(
           `${specimen.expectedSpan.startS.toFixed(2)}-${specimen.expectedSpan.endS.toFixed(2)}s`,
         );

@@ -117,6 +117,24 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
             "Overlapping panels cannot earn individual visual coverage")
     }
 
+    func testHistoryHitUsesTheRenderedLeadingTextRatherThanTheWideSpacer() {
+        for frame in [CGRect(x: 265, y: 516, width: 623, height: 50), CGRect(x: 275, y: 577, width: 138, height: 32)] {
+            let point = UIE2EHistoryGeometry.selectionOffset(in: frame)
+            XCTAssertTrue(CGRect(x: 28, y: 2, width: 100, height: 18).contains(CGPoint(x: point.dx, y: point.dy)),
+                "A duration label can widen AX across an inert Spacer; click the leading text")
+        }
+    }
+    func testAskActionsStayInsideTheirOwnPayloadInterval() {
+        let first = CGRect(x: 300, y: 600, width: 500, height: 20)
+        let loaded = CGRect(x: 300, y: 760, width: 500, height: 20)
+        let copies = [CGRect(x: 330, y: 625, width: 20, height: 20), CGRect(x: 330, y: 800, width: 20, height: 20)]
+        XCTAssertEqual(UIE2EHistoryGeometry.actionIndex(after: first, before: loaded.minY, candidates: copies), 0)
+        XCTAssertEqual(UIE2EHistoryGeometry.actionIndex(after: loaded, before: nil, candidates: copies), 1)
+        XCTAssertNil(UIE2EHistoryGeometry.actionIndex(after: first, before: loaded.minY, candidates: [copies[1]]),
+            "A missing first-row action must not borrow the loaded row")
+        XCTAssertNil(UIE2EHistoryGeometry.actionIndex(after: loaded, before: nil, candidates: [copies[1], copies[1]]))
+        XCTAssertNil(UIE2EHistoryGeometry.actionIndex(after: .zero, before: nil, candidates: copies))
+    }
 
     func testFullAXTextCannotProveThatAOneLineFeedbackFrameIsReadable() {
         // Deliberately synthetic overflow stress text; this is not current product copy.
@@ -135,6 +153,15 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         }
     }
 
+    func testSelectionFeedbackWaiverRequiresP1fAndActualFailure() {
+        var ledger = UIE2ECoverageLedger()
+        ledger.requiredScope = ["338:static:selection-copy-empty"]
+        XCTAssertFalse(ledger.recordExpected(surface: "338:static:selection-copy-empty", issue: .selectionFeedback,
+            descriptions: ["Missing/unreachable gallery control"]))
+        XCTAssertTrue(ledger.recordExpected(surface: "338:static:selection-copy-empty", issue: .selectionFeedback,
+            descriptions: ["[P1f] full error text cannot fit its visible frame"]))
+        XCTAssertTrue(ledger.missingSurfaces.isEmpty)
+    }
 
     func testTerminalMayShowAnEllipsizedPreviewOnlyWhenFullTextIsVisibleInCard() {
         let full = "QA terminal transcript שלום 👋"
@@ -151,6 +178,19 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
             fullFrame: CGRect(x: 20, y: 10, width: 60, height: 15), panel: panel))
     }
 
+    func testKnownFailureRequiresTheMatchingObservedPacketIssue() {
+        var ledger = UIE2ECoverageLedger()
+        XCTAssertFalse(ledger.recordExpected(surface: "notch:list-newlines", issue: .listNewlines, descriptions: []))
+        XCTAssertFalse(ledger.recordExpected(surface: "notch:list-newlines", issue: .listNewlines,
+            descriptions: ["Missing control: unrelated harness locator"]))
+        XCTAssertTrue(ledger.missingSurfaces.contains("notch:list-newlines"))
+        XCTAssertTrue(ledger.recordExpected(surface: "notch:list-newlines", issue: .listNewlines,
+            descriptions: ["[P14b] Second item remains on the first line"]))
+        XCTAssertFalse(ledger.missingSurfaces.contains("notch:list-newlines"))
+        XCTAssertFalse(ledger.verifiedSurfaces.contains("notch:list-newlines"))
+        XCTAssertEqual(ledger.expectedSurfaces["notch:list-newlines"], "P14b")
+        XCTAssertTrue(ledger.missingSurfaces.contains("notch:seek-idle"))
+    }
 
     func testFeedbackMatchesNativeStaticTextValueWithoutReadingNumericControlValues() {
         let predicate = UIE2EAXText.predicate("Pasted", staticTextRole: 48)
@@ -248,5 +288,20 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         let start = try XCTUnwrap(source.range(of: "open Ask history scope"))
         let rest = source[start.lowerBound...]
         XCTAssertTrue(rest.contains("assertHistoryPaste(\"QA response\")"))
+    }
+    func testFocusedPlacementRejectsShiftedOnscreenPanelDespiteMatchingObservations() throws {
+        let intended = CGRect(x: 100, y: 700, width: 300, height: 80)
+        let shifted = CGRect(x: 140, y: 250, width: 300, height: 80)
+        let snapshot = ["familyExpectedFrame": NSStringFromRect(intended), "familyAXFrame": NSStringFromRect(shifted)]
+        let planned = try XCTUnwrap(UIE2EGalleryFrames.expectedFamilyAX(snapshot, primaryTop: 1000))
+        XCTAssertNotEqual(planned, shifted, "Two observations of a shifted panel cannot establish placement")
+        XCTAssertEqual(planned, CGRect(x: 100, y: 220, width: 300, height: 80))
+    }
+    func testFocusedExpiryRejectsMissingOrEmptyRenderer() {
+        XCTAssertFalse(UIE2EGalleryFrames.expired(renderer: nil, feedbackPresent: false))
+        XCTAssertFalse(UIE2EGalleryFrames.expired(renderer: .zero, feedbackPresent: false))
+        let frame = CGRect(x: 100, y: 200, width: 300, height: 80)
+        XCTAssertFalse(UIE2EGalleryFrames.expired(renderer: frame, feedbackPresent: true))
+        XCTAssertTrue(UIE2EGalleryFrames.expired(renderer: frame, feedbackPresent: false))
     }
 }

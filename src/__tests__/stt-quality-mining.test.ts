@@ -20,6 +20,9 @@ import {
   loadVoiceBarRecordings,
 } from "../stt-quality-mining";
 
+// Real subprocesses: standalone p95 <= 67 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 function makeRecording(
   root: string,
   input: {
@@ -548,7 +551,7 @@ describe("stt-quality-mining", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("fails the CLI when an explicit polish log path is missing", async () => {
     const root = mkdtempSync(join(tmpdir(), "voicelayer-cli-polish-missing-"));
@@ -579,5 +582,5 @@ describe("stt-quality-mining", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

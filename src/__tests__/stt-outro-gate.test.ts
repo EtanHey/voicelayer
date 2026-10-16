@@ -14,6 +14,10 @@ import {
 } from "../stt-outro-gate";
 import { WhisperServerBackend } from "../stt";
 import type { TranscriptSegment } from "../stt-sentence-boundaries";
+import { privateSpecimenRoot } from "./setup/private-specimens";
+
+// Cold speech fixture is unmeasured (TEST2 forbids synthesis); allow 15 s for say + ffmpeg fixture creation.
+const SUBPROCESS_TEST_TIMEOUT_MS = 15_000;
 
 /**
  * The hallucinated-closer gate, against the four real specimens plus synthetic
@@ -21,8 +25,12 @@ import type { TranscriptSegment } from "../stt-sentence-boundaries";
  *
  * The whole point of this gate is that it decides on the AUDIO, so the cases
  * that matter feed it real WAVs from Etan's recordings archive (gitignored and
- * machine-local, like the #21 and #30 fixtures) and skip loudly when the
- * archive is absent. The synthetic cases always run: a `say`-spoken clip padded
+ * machine-local, like the #21 and #30 fixtures). They are READ-ONLY and require
+ * VOICELAYER_TEST_REAL_ARCHIVE=1, or VOICELAYER_TEST_SPECIMEN_DIR pointing at a
+ * private root with <date>/<session>/audio.wav (and optional correction-corpus.tsv).
+ * No private corpus is copied into this repo. Default/hook/CI runs skip loudly
+ * without even probing the archive. Missing opted-in files also skip loudly.
+ * The synthetic cases always run: a `say`-spoken clip padded
  * with silence when `say` and `ffmpeg` are available, and hand-built tone
  * fixtures that need nothing at all.
  *
@@ -34,7 +42,11 @@ import type { TranscriptSegment } from "../stt-sentence-boundaries";
  * the DECISION, given a span.
  */
 
-const RECORDINGS = join(homedir(), ".local/share/voicelayer/recordings");
+const SPECIMEN_ROOT = privateSpecimenRoot();
+const RECORDINGS = SPECIMEN_ROOT ?? "";
+if (!SPECIMEN_ROOT) {
+  console.error("[outro-gate] SKIPPING private specimens: set VOICELAYER_TEST_REAL_ARCHIVE=1 or VOICELAYER_TEST_SPECIMEN_DIR (read-only).");
+}
 
 /** Specimen 1 — English tail. `…on Slack. Thank you.` He did not say it. */
 const CLIP_SLACK = join(
@@ -924,7 +936,7 @@ describe("stripHallucinatedOutro — real speech plus 2 s of silence", () => {
 
     expect(decision.reason).toBe("removed");
     expect(decision.text).toBe(spoken);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   sayTest("keeps the same farewell when it is inside the spoken region", () => {
     const wav = buildSayFixture();
@@ -940,7 +952,7 @@ describe("stripHallucinatedOutro — real speech plus 2 s of silence", () => {
 
     expect(decision.removed).toEqual([]);
     expect(decision.text).toBe(`${spoken}. Thank you.`);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 // --- the archived specimens ---
@@ -952,7 +964,8 @@ const specimens = [
   { path: CLIP_HEBREW_MID, name: "a6aa28aa" },
   { path: CLIP_OKAY, name: "ac389f08" },
 ];
-const missing = specimens.filter((entry) => !existsSync(entry.path));
+const has = (path: string) => Boolean(SPECIMEN_ROOT) && existsSync(path);
+const missing = SPECIMEN_ROOT ? specimens.filter((entry) => !has(entry.path)) : [];
 if (missing.length > 0) {
   console.error(
     `[outro-gate] SKIPPING archived specimens (machine-local recordings archive): ${missing
@@ -960,7 +973,6 @@ if (missing.length > 0) {
       .join(", ")}`,
   );
 }
-const has = (path: string) => existsSync(path);
 const clipTest = (path: string) => (has(path) ? test : test.skip);
 
 describe("stripHallucinatedOutro — specimen 1, the Slack dictation", () => {
@@ -1319,12 +1331,14 @@ describe("WhisperServerBackend with the outro gate", () => {
 
 // --- the corpus gate ---
 
-const CORPUS_TSV = join(
-  homedir(),
-  "Gits/voicelayer/docs.local/recon-2026-09-06/correction-corpus.tsv",
-);
-const hasCorpus = existsSync(CORPUS_TSV);
-if (!hasCorpus) {
+const CORPUS_TSV = process.env.VOICELAYER_TEST_SPECIMEN_DIR?.trim()
+  ? join(RECORDINGS, "correction-corpus.tsv")
+  : join(
+      homedir(),
+      "Gits/voicelayer/docs.local/recon-2026-09-06/correction-corpus.tsv",
+    );
+const hasCorpus = has(CORPUS_TSV);
+if (SPECIMEN_ROOT && !hasCorpus) {
   console.error(
     `[outro-gate] SKIPPING the corpus gate — ${CORPUS_TSV} absent (docs.local is gitignored).`,
   );

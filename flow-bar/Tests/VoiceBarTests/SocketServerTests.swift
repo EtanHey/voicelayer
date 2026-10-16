@@ -11,9 +11,11 @@ final class SocketServerTests: XCTestCase {
 
     func testPRIV1DroppedSpeakTextLogsOnlyMetadata() throws {
         let server = SocketServer(state: VoiceState())
+        let canary = "CANARY-TXT-\(UUID().uuidString)"
+        let home = "CANARY-HOME-\(UUID().uuidString)"
         let command: [String: Any] = ["cmd": "speak_text", "id": "priv1-command",
-                                      "text": "PRIVATE_SELECTION_שלום_🔐",
-                                      "transcript": "PRIVATE_TRANSCRIPT", "selection": "PRIVATE_FIELD"]
+                                      "text": canary, "transcript": canary,
+                                      "selection": "/Users/\(home)/recordings/audio.wav"]
         let bytes = try JSONSerialization.data(withJSONObject: command).count
         let output = try captureSocketStderr {
             server.sendCommandToOwner(command: command)
@@ -22,16 +24,18 @@ final class SocketServerTests: XCTestCase {
         XCTAssertTrue(output.contains("speak_text"), output)
         XCTAssertTrue(output.contains("priv1-command"), output)
         XCTAssertTrue(output.contains("bytes=\(bytes)"), output)
-        XCTAssertFalse(output.contains("PRIVATE_"), output)
+        XCTAssertFalse(output.contains(canary), output)
+        XCTAssertFalse(output.contains(home), output)
     }
 
     func testPRIV1BadJSONLogsByteCountWithoutPayload() throws {
         let server = SocketServer(state: VoiceState())
-        let line = #"{"type":"transcription","text":"PRIVATE_TRANSCRIPT_שלום""#
+        let canary = "CANARY-TXT-\(UUID().uuidString)"
+        let line = "{\"type\":\"transcription\",\"text\":\"\(canary)\""
         let output = try captureSocketStderr { server.parseLine(line) }
         XCTAssertTrue(output.contains("Bad JSON"), output)
         XCTAssertTrue(output.contains("bytes=\(line.utf8.count)"), output)
-        XCTAssertFalse(output.contains("PRIVATE_"), output)
+        XCTAssertFalse(output.contains(canary), output)
     }
 
     func testSpeakSelectionSendsRawTextAsSpeakTextNDJSONToDaemonOnly() throws {

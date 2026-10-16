@@ -992,12 +992,51 @@ clear_app_bundle_for_rebuild() {
     fi
 }
 
+configure_qa_swift_flags() {
+    QA_SWIFT_FLAGS=()
+    case "${VOICEBAR_UIE2E_FOCUSED_338:-0}" in
+        0|1) ;;
+        *) echo '[build-app] ERROR: VOICEBAR_UIE2E_FOCUSED_338 must be 0 or 1.' >&2; return 1 ;;
+    esac
+    if [[ "${VOICEBAR_UIE2E_FOCUSED_338:-0}" == 1 && "${VOICEBAR_QA_BUILD:-0}" != 1 ]]; then
+        echo '[build-app] ERROR: focused-338 requires VOICEBAR_QA_BUILD=1.' >&2
+        return 1
+    fi
+    if ! [[ "${VOICEBAR_QA_BUILD:-0}" == "1" ]]; then return 0; fi
+    if [[ "$VOICEBAR_REQUIRE_NOTARIZATION" == 1 || -n "$VOICEBAR_RELEASE_ZIP" ]]; then
+        echo '[build-app] ERROR: refusing a QA build for a notarized release (unset VOICEBAR_QA_BUILD).' >&2
+        return 1
+    fi
+    QA_SWIFT_FLAGS=(-Xswiftc -DVOICEBAR_QA)
+    if [[ "${VOICEBAR_UIE2E_FOCUSED_338:-0}" == 1 ]]; then
+        # Check product declarations, never QA fixture references or comments. Main may lack #338.
+        python3 - "$PACKAGE_DIR" <<'PYFOCUSED' || return 1
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1]) / 'Sources/VoiceBarUI'
+required = [('VoiceState.swift', 'showsSelectionBusyNote', r'\bvar\s+showsSelectionBusyNote\b'),
+            ('VoiceBarPresentation.swift', 'SelectionBusyReason', r'\benum\s+SelectionBusyReason\b'),
+            ('VoiceState.swift', 'copyTimedOut', r'\bcase\s+copyTimedOut\b')]
+for filename, symbol, pattern in required:
+    path = root / filename
+    source = path.read_text() if path.is_file() else ''
+    source = re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"', ' ', source, flags=re.S)
+    if not re.search(pattern, source):
+        sys.exit('[build-app] ERROR: focused-338 requires #338 product API ' + symbol +
+                 ' in ' + str(path) + '; integrate #338/P1e source before building this scenario.')
+PYFOCUSED
+        QA_SWIFT_FLAGS+=(-Xswiftc -DVOICEBAR_UIE2E_FOCUSED_338)
+    fi
+    echo '[build-app] VOICEBAR_QA_BUILD=1: compiling the dev/CI-only QA probes into this bundle.'
+}
+
 if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" = "1" ]]; then
     # shellcheck disable=SC2317 # The exit path is used only when executed, not sourced.
     return 0 2>/dev/null || exit 0
 fi
 
 parse_build_app_args "$@"
+# Validate before process inspection, stop, install-path mutation or any compiler invocation.
+configure_qa_swift_flags
 normalize_app_dir_path
 if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
     echo "[build-app] ERROR: UIE2E ad-hoc signing requires a marked scratch QA bundle and --no-stop --no-relaunch." >&2
@@ -1019,16 +1058,6 @@ fi
 # AIDEV-NOTE: the QA probes (qa_* socket messages, isolated-capture probes) are dev/CI-only
 # (Etan ruling 2, 2026-09-24). Debug builds define VOICEBAR_QA in Package.swift; a release
 # bundle gets it only by an explicit VOICEBAR_QA_BUILD=1, which a notarized release refuses.
-QA_SWIFT_FLAGS=()
-if [[ "${VOICEBAR_QA_BUILD:-0}" == "1" ]]; then
-    if [ "$VOICEBAR_REQUIRE_NOTARIZATION" = "1" ] || [ -n "$VOICEBAR_RELEASE_ZIP" ]; then
-        echo "[build-app] ERROR: refusing a QA build for a notarized release (unset VOICEBAR_QA_BUILD)."
-        exit 1
-    fi
-    echo "[build-app] VOICEBAR_QA_BUILD=1: compiling the dev/CI-only QA probes into this bundle."
-    QA_SWIFT_FLAGS=(-Xswiftc -DVOICEBAR_QA)
-fi
-
 echo "[build-app] Building VoiceBar (release)..."
 swift build -c release --package-path "$PACKAGE_DIR" ${QA_SWIFT_FLAGS[@]+"${QA_SWIFT_FLAGS[@]}"}
 

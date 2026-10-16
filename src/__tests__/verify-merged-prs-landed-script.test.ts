@@ -9,6 +9,9 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 672 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const repoRoot = join(import.meta.dir, "..", "..");
 const script = join(repoRoot, "scripts", "verify-merged-prs-landed.sh");
 
@@ -105,7 +108,7 @@ describe("verify-merged-prs-landed.sh", () => {
     expect(stderr).toContain("https://example.test/pull/392");
     expect(stderr).not.toContain("#388");
     expect(stderr).toContain("1 merged PR is not reachable from origin/main");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("passes when every merged PR merge commit is reachable", () => {
     writeExecutable(
@@ -127,7 +130,7 @@ printf '388\treachable-sha\thttps://example.test/pull/388\tLanded PR\n'
       "All merged PR merge commits are reachable from origin/main",
     );
     expect(output(result.stderr)).toBe("");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("treats a missing merge object as unreachable after refreshing the base", async () => {
     writeExecutable(
@@ -182,7 +185,7 @@ printf '199\tmissing-sha\thttps://example.test/pull/199\tMissing object PR\n'
     expect(stderr).toContain("#199");
     expect(stderr).toContain("missing-sha");
     expect(stderr).toContain("1 merged PR is not reachable from origin/main");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("fails closed when the repository history is shallow", () => {
     writeExecutable(
@@ -206,5 +209,5 @@ exit 64
 
     expect(result.exitCode).toBe(2);
     expect(output(result.stderr)).toContain("complete (non-shallow) Git history");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

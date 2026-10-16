@@ -13,6 +13,9 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 350 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const repoRoot = join(import.meta.dir, "..", "..");
 const syncLib = join(repoRoot, "scripts", "lib", "brew-cask-sync.sh");
 const token = "etanhey/layers/voicebar";
@@ -206,7 +209,7 @@ describe("brew-cask-sync drift detection", () => {
 
       expect(result.exitCode).toBe(0);
       expect(decode(result.stdout).trim()).toBe(expected);
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 });
 
@@ -227,7 +230,7 @@ describe("brew-cask-sync repair", () => {
     expect(installedAppVersion(box)).toBe("2.2.6");
     expect(registeredVersions(box)).toEqual(["2.2.6"]);
     expect(result.exitCode).toBe(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("the stale registration is moved aside, never deleted", () => {
     const box = sandbox({ appVersion: "2.2.5", registeredVersion: "2.1.10" });
@@ -237,7 +240,7 @@ describe("brew-cask-sync repair", () => {
     expect(kept.length).toBe(1);
     expect(kept[0]).toContain("voicebar-caskroom-");
     expect(existsSync(join(box.backupRoot, kept[0]!, "2.1.10"))).toBe(true);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a hand-placed unmanaged app is adopted in place", () => {
     const box = sandbox({ appVersion: "2.2.6", offeredVersion: "2.2.6" });
@@ -247,7 +250,7 @@ describe("brew-cask-sync repair", () => {
     expect(decode(result.stdout)).toContain("drift detected (unmanaged)");
     expect(brewCalls(box)).toContain(`install --cask --force ${token}`);
     expect(registeredVersions(box)).toEqual(["2.2.6"]);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a machine with nothing installed gets a plain install", () => {
     const box = sandbox({ offeredVersion: "2.2.6" });
@@ -257,7 +260,7 @@ describe("brew-cask-sync repair", () => {
     expect(brewCalls(box)).toContain(`install --cask ${token}`);
     expect(brewCalls(box)).not.toContain("--force");
     expect(installedAppVersion(box)).toBe("2.2.6");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a root-only saved uninstall recipe is routed around, not run", () => {
     // Ledger and disk agree at 2.1.10 and only the tap is ahead, so the naive
@@ -283,7 +286,7 @@ describe("brew-cask-sync repair", () => {
     expect(calls).toContain(`install --cask --force ${token}`);
     expect(calls).not.toContain("upgrade --cask");
     expect(installedAppVersion(box)).toBe("2.2.6");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a sudo-free saved recipe still takes the ordinary upgrade path", () => {
     const box = sandbox({
@@ -297,7 +300,7 @@ describe("brew-cask-sync repair", () => {
     expect(brewCalls(box)).toContain(`upgrade --cask ${token}`);
     expect(brewCalls(box)).not.toContain("--force");
     expect(installedAppVersion(box)).toBe("2.2.6");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("running against an already-canonical Mac is a no-op", () => {
     const box = sandbox({
@@ -313,7 +316,7 @@ describe("brew-cask-sync repair", () => {
     expect(calls).not.toContain("upgrade --cask");
     expect(existsSync(box.backupRoot)).toBe(false);
     expect(decode(result.stdout)).toContain("already canonical at 2.2.6");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a second run straight after a repair changes nothing", () => {
     const box = sandbox({
@@ -330,7 +333,7 @@ describe("brew-cask-sync repair", () => {
     expect(brewCalls(box)).not.toContain("upgrade --cask");
     expect(decode(second.stdout)).toContain("already canonical at 2.2.6");
     expect(readdirSync(box.backupRoot).length).toBe(1);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("an unwritable Caskroom stops before anything is destroyed", () => {
     const box = sandbox({ appVersion: "2.2.5", registeredVersion: "2.1.10" });
@@ -346,7 +349,7 @@ describe("brew-cask-sync repair", () => {
     } finally {
       chmodSync(join(box.prefix, "Caskroom"), 0o755);
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a repair that does not reach the offered version fails loudly", () => {
     const box = sandbox({
@@ -366,7 +369,7 @@ describe("brew-cask-sync repair", () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(decode(result.stderr)).toContain("did not reach the offered version 2.2.6");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 describe("brew-cask-sync environment contract", () => {
@@ -383,7 +386,7 @@ describe("brew-cask-sync environment contract", () => {
 
     expect(result.exitCode).toBe(0);
     expect(decode(result.stdout).trim()).toBe("2.2.6");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("drift is still detected correctly with no plist tooling", () => {
     const box = sandbox({ appVersion: "2.2.5", registeredVersion: "2.1.10" });
@@ -393,7 +396,7 @@ describe("brew-cask-sync environment contract", () => {
     });
 
     expect(decode(result.stdout).trim()).toBe("version-drift");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a tapped token with no readable offer stops before touching anything", () => {
     // Tap missing, half-cloned, or renamed. Without this guard the final
@@ -409,7 +412,7 @@ describe("brew-cask-sync environment contract", () => {
     expect(brewCalls(box)).not.toContain("install --cask");
     expect(brewCalls(box)).not.toContain("upgrade --cask");
     expect(existsSync(box.backupRoot)).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("the tap is refreshed with an explicit remote and branch", () => {
     const box = sandbox({});
@@ -418,7 +421,7 @@ describe("brew-cask-sync environment contract", () => {
 
     // There is no `origin` in the sandbox; the shape of the call is the point.
     expect(decode(result.stdout)).toContain("pull --ff-only origin main");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("an untapped tap is tapped rather than pulled", () => {
     const box = sandbox({});
@@ -427,7 +430,7 @@ describe("brew-cask-sync environment contract", () => {
 
     expect(result.exitCode).toBe(0);
     expect(brewCalls(box)).toContain("tap etanhey/layers");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   // zsh is not installed on the ubuntu-latest CI runner. The point of this test
   // is the M1's non-interactive zsh, so skipping where there is no zsh keeps it
@@ -466,7 +469,7 @@ describe("brew-cask-sync environment contract", () => {
     expect(decode(result.stderr)).not.toContain("command not found");
     expect(result.exitCode).toBe(0);
     expect(decode(result.stdout)).toContain("already canonical at 2.2.6");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   // A machine with no Homebrew at all: Linux CI, or a Mac before brew is
   // installed. bcs_sync_cask already short-circuits at its entry; its callers
@@ -497,7 +500,7 @@ describe("brew-cask-sync environment contract", () => {
 
     expect(result.exitCode).toBe(0);
     expect(decode(result.stdout)).toContain(`reinstall --cask ${token}`);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a real brew call on a brew-less machine fails loudly instead of silently", () => {
     const result = runWithoutBrew(
@@ -510,7 +513,7 @@ describe("brew-cask-sync environment contract", () => {
     expect(result.exitCode).not.toBe(0);
     expect(decode(result.stderr)).toContain("Homebrew not found");
     expect(decode(result.stdout)).not.toContain(`reinstall --cask ${token}`);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("function detection does not use the zsh-broken declare -F idiom", () => {
     const executable = readFileSync(syncLib, "utf8")

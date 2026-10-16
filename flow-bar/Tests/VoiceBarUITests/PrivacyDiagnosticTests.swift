@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 @testable import VoiceBarUI
 import XCTest
 
@@ -21,8 +22,33 @@ final class PrivacyDiagnosticTests: XCTestCase {
     }
 
     private func checkResult(_ scenario: String) throws {
-        let path = "/Users/PRIVATE_OWNER/recordings/2026-10-16T00-00-00/audio.wav"
-        let text = "PRIVATE_TRANSCRIPT שלום 🔐"
+        let nonce = UUID().uuidString
+        let home = "CANARY-HOME-\(nonce)"
+        let path = "/Users/\(home)/recordings/2026-10-16T00-00-00/audio.wav"
+        let text = "CANARY-TXT-\(nonce) שלום 🔐"
+        // Capture direct NSLog/stderr as well as the structured diagnostic and
+        // ControlLayer seams below. This never starts the app or a live socket.
+        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("privacy-\(nonce).log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        let log = try FileHandle(forWritingTo: logURL)
+        let saved = dup(STDERR_FILENO)
+        guard saved >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        defer { close(saved); try? log.close(); try? FileManager.default.removeItem(at: logURL) }
+        fflush(stderr)
+        guard dup2(log.fileDescriptor, STDERR_FILENO) >= 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        defer {
+            fflush(stderr)
+            dup2(saved, STDERR_FILENO)
+            do {
+                let output = try String(contentsOf: logURL, encoding: .utf8)
+                XCTAssertTrue(output.contains("[privacy-fixture]"), "NSLog capture produced no diagnostics")
+                XCTAssertFalse(output.contains(home), "Home canary escaped through stderr")
+                XCTAssertFalse(output.contains(text), "Text canary escaped through stderr")
+            } catch { XCTFail("Cannot read captured diagnostics: \(error)") }
+        }
+        NSLog("[privacy-fixture] capture-ready") // Rejected requests may intentionally emit nothing.
         var rows: [RecentTranscriptionEntry] = []
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
                                recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { rows = $0 })
@@ -30,7 +56,10 @@ final class PrivacyDiagnosticTests: XCTestCase {
         state.minimumTranscribingDisplayDuration = 0
         var diagnostics: [(String, [String: String])] = []
         var journal: [(String, [String: String])] = []
-        state.diagnosticLogger = { diagnostics.append(($0, $1)) }
+        state.diagnosticLogger = {
+            diagnostics.append(($0, $1))
+            NSLog("[privacy-fixture] %@ %@", $0, String(describing: $1))
+        }
         state.controlLayerEventWriter = { journal.append(($0, $1)) }
         if scenario != "final" {
             var command: [String: Any]?
@@ -58,10 +87,10 @@ final class PrivacyDiagnosticTests: XCTestCase {
                 XCTAssertEqual(journal.first { $0.0 == event }?.1["hasRecordingPath"], "true")
             }
         }
-        for (_, details) in diagnostics + journal {
-            let output = String(describing: details) // The same details feed NSLog and the ControlLayer writer.
+        for (event, details) in diagnostics + journal {
+            let output = event + String(describing: details) // Same event/details feed NSLog and ControlLayer.
             XCTAssertFalse(output.contains(path), output)
-            XCTAssertFalse(output.contains("PRIVATE_OWNER"), output)
+            XCTAssertFalse(output.contains(home), output)
             XCTAssertFalse(output.contains(text), output)
         }
     }

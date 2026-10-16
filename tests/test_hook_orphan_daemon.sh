@@ -115,6 +115,11 @@ run_dir = os.environ["VOICELAYER_TMP_ROOT"]
 record = pathlib.Path(os.environ["HOOK_RECORD"])
 if case == "real":
     record.write_text(str(os.getpid()))
+    # Keep the real child's PID lock inside the Bun preload's per-run boundary.
+    # Its socket/supervisor fixtures still use this script's short private root.
+    test_root = os.environ.get("VOICELAYER_TEST_RUN_ROOT")
+    if test_root:
+        os.environ["QA_VOICE_MCP_PID_PATH"] = str(pathlib.Path(test_root) / f"hook-{os.getpid()}.pid")
     os.execv(os.environ["HOOK_REAL_BUN"], [os.environ["HOOK_REAL_BUN"], *sys.argv[1:]])
 if case in ("stubborn", "KILL-supervisor"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)

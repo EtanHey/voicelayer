@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 125 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // Etan ruling 2 (2026-09-24): the QA probes must not ship to users. They compile only
 // under VOICEBAR_QA, which debug/test builds define and a release build gets only by an
 // explicit VOICEBAR_QA_BUILD=1 opt-in; the release path refuses it and checks its binary.
@@ -36,12 +39,12 @@ describe("VoiceBar QA probes are dev/CI-only", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr.toString()).toContain(marker);
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("the checker passes a binary without probes", () => {
     const result = runChecker("\u0000\u0001VoiceBar qa_ prefix only\u0000");
     expect(result.exitCode).toBe(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("the checker refuses a missing binary instead of passing it", () => {
     const result = Bun.spawnSync(["bash", checker, "/nonexistent/VoiceBar"], {
@@ -49,7 +52,7 @@ describe("VoiceBar QA probes are dev/CI-only", () => {
       stderr: "pipe",
     });
     expect(result.exitCode).toBe(2);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("only debug builds define VOICEBAR_QA in the package", () => {
     const manifest = read("flow-bar", "Package.swift");
