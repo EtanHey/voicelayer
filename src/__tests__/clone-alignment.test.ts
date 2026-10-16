@@ -122,7 +122,7 @@ test("cancellation reaps owned decoding before returning, including pre-abort", 
   expect(await Bun.file(before.prefix + ".pid").exists()).toBe(false);
 });
 test("the half-duration deadline kills and reaps a slow decoder", async () => {
-  const { input, prefix } = await request("hello", payload(["hello"]), 5000); input.durationMs = 1000;
+  const { input, prefix } = await request("hello", payload(["hello"]), 5000);
   const pending = alignCloneAudio(input), pid = await started(prefix);
   expect((await pending).reason).toBe("deadline"); reaped(pid);
 });
