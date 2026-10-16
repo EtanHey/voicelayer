@@ -40,6 +40,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                 let crop = try XCTUnwrap(image.cropping(to: CGRect(
                     x: textFrame.minX, y: CGFloat(line) * textFrame.height / 2,
                     width: textFrame.width, height: textFrame.height / 2)))
+                try reportCropInk(crop, label: "line=\(line) message=\(message.debugDescription)")
                 try requireOCR(size: CGSize(width: crop.width, height: crop.height), scale: textFrame.height / 32)
                 return try recognize(crop).joined(separator: " ")
             }.joined(separator: " ")
@@ -60,6 +61,26 @@ final class PasteFeedbackLayoutTests: XCTestCase {
             XCTAssertTrue(error is XCTSkip)
         }
         XCTAssertTrue(probed, "Even the unavailable seam must render and probe a control")
+    }
+
+    func testCropInkDistinguishesBlankPixelsFromVisibleInk() throws {
+        let context = try XCTUnwrap(CGContext(data: nil, width: 16, height: 16,
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        for background in [CGColor(gray: 0, alpha: 0), CGColor(gray: 0, alpha: 1),
+                           CGColor(gray: 1, alpha: 1)] {
+            context.clear(CGRect(x: 0, y: 0, width: 16, height: 16))
+            context.setFillColor(background)
+            context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+            let blank = try cropInk(XCTUnwrap(context.makeImage()))
+            XCTAssertEqual(blank.luminanceRange, 0)
+            XCTAssertEqual(blank.variance, 0)
+        }
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 8, height: 16))
+        let ink = try cropInk(XCTUnwrap(context.makeImage()))
+        XCTAssertEqual(ink.luminanceRange, 255)
+        XCTAssertGreaterThan(ink.variance, 0)
     }
 
     func testOrdinaryStatusAndTerminalPreviewRemainOneLine() {
@@ -174,6 +195,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                             let badge = try XCTUnwrap(image.cropping(to: CGRect(
                                 x: (textX - cropInset) * scale, y: 0,
                                 width: (queueWidth - 4) * scale, height: 32 * scale)))
+                            try reportCropInk(badge, label: "badge screen=\(screenWidth) message=\(index) light=\(light)")
                             try requireOCR(size: CGSize(width: badge.width, height: badge.height), scale: scale,
                                            font: roundedBadgeFont, text: "12")
                             XCTAssertEqual(try recognize(badge), ["12"], "Badge must remain visible")
@@ -190,6 +212,46 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                 }
             }
         }
+    }
+
+    private struct CropInk {
+        let luminanceRange: Int
+        let variance: Double
+        let nonzeroLuminancePixels: Int
+        let nonzeroAlphaPixels: Int
+    }
+
+    private func cropInk(_ image: CGImage) throws -> CropInk {
+        let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let bytes = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        var minimum = 255, maximum = 0, nonzeroLuminance = 0, nonzeroAlpha = 0
+        var sum = 0.0, squaredSum = 0.0
+        let count = image.width * image.height
+        for pixel in 0..<count {
+            let offset = pixel * 4
+            // Premultiplied RGB measures visible ink over black, including alpha.
+            let luminance = (54 * Int(bytes[offset]) + 183 * Int(bytes[offset + 1])
+                             + 19 * Int(bytes[offset + 2])) / 256
+            minimum = min(minimum, luminance)
+            maximum = max(maximum, luminance)
+            if luminance > 0 { nonzeroLuminance += 1 }
+            if bytes[offset + 3] > 0 { nonzeroAlpha += 1 }
+            sum += Double(luminance)
+            squaredSum += Double(luminance * luminance)
+        }
+        let mean = sum / Double(count)
+        return CropInk(luminanceRange: maximum - minimum,
+                       variance: max(0, squaredSum / Double(count) - mean * mean),
+                       nonzeroLuminancePixels: nonzeroLuminance, nonzeroAlphaPixels: nonzeroAlpha)
+    }
+
+    private func reportCropInk(_ image: CGImage, label: String) throws {
+        let ink = try cropInk(image)
+        print("P1H crop \(label) size=\(image.width)x\(image.height) range=\(ink.luminanceRange) "
+              + "variance=\(ink.variance) lit=\(ink.nonzeroLuminancePixels) alpha=\(ink.nonzeroAlphaPixels)")
     }
 
     private func requireOCR(size: CGSize = CGSize(width: 68, height: 16), scale: CGFloat = 1,
