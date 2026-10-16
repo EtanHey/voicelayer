@@ -1,6 +1,18 @@
 import CoreGraphics
 import Foundation
 
+/// Recovery copy shares one identity between the producer and its two-line layout.
+enum PasteRecoveryFeedback {
+    static let notInserted = "Not pasted\nIn History"
+    static let unverified = "Unverified\nIn History"
+    static let partial = "Part pasted\nHistory: full"
+
+    static func contains(_ text: String?) -> Bool {
+        guard let text else { return false }
+        return [notInserted, unverified, partial].contains(text)
+    }
+}
+
 public enum HotkeyPhase: Equatable {
     case idle
     case pressing
