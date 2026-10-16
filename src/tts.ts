@@ -1798,9 +1798,11 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     // A recording may have begun while the predecessor was settling.
     assertSpeakerClear();
     await runLongRead(texts, id, signal, {
-      registerSeek: (control) => { handle.seek = { seek: offset => {
-        const result = control.seek(offset); if (result.outcome === "accept") generation++; return result;
-      } }; },
+      registerSeek: (control) => {
+        const advance = (result: SeekResult) => { if (result.outcome === "accept") generation++; return result; };
+        handle.seek = { seek: offset => advance(control.seek(offset)), restart: () => advance(control.restart()) };
+      },
+      canReplay: (chunk) => existsSync(chunk.audioFile),
       prepareSeek: (chunk, offset, seekSignal) => offset < chunk.durationMs
         ? prepareSeekSlice(chunk.audioFile, offset, seekSignal) : Promise.resolve(undefined),
       disposeSeek: disposeSeekSlice,
@@ -1926,8 +1928,14 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
 
 /** Restart the active audio job without resolving its blocking playback handle. */
 export function restartPlayback(): boolean {
-  // A chunk-only restart would repeat audio outside the long read's history/timeline.
-  if (activeLongRead && !activeLongRead.controller.signal.aborted) return false;
+  if (activeLongRead) {
+    // Keep the utterance, synthesis, played ranges and physical exit fences owned by
+    // the long-read runner. Restarting only its queued chunk loses global zero.
+    const result = activeLongRead.seek?.restart();
+    if (result?.outcome === "accept") return true;
+    broadcast({ type: "error", source: "seek", message: result?.reason ?? "Replay prefix audio unavailable", recoverable: true });
+    return false;
+  }
   return playbackQueueManager.restart();
 }
 
