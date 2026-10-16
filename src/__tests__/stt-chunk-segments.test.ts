@@ -10,11 +10,11 @@ import { findCandidateSpan, findOutroCandidates } from "../stt-outro-gate";
 import type { TranscriptSegment } from "../stt-sentence-boundaries";
 import realChunkSegments from "./fixtures/h3-real-chunk-segments.json";
 import { TEST_TMP } from "./setup/test-tmp";
-import { privateSpecimenRoot } from "./setup/private-specimens";
+import { privateCorpusPaths } from "./setup/private-specimens";
 
 /** Private archived WAVs are READ-ONLY and explicit opt-in only:
  * VOICELAYER_TEST_REAL_ARCHIVE=1 uses the local recordings archive;
- * VOICELAYER_TEST_SPECIMEN_DIR uses <root>/<date>/<session>/audio.wav.
+ * With the flag set, VOICELAYER_TEST_SPECIMEN_DIR selects <root>/<date>/<session>/audio.wav.
  * Never copy this private corpus into the repo. Default/hook/CI runs skip
  * loudly before probing it; synthetic and checked-in timing tests still run.
  */
@@ -348,11 +348,9 @@ describe("chunk transcript segment stitching", () => {
   });
 });
 
-const SPECIMEN_ROOT = privateSpecimenRoot();
+const PRIVATE_CORPUS = privateCorpusPaths("chunk-segments");
+const SPECIMEN_ROOT = PRIVATE_CORPUS?.recordings;
 const RECORDINGS = join(SPECIMEN_ROOT ?? "", "2026-09-07");
-if (!SPECIMEN_ROOT) {
-  console.error("[chunk-segments] SKIPPING private specimens: set VOICELAYER_TEST_REAL_ARCHIVE=1 or VOICELAYER_TEST_SPECIMEN_DIR (read-only).");
-}
 
 interface Specimen {
   id: string;
