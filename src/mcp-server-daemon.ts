@@ -38,7 +38,7 @@ import {
   onCommand,
 } from "./socket-client";
 import { handleSocketCommand } from "./socket-handlers";
-import { createMcpDaemon, isSocketLive } from "./mcp-daemon";
+import { createMcpDaemon, isSocketLive, logUnhandledNdjsonMessage } from "./mcp-daemon";
 import { getConnectionCount, getUptimeSeconds } from "./daemon-health";
 import {
   isProcessAlive,
@@ -257,11 +257,7 @@ async function main() {
         return await handler(args, context);
       },
     },
-    onNdjsonMessage: (msg) => {
-      console.error(
-        `[voicelayer-daemon] NDJSON message: ${JSON.stringify(msg)}`,
-      );
-    },
+    onNdjsonMessage: logUnhandledNdjsonMessage,
   });
 
   console.error(
