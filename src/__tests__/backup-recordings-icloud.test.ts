@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, utimesSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, utimesSync, symlinkSync, cpSync, realpathSync, openSync, closeSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -100,6 +100,68 @@ test("installer renders a nightly plist without loading or running it", () => {
   expect(plist).not.toContain("RunAtLoad");
   expect(existsSync(join(home, "launchctl-called"))).toBe(false);
   expect(existsSync(dest)).toBe(false);
+});
+
+function installLayout(relative: string, viaOpt = false) {
+  const root = join(home, relative);
+  mkdirSync(join(root, "scripts"), { recursive: true });
+  mkdirSync(join(root, "launchd"));
+  for (const file of ["scripts/backup-recordings-icloud.sh", "launchd/install.sh", "launchd/com.voicelayer.recordings-backup.plist"]) {
+    cpSync(resolve(file), join(root, file));
+  }
+  const opt = join(realpathSync(home), "brew/opt/voicelayer");
+  if (relative.startsWith("brew/Cellar/")) {
+    mkdirSync(join(home, "brew/opt"), { recursive: true });
+    symlinkSync(join(home, "brew/Cellar/voicelayer/2.2.44"), opt);
+  }
+  const result = Bun.spawnSync(["bash", join(viaOpt ? join(opt, "libexec") : root, "launchd/install.sh"), "--recordings-backup"], {
+    env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+  });
+  expect(result.exitCode).toBe(0);
+  const parsed = Bun.spawnSync(["python3", "-c", "import json, plistlib, sys; print(json.dumps(plistlib.load(open(sys.argv[1], 'rb'))))",
+    join(home, "Library/LaunchAgents/com.voicelayer.recordings-backup.plist")]);
+  expect(parsed.exitCode).toBe(0);
+  expect(existsSync(join(home, "launchctl-called"))).toBe(false);
+  expect(existsSync(dest)).toBe(false);
+  return { root, opt, config: JSON.parse(parsed.stdout.toString()) as { ProgramArguments: string[]; StandardErrorPath: string } };
+}
+
+for (const viaOpt of [false, true]) {
+  test(`Cellar installer renders stable opt path (invoked via ${viaOpt ? "symlink" : "keg"}) and survives upgrade`, () => {
+    const { root, opt, config } = installLayout("brew/Cellar/voicelayer/2.2.44/libexec", viaOpt);
+    // The fake opt points at the formula root, as Homebrew does, not libexec.
+    expect(config.ProgramArguments).toEqual(["/bin/bash", join(opt, "libexec/scripts/backup-recordings-icloud.sh")]);
+    rmSync(join(home, "brew/Cellar/voicelayer/2.2.44"), { recursive: true });
+    rmSync(opt);
+    const next = root.replace("2.2.44", "2.2.45");
+    mkdirSync(join(next, "scripts"), { recursive: true });
+    writeFileSync(join(next, "scripts/backup-recordings-icloud.sh"), "printf 'upgraded job ran\\n'\n");
+    symlinkSync(join(home, "brew/Cellar/voicelayer/2.2.45"), opt);
+    const job = Bun.spawnSync(config.ProgramArguments);
+    expect(job.exitCode).toBe(0);
+    expect(job.stdout.toString()).toBe("upgraded job ran\n");
+  });
+}
+
+test("checkout installer keeps its checkout script path", () => {
+  const { root, config } = installLayout("checkout");
+  expect(config.ProgramArguments).toEqual(["/bin/bash", join(realpathSync(root), "scripts/backup-recordings-icloud.sh")]);
+});
+
+test("missing scheduled script fails nonzero and records Bash's error in the configured log", () => {
+  const { root, config } = installLayout("checkout");
+  expect(config.StandardErrorPath).toBe(join(realpathSync(home), "Library/Logs/voicelayer/recordings-backup.log"));
+  rmSync(join(root, "scripts/backup-recordings-icloud.sh"));
+  // Emulate launchd's stderr redirection without loading a real LaunchAgent.
+  const stderr = openSync(config.StandardErrorPath, "a");
+  try {
+    expect(Bun.spawnSync(config.ProgramArguments, { stderr }).exitCode).not.toBe(0);
+  } finally {
+    closeSync(stderr);
+  }
+  const log = readFileSync(config.StandardErrorPath, "utf8");
+  expect(log).toContain("backup-recordings-icloud.sh");
+  expect(log).toContain("No such file or directory");
 });
 
 test("failed transfers publish no partial files and preserve originals", () => {
