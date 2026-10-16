@@ -14,10 +14,10 @@ enum PasteRecoveryFeedback {
 }
 
 enum SelectionErrorFeedback {
-    static let clipboardChanged = "Clipboard\nchanged"
-    static let copyTimedOut = "Copy timed\nout; retry"
+    static let clipboardChanged = "Clipboard\nReselect"
+    static let copyTimedOut = "Timed out\nReselect"
     static let copyEmpty = "No text\nReselect"
-    static let copyFailed = "Check app\naccess"
+    static let copyFailed = "Can't copy\nCheck A11y"
 
     static func contains(_ text: String?) -> Bool {
         guard let text else { return false }

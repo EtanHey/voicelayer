@@ -148,7 +148,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
             XCTAssertEqual(report.details["outcome"], "clipboard_changed")
             XCTAssertEqual(report.details["ax_read"], "unavailable")
             XCTAssertEqual(report.details["path"], "copy")
-            XCTAssertEqual(report.message, "Clipboard\nchanged")
+            XCTAssertEqual(report.message, "Clipboard\nReselect")
             XCTAssertEqual(report.commands, 0)
             finished.fulfill()
         }
@@ -247,8 +247,8 @@ final class SpeakSelectionCaptureTests: XCTestCase {
                 XCTAssertEqual(report.details["outcome"], expectedOutcome, outcome)
                 let expectedMessage = ["empty": "No text\nReselect",
                                        "nonstring": "No text\nReselect",
-                                       "timeout": "Copy timed\nout; retry",
-                                       "copyFailure": "Check app\naccess"][outcome]
+                                       "timeout": "Timed out\nReselect",
+                                       "copyFailure": "Can't copy\nCheck A11y"][outcome]
                 XCTAssertEqual(report.message, expectedMessage, outcome)
                 XCTAssertEqual(report.commands, ["text", "emptyAX"].contains(outcome) ? 1 : 0)
                 XCTAssertFalse(report.details.values.contains { $0.contains("raw **selection**") || $0.contains("original text") })
