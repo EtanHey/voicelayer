@@ -124,17 +124,20 @@ describe("socket-client", () => {
     } catch {}
   });
 
-  it("PRIV1 logs speak_text metadata without selected text or extra user fields", async () => {
+  it("PRIV11 PRIV1 logs speak_text metadata without selected text or extra user fields", async () => {
     mockServer = createMockVoiceBarServer(TEST_SOCKET);
     const client = await import("../socket-client");
     const received: SocketCommand[] = [];
-    const text = "PRIVATE_SELECTION_שלום_🔐";
+    const text = process.env.PRIV11_TEXT ?? "PRIVATE_SELECTION_שלום_🔐";
     const command = { cmd: "speak_text", id: "priv1-command", text,
       source: "PRIVATE_SOURCE", transcript: "PRIVATE_TRANSCRIPT", selection: "PRIVATE_FIELD" };
     client.onCommand(c => { received.push(c); });
     client.connectToBar(TEST_SOCKET);
     expect(await waitFor(client.isConnected)).toBe(true);
-    const log = spyOn(console, "error").mockImplementation(() => {});
+    const originalError = console.error;
+    const log = spyOn(console, "error").mockImplementation((...args) => {
+      if (process.env.PRIV11_CHILD) originalError(...args);
+    });
     try {
       const line = JSON.stringify(command);
       mockServer.sendToAll(line + "\n");
