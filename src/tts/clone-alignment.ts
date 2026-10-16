@@ -189,7 +189,7 @@ export async function alignCloneAudio(request: CloneAlignmentRequest): Promise<C
     try { if (child?.exitCode === null) child.kill("SIGKILL"); } catch { cleanupFailed = true; }
     try { if (child) await child.exited; } catch { cleanupFailed = true; }
     try { if (directory) await rm(directory, { recursive: true, force: true }); } catch { cleanupFailed = true; }
-    if (cleanupFailed) untimed("unavailable");
+    if (cleanupFailed) untimed(controller.signal.aborted ? deadline ? "deadline" : "cancelled" : "unavailable");
     // Include cleanup in the deadline, and reject cancellation during cleanup.
     if (input.signal?.aborted) untimed("cancelled");
     else if (performance.now() >= expiresAt) untimed("deadline");

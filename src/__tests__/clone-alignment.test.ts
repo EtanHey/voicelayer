@@ -169,11 +169,12 @@ for (const phase of ["converter", "decoder"]) {
     });
   }
 }
-for (const reason of ["cancelled", "deadline"] as const) {
-  test(`cleanup stop failure preserves ${reason} and still awaits exit and removes its snapshot`, async () => {
+for (const [reason, earlyClockCheck] of [["cancelled", false], ["deadline", false], ["deadline", true]] as const) {
+  test(`cleanup stop failure preserves ${reason}${earlyClockCheck ? " before the final clock deadline" : ""} and still awaits exit and removes its snapshot`, async () => {
     const { input } = await request("hello"), controller = new AbortController();
     input.signal = controller.signal;
     let directory = "", kills = 0, exitReads = 0, timer: ReturnType<typeof setTimeout> | undefined;
+    let clock: ReturnType<typeof spyOn> | undefined;
     const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
       directory = dirname(argv[argv.indexOf("-i") + 1]);
       let rejectExit!: (error: Error) => void;
@@ -183,7 +184,13 @@ for (const reason of ["cancelled", "deadline"] as const) {
       // Exercise the real deadline; external cancellation happens after spawn returns.
       if (reason === "cancelled") timer = setTimeout(() => controller.abort(), 0);
       return { exitCode: null, get exited() { exitReads++; return exited; },
-        kill() { kills++; queueMicrotask(() => rejectExit(new Error("injected wait failure"))); throw new Error("injected kill failure"); } };
+        kill() {
+          kills++;
+          // Timer delivery can precede the fractional performance.now() deadline.
+          if (earlyClockCheck && !clock) clock = spyOn(performance, "now").mockReturnValue(0);
+          queueMicrotask(() => rejectExit(new Error("injected wait failure")));
+          throw new Error("injected kill failure");
+        } };
     }) as typeof Bun.spawn);
     try {
       const result = await alignCloneAudio(input);
@@ -192,7 +199,7 @@ for (const reason of ["cancelled", "deadline"] as const) {
       expect(kills).toBe(2); expect(exitReads).toBe(2);
       expect(directory).not.toBe(""); expect(existsSync(directory)).toBe(false);
     } finally {
-      clearTimeout(timer); spawn.mockRestore();
+      clock?.mockRestore(); clearTimeout(timer); spawn.mockRestore();
       if (directory) await rm(directory, { recursive: true, force: true });
     }
   });
