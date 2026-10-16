@@ -316,21 +316,23 @@ extension VoiceBarFlowTests {
         let identity = section ?? (element.identifier.isEmpty ? (element.elementType == .popUpButton ? "voice-picker" : label) : element.identifier)
         var context = UIE2EControlContext(page: activePage)
         if label == "Open General settings" { context.page = "Navigation" }
-        if activePage == "History" {
+        if context.page == "History" {
             let selector = element.elementType == .radioButton && ["Ask", "Dictations"].contains(label)
             context.scope = selector ? "scope-selector" : activeHistoryScope
             if label.hasPrefix("QA fixture transcript") { context.row = "qa-recording" }
+            else if label.hasPrefix("QA loaded transcript") { context.row = "qa-loaded" }
             else if label.hasPrefix("QA older transcript") { context.row = "qa-older" }
             else if ["Copy transcript", "Paste transcript", "Re-transcribe stored audio", "Open stored audio in Finder",
                      "Copy recording details", "Copied recording details"].contains(label) {
-                context.row = activeHistoryScope == "Ask" ? "qa-ask-response" : selectedHistoryRow
+                context.row = activeHistoryScope == "Ask" ? askControlRow(element) : selectedHistoryRow
             }
         }
         if activePage == "Dictionary" {
             for prefix in ["Edit term ", "Delete term ", "Copy term ", "Copied term "] where label.hasPrefix(prefix) {
                 context.row = String(label.dropFirst(prefix.count))
             }
-            if ["Cancel", "Save", "Delete?", "Correct spelling", "Misheard as"].contains(label) {
+            if ["Cancel", "Save", "Delete?", "Correct spelling", "Misheard as"].contains(label) ||
+                label.hasPrefix("Remove misheard spelling ") {
                 context.row = editingDictionaryRow
             }
         }
@@ -341,20 +343,59 @@ extension VoiceBarFlowTests {
     }
 
     func speechProfile(_ element: XCUIElement) -> String {
-        let point = CGPoint(x: element.frame.midX, y: element.frame.midY)
+        // Native CU: the same ID is inherited by Text/Picker/Slider descendants.
+        // Match role + ID instead of evaluating an ambiguous any-element query.
         for kind in ["short", "long"] {
-            for field in ["voice", "rate"] {
-                let group = app.descendants(matching: .any)["speech-\(kind).\(field)"]
-                if group.exists && group.frame.contains(point) { return kind }
+            if element.identifier == "speech-\(kind).voice" || element.identifier == "speech-\(kind).rate" { return kind }
+        }
+        // Section headings are AX headings rather than StaticText. Associate
+        // S3 Copy with its one-picker native section; never use a shared label key.
+        if element.label.lowercased().contains("daemon command") {
+            let window = app.windows["VoiceBar QA Settings"]
+            for kind in ["short", "long"] {
+                let sections = window.descendants(matching: .any)
+                    .containing(.popUpButton, identifier: "speech-\(kind).voice").allElementsBoundByIndex
+                for section in sections where section.popUpButtons.count == 1 {
+                    let copies = section.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'daemon command'"))
+                    if copies.count == 1 && copies.firstMatch.frame == element.frame { return kind }
+                }
             }
         }
-        let long = app.staticTexts["Long reads"].firstMatch
-        if long.exists && !long.frame.isEmpty && point.y >= long.frame.minY { return "long" }
-        let short = app.staticTexts["Short speaks"].firstMatch
-        if short.exists && !short.frame.isEmpty && point.y >= short.frame.minY { return "short" }
         XCTFail("Cannot resolve Speech profile for \(element.label); refusing a shared coverage identity")
         return "unresolved-profile"
     }
+
+    func askPayloadFrames() -> [String: CGRect] {
+        var frames: [String: CGRect] = [:]
+        for (row, payload) in [("qa-ask-response", "QA response"), ("qa-ask-loaded-response", "QA loaded response")] {
+            let texts = app.windows["VoiceBar QA Settings"].staticTexts.matching(UIE2EAXText.predicate(payload,
+                staticTextRole: XCUIElement.ElementType.staticText.rawValue)).allElementsBoundByIndex
+                .map(\.frame).filter { !$0.isEmpty && !$0.isInfinite && !$0.isNull }
+            frames[row] = texts.min { $0.width * $0.height < $1.width * $1.height }
+        }
+        return frames
+    }
+
+
+    func askControl(_ label: String, row: String) -> XCUIElement? {
+        let payloads = askPayloadFrames()
+        guard let payload = payloads[row] else { return nil }
+        let nextY = payloads.values.filter { $0.minY > payload.minY }.map(\.minY).min()
+        let buttons = app.windows["VoiceBar QA Settings"].buttons.matching(identifier: label).allElementsBoundByIndex
+        guard let index = UIE2EHistoryGeometry.actionIndex(after: payload, before: nextY, candidates: buttons.map(\.frame)) else { return nil }
+        return buttons[index]
+    }
+
+
+    func askControlRow(_ element: XCUIElement) -> String {
+        let label = element.identifier.isEmpty ? element.label : element.identifier
+        for row in ["qa-ask-response", "qa-ask-loaded-response"] {
+            if let control = askControl(label, row: row), control.frame == element.frame { return row }
+        }
+        XCTFail("Cannot resolve Ask control row; refusing a shared coverage identity")
+        return "unresolved-ask-row"
+    }
+
 
     func didActivate(label: String, type: XCUIElement.ElementType) {
         if type == .staticText, ["General", "Transcription", "Dictionary", "Speech", "History"].contains(label) { activePage = label }
@@ -368,6 +409,7 @@ extension VoiceBarFlowTests {
         }
         if activePage == "History", label.hasPrefix("QA fixture transcript") { selectedHistoryRow = "qa-recording" }
         if activePage == "History", label.hasPrefix("QA older transcript") { selectedHistoryRow = "qa-older" }
+        if activePage == "History", label.hasPrefix("QA loaded transcript") { selectedHistoryRow = "qa-loaded" }
         if activePage == "Dictionary" {
             for prefix in ["Edit term ", "Delete term "] where label.hasPrefix(prefix) {
                 editingDictionaryRow = String(label.dropFirst(prefix.count))
@@ -380,10 +422,11 @@ extension VoiceBarFlowTests {
     /// passing when a newly added control is absent from this flow. Audio remains excluded.
     func observeControls() {
         let window = app.windows["VoiceBar QA Settings"]
-        for type: XCUIElement.ElementType in [.button, .checkBox, .radioButton, .popUpButton, .slider, .textField, .disclosureTriangle] {
+        for type: XCUIElement.ElementType in [.button, .switch, .checkBox, .link, .radioButton, .popUpButton, .slider, .textField, .disclosureTriangle] {
             for element in window.descendants(matching: type).allElementsBoundByIndex where element.isEnabled && element.isHittable {
                 let label = element.label.lowercased()
                 if element.identifier.hasPrefix("qa-fixture-") || label.hasPrefix("copied") { continue }
+                if element.identifier.hasPrefix("_XCUI:") || label == "windowsharingsessionbutton" { continue }
                 if ["close", "minimize", "zoom", "full screen"].contains(label) { continue }
                 if label.hasPrefix("play ") || ["preview", "play", "replay", "speak", "start voice recording"].contains(label) { continue }
                 observed.insert(controlKey(element))
@@ -448,7 +491,7 @@ extension VoiceBarFlowTests {
         step("assert intent \(expected)") {
             do {
                 let events = try JSONDecoder().decode([String].self, from: Data(contentsOf: root.appendingPathComponent("events.json")))
-                XCTAssertTrue(events.contains(expected), "Missing fixture intent: \(expected)")
+                XCTAssertTrue(events.dropFirst(lastActionEventIndex).contains(expected), "Missing fresh fixture intent: \(expected)")
             } catch { XCTFail("Cannot read fixture receipts: \(error)") }
         }
     }
@@ -766,16 +809,35 @@ extension VoiceBarFlowTests {
     func historyControl(_ label: String) -> XCUIElement {
         let window = app.windows["VoiceBar QA Settings"]
         let selector = window.radioButtons[activeHistoryScope]
-        let payload = activeHistoryScope == "Ask" ? "QA response" :
-            selectedHistoryRow == "qa-older" ? "QA older transcript" : "QA fixture transcript שלום 👋"
+        let payload = activeHistoryScope == "Ask" ?
+            (selectedHistoryRow == "qa-ask-loaded-response" ? "QA loaded response" : "QA response") :
+            selectedHistoryRow == "qa-older" ? "QA older transcript" :
+            selectedHistoryRow == "qa-loaded" ? "QA loaded transcript" : "QA fixture transcript שלום 👋"
         let missing = window.buttons["UIE2E-missing-\(activeHistoryScope)-\(selectedHistoryRow)-\(label)"]
-        guard selector.exists, selector.isSelected || selector.value as? String == "1" else {
+        guard selector.exists, UIE2EAXSelection.isSelected(flag: selector.isSelected, value: selector.value) else {
             XCTFail("History scope \(activeHistoryScope) is not selected"); return missing
         }
         // Dictations' list rows are buttons; only its detail has the static transcript.
         // Ask's matching response text scopes the response controls independently of Dictations.
-        let anchor = NSPredicate(format: "elementType == %d AND label CONTAINS %@",
-                                 XCUIElement.ElementType.staticText.rawValue, payload)
+        // Native CU: Dictations combines transcript + Audio length into one AX
+        // StaticText value. Exact label matching loses the fresh detail container.
+        let anchor = NSPredicate(format: "elementType == %d AND (label CONTAINS %@ OR value CONTAINS %@)",
+            XCUIElement.ElementType.staticText.rawValue, payload, payload)
+        // Clearing search recreates the detail after its debounced archive
+        // load. Wait on the real payload before taking a fresh container list.
+        let payloadText = window.descendants(matching: .staticText).matching(anchor).firstMatch
+        guard payloadText.exists || payloadText.waitForExistence(timeout: 4) else {
+            attachJSON("UIE2E-HISTORY-MISSING-DETAIL", ["scope": activeHistoryScope,
+                "row": selectedHistoryRow, "payload": payload, "AX": window.debugDescription])
+            XCTFail("History detail payload did not appear for \(activeHistoryScope)/\(selectedHistoryRow)")
+            return missing
+        }
+        if activeHistoryScope == "Ask" {
+            if let control = askControl(label, row: selectedHistoryRow) { return control }
+            attachJSON("UIE2E-ASK-MISSING-ACTION", ["row": selectedHistoryRow, "label": label, "AX": window.debugDescription])
+            XCTFail("Missing unambiguous Ask row action for " + selectedHistoryRow + "/" + label)
+            return missing
+        }
         let containers = window.descendants(matching: .any).containing(anchor).allElementsBoundByIndex
             .filter { $0.buttons.matching(identifier: label).count == 1 }
             .sorted { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
@@ -799,7 +861,10 @@ extension VoiceBarFlowTests {
         step("assert exact new paste payload \(expected)") {
             do {
                 let events = try JSONDecoder().decode([String].self, from: Data(contentsOf: root.appendingPathComponent("events.json")))
-                XCTAssertEqual(Array(events.dropFirst(before)), ["history-paste:" + expected])
+                let received = Array(events.dropFirst(before))
+                attachJSON("UIE2E-HISTORY-PASTE-\(activeHistoryScope)-\(selectedHistoryRow)",
+                    ["scope": activeHistoryScope, "row": selectedHistoryRow, "expected": expected, "received": received])
+                XCTAssertEqual(received, ["history-paste:" + expected])
             } catch { XCTFail("Cannot read paste sink: \(error)") }
         }
     }
@@ -819,8 +884,31 @@ extension VoiceBarFlowTests {
         receipt("history-finder")
         assertHistoryCopy("Copy recording details", contains: "Model: QA recognizer\nEffort: accurate")
         click(app.buttons["Load more"])
+        step("assert Dictations pagination visibly adds its next row") {
+            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA loaded transcript'")).firstMatch
+            XCTAssertTrue(row.exists || row.waitForExistence(timeout: 4))
+            XCTAssertFalse(app.buttons["Load more"].exists)
+            waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("history-page:200") }
+        }
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA loaded transcript'")).firstMatch,
+              "select the newly loaded Dictations row")
+        assertHistoryCopy(equals: "QA loaded transcript")
+        assertHistoryPaste("QA loaded transcript")
         click(app.buttons["Refresh history"])
+        step("assert Refresh history reloads the active page") {
+            waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("history-page:200") }
+        }
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA older transcript'")).firstMatch,
+              "select older row before Jump to latest")
         click(app.buttons["Jump to latest"])
+        step("assert Jump scroll contract without inventing a selection change") {
+            let latest = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch
+            let older = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA older transcript'")).firstMatch
+            waitUntil { latest.isHittable }
+            XCTAssertTrue(older.isSelected, "Jump scrolls; only a row click changes selection")
+        }
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'QA fixture transcript'")).firstMatch,
+              "select newest row explicitly after Jump")
         replace(app.textFields["Search transcripts"], "no-match-uie2e")
         step("recording history search empty state") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "exists == false"), object: app.buttons["Copy transcript"])], timeout: 4), .completed) }
@@ -834,7 +922,21 @@ extension VoiceBarFlowTests {
         assertHistoryCopy(equals: "QA response")
         assertHistoryPaste("QA response")
         click(app.buttons["Load older ask history"])
+        step("assert Ask pagination visibly adds its next row") {
+            let row = app.staticTexts.matching(UIE2EAXText.predicate("QA loaded question",
+                staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+            XCTAssertTrue(row.exists || row.waitForExistence(timeout: 4))
+            XCTAssertFalse(app.buttons["Load older ask history"].exists)
+            waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("ask-history-page:200") }
+        }
+        selectedHistoryRow = "qa-ask-loaded-response"
+        assertHistoryCopy(equals: "QA loaded response")
+        assertHistoryPaste("QA loaded response")
+        selectedHistoryRow = "qa-ask-response"
         click(app.buttons["Refresh ask history"])
+        step("assert Refresh Ask history reloads the active page") {
+            waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("ask-history-page:200") }
+        }
         replace(app.textFields["Search questions and answers"], "no-match-uie2e")
         step("ask history search empty state") { XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "exists == false"), object: app.buttons["Copy transcript"])], timeout: 4), .completed) }
