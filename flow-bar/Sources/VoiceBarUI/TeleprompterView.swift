@@ -90,20 +90,9 @@ public struct TeleprompterBoundary: Equatable {
                 return indexed ? Self(offsetMs: nil, durationMs: nil, text: "", wordIndex: -1) : nil
             }
             // Match the old decoder's Int-first coercion (including JSON booleans)
-            // and signed fractional truncation, without wrapping unsafe NSNumbers.
+            // and signed fractional truncation, without trapping on unsafe Doubles.
             func legacyMilliseconds(_ value: Any?) -> Int? {
-                guard let value else { return nil }
-                if let integer = value as? Int {
-                    // JSON numbers bridge to Int via NSNumber.intValue, which wraps
-                    // 1e100 into a live timestamp. Pure Swift Int (Int.max) is exact.
-                    if type(of: value) != Int.self {
-                        guard let number = value as? NSNumber else { return nil }
-                        let double = number.doubleValue
-                        guard double.isFinite else { return nil }
-                        return Int(exactly: double.rounded(.towardZero))
-                    }
-                    return integer
-                }
+                if let integer = value as? Int { return integer }
                 guard let number = value as? Double, number.isFinite else { return nil }
                 return Int(exactly: number.rounded(.towardZero))
             }
@@ -127,9 +116,6 @@ public struct TeleprompterBoundary: Equatable {
                     globalOffset = global.partialValue
                 }
             }
-            // Legacy compactMap used to drop unusable rows. Keeping a nil-offset
-            // placeholder would still start estimated karaoke (`!wordBoundaries.isEmpty`).
-            if !indexed, globalOffset == nil { return nil }
             return Self(offsetMs: globalOffset, durationMs: globalOffset == nil ? nil : duration,
                         text: text, wordIndex: indexed ? (index ?? -1) : nil)
         }
