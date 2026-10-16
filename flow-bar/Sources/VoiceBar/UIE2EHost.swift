@@ -15,7 +15,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var statusController: MenuBarStatusItemController?
     var popoverPresenter: MenuBarPopoverPresenter?
-
+    var wizard: NSWindow?
     init(sandbox: UIE2ESandbox) {
         self.sandbox = sandbox
         model = UIE2EModel(sandbox: sandbox)
@@ -94,8 +94,33 @@ final class UIE2EHost: NSObject, NSApplicationDelegate {
         settings.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         configureStatusItem()
+        model.onRunSetup = { [weak self] in self?.openWizard() }
         model.receipt("launch")
     }
+
+    private func openWizard() {
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: SetupWizardView.contentSize),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "VoiceBar QA Setup"
+        window.isReleasedWhenClosed = false
+        let defaults = UserDefaults(suiteName: "com.voicelayer.uie2e.wizard.\(sandbox.root.lastPathComponent)")!
+        let controller = SetupWizardController(store: SetupWizardCompletionStore(defaults: defaults),
+            model: .init(), onClose: { [weak self, weak window] in
+                window?.orderOut(nil); self?.settings.makeKeyAndOrderFront(nil)
+            })
+        window.contentView = NSHostingView(rootView: SetupWizardView(controller: controller,
+            dependencies: .init(permissionSnapshot: { .allGranted },
+                onRequestMicrophone: { done in self.model.receipt("wizard-permission-fixture"); done() },
+                openURL: { self.model.receipt("wizard-url:" + $0.absoluteString) },
+                f5KeyStatus: { .init(listenerActive: true, helperInstalled: true) },
+                onRunRelaySetup: { done in done(.installerRun(exitCode: 7, output: "QA fixture only", missingAfter: [], finishedAt: Date())) },
+                onRestartHotkeyListener: { .failed(missing: []) },
+                defaultMicrophoneName: { "QA microphone A" }, onChangeMicrophone: { self.model.receipt("wizard-microphone") },
+                tryItObservation: { .none })))
+        wizard = window
+        window.center(); window.makeKeyAndOrderFront(nil)
+    }
+
 
     private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -108,13 +133,22 @@ final class UIE2EHost: NSObject, NSApplicationDelegate {
                 transcript: UIE2EModel.transcript, onCopy: { self.model.copy(UIE2EModel.transcript) },
                 onSettings: { self.popoverPresenter?.close(); self.settings.makeKeyAndOrderFront(nil); self.model.receipt("popover-settings") },
                 onQuit: { self.model.receipt("popover-quit"); NSApp.terminate(nil) },
-                onRunSetup: { self.popoverPresenter?.close(); self.model.receipt("popover-setup") },
+                onRunSetup: { self.popoverPresenter?.close(); self.model.receipt("popover-setup"); self.openWizard() },
                 onChangeMicrophone: { self.popoverPresenter?.close(); self.model.tab = .general; self.model.requestID += 1; self.model.receipt("popover-microphone") }))
         }
         popoverPresenter = presenter
         statusController = MenuBarStatusItemController(button: button, presenter: presenter)
-        button.setAccessibilityTitle("VoiceBar QA")
+        Self.identifyStatusButton(button)
     }
+
+    static func identifyStatusButton(_ button: NSButton) {
+        button.setAccessibilityTitle("VoiceBar QA")
+        // NSButton otherwise derives AXLabel from the production SF Symbol's
+        // accessibilityDescription ("VoiceBar"), overriding the QA title.
+        button.setAccessibilityLabel("VoiceBar QA")
+        button.setAccessibilityIdentifier("uie2e-status-item")
+    }
+
 
     private func configureMenu() {
         menu.transcriptProvider = { UIE2EModel.transcript }
@@ -148,6 +182,7 @@ final class UIE2EModel {
     var tab: SettingsTab = .general
     var requestID = 0
     var events: [String] = []
+    var onRunSetup: () -> Void = {}
     var residency = "loaded"
     var processing: [String: Any] = [:]
     var speech: [String: Any] = [:]
@@ -169,6 +204,7 @@ final class UIE2EModel {
         voice.controlLayerEventWriter = { _, _ in } // Also isolated before any host/window exists.
         voice.pasteHandler = { _ in true }
         voice.frontmostAppProvider = { nil }
+        voice.selectionTextCaptureHandler = { [weak self] done in done(.completed(self?.selectionText ?? "")) }
         voice.sendCommand = { [weak self] command in self?.command(command) }
         refresh()
         persistDictionary()
@@ -192,6 +228,22 @@ final class UIE2EModel {
         let entry = SettingsAskHistoryEntry(id: "qa-ask", dayKey: "2026-10-15", askID: "qa-ask", createdAt: Date(timeIntervalSince1970: 1_790_000_000),
             questionText: "QA question", questionAudioPath: nil, responseTranscript: "QA response", responseAudioPath: nil)
         return .init(groups: [.init(dayKey: entry.dayKey, date: entry.createdAt, entries: [entry])], hasMore: true)
+    }
+    func historyPage(limit: Int) -> SettingsHistoryPage {
+        receipt("history-page:" + String(limit))
+        guard limit > 100, let group = history.groups.first else { return history }
+        let entry = SettingsHistoryEntry(id: "qa-loaded", dayKey: group.dayKey, recordingID: "qa-loaded",
+            createdAt: group.date.addingTimeInterval(-240), transcript: "QA loaded transcript",
+            audioPath: sandbox.root.appendingPathComponent("loaded.wav"))
+        return .init(groups: [.init(dayKey: group.dayKey, date: group.date, entries: group.entries + [entry])], hasMore: false)
+    }
+    func askHistoryPage(limit: Int) -> SettingsAskHistoryPage {
+        receipt("ask-history-page:" + String(limit))
+        guard limit > 100, let group = askHistory.groups.first else { return askHistory }
+        let entry = SettingsAskHistoryEntry(id: "qa-ask-loaded", dayKey: group.dayKey, askID: "qa-ask-loaded",
+            createdAt: group.date.addingTimeInterval(-240), questionText: "QA loaded question", questionAudioPath: nil,
+            responseTranscript: "QA loaded response", responseAudioPath: nil)
+        return .init(groups: [.init(dayKey: group.dayKey, date: group.date, entries: group.entries + [entry])], hasMore: false)
     }
     var microphone: MicrophonePrioritySnapshot {
         .init(rows: microphoneOrder.map { .init(uid: $0, deviceID: $0, label: "QA microphone \($0.uppercased())", isConnected: true) },
@@ -293,14 +345,14 @@ private struct UIE2ESettings: View {
             onShowVoiceBar: { model.hidden = false; model.receipt("show") },
             onRunRelaySetup: { done in model.receipt("relay-setup"); done(.installerRun(exitCode: 7, output: "QA relay failure\nSecond line", missingAfter: [], finishedAt: Date())) },
             lastDictationEntry: { model.recent }, lastDictationInsertionStatus: { .pasted }, onCopyLastDictation: { model.copy($0) },
-            historyPage: { limit in .init(groups: history.groups, hasMore: limit <= 100) }, initialHistoryPage: history, askHistoryPage: { limit in .init(groups: asks.groups, hasMore: limit <= 100) },
+            historyPage: { await model.historyPage(limit: $0) }, initialHistoryPage: history, askHistoryPage: { await model.askHistoryPage(limit: $0) },
             historySearchPage: { _, query in history.groups[0].entries[0].transcript.localizedCaseInsensitiveContains(query) ? history : .init(groups: [], hasMore: false) },
             askHistorySearchPage: { _, query in "QA question QA response".localizedCaseInsensitiveContains(query) ? asks : .init(groups: [], hasMore: false) },
             searchPrewarm: {}, initialAskHistoryPage: asks, onCopyHistoryTranscript: { _ = model.copy($0) },
             onPasteHistoryTranscript: { model.pasteHistoryTranscript($0) }, onRetranscribeHistoryEntry: { _ in model.receipt("history-retranscribe") },
             onRevealHistoryFile: { _ in model.receipt("history-finder") },
             footerPresentation: { .resolve(isConnected: model.voice.isConnected, mode: model.voice.mode, captureLive: false,
-                                            errorMessage: nil, remoteSTTConfigured: false) }, onRunSetup: { model.receipt("run-setup") },
+                                            errorMessage: nil, remoteSTTConfigured: false) }, onRunSetup: { model.receipt("run-setup"); model.onRunSetup() },
             tabRequest: .init(tab: model.tab, id: model.requestID), initialDictionaryPreview: model.preview,
             onSelectedTabChange: { model.tab = $0 },
             historyPlayback: .init(start: { _ in fatalError("UIE2E forbids playback") }, stop: {}))

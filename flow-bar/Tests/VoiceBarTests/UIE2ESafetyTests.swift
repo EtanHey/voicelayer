@@ -1,6 +1,9 @@
 import Foundation
+import OffscreenTestSupport
 @testable import VoiceBar
 import XCTest
+import SwiftUI
+import VoiceBarUI
 
 final class UIE2ESafetyTests: XCTestCase {
     func testRejectsMissingOrUnmarkedSandbox() throws {
@@ -23,6 +26,95 @@ final class UIE2ESafetyTests: XCTestCase {
 
 @MainActor
 final class UIE2EFixtureCommandTests: XCTestCase {
+
+
+
+    func testFeedbackFixtureHoldsItsPresentationThroughPointerExit() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        model.voice.setHoveringFromDebouncedPointer(false)
+        for name in ["paste-not-inserted", "paste-unverified", "paste-partial"] {
+            model.fixture(name)
+            model.voice.setHoveringFromDebouncedPointer(false)
+            XCTAssertEqual(UIE2EHost.panelLayout(for: model.voice).presentation.visualState, .compactStatus)
+        }
+        model.fixture("idle")
+        model.voice.setHoveringFromDebouncedPointer(false)
+        XCTAssertTrue(model.voice.isCollapsed, "Fixture hold must be released for normal idle")
+    }
+
+    func testHistoryPaginationAddsVisibleFixtureRowsInBothScopes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        XCTAssertEqual(model.historyPage(limit: 100).loadedEntryCount, 2)
+        let recordings = model.historyPage(limit: 200)
+        XCTAssertEqual(recordings.loadedEntryCount, 3)
+        XCTAssertEqual(recordings.groups.last?.entries.last?.transcript, "QA loaded transcript")
+        XCTAssertFalse(recordings.hasMore)
+        XCTAssertEqual(model.askHistoryPage(limit: 100).loadedEntryCount, 1)
+        let asks = model.askHistoryPage(limit: 200)
+        XCTAssertEqual(asks.loadedEntryCount, 2)
+        XCTAssertEqual(asks.groups.last?.entries.last?.responseTranscript, "QA loaded response")
+        XCTAssertFalse(asks.hasMore)
+        XCTAssertTrue(model.events.contains("history-page:200"))
+        XCTAssertTrue(model.events.contains("ask-history-page:200"))
+    }
+
+
+    func testRecentTranscriptIdentityKeepsTheRealControllerPayloadAndTitle() throws {
+        let controller = PillContextMenuController()
+        controller.recentTranscriptionEntriesProvider = {
+            [.init(text: UIE2EModel.transcript, createdAt: Date(timeIntervalSince1970: 1_790_000_000))]
+        }
+        let menu = controller.makeMenu()
+        let item = try XCTUnwrap(menu.items.flatMap { $0.submenu?.items ?? [] }.first {
+            $0.representedObject as? String == UIE2EModel.transcript
+        })
+        let title = item.title
+        UIE2EHost.identifyRecentMenuItems(menu)
+        XCTAssertEqual(item.accessibilityIdentifier(), "uie2e-recent-qa-recording")
+        XCTAssertEqual(item.title, title)
+        XCTAssertEqual(item.representedObject as? String, UIE2EModel.transcript)
+        XCTAssertNotNil(item.target)
+        XCTAssertNotNil(item.action)
+    }
+
+    func testMicrophoneMenuIdentitySurvivesNativeSubtitleWithoutReplacingItsActions() throws {
+        let controller = PillContextMenuController()
+        controller.defaultMicrophoneNameProvider = { "QA microphone A" }
+        let menu = controller.makeMenu()
+        let parent = try XCTUnwrap(menu.items.first { $0.title == "Microphone" })
+        let children = try XCTUnwrap(parent.submenu).items
+        let change = try XCTUnwrap(children.first { $0.action != nil })
+        let title = change.title, action = change.action
+        UIE2EHost.identifyRecentMenuItems(menu)
+        XCTAssertEqual(parent.accessibilityIdentifier(), "uie2e-microphone-menu")
+        XCTAssertEqual(parent.title, "Microphone")
+        XCTAssertEqual(children.first?.accessibilityIdentifier(), "uie2e-microphone-default")
+        XCTAssertEqual(change.accessibilityIdentifier(), "uie2e-microphone-change")
+        XCTAssertEqual(change.title, title)
+        XCTAssertEqual(change.action, action)
+        XCTAssertNotNil(change.target)
+    }
+
+
+    func testQAStatusButtonHasItsOwnAXIdentityRatherThanTheProductionImageName() {
+        let button = NSButton()
+        button.image = NSImage(systemSymbolName: "waveform.circle.fill", accessibilityDescription: "VoiceBar")
+        UIE2EHost.identifyStatusButton(button)
+        XCTAssertEqual(button.accessibilityLabel(), "VoiceBar QA")
+        XCTAssertEqual(button.accessibilityIdentifier(), "uie2e-status-item")
+    }
+
+
+
+
     func testAskPasteSinkReceivesExactlyTheResponse() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
