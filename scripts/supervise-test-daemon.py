@@ -13,6 +13,23 @@ import sys
 import time
 
 
+def audit(event, reason, pgid=None, members=(), **fields):
+    """Opt-in test evidence lives outside RUN_DIR, which the hook removes."""
+    path = os.environ.get("VOICELAYER_HOOK_AUDIT_LOG")
+    if not path:
+        return
+    row = dict(time_ns=time.time_ns(), actor_pid=os.getpid(), event=event,
+               reason=reason, pgid=pgid, targets=[p[0] for p in members],
+               run_nonce=os.environ.get("VOICELAYER_HOOK_TEST_NONCE"), **fields)
+    if event in ("signal-attempt", "signal-sent", "signal-gone"):
+        row["sender_pid"] = os.getpid()
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, (json.dumps(row) + "\n").encode())
+    finally:
+        os.close(fd)
+
+
 def process_identity(pid):
     """Read argv and envp separately; argv text is NEVER ownership evidence."""
     try:
@@ -73,11 +90,16 @@ def processes():
 
 
 def carries_run(env, run_dir):
-    return env is not None and all(env.get(key) and os.path.isabs(env[key]) and
+    # Test fixtures deliberately imitate production orphans. Neither an unscoped
+    # hook nor a different test run may adopt them; untagged production ownership
+    # remains unchanged. Apply this again to every survivor before each signal.
+    return (env is not None and
+            env.get("VOICELAYER_HOOK_TEST_NONCE") == os.environ.get("VOICELAYER_HOOK_TEST_NONCE") and
+            all(env.get(key) and os.path.isabs(env[key]) and
                                    Path(env[key]) == value
                for key, value in (("VOICELAYER_TMP_ROOT", run_dir),
                                   ("VOICELAYER_MCP_SOCKET_PATH", run_dir / "voicelayer-mcp.sock"),
-                                  ("VOICELAYER_SOCKET_PATH", run_dir / "voicelayer.sock")))
+                                  ("VOICELAYER_SOCKET_PATH", run_dir / "voicelayer.sock"))))
 
 
 def daemon_argv(argv):
@@ -92,11 +114,13 @@ def reap_group(pgid, run_dir, orphan_only=False):
             # A different real environment is never ours. An unavailable native
             # identity can be transient during exec/exit; never signal it.
             if any(p[4] is not None for p in unverified):
+                audit("skip", "environment ownership mismatch", pgid, members)
                 return []
             return None
         if not members:
             return []
         if orphan_only and run_dir.exists():
+            audit("skip", "run directory still exists", pgid, members)
             return []
         return members
 
@@ -108,6 +132,7 @@ def reap_group(pgid, run_dir, orphan_only=False):
                 return members
             if time.monotonic() >= deadline:
                 if orphan_only:
+                    audit("skip", "environment unreadable after retry", pgid)
                     return []  # Unknown environment: skip the entire group.
                 raise RuntimeError(f"cannot verify test daemon group {pgid}")
             time.sleep(0.05)
@@ -120,11 +145,16 @@ def reap_group(pgid, run_dir, orphan_only=False):
     # Revalidate before EACH signal. A stale PID/PGID file is never authority
     # to kill a reused group, a resident daemon, or another test run.
     for signum in (signal.SIGTERM, signal.SIGKILL):
-        if not verified_members():
+        members = verified_members()
+        if not members:
             return
+        reason = "absent-dir PPID-1 daemon" if orphan_only else "owned daemon cleanup"
+        audit("signal-attempt", reason, pgid, members, signal=int(signum), run_dir=str(run_dir))
         try:
             os.killpg(pgid, signum)
+            audit("signal-sent", reason, pgid, members, signal=int(signum), run_dir=str(run_dir))
         except ProcessLookupError:
+            audit("signal-gone", reason, pgid, members, signal=int(signum))
             return
         deadline = time.monotonic() + 1
         while time.monotonic() < deadline:
@@ -154,6 +184,10 @@ def sweep_orphans():
     seen = set()
     for pid, ppid, pgid, argv, env in processes():
         if ppid != 1 or pgid <= 1 or pgid in seen:
+            continue
+        if env is not None and env.get("VOICELAYER_HOOK_TEST_NONCE") != os.environ.get("VOICELAYER_HOOK_TEST_NONCE"):
+            if daemon_argv(argv):
+                audit("skip", "test nonce mismatch", pgid, [(pid, ppid, pgid, argv, env)])
             continue
         mcp_socket = (env or {}).get("VOICELAYER_MCP_SOCKET_PATH", "")
         run_dir = Path(mcp_socket).parent
@@ -194,10 +228,12 @@ def main():
 
     def request_start(_signum, _frame):
         nonlocal start_requested
+        audit("signal-received", "supervisor start request", signal=int(_signum))
         start_requested = True
 
     def request_stop(signum, _frame):
         nonlocal stopping, exiting
+        audit("signal-received", "supervisor stop request", signal=int(signum))
         stopping = True
         if signum != signal.SIGUSR1:
             exiting = True
