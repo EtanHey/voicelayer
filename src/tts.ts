@@ -672,6 +672,7 @@ async function playClonedAudio(
     onPlaybackComplete?: (outcome: PlaybackOutcomeEvent) => void;
     captureAudioArtifact?: boolean;
   },
+  signal?: AbortSignal,
 ): Promise<
   Pick<
     TextToSpeechResult,
@@ -700,6 +701,7 @@ async function playClonedAudio(
   let proc: QueuedPlaybackHandle;
   let audioArtifact: TextToSpeechResult["audioArtifact"];
   try {
+    throwIfAbortedSafe(signal);
     assertSpeakerClear();
     audioArtifact = captureAudioArtifact(
       ttsFile,
@@ -1610,6 +1612,13 @@ class PlaybackQueueManager {
 }
 
 const playbackQueueManager = new PlaybackQueueManager();
+// Standard speech has no queue job until synthesis finishes. Keep its operation
+// identity alive across every preparation await so global Stop can invalidate it.
+const speechPreparations = new Set<AbortController>();
+
+export function hasPendingSpeechPreparation(): boolean {
+  return speechPreparations.size > 0;
+}
 
 /** Claim a quiet queue synchronously; a race refuses Ask instead of overlapping capture. */
 export function reserveCaptureAdmission(): CaptureAdmission | undefined {
@@ -1686,10 +1695,13 @@ export function seekPlayback(offsetMs: number): SeekResult {
 
 /** Stop current playback if any. */
 export function stopPlayback(playbackElapsedMs?: number): boolean {
+  const hadPreparation = hasPendingSpeechPreparation();
+  for (const controller of speechPreparations) controller.abort();
+  speechPreparations.clear();
   const hadLongRead = cancelLongRead(playbackElapsedMs);
   const stopped = playbackQueueManager.stop(playbackElapsedMs);
-  if (hadLongRead && !stopped) broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
-  return hadLongRead || stopped;
+  if ((hadPreparation || hadLongRead) && !stopped) broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
+  return hadPreparation || hadLongRead || stopped;
 }
 
 /** Internal cancellation is utterance-scoped; foreign, terminal and stale intents are no-ops. */
@@ -1977,6 +1989,21 @@ export async function speak(
   text: string,
   options?: TextToSpeechOptions,
 ): Promise<TextToSpeechResult> {
+  if (!text?.trim()) return {};
+  const controller = new AbortController();
+  speechPreparations.add(controller);
+  try {
+    return await prepareSpeech(text, options, controller.signal);
+  } finally {
+    speechPreparations.delete(controller);
+  }
+}
+
+async function prepareSpeech(
+  text: string,
+  options: TextToSpeechOptions | undefined,
+  signal: AbortSignal,
+): Promise<TextToSpeechResult> {
   const receivedAt = Date.now();
   const chars = text?.length ?? 0;
   if (!text?.trim()) return {};
@@ -1984,6 +2011,7 @@ export async function speak(
   preemptLongRead();
   if (cancelledLongReadTeardowns.size) {
     await Promise.all([...cancelledLongReadTeardowns]);
+    throwIfAbortedSafe(signal);
     assertSpeakerClear();
   }
 
@@ -2072,6 +2100,7 @@ export async function speak(
       resolved.warning,
       displayText,
       edgeProjection.ranges,
+      signal,
     );
   }
 
@@ -2087,6 +2116,8 @@ export async function speak(
         profileAssetVoice,
         profile.reference_clip,
       );
+      if (signal.aborted && wavPath) { try { unlinkSync(wavPath); } catch {} }
+      throwIfAbortedSafe(signal);
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
       if (mp3Path) {
         audioEngine = "xtts-v2";
@@ -2097,6 +2128,7 @@ export async function speak(
           speakingText,
           resolved.voice,
           cloneOptions(),
+          signal,
         );
         return {
           warning: resolved.warning,
@@ -2123,6 +2155,8 @@ export async function speak(
         profile.reference_clip,
         profile.reference_text,
       );
+      if (signal.aborted && wavPath) { try { unlinkSync(wavPath); } catch {} }
+      throwIfAbortedSafe(signal);
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
       if (mp3Path) {
         audioEngine = "f5-tts-mlx";
@@ -2133,6 +2167,7 @@ export async function speak(
           speakingText,
           resolved.voice,
           cloneOptions(),
+          signal,
         );
         return {
           warning: resolved.warning,
@@ -2148,7 +2183,8 @@ export async function speak(
     }
 
     // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
-    const audioBuffer = await synthesizeCloned(spokenText, resolved.voice);
+    const audioBuffer = await synthesizeCloned(spokenText, resolved.voice, signal);
+    throwIfAbortedSafe(signal);
     if (audioBuffer) {
       audioEngine = "qwen3-tts";
       const ttsFile = ttsFilePath(process.pid, ttsCounter++);
@@ -2160,6 +2196,7 @@ export async function speak(
         speakingText,
         resolved.voice,
         cloneOptions(),
+        signal,
       );
       return {
         warning: resolved.warning,
@@ -2189,6 +2226,7 @@ export async function speak(
       undefined,
       displayText,
       edgeProjection.ranges,
+      signal,
     );
   }
 
@@ -2200,6 +2238,7 @@ export async function speak(
     resolved.warning,
     displayText,
     edgeProjection.ranges,
+    signal,
   );
 }
 
@@ -2222,6 +2261,7 @@ async function speakWithEdgeTTS(
   warning?: string,
   displayText: string = spokenText,
   ranges?: ProjectionRange[],
+  signal?: AbortSignal,
 ): Promise<TextToSpeechResult> {
   // Profile file rates enter as explicit options; otherwise preserve mode > env > default.
   let rate =
@@ -2248,7 +2288,9 @@ async function speakWithEdgeTTS(
         rate,
         ttsFile,
         scriptPath,
+        signal,
       );
+      throwIfAbortedSafe(signal);
       wordBoundaries = synthesized.wordBoundaries;
     } else {
       const synthesizedChunks: SynthesizedChunk[] = [];
@@ -2257,8 +2299,9 @@ async function speakWithEdgeTTS(
         const chunkFile = ttsFile.replace(".mp3", `.chunk${index}.mp3`);
         tempChunkFiles.push(chunkFile);
         synthesizedChunks.push(
-          await synthesizeEdgeChunk(chunk, voice, rate, chunkFile, scriptPath),
+          await synthesizeEdgeChunk(chunk, voice, rate, chunkFile, scriptPath, signal),
         );
+        throwIfAbortedSafe(signal);
       }
 
       concatenateMp3Files(
@@ -2268,7 +2311,7 @@ async function speakWithEdgeTTS(
       wordBoundaries = mergeWordBoundaryChunks(synthesizedChunks);
     }
   } catch (error) {
-    broadcast({
+    if (!signal?.aborted) broadcast({
       type: "error",
       message: "TTS synthesis failed (edge-tts)",
       recoverable: true,
@@ -2305,6 +2348,7 @@ async function speakWithEdgeTTS(
   let proc: QueuedPlaybackHandle;
   let audioArtifact: TextToSpeechResult["audioArtifact"];
   try {
+    throwIfAbortedSafe(signal);
     assertSpeakerClear();
     audioArtifact = captureAudioArtifact(
       ttsFile,
