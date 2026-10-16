@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
+import ts from "typescript";
 
 // Exact lines AND occurrence budgets: adding a home path even in an allowed
 // file needs review. These exceptions are fixtures, isolation or path contracts.
@@ -112,10 +113,56 @@ const ALLOWED: Record<string, Array<[string, number]>> = {
   ],
 };
 
+// Keep literal/script-text coverage for every file type. The AST pass also
+// sees token boundaries across comments/newlines, optional/bracket access,
+// binding aliases and template interpolations. Never execute scanned sources.
 function homeLines(source: string): string[] {
-  return source.split(/\r?\n/).map(line => line.trim()).filter(line =>
-    /\b(?:os\.)?homedir\s*\(|\bprocess\.env(?:\.HOME\b|\[["']HOME["']\])|["'`]~\/|\/Users\//.test(line),
-  );
+  const lines = source.split(/\r?\n/);
+  const flagged = new Set<number>();
+  lines.forEach((line, index) => {
+    if (/\b(?:os\.)?homedir\s*\(|\b(?:process|Bun)\.env(?:\.HOME\b|\[["']HOME["']\])|\$\{\s*HOME\s*\}|["'`]~\/|\/Users\//.test(line)) {
+      flagged.add(index);
+    }
+  });
+  const tree = ts.createSourceFile("guard-input.ts", source, ts.ScriptTarget.Latest, true);
+  const unwrap = (node: ts.Expression): ts.Expression =>
+    ts.isParenthesizedExpression(node) ? unwrap(node.expression) : node;
+  function member(node: ts.Node): string | undefined {
+    if (ts.isPropertyAccessExpression(node)) return node.name.text;
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+      return node.argumentExpression.text;
+    }
+    return undefined;
+  }
+  function environment(node: ts.Expression): boolean {
+    node = unwrap(node);
+    if (member(node) !== "env" ||
+        !(ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))) return false;
+    const root = unwrap(node.expression);
+    return ts.isIdentifier(root) && (root.text === "process" || root.text === "Bun");
+  }
+  function bindingName(node: ts.BindingElement): string | undefined {
+    const key = node.propertyName ?? node.name;
+    return ts.isIdentifier(key) || ts.isStringLiteralLike(key) ? key.text : undefined;
+  }
+  function visit(node: ts.Node): void {
+    const access = ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node);
+    if ((access && (member(node) === "homedir" ||
+          (member(node) === "HOME" && environment(node.expression)))) ||
+        (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "homedir") ||
+        (ts.isImportSpecifier(node) && node.propertyName?.text === "homedir") ||
+        (ts.isBindingElement(node) && bindingName(node) === "homedir") ||
+        (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) &&
+          node.initializer && environment(node.initializer) && node.name.elements.some(e => bindingName(e) === "HOME")) ||
+        (ts.isTemplateSpan(node) && ts.isIdentifier(node.expression) && node.expression.text === "HOME") ||
+        (ts.isStringLiteralLike(node) && node.text.startsWith("~/"))) {
+      flagged.add(tree.getLineAndCharacterOfPosition(node.getStart(tree)).line);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(tree);
+  // One budget unit per original source line, even if multiple detectors fire.
+  return [...flagged].sort((a, b) => a - b).map(index => lines[index].trim());
 }
 
 function unexpected(file: string, source: string): string[] {
@@ -153,13 +200,54 @@ test("private corpus home paths stay in the opt-in helper or reviewed exceptions
   expect(failures).toEqual([]);
 });
 
-test("guard rejects each forbidden form in both new and allowlisted files", () => {
-  for (const source of ["homedir()", "os.homedir()", "process.env.HOME",
-    "process.env['HOME']", '"~/private"', "`~/private`", '"/Users/private/archive"']) {
-    expect(unexpected("tests/new.test.ts", source)).toEqual([source]);
-    expect(unexpected("src/__tests__/qwen3.test.ts", source)).toEqual([source]);
-  }
+const REJECTED_FORMS = [
+  ["bare homedir", "homedir()"],
+  ["os homedir", "os.homedir()"],
+  ["multiline os homedir", "os\n .\n homedir\n ()"],
+  ["multiline require homedir", 'require(\n "os"\n ).\n homedir\n ()'],
+  ["node os require homedir", 'require("node:os")["homedir"]()'],
+  ["homedir property alias", "const h = os.homedir; h()"],
+  ["homedir import alias", 'import { homedir as h } from "os"; h()'],
+  ["multiline homedir import alias", 'import {\n homedir\n as h\n } from "node:os"; h()'],
+  ["homedir require binding alias", 'const { homedir: h } = require("os"); h()'],
+  ["process HOME dot", "process.env.HOME"],
+  ["process HOME single bracket", "process.env['HOME']"],
+  ["process HOME double bracket", 'process.env["HOME"]'],
+  ["multiline process HOME single bracket", "process\n .env[\n 'HOME'\n ]"],
+  ["multiline process HOME double bracket", 'process.env[\n "HOME"\n ]'],
+  ["Bun HOME dot", "Bun.env.HOME"],
+  ["Bun HOME single bracket", "Bun.env['HOME']"],
+  ["Bun HOME double bracket", 'Bun.env["HOME"]'],
+  ["optional process HOME dot", "process.env?.HOME"],
+  ["optional process HOME bracket", 'process.env?.["HOME"]'],
+  ["optional Bun HOME dot", "Bun.env?.HOME"],
+  ["optional Bun HOME bracket", "Bun.env?.['HOME']"],
+  ["bracket env access", 'process["env"]["HOME"]'],
+  ["HOME destructuring", "const { HOME } = process.env"],
+  ["HOME destructuring alias", "const { HOME: home } = process.env"],
+  ["Bun HOME destructuring", "const { HOME } = Bun.env"],
+  ["multiline HOME destructuring", "const {\n HOME: home\n } = process\n .env"],
+  ["bare HOME template", "`${HOME}/private`"],
+  ["Bun HOME template", "`${Bun.env.HOME}/private`"],
+  ["process HOME template", "`${process.env.HOME}/private`"],
+  ["multiline HOME template", "`${\n process.env[\n 'HOME'\n ]}/private`"],
+  ["comment-separated HOME", "process /* fixture */ . env /* fixture */ ?. HOME"],
+  ["tilde double literal", '"~/private"'],
+  ["tilde single literal", "'~/private'"],
+  ["tilde template literal", "`~/private`"],
+  ["absolute home literal", '"/Users/private/archive"'],
+] as const;
+
+for (const file of ["tests/new.test.ts", "src/__tests__/qwen3.test.ts"]) {
+  test.each(REJECTED_FORMS)(`${file} rejects %s`, (_name, source) => {
+    expect(unexpected(file, source).length).toBeGreaterThan(0);
+  });
+}
+
+test("allowlist budgets reject duplicate and modified exceptions", () => {
   const file = "src/__tests__/preload-git-env.test.ts";
   const line = ALLOWED[file][0][0];
+  expect(unexpected(file, line)).toEqual([]);
   expect(unexpected(file, `${line}\n${line}`)).toEqual([line]);
+  expect(unexpected(file, `${line} Bun.env.HOME;`)).toHaveLength(1);
 });
