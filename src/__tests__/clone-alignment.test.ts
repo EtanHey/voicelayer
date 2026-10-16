@@ -1,7 +1,9 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { existsSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { alignCloneAudio, type CloneAlignmentRequest } from "../tts/clone-alignment";
 import { projectSpeakableText } from "../speakable-text";
 
@@ -130,6 +132,96 @@ test("missing local decoder is a truthful untimed result", async () => {
   const { input } = await request("hello"); input.decoder.binary = join(root, "absent");
   expect((await alignCloneAudio(input)).reason).toBe("unavailable");
 });
+for (const phase of ["converter", "decoder"]) {
+  for (const fault of ["exited", "kill", "both"]) {
+    test(`cleanup ${phase} ${fault} failure resolves untimed and removes its snapshot`, async () => {
+      const { input } = await request("hello");
+      let directory = "", kills = 0, exitReads = 0;
+      const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
+        const converter = argv[0] === input.decoder.ffmpeg;
+        if (converter) directory = dirname(argv[argv.indexOf("-i") + 1]);
+        else writeFileSync(argv[argv.indexOf("-of") + 1] + ".json", JSON.stringify(payload(["hello"])));
+        if (converter !== (phase === "converter")) return { exitCode: 0, exited: Promise.resolve(0) };
+        const exited = fault === "kill" ? Promise.resolve(1) : Promise.reject(new Error("injected wait failure"));
+        return {
+          exitCode: fault === "exited" ? 1 : null,
+          get exited() { exitReads++; return exited; },
+          kill() { kills++; throw new Error("injected kill failure"); },
+        };
+      }) as typeof Bun.spawn);
+      try {
+        const settled = await Promise.allSettled([alignCloneAudio(input)]);
+        if (settled[0].status === "rejected" || existsSync(directory))
+          console.error({ phase, fault, promiseStatus: settled[0].status, snapshotLeaked: existsSync(directory), exitReads, kills });
+        expect(directory).not.toBe("");
+        expect(existsSync(directory)).toBe(false);
+        expect(settled[0].status).toBe("fulfilled");
+        if (settled[0].status === "fulfilled") {
+          expect(settled[0].value).toMatchObject({ status: "untimed", reason: "unavailable" });
+          expect(offsets(settled[0].value)).toEqual([null]);
+        }
+        expect(exitReads).toBe(2);
+        expect(kills).toBe(fault === "exited" ? 0 : 1);
+      } finally {
+        spawn.mockRestore();
+        if (directory) await rm(directory, { recursive: true, force: true });
+      }
+    });
+  }
+}
+for (const reason of ["cancelled", "deadline"] as const) {
+  test(`cleanup stop failure preserves ${reason} and still awaits exit and removes its snapshot`, async () => {
+    const { input } = await request("hello"), controller = new AbortController();
+    input.signal = controller.signal;
+    let directory = "", kills = 0, exitReads = 0, timer: ReturnType<typeof setTimeout> | undefined;
+    const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
+      directory = dirname(argv[argv.indexOf("-i") + 1]);
+      let rejectExit!: (error: Error) => void;
+      const exited = new Promise<number>((_, reject) => {
+        rejectExit = reject;
+      });
+      // Exercise the real deadline; external cancellation happens after spawn returns.
+      if (reason === "cancelled") timer = setTimeout(() => controller.abort(), 0);
+      return { exitCode: null, get exited() { exitReads++; return exited; },
+        kill() { kills++; queueMicrotask(() => rejectExit(new Error("injected wait failure"))); throw new Error("injected kill failure"); } };
+    }) as typeof Bun.spawn);
+    try {
+      const result = await alignCloneAudio(input);
+      expect(result).toMatchObject({ status: "untimed", reason });
+      expect(offsets(result)).toEqual([null]);
+      expect(kills).toBe(2); expect(exitReads).toBe(2);
+      expect(directory).not.toBe(""); expect(existsSync(directory)).toBe(false);
+    } finally {
+      clearTimeout(timer); spawn.mockRestore();
+      if (directory) await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+for (const fault of ["exited", "kill", "rm"]) {
+  test(`cleanup ${fault} failure invalidates already computed timings`, async () => {
+    const { input } = await request("hello"); let directory = "", exitReads = 0;
+    const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
+      if (argv[0] === input.decoder.ffmpeg) {
+        directory = dirname(argv[argv.indexOf("-i") + 1]);
+        return { exitCode: 0, exited: Promise.resolve(0) };
+      }
+      writeFileSync(argv[argv.indexOf("-of") + 1] + ".json", JSON.stringify(payload(["hello"])));
+      return { exitCode: fault === "kill" ? null : 0, get exited() {
+        return ++exitReads === 1 || fault !== "exited" ? Promise.resolve(0) : Promise.reject(new Error("injected cleanup wait failure"));
+      }, kill() { throw new Error("injected cleanup kill failure"); } };
+    }) as typeof Bun.spawn);
+    const originalRemove = fsPromises.rm;
+    const remove = fault === "rm" ? spyOn(fsPromises, "rm").mockImplementation((path, options) =>
+      path === directory ? Promise.reject(new Error("injected removal failure")) : originalRemove(path, options)) : undefined;
+    try {
+      const result = await alignCloneAudio(input);
+      expect(result).toMatchObject({ status: "untimed", reason: "unavailable" });
+      expect(offsets(result)).toEqual([null]); expect(result.words[0].duration_ms).toBeNull();
+      expect(exitReads).toBe(2); expect(existsSync(directory)).toBe(fault === "rm");
+      if (remove) expect(remove).toHaveBeenCalledWith(directory, { recursive: true, force: true });
+    } finally { remove?.mockRestore(); spawn.mockRestore(); if (directory) await rm(directory, { recursive: true, force: true }); }
+  });
+}
 test("cancellation also kills and reaps preparation before decoding starts", async () => {
   const { input, prefix } = await request("hello"), controller = new AbortController(), prep = prefix + ".prep";
   await writeFile(input.decoder.ffmpeg, `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';
