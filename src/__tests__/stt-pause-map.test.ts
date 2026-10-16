@@ -21,6 +21,9 @@ import {
   type PauseSpan,
 } from "../stt-pause-map";
 
+// Cold speech fixture is unmeasured (TEST2 forbids synthesis); match neighboring 120 s native VAD cases.
+const SUBPROCESS_TEST_TIMEOUT_MS = 120_000;
+
 // Pause map + chunk-boundary policy for the ≥90 s saved-WAV decode path.
 //
 // Three layers, deliberately separated so the policy is testable without a
@@ -847,7 +850,7 @@ describe("VAD isolation", () => {
     await own.process(pcmChunkAt(wav, 41));
     own.reset();
     expect(await own.process(pcmChunkAt(wav, 40))).toBe(first);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 function isSpeechLabel(probability: number): string {

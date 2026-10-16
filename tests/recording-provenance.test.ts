@@ -42,6 +42,11 @@ import {
   __setWhisperServerLaunchRecordForTests,
 } from "../src/whisper-server";
 
+// Real subprocesses: standalone p95 <= 153 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+// Real subprocesses: standalone p95 <= 1504 ms; 4x rounded up, with a 5 s scheduling floor.
+const SLOW_SUBPROCESS_TEST_TIMEOUT_MS = 7_000;
+
 const READY_MACHINE: RecordingProvenanceProbe["machine"] = () => ({
   host: "test-mac",
   chip: "Apple M1 Pro",
@@ -149,7 +154,7 @@ describe("provenance probes stay off the recording hot path", () => {
     const second = readProvenance(archive("after probe"));
     expect(second.chip).toBe("Apple M4 Max");
     expect(second.host).toBe("Slow Mac");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("bounds a wedged probe with a real timeout instead of hanging", async () => {
     const started = Date.now();
@@ -158,7 +163,7 @@ describe("provenance probes stay off the recording hot path", () => {
 
     expect(result).toBe(null);
     expect(elapsed).toBeLessThan(2_000);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 describe("whisper_cpp_version follows the resolved binary", () => {
@@ -400,7 +405,7 @@ describe("performance_effort describes the launched server", () => {
         process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = savedEffort;
       }
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 
@@ -435,7 +440,7 @@ describe("the prime path never blocks on binary resolution", () => {
 
     expect(settled).toBe("settled");
     expect(elapsed).toBeLessThan(2_000);
-  });
+  }, SLOW_SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("keeps the event loop responsive while a resolver is outstanding", async () => {
     let resolveLate: ((value: string | null) => void) | undefined;

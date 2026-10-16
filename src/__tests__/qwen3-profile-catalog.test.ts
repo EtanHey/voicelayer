@@ -5,6 +5,9 @@ import { availableTTSVoices } from "../tts-controls-status";
 import { resolveSpeakProfile } from "../tts-settings";
 import { TEST_TMP } from "./setup/test-tmp";
 
+// Real subprocesses: standalone p95 <= 35 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const homes: string[] = [];
 afterEach(() => { for (const home of homes.splice(0)) rmSync(home, {recursive:true, force:true}); });
 function fixture() {
@@ -75,4 +78,4 @@ test("ready Ben alias and atomic selection survive a fresh process without chang
   };
   expect(run(`import {loadProfile} from './src/tts/qwen3'; import {setTTSProfile} from './src/tts-settings'; setTTSProfile('short',{engine:'clone',voice:'ben-c1'}); console.log(JSON.stringify(loadProfile('Ben')));`)).toMatchObject({profile_id:"ben-c1",aliases:["ben"]});
   expect(run(`import {readTTSSettings} from './src/tts-settings'; console.log(JSON.stringify(readTTSSettings()));`)).toMatchObject({profiles:{short:{engine:"clone",voice:"ben-c1",rate:"+20%"}},short_limit_chars:650});
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
