@@ -9,6 +9,35 @@ final class SocketServerTests: XCTestCase {
     private var windows: [NSWindow] = []
     deinit {}
 
+    func testPRIV1DroppedSpeakTextLogsOnlyMetadata() throws {
+        let server = SocketServer(state: VoiceState())
+        let canary = "CANARY-TXT-\(UUID().uuidString)"
+        let home = "CANARY-HOME-\(UUID().uuidString)"
+        let command: [String: Any] = ["cmd": "speak_text", "id": "priv1-command",
+                                      "text": canary, "transcript": canary,
+                                      "selection": "/Users/\(home)/recordings/audio.wav"]
+        let bytes = try JSONSerialization.data(withJSONObject: command).count
+        let output = try captureSocketStderr {
+            server.sendCommandToOwner(command: command)
+            _ = server.bytesReadForTesting() // Drain the server queue before reading its log.
+        }
+        XCTAssertTrue(output.contains("speak_text"), output)
+        XCTAssertTrue(output.contains("priv1-command"), output)
+        XCTAssertTrue(output.contains("bytes=\(bytes)"), output)
+        XCTAssertFalse(output.contains(canary), output)
+        XCTAssertFalse(output.contains(home), output)
+    }
+
+    func testPRIV1BadJSONLogsByteCountWithoutPayload() throws {
+        let server = SocketServer(state: VoiceState())
+        let canary = "CANARY-TXT-\(UUID().uuidString)"
+        let line = "{\"type\":\"transcription\",\"text\":\"\(canary)\""
+        let output = try captureSocketStderr { server.parseLine(line) }
+        XCTAssertTrue(output.contains("Bad JSON"), output)
+        XCTAssertTrue(output.contains("bytes=\(line.utf8.count)"), output)
+        XCTAssertFalse(output.contains(canary), output)
+    }
+
     func testSpeakSelectionSendsRawTextAsSpeakTextNDJSONToDaemonOnly() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }
@@ -17,7 +46,9 @@ final class SocketServerTests: XCTestCase {
         fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
         fixture.state.speakSelection()
         let line = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
-        let command = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String])
+        var command = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String])
+        let requestID = try XCTUnwrap(command.removeValue(forKey: "id"))
+        XCTAssertNotNil(UUID(uuidString: requestID), "Selection acks must correlate to this exact request")
         XCTAssertEqual(command, ["cmd": "speak_text", "text": selection, "profile": "auto",
                                  "format": "markdown", "source": "selection"])
         XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.1))
@@ -1554,4 +1585,23 @@ private func readLines(from fd: Int32, count expectedCount: Int, timeout: TimeIn
     }
 
     return lines
+}
+
+/// Capture the real NSLog sink without installing a test-only logging path.
+private func captureSocketStderr(_ body: () -> Void) throws -> String {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("priv1-\(UUID().uuidString).log")
+    FileManager.default.createFile(atPath: url.path, contents: nil)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let file = try FileHandle(forWritingTo: url)
+    defer { try? file.close() }
+    let saved = dup(STDERR_FILENO)
+    guard saved >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+    defer { dup2(saved, STDERR_FILENO); close(saved) }
+    fflush(stderr)
+    guard dup2(file.fileDescriptor, STDERR_FILENO) >= 0 else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+    body()
+    fflush(stderr)
+    return String(decoding: try Data(contentsOf: url), as: UTF8.self)
 }

@@ -3,6 +3,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir, hostname } from "node:os";
 import { join, resolve } from "node:path";
 
+// Real subprocesses: standalone p95 <= 484 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const script = resolve("scripts/backup-recordings-icloud.sh");
 let home: string, source: string, dest: string, bin: string;
 beforeEach(() => {
@@ -51,21 +54,21 @@ test("append-only, spaces, unchanged reruns and changed versions", () => {
   rmSync(folder, { recursive: true });
   expect(run().exitCode).toBe(0);
   expect(readFileSync(join(backed, version), "utf8")).toBe("modified audio");
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("space guard includes pending copy and logs the skip", () => {
   recording();
   space(24_414_063); // 25 GB minus the bytes to copy is below the reserve
   expect(run().exitCode).toBe(0);
   expect(existsSync(dest)).toBe(false);
   expect(readFileSync(join(home, "Library/Logs/voicelayer/recordings-backup.log"), "utf8")).toContain("space guard");
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("skips active sessions but still backs up an older session on the same day", () => {
   recording("day/active", false);
   recording("day/stable");
   expect(run().exitCode).toBe(0);
   expect(existsSync(join(dest, "day/active"))).toBe(false);
   expect(existsSync(join(dest, "day/stable/audio.wav"))).toBe(true);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("dry run creates neither backups nor logs", () => {
   recording();
   const before = readdirSync(home).sort();
@@ -73,7 +76,7 @@ test("dry run creates neither backups nor logs", () => {
   expect(result.exitCode).toBe(0);
   expect(result.stdout.toString()).toContain("DRY RUN");
   expect(readdirSync(home).sort()).toEqual(before);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("does not follow source or destination symlinks", () => {
   const folder = recording();
   const outside = join(home, "private");
@@ -88,7 +91,7 @@ test("does not follow source or destination symlinks", () => {
   symlinkSync(outside, join(home, "Library/Mobile Documents"));
   expect(run().exitCode).not.toBe(0);
   expect(readdirSync(outside)).toEqual(["secret"]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("installer renders a nightly plist without loading or running it", () => {
   const result = Bun.spawnSync(["bash", resolve("launchd/install.sh"), "--recordings-backup"], {
     env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
@@ -100,7 +103,7 @@ test("installer renders a nightly plist without loading or running it", () => {
   expect(plist).not.toContain("RunAtLoad");
   expect(existsSync(join(home, "launchctl-called"))).toBe(false);
   expect(existsSync(dest)).toBe(false);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 function installLayout(relative: string, viaOpt = false) {
   const root = join(home, relative);
@@ -140,13 +143,13 @@ for (const viaOpt of [false, true]) {
     const job = Bun.spawnSync(config.ProgramArguments);
     expect(job.exitCode).toBe(0);
     expect(job.stdout.toString()).toBe("upgraded job ran\n");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 }
 
 test("checkout installer keeps its checkout script path", () => {
   const { root, config } = installLayout("checkout");
   expect(config.ProgramArguments).toEqual(["/bin/bash", join(realpathSync(root), "scripts/backup-recordings-icloud.sh")]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("missing scheduled script fails nonzero and records Bash's error in the configured log", () => {
   const { root, config } = installLayout("checkout");
@@ -162,7 +165,7 @@ test("missing scheduled script fails nonzero and records Bash's error in the con
   const log = readFileSync(config.StandardErrorPath, "utf8");
   expect(log).toContain("backup-recordings-icloud.sh");
   expect(log).toContain("No such file or directory");
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("failed transfers publish no partial files and preserve originals", () => {
   recording();
@@ -170,13 +173,13 @@ test("failed transfers publish no partial files and preserve originals", () => {
   expect(run().exitCode).toBe(1);
   expect(readdirSync(join(dest, "2026-10-14/session one"))).toEqual([]);
   expect(readFileSync(join(source, "2026-10-14/session one/audio.wav"), "utf8")).toBe("original audio");
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("missing iCloud directory skips without creating a lookalike", () => {
   recording();
   rmSync(join(home, "Library/Mobile Documents"), { recursive: true });
   expect(run().exitCode).toBe(0);
   expect(existsSync(join(home, "Library/Mobile Documents"))).toBe(false);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("exclusive publication never overwrites a file appearing during transfer", () => {
   const folder = recording();
@@ -189,7 +192,7 @@ staged = pathlib.Path(sys.argv[-1])
 `, { mode: 0o755 });
   expect(run().exitCode).toBe(1);
   expect(readFileSync(join(dest, "2026-10-14/session one/audio.wav"), "utf8")).toBe("racing writer");
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 test("copies nested session sidecars with the same relative tree", () => {
   const folder = recording();
@@ -197,7 +200,7 @@ test("copies nested session sidecars with the same relative tree", () => {
   writeFileSync(join(folder, "chunks/part.json"), "timing");
   expect(run().exitCode).toBe(0);
   expect(readFileSync(join(dest, "2026-10-14/session one/chunks/part.json"), "utf8")).toBe("timing");
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 for (const [label, payload] of [["short", "XX"], ["same-size wrong bytes", "X".repeat(14)]] as const) {
   test(`rejects a successful rsync with ${label} payload`, () => {
@@ -214,7 +217,7 @@ os.utime(staged, ns=(st.st_atime_ns, st.st_mtime_ns))
     expect(readdirSync(join(dest, "2026-10-14/session one"))).toEqual([]);
     expect(readFileSync(join(folder, "audio.wav"), "utf8")).toBe("original audio");
     expect(readFileSync(join(home, "Library/Logs/voicelayer/recordings-backup.log"), "utf8")).toContain("verification failed");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 }
 
 test("rejects a source changed during the byte comparison", () => {
@@ -228,4 +231,4 @@ os.utime(sys.argv[-1], ns=(st.st_atime_ns, st.st_mtime_ns + 1))
   expect(run().exitCode).toBe(1);
   expect(readdirSync(join(dest, "2026-10-14/session one"))).toEqual([]);
   expect(readFileSync(join(home, "Library/Logs/voicelayer/recordings-backup.log"), "utf8")).toContain("source changed");
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);

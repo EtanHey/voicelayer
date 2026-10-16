@@ -1,18 +1,17 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { applyRules } from "../rules-engine";
+import { privateCorpusPaths } from "./setup/private-specimens";
 
-// Personal audio, expectations, and decode output never enter the repository.
-// CI skips without the local manifest; an explicit manifest must be usable.
-const override = process.env.VOICELAYER_NUMBERS_CORPUS_PATH;
-const manifestPath = override ?? join(
-  homedir(), "Gits/voicelayer/docs.local/va-numbers/bakeoff-corpus.private.json",
-);
-const corpusTest = existsSync(manifestPath) || override ? test : test.skip;
-if (!existsSync(manifestPath) && !override) {
+// Private inputs are read-only; a path override never authorizes access.
+const corpus = privateCorpusPaths("number-audio");
+const manifestPath = corpus?.numbersManifest ?? "";
+const available = Boolean(corpus) && existsSync(manifestPath);
+const corpusTest = corpus && (available || process.env.VOICELAYER_NUMBERS_CORPUS_PATH) ? test : test.skip;
+if (corpus && !available && !process.env.VOICELAYER_NUMBERS_CORPUS_PATH) {
   console.error("[number-audio] SKIPPING: private local corpus manifest absent.");
 }
 

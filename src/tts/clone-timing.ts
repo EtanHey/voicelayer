@@ -1,0 +1,77 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { getEffectiveRecordingState, onRecordingStateChange } from "../recording-state";
+import { resolveBinaryAsync } from "../resolve-binary";
+import type { AlignedWordBoundary } from "../socket-protocol";
+import { alignCloneAudio, type CloneAlignmentRequest } from "./clone-alignment";
+
+let tail = Promise.resolve();
+type TimingInput = Omit<CloneAlignmentRequest, "decoder" | "language" | "signal" | "lowPriority" | "playbackRate" | "canSpawn" | "onChildSpawned" | "onChildrenReaped">;
+/** Current-player work only. Replacements serialize behind cancellation/reaping,
+ * while audio playback itself never awaits this queue. Files are already at rate. */
+export function startCloneTiming(input: TimingInput, isCurrent: () => boolean, publish: (words: AlignedWordBoundary[]) => void) {
+  let resolveReaped!: () => void, rejectReaped!: (error: unknown) => void;
+  const childReaped = new Promise<void>((resolve, reject) => { resolveReaped = resolve; rejectReaped = reject; });
+  let childExit: Promise<number> | undefined;
+  const controller = new AbortController(), cancel = () => {
+    controller.abort();
+    // Aborted admission prevents any later spawn, even if preparation is stuck.
+    if (!childExit) resolveReaped();
+  };
+  const onChildSpawned = (exited: Promise<number>) => {
+    childExit = exited;
+    // A rejected watcher needs the adapter's final physical-state check,
+    // including its kill/reap attempt, before readiness can be classified.
+    void exited.then(() => {
+      if (childExit === exited) childExit = undefined;
+      if (controller.signal.aborted) resolveReaped();
+    }, () => {});
+  };
+  const onChildrenReaped = (error?: Error) => {
+    childExit = undefined;
+    if (error) {
+      console.error(`[voicelayer] Alignment child termination unconfirmed: ${String(error)}`);
+      rejectReaped(error);
+    } else resolveReaped();
+  };
+  const unsubscribe = onRecordingStateChange(state => { if (state !== "idle") cancel(); });
+  // Effective state also covers a separate CLI process's capture/transcription.
+  const check = () => { if (!isCurrent() || getEffectiveRecordingState() !== "idle") cancel(); };
+  const poll = setInterval(check, 10); poll.unref(); check();
+  const current = () => { check(); return !controller.signal.aborted; };
+  const cleanupDone = tail.then(async () => {
+    if (!current()) return;
+    const [binary, ffmpeg] = await Promise.all([
+      resolveBinaryAsync("whisper-cli").then(path => path ?? resolveBinaryAsync("whisper-cpp")),
+      resolveBinaryAsync("ffmpeg"),
+    ]);
+    if (!binary || !ffmpeg || !current()) return;
+    const result = await alignCloneAudio({ ...input, playbackRate: 1, lowPriority: true, canSpawn: current, onChildSpawned, onChildrenReaped,
+      language: /\p{Script=Hebrew}/u.test(input.speechText) ? "he" : "en", signal: controller.signal,
+      decoder: { binary, ffmpeg, model: process.env.QA_VOICE_WHISPER_MODEL ?? join(homedir(), ".cache/whisper/ggml-large-v3-turbo.bin") } });
+    if (!current() || result.status === "untimed" || result.identity.requestId !== input.requestId ||
+        result.identity.chunkId !== input.chunkId || result.identity.playbackRate !== 1) return;
+    const sha = createHash("sha256").update(await readFile(input.audioPath)).digest("hex");
+    if (!current() || result.identity.audioSha256 !== sha) return;
+    const display = Array.from(input.displayText.matchAll(/\S+/gu));
+    if (display.length !== result.words.length || result.words.some((word, i) => word.text !== display[i][0] ||
+        word.displayRange.start !== display[i].index || word.displayRange.end !== display[i].index + display[i][0].length)) return;
+    const words = result.words.map((word, word_index) => {
+      const { text, offset_ms: offset, duration_ms: duration } = word;
+      const valid = offset !== null && duration !== null && Number.isFinite(offset) && Number.isFinite(duration) &&
+        offset >= 0 && duration > 0 && offset + duration <= input.durationMs;
+      return { word_index, text, offset_ms: valid ? offset : null, duration_ms: valid ? duration : null };
+    });
+    // Wire stays chunk-local; Swift adds chunk_start_ms exactly once.
+    if (words.some(word => word.offset_ms !== null)) publish(words);
+  }).catch(() => {}).finally(() => { clearInterval(poll); unsubscribe(); if (!childExit) resolveReaped(); });
+  // The job retains cleanup ownership; capture and replacement jobs only need
+  // physical child quiescence, never binary lookup or filesystem completion.
+  // A cancelled queued job has no child of its own, but cannot let a later job
+  // jump over an older child that is still being reaped.
+  // Wait for both settlements, then recover errors for the next admission.
+  tail = Promise.allSettled([tail, childReaped]).then(() => {});
+  return { cancel, childReaped, cleanupDone };
+}

@@ -13,13 +13,16 @@ import {
   type BinarySpawnSync,
 } from "../resolve-binary";
 
+// Real subprocesses: standalone p95 <= 123 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 beforeEach(() => __resetBinarySpawnForTests());
 
 describe("initEnrichedPATH", () => {
   it("returns a non-empty string", () => {
     const path = initEnrichedPATH();
     expect(path.length).toBeGreaterThan(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("includes /usr/bin", () => {
     const path = initEnrichedPATH();
@@ -48,18 +51,18 @@ describe("resolveBinary", () => {
     const path = resolveBinary("ls");
     expect(path).not.toBeNull();
     expect(path).toContain("/ls");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("returns null for nonexistent binary", () => {
     const path = resolveBinary("definitely_not_a_real_binary_12345");
     expect(path).toBeNull();
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("finds binary via candidate paths when which would fail", () => {
     // python3 --version works reliably on macOS
     const path = resolveBinary("nonexistent_via_which", ["/usr/bin/python3"]);
     expect(path).toBe("/usr/bin/python3");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("finds rec (sox) if installed", () => {
     const path = resolveBinary("rec", [
@@ -70,7 +73,7 @@ describe("resolveBinary", () => {
     if (path) {
       expect(path).toContain("rec");
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 

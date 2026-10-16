@@ -9,6 +9,27 @@ import {
 
 describe("socket-protocol", () => {
   describe("serializeEvent", () => {
+    it("keeps the Edge subtitle wire byte-for-byte", () => {
+      expect(serializeEvent({ type: "subtitle", words: [
+        { offset_ms: 120.5, duration_ms: 80, text: "Hello" },
+      ] })).toBe('{"type":"subtitle","words":[{"offset_ms":120.5,"duration_ms":80,"text":"Hello"}]}\n');
+    });
+
+    it("preserves indexed nulls while failing closed for old apps", () => {
+      const aligned_words = [
+        { word_index: 0, text: "go", offset_ms: null, duration_ms: null },
+        { word_index: 1, text: "go", offset_ms: 650, duration_ms: 200 },
+      ];
+      // Even an untyped producer must not expose compactable rows to an old app.
+      const event = { type: "subtitle", words: [
+        { text: "go", offset_ms: 650, duration_ms: 200 },
+      ], aligned_words } as unknown as SocketEvent;
+      const parsed = JSON.parse(serializeEvent(event));
+      expect(parsed.aligned_words).toEqual(aligned_words);
+      expect(parsed.words).toEqual([]);
+      expect((event as { words: unknown[] }).words).toHaveLength(1);
+    });
+
     it("serializes state idle event to NDJSON", () => {
       const event: SocketEvent = { type: "state", state: "idle" };
       const result = serializeEvent(event);

@@ -34,6 +34,9 @@ import {
   type RecordingProvenanceProbe,
 } from "../recording-provenance";
 
+// Real subprocesses: standalone p95 <= 5 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const FAKE_PROBE: RecordingProvenanceProbe = {
   machine: () => ({
     host: "test-mac",
@@ -273,7 +276,7 @@ describe("archived recording metadata carries provenance", () => {
     expect((provenance.host as string).length).toBeGreaterThan(0);
     expect(typeof provenance.app_version).toBe("string");
     expect(provenance.app_version_source).toBe("package.json");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("writes schema 4 with provenance for a voice_ask capture and keeps it through finalization", () => {
     const userAudio = createWavBuffer(new Uint8Array([9, 10, 11, 12]));

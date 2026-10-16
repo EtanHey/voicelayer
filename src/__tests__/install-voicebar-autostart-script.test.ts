@@ -14,6 +14,11 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 1018 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+// Real subprocesses: standalone p95 <= 1372 ms; 4x rounded up, with a 5 s scheduling floor.
+const SLOW_SUBPROCESS_TEST_TIMEOUT_MS = 6_000;
+
 const installScript = join(
   import.meta.dir,
   "..",
@@ -204,7 +209,7 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
         ),
       ),
     ).toBe(true);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("strips com.apple.quarantine before the --reload bootstrap", async () => {
     const workspace = makeWorkspace({ printLoaded: 1 });
@@ -214,7 +219,7 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
     expect(result.status).toBe(0);
     const lines = await readLog(workspace);
     expectQuarantineStrippedBeforeBootstrap(lines);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   // The cask's postflight is `voicelayer setup` -> `voicelayer autostart install`
   // with NO --reload, so on an upgrade the agent is already loaded and the script
@@ -235,7 +240,7 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
         ),
       ),
     ).toBe(true);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("strips com.apple.quarantine even when the agent is left unloaded", async () => {
     const workspace = makeWorkspace({ printLoaded: 0 });
@@ -245,7 +250,7 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
     expect(result.status).toBe(0);
     const lines = await readLog(workspace);
     expect(stripIndexes(lines).length).toBeGreaterThan(0);
-  });
+  }, SLOW_SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("still succeeds when xattr is absent from PATH", async () => {
     const workspace = makeWorkspace({ printLoaded: 0, withXattr: false });
@@ -257,7 +262,7 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
     const lines = await readLog(workspace);
     expect(stripIndexes(lines)).toHaveLength(0);
     expect(bootstrapIndexes(lines).length).toBeGreaterThan(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("stays silent and succeeds when the quarantine attribute is absent", async () => {
     const workspace = makeWorkspace({
@@ -275,7 +280,7 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
     expect(
       indexesOf(lines, (line) => line.startsWith("xattr -p")),
     ).toHaveLength(1);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("warns loudly, naming the bundle, when the strip fails and quarantine remains", async () => {
     const workspace = makeWorkspace({
@@ -293,7 +298,7 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
     );
     const lines = await readLog(workspace);
     expect(bootstrapIndexes(lines).length).toBeGreaterThan(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("does not call xattr when no bundle is installed yet", async () => {
     const workspace = makeWorkspace({ printLoaded: 0, withAppBundle: false });
@@ -306,7 +311,7 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
       0,
     );
     expect(bootstrapIndexes(lines).length).toBeGreaterThan(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 // The LaunchAgent's stderr file is VoiceBar's own log. It held a keystroke log of
@@ -363,7 +368,7 @@ describe("install-voicebar-autostart.sh log paths", () => {
     for (const path of logPathValues(workspace)) {
       expect(path.startsWith(`${workspace.home}/`)).toBe(true);
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("bakes the absolute per-user log paths into the installed plist", async () => {
     const workspace = makeWorkspace({ printLoaded: 0 });
@@ -381,7 +386,7 @@ describe("install-voicebar-autostart.sh log paths", () => {
       expect(path).not.toContain("~");
       expect(path).not.toContain("__VOICEBAR_LOG_DIR__");
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   // Splicing a path into XML is new here -- `cp` never interpolated anything --
   // so an unescaped & in $HOME would emit a malformed plist and `plutil -lint`
@@ -428,7 +433,7 @@ describe("install-voicebar-autostart.sh log paths", () => {
     expect(
       statSync(join(hostileHome, "Library", "Logs", "voicelayer")).mode & 0o777,
     ).toBe(0o700);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("creates the log directory and files private to the user", async () => {
     const workspace = makeWorkspace({ printLoaded: 0 });
@@ -440,7 +445,7 @@ describe("install-voicebar-autostart.sh log paths", () => {
     for (const name of ["voicebar.log", "voicebar-err.log"]) {
       expect(statSync(join(logDir(workspace), name)).mode & 0o777).toBe(0o600);
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("tightens the mode of log files an earlier install left world-readable", async () => {
     const workspace = makeWorkspace({ printLoaded: 0 });
@@ -455,7 +460,7 @@ describe("install-voicebar-autostart.sh log paths", () => {
     expect(statSync(leaked).mode & 0o777).toBe(0o600);
     // Repairing the mode must not throw away the operator's existing log.
     expect(readFileSync(leaked, "utf8")).toBe("pre-existing log content\n");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   // The in-place-update branch compares what it is about to write against what
   // is on disk. Rendering the template at install time must not make every run
@@ -471,7 +476,7 @@ describe("install-voicebar-autostart.sh log paths", () => {
     const repeat = runInstaller(workspace);
     expect(repeat.status).toBe(0);
     expect(repeat.stdout).toContain("already current");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 // Moving the log path forward does not remediate the machines that already have
@@ -491,7 +496,7 @@ describe("install-voicebar-autostart.sh legacy /tmp log cleanup", () => {
     expect(existsSync(leaked)).toBe(true);
     expect(readFileSync(leaked, "utf8")).toBe("");
     expect(statSync(leaked).mode & 0o777).toBe(0o600);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("truncates the legacy stdout log too", async () => {
     const workspace = makeWorkspace({ printLoaded: 0 });
@@ -503,7 +508,7 @@ describe("install-voicebar-autostart.sh legacy /tmp log cleanup", () => {
 
     expect(readFileSync(leaked, "utf8")).toBe("");
     expect(statSync(leaked).mode & 0o777).toBe(0o600);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   // /tmp is world-writable and sticky, so anyone can plant a name there. The
   // cleanup must not follow one into a file it was never meant to touch.
@@ -516,7 +521,7 @@ describe("install-voicebar-autostart.sh legacy /tmp log cleanup", () => {
     expect(runInstaller(workspace).status).toBe(0);
 
     expect(readFileSync(decoy, "utf8")).toBe("important unrelated content\n");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("succeeds when there is no legacy log to clean up", async () => {
     const workspace = makeWorkspace({ printLoaded: 0 });
@@ -527,5 +532,5 @@ describe("install-voicebar-autostart.sh legacy /tmp log cleanup", () => {
     expect(existsSync(join(workspace.legacyLogDir, "voicebar-err.log"))).toBe(
       false,
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
