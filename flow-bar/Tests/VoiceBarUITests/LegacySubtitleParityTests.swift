@@ -70,11 +70,12 @@ final class LegacySubtitleParityTests: XCTestCase {
                 (1e100, 100), (-1e100, 100), (0, Double.infinity), (Int.max, 1), (Int.min, Int.min)] {
                 let rows: [[String: Any]] = [["text": "Hello", "offset_ms": offset, "duration_ms": duration]]
                 let decoded = TeleprompterBoundary.subtitleWords(["words": rows], chunkStartMs: chunkStart)
-                XCTAssertTrue(decoded.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
+                XCTAssertTrue(decoded.isEmpty, "unsafe legacy timings must drop the row")
             }
             let exact = TeleprompterBoundary.subtitleWords(["words": [["text": "Hello", "offset_ms": Int.max, "duration_ms": 0]]],
                                                           chunkStartMs: chunkStart)
             XCTAssertEqual(exact.first?.offsetMs, chunkStart == 0 ? Int.max : nil)
+            XCTAssertEqual(exact.count, chunkStart == 0 ? 1 : 0)
             for (offset, duration): (Any, Any) in [(-0.5, 100), (-1.5, 100), (0, -100.5), (true, 100),
                                                   (false, 100), (0, true), (0, false)] {
                 let data = try JSONSerialization.data(withJSONObject: ["aligned_words": [
@@ -85,6 +86,55 @@ final class LegacySubtitleParityTests: XCTestCase {
                 XCTAssertNil(decoded[0].offsetMs)
                 XCTAssertNil(decoded[0].durationMs)
                 XCTAssertEqual(decoded[0].wordIndex, 0)
+            }
+        }
+    }
+
+    func testLegacyJSONOverflowDropsOnlyUnsafeRows() throws {
+        let cases = [(Int.max, 1, 0), (Int.max, 0, 12000),
+                     (Int.max - 12000, 1, 12000), (Int.min, -1, 0)]
+        for (offset, duration, chunkStart) in cases {
+            let unsafe: [String: Any] = ["text": "unsafe", "offset_ms": offset, "duration_ms": duration]
+            for rows in [[unsafe], [valid[0], unsafe, valid[1]]] {
+                let data = try JSONSerialization.data(withJSONObject: ["words": rows])
+                let event = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                let decoded = TeleprompterBoundary.subtitleWords(event, chunkStartMs: chunkStart)
+                let expected = rows.count == 1 ? [] : valid.map {
+                    TeleprompterBoundary(offsetMs: ($0["offset_ms"] as! Int) + chunkStart,
+                                         durationMs: $0["duration_ms"] as? Int, text: $0["text"] as! String)
+                }
+                XCTAssertEqual(decoded, expected, "offset=\(offset), duration=\(duration), chunk=\(chunkStart)")
+            }
+        }
+    }
+
+    func testLegacyOverflowOnlyEventNeverRendersEstimatedKaraoke() async throws {
+        for (offset, duration, chunkStart) in [(Int.max, 1, 0), (Int.max, 0, 12000)] {
+            let state = VoiceState(playbackAmplitudeClock: { 100 })
+            state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world",
+                               "long_read": ["chunk_start_ms": chunkStart], "duration_ms": chunkStart + 5000])
+            state.handleEvent(["type": "subtitle", "words": valid])
+            let data = try JSONSerialization.data(withJSONObject: ["type": "subtitle", "words": [
+                ["text": "Hello", "offset_ms": offset, "duration_ms": duration]]])
+            let event = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            state.handleEvent(event)
+            XCTAssertTrue(state.wordBoundaries.isEmpty)
+            for appearance in [VoiceBarNotchAppearance.dark, .light] {
+                var elapsed = chunkStart
+                let host = NSHostingView(rootView: TeleprompterView(text: "Hello world", wordBoundaries: state.wordBoundaries,
+                    playbackElapsedMilliseconds: { elapsed }, wrapWidth: 240, viewportHeight: 60)
+                    .environment(\.voiceBarNotchAppearance, appearance).frame(width: 250, height: 70).background(.black))
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 250, height: 70),
+                                      styleMask: [.borderless], backing: .buffered, defer: false)
+                window.contentView = host
+                window.isReleasedWhenClosed = false
+                VLOrderTestWindow(window)
+                defer { window.close() }
+                try await Task.sleep(for: .milliseconds(100))
+                XCTAssertNil(try highlightCenter(host), "overflow-only legacy subtitles have no highlight")
+                elapsed += 500
+                try await Task.sleep(for: .milliseconds(700))
+                XCTAssertNil(try highlightCenter(host), "overflow-only legacy subtitles never start estimated karaoke")
             }
         }
     }

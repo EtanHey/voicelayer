@@ -116,6 +116,8 @@ public struct TeleprompterBoundary: Equatable {
                     globalOffset = global.partialValue
                 }
             }
+            // A legacy placeholder would enable estimated karaoke without timing.
+            if !indexed, globalOffset == nil { return nil }
             return Self(offsetMs: globalOffset, durationMs: globalOffset == nil ? nil : duration,
                         text: text, wordIndex: indexed ? (index ?? -1) : nil)
         }
