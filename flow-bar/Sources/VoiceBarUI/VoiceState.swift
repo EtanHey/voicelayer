@@ -1833,6 +1833,9 @@ public final class VoiceState {
             }
 
         case "subtitle":
+            // Old daemons' missing/mistyped words are a no-op. Indexed payloads
+            // still replace the timeline even when malformed, so they fail closed.
+            guard event["aligned_words"] != nil || event["words"] is [[String: Any]] else { return }
             wordBoundaries = TeleprompterBoundary.subtitleWords(event, chunkStartMs: playbackChunkStartMilliseconds)
 
         case "queue":

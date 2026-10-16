@@ -554,6 +554,10 @@ public struct TeleprompterView: View {
         teleprompterWords.filter { $0.offsetMs != nil }
     }
 
+    private var usesIndexedTiming: Bool {
+        wordBoundaries.contains { $0.wordIndex != nil }
+    }
+
     public var body: some View {
         ScrollViewReader { proxy in
             ScrollView(
@@ -644,13 +648,13 @@ public struct TeleprompterView: View {
 
     private func wordLabel(_ word: TeleprompterWord, highlightedIndex: Int) -> some View {
         Text(word.text)
-            .font(.system(size: 16, weight: word.offsetMs != nil && word.id == highlightedIndex ? .semibold : .medium))
+            .font(.system(size: 16, weight: canHighlight(word) && word.id == highlightedIndex ? .semibold : .medium))
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: wrapWidth, alignment: .leading)
             .foregroundStyle(wordForeground(word, highlightedIndex: highlightedIndex))
             .background {
-                if !isReadback, word.offsetMs != nil,
+                if !isReadback, canHighlight(word),
                    word.id == highlightedIndex || hoveredWordID == word.id {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color(red: 92/255, green: 124/255, blue: 1).opacity(word.id == highlightedIndex ? 0.30 : 0.12))
@@ -658,8 +662,12 @@ public struct TeleprompterView: View {
             }
     }
 
+    private func canHighlight(_ word: TeleprompterWord) -> Bool {
+        usesIndexedTiming ? word.offsetMs != nil : !wordBoundaries.isEmpty
+    }
+
     private func wordForeground(_ word: TeleprompterWord, highlightedIndex: Int) -> Color {
-        if !isReadback, word.offsetMs == nil { return notchPalette.primary.color.opacity(0.78) }
+        if !isReadback, usesIndexedTiming, word.offsetMs == nil { return notchPalette.primary.color.opacity(0.78) }
         if notchAppearance == .dark, !isReadback, !wordBoundaries.isEmpty {
             return word.id == highlightedIndex ? .white : Color(red: 234/255, green: 234/255, blue: 240/255)
         }
@@ -699,7 +707,8 @@ public struct TeleprompterView: View {
     }
 
     private func startAnimating() {
-        guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), !timedWords.isEmpty else { return }
+        let hasTimeline = usesIndexedTiming ? !timedWords.isEmpty : !wordBoundaries.isEmpty
+        guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), hasTimeline else { return }
         currentIndex = TeleprompterPlaybackPolicy.currentWordIndex(
             in: teleprompterWords,
             elapsedMilliseconds: highlightElapsedMilliseconds
