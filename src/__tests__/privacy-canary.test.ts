@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { randomUUID } from "crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
-import { diagnosticLeaks, streamLeaks } from "./setup/privacy-canary";
+import { assertNoCanaryDiagnostics, canaryChildEnv, diagnosticLeaks, streamLeaks } from "./setup/privacy-canary";
 import * as outro from "../stt-outro-gate";
 import { WhisperServerBackend } from "../stt";
 
@@ -15,7 +15,7 @@ import { WhisperServerBackend } from "../stt";
     ["outro", [import.meta.path], "PRIV11 sink"],
     ["capture/archive/retranscribe", ["src/__tests__/input-durability.test.ts"],
       "PRIV11|refuses an archive whose audio|does not write a transcript outside|delivers text without claiming archive finalization|warns and delivers VoiceBar STT|both VoiceBar recording and archive creation fail|labels paired archive failures"],
-    ["Ask/selection", ["src/__tests__/voice-ask-length-guard.test.ts", "src/__tests__/socket-speak-text.test.ts", "src/__tests__/socket-client.test.ts"], "PRIV11"],
+    ["Ask/selection", ["src/__tests__/privacy-pipeline.test.ts", "src/__tests__/socket-client.test.ts"], "PRIV11"],
   ] as const) {
     it(`keeps ${name} content out of every captured diagnostic`, async () => {
       const nonce = randomUUID();
@@ -24,12 +24,7 @@ import { WhisperServerBackend } from "../stt";
       const home = join(root, `CANARY-HOME-${nonce}`);
       mkdirSync(privateRoot); mkdirSync(home);
       const tokens = [`CANARY-TXT-${nonce}`, `CANARY-HOME-${nonce}`];
-      const env = { ...process.env, HOME: home, PRIV11_CHILD: "1", PRIV11_NONCE: nonce,
-        PRIV11_PRIVATE_ROOT: privateRoot, PRIV11_TEXT: tokens[0],
-        VOICELAYER_CONTROL_LAYER_BASE: join(root, "journal"),
-        QA_VOICE_STT_POLISH_LOG_PATH: join(root, "polish-shadow.jsonl"),
-        QA_VOICE_RECORDINGS_DIR: join(privateRoot, "recordings"),
-      };
+      const env = canaryChildEnv(root, nonce);
       const child = Bun.spawn([process.execPath, "test", ...files, "--test-name-pattern", pattern],
         { env, stdout: "pipe", stderr: "pipe" });
       try {
@@ -38,9 +33,7 @@ import { WhisperServerBackend } from "../stt";
         ]);
         if (process.env.PRIV11_RECEIPTS_DIR) writeFileSync(
           join(process.env.PRIV11_RECEIPTS_DIR, name.replaceAll("/", "-") + ".log"), stdout + stderr);
-        const sinks = streamLeaks(stdout, stderr, tokens);
-        sinks.push(...diagnosticLeaks(root, tokens));
-        expect(sinks, `${name}: diagnostic canary escaped`).toEqual([]);
+        assertNoCanaryDiagnostics(root, tokens, stdout, stderr);
         expect(code, `${name}: fixture child failed (output withheld)`).toBe(0);
         expect(/\b[1-9]\d* pass\b/.test(stderr), `${name}: no fixtures ran`).toBe(true);
         if (name === "outro") {
@@ -51,6 +44,24 @@ import { WhisperServerBackend } from "../stt";
       } finally { child.kill(); rmSync(root, { recursive: true, force: true }); }
     }, 60_000);
   }
+
+  it("detects canaries written through every resolved preload output root", () => {
+    const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "roots-"));
+    const env = canaryChildEnv(root, randomUUID());
+    try {
+      for (const key of ["VOICELAYER_TMP_ROOT", "VOICELAYER_STATE_DIR", "QA_VOICE_THINK_FILE"]) {
+        expect(env[key]?.startsWith(root + "/"), `${key} escapes diagnostic scan`).toBe(true);
+      }
+      const code = `import {TMP_ROOT, STATE_DIR} from './src/paths.ts';
+        await Bun.write(TMP_ROOT + '/tmp-probe.log', process.env.PRIV11_TEXT);
+        await Bun.write(STATE_DIR + '/state-probe.log', process.env.PRIV11_TEXT);
+        await Bun.write(process.env.QA_VOICE_THINK_FILE, process.env.PRIV11_TEXT);`;
+      const child = Bun.spawnSync([process.execPath, "--preload", "./src/__tests__/setup/preload.ts", "-e", code], { env });
+      expect(child.exitCode).toBe(0);
+      expect(diagnosticLeaks(root, [env.PRIV11_TEXT!]).sort()).toEqual(["state-probe.log", "thinking.md", "tmp-probe.log"]);
+      expect(() => assertNoCanaryDiagnostics(root, [env.PRIV11_TEXT!])).toThrow("Privacy canary escaped");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 
   it("detects diagnostic files, including SQLite bytes, with narrow exclusions", () => {
     const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "scan-"));

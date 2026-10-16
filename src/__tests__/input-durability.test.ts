@@ -542,7 +542,10 @@ describe("input recording durability", () => {
               onArchiveCreated: path => { archiveDir = path; },
             });
           }
-          await Bun.sleep(0); // Drain deferred archive metadata diagnostics before log readback/cleanup.
+          if (surface === "dictation" && !suppressed && archiveDir) {
+            await waitUntil(() => broadcasts.some(e => e.type === "archive_metadata_updated" &&
+              e.recording_path === join(archiveDir!, "audio.wav")), "deferred archive metadata write");
+          }
           const output = log.mock.calls.flat().join("\n");
           expect(output).not.toContain(backendText);
           expect(output).not.toContain("PRIVATE_TRANSCRIPT");
@@ -604,9 +607,14 @@ describe("input recording durability", () => {
         rmSync(metadata); mkdirSync(metadata); // Deferred spoken-duration write must fail.
       }
     });
-    const result = await input.waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
-    expect(result).toBe(backendText);
-    await Bun.sleep(0);
+    const originalError = console.error;
+    const log = spyOn(console, "error").mockImplementation((...args) => originalError(...args));
+    try {
+      const result = await input.waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+      expect(result).toBe(backendText);
+      await waitUntil(() => log.mock.calls.some(call => String(call[0]).startsWith(
+        "[voicelayer] Failed to record spoken length:")), "deferred spoken-duration failure");
+    } finally { log.mockRestore(); }
     const audioPath = capturedVoiceBarAudio()[0];
     const metadata = audioPath.replace("audio.wav", "metadata.json");
     rmSync(metadata, { recursive: true });
