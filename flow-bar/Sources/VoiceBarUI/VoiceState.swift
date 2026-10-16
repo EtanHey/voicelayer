@@ -334,6 +334,12 @@ public final class VoiceState {
     public var mode: VoiceMode = .idle {
         didSet {
             clearSelectionBusyNoteIfSessionEnded()
+            if mode == .recording || mode == .transcribing || mode == .disconnected || mode == .error {
+                if selectionCaptureInFlight { selectionCaptureCancelled = true }
+                selectionSpeechRequestID = nil
+                selectionSubmittedText = nil
+                selectionReadText = nil
+            }
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
@@ -680,6 +686,7 @@ public final class VoiceState {
     public var hotkeyPhase: HotkeyPhase = .idle {
         didSet {
             clearSelectionBusyNoteIfSessionEnded()
+            if hotkeyPhase != .idle, selectionCaptureInFlight { selectionCaptureCancelled = true }
             notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPhase)
         }
     }
@@ -877,47 +884,80 @@ public final class VoiceState {
     public var selectionTextCaptureHandler: (@escaping (SelectionCaptureResult) -> Void) -> Void = { $0(.completed(nil)) }
     private var selectionCaptureInFlight = false
     private var selectionCaptureCancelled = false
+    private var selectionCaptureID: UUID?
+    private var selectionSpeechRequestID: String?
+    private var selectionSubmittedText: String?
+    // Retain the original selection across preparation, markdown projection and chunk receipts.
+    private var selectionReadText: String?
+    private var selectionReadRequestID: String?
+    private var selectionReadID: String?
+    private var selectionReadIsPreparing = false
+    private var selectionSpeechEpoch = 0
     public private(set) var showsSelectionBusyNote = false
     @ObservationIgnored private var selectionBusyNoteTask: Task<Void, Never>?
 
+    private var selectionRejectionMessage: String?
+    public var selectionFeedbackNote: String? {
+        guard showsSelectionBusyNote else { return nil }
+        return selectionRejectionMessage ?? VoiceBarPresentation.selectionBusyNote(
+            isRequested: true, mode: mode, hotkeyPhase: hotkeyPhase)
+    }
+
     private func clearSelectionBusyNoteIfSessionEnded() {
-        guard showsSelectionBusyNote,
+        guard showsSelectionBusyNote, selectionRejectionMessage == nil,
               VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) == nil else { return }
         selectionBusyNoteTask?.cancel()
         selectionBusyNoteTask = nil
         showsSelectionBusyNote = false
     }
 
+    private func showSelectionBusyNote(message: String? = nil) {
+        selectionRejectionMessage = message
+        showsSelectionBusyNote = true
+        selectionBusyNoteTask?.cancel()
+        selectionBusyNoteTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            self?.showsSelectionBusyNote = false
+            self?.selectionBusyNoteTask = nil
+        }
+        expandFromCollapse()
+    }
+
+    private static func normalizedSelection(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    private func stopSelectionRead() {
+        selectionSpeechRequestID = nil
+        selectionSubmittedText = nil
+        sendCommand?(["cmd": "stop"])
+    }
+
     public func speakSelection() {
         if let reason = VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) {
-            showsSelectionBusyNote = true
-            selectionBusyNoteTask?.cancel()
-            selectionBusyNoteTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(2))
-                guard !Task.isCancelled else { return }
-                self?.showsSelectionBusyNote = false
-                self?.selectionBusyNoteTask = nil
-            }
+            showSelectionBusyNote()
             logDiagnostic("selection_busy", details: ["reason": reason.rawValue, "appKeyWindowTitle": "not_recorded"])
-            return
-        }
-        if mode == .speaking {
-            if selectionCaptureInFlight { selectionCaptureCancelled = true }
-            sendCommand?(["cmd": "stop"])
             return
         }
         guard !selectionCaptureInFlight else {
             selectionCaptureCancelled = true
+            if mode == .speaking || selectionSubmittedText != nil { stopSelectionRead() }
             return
         }
         guard mode != .disconnected, sendCommand != nil else {
             showConfirmation("VoiceLayer is disconnected")
             return
         }
+        let replacing = mode == .speaking || selectionSubmittedText != nil
+        let speechEpoch = selectionSpeechEpoch
+        let captureID = UUID()
+        selectionCaptureID = captureID
         selectionCaptureInFlight = true
         selectionCaptureCancelled = false
         selectionTextCaptureHandler { [weak self] result in
-            guard let self else { return }
+            guard let self, selectionCaptureID == captureID else { return }
+            selectionCaptureID = nil
             logDiagnostic("selection_capture", details: result.diagnosticDetails)
             selectionCaptureInFlight = false
             guard !selectionCaptureCancelled else {
@@ -925,9 +965,19 @@ public final class VoiceState {
                 return
             }
             // Capturing yields to the run loop. A new F5 session always wins.
-            guard mode != .recording, mode != .transcribing, mode != .speaking,
-                  mode != .disconnected, hotkeyPhase == .idle else { return }
-            guard let text = result.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard mode != .recording, mode != .transcribing, mode != .disconnected,
+                  hotkeyPhase == .idle, selectionSpeechEpoch == speechEpoch else { return }
+            let normalized = Self.normalizedSelection(result.text ?? "")
+            // Preparing's label is not input text. Prefer own input, otherwise use reliable
+            // speaking text at completion; a same-read receipt may have arrived during capture.
+            let currentText = selectionSubmittedText ?? selectionReadText
+                ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+            let sameSelection = currentText.map { normalized == Self.normalizedSelection($0) } ?? false
+            if replacing, normalized.isEmpty || sameSelection {
+                stopSelectionRead()
+                return
+            }
+            guard let text = result.text, !normalized.isEmpty else {
                 expandFromCollapse()
                 switch result.outcome {
                 case .secureField: showConfirmation("Can't read a secure field")
@@ -942,7 +992,11 @@ public final class VoiceState {
                 startCollapseTimer()
                 return
             }
-            sendCommand?(["cmd": "speak_text", "text": text, "profile": "auto",
+            let requestID = UUID().uuidString
+            selectionSpeechRequestID = requestID
+            selectionSubmittedText = text
+            // speak_text preempts only the owned read and awaits its player teardown (PLAYER0/FX).
+            sendCommand?(["cmd": "speak_text", "id": requestID, "text": text, "profile": "auto",
                           "format": "markdown", "source": "selection"])
         }
     }
@@ -1196,6 +1250,8 @@ public final class VoiceState {
 
     public func stop(physicalPress: Bool = false) {
         if selectionCaptureInFlight { selectionCaptureCancelled = true }
+        selectionSpeechRequestID = nil
+        selectionSubmittedText = nil
         let shouldShowTranscribing = mode == .recording
         let shouldExitInterruptedPlayback = mode == .speaking
         var payload: [String: Any] = ["cmd": "stop"]
@@ -1255,6 +1311,8 @@ public final class VoiceState {
 
     public func cancel() {
         if selectionCaptureInFlight { selectionCaptureCancelled = true }
+        selectionSpeechRequestID = nil
+        selectionSubmittedText = nil
         let cancelledTranscription = mode == .transcribing
         barInitiatedRecording = false
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
@@ -1747,6 +1805,22 @@ public final class VoiceState {
                 }
                 if idleSource == "recording" { refreshModelsBusy() }
             case "speaking":
+                selectionReadIsPreparing = (event["long_read"] as? [String: Any])?["preparing"] as? Bool == true
+                let readID = (event["long_read"] as? [String: Any])?["id"] as? String
+                let acknowledgesSubmission = selectionSubmittedText.map { submitted in
+                    selectionReadIsPreparing || (event["text"] as? String).map {
+                        Self.normalizedSelection($0) == Self.normalizedSelection(submitted)
+                    } == true
+                } ?? false
+                if readID == nil || readID != selectionReadID {
+                    // A newer press may already be capturing against this pending submission.
+                    // Its first receipt acknowledges that read; only an unrelated owner invalidates it.
+                    if !acknowledgesSubmission { selectionSpeechEpoch += 1 }
+                    selectionReadID = readID
+                    selectionReadText = acknowledgesSubmission ? selectionSubmittedText : nil
+                    selectionReadRequestID = acknowledgesSubmission ? selectionSpeechRequestID : nil
+                    if acknowledgesSubmission { selectionSubmittedText = nil }
+                }
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
@@ -3591,6 +3665,19 @@ public final class VoiceState {
     }
 
     private func handleAckEvent(_ event: [String: Any]) {
+        // speak_text is not a recorder intent. Match its raw ack without changing that contract.
+        if event["command"] as? String == "speak_text" {
+            guard let id = event["id"] as? String, id == selectionSpeechRequestID else { return }
+            selectionSpeechRequestID = nil
+            if event["outcome"] as? String == "reject" {
+                if selectionReadRequestID == id { selectionReadText = nil }
+                selectionSubmittedText = nil
+                showSelectionBusyNote(message: event["reason"] as? String == "busy"
+                    ? "Busy. Selection not read" : "Selection not read. Try again")
+                logDiagnostic("selection_rejected", details: ["outcome": "reject", "appKeyWindowTitle": "not_recorded"])
+            }
+            return
+        }
         guard let ack = SocketAckEvent(event: event) else {
             return
         }

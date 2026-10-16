@@ -46,7 +46,9 @@ final class SocketServerTests: XCTestCase {
         fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
         fixture.state.speakSelection()
         let line = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
-        let command = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String])
+        var command = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String])
+        let requestID = try XCTUnwrap(command.removeValue(forKey: "id"))
+        XCTAssertNotNil(UUID(uuidString: requestID), "Selection acks must correlate to this exact request")
         XCTAssertEqual(command, ["cmd": "speak_text", "text": selection, "profile": "auto",
                                  "format": "markdown", "source": "selection"])
         XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.1))
