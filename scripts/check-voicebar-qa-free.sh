@@ -15,6 +15,9 @@ if [[ ! -f "$binary" ]]; then
 fi
 
 markers=(
+  VoiceBarUIE2EOnly
+  VOICEBAR_UIE2E_ROOT
+  voicebar-ui-e2e-v1
   qa_context_menu_probe
   qa_vertical_hit_probe
   QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH

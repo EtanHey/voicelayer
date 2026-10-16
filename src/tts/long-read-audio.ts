@@ -1,13 +1,14 @@
 import { unlinkSync, writeFileSync } from "fs";
+import { throwIfAbortedSafe } from "../abort";
 import { resolveBinaryAsync } from "../resolve-binary";
 import type { PlayedChunk } from "./long-read";
 
 /** Run only the owned child; cancellation never kills another daemon's process. */
 export async function runAudioCommand(argv: string[], signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
+  throwIfAbortedSafe(signal);
   if (argv[0] === "ffmpeg") {
     const ffmpeg = await resolveBinaryAsync("ffmpeg");
-    signal?.throwIfAborted();
+    throwIfAbortedSafe(signal);
     if (!ffmpeg) throw new Error("ffmpeg unavailable for audio conversion");
     argv = [ffmpeg, ...argv.slice(1)];
   }
@@ -23,7 +24,7 @@ export async function runAudioCommand(argv: string[], signal?: AbortSignal): Pro
   try {
     if (signal?.aborted) kill();
     const code = await proc.exited;
-    signal?.throwIfAborted();
+    throwIfAbortedSafe(signal);
     if (code !== 0) throw new Error(`Audio conversion failed (${code})`);
   } finally {
     clearTimeout(timeout); clearTimeout(escalation);

@@ -49,8 +49,16 @@ describe("handleConverse resilience — P0-2", () => {
   let clearStopSpy: ReturnType<typeof spyOn>;
   let recordingStateRoot: string;
   let savedRecordingStatePath: string | undefined;
+  let finishHeldFixtures: Array<() => void>;
+
+  function holdFixture<T>(value: T): Promise<T> {
+    const pending = Promise.withResolvers<T>();
+    finishHeldFixtures.push(() => pending.resolve(value));
+    return pending.promise;
+  }
 
   beforeEach(() => {
+    finishHeldFixtures = [];
     recordingStateRoot = mkdtempSync(
       join(tmpdir(), "voicelayer-converse-resilience-"),
     );
@@ -153,7 +161,9 @@ describe("handleConverse resilience — P0-2", () => {
     }
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const finish of finishHeldFixtures) finish();
+    await Bun.sleep(0);
     broadcastSpy.mockRestore();
     speakSpy?.mockRestore();
     awaitSpy.mockRestore();
@@ -288,7 +298,7 @@ describe("handleConverse resilience — P0-2", () => {
         (_timeout, _silenceMode, _pushToEnd, options) => {
           capturedSignal = (options as { signal?: AbortSignal } | undefined)
             ?.signal;
-          return new Promise(() => {});
+          return holdFixture(null);
         },
       );
 
@@ -308,9 +318,8 @@ describe("handleConverse resilience — P0-2", () => {
       expect(capturedSignal?.aborted).toBe(false);
 
       jest.advanceTimersByTime(20_000);
-      await Promise.resolve();
-      expect(settled).toBe(true);
       const result = await pending;
+      expect(settled).toBe(true);
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Hard timeout");
@@ -385,7 +394,7 @@ describe("handleConverse resilience — P0-2", () => {
           (
             options as { onCaptureStart?: () => void } | undefined
           )?.onCaptureStart?.();
-          return new Promise(() => {});
+          return holdFixture(null);
         },
       );
 
@@ -618,10 +627,10 @@ describe("handleConverse resilience — P0-2", () => {
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
     try {
       speakSpy = spyOn(tts, "speak").mockImplementation(
-        () => new Promise(() => {}),
+        () => holdFixture(capturedPrompt()),
       );
       waitSpy = spyOn(input, "waitForInput").mockImplementation(
-        () => new Promise(() => {}),
+        () => holdFixture(null),
       );
 
       const pending = handleConverse({
@@ -658,7 +667,7 @@ describe("handleConverse resilience — P0-2", () => {
       // No onCaptureStart callback: the recorder never opens the microphone, so
       // the timeout fires while the flow is still in the capture-start stage.
       waitSpy = spyOn(input, "waitForInput").mockImplementation(
-        () => new Promise(() => {}),
+        () => holdFixture(null),
       );
 
       const pending = handleConverse({
@@ -696,7 +705,7 @@ describe("handleConverse resilience — P0-2", () => {
           }),
       );
       waitSpy = spyOn(input, "waitForInput").mockImplementation(
-        () => new Promise(() => {}),
+        () => holdFixture(null),
       );
       const events: unknown[] = [];
 

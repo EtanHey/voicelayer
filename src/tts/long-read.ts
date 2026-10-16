@@ -17,10 +17,11 @@ export interface SeekResult {
   offset_ms?: number;
   clamped?: boolean;
 }
-export interface LongReadSeek { seek(offsetMs: number): SeekResult }
+export interface LongReadSeek { seek(offsetMs: number): SeekResult; restart(): SeekResult }
 
 export interface LongReadDependencies {
   registerSeek?(control: LongReadSeek): void;
+  canReplay?(chunk: LongReadChunk): boolean;
   prepareSeek?(chunk: LongReadChunk, offsetMs: number, signal: AbortSignal): Promise<string | undefined>;
   disposeSeek?(file?: string): void;
   seekFailed?(error: unknown): void;
@@ -59,16 +60,22 @@ export async function runLongRead(
   let changed = new Promise<void>((resolve) => { wake = resolve; });
   const duration = () => [...owned.values()].reduce((total, chunk) => total + chunk.durationMs, 0);
   const chunkStart = (index: number) => [...owned.entries()].reduce((total, [i, chunk]) => total + (i < index ? chunk.durationMs : 0), 0);
-  deps.registerSeek?.({ seek: (offsetMs) => {
+  const seek = (offsetMs: number, replay = false): SeekResult => {
     if (!Number.isFinite(offsetMs) || offsetMs < 0) return { outcome: "reject", reason: "invalid offset" };
     if (closing || signal.aborted) return { outcome: "noop", reason: "nothing playing" };
+    if (replay) {
+      for (let i = 0; i <= currentIndex; i++) {
+        const chunk = owned.get(i);
+        if (!chunk || deps.canReplay?.(chunk) === false) return { outcome: "reject", reason: "Replay prefix audio unavailable" };
+      }
+    }
     if (owned.size === 0) return { outcome: "noop", reason: "not ready" };
     const total = duration(), offset = Math.min(offsetMs, total);
     let index = 0, local = offset;
     while (index < owned.size - 1 && local >= owned.get(index)!.durationMs) {
       local -= owned.get(index)!.durationMs; index++;
     }
-    seeking?.abort();
+    seeking?.abort(); seeking = undefined;
     const apply = (sliceFile?: string) => {
       // A committed cursor must survive while a newer conversion is pending.
       // Replacing it early could turn its interrupted player into a read stop.
@@ -76,7 +83,8 @@ export async function runLongRead(
       target = { index, local, sliceFile };
       playback?.interrupt?.(); wake();
     };
-    if (!deps.prepareSeek) apply();
+    // Global zero reuses the retained original; no asynchronous slice can overtake Stop.
+    if (replay || !deps.prepareSeek) apply();
     else {
       const preparation = new AbortController(); seeking = preparation;
       const conversion = (async () => {
@@ -95,7 +103,8 @@ export async function runLongRead(
       void conversion.then(() => conversions.delete(conversion));
     }
     return { outcome: "accept", offset_ms: offset, clamped: offsetMs > total };
-  } });
+  };
+  deps.registerSeek?.({ seek, restart: () => seek(0, true) });
 
   const pump = () => {
     if (closing || signal.aborted || synthesisFailed || inFlight ||

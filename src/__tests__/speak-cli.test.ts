@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { writeFileSync, unlinkSync, mkdirSync, rmSync, statSync, chmodSync, symlinkSync, readFileSync, existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { STATE_DIR } from "../paths";
+import { testSocket } from "./setup/test-tmp";
 
 const io = (stdin = "") => ({ readStdin: async () => stdin, readFile: async () => "# File", stderr: (_s: string) => {}, stdout: (_s: string) => {} });
 
@@ -35,7 +36,7 @@ describe("speak CLI", () => {
     expect(await runSpeakCli(["--help"], deps)).toBe(0);
   });
   test("authenticated real socket routes speech and stop without MCP tools", async () => {
-    const socketPath = join(STATE_DIR, "d.sock");
+    const socketPath = testSocket("sc.sock");
     const received: unknown[] = [];
     const control = createSpeechControl("test-token", async (command, lifecycle) => {
       received.push(command);
@@ -52,7 +53,7 @@ describe("speak CLI", () => {
     } finally { daemon.stop(); }
   });
   test("shell entry reads piped stdin and file; errors exit nonzero", async () => {
-    const socketPath = join(STATE_DIR, "shell.sock");
+    const socketPath = testSocket("ss.sock");
     const secretPath = join(STATE_DIR, "shell.secret");
     writeFileSync(secretPath, "shell-token", { mode: 0o600 });
     const received: any[] = [];
@@ -197,7 +198,7 @@ describe("speak CLI review regressions", () => {
     } finally { process.env = old; }
   });
   test("wait unblocks after a concurrent stop; tools remain the canonical two", async () => {
-    const socketPath = join(STATE_DIR, "r1.sock");
+    const socketPath = testSocket("sr.sock");
     let finish!: (value: {}) => void;
     const completion = new Promise<{}>(resolve => { finish = resolve; });
     let speaking = false, ended = false;
