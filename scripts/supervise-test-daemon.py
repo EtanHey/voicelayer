@@ -8,9 +8,27 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
+
+
+def audit(event, reason, pgid=None, members=(), **fields):
+    """Opt-in test evidence lives outside RUN_DIR, which the hook removes."""
+    path = os.environ.get("VOICELAYER_HOOK_AUDIT_LOG")
+    if not path:
+        return
+    row = dict(time_ns=time.time_ns(), actor_pid=os.getpid(), event=event,
+               reason=reason, pgid=pgid, targets=[p[0] for p in members],
+               run_nonce=os.environ.get("VOICELAYER_HOOK_TEST_NONCE"), **fields)
+    if event in ("signal-attempt", "signal-sent", "signal-gone"):
+        row["sender_pid"] = os.getpid()
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, (json.dumps(row) + "\n").encode())
+    finally:
+        os.close(fd)
 
 
 def process_identity(pid):
@@ -80,6 +98,42 @@ def carries_run(env, run_dir):
                                   ("VOICELAYER_SOCKET_PATH", run_dir / "voicelayer.sock")))
 
 
+def live_peer_fixture(env):
+    """Only a matching, held lease plus a live owner can exempt a tagged fixture."""
+    nonce = (env or {}).get("VOICELAYER_HOOK_TEST_NONCE")
+    owner = (env or {}).get("VOICELAYER_HOOK_TEST_OWNER", "")
+    if not nonce or not os.path.isabs(owner):
+        return False
+    # A run's own sweep intentionally exercises its fixtures. Inheriting these
+    # values never changes eligibility of UNTAGGED or dead-owner real orphans.
+    if (nonce == os.environ.get("VOICELAYER_HOOK_TEST_NONCE") and
+            owner == os.environ.get("VOICELAYER_HOOK_TEST_OWNER")):
+        return False
+    try:
+        fd = os.open(owner, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(fd) as lock:
+            if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
+                return False
+            lease = json.loads(lock.read(4096))
+            pid = lease["pid"]
+            if (lease["nonce"] != nonce or type(pid) is not int or pid <= 1 or
+                    not isinstance(lease["started"], str) or not lease["started"]):
+                return False
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # A stale PID/metadata file without this held lock is never proof.
+                state = subprocess.check_output(
+                    ["ps", "-p", str(pid), "-o", "stat=,lstart="], text=True, timeout=1,
+                    env=dict(os.environ, LC_ALL="C", TZ="UTC")).split(None, 1)
+                return len(state) == 2 and "Z" not in state[0] and state[1].strip() == lease["started"]
+            else:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                return False
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        return False
+
+
 def daemon_argv(argv):
     return any(arg == "src/mcp-server-daemon.ts" or arg.endswith("/src/mcp-server-daemon.ts") for arg in argv)
 
@@ -92,11 +146,16 @@ def reap_group(pgid, run_dir, orphan_only=False):
             # A different real environment is never ours. An unavailable native
             # identity can be transient during exec/exit; never signal it.
             if any(p[4] is not None for p in unverified):
+                audit("skip", "environment ownership mismatch", pgid, members)
                 return []
             return None
         if not members:
             return []
+        if orphan_only and any(live_peer_fixture(p[4]) for p in members):
+            audit("skip", "fixture owner alive", pgid, members)
+            return []
         if orphan_only and run_dir.exists():
+            audit("skip", "run directory still exists", pgid, members)
             return []
         return members
 
@@ -108,6 +167,7 @@ def reap_group(pgid, run_dir, orphan_only=False):
                 return members
             if time.monotonic() >= deadline:
                 if orphan_only:
+                    audit("skip", "environment unreadable after retry", pgid)
                     return []  # Unknown environment: skip the entire group.
                 raise RuntimeError(f"cannot verify test daemon group {pgid}")
             time.sleep(0.05)
@@ -120,11 +180,16 @@ def reap_group(pgid, run_dir, orphan_only=False):
     # Revalidate before EACH signal. A stale PID/PGID file is never authority
     # to kill a reused group, a resident daemon, or another test run.
     for signum in (signal.SIGTERM, signal.SIGKILL):
-        if not verified_members():
+        members = verified_members()
+        if not members:
             return
+        reason = "absent-dir PPID-1 daemon" if orphan_only else "owned daemon cleanup"
+        audit("signal-attempt", reason, pgid, members, signal=int(signum), run_dir=str(run_dir))
         try:
             os.killpg(pgid, signum)
+            audit("signal-sent", reason, pgid, members, signal=int(signum), run_dir=str(run_dir))
         except ProcessLookupError:
+            audit("signal-gone", reason, pgid, members, signal=int(signum))
             return
         deadline = time.monotonic() + 1
         while time.monotonic() < deadline:
@@ -194,10 +259,12 @@ def main():
 
     def request_start(_signum, _frame):
         nonlocal start_requested
+        audit("signal-received", "supervisor start request", signal=int(_signum))
         start_requested = True
 
     def request_stop(signum, _frame):
         nonlocal stopping, exiting
+        audit("signal-received", "supervisor stop request", signal=int(signum))
         stopping = True
         if signum != signal.SIGUSR1:
             exiting = True
