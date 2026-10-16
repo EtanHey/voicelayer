@@ -70,16 +70,21 @@ final class LegacySubtitleParityTests: XCTestCase {
                 (1e100, 100), (-1e100, 100), (0, Double.infinity), (Int.max, 1), (Int.min, Int.min)] {
                 let rows: [[String: Any]] = [["text": "Hello", "offset_ms": offset, "duration_ms": duration]]
                 let decoded = TeleprompterBoundary.subtitleWords(["words": rows], chunkStartMs: chunkStart)
-                XCTAssertTrue(decoded.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
+                XCTAssertTrue(decoded.isEmpty, "unusable legacy timings must drop, not leave a karaoke placeholder")
             }
+            let data = try JSONSerialization.data(withJSONObject: ["words": [
+                ["text": "Hello", "offset_ms": 1e100, "duration_ms": 100]]])
+            let jsonEvent = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertTrue(TeleprompterBoundary.subtitleWords(jsonEvent, chunkStartMs: chunkStart).isEmpty)
             let exact = TeleprompterBoundary.subtitleWords(["words": [["text": "Hello", "offset_ms": Int.max, "duration_ms": 0]]],
                                                           chunkStartMs: chunkStart)
             XCTAssertEqual(exact.first?.offsetMs, chunkStart == 0 ? Int.max : nil)
+            if chunkStart != 0 { XCTAssertTrue(exact.isEmpty) }
             for (offset, duration): (Any, Any) in [(-0.5, 100), (-1.5, 100), (0, -100.5), (true, 100),
                                                   (false, 100), (0, true), (0, false)] {
-                let data = try JSONSerialization.data(withJSONObject: ["aligned_words": [
+                let alignedData = try JSONSerialization.data(withJSONObject: ["aligned_words": [
                     ["word_index": 0, "text": "Hello", "offset_ms": offset, "duration_ms": duration]]])
-                let event = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                let event = try XCTUnwrap(JSONSerialization.jsonObject(with: alignedData) as? [String: Any])
                 let decoded = TeleprompterBoundary.subtitleWords(event, chunkStartMs: chunkStart)
                 XCTAssertEqual(decoded.count, 1)
                 XCTAssertNil(decoded[0].offsetMs)
@@ -87,6 +92,20 @@ final class LegacySubtitleParityTests: XCTestCase {
                 XCTAssertEqual(decoded[0].wordIndex, 0)
             }
         }
+    }
+
+    func testLegacyJsonOverflowDoesNotStartEstimatedKaraoke() throws {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world", "duration_ms": 5000])
+        state.handleEvent(["type": "subtitle", "words": valid])
+        let data = try JSONSerialization.data(withJSONObject: ["type": "subtitle", "words": [
+            ["text": "Hello", "offset_ms": 1e100, "duration_ms": 100]]])
+        let event = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        state.handleEvent(event)
+        XCTAssertTrue(state.wordBoundaries.isEmpty)
+        let words = TeleprompterContentModel.words(text: "Hello world", wordBoundaries: state.wordBoundaries)
+        XCTAssertTrue(words.allSatisfy { $0.offsetMs == nil })
+        XCTAssertFalse(TeleprompterPlaybackPolicy.usesServerTimestamps(in: words))
     }
 
     func testMalformedIndexedEventsStillClearPreviousTimings() {
