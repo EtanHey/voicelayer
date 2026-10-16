@@ -13,6 +13,51 @@ spec.loader.exec_module(results)
 
 
 class ReportTests(unittest.TestCase):
+    def test_expected_packet_failure_is_explicit_xfail_and_unmatched_cannot_pass(self):
+        (self.root / 'a.png').write_bytes(b'png')
+        step = dict(number=1, name='newline frame', attachment='UIE2E-0001', passed=True,
+                    expectedFailure=dict(packet='P14b', surface='notch:list-newlines',
+                                         descriptions=['[P14b] items remain on one line']))
+        attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=True)
+        self.assertTrue(results.report(self.root, [step], [dict(attachments=[attachment])]))
+        self.assertIn('XFAIL [P14b]', (self.root / 'index.html').read_text())
+        step['expectedFailure']['descriptions'] = []
+        with self.assertRaises(ValueError):
+            results.report(self.root, [step], [dict(attachments=[attachment])])
+        step['expectedFailure']['descriptions'] = ['Missing control: unrelated harness failure']
+        with self.assertRaises(ValueError):
+            results.report(self.root, [step], [dict(attachments=[attachment])])
+
+    def test_expected_surface_without_matching_receipt_stays_blocking(self):
+        directory, ledger, manifest = self.attachment_run()
+        ledger['coverage'].update(expectedSurfaces={'notch:seek-idle': 'SEEK2'}, missingSurfaces=[])
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        with self.assertRaises(ValueError):
+            self.export_attached_run()
+
+    def test_observed_expected_surface_exports_without_becoming_verified(self):
+        directory, ledger, manifest = self.attachment_run()
+        expected = dict(packet='P14b', surface='notch:list-newlines', descriptions=['[P14b] same visual line'])
+        ledger['steps'][0]['expectedFailure'] = expected
+        ledger['coverage'].update(expectedSurfaces={'notch:list-newlines': 'P14b'}, missingSurfaces=[], verifiedSurfaces=[])
+        (directory / 'step.json').write_text(json.dumps(ledger['steps'][0]))
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        self.assertTrue(self.export_attached_run())
+        self.assertIn('XFAIL [P14b]', (directory / 'index.html').read_text())
+        ledger['coverage']['verifiedSurfaces'] = ['notch:list-newlines']
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        with self.assertRaises(ValueError):
+            self.export_attached_run()
+
+    def test_unexpected_pass_or_unmatched_failure_cannot_use_an_expected_tag(self):
+        (self.root / 'a.png').write_bytes(b'png')
+        step = dict(number=1, name='unexpected result', attachment='UIE2E-0001', passed=False)
+        attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
+        self.assertFalse(results.report(self.root, [step], [dict(attachments=[attachment])]))
+        step['expectedFailure'] = dict(packet='SEL1', surface='notch:supersede-preparing', descriptions=['[SEL1] replacement'])
+        with self.assertRaises(ValueError):
+            results.report(self.root, [step], [dict(attachments=[attachment])])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temp.name)
@@ -30,6 +75,17 @@ class ReportTests(unittest.TestCase):
         (self.root / 'b.png').unlink()
         with self.assertRaises(ValueError):
             results.report(self.root, steps, [dict(attachments=attachments)])
+
+    def test_unverified_surfaces_fail_even_with_passing_control_receipts(self):
+        coverage = dict(observed=[], exercised=[], missing=[], missingSurfaces=['Speech', 'notch:seek-idle'])
+        ledger = dict(version=1, steps=[dict(number=1, name='click', attachment='UIE2E-0001', passed=True)],
+                      completed=True, failures=0, coverage=coverage, knownVisualGaps=[])
+        (self.root / 'step.json').write_text(json.dumps(ledger['steps'][0]))
+        (self.root / 'ledger.json').write_text(json.dumps(ledger))
+        attachments = [dict(suggestedHumanReadableName='UIE2E-RECEIPT-0001.json', exportedFileName='step.json', isAssociatedWithFailure=False),
+                       dict(suggestedHumanReadableName='UIE2E-LEDGER.json', exportedFileName='ledger.json', isAssociatedWithFailure=False)]
+        _, _, issues = results.receipts(self.root, [dict(attachments=attachments)])
+        self.assertIn('FAIL unverified surfaces: Speech, notch:seek-idle', issues)
 
     def test_zero_steps_and_duplicate_screenshots_cannot_pass(self):
         with self.assertRaises(ValueError):
@@ -63,6 +119,100 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(target['EnvironmentVariables']['Existing'], 'kept')
         self.assertEqual(target['EnvironmentVariables']['VOICEBAR_UIE2E_APP'], str(self.root / 'QA.app'))
         self.assertEqual(target['TestBundlePath'], str(products / 'Debug/Test.xctest'))
+
+
+
+
+
+
+
+
+    def p1f_run(self, scenario='full'):
+        directory, ledger, manifest = self.attachment_run()
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        surfaces = ['338:static:selection-' + suffix for suffix in
+                    ['clipboard-changed', 'copy-timeout', 'copy-empty', 'copy-failed']]
+        ledger['steps'][0].update(name='selection errors page', expectedFailure=dict(
+            packet='P1f', surface='', surfaces=surfaces,
+            descriptions=['[P1f] selection error text is clipped']))
+        ledger['coverage'].update(expectedSurfaces=dict.fromkeys(surfaces, 'P1f'),
+                                  missingSurfaces=[], verifiedSurfaces=[])
+        for attachment in manifest[:2]:
+            attachment['isAssociatedWithFailure'] = True
+        (directory / 'manifest.json').write_text(json.dumps([dict(attachments=manifest)]))
+        self.write_p1f_receipts(directory, ledger)
+        return directory, ledger, manifest, sandbox
+
+    def write_p1f_receipts(self, directory, ledger):
+        (directory / 'step.json').write_text(json.dumps(ledger['steps'][0]))
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+
+
+    def test_full_p1f_aggregated_four_surface_expected_receipt_still_exports(self):
+        directory, ledger, _, sandbox = self.p1f_run(scenario='full')
+        with patch.object(results.subprocess, 'run'):
+            self.assertTrue(results.export(self.root, sandbox))
+        page = (directory / 'index.html').read_text()
+        self.assertEqual(page.count('XFAIL [P1f]'), 1)
+
+    def test_p1f_missing_unknown_or_duplicate_scope_cannot_waive_coverage(self):
+        directory, ledger, _, sandbox = self.p1f_run()
+        expected = ledger['steps'][0]['expectedFailure']
+        surfaces = expected['surfaces'][:]
+        for invalid in [surfaces[:-1], surfaces[:-1] + ['338:static:unknown'],
+                        surfaces + ['338:static:unknown'], surfaces + [surfaces[0]]]:
+            with self.subTest(surfaces=invalid):
+                expected['surfaces'] = invalid
+                self.write_p1f_receipts(directory, ledger)
+                with patch.object(results.subprocess, 'run'), self.assertRaises(ValueError):
+                    results.export(self.root, sandbox)
+        expected.pop('surfaces')
+        self.write_p1f_receipts(directory, ledger)
+        with patch.object(results.subprocess, 'run'), self.assertRaises(ValueError):
+            results.export(self.root, sandbox)
+
+    def test_p1f_unknown_packet_or_untagged_description_cannot_waive(self):
+        directory, ledger, _, sandbox = self.p1f_run()
+        expected = ledger['steps'][0]['expectedFailure']
+        for packet, descriptions in [
+                ('UNKNOWN', ['[UNKNOWN] clipped text']), ('P1f-extra', ['[P1f-extra] clipped text']),
+                ('P1f', []), ('P1f', ['clipped text']), ('P1f', ['[P1f-extra] clipped text']),
+                ('P1f', ['[P1f] clipped text', 'Missing control: unrelated harness failure']),
+                ('P1f', ['[P1e] clipped text']), ('P1f', [None])]:
+            with self.subTest(packet=packet, descriptions=descriptions):
+                expected.update(packet=packet, descriptions=descriptions)
+                self.write_p1f_receipts(directory, ledger)
+                with patch.object(results.subprocess, 'run'), self.assertRaises(ValueError):
+                    results.export(self.root, sandbox)
+
+    def test_optional_expected_surfaces_must_be_nonempty_unique_strings(self):
+        for packet in ['P14b', 'P1f']:
+            for invalid in [None, [], 'scope', {}, [''], [' '], [None], [1], ['scope', 'scope']]:
+                with self.subTest(packet=packet, surfaces=invalid):
+                    step = dict(passed=True, expectedFailure=dict(packet=packet, surface='scope',
+                                surfaces=invalid, descriptions=['[' + packet + '] clipped text']))
+                    with self.assertRaises(ValueError):
+                        results.expected_packet(step)
+
+    def test_p1f_singular_surface_still_exports(self):
+        directory, ledger, _, sandbox = self.p1f_run(scenario='full')
+        expected = ledger['steps'][0]['expectedFailure']
+        surface = expected.pop('surfaces')[0]
+        expected['surface'] = surface
+        ledger['coverage']['expectedSurfaces'] = {surface: 'P1f'}
+        self.write_p1f_receipts(directory, ledger)
+        with patch.object(results.subprocess, 'run'):
+            self.assertTrue(results.export(self.root, sandbox))
+
+    def test_legacy_packet_cannot_use_aggregate_surface_proof(self):
+        directory, ledger, _, sandbox = self.p1f_run()
+        ledger['steps'][0]['expectedFailure'].update(packet='P14b', descriptions=['[P14b] clipped text'])
+        ledger['coverage']['expectedSurfaces'] = dict.fromkeys(
+            ledger['coverage']['expectedSurfaces'], 'P14b')
+        self.write_p1f_receipts(directory, ledger)
+        with patch.object(results.subprocess, 'run'), self.assertRaises(ValueError):
+            results.export(self.root, sandbox)
+
 
     def test_contact_sheet_links_the_validated_recording_and_metadata(self):
         directory = self.root / 'screenshots'; directory.mkdir()
