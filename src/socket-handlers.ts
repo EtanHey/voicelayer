@@ -25,6 +25,7 @@ import {
   playAudioNonBlocking,
   restartPlayback,
   stopPlayback,
+  hasPendingSpeechPreparation,
   speakText,
   seekPlayback,
 } from "./tts";
@@ -125,7 +126,7 @@ export function handleSocketCommand(
       }
     }
     case "stop":
-      if (recordingState === "idle" && playbackQueueDepth === 0) {
+      if (recordingState === "idle" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation()) {
         return buildAck(command, "noop", "already idle");
       }
       if (recordingState === "transcribing") {

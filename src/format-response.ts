@@ -62,7 +62,7 @@ export function formatAsk(
     retranscribedArchiveId?: string;
     timeoutSeconds?: number;
     pushToEnd?: boolean;
-    outcome?: "timeout" | "no-speech" | "captured";
+    outcome?: "timeout" | "no-speech" | "captured" | "stopped-before-prompt";
     recovery?: {
       archiveId: string;
       audioPath: string;
@@ -72,6 +72,9 @@ export function formatAsk(
   },
 ): string {
   const promptInterruption = formatPromptInterruption(opts?.promptPlayback);
+  if (opts?.outcome === "stopped-before-prompt") {
+    return boxed("voice_ask", ["Stopped by the user before the question was spoken. Nothing was recorded."]);
+  }
   // Explicit null check to handle empty string "" as valid transcript
   if (transcript !== null && transcript !== undefined) {
     return boxed("voice_ask", [

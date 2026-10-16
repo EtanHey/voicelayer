@@ -344,12 +344,12 @@ describe("TTS display text stays separate from pronunciation text", () => {
       });
       expect(synthesizeSpy).toHaveBeenCalledTimes(route === "announce" ? 0 : 1);
       if (displayText.startsWith("Export")) expect(synthesizeSpy).toHaveBeenCalledWith(
-        "Export M P three from incident inventory dot M D.", "long-display-clone",
+        "Export M P three from incident inventory dot M D.", "long-display-clone", expect.any(AbortSignal),
       );
       expect(result.engine).toBe(route === "clone" ? "qwen3-tts" : "edge-tts");
       if (route === "announce") expect(spawnCalls.find(c => c.cmd[0].includes("python3"))?.cmd).toContain("--text=MP3 API");
       if (route === "fallback") {
-        expect(synthesizeSpy).toHaveBeenCalledWith("Is that OK? M P three A P I at 3 PM on 2026.10.15.", "long-display-clone");
+        expect(synthesizeSpy).toHaveBeenCalledWith("Is that OK? M P three A P I at 3 PM on 2026.10.15.", "long-display-clone", expect.any(AbortSignal));
         expect(spawnCalls.find(c => c.cmd[0].includes("python3"))?.cmd).toContain(`--text=${displayText}`);
       }
       await waitFor(

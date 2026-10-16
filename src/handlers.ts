@@ -10,6 +10,7 @@ import { basename, join } from "path";
 import {
   assertSpeakerClear,
   isSpeakerOutputRefusedError,
+  SpeechPreparationStoppedError,
   speak,
   getHistoryEntry,
   playAudioNonBlocking,
@@ -344,6 +345,9 @@ export async function handleVoiceSpeak(
       default:
         return await handleAnnounce({ message, rate, voice }, context);
     }
+  } catch (error) {
+    if (error instanceof SpeechPreparationStoppedError) return textResult(error.message);
+    throw error;
   } finally {
     reservation.release();
   }
@@ -889,6 +893,9 @@ export async function handleConverse(
           broadcast({ type: "state", state: "idle" });
         }
       }, () => {}); // Rejected exit proof cannot authorize idle.
+    }
+    if (err instanceof SpeechPreparationStoppedError) {
+      return textResult(formatAsk(null, { outcome: "stopped-before-prompt" }));
     }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[voicelayer] voice_ask error: ${message}`);
