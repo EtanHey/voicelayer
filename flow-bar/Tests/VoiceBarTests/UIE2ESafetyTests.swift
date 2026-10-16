@@ -152,10 +152,11 @@ final class UIE2EFixtureCommandTests: XCTestCase {
             $0["text"] as? String == "QA original selection" },
             "Preparing must retain a real original selection request before replacement")
         model.fixture("selection-replace")
-        XCTAssertTrue(model.commands.contains { $0["cmd"] as? String == "stop" },
-            "The current unmerged SEL1 contract stops; the probe must actually invoke speakSelection")
+        XCTAssertEqual(model.commands.last?["cmd"] as? String, "speak_text")
+        XCTAssertEqual(model.commands.last?["text"] as? String, "QA replacement selection",
+            "SEL1 must replace Preparing through the real selection method")
 
-        // Cleanup happens only after the probe has asserted SEL1's real stop behavior.
+        // Cleanup happens only after asserting SEL1's replacement payload.
         let commandsBeforeIdleCleanup = model.commands.count
         model.fixture("idle")
         XCTAssertEqual(model.voice.mode, .idle)
