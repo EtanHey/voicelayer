@@ -13,6 +13,15 @@ import {
 import { join } from "path";
 import { tmpdir } from "os";
 
+// Real subprocesses: standalone p95 <= 1095 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+// Real subprocesses: standalone p95 <= 1271 ms; 4x rounded up, with a 5 s scheduling floor.
+const ARTIFACT_SUBPROCESS_TEST_TIMEOUT_MS = 6_000;
+// Real subprocesses: standalone p95 <= 1739 ms; 4x rounded up, with a 5 s scheduling floor.
+const SAFETY_SUBPROCESS_TEST_TIMEOUT_MS = 7_000;
+// Real subprocesses: standalone p95 <= 1806 ms; 4x rounded up, with a 5 s scheduling floor.
+const SLOW_SUBPROCESS_TEST_TIMEOUT_MS = 8_000;
+
 const repoRoot = new URL("../..", import.meta.url).pathname;
 const scriptPath = join(repoRoot, "scripts", "voicelayer-verify.sh");
 
@@ -140,7 +149,7 @@ describe("the fake-repo helper stays inside its temp repo", () => {
       else process.env.GIT_CONFIG = saved.config;
       rmSync(victim, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 describe("voicelayer-verify.sh", () => {
@@ -168,7 +177,7 @@ describe("voicelayer-verify.sh", () => {
     expect(body).toContain("Verified-Runtime:");
     expect(body).toContain("tester: Unit Test");
     expect(body).toContain("src/mcp-socket-owner.ts");
-  });
+  }, ARTIFACT_SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("requires runtime verification for recording state gate changes", async () => {
     const changed = join(tempRoot, "changed.txt");
@@ -190,7 +199,7 @@ describe("voicelayer-verify.sh", () => {
     const body = await Bun.file(join(tempRoot, ".verified", artifacts[0])).text();
     expect(body).toContain("Verified-Runtime:");
     expect(body).toContain("src/recording-state.ts");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("does not create an artifact when manual confirmation is rejected", () => {
     const changed = join(tempRoot, "changed.txt");
@@ -207,7 +216,7 @@ describe("voicelayer-verify.sh", () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("runs corpus and interaction verification without human input on isolated sockets", async () => {
     run(["git", "checkout", "-b", "feature/corpus-gate"]);
@@ -296,7 +305,7 @@ describe("voicelayer-verify.sh", () => {
     expect(pidBefore).not.toBeNull();
     expect(pidAfter).not.toBeNull();
     expect(pidAfter?.[1]).toBe(pidBefore?.[1]);
-  });
+  }, SLOW_SUBPROCESS_TEST_TIMEOUT_MS);
 
   for (const stage of ["corpus", "interaction", "proof"] as const) {
     test(`FX-3 retains failed ${stage} daemon logs with the original failure status, without retaining staged audio`, async () => {
@@ -324,7 +333,7 @@ describe("voicelayer-verify.sh", () => {
       expect(await Bun.file(join(retained, "daemon.log")).text()).toBe("daemon stdout\ndaemon stderr\n");
       expect(text(result.stderr)).toContain(retained);
       expect(existsSync((await Bun.file(join(tempRoot, "runner.log")).text()).trim())).toBe(false);
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
   test("refuses to certify a corpus run that killed the live whisper-server", () => {
@@ -374,7 +383,7 @@ describe("voicelayer-verify.sh", () => {
       "corpus run touched the live whisper-server",
     );
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
-  });
+  }, SAFETY_SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("refuses to certify a corpus runner that omits the very-long terminal proof", () => {
     run(["git", "checkout", "-b", "feature/corpus-missing-long-proof"]);
@@ -405,7 +414,7 @@ describe("voicelayer-verify.sh", () => {
       "missing very-long terminal gate proof",
     );
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("removes a stale corpus artifact before a failed verification attempt", () => {
     run(["git", "checkout", "-b", "feature/corpus-stale"]);
@@ -432,7 +441,7 @@ describe("voicelayer-verify.sh", () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(existsSync(artifact)).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("refuses to certify a dirty worktree in corpus mode", () => {
     const changed = join(tempRoot, "changed.txt");
@@ -456,7 +465,7 @@ describe("voicelayer-verify.sh", () => {
     expect(result.exitCode).not.toBe(0);
     expect(text(result.stderr)).toContain("dirty worktree");
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("refuses test runner overrides in the verifier's own repository", () => {
     const localScript = join(tempRoot, "scripts", "voicelayer-verify.sh");
@@ -477,7 +486,7 @@ describe("voicelayer-verify.sh", () => {
     expect(result.exitCode).not.toBe(0);
     expect(text(result.stderr)).toContain("test-only");
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("refuses runner overrides through a symlink to the verifier worktree", () => {
     const localScript = join(tempRoot, "scripts", "voicelayer-verify.sh");
@@ -501,7 +510,7 @@ describe("voicelayer-verify.sh", () => {
     expect(result.exitCode).not.toBe(0);
     expect(text(result.stderr)).toContain("test-only");
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("refuses runner overrides through a linked worktree of the verifier repository", () => {
     const localScript = join(tempRoot, "scripts", "voicelayer-verify.sh");
@@ -531,7 +540,7 @@ describe("voicelayer-verify.sh", () => {
       run(["git", "worktree", "remove", "--force", linkedWorktree]);
       rmSync(linkedWorktree, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("skips verification when changed files do not touch daemon surfaces", () => {
     const changed = join(tempRoot, "changed.txt");
@@ -547,7 +556,7 @@ describe("voicelayer-verify.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("no daemon verification required");
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("treats a launchd VoiceBar respawn as a successful relaunch", async () => {
     const changed = join(tempRoot, "changed.txt");
@@ -633,5 +642,5 @@ exit 0
     expect(artifacts).toHaveLength(1);
     const body = await Bun.file(join(tempRoot, ".verified", artifacts[0])).text();
     expect(body).toContain("Verified-Runtime:");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

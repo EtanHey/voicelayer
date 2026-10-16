@@ -12,6 +12,9 @@ import { it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import * as socketClient from "../socket-client";
 
+// Real subprocesses: standalone p95 <= 360 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 interface MockPlayer {
   cmd: string[];
   resolveExit: () => void;
@@ -128,7 +131,7 @@ describe("stopPlayback queue clearing", () => {
 
     // Only one player should have been spawned (second was cancelled)
     expect(playerMocks.length).toBe(1);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("stopPlayback is idempotent — multiple calls are safe", async () => {
     const { playAudioNonBlocking, stopPlayback } = await import("../tts");
@@ -149,7 +152,7 @@ describe("stopPlayback queue clearing", () => {
       (b: any) => b.type === "state" && b.state === "idle",
     );
     expect(idles.length).toBe(1);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("queueSize does not go negative after stop + error", async () => {
     const { playAudioNonBlocking, stopPlayback } = await import("../tts");
@@ -173,7 +176,7 @@ describe("stopPlayback queue clearing", () => {
       (b: any) => b.type === "state" && b.state === "idle",
     );
     expect(idles.length).toBeGreaterThanOrEqual(1);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 describe("playback error handling", () => {
@@ -232,7 +235,7 @@ describe("playback error handling", () => {
       (b: any) => b.type === "state" && b.state === "idle",
     );
     expect(idles.length).toBeGreaterThanOrEqual(1);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("awaitCurrentPlayback swallows queue errors", async () => {
     // @ts-ignore — mock spawn to throw
@@ -247,5 +250,5 @@ describe("playback error handling", () => {
 
     // Should not throw — errors are swallowed
     await expect(awaitCurrentPlayback()).resolves.toBeUndefined();
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

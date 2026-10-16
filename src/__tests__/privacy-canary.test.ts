@@ -7,6 +7,9 @@ import { assertNoCanaryDiagnostics, canaryChildEnv, diagnosticLeaks, streamLeaks
 import * as outro from "../stt-outro-gate";
 import { WhisperServerBackend } from "../stt";
 
+// Real subprocesses: standalone p95 <= 85 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // Capture at the process boundary: console methods, raw stdout/stderr writes,
 // native/subprocess output and Bun's runner all reach these pipes. Never print
 // captured content on failure (it may itself contain private material).
@@ -61,7 +64,7 @@ import { WhisperServerBackend } from "../stt";
       expect(diagnosticLeaks(root, [env.PRIV11_TEXT!]).sort()).toEqual(["state-probe.log", "thinking.md", "tmp-probe.log"]);
       expect(() => assertNoCanaryDiagnostics(root, [env.PRIV11_TEXT!])).toThrow("Privacy canary escaped");
     } finally { rmSync(root, { recursive: true, force: true }); }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("detects diagnostic files, including SQLite bytes, with narrow exclusions", () => {
     const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "scan-"));
@@ -87,7 +90,7 @@ import { WhisperServerBackend } from "../stt";
       expect(child.exitCode).toBe(0);
       expect(streamLeaks(child.stdout.toString(), child.stderr.toString(), [token]).length, writer).toBeGreaterThan(0);
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 (process.env.PRIV11_CHILD ? describe : describe.skip)("PRIV11 sink", () => {

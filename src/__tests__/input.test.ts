@@ -68,6 +68,9 @@ import { STOP_FILE } from "../paths";
 import { PACKAGE_VERSION } from "../version";
 import { retainedRecordingFilePath } from "../paths";
 
+// Real subprocesses: standalone p95 <= 47 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 describe("input module", () => {
   let testStateRoot: string | undefined;
   let savedRecordingStatePath: string | undefined;
@@ -284,7 +287,7 @@ describe("input module", () => {
         app_version_source: "package.json",
       });
       expect(typeof metadata.provenance.host).toBe("string");
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("skips archive creation when a recording is cancelled before transcription", () => {
       const archivedPath = archiveVoiceBarRecording({
@@ -1261,7 +1264,7 @@ describe("input module", () => {
       expect(result.detected).toBe(false);
       expect(result.speechChunks).toBe(0);
       expect(result.totalChunks).toBeGreaterThan(0);
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("allows clean speech captures through the push-to-end speech gate", async () => {
       const result = await evaluatePushToEndSpeechGate(

@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 19 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // Static contract tests for flow-bar/build-app.sh: every runtime asset that
 // src/ resolves relative to itself MUST be bundled into Resources/, or the
 // installed app silently loses a capability on the next rebuild.
@@ -118,7 +121,7 @@ describe("build-app.sh Developer ID release contract", () => {
     expect(noncanonical.exitCode).toBe(0);
     expect(noncanonicalOutput).toContain("rm:-rf -- /tmp/VoiceBar.app");
     expect(noncanonicalOutput).not.toContain("find:");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("uses the Developer ID Application identity with hardened runtime and a real timestamp", () => {
     expect(buildScript).toContain(

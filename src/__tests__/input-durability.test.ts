@@ -36,6 +36,9 @@ import * as tts from "../tts";
 import * as vad from "../vad";
 import * as voiceBarLauncher from "../voice-bar-launcher";
 
+// Real subprocesses: standalone p95 <= 353 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const VAD_CHUNK_SAMPLES = 512;
 const VAD_CHUNK_BYTES = VAD_CHUNK_SAMPLES * 2;
 
@@ -375,7 +378,7 @@ describe("input recording durability", () => {
         if (savedChunked === undefined) delete process.env.QA_VOICE_CHUNKED_STT;
         else process.env.QA_VOICE_CHUNKED_STT = savedChunked;
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
   beforeEach(() => {
