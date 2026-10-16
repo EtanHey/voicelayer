@@ -393,6 +393,35 @@ final class UIE2EFocusedGalleryTests: XCTestCase {
     }
 
 
+    func testPinnedBusyPresentationSurvivesRealTranscribingWatchdog() async throws {
+        let (gallery, root) = try gallery()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let transcribing = gallery.item("busy-transcribing")
+        let presentation = transcribing.renderedVoice
+        XCTAssertFalse(presentation === transcribing.voice, "Static hold needs an independent presentation model")
+        var lifetimeModes: [VoiceMode] = []
+        transcribing.voice.onModeChange = { lifetimeModes.append($0) }
+        // Keep the production 30-second watchdog unchanged. Static gallery work may take longer.
+        for _ in 0..<45 {
+            try await Task.sleep(for: .milliseconds(700))
+            gallery.refreshPinnedStates()
+        }
+        XCTAssertTrue(lifetimeModes.contains(.error), "The genuine lifetime watchdog must still fire")
+        XCTAssertTrue(transcribing.renderedVoice === presentation)
+        XCTAssertEqual(transcribing.renderedVoice.mode, .transcribing)
+        for item in gallery.items where item.spec.family == "busy" {
+            XCTAssertEqual(item.actualNote, item.spec.expectedText, item.spec.id)
+            XCTAssertEqual(item.effects.selectionCaptures, 0)
+            XCTAssertTrue(item.effects.commands.isEmpty)
+        }
+        gallery.endSessions()
+        XCTAssertEqual(gallery.sessionEndBefore.count, 3)
+        for item in gallery.items where item.spec.family == "busy" {
+            XCTAssertNil(item.heldPresentation, "Session end must use genuine freshly admitted lifetime states")
+            XCTAssertEqual(item.voice.mode, .idle)
+            XCTAssertNil(item.actualNote)
+        }
+    }
 
     func testRealRoutesProduceEveryFamilyWithoutHardwareOrTransport() throws {
         let (gallery, root) = try gallery()
@@ -490,8 +519,109 @@ final class UIE2EFocusedGalleryTests: XCTestCase {
         XCTAssertTrue(gallery.items.allSatisfy { $0.heldPresentation == nil })
     }
 
+    func testFreshObservationSchemaCopySinkAndAXCoordinates() throws {
+        let (gallery, root) = try gallery()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let item = gallery.item("paste-not-inserted")
+        XCTAssertTrue(item.voice.copyTranscript(UIE2EStateGallery.transcript))
+        XCTAssertEqual(item.effects.clipboardWrites, 1)
+        XCTAssertEqual(item.effects.clipboard, UIE2EStateGallery.transcript)
+        gallery.observe(reason: "before")
+        func receipt() throws -> [String: Any] {
+            try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("gallery.json"))) as? [String: Any])
+        }
+        let before = try receipt()
+        gallery.observe(reason: "read-current")
+        let after = try receipt()
+        XCTAssertEqual(after["scenario"] as? String, "focused-338")
+        XCTAssertEqual(after["observationGeneration"] as? Int, (before["observationGeneration"] as? Int).map { $0 + 1 })
+        XCTAssertEqual(after["copyStateID"] as? String, "paste-not-inserted")
+        XCTAssertEqual(after["copyControlLabel"] as? String, "Copy last dictation")
+        let states = try XCTUnwrap(after["states"] as? [[String: Any]])
+        XCTAssertEqual(states.count, 11)
+        XCTAssertEqual(states.first?["confirmation"] as? String, item.renderedVoice.confirmationText)
+        XCTAssertEqual(Self.axTestFrame, UIE2EStateGallery.axFrame(CGRect(x: -100, y: 100, width: 300, height: 50), primaryTop: 1080))
+    }
     private static let axTestFrame = CGRect(x: -100, y: 930, width: 300, height: 50)
 
+    func testGalleryPanelsUseNonmodalWindowAXWithoutChangingFramesOrFamilyRole() throws {
+        XCTAssertTrue(VLOffscreenPolicyInstalled(), "Gallery panels must remain offscreen in this test")
+        let (gallery, root) = try gallery()
+        let controls = NSWindow(contentRect: CGRect(x: -20_000, y: -20_000, width: 1000, height: 96),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        controls.isReleasedWhenClosed = false
+        let familyBaseline = FloatingPillPanel(content: NSView(frame: CGRect(x: 0, y: 0, width: 80, height: 30)))
+        let familyRole = familyBaseline.accessibilityRole()
+        let familySubrole = familyBaseline.accessibilitySubrole()
+        defer {
+            gallery.hide(); controls.close(); familyBaseline.close()
+            try? FileManager.default.removeItem(at: root)
+        }
 
+        gallery.prepare(controls: controls, metrics: desktopMetrics)
+        XCTAssertEqual(gallery.panels.count, gallery.items.count)
+        let frames = gallery.panels.map(\.frame)
+        let contentFrames = gallery.panels.map { $0.contentView?.frame ?? .zero }
+        let styles = gallery.panels.map(\.styleMask)
+        let controlsFrameAfterPrepare = controls.contentView?.frame ?? .zero
+        for panel in gallery.panels {
+            XCTAssertEqual(panel.accessibilityRole(), NSAccessibility.Role.window)
+            XCTAssertEqual(panel.accessibilitySubrole(), NSAccessibility.Subrole.standardWindow,
+                "A gallery fixture is a nonmodal window, not an interrupting dialog")
+        }
+        XCTAssertTrue(styles.allSatisfy { $0.contains(.borderless) && $0.contains(.nonactivatingPanel) })
+
+        gallery.observe(reason: "nonmodal-ax")
+        XCTAssertEqual(gallery.panels.map(\.frame), frames)
+        XCTAssertEqual(gallery.panels.map { $0.contentView?.frame ?? .zero }, contentFrames)
+        XCTAssertEqual(gallery.panels.map(\.styleMask), styles)
+        XCTAssertEqual(controls.contentView?.frame, controlsFrameAfterPrepare)
+
+        gallery.selectFamily("terminal")
+        let productionFamily = try XCTUnwrap(gallery.familyPanel)
+        XCTAssertEqual(productionFamily.accessibilityRole(), familyRole)
+        XCTAssertEqual(productionFamily.accessibilitySubrole(), familySubrole,
+            "The real FloatingPillPanel must keep its production AX role and subrole")
+    }
+
+    func testProductionLayoutAndMeasuredPagePackingDoNotOverlapOrClip() throws {
+        let (gallery, root) = try gallery()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let metrics = VoiceBarNotchScreenMetrics(frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1080), safeAreaTop: 37,
+            auxiliaryTopLeftArea: CGRect(x: 0, y: 1080, width: 760, height: 37),
+            auxiliaryTopRightArea: CGRect(x: 968, y: 1080, width: 760, height: 37))
+        let geometry = VoiceBarNotchScreenGeometry.resolve(metrics: metrics)
+        for item in gallery.items {
+            let layout = UIE2EStateGallery.layout(for: item.voice, screenGeometry: geometry)
+            XCTAssertEqual(layout.presentation.geometry.coreWidth, geometry.housingFrame.width)
+            XCTAssertEqual(layout.presentation.visibleCoreOcclusionInset, geometry.visibleCoreOcclusionInset)
+            XCTAssertEqual(layout.windowFrame(anchoredTo: geometry).size, layout.panelSize)
+        }
+        let area = UIE2EStateGallery.captureArea(for: metrics)
+        XCTAssertLessThanOrEqual(area.maxY, metrics.frame.maxY - 150,
+            "Only gallery placement reserves the OS notification band")
+        XCTAssertGreaterThanOrEqual(area.minY, metrics.visibleFrame.minY + 140)
+        let sizes = gallery.items.map { item -> CGSize in
+            let size = UIE2EHost.panelLayout(for: item.renderedVoice).panelSize
+            guard item.spec.hasCard else { return size }
+            let card = NSHostingView(rootView: DictationCard(
+                entry: .init(text: item.voice.latestReusableTranscript, createdAt: Date()),
+                insertionStatus: item.voice.latestDictationInsertionStatus, onCopy: { _ in false })
+                .padding(10).frame(width: size.width))
+            XCTAssertGreaterThan(card.fittingSize.height, 0)
+            return CGSize(width: size.width, height: size.height + card.fittingSize.height)
+        }
+        let pages = UIE2EStateGallery.pack(sizes: sizes, in: area)
+        XCTAssertEqual(pages.count, 2)
+        XCTAssertEqual(pages.flatMap { $0 }.map { $0.index }.sorted(), Array(sizes.indices))
+        for page in pages {
+            for (offset, placement) in page.enumerated() {
+                XCTAssertEqual(placement.frame.size, sizes[placement.index])
+                XCTAssertTrue(area.contains(placement.frame))
+                for other in page.dropFirst(offset + 1) { XCTAssertFalse(placement.frame.intersects(other.frame)) }
+            }
+        }
+    }
 }
 #endif

@@ -247,12 +247,245 @@ final class UIE2EStateGallery {
         return pages
     }
 
-    private func rebuildVisiblePanels() {}
-    func selectPage(_ index: Int) { page = index; observe(reason: "page") }
+    func show() {
+        guard let screen = NSScreen.main else { return }
+        controls = NSWindow(contentRect: CGRect(x: screen.visibleFrame.minX + 20, y: screen.visibleFrame.minY + 10,
+            width: min(1000, screen.visibleFrame.width - 40), height: 96),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        controls?.title = "VoiceBar QA Settings"
+        prepare(controls: controls!, metrics: .init(frame: screen.frame, visibleFrame: screen.visibleFrame,
+            safeAreaTop: screen.safeAreaInsets.top, auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+            auxiliaryTopRightArea: screen.auxiliaryTopRightArea))
+        controls?.makeKeyAndOrderFront(nil)
+        pinTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(700))
+                guard !Task.isCancelled, let self else { return }
+                self.refreshPinnedStates()
+            }
+        }
+        observe(reason: "launch")
+    }
+
+    /// Also permits isolated offscreen hosting without starting the QA app or its pin loop.
+    func prepare(controls: NSWindow, metrics: VoiceBarNotchScreenMetrics) {
+        self.controls = controls
+        screenMetrics = metrics
+        screenGeometry = .resolve(metrics: metrics)
+        rebuildVisiblePanels()
+    }
+
+    func hide() {
+        pinTask?.cancel(); pinTask = nil
+        panels.forEach { $0.orderOut(nil) }
+        familyPanel?.orderOut(nil)
+        controls?.orderOut(nil)
+    }
+
+    static func captureArea(for metrics: VoiceBarNotchScreenMetrics) -> CGRect {
+        let area = metrics.visibleFrame.insetBy(dx: 20, dy: 20)
+        let top = min(area.maxY, metrics.frame.maxY - 150)
+        let bottom = area.minY + 120
+        precondition(top > bottom, "QA display too small for gallery capture area; use a larger display")
+        return CGRect(x: area.minX, y: bottom, width: area.width, height: top - bottom)
+    }
+
+    private func bar(for item: Item, geometry: VoiceBarNotchScreenGeometry? = nil) -> PillHostingView<AnyView> {
+        let presentationModel: VoiceBarNotchPresentationModel? = geometry.map {
+            let model = VoiceBarNotchPresentationModel()
+            Self.update(model, state: item.renderedVoice, base: UIE2EHost.panelLayout(for: item.renderedVoice).presentation, geometry: $0)
+            return model
+        }
+        let view = PillHostingView(rootView: AnyView(BarView(state: item.renderedVoice,
+            commandRouter: VoiceBarCommandRouter(voiceState: item.renderedVoice), onOpenSettings: {}, onOpenHistory: {},
+            presentationModel: presentationModel, includesPanelOutsets: true)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("qa-gallery-bar-\(item.spec.id)")))
+        let layout = geometry.map { Self.layout(for: item.renderedVoice, screenGeometry: $0) } ?? UIE2EHost.panelLayout(for: item.renderedVoice)
+        view.activeHitTestProvider = { layout.containsInteractiveContent($0) }
+        view.renderedSurfaceHitTestProvider = { layout.containsVisibleSurface($0) }
+        view.hoverExpansionHitTestProvider = { layout.containsHoverExpansion($0) }
+        view.hoverRetentionHitTestProvider = { layout.containsHoverRetention($0) }
+        view.frame = CGRect(origin: .zero, size: layout.panelSize)
+        return view
+    }
+
+    private func rebuildVisiblePanels() {
+        guard let screenMetrics, controls != nil else { return }
+        panels.forEach { $0.orderOut(nil) }; panels.removeAll()
+        for item in items {
+            let bar = bar(for: item)
+            let content = NSView(frame: bar.frame)
+            var cardHeight: CGFloat = 0
+            if item.spec.hasCard {
+                let card = NSHostingView(rootView: DictationCard(
+                    entry: .init(text: item.voice.latestReusableTranscript, createdAt: Date(timeIntervalSince1970: 1_790_000_000)),
+                    insertionStatus: item.voice.latestDictationInsertionStatus,
+                    onCopy: { self.copyFromCard(item, text: $0) })
+                    .padding(10).frame(width: bar.frame.width)
+                    .accessibilityIdentifier(item.spec.id == "paste-not-inserted" ? "qa-gallery-copy" : "qa-gallery-card-\(item.spec.id)"))
+                cardHeight = card.fittingSize.height
+                card.frame = CGRect(x: 0, y: bar.frame.height, width: bar.frame.width, height: cardHeight)
+                content.addSubview(card)
+            }
+            content.addSubview(bar)
+            content.setFrameSize(CGSize(width: bar.frame.width, height: bar.frame.height + cardHeight))
+            let panel = NSPanel(contentRect: content.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            // XCTest otherwise sees these ordinary fixture surfaces as modal AX dialogs and
+            // raises interruption alerts while the real notch family panel remains visible.
+            panel.setAccessibilityRole(.window)
+            panel.setAccessibilitySubrole(.standardWindow)
+            panel.title = "VoiceBar QA Gallery \(item.spec.id)"
+            panel.contentView = content; panel.isReleasedWhenClosed = false
+            panel.level = .floating
+            panels.append(panel)
+            if item.renderedVoice.onPanelLayoutChange == nil {
+                item.renderedVoice.onPanelLayoutChange = { [weak self] in
+                    // Bind once per model, including its later production expiry callback.
+                    // Defer because a layout notification may arrive mid-transition.
+                    DispatchQueue.main.async { [weak self] in self?.rebuildVisiblePanels() }
+                }
+            }
+        }
+        let captureArea = Self.captureArea(for: screenMetrics)
+        let measured = panels.map { $0.frame.size }
+        if pages.isEmpty {
+            measuredSlots = measured
+            pages = Self.pack(sizes: measuredSlots, in: captureArea)
+        } else {
+            // The first production measurements define both page membership and controls.
+            // Expiry may shrink surfaces, but must never repack or recreate their controls.
+            precondition(zip(measuredSlots, measured).allSatisfy {
+                $1.width <= $0.width && $1.height <= $0.height
+            }, "QA view exceeds its reserved gallery slot; use a larger display")
+        }
+        page = min(page, pages.count - 1)
+        if familyID == nil {
+            for placement in pages[page] {
+                let panel = panels[placement.index]
+                Self.place(panel, in: placement.frame); panel.orderFront(nil)
+            }
+        }
+        updateFamilyPanel()
+        installControlsIfNeeded()
+    }
+
+    private func installControlsIfNeeded() {
+        guard controlsHost == nil else { return }
+        let pageIndices = Array(pages.indices)
+        let host = NSHostingView(rootView: AnyView(VStack {
+            HStack {
+                ForEach(pageIndices, id: \.self) { [weak self] index in
+                    Button("Page \(index + 1)") { [weak self] in self?.selectPage(index) }.accessibilityIdentifier("qa-gallery-page-\(index)")
+                }
+                Button("Start all clocks") { [weak self] in self?.startClocks() }.accessibilityIdentifier("qa-gallery-start-clocks")
+                Button("End sessions") { [weak self] in self?.endSessions() }.accessibilityIdentifier("qa-gallery-end-sessions")
+                Button("Observe") { [weak self] in self?.observe(reason: "read-current") }.accessibilityIdentifier("qa-gallery-observe")
+            }
+            HStack {
+                ForEach(["paste-feedback", "terminal", "busy", "selection-error"], id: \.self) { [weak self] family in
+                    Button(family) { [weak self] in self?.selectFamily(family) }.accessibilityIdentifier("qa-gallery-family-\(family)")
+                }
+            }
+        }.padding(8)))
+        controlsHost = host
+        controls?.contentView = host
+    }
+    private static func place(_ panel: NSPanel, in slot: CGRect) {
+        panel.setFrameOrigin(CGPoint(x: slot.minX, y: slot.maxY - panel.frame.height))
+    }
+    func selectPage(_ index: Int) {
+        page = index; familyID = nil; familyPanel?.orderOut(nil)
+        panels.forEach { $0.orderOut(nil) }
+        for placement in pages.indices.contains(page) ? pages[page] : [] {
+            Self.place(panels[placement.index], in: placement.frame)
+            panels[placement.index].orderFront(nil)
+        }
+        observe(reason: "page")
+    }
+    func selectFamily(_ family: String) {
+        familyID = items.first { $0.spec.family == family }?.spec.id
+        panels.forEach { $0.orderOut(nil) }
+        updateFamilyPanel(); observe(reason: "family")
+    }
+    private func updateFamilyPanel() {
+        familyPanel?.orderOut(nil)
+        guard let familyID, let geometry = screenGeometry else { return }
+        let item = item(familyID)
+        let layout = Self.layout(for: item.renderedVoice, screenGeometry: geometry)
+        let panel = FloatingPillPanel(content: bar(for: item, geometry: geometry))
+        panel.title = "VoiceBar QA Pill"
+        panel.setFrame(layout.windowFrame(anchoredTo: geometry), display: true)
+        panel.orderFront(nil); familyPanel = panel
+    }
+
+    /// This is the real DictationCard action. Only an explicit native button click writes
+    /// the clipboard; automatic delivery and offscreen tests retain the synthetic sinks.
+    private func copyFromCard(_ item: Item, text: String) -> Bool {
+        let writer = item.voice.pasteboardWriter, reader = item.voice.pasteboardStringProvider
+        defer { item.voice.pasteboardWriter = writer; item.voice.pasteboardStringProvider = reader }
+        item.voice.pasteboardWriter = { text in
+            item.effects.clipboardWrites += 1
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+        item.voice.pasteboardStringProvider = { NSPasteboard.general.string(forType: .string) }
+        let result = item.voice.copyTranscript(text)
+        observe(reason: "copy")
+        return result
+    }
+
+    /// AppKit global coordinates -> primary-display-top-left accessibility coordinates.
+    static func axFrame(_ frame: CGRect, primaryTop: CGFloat) -> CGRect {
+        CGRect(x: frame.minX, y: primaryTop - frame.maxY, width: frame.width, height: frame.height)
+    }
+
     func observe(reason: String) {
         observationGeneration += 1
-        sandbox.writeObject(["scenario": "focused-338", "reason": reason,
-            "observationGeneration": observationGeneration, "clockGeneration": clockGeneration], file: "gallery.json")
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
+        let observations: [[String: Any]] = items.enumerated().map { index, item in
+            ["id": item.spec.id, "family": item.spec.family, "expectedText": item.spec.expectedText,
+             "mode": item.renderedVoice.mode.rawValue, "note": item.actualNote as Any? ?? NSNull(),
+             "confirmation": item.renderedVoice.confirmationText as Any? ?? NSNull(),
+             "showsBusy": item.renderedVoice.showsSelectionBusyNote, "captureLive": item.voice.captureLive,
+             "expirySeconds": item.spec.expiry, "clockGeneration": item.clockGeneration,
+             "clockOrigin": item.clockOrigin?.timeIntervalSince1970 as Any? ?? NSNull(),
+             "renderer": "production BarView", "fontSize": 12, "fontWeight": "medium",
+             "fontSource": "a3dbd792 BarView.compactStatusLabel; recheck after product font changes",
+             "cardFont": item.spec.hasCard ? "default body (not 12 medium)" : "none",
+             "frame": panels.indices.contains(index) ? NSStringFromRect(panels[index].frame) : "not-mounted",
+             "axFrame": panels.indices.contains(index) ? NSStringFromRect(Self.axFrame(panels[index].frame, primaryTop: primaryTop)) : "not-mounted",
+             "commandCount": item.effects.commands.count, "selectionCaptures": item.effects.selectionCaptures,
+             "typedCount": item.effects.typed.count, "clipboardWrites": item.effects.clipboardWrites,
+             "pasteShortcuts": item.effects.pasteShortcuts,
+             "effects": ["commands": item.effects.commands, "commandCount": item.effects.commands.count,
+                "selectionCaptures": item.effects.selectionCaptures, "typedCount": item.effects.typed.count,
+                "clipboardWrites": item.effects.clipboardWrites, "pasteShortcuts": item.effects.pasteShortcuts,
+                "captureLive": item.voice.captureLive]]
+        }
+        let familyLayout = familyID.flatMap { id in screenGeometry.map { Self.layout(for: item(id).renderedVoice, screenGeometry: $0) } }
+        sandbox.writeObject(["scenario": "focused-338", "page": page, "currentPage": page, "pageCount": pages.count,
+            "states": observations, "reason": reason, "observationGeneration": observationGeneration,
+            "sessionEndBefore": sessionEndBefore, "sessionEndBeforeModes": sessionEndModes,
+            "sessionEndGeneration": sessionEndGeneration,
+            "pages": pages.enumerated().map { ["index": $0.offset, "states": $0.element.map { items[$0.index].spec.id }] },
+            "pinned": isPinned, "lifetime": isPinned ? "synthetic fixture hold" : "production timers",
+            "clockGeneration": clockGeneration, "clockOrigin": clockOrigin?.timeIntervalSince1970 as Any? ?? NSNull(),
+            "clockStartedAt": clockOrigin?.timeIntervalSince1970 as Any? ?? NSNull(),
+            "observedAt": Date().timeIntervalSince1970, "familyState": familyID as Any? ?? NSNull(),
+            "familyStateID": familyID as Any? ?? NSNull(),
+            "activeFamily": familyID.map { item($0).spec.family } as Any? ?? NSNull(),
+            "familyFrame": familyID == nil ? "not-mounted" : familyPanel.map { NSStringFromRect($0.frame) } ?? "not-mounted",
+            "familyAXFrame": familyID == nil ? "not-mounted" : familyPanel.map { NSStringFromRect(Self.axFrame($0.frame, primaryTop: primaryTop)) } ?? "not-mounted",
+            "familyExpectedFrame": familyLayout.flatMap { layout in screenGeometry.map { NSStringFromRect(layout.windowFrame(anchoredTo: $0)) } } as Any? ?? NSNull(),
+            "hardwareCoreFrame": screenGeometry.map { NSStringFromRect($0.housingFrame) } as Any? ?? NSNull(),
+            "visibleCoreOcclusionInset": screenGeometry.map { Double($0.visibleCoreOcclusionInset) } as Any? ?? NSNull(),
+            "screenKind": screenGeometry.map { String(describing: $0.kind) } ?? "not-observed",
+            "screenAXBounds": screenGeometry.map { NSStringFromRect(Self.axFrame($0.screenFrame, primaryTop: primaryTop)) } ?? "not-observed",
+            "copyStateID": "paste-not-inserted", "copyControlLabel": "Copy last dictation", "copyExpectedText": Self.transcript,
+            "noAudio": true, "dependencies": "synthetic transport/capture/typing/activation; no AppDelegate, sockets or hardware; clipboard only on explicit Copy",
+            "visualTextProven": false,
+            "copyControl": "DictationCard Copy last dictation; qa-gallery-copy scopes the representative card"], file: "gallery.json")
     }
 }
 #endif
