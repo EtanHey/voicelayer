@@ -50,6 +50,16 @@ final class UIE2EHost: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        // The minimal AppKit host needs standard Edit commands too. Without this,
+        // Cmd-A was a no-op and Dictionary rename/search silently appended text.
+        let main = NSMenu(), editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        // AppKit reserves the first menu for application commands.
+        let applicationItem = NSMenuItem()
+        applicationItem.submenu = NSMenu(title: "VoiceBar QA")
+        main.addItem(applicationItem)
+        editItem.submenu = edit; main.addItem(editItem); NSApp.mainMenu = main
         settings = NSWindow(contentRect: NSRect(x: 80, y: 180, width: 820, height: 700),
                             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         settings.title = "VoiceBar QA Settings"

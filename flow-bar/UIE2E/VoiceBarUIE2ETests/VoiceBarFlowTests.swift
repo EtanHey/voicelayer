@@ -566,7 +566,6 @@ extension VoiceBarFlowTests {
         }
         return windowCandidates.count == 1 ? windowCandidates[0] : nil
     }
-
     func dictionarySheetControl(_ role: XCUIElement.ElementType, label: String) -> XCUIElement {
         guard let sheet = dictionaryEditSheet() else {
             XCTFail("Expected exactly one open Dictionary edit sheet for control \(label)")
@@ -575,7 +574,6 @@ extension VoiceBarFlowTests {
         return sheet.descendants(matching: role)
             .matching(NSPredicate(format: "label == %@", label)).firstMatch
     }
-
     func waitForDictionarySheetStable(action: String) -> Bool {
         var becameStable = false
         step("wait for Dictionary sheet to settle before \(action)") {
@@ -605,7 +603,6 @@ extension VoiceBarFlowTests {
         }
         return becameStable
     }
-
     func clickDictionarySheetButton(_ label: String) -> Bool {
         guard waitForDictionarySheetStable(action: label) else { return false }
         guard click(dictionarySheetControl(.button, label: label), "Dictionary sheet \(label)",
@@ -619,13 +616,81 @@ extension VoiceBarFlowTests {
         }
         return dismissed
     }
-
     func assertTerm(_ canonical: String, variants: [String]?, exists: Bool = true) {
         step("assert persisted dictionary \(canonical)") {
             let entry = dictionaryEntries().first { $0["canonical"] as? String == canonical }
             XCTAssertEqual(entry != nil, exists)
             if let variants { XCTAssertEqual(entry?["variants"] as? [String], variants) }
         }
+    }    func dictionaryFlow() {
+        walk("Dictionary")
+        // The initial row's controls are part of the inventory too.
+        click(app.buttons["Edit term QA initial"])
+        guard waitForDictionarySheetStable(action: "edit initial Dictionary term") else { return }
+        replace(dictionarySheetControl(.textField, label: "Correct spelling"), "QA initial")
+        replace(dictionarySheetControl(.textField, label: "Misheard as"), "qa kept variant")
+        click(dictionarySheetControl(.button, label: "Remove misheard spelling initial variant"),
+            "remove initial misheard spelling", revealPolicy: .explicitlyScoped)
+        clickDictionarySheetButton("Save")
+        assertTerm("QA initial", variants: ["qa kept variant"])
+        click(app.buttons["Edit term QA initial"])
+        clickDictionarySheetButton("Cancel")
+        assertTerm("QA initial", variants: ["qa kept variant"])
+        click(app.buttons["Delete term QA initial"])
+        click(app.windows["VoiceBar QA Settings"].buttons["Cancel"], "cancel inline dictionary delete")
+        click(app.buttons["Add term"])
+        guard waitForDictionarySheetStable(action: "enter new term") else { return }
+        replace(dictionarySheetControl(.textField, label: "Correct spelling"), "QA new term")
+        replace(dictionarySheetControl(.textField, label: "Misheard as"), "qa misheard")
+        click(dictionarySheetControl(.button, label: "Swap correct and misheard text"))
+        click(dictionarySheetControl(.button, label: "Swap correct and misheard text"))
+        clickDictionarySheetButton("Add")
+        assertTerm("QA new term", variants: ["qa misheard"])
+        assertCopy("Copy term QA new term", equals: "QA new term")
+        click(app.buttons["Edit term QA new term"])
+        guard waitForDictionarySheetStable(action: "edit QA new term") else { return }
+        replace(dictionarySheetControl(.textField, label: "Misheard as"), "qa second variant")
+        clickDictionarySheetButton("Save")
+        assertTerm("QA new term", variants: ["qa misheard", "qa second variant"])
+        click(app.buttons["Edit term QA new term"])
+        guard waitForDictionarySheetStable(action: "edit QA new term for cancelled rename") else { return }
+        replace(dictionarySheetControl(.textField, label: "Correct spelling"), "QA cancelled rename")
+        clickDictionarySheetButton("Cancel")
+        assertTerm("QA new term", variants: ["qa misheard", "qa second variant"])
+        click(app.buttons["Edit term QA new term"])
+        guard waitForDictionarySheetStable(action: "rename QA new term") else { return }
+        replace(dictionarySheetControl(.textField, label: "Correct spelling"), "QA renamed term")
+        clickDictionarySheetButton("Save")
+        assertTerm("QA renamed term", variants: ["qa misheard", "qa second variant"])
+        assertTerm("QA new term", variants: nil, exists: false)
+        click(app.buttons["Edit term QA renamed term"])
+        guard waitForDictionarySheetStable(action: "remove a misheard spelling") else { return }
+        click(dictionarySheetControl(.button, label: "Remove misheard spelling qa misheard"))
+        clickDictionarySheetButton("Save")
+        assertTerm("QA renamed term", variants: ["qa second variant"])
+        let search = app.textFields["Search terms and variants"]
+        replace(search, "second variant")
+        step("search matches variant and filters unrelated term") {
+            XCTAssertTrue(app.buttons["Edit term QA renamed term"].exists)
+            XCTAssertFalse(app.buttons["Edit term QA initial"].exists)
+        }
+        replace(search, "TypeScript")
+        // A filtered included section may expand automatically; explicitly open it otherwise.
+        let included = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Included terms'")).firstMatch
+        if included.exists && (included.value as? String) != "Expanded" { click(included) }
+        assertCopy("Copy term TypeScript", equals: "TypeScript")
+        replace(search, "")
+        assertCopy("Copy term QA initial", equals: "QA initial")
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Your terms'")).firstMatch)
+        click(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Your terms'")).firstMatch)
+        click(app.windows["VoiceBar QA Settings"].buttons["Delete term QA renamed term"])
+        click(app.windows["VoiceBar QA Settings"].buttons["Cancel"], "cancel renamed-term inline delete")
+        assertTerm("QA renamed term", variants: ["qa second variant"])
+        click(app.windows["VoiceBar QA Settings"].buttons["Delete term QA renamed term"])
+        click(app.windows["VoiceBar QA Settings"].buttons["Delete?"])
+        assertTerm("QA renamed term", variants: nil, exists: false)
+        click(app.buttons["Add term"])
+        clickDictionarySheetButton("Cancel")
     }
     func dictionaryFlow() {
         walk("Dictionary")
@@ -697,6 +762,7 @@ extension VoiceBarFlowTests {
         click(app.buttons["Add term"])
         clickDictionarySheetButton("Cancel")
     }
+
     func speechFlow() {
         walk("Speech")
         for (index, kind) in ["short", "long"].enumerated() {

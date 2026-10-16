@@ -152,6 +152,13 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
     }
 
 
+    func testFeedbackMatchesNativeStaticTextValueWithoutReadingNumericControlValues() {
+        let predicate = UIE2EAXText.predicate("Pasted", staticTextRole: 48)
+        XCTAssertTrue(predicate.evaluate(with: ["label": "", "value": "Pasted", "elementType": 48]))
+        XCTAssertTrue(predicate.evaluate(with: ["label": "Pasted", "value": 1, "elementType": 9]))
+        XCTAssertFalse(predicate.evaluate(with: ["label": "", "value": 1, "elementType": 9]))
+        XCTAssertFalse(predicate.evaluate(with: ["label": "", "value": "Pasted", "elementType": 9]))
+    }
 
     func testSelectableTextViewValueMatchesFullPayloadWithoutLabel() {
         let payload = "QA terminal transcript שלום 👋"
@@ -163,7 +170,21 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         XCTAssertFalse(predicate.evaluate(with: ["label": "", "value": payload, "elementType": 9]))
     }
 
+    func testRadioScopeSelectionAcceptsTheNativeNumericAXValue() {
+        XCTAssertTrue(UIE2EAXSelection.isSelected(flag: false, value: NSNumber(value: 1)))
+        XCTAssertFalse(UIE2EAXSelection.isSelected(flag: false, value: NSNumber(value: 0)))
+        XCTAssertTrue(UIE2EAXSelection.isSelected(flag: false, value: "1"))
+        XCTAssertTrue(UIE2EAXSelection.isSelected(flag: true, value: nil))
+        XCTAssertFalse(UIE2EAXSelection.isSelected(flag: false, value: nil))
+    }
 
+    func testStableScrollInMiddleCannotProveAnEdge() {
+        XCTAssertFalse(UIE2EScrollEdge.reached(0.5, direction: -1))
+        XCTAssertFalse(UIE2EScrollEdge.reached(0, direction: -1))
+        XCTAssertTrue(UIE2EScrollEdge.reached(1, direction: -1))
+        XCTAssertTrue(UIE2EScrollEdge.reached(0, direction: 1))
+        XCTAssertFalse(UIE2EScrollEdge.reached(.nan, direction: 1))
+    }
 
     func testGeometryDetectsReplayRestartShiftAndRowResize() {
         let baseline = UIE2EControlGeometry(replay: CGRect(x: 100, y: 20, width: 20, height: 20),
