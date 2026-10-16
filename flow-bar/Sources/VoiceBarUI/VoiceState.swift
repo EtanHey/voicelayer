@@ -932,10 +932,10 @@ public final class VoiceState {
                 switch result.outcome {
                 case .secureField: showConfirmation("Can't read a secure field")
                 case .clipboardRestoreFailed: showConfirmation("Couldn't restore the clipboard")
-                case .clipboardChanged: showConfirmation("Clipboard changed. Select the text and try again")
-                case .copyTimedOut: showConfirmation("Copy timed out. Select text and try again")
-                case .copyEmpty: showConfirmation("Copy returned no text. Select text and try again")
-                case .copyFailed: showConfirmation("Couldn't copy. Check Accessibility and try again")
+                case .clipboardChanged: showConfirmation(SelectionErrorFeedback.clipboardChanged)
+                case .copyTimedOut: showConfirmation(SelectionErrorFeedback.copyTimedOut)
+                case .copyEmpty: showConfirmation(SelectionErrorFeedback.copyEmpty)
+                case .copyFailed: showConfirmation(SelectionErrorFeedback.copyFailed)
                 case .captureFailed: showConfirmation("Couldn't read the selection, try again")
                 case .completed: showConfirmation("No text selected")
                 }

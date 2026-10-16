@@ -805,16 +805,12 @@ public struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        compactStatusLabel(statusText, lineLimit:
-            state.mode == .idle && PasteRecoveryFeedback.contains(state.confirmationText) ? 2 : 1)
+        compactStatusLabel(statusText, confirmationText: state.confirmationText)
     }
 
-    private func compactStatusLabel(_ text: String, lineLimit: Int = 1) -> some View {
-        Text(text)
-            .font(.system(size: 12, weight: .medium))
+    private func compactStatusLabel(_ text: String, confirmationText: String? = nil) -> some View {
+        CompactStatusLabel(text: text, mode: state.mode, confirmationText: confirmationText)
             .foregroundStyle(notchPrimaryLabelColor)
-            .lineLimit(lineLimit)
-            .truncationMode(.tail)
             .layoutPriority(1)
             .transaction { transaction in
                 transaction.animation = nil
@@ -980,5 +976,19 @@ public struct BarView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
         .help(accessibilityLabel)
+    }
+}
+
+/// Shared renderer lets offscreen tests measure the same line limit as the pill.
+struct CompactStatusLabel: View {
+    let text: String
+    let mode: VoiceMode
+    let confirmationText: String?
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium))
+            .lineLimit(mode == .idle && TwoLineStatusFeedback.contains(confirmationText) ? 2 : 1)
+            .truncationMode(.tail)
     }
 }

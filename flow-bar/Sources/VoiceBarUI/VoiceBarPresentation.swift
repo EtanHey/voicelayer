@@ -13,6 +13,25 @@ enum PasteRecoveryFeedback {
     }
 }
 
+enum SelectionErrorFeedback {
+    static let clipboardChanged = "Clipboard\nchanged"
+    static let copyTimedOut = "Copy timed\nout; retry"
+    static let copyEmpty = "No text\nReselect"
+    static let copyFailed = "Check app\naccess"
+
+    static func contains(_ text: String?) -> Bool {
+        guard let text else { return false }
+        return [clipboardChanged, copyTimedOut, copyEmpty, copyFailed].contains(text)
+    }
+}
+
+/// Only these short notices opt into two lines; transcript previews keep their limit.
+enum TwoLineStatusFeedback {
+    static func contains(_ text: String?) -> Bool {
+        PasteRecoveryFeedback.contains(text) || SelectionErrorFeedback.contains(text)
+    }
+}
+
 public enum HotkeyPhase: Equatable {
     case idle
     case pressing
