@@ -5,6 +5,13 @@ import SwiftUI
 struct TeleprompterPlaybackScrubBar: View {
     let state: VoiceState
 
+    var timingNotice: String? {
+        let words = TeleprompterContentModel.words(text: state.statusText, wordBoundaries: state.wordBoundaries)
+        return state.isTeleprompterPlaybackReady && !words.contains {
+            TeleprompterSeekPolicy.offset(for: $0, isReadback: false) != nil
+        } ? "Word timing unavailable" : nil
+    }
+
     var control: SettingsPlaybackScrubBar {
         let interactive = state.isTeleprompterPlaybackReady
         return SettingsPlaybackScrubBar(
@@ -21,8 +28,8 @@ struct TeleprompterPlaybackScrubBar: View {
     var body: some View {
         VStack(spacing: 3) {
             control.disabled(!state.isTeleprompterPlaybackReady)
-            if state.isTeleprompterPlaybackReady && state.wordBoundaries.isEmpty {
-                Text("Cloned voice: no word timing")
+            if let timingNotice {
+                Text(timingNotice)
                     .font(.system(size: 10))
                     .foregroundStyle(Color(red: 154/255, green: 154/255, blue: 163/255))
             }

@@ -154,13 +154,24 @@ export interface WordBoundary {
   text: string;
 }
 
-/** Sent after TTS synthesis completes, before playback starts.
- *  Voice Bar uses these timestamps to drive karaoke word highlighting. */
-export interface SubtitleEvent {
-  type: "subtitle";
-  /** Word boundaries with exact timing from the TTS engine. */
-  words: WordBoundary[];
+/** Display-token identity is assigned before visual wrapping. Unknown timing
+ * stays explicitly null; neither row order nor array compaction is identity. */
+export interface AlignedWordBoundary {
+  word_index: number;
+  text: string;
+  /** Chunk-local playback milliseconds, already adjusted for the player rate. */
+  offset_ms: number | null;
+  duration_ms: number | null;
 }
+
+/** Legacy Edge events are unchanged. Nullable updates may arrive during playback.
+ * New events leave words empty so old apps safely render the chunk untimed.
+ * New apps prefer aligned_words, matching exact display text and word_index.
+ * The caller owns request/chunk/audio/rate freshness before publishing. */
+export type SubtitleEvent = { type: "subtitle" } & (
+  | { words: WordBoundary[]; aligned_words?: never }
+  | { words: []; aligned_words: AlignedWordBoundary[] }
+);
 
 export type PlaybackPriority =
   | "critical"
@@ -567,7 +578,9 @@ function normalizeSpeakingEnvelope(event: StateEvent): StateEvent {
 /** Serialize an event to NDJSON (JSON + newline). */
 export function serializeEvent(event: SocketEvent): string {
   const normalizedEvent =
-    event.type === "state" && event.state === "speaking"
+    event.type === "subtitle" && "aligned_words" in event
+      ? { ...event, words: [] as [] }
+      : event.type === "state" && event.state === "speaking"
       ? normalizeSpeakingEnvelope(event)
       : event;
   const payload = serializeJsonEvent(normalizedEvent);

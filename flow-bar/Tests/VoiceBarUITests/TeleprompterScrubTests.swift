@@ -308,8 +308,6 @@ final class TeleprompterScrubTests: XCTestCase {
     }
 
     private func words(for state: VoiceState) -> [TeleprompterWord] {
-        TeleprompterContentModel.words(text: state.statusText, wordBoundaries: state.wordBoundaries.map {
-            TeleprompterBoundary(offsetMs: $0.offsetMs, durationMs: $0.durationMs, text: $0.text)
-        })
+        TeleprompterContentModel.words(text: state.statusText, wordBoundaries: state.wordBoundaries)
     }
 }

@@ -56,6 +56,14 @@ async function started(prefix: string) {
 }
 function reaped(pid: number) { expect(() => process.kill(pid, 0)).toThrow(); }
 
+test("R2 PID readiness rejects empty and nonpositive or fractional readbacks", async () => {
+  for (const invalid of ["", "0", "-1", "1.5", "not-a-pid"]) {
+    const read = spyOn(fsPromises, "readFile").mockResolvedValueOnce(invalid).mockResolvedValueOnce(String(process.pid));
+    try { expect(await started("pid-readback-fixture")).toBe(process.pid); expect(read).toHaveBeenCalledTimes(2); }
+    finally { read.mockRestore(); }
+  }
+});
+
 test("decoder PID observation waits for the marker contents", async () => {
   const prefix = join(root, String(++serial));
   // writeFileSync creates/truncates the marker before writing the PID bytes.
