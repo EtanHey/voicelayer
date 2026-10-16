@@ -97,6 +97,7 @@ final class VoiceBarFlowTests: XCTestCase {
             XCTAssertEqual(app.state, .runningForeground)
         }
     }
+
     override func tearDownWithError() throws {
         // XCTest owns attachment storage, including when its signed runner is sandboxed.
         // Keep the final snapshot after termination and clipboard restoration assertions.
@@ -118,6 +119,7 @@ final class VoiceBarFlowTests: XCTestCase {
         }
         if !restored.isEmpty { XCTAssertTrue(NSPasteboard.general.writeObjects(restored)) }
     }
+
     func attachJSON(_ name: String, _ object: Any) {
         do {
             let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
@@ -235,6 +237,7 @@ final class VoiceBarFlowTests: XCTestCase {
         }
         return clicked
     }
+
     func replace(_ field: XCUIElement, _ value: String) {
         guard click(field, "focus \(field.label)") else { return }
         step("select field contents") { field.typeKey("a", modifierFlags: .command) }
@@ -247,6 +250,7 @@ final class VoiceBarFlowTests: XCTestCase {
             XCTAssertEqual(field.value as? String, value, "Text replacement must not append to an old value")
         }
     }
+
     func tab(_ name: String) {
         let sidebar = app.windows["VoiceBar QA Settings"].outlines["Sidebar"]
         click(sidebar.staticTexts[name], "open \(name) tab")
@@ -265,6 +269,7 @@ final class VoiceBarFlowTests: XCTestCase {
             activePage = name
         }
     }
+
     func scroll(_ direction: CGFloat, times: Int = 6) {
         for index in 1...times {
             step("scroll \(direction > 0 ? "up" : "down") \(index)") {
@@ -275,6 +280,7 @@ final class VoiceBarFlowTests: XCTestCase {
             }
         }
     }
+
     func assertCopy(_ label: String, equals expected: String? = nil, contains required: String? = nil,
                     target: XCUIElement? = nil, resolver: (() -> XCUIElement)? = nil) {
         NSPasteboard.general.clearContents()
@@ -287,18 +293,26 @@ final class VoiceBarFlowTests: XCTestCase {
             if let required { XCTAssertTrue(actual?.contains(required) == true, actual ?? "nil") }
         }
     }
+
     func testFullUIOnlyFlow() throws {
-        generalFlow()
-        transcriptionFlow()
-        dictionaryFlow()
-        speechFlow()
-        historyFlow()
-        pillFlow()
-        menuBarFlow()
-        contextMenuFlow()
+        guard scenario == "full" else { throw NSError(domain: "UIE2E full test selected in focused run", code: 1) }
+        // Dictionary's animated top-level edit sheet and inline delete confirmation
+        // have separate Cancel controls. Exercise both before the long tab sweeps.
+        for (name, run) in [("Dictionary", dictionaryFlow), ("History", historyFlow), ("Pill", pillFlow),
+            ("Popover", menuBarFlow), ("Context menu", contextMenuFlow), ("Notch", notchRegressionFlow),
+            ("General", generalFlow), ("Transcription", transcriptionFlow), ("Speech", speechFlow)] {
+            let before = testRun?.failureCount ?? 0
+            run()
+            step("verify completed surface \(name)") {
+                XCTAssertEqual(testRun?.failureCount ?? 0, before, "Surface did not complete successfully")
+                if (testRun?.failureCount ?? 0) == before { ledger.verifiedSurfaces.insert(name) }
+            }
+            if name == "Context menu", app.state == .notRunning { relaunchQA() }
+        }
         step("all observed non-audio Settings controls exercised") {
             let missing = observed.subtracting(exercised).sorted()
             XCTAssertTrue(missing.isEmpty, "Unexercised controls: \(missing.joined(separator: ", "))")
+            XCTAssertTrue(ledger.missingSurfaces.isEmpty, "Unverified surfaces: \(ledger.missingSurfaces.sorted())")
         }
         completed = true
     }
@@ -309,7 +323,6 @@ extension VoiceBarFlowTests {
         if let number = element.value as? NSNumber { return number.stringValue }
         return element.value as? String
     }
-
     func waitUntil(_ predicate: @escaping () -> Bool, timeout: TimeInterval = 3) {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in predicate() }, object: nil)], timeout: timeout), .completed)
@@ -329,7 +342,6 @@ extension VoiceBarFlowTests {
             XCTAssertTrue(NSScreen.screens.contains { $0.frame.intersects(window.frame) }, "QA window is off-screen")
         }
     }
-
     func controlKey(_ element: XCUIElement) -> String {
         let label = element.label
         let section = label.hasPrefix("Your terms") ? "Your terms" : label.hasPrefix("Included terms") ? "Included terms" : nil
@@ -396,7 +408,6 @@ extension VoiceBarFlowTests {
         return frames
     }
 
-
     func askControl(_ label: String, row: String) -> XCUIElement? {
         let payloads = askPayloadFrames()
         guard let payload = payloads[row] else { return nil }
@@ -406,7 +417,6 @@ extension VoiceBarFlowTests {
         return buttons[index]
     }
 
-
     func askControlRow(_ element: XCUIElement) -> String {
         let label = element.identifier.isEmpty ? element.label : element.identifier
         for row in ["qa-ask-response", "qa-ask-loaded-response"] {
@@ -415,7 +425,6 @@ extension VoiceBarFlowTests {
         XCTFail("Cannot resolve Ask control row; refusing a shared coverage identity")
         return "unresolved-ask-row"
     }
-
 
     func didActivate(label: String, type: XCUIElement.ElementType) {
         if type == .staticText, ["General", "Transcription", "Dictionary", "Speech", "History"].contains(label) { activePage = label }
@@ -475,6 +484,7 @@ extension VoiceBarFlowTests {
         scrollFully(-1)
         scrollFully(1)
     }
+
     func scrollFully(_ direction: CGFloat) {
         let area = app.windows["VoiceBar QA Settings"].scrollViews.allElementsBoundByIndex.last
         func position() -> Double? {
@@ -507,6 +517,7 @@ extension VoiceBarFlowTests {
         }
         step("assert full scroll reached edge") { XCTFail("Scroll did not stabilize within 16 actions") }
     }
+
     func receipt(_ expected: String) {
         step("assert intent \(expected)") {
             do {
@@ -563,6 +574,7 @@ extension VoiceBarFlowTests {
         // Exercise both disclosure states, keeping the form fully scrollable.
         click(app.buttons["Advanced"])
     }
+
     func transcriptionFlow() {
         walk("Transcription")
         let residency = app.buttons["models-residency-control"]
@@ -592,6 +604,7 @@ extension VoiceBarFlowTests {
         }
         assertCopy("Copy recognizer error", equals: "QA recognizer failure\nSecond line")
     }
+
     func wizardFlow() {
         let before = testRun?.failureCount ?? 0
         let window = app.windows["VoiceBar QA Setup"]
@@ -614,6 +627,9 @@ extension VoiceBarFlowTests {
         catch { XCTFail("Missing fixture dictionary: \(error)"); return [] }
     }
 
+    /// DictionaryAddSheetView is presented as a separate top-level sheet. Do not
+    /// resolve its Cancel/Save/Add controls from the whole application: the
+    /// Dictionary tab also has inline delete-confirmation Cancel/Delete? rows.
     func dictionaryEditSheet() -> XCUIElement? {
         let correctField = NSPredicate(format: "label == %@", "Correct spelling")
         let candidates = app.sheets.allElementsBoundByIndex.filter {
@@ -630,7 +646,6 @@ extension VoiceBarFlowTests {
         return windowCandidates.count == 1 ? windowCandidates[0] : nil
     }
 
-
     func dictionarySheetControl(_ role: XCUIElement.ElementType, label: String) -> XCUIElement {
         guard let sheet = dictionaryEditSheet() else {
             XCTFail("Expected exactly one open Dictionary edit sheet for control \(label)")
@@ -640,7 +655,7 @@ extension VoiceBarFlowTests {
             .matching(NSPredicate(format: "label == %@", label)).firstMatch
     }
 
-
+    @discardableResult
     func waitForDictionarySheetStable(action: String) -> Bool {
         var becameStable = false
         step("wait for Dictionary sheet to settle before \(action)") {
@@ -671,7 +686,7 @@ extension VoiceBarFlowTests {
         return becameStable
     }
 
-
+    @discardableResult
     func clickDictionarySheetButton(_ label: String) -> Bool {
         guard waitForDictionarySheetStable(action: label) else { return false }
         guard click(dictionarySheetControl(.button, label: label), "Dictionary sheet \(label)",
@@ -685,7 +700,6 @@ extension VoiceBarFlowTests {
         }
         return dismissed
     }
-
 
     func assertTerm(_ canonical: String, variants: [String]?, exists: Bool = true) {
         step("assert persisted dictionary \(canonical)") {
@@ -803,6 +817,7 @@ extension VoiceBarFlowTests {
         }
         speechCopyFlow()
     }
+
     func skipCapability(_ reason: String) {
         step(reason, skipped: reason) {}
         print("UIE2E SKIP: \(reason)")
@@ -1018,6 +1033,113 @@ extension VoiceBarFlowTests {
         click(app.buttons["qa-fixture-idle"])
     }
 
+    /// Silent production BarView/VoiceState probes. Missing/unsupported behavior
+    /// fails a required surface; it is never reported as exercised by a fixture click.
+    func notchRegressionFlow() {
+        geometryFlow()
+        func verify(_ name: String, expected issue: UIE2EKnownIssue? = nil, _ body: () -> Void) {
+            let before = testRun?.failureCount ?? 0
+            let surface = "notch:" + name
+            step("required notch flow \(name)", expected: issue, surface: surface, body)
+            guard (testRun?.failureCount ?? 0) == before else { return }
+            if let issue, let expected = steps.last?["expectedFailure"] as? [String: Any],
+               let descriptions = expected["descriptions"] as? [String] {
+                XCTAssertTrue(ledger.recordExpected(surface: surface, issue: issue, descriptions: descriptions))
+            } else {
+                ledger.verifiedSurfaces.insert(surface)
+            }
+        }
+        click(app.buttons["qa-fixture-speaking"])
+        verify("replay-playing") {
+            let replay = app.dialogs["VoiceBar QA Pill"].buttons["Replay"]
+            guard replay.waitForExistence(timeout: 3), replay.isHittable else { XCTFail("Replay not reachable in silent speaking fixture"); return }
+            let before = fixtureEvents().count
+            replay.click() // Only this marked QA fixture; sendCommand is an in-memory sink.
+            waitUntil { self.fixtureEvents().dropFirst(before).contains("command:replay") }
+        }
+        verify("seek-playing") {
+            let word = app.dialogs["VoiceBar QA Pill"].buttons["Second"]
+            guard word.waitForExistence(timeout: 3), word.isHittable else { XCTFail("Timed Second word is not seekable while playing"); return }
+            let before = fixtureEvents().count
+            word.click()
+            waitUntil { self.fixtureEvents().dropFirst(before).contains("command:seek") }
+            let object = try? JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("commands.json"))) as? [String: Any]
+            let messages = object?["messages"] as? [[String: Any]]
+            XCTAssertEqual(messages?.last?["offset_ms"] as? Int, 3000)
+        }
+        verify("list-newlines", expected: .listNewlines) {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            let first = pill.buttons["First"], second = pill.buttons["Second"]
+            guard first.exists, second.exists else { XCTFail("List words not rendered"); return }
+            XCTAssertGreaterThan(second.frame.minY, first.frame.maxY, "[P14b] A list newline must create a new visual line")
+        }
+        click(app.buttons["qa-fixture-readback"])
+        verify("seek-idle", expected: .seekIdle) {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            let content = pill.descendants(matching: .any).matching(UIE2EAXText.predicate("Second",
+                staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+            guard pill.exists, content.exists else { XCTFail("Idle readback fixture content is missing"); return }
+            let word = pill.buttons["Second"]
+            guard word.exists, word.isEnabled else { XCTFail("[SEEK2] Idle readback words are not actionable seek controls"); return }
+            guard word.isHittable else { XCTFail("Idle word exists but is unreachable in QA host"); return }
+            let before = fixtureEvents().count
+            word.click()
+            let received = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                self.fixtureEvents().dropFirst(before).contains("command:seek") }, object: nil)], timeout: 3)
+            XCTAssertEqual(received, .completed, "[SEEK2] Readback word did not dispatch seek")
+        }
+        click(app.buttons["qa-fixture-preparing"])
+        step("assert real Preparing state and visible playback shell before selection probe") {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            // Movie evidence shows a shell/timeline/controls, without word text.
+            // Model receipt establishes Preparing; visible controls establish reachability.
+            do {
+                let data = try Data(contentsOf: root.appendingPathComponent("preparing.json"))
+                let state = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                XCTAssertEqual(state?["mode"] as? String, "speaking")
+                XCTAssertEqual(state?["statusText"] as? String, "Preparing speech…")
+                XCTAssertEqual(state?["durationGrowing"] as? Bool, true)
+                XCTAssertEqual(state?["originalRequested"] as? Bool, true)
+            } catch { XCTFail("Missing actual Preparing state receipt: \(error)") }
+            XCTAssertTrue(pill.exists)
+            for label in ["Replay", "Hide teleprompter", "Stop speaking"] {
+                let control = pill.buttons[label]
+                XCTAssertTrue(control.exists && control.isHittable, "Preparing shell control missing: " + label)
+            }
+            attachJSON("UIE2E-PREPARING-PRESENTATION", ["AX": pill.debugDescription,
+                "scope": "Preparing model receipt plus visible shell controls; no word-text claim"])
+        }
+        let commandStart = fixtureEvents().count
+        click(app.buttons["qa-fixture-selection-replace"], "invoke real selection method with synthetic replacement")
+        verify("supersede-preparing", expected: .supersedePreparing) {
+            let received = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                self.fixtureEvents().dropFirst(commandStart).contains("command:speak_text") }, object: nil)], timeout: 3)
+            guard received == .completed else {
+                XCTFail("[SEL1] Preparing selection method stopped without submitting the replacement speak_text")
+                return
+            }
+            let object = try? JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("commands.json"))) as? [String: Any]
+            let messages = object?["messages"] as? [[String: Any]]
+            XCTAssertEqual(messages?.last?["text"] as? String, "QA replacement selection",
+                "[SEL1] Selection replacement payload must be exact")
+            let text = app.dialogs["VoiceBar QA Pill"].descendants(matching: .any).matching(UIE2EAXText.predicate("replacement",
+                staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+            XCTAssertTrue(text.exists || text.waitForExistence(timeout: 3), "[SEL1] Replacement text never reached the UI")
+        }
+        click(app.buttons["qa-fixture-idle"])
+        step("idle fixture clears the Preparing and readback presentation") {
+            waitUntil {
+                let pill = self.app.dialogs["VoiceBar QA Pill"]
+                let preparing = pill.descendants(matching: .any).matching(UIE2EAXText.predicate("Preparing speech…",
+                    staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+                return !preparing.exists && !pill.buttons["Stop speaking"].exists &&
+                    !pill.buttons["Dismiss teleprompter"].exists && !pill.staticTexts["Teleprompter hidden"].exists
+            }
+        }
+    }
+
+    /// Exact AX screen frames are attached per transition, including failures.
+    /// Row means the tight envelope of the three native control frames.
     func captureGeometry(_ name: String, speaking: Bool) -> UIE2EControlGeometry? {
         var geometry: UIE2EControlGeometry?
         step("GEO0 capture " + name) {
@@ -1056,7 +1178,6 @@ extension VoiceBarFlowTests {
         }
         return geometry
     }
-
 
     func geometryFlow() {
         click(app.buttons["qa-fixture-speaking"])
@@ -1139,7 +1260,7 @@ extension VoiceBarFlowTests {
         click(app.buttons["qa-fixture-idle"])
     }
 
-
+    @discardableResult
     func openContextMenu() -> Bool {
         var opened = false
         if app.menuItems["Settings…"].exists, app.menuItems["Settings…"].isHittable {
@@ -1172,7 +1293,6 @@ extension VoiceBarFlowTests {
             activePage = "General"; activeHistoryScope = "Dictations"; selectedHistoryRow = "qa-recording"
         }
     }
-
 
     func menuBarFlow() {
         defer {
@@ -1211,7 +1331,6 @@ extension VoiceBarFlowTests {
         }
         return opened
     }
-
 
     func contextMenuFlow() {
         defer {
@@ -1272,5 +1391,4 @@ extension VoiceBarFlowTests {
         }
         return opened
     }
-
 }
