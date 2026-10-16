@@ -782,6 +782,7 @@ export interface CaptureAdmission {
 interface PlaybackJob {
   id: string;
   lifecycle: PlaybackLifecycle;
+  alignments: Set<Promise<void>>;
   audioFile: string;
   sliceFile?: string;
   skipAmplitudeDecode?: boolean;
@@ -926,6 +927,7 @@ class PlaybackQueueManager {
   private replayPreparingJob: PlaybackJob | null = null;
   private drainWaiters = new Set<() => void>();
   private conversions = new Set<Promise<void>>();
+  private alignments = new Set<Promise<void>>();
   private seekPreparation?: { job: PlaybackJob; controller: AbortController };
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -966,6 +968,7 @@ class PlaybackQueueManager {
     const job: PlaybackJob = {
       id: nextPlaybackId(),
       lifecycle: new PlaybackLifecycle(),
+      alignments: new Set(),
       audioFile,
       sliceFile: metadata?.seekSliceFile,
       skipAmplitudeDecode: metadata?.isSeek,
@@ -978,11 +981,13 @@ class PlaybackQueueManager {
       exited,
     };
     this.jobs.set(job.id, job);
-    void job.lifecycle.playerExited.then(() => this.jobs.delete(job.id), () => this.jobs.delete(job.id));
+    // Terminal ownership includes alignment; audio scheduling below deliberately does not.
+    const playerExited = job.lifecycle.playerExited.finally(async () => { await Promise.all(job.alignments); });
+    void playerExited.then(() => this.jobs.delete(job.id), () => this.jobs.delete(job.id));
     const handle: QueuedPlaybackHandle = { id: job.id, exited,
       get generation() { return job.lifecycle.generation; },
-      playerExited: job.lifecycle.playerExited,
-      waitForPlayerExit: () => job.lifecycle.waitForPlayerExit() };
+      playerExited,
+      waitForPlayerExit: async () => { try { await job.lifecycle.waitForPlayerExit(); } finally { await Promise.all(job.alignments); } } };
     try { metadata?.onQueued?.(handle); }
     catch (error) { console.error(`[voicelayer] Playback queue observer failed: ${String(error)}`); }
     if (job.completed) return handle;
@@ -1031,10 +1036,14 @@ class PlaybackQueueManager {
   }
 
   async awaitDrained(): Promise<void> {
-    while (this.depth() > 0 || this.conversions.size > 0) {
+    while (this.depth() > 0 || this.conversions.size > 0 || this.alignments.size > 0) {
       if (this.depth() > 0) await new Promise<void>((resolve) => { this.drainWaiters.add(resolve); });
-      await Promise.all([...this.conversions]);
+      await Promise.all([...this.conversions, ...this.alignments]);
     }
+  }
+
+  audioExited(id: string): Promise<void> {
+    return this.jobs.get(id)?.lifecycle.playerExited ?? Promise.resolve();
   }
 
   stop(playbackElapsedMs?: number): boolean {
@@ -1371,6 +1380,12 @@ class PlaybackQueueManager {
         chunkId: String(next.metadata.longRead?.chunk_index ?? 0),
       }, () => this.current === active && !next.completed && next.lifecycle.generation === generation,
       aligned_words => broadcast({ type: "subtitle", words: [], aligned_words }));
+      const done = active.timing.done;
+      next.alignments.add(done); this.alignments.add(done);
+      void done.then(() => {
+        next.alignments.delete(done); this.alignments.delete(done);
+        this.resolveIfIdle(); broadcastPlaybackIdleIfSpeakerClear();
+      });
     }
     this.startProgressTimer();
     this.emitQueueSnapshot();
@@ -1531,7 +1546,7 @@ class PlaybackQueueManager {
   }
 
   getDepthForHealth() {
-    return this.depth();
+    return this.depth() || this.alignments.size;
   }
 
   private startProgressTimer() {
@@ -1907,7 +1922,8 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
           },
         });
         playerExits.push(playback.playerExited); void playback.playerExited.catch(() => {});
-        return { started: start, exited: playback.exited.then(async outcome => { await playback.playerExited; return outcome; }),
+        const audioExited = playbackQueueManager.audioExited(playback.id);
+        return { started: start, exited: playback.exited.then(async outcome => { await audioExited; return outcome; }),
           interrupt: () => playbackQueueManager.interrupt(playback.id) };
       },
       saveHistory: async (played) => {

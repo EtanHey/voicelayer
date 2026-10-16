@@ -15,7 +15,7 @@ import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
-function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; }
+function deferred<T>() { let resolve!: (v: T) => void, reject!: (e: Error) => void; const promise = new Promise<T>((r, fail) => { resolve = r; reject = fail; }); return { promise, resolve, reject }; }
 const text = Array.from({ length: 80 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ");
 
 describe("long-read real runtime with owned synth/player fakes", () => {
@@ -36,12 +36,14 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let decoderBarrier: ReturnType<typeof fixtureBarrier<Child>>;
   let histories: Child[], decoders: Child[];
   let clockMs: number;
+  let releaseAlignments: (() => void)[];
 
   beforeEach(() => {
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
     failHistory = false;
     clockMs = 100_000;
+    releaseAlignments = [];
     spies.push(spyOn(Date, "now").mockImplementation(() => clockMs));
     synthBarrier = fixtureBarrier(); playerBarrier = fixtureBarrier();
     historyBarrier = fixtureBarrier(); decoderBarrier = fixtureBarrier(); histories = []; decoders = [];
@@ -87,7 +89,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     }) as any;
   });
   afterEach(async () => {
-    stopPlayback(); for (const player of players) player.exit.resolve(143); for (const child of histories) child.exit.resolve(0); for (const h of handles) await h.done; await awaitCurrentPlayback();
+    stopPlayback(); for (const release of releaseAlignments) release(); for (const player of players) player.exit.resolve(143); for (const child of histories) child.exit.resolve(0); for (const h of handles) await h.done; await awaitCurrentPlayback();
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
@@ -99,7 +101,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const entered = fixtureBarrier<alignment.CloneAlignmentRequest>();
     const pending: ReturnType<typeof deferred<alignment.CloneAlignmentResult>>[] = [];
     spies.push(spyOn(alignment, "alignCloneAudio").mockImplementation(request => {
-      const result = deferred<alignment.CloneAlignmentResult>(); pending.push(result); entered.push(request); return result.promise;
+      const result = deferred<alignment.CloneAlignmentResult>(); pending.push(result); entered.push(request);
+      releaseAlignments.push(() => result.resolve({ status: "untimed", identity: {} as any, words: [] })); return result.promise;
     }));
     const result = (request: alignment.CloneAlignmentRequest): alignment.CloneAlignmentResult => ({
       status: "partial", identity: { requestId: request.requestId, chunkId: request.chunkId, playbackRate: request.playbackRate,
@@ -127,6 +130,39 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       { word_index: 1, text: "MP3", offset_ms: null, duration_ms: null },
       { word_index: 2, text: "now.", offset_ms: 200, duration_ms: 80 },
     ] });
+  });
+
+  for (const cmd of ["stop", "cancel"] as const) it(`R2 ${cmd} ack retains alignment cleanup after audio exits`, async () => {
+    const f = cloneFixture(), h = start("clone", "Question?"); await playerBarrier.at(0); const request = await f.entered.at(0);
+    if (cmd === "cancel") { players[0].exit.resolve(0); await h.done; }
+    let acknowledged = false;
+    const ack = Promise.resolve(handleSocketCommand({ cmd, playback_elapsed_ms: 250 })).then(() => { acknowledged = true; });
+    await h.done; await fixtureCheckpoint(); expect(request.signal!.aborted).toBe(true); expect(acknowledged).toBe(false);
+    releaseAlignments[0](); await ack; expect(acknowledged).toBe(true);
+  });
+  for (const failed of [false, true]) it(`R2 scoped terminal and quiesced-attempt fences include alignment cleanup; failed=${failed}`, async () => {
+    const f = cloneFixture(); let playback: any;
+    await speak("Question?", { voice: "fixture", onPlaybackQueued: handle => { playback = handle; } });
+    await playerBarrier.at(0); await f.entered.at(0);
+    if (failed) players[0].exit.reject(new Error("fixture player exit")); else players[0].exit.resolve(0);
+    await playback.exited;
+    const settled: string[] = [], mark = (label: string, work: Promise<unknown>) => work.then(() => settled.push(label), () => settled.push(label));
+    const waits = [mark("terminal", playback.playerExited), mark("snapshot", playback.waitForPlayerExit()), mark("drain", awaitCurrentPlayback())];
+    await fixtureCheckpoint(); expect(settled).toEqual([]); releaseAlignments[0](); await Promise.all(waits); expect(settled.sort()).toEqual(["drain", "snapshot", "terminal"]);
+  });
+  it("R2 Ask cannot start capture until its clone alignment cleanup finishes", async () => {
+    const f = cloneFixture();
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    const capture = spyOn(input, "waitForInput").mockResolvedValue("fixture answer"); spies.push(capture);
+    const answer = handleVoiceAsk({ message: "Question?", voice: "fixture", timeout_seconds: 5 });
+    await playerBarrier.at(0); await f.entered.at(0); players[0].exit.resolve(0);
+    await fixtureCheckpoint(); await Bun.sleep(5); expect(capture).not.toHaveBeenCalled();
+    releaseAlignments[0](); await answer; expect(capture).toHaveBeenCalledTimes(1);
+  });
+  it("R2 replacement audio starts while cancelled alignment cleanup is still held", async () => {
+    const f = cloneFixture(), old = start("clone", "Old question?"); await playerBarrier.at(0); await f.entered.at(0);
+    const replacement = start("edge", "New answer."); await playerBarrier.at(1); await old.done;
+    expect(players).toHaveLength(2); releaseAlignments[0](); stopPlayback(); await replacement.done;
   });
 
   for (const stale of ["requestId", "chunkId", "audioSha256", "playbackRate", "text", "audio", "stop", "seek", "recording", "transcribing"] as const)

@@ -8,7 +8,7 @@ import type { AlignedWordBoundary } from "../socket-protocol";
 import { alignCloneAudio, type CloneAlignmentRequest } from "./clone-alignment";
 
 let tail = Promise.resolve();
-type TimingInput = Omit<CloneAlignmentRequest, "decoder" | "language" | "signal" | "lowPriority" | "playbackRate">;
+type TimingInput = Omit<CloneAlignmentRequest, "decoder" | "language" | "signal" | "lowPriority" | "playbackRate" | "canSpawn">;
 /** Current-player work only. Replacements serialize behind cancellation/reaping,
  * while audio playback itself never awaits this queue. Files are already at rate. */
 export function startCloneTiming(input: TimingInput, isCurrent: () => boolean, publish: (words: AlignedWordBoundary[]) => void) {
@@ -25,7 +25,7 @@ export function startCloneTiming(input: TimingInput, isCurrent: () => boolean, p
       resolveBinaryAsync("ffmpeg"),
     ]);
     if (!binary || !ffmpeg || !current()) return;
-    const result = await alignCloneAudio({ ...input, playbackRate: 1, lowPriority: true,
+    const result = await alignCloneAudio({ ...input, playbackRate: 1, lowPriority: true, canSpawn: current,
       language: /\p{Script=Hebrew}/u.test(input.speechText) ? "he" : "en", signal: controller.signal,
       decoder: { binary, ffmpeg, model: process.env.QA_VOICE_WHISPER_MODEL ?? join(homedir(), ".cache/whisper/ggml-large-v3-turbo.bin") } });
     if (!current() || result.status === "untimed" || result.identity.requestId !== input.requestId ||

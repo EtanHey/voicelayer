@@ -19,6 +19,8 @@ export interface CloneAlignmentRequest {
   signal?: AbortSignal;
   /** Background integration yields CPU scheduling to dictation. */
   lowPriority?: boolean;
+  /** Synchronous admission immediately before EACH native child; false yields. */
+  canSpawn?: () => boolean;
   /** Existing whisper.cpp, large-v3-turbo and ffmpeg; no download or daemon. */
   decoder: { binary: string; model: string; ffmpeg: string };
 }
@@ -146,11 +148,13 @@ export async function alignCloneAudio(request: CloneAlignmentRequest): Promise<C
     // reader produced different, less accurate spans for the same fixture.
     const wav = join(directory, "decoded.wav");
     const priority = input.lowPriority ? ["/usr/bin/nice", "-n", "19"] : [];
+    if (input.canSpawn?.() === false || expired()) return untimed(deadline ? "deadline" : "cancelled");
     child = Bun.spawn([...priority, input.decoder.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", file,
       "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     const prepared = await child.exited;
     if (expired()) return untimed(deadline ? "deadline" : "cancelled");
     if (prepared !== 0) return untimed("unavailable");
+    if (input.canSpawn?.() === false || expired()) return untimed(deadline ? "deadline" : "cancelled");
     child = Bun.spawn([...priority, input.decoder.binary, "-m", input.decoder.model, "-f", wav, "-l", input.language,
       "-dtw", "large.v3.turbo", "-nfa", "-ojf", "-of", output], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     const code = await child.exited;

@@ -36,10 +36,21 @@ writeFileSync(${JSON.stringify(prefix + ".hash")},createHash('sha256').update(re
 }
 const offsets = (result: Awaited<ReturnType<typeof alignCloneAudio>>) => result.words.map(w => w.offset_ms);
 async function started(prefix: string) {
-  for (let i = 0; i < 200; i++) { try { return Number(await readFile(prefix + ".pid", "utf8")); } catch { await Bun.sleep(5); } }
+  for (let i = 0; i < 200; i++) {
+    try { const text = (await readFile(prefix + ".pid", "utf8")).trim(), pid = Number(text); if (text && Number.isSafeInteger(pid) && pid > 0) return pid; } catch {}
+    await Bun.sleep(5);
+  }
   throw new Error("decoder did not start");
 }
 function reaped(pid: number) { expect(() => process.kill(pid, 0)).toThrow(); }
+
+test("R2 PID readiness rejects empty and nonpositive or fractional readbacks", async () => {
+  for (const invalid of ["", "0", "-1", "1.5", "not-a-pid"]) {
+    const read = spyOn(fsPromises, "readFile").mockResolvedValueOnce(invalid).mockResolvedValueOnce(String(process.pid));
+    try { expect(await started("pid-readback-fixture")).toBe(process.pid); expect(read).toHaveBeenCalledTimes(2); }
+    finally { read.mockRestore(); }
+  }
+});
 
 test("frozen Edge audio retains only spans corroborated by the same token's DTW anchor", async () => {
   const { input } = await request("Should the company and the project merge, or stay separate?", EDGE_DECODE);

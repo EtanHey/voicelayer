@@ -8,6 +8,8 @@ import { startCloneTiming } from "../tts/clone-timing";
 import { projectSpeakableText } from "../speakable-text";
 import { TEST_TMP } from "./setup/test-tmp";
 import { recordingStateFilePath } from "../paths";
+import * as fsPromises from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 
 let directory: string, model: string | undefined, spy: ReturnType<typeof spyOn> | undefined;
 let jobs: ReturnType<typeof startCloneTiming>[] = [], published = 0;
@@ -32,11 +34,35 @@ writeFileSync(${JSON.stringify(join(directory, "pid"))},String(process.pid)); se
   const input = { ...projectSpeakableText("Hello world"), audioPath, durationMs: 8000, requestId: "native", chunkId: "0" };
   const start = () => { const job = startCloneTiming(input, () => true, () => { published++; }); jobs.push(job); return job; };
   const pid = async () => {
-    for (let i = 0; i < 500; i++) { try { return Number(await readFile(join(directory, "pid"), "utf8")); } catch { await Bun.sleep(5); } }
+    for (let i = 0; i < 500; i++) {
+      try { const text = (await readFile(join(directory, "pid"), "utf8")).trim(), pid = Number(text); if (text && Number.isSafeInteger(pid) && pid > 0) return pid; } catch {}
+      await Bun.sleep(5);
+    }
     throw new Error("native decoder did not start");
   };
-  return { start, pid };
+  return { start, pid, converter, decoder };
 }
+for (const phase of ["converter", "decoder"] as const) test(`R2 admission rechecks persisted busy state immediately before ${phase}`, async () => {
+  const f = await fixture(), spawned: string[] = [], originalWrite = fsPromises.writeFile;
+  const busy = () => writeFileSync(recordingStateFilePath(), JSON.stringify({ state: "transcribing", pid: process.pid, updated_at: new Date().toISOString() }));
+  // No poll is allowed to run: admission itself must catch this interleaving.
+  const poll = spyOn(globalThis, "setInterval").mockImplementation(() => ({ unref() {} }) as any);
+  const write = spyOn(fsPromises, "writeFile").mockImplementation(async (...args: any[]) => {
+    await (originalWrite as any)(...args);
+    if (phase === "converter" && String(args[0]).includes("vl-cln1a-") && String(args[0]).endsWith("audio.mp3")) busy();
+  });
+  const spawn = spyOn(Bun, "spawn").mockImplementation((argv: any) => {
+    const kind = argv.includes(f.converter) ? "converter" : "decoder"; spawned.push(kind);
+    return { exitCode: 0, exited: Promise.resolve().then(() => { if (phase === "decoder" && kind === "converter") busy(); return 0; }), kill() {} } as any;
+  });
+  try { await f.start().done; expect(spawned).toEqual(phase === "converter" ? [] : ["converter"]); }
+  finally { spawn.mockRestore(); write.mockRestore(); poll.mockRestore(); }
+});
+test("R2 native PID readiness waits past an empty file", async () => {
+  const f = await fixture(), file = join(directory, "pid"); await writeFile(file, "");
+  const ready = Bun.sleep(10).then(() => writeFile(file, String(process.pid)));
+  try { expect(await f.pid()).toBe(process.pid); } finally { await ready; }
+});
 test("busy dictation defers alignment without resolving or spawning a decoder", async () => {
   const f = await fixture(); recording.setRecordingState("transcribing");
   await f.start().done; expect(spy).not.toHaveBeenCalled();
