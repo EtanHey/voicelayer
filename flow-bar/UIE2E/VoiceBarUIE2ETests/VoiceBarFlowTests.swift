@@ -8,8 +8,11 @@ final class VoiceBarFlowTests: XCTestCase {
     var root: URL!
     var steps: [[String: Any]] = []
     var completed = false
+    var scenario = "full"
     var knownVisualGaps: [String] = []
+    var limitations = ["NOT_PROVEN: external T3-client selection Speak is outside this isolated VoiceBar run. SEL1 probes the real VoiceState method with synthetic selection capture only."]
     var ledger = UIE2ECoverageLedger()
+    var terminalFullTextProven = false
     var observed: Set<String> { get { ledger.observed } set { ledger.observed = newValue } }
     var exercised: Set<String> { get { ledger.exercised } set { ledger.exercised = newValue } }
     var activePage = "General"
@@ -23,6 +26,13 @@ final class VoiceBarFlowTests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = true
         let env = ProcessInfo.processInfo.environment
+        scenario = env["VOICEBAR_UIE2E_SCENARIO"] ?? "full"
+        guard ["full", "focused-338"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
+        if scenario == "focused-338" {
+            limitations = ["Gallery variants use real production BarView/DictationCard in arbitrary page positions; they do not prove notch placement. One actual production-geometry notch render per family is checked separately.",
+                "Static confirmation holds are synthetic presentations of actual production outcomes; synchronized lifetime uses fresh production timers. No real microphone, audio, global hotkey, external insertion or installed-app acceptance is claimed.",
+                "P1e readability is a normal assertion; focused results permit no P1e XFAIL or capability skip and do not establish full release coverage."]
+        }
         root = URL(fileURLWithPath: try XCTUnwrap(env["VOICEBAR_UIE2E_ROOT"]))
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent(".uie2e-sandbox")), "voicebar-ui-e2e-v1\n")
         pasteboardItems = try (NSPasteboard.general.pasteboardItems ?? []).map { item in
@@ -37,25 +47,66 @@ final class VoiceBarFlowTests: XCTestCase {
               Bundle(url: appURL)?.object(forInfoDictionaryKey: "VoiceBarUIE2EOnly") as? Bool == true
         else { throw NSError(domain: "UIE2E unsafe app", code: 1) }
         app = XCUIApplication(url: appURL)
-        app.launchEnvironment = ["VOICEBAR_UIE2E": "1", "VOICEBAR_UIE2E_ROOT": root.path,
+        app.launchEnvironment = ["VOICEBAR_UIE2E": "1", "VOICEBAR_UIE2E_SCENARIO": scenario, "VOICEBAR_UIE2E_ROOT": root.path,
             "HOME": root.appendingPathComponent("home").path, "CFFIXED_USER_HOME": root.appendingPathComponent("home").path,
             "VOICEBAR_USER_DEFAULTS_SUITE": "com.voicelayer.uie2e.\(root.lastPathComponent)",
             "VOICELAYER_SOCKET_PATH": root.appendingPathComponent("v.sock").path,
             "VOICELAYER_MCP_SOCKET_PATH": root.appendingPathComponent("m.sock").path]
+        addUIInterruptionMonitor(withDescription: "Known benign foreign overlay; never grant permissions") { [unowned self] alert in
+            switch UIE2EInterruptionPolicy.classify(alertDescription: alert.debugDescription) {
+            case .permissionPrompt:
+                XCTFail("BLOCKED permission prompt: \(alert.debugDescription)")
+                return false
+            case .qaOwnedInterruption:
+                XCTFail("BLOCKED QA-owned modal interruption; resolve the scoped QA control instead of treating its sheet as foreign: \(alert.debugDescription)")
+                return false
+            case let .knownBenignForeign(owner):
+                let foreign = XCUIApplication(bundleIdentifier: owner)
+                let foreignState = foreign.state
+                let processState: UIE2EInterruptionProcessState
+                switch foreignState {
+                case .runningForeground, .runningBackground: processState = .running
+                case .notRunning: processState = .notRunning
+                default: processState = .unknown
+                }
+                // The AX hierarchy is only queried inside this state-gated closure.
+                // A stale XCUIApplication handle for an exited owner can fatally fail XCTest.
+                guard let hasMatchingDialog = UIE2EInterruptionPolicy.queryHierarchyIfRunning(state: processState, {
+                    foreign.dialogs.allElementsBoundByIndex.contains { $0.frame == alert.frame }
+                }) else {
+                    XCTFail("BLOCKED known overlay owner is not queryable (state: \(foreignState)): \(owner)")
+                    return false
+                }
+                guard hasMatchingDialog else {
+                    XCTFail("BLOCKED known overlay did not match the interruption frame: \(owner), \(alert.debugDescription)")
+                    return false
+                }
+                self.app.activate() // Recover focus only; no foreign buttons, dismissal or permission action.
+                let clear = self.app.state == .runningForeground && self.app.windows["VoiceBar QA Settings"].isHittable
+                if !clear { XCTFail("BLOCKED benign foreign overlay persists after QA activation: \(owner)") }
+                return clear
+            case let .unknown(owner):
+                XCTFail("BLOCKED unknown interruption owner \(owner ?? "(unavailable)"): \(alert.debugDescription)")
+                return false
+            }
+        }
         step("launch isolated QA app") {
             app.launch()
+            app.activate()
             XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+            XCTAssertEqual(app.state, .runningForeground)
         }
     }
-
     override func tearDownWithError() throws {
         // XCTest owns attachment storage, including when its signed runner is sandboxed.
         // Keep the final snapshot after termination and clipboard restoration assertions.
         defer {
-            attachJSON("UIE2E-LEDGER", ["version": 1, "steps": steps, "completed": completed,
+            attachJSON("UIE2E-LEDGER", ["version": 1, "scenario": scenario, "scope": scenario, "steps": steps, "completed": completed,
                 "failures": testRun?.failureCount ?? 1,
-                "coverage": ["observed": observed.sorted(), "exercised": exercised.sorted(), "missing": ledger.missing.sorted()],
-                "knownVisualGaps": knownVisualGaps])
+                "coverage": ["scenario": scenario, "observed": observed.sorted(), "exercised": exercised.sorted(), "missing": ledger.missing.sorted(),
+                    "missingSurfaces": ledger.missingSurfaces.sorted(), "verifiedSurfaces": ledger.verifiedSurfaces.sorted(),
+                    "expectedSurfaces": ledger.expectedSurfaces],
+                "knownVisualGaps": knownVisualGaps, "limitations": limitations])
         }
         if app != nil, app.state != .notRunning { step("terminate QA app") { app.terminate() } }
         guard pasteboardSaved else { return }
@@ -67,7 +118,6 @@ final class VoiceBarFlowTests: XCTestCase {
         }
         if !restored.isEmpty { XCTAssertTrue(NSPasteboard.general.writeObjects(restored)) }
     }
-
     func attachJSON(_ name: String, _ object: Any) {
         do {
             let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
