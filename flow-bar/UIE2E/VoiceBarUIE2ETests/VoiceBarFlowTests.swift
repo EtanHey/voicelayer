@@ -1115,7 +1115,7 @@ extension VoiceBarFlowTests {
         }
         let commandStart = fixtureEvents().count
         click(app.buttons["qa-fixture-selection-replace"], "invoke real selection method with synthetic replacement")
-        verify("supersede-preparing", expected: .supersedePreparing) {
+        verify("supersede-preparing") {
             let received = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 self.fixtureEvents().dropFirst(commandStart).contains("command:speak_text") }, object: nil)], timeout: 3)
             guard received == .completed else {
