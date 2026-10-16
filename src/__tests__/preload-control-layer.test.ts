@@ -15,7 +15,7 @@ function probe(override?: string) {
   // has selected the exact private per-run base. Never probe the live DB.
   const script = [
     'const { join } = await import("path");',
-    'const expected = join(process.cwd(), ".test-tmp", String(process.pid), "orc");',
+    'const expected = join(process.env.VOICELAYER_TEST_RUN_ROOT, "orc");',
     'const base = process.env.VOICELAYER_CONTROL_LAYER_BASE;',
     'let rows = null, marker = false;',
     'if (base === expected) {',
@@ -27,7 +27,7 @@ function probe(override?: string) {
     '  db.close();',
     '  marker = await Bun.file(join(base, "markers", "voice_test-isolation")).exists();',
     '}',
-    'console.log(JSON.stringify({ pid: process.pid, base: base ?? null, expected, rows, marker }));',
+    'console.log(JSON.stringify({ pid: process.pid, root: process.env.VOICELAYER_TEST_RUN_ROOT, base: base ?? null, expected, rows, marker }));',
   ].join("\n");
   const result = Bun.spawnSync([process.execPath, "--preload", preload, "-e", script], {
     env, cwd: process.cwd(), stdout: "pipe", stderr: "pipe",
@@ -39,7 +39,8 @@ function probe(override?: string) {
 describe("preload isolates the control-layer journal", () => {
   it("defaults the journal DB and markers to the private per-run test root", () => {
     const result = probe();
-    expect(result.base).toBe(join(process.cwd(), ".test-tmp", String(result.pid), "orc"));
+    expect(result.root).toMatch(new RegExp(`/\\.test-tmp/${result.pid}-[a-f0-9]{4,6}$`));
+    expect(result.base).toBe(join(result.root, "orc"));
     expect(result.base).not.toStartWith(join(homedir(), ".local", "share", "orc"));
     expect(result.rows).toBe(1);
     expect(result.marker).toBe(true);

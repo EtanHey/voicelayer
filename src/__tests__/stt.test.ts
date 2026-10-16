@@ -2150,9 +2150,7 @@ describe("STT backends", () => {
 
     it("finishes the Hebrew chunk path when the full-WAV witness times out", async () => {
       const wavPath = join(
-        process.cwd(),
-        ".test-tmp",
-        String(process.pid),
+        process.env.VOICELAYER_TEST_RUN_ROOT!,
         "hebrew-witness-timeout.wav",
       );
       const wav = makePcm16Wav(164.78);
