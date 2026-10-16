@@ -294,6 +294,10 @@ final class VoiceBarFlowTests: XCTestCase {
         }
     }
 
+    func testFocused338StateGallery() throws {
+        try runFocused338StateGallery()
+    }
+
     func testFullUIOnlyFlow() throws {
         guard scenario == "full" else { throw NSError(domain: "UIE2E full test selected in focused run", code: 1) }
         // Dictionary's animated top-level edit sheet and inline delete confirmation

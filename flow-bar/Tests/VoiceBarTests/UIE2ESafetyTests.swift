@@ -392,6 +392,67 @@ final class UIE2EFocusedGalleryTests: XCTestCase {
             auxiliaryTopRightArea: CGRect(x: 968, y: 1080, width: 760, height: 37))
     }
 
+    func testControlsHostSurvivesSelectionClocksExpiryPagesAndSessionEnd() async throws {
+        XCTAssertTrue(VLOffscreenPolicyInstalled(), "No visible or activating windows are permitted")
+        let (gallery, root) = try gallery()
+        let window = NSWindow(contentRect: CGRect(x: -20000, y: -20000, width: 1000, height: 96),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { gallery.hide(); window.close(); try? FileManager.default.removeItem(at: root) }
+        gallery.prepare(controls: window, metrics: desktopMetrics)
+        let host = try XCTUnwrap(window.contentView)
+        func receipt() throws -> [String: Any] {
+            try XCTUnwrap(try JSONSerialization.jsonObject(with:
+                Data(contentsOf: root.appendingPathComponent("gallery.json"))) as? [String: Any])
+        }
+        gallery.observe(reason: "initial")
+        let initialPages = try XCTUnwrap(try receipt()["pages"] as? [[String: Any]])
+        let inventory = initialPages.map { $0["states"] as? [String] }
+        XCTAssertEqual(inventory.count, 2)
+        func assertStable(_ phase: String) throws {
+            XCTAssertTrue(window.contentView === host, "Control AX host replaced: \(phase)")
+            gallery.observe(reason: phase)
+            let pages = try XCTUnwrap(try receipt()["pages"] as? [[String: Any]])
+            XCTAssertEqual(pages.map { $0["states"] as? [String] }, inventory, phase)
+        }
+        gallery.refreshPinnedStates()
+        gallery.selectFamily("busy")
+        gallery.selectFamily("selection-error")
+        XCTAssertEqual(try receipt()["activeFamily"] as? String, "selection-error")
+        try assertStable("family-selection")
+        gallery.startClocks()
+        try assertStable("start-clocks")
+        gallery.selectPage(1)
+        try assertStable("page-one")
+        // Genuine production timers invoke onPanelLayoutChange. Wrap the installed callbacks
+        // to prove expiry reaches the gallery rebuild, rather than manually rebuilding a host.
+        var expiryCallbacks = 0
+        for item in gallery.items where item.spec.family == "selection-error" {
+            let rebuild = try XCTUnwrap(item.voice.onPanelLayoutChange)
+            item.voice.onPanelLayoutChange = {
+                if item.voice.confirmationText == nil { expiryCallbacks += 1 }
+                rebuild()
+            }
+        }
+        try await Task.sleep(for: .milliseconds(5400))
+        XCTAssertGreaterThan(expiryCallbacks, 0, "Real confirmation expiry must reach the host")
+        XCTAssertTrue(gallery.items.allSatisfy { $0.voice.confirmationText == nil })
+        try assertStable("after-expiry-callbacks")
+        gallery.selectPage(0)
+        try assertStable("page-zero-after-expiry")
+        gallery.endSessions()
+        try await Task.sleep(for: .milliseconds(100)) // Drain queued production layout callbacks.
+        try assertStable("end-sessions")
+        XCTAssertEqual(gallery.sessionEndBefore.count, 3)
+        let modes = try XCTUnwrap(try receipt()["sessionEndBeforeModes"] as? [String: String])
+        XCTAssertEqual(modes, ["busy-recording": "recording", "busy-transcribing": "transcribing", "busy-f5-preview": "idle"])
+        for item in gallery.items where item.spec.family == "busy" {
+            XCTAssertEqual(gallery.sessionEndBefore[item.spec.id], item.spec.expectedText)
+            XCTAssertNil(item.actualNote)
+            XCTAssertEqual(item.voice.mode, .idle)
+            XCTAssertEqual(item.voice.hotkeyPhase, .idle)
+        }
+    }
 
     func testPinnedBusyPresentationSurvivesRealTranscribingWatchdog() async throws {
         let (gallery, root) = try gallery()
