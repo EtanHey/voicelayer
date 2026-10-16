@@ -11,34 +11,80 @@ final class LegacySubtitleParityTests: XCTestCase {
         ["text": "world", "offset_ms": 500, "duration_ms": 100],
     ]
 
-    func testLegacyEventTableMatches85a1fa5c() {
+    func testLegacyEventTableMatches85a1fa5c() throws {
         // Captured from base's subtitle handler + content/playback policies.
         // Each event follows a valid event: missing/mistyped words are no-ops;
         // an explicit empty array clears, and partial display coverage estimates.
-        let cases: [(String, [String: Any], [Int], [Int?], Bool)] = [
-            ("valid", ["words": valid], [0, 500], [0, 500], true),
-            ("zero duration", ["words": [["text": "Hello", "offset_ms": 0, "duration_ms": 0], valid[1]]],
-             [0, 500], [0, 500], true),
-            ("partial", ["words": [valid[0]]], [0], [nil, nil], false),
-            ("missing", [:], [0, 500], [0, 500], true),
-            ("mistyped", ["words": "bad"], [0, 500], [0, 500], true),
-            ("empty", ["words": []], [], [nil, nil], false),
+        let numericCases: [(String, Any, Any, Int, Int)] = [
+            ("negative fraction", -0.5, 100, 0, 100),
+            ("negative offset", -1.5, 100, -1, 100),
+            ("negative duration", 0, -100.5, 0, -100),
+            ("boolean offset true", true, 100, 1, 100),
+            ("boolean offset false", false, 100, 0, 100),
+            ("boolean duration true", 0, true, 0, 1),
+            ("boolean duration false", 0, false, 0, 0),
+            ("fractional", 120.5, 80.75, 120, 80),
         ]
+        var cases: [(String, [String: Any], [Int], [Int?], Bool, [Int])] = [
+            ("valid", ["words": valid], [0, 500], [0, 500], true, [100, 100]),
+            ("zero duration", ["words": [["text": "Hello", "offset_ms": 0, "duration_ms": 0], valid[1]]],
+             [0, 500], [0, 500], true, [0, 100]),
+            ("partial", ["words": [valid[0]]], [0], [nil, nil], false, [100]),
+            ("missing", [:], [0, 500], [0, 500], true, [100, 100]),
+            ("mistyped", ["words": "bad"], [0, 500], [0, 500], true, [100, 100]),
+            ("empty", ["words": []], [], [nil, nil], false, []),
+        ]
+        for (name, offset, duration, expectedOffset, expectedDuration) in numericCases {
+            let row: [String: Any] = ["text": "Hello", "offset_ms": offset, "duration_ms": duration]
+            cases.append((name, ["words": [row, valid[1]]], [expectedOffset, 500],
+                          [expectedOffset, 500], true, [expectedDuration, 100]))
+        }
         for chunkStart in [0, 12000] {
-            for (name, payload, offsets, displayOffsets, measured) in cases {
+            for (name, payload, offsets, displayOffsets, measured, durations) in cases {
                 let state = VoiceState(playbackAmplitudeClock: { 100 })
                 state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world",
                                    "long_read": ["chunk_start_ms": chunkStart], "duration_ms": chunkStart + 5000])
                 state.handleEvent(["type": "subtitle", "words": valid])
                 let previous = state.wordBoundaries
-                state.handleEvent(payload.merging(["type": "subtitle"]) { _, new in new })
+                // Use the real JSON bridge: JSON booleans are NSNumber, not Swift Bool.
+                let data = try JSONSerialization.data(withJSONObject: payload.merging(["type": "subtitle"]) { _, new in new })
+                let event = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                state.handleEvent(event)
                 if name == "missing" || name == "mistyped" { XCTAssertEqual(state.wordBoundaries, previous, name) }
                 let words = TeleprompterContentModel.words(text: "Hello world", wordBoundaries: state.wordBoundaries)
                 XCTAssertEqual(state.wordBoundaries.compactMap(\.offsetMs), offsets.map { $0 + chunkStart }, name)
+                XCTAssertEqual(state.wordBoundaries.compactMap(\.durationMs), durations, name)
                 XCTAssertEqual(words.map(\.offsetMs), displayOffsets.map { $0.map { $0 + chunkStart } }, name)
+                XCTAssertEqual(words.map { TeleprompterSeekPolicy.offset(for: $0, isReadback: false) },
+                               displayOffsets.map { $0.flatMap { $0 + chunkStart >= 0 ? $0 + chunkStart : nil } }, name)
                 XCTAssertEqual(TeleprompterPlaybackPolicy.usesServerTimestamps(in: words), measured, name)
                 XCTAssertEqual(TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(forWordAt: 1, in: words),
                                measured ? chunkStart + 500 : 355, name)
+            }
+        }
+    }
+
+    func testLegacyNumericConversionNeverTrapsAndIndexedNumbersStayStrict() throws {
+        for chunkStart in [0, 12000] {
+            for (offset, duration): (Any, Any) in [(Double.infinity, 100), (Double.nan, 100),
+                (1e100, 100), (-1e100, 100), (0, Double.infinity), (Int.max, 1), (Int.min, Int.min)] {
+                let rows: [[String: Any]] = [["text": "Hello", "offset_ms": offset, "duration_ms": duration]]
+                let decoded = TeleprompterBoundary.subtitleWords(["words": rows], chunkStartMs: chunkStart)
+                XCTAssertTrue(decoded.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
+            }
+            let exact = TeleprompterBoundary.subtitleWords(["words": [["text": "Hello", "offset_ms": Int.max, "duration_ms": 0]]],
+                                                          chunkStartMs: chunkStart)
+            XCTAssertEqual(exact.first?.offsetMs, chunkStart == 0 ? Int.max : nil)
+            for (offset, duration): (Any, Any) in [(-0.5, 100), (-1.5, 100), (0, -100.5), (true, 100),
+                                                  (false, 100), (0, true), (0, false)] {
+                let data = try JSONSerialization.data(withJSONObject: ["aligned_words": [
+                    ["word_index": 0, "text": "Hello", "offset_ms": offset, "duration_ms": duration]]])
+                let event = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                let decoded = TeleprompterBoundary.subtitleWords(event, chunkStartMs: chunkStart)
+                XCTAssertEqual(decoded.count, 1)
+                XCTAssertNil(decoded[0].offsetMs)
+                XCTAssertNil(decoded[0].durationMs)
+                XCTAssertEqual(decoded[0].wordIndex, 0)
             }
         }
     }

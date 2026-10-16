@@ -89,21 +89,28 @@ public struct TeleprompterBoundary: Equatable {
             guard let text = row["text"] as? String else {
                 return indexed ? Self(offsetMs: nil, durationMs: nil, text: "", wordIndex: -1) : nil
             }
-            // Preserve legacy Edge's fractional-millisecond truncation; reject traps and booleans.
+            // Match the old decoder's Int-first coercion (including JSON booleans)
+            // and signed fractional truncation, without trapping on unsafe Doubles.
+            func legacyMilliseconds(_ value: Any?) -> Int? {
+                if let integer = value as? Int { return integer }
+                guard let number = value as? Double, number.isFinite else { return nil }
+                return Int(exactly: number.rounded(.towardZero))
+            }
+            // Indexed acoustic timings keep strict nonnegative, non-boolean validation.
             func milliseconds(_ value: Any?, integral: Bool = false) -> Int? {
                 guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
                       number.doubleValue >= 0,
                       !integral || number.doubleValue.rounded(.towardZero) == number.doubleValue else { return nil }
                 return Int(exactly: number.doubleValue.rounded(.towardZero))
             }
-            let offset = milliseconds(row["offset_ms"])
-            let duration = milliseconds(row["duration_ms"])
+            let offset = indexed ? milliseconds(row["offset_ms"]) : legacyMilliseconds(row["offset_ms"])
+            let duration = indexed ? milliseconds(row["duration_ms"]) : legacyMilliseconds(row["duration_ms"])
             let index = milliseconds(row["word_index"], integral: true)
             if !indexed, offset == nil || duration == nil { return nil }
             var globalOffset: Int?
-            // Edge keeps zero-duration anchors for omitted markdown. Only the
-            // indexed format requires a positive acoustic span.
-            if let offset, let duration, offset >= 0, (!indexed || duration > 0), chunkStartMs >= 0 {
+            // Legacy values retain their signs and zero-duration markdown anchors.
+            // Only indexed timing requires a nonnegative start and positive span.
+            if let offset, let duration, (!indexed || (offset >= 0 && duration > 0 && chunkStartMs >= 0)) {
                 let global = offset.addingReportingOverflow(chunkStartMs)
                 if !global.overflow && !global.partialValue.addingReportingOverflow(duration).overflow {
                     globalOffset = global.partialValue
