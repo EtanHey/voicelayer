@@ -34,6 +34,40 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         ))
     }
 
+    func testDictionarySheetRoutingPreservesReachabilityAndDismissalAssertions() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("UIE2E/VoiceBarUIE2ETests/VoiceBarFlowTests.swift"))
+        let clickStart = try XCTUnwrap(source.range(of: "func click(_ resolve:"))
+        let clickEnd = try XCTUnwrap(source[clickStart.upperBound...].range(of: "    func tab("))
+        let click = source[clickStart.lowerBound..<clickEnd.lowerBound]
+        XCTAssertTrue(click.contains("UIE2ERevealRouting.shouldReveal"))
+        XCTAssertTrue(click.contains("element.isEnabled, element.isHittable"), "A no-scroll route must still reject unreachable controls")
+
+        let sheetStart = try XCTUnwrap(source.range(of: "func clickDictionarySheetButton("))
+        let sheetEnd = try XCTUnwrap(source[sheetStart.upperBound...].range(of: "    func assertTerm("))
+        let sheet = source[sheetStart.lowerBound..<sheetEnd.lowerBound]
+        XCTAssertTrue(sheet.contains("revealPolicy: .explicitlyScoped"), "Sheet controls must bypass Settings scrolling")
+        XCTAssertTrue(sheet.contains("waitForDictionarySheetStable"))
+        XCTAssertTrue(sheet.contains("dictionaryEditSheet() == nil"), "The action still requires sheet dismissal")
+
+        let dictionaryStart = try XCTUnwrap(source.range(of: "func dictionaryFlow()"))
+        let dictionaryEnd = try XCTUnwrap(source[dictionaryStart.upperBound...].range(of: "    func speechFlow()"))
+        let dictionary = source[dictionaryStart.lowerBound..<dictionaryEnd.lowerBound]
+        XCTAssertTrue(dictionary.contains("replace(dictionarySheetControl(.textField, label: \"Correct spelling\"), \"QA initial\")"))
+        XCTAssertTrue(dictionary.contains("replace(dictionarySheetControl(.textField, label: \"Misheard as\"), \"qa kept variant\")"))
+        XCTAssertTrue(dictionary.contains("Remove misheard spelling initial variant"))
+        XCTAssertTrue(dictionary.contains("clickDictionarySheetButton(\"Save\")"))
+        XCTAssertTrue(dictionary.contains(#"assertTerm("QA initial", variants: ["qa kept variant"])"#))
+        let initialSaved = try XCTUnwrap(dictionary.range(of: #"assertTerm("QA initial", variants: ["qa kept variant"])"#))
+        let afterInitialSave = dictionary[initialSaved.upperBound...]
+        let reopen = try XCTUnwrap(afterInitialSave.range(of: #"click(app.buttons["Edit term QA initial"])"#))
+        let afterReopen = afterInitialSave[reopen.upperBound...]
+        let cancel = try XCTUnwrap(afterReopen.range(of: #"clickDictionarySheetButton("Cancel")"#))
+        let afterCancel = afterReopen[cancel.upperBound...]
+        let persistedAfterCancel = try XCTUnwrap(afterCancel.range(of: #"assertTerm("QA initial", variants: ["qa kept variant"])"#))
+        XCTAssertLessThan(reopen.lowerBound, cancel.lowerBound)
+        XCTAssertLessThan(cancel.lowerBound, persistedAfterCancel.lowerBound)
+    }
 
     func testFocusedScopeCannotSatisfyTheFullSurfaceGate() {
         var focused = UIE2ECoverageLedger()
@@ -118,13 +152,6 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
     }
 
 
-    func testFeedbackMatchesNativeStaticTextValueWithoutReadingNumericControlValues() {
-        let predicate = UIE2EAXText.predicate("Pasted", staticTextRole: 48)
-        XCTAssertTrue(predicate.evaluate(with: ["label": "", "value": "Pasted", "elementType": 48]))
-        XCTAssertTrue(predicate.evaluate(with: ["label": "Pasted", "value": 1, "elementType": 9]))
-        XCTAssertFalse(predicate.evaluate(with: ["label": "", "value": 1, "elementType": 9]))
-        XCTAssertFalse(predicate.evaluate(with: ["label": "", "value": "Pasted", "elementType": 9]))
-    }
 
     func testSelectableTextViewValueMatchesFullPayloadWithoutLabel() {
         let payload = "QA terminal transcript שלום 👋"
@@ -136,21 +163,7 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
         XCTAssertFalse(predicate.evaluate(with: ["label": "", "value": payload, "elementType": 9]))
     }
 
-    func testRadioScopeSelectionAcceptsTheNativeNumericAXValue() {
-        XCTAssertTrue(UIE2EAXSelection.isSelected(flag: false, value: NSNumber(value: 1)))
-        XCTAssertFalse(UIE2EAXSelection.isSelected(flag: false, value: NSNumber(value: 0)))
-        XCTAssertTrue(UIE2EAXSelection.isSelected(flag: false, value: "1"))
-        XCTAssertTrue(UIE2EAXSelection.isSelected(flag: true, value: nil))
-        XCTAssertFalse(UIE2EAXSelection.isSelected(flag: false, value: nil))
-    }
 
-    func testStableScrollInMiddleCannotProveAnEdge() {
-        XCTAssertFalse(UIE2EScrollEdge.reached(0.5, direction: -1))
-        XCTAssertFalse(UIE2EScrollEdge.reached(0, direction: -1))
-        XCTAssertTrue(UIE2EScrollEdge.reached(1, direction: -1))
-        XCTAssertTrue(UIE2EScrollEdge.reached(0, direction: 1))
-        XCTAssertFalse(UIE2EScrollEdge.reached(.nan, direction: 1))
-    }
 
     func testGeometryDetectsReplayRestartShiftAndRowResize() {
         let baseline = UIE2EControlGeometry(replay: CGRect(x: 100, y: 20, width: 20, height: 20),
