@@ -8,24 +8,47 @@ import type { AlignedWordBoundary } from "../socket-protocol";
 import { alignCloneAudio, type CloneAlignmentRequest } from "./clone-alignment";
 
 let tail = Promise.resolve();
-type TimingInput = Omit<CloneAlignmentRequest, "decoder" | "language" | "signal" | "lowPriority" | "playbackRate" | "canSpawn">;
+type TimingInput = Omit<CloneAlignmentRequest, "decoder" | "language" | "signal" | "lowPriority" | "playbackRate" | "canSpawn" | "onChildSpawned" | "onChildrenReaped">;
 /** Current-player work only. Replacements serialize behind cancellation/reaping,
  * while audio playback itself never awaits this queue. Files are already at rate. */
 export function startCloneTiming(input: TimingInput, isCurrent: () => boolean, publish: (words: AlignedWordBoundary[]) => void) {
-  const controller = new AbortController(), cancel = () => controller.abort();
+  let resolveReaped!: () => void, rejectReaped!: (error: unknown) => void;
+  const childReaped = new Promise<void>((resolve, reject) => { resolveReaped = resolve; rejectReaped = reject; });
+  let childExit: Promise<number> | undefined;
+  const controller = new AbortController(), cancel = () => {
+    controller.abort();
+    // Aborted admission prevents any later spawn, even if preparation is stuck.
+    if (!childExit) resolveReaped();
+  };
+  const onChildSpawned = (exited: Promise<number>) => {
+    childExit = exited;
+    // A rejected watcher needs the adapter's final physical-state check,
+    // including its kill/reap attempt, before readiness can be classified.
+    void exited.then(() => {
+      if (childExit === exited) childExit = undefined;
+      if (controller.signal.aborted) resolveReaped();
+    }, () => {});
+  };
+  const onChildrenReaped = (error?: Error) => {
+    childExit = undefined;
+    if (error) {
+      console.error(`[voicelayer] Alignment child termination unconfirmed: ${String(error)}`);
+      rejectReaped(error);
+    } else resolveReaped();
+  };
   const unsubscribe = onRecordingStateChange(state => { if (state !== "idle") cancel(); });
   // Effective state also covers a separate CLI process's capture/transcription.
   const check = () => { if (!isCurrent() || getEffectiveRecordingState() !== "idle") cancel(); };
   const poll = setInterval(check, 10); poll.unref(); check();
   const current = () => { check(); return !controller.signal.aborted; };
-  const done = tail.then(async () => {
+  const cleanupDone = tail.then(async () => {
     if (!current()) return;
     const [binary, ffmpeg] = await Promise.all([
       resolveBinaryAsync("whisper-cli").then(path => path ?? resolveBinaryAsync("whisper-cpp")),
       resolveBinaryAsync("ffmpeg"),
     ]);
     if (!binary || !ffmpeg || !current()) return;
-    const result = await alignCloneAudio({ ...input, playbackRate: 1, lowPriority: true, canSpawn: current,
+    const result = await alignCloneAudio({ ...input, playbackRate: 1, lowPriority: true, canSpawn: current, onChildSpawned, onChildrenReaped,
       language: /\p{Script=Hebrew}/u.test(input.speechText) ? "he" : "en", signal: controller.signal,
       decoder: { binary, ffmpeg, model: process.env.QA_VOICE_WHISPER_MODEL ?? join(homedir(), ".cache/whisper/ggml-large-v3-turbo.bin") } });
     if (!current() || result.status === "untimed" || result.identity.requestId !== input.requestId ||
@@ -43,7 +66,12 @@ export function startCloneTiming(input: TimingInput, isCurrent: () => boolean, p
     });
     // Wire stays chunk-local; Swift adds chunk_start_ms exactly once.
     if (words.some(word => word.offset_ms !== null)) publish(words);
-  }).catch(() => {}).finally(() => { clearInterval(poll); unsubscribe(); });
-  tail = done;
-  return { cancel, done };
+  }).catch(() => {}).finally(() => { clearInterval(poll); unsubscribe(); if (!childExit) resolveReaped(); });
+  // The job retains cleanup ownership; capture and replacement jobs only need
+  // physical child quiescence, never binary lookup or filesystem completion.
+  // A cancelled queued job has no child of its own, but cannot let a later job
+  // jump over an older child that is still being reaped.
+  // Wait for both settlements, then recover errors for the next admission.
+  tail = Promise.allSettled([tail, childReaped]).then(() => {});
+  return { cancel, childReaped, cleanupDone };
 }

@@ -981,7 +981,7 @@ class PlaybackQueueManager {
       exited,
     };
     this.jobs.set(job.id, job);
-    // Terminal ownership includes alignment; audio scheduling below deliberately does not.
+    // Capture/Stop fences include alignment children, never preparation or cleanup.
     const playerExited = job.lifecycle.playerExited.finally(async () => { await Promise.all(job.alignments); });
     void playerExited.then(() => this.jobs.delete(job.id), () => this.jobs.delete(job.id));
     const handle: QueuedPlaybackHandle = { id: job.id, exited,
@@ -1380,12 +1380,13 @@ class PlaybackQueueManager {
         chunkId: String(next.metadata.longRead?.chunk_index ?? 0),
       }, () => this.current === active && !next.completed && next.lifecycle.generation === generation,
       aligned_words => broadcast({ type: "subtitle", words: [], aligned_words }));
-      const done = active.timing.done;
-      next.alignments.add(done); this.alignments.add(done);
-      void done.then(() => {
-        next.alignments.delete(done); this.alignments.delete(done);
+      const childReaped = active.timing.childReaped;
+      next.alignments.add(childReaped); this.alignments.add(childReaped);
+      const forgetAlignment = () => {
+        next.alignments.delete(childReaped); this.alignments.delete(childReaped);
         this.resolveIfIdle(); broadcastPlaybackIdleIfSpeakerClear();
-      });
+      };
+      void childReaped.then(forgetAlignment, forgetAlignment);
     }
     this.startProgressTimer();
     this.emitQueueSnapshot();
