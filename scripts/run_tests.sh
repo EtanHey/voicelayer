@@ -20,7 +20,8 @@ DAEMON_ERR="$RUN_DIR/mcp-daemon.err.log"
 exit_status=0
 daemon_pid=""
 
-mkdir -p "$RUN_DIR"
+# Never adopt another run's directory (including after PID reuse).
+mkdir -m 700 "$RUN_DIR" || exit 1
 
 record_status() {
   local label="$1"
@@ -36,11 +37,17 @@ record_status() {
 }
 
 cleanup() {
-  if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
+  local status=$?
+  trap '' HUP INT TERM
+  if [ -n "$daemon_pid" ]; then
     kill "$daemon_pid" 2>/dev/null
     wait "$daemon_pid" 2>/dev/null
   fi
-  rm -f "$MCP_SOCKET" "$VOICEBAR_SOCKET" "$MCP_PID_FILE" "$DISABLE_FLAG"
+  # Opt in to retaining logs/state for debugging; never retain processes.
+  if [ "${VOICELAYER_RUN_TESTS_KEEP_RUN_DIR:-0}" != "1" ]; then
+    rm -rf "$RUN_DIR"
+  fi
+  return "$status"
 }
 
 print_log_tail() {
@@ -54,6 +61,9 @@ print_log_tail() {
 }
 
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 printf 'VoiceLayer regression gate\n'
 printf 'repo: %s\n' "$ROOT_DIR"
@@ -89,7 +99,7 @@ printf '\n== Bun MCP daemon boot ==\n'
 (
   cd "$ROOT_DIR" || exit 1
   # Keep HOME-derived logs/caches and all runtime state inside this smoke run.
-  HOME="$RUN_DIR" \
+  exec env HOME="$RUN_DIR" \
     VOICELAYER_STATE_DIR="$RUN_DIR/state" \
     VOICELAYER_TMP_ROOT="$RUN_DIR" \
     VOICELAYER_CONTROL_LAYER_BASE="$RUN_DIR/journal" \
@@ -103,7 +113,8 @@ printf '\n== Bun MCP daemon boot ==\n'
     QA_VOICE_MCP_HEARTBEAT_PATH="$RUN_DIR/voicelayer-mcp.heartbeat" \
     QA_VOICE_DISABLE_FLAG_PATH="$DISABLE_FLAG" \
     VOICELAYER_ALLOW_ORPHAN_DAEMON=1 \
-    bun run src/mcp-server-daemon.ts
+    python3 "$ROOT_DIR/scripts/supervise-test-daemon.py" "$$" "$RUN_DIR" \
+      bun run src/mcp-server-daemon.ts
 ) >"$DAEMON_OUT" 2>"$DAEMON_ERR" &
 daemon_pid=$!
 
@@ -113,7 +124,7 @@ for _ in $(seq 1 150); do
     daemon_status=0
     break
   fi
-  if ! kill -0 "$daemon_pid" 2>/dev/null; then
+  if [ -f "$RUN_DIR/daemon-reaped" ] || ! kill -0 "$daemon_pid" 2>/dev/null; then
     daemon_status=1
     break
   fi
@@ -123,9 +134,12 @@ record_status "bun MCP daemon boot" "$daemon_status"
 
 # Boot smoke is complete; do not leave its daemon alive during the test suites.
 # Its periodic log rotator still targets production /tmp logs.
-kill "$daemon_pid" 2>/dev/null
-wait "$daemon_pid" 2>/dev/null
-daemon_pid=""
+# USR1 stops/reaps the daemon group; the supervisor remains until EXIT so it
+# can remove RUN_DIR even if the shell is killed during the later Bun suite.
+kill -USR1 "$daemon_pid" 2>/dev/null
+while [ ! -f "$RUN_DIR/daemon-reaped" ] && kill -0 "$daemon_pid" 2>/dev/null; do
+  sleep 0.05
+done
 
 printf '\n== F5 hidutil LaunchAgent smoke ==\n'
 hidutil_plist_status=0
