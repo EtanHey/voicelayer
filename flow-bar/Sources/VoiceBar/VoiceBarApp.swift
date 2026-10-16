@@ -163,6 +163,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var setupWizard = SetupWizardWindowController(defaults: defaults) { [weak self] in
         self?.makeSetupWizardDependencies() ?? SetupWizardDependencies()
     }
+    private lazy var presentSetupWizard: () -> Void = { [weak self] in
+        self?.refreshRelaySetupStatusAsync()
+        self?.setupWizard.show()
+    }
+    private var pendingAutomaticSetupCheck: (() -> Bool)?
+    private var hasPresentedSetupWizard = false
 
     /// The last tab the app asked Settings to show (see `SettingsTabRequest`).
     private var settingsTabRequest: SettingsTabRequest?
@@ -1167,6 +1173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshNotchPresentationAndPanelLayout(animated: false)
         reapplyAnchoredPanelPosition()
         orderPanelFront(reason: "unsnooze")
+        presentAutomaticSetupIfNeeded()
     }
 
     private func orderPanelFront(reason: String, regardless: Bool = false) {
@@ -2777,10 +2784,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - Setup wizard (F3)
 
-    /// Opens the setup wizard (Settings › General › Run setup again, the menu, or first launch).
+    /// Explicit Run setup stays available while hidden and consumes any automatic launch request.
     func openSetupWizard() {
-        refreshRelaySetupStatusAsync()
-        setupWizard.show()
+        hasPresentedSetupWizard = true
+        pendingAutomaticSetupCheck = nil
+        presentSetupWizard()
+    }
+
+    func configureSetupWizardPresentationForTesting(_ present: @escaping () -> Void) {
+        presentSetupWizard = present
+    }
+
+    func completeFirstRunSetupDetection(shouldShow: @escaping () -> Bool) {
+        guard !hasPresentedSetupWizard else { return }
+        pendingAutomaticSetupCheck = shouldShow
+        presentAutomaticSetupIfNeeded()
+    }
+
+    private func presentAutomaticSetupIfNeeded() {
+        guard !isSnoozed, !voiceState.isHidden,
+              let shouldShow = pendingAutomaticSetupCheck else { return }
+        pendingAutomaticSetupCheck = nil
+        // Re-read completion/readiness when shown: setup may have been finished during the snooze.
+        if shouldShow() { openSetupWizard() }
     }
 
     /// "Run setup…" in the menu-bar popover: close the popover first, as Open Settings… does.
@@ -2806,12 +2832,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                let readiness = SetupLaunchReadiness(
-                    permissionsGranted: SetupPermissionsStep(snapshot: currentSetupPermissionSnapshot()).allGranted,
-                    listenerActive: hotkeyEnabled
-                )
-                if SetupWizardLaunchPolicy.resolve(store: store, hasPriorUse: hasPriorUse, readiness: readiness) {
-                    openSetupWizard()
+                completeFirstRunSetupDetection { [weak self] in
+                    guard let self else { return false }
+                    let readiness = SetupLaunchReadiness(
+                        permissionsGranted: SetupPermissionsStep(snapshot: currentSetupPermissionSnapshot()).allGranted,
+                        listenerActive: hotkeyEnabled
+                    )
+                    return SetupWizardLaunchPolicy.resolve(store: store, hasPriorUse: hasPriorUse, readiness: readiness)
                 }
             }
         }
