@@ -219,9 +219,9 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
     private func boundaries(
         for text: String,
         stepMs: Int
-    ) -> [(offsetMs: Int, durationMs: Int, text: String)] {
+    ) -> [TeleprompterBoundary] {
         text.split(whereSeparator: { $0.isWhitespace }).enumerated().map { index, word in
-            (index * stepMs, max(80, stepMs - 20), String(word))
+            TeleprompterBoundary(offsetMs: index * stepMs, durationMs: max(80, stepMs - 20), text: String(word))
         }
     }
 

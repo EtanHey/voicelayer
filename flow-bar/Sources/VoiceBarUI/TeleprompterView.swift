@@ -70,9 +70,47 @@ public struct FlowLayout: Layout {
 // MARK: - Teleprompter View
 
 public struct TeleprompterBoundary: Equatable {
-    public let offsetMs: Int
-    public let durationMs: Int
+    public let offsetMs: Int?
+    public let durationMs: Int?
     public let text: String
+    public let wordIndex: Int?
+
+    public init(offsetMs: Int?, durationMs: Int?, text: String, wordIndex: Int? = nil) {
+        self.offsetMs = offsetMs
+        self.durationMs = durationMs
+        self.text = text
+        self.wordIndex = wordIndex
+    }
+
+    static func subtitleWords(_ event: [String: Any], chunkStartMs: Int) -> [Self] {
+        let indexed = event["aligned_words"] != nil
+        let rows = event[indexed ? "aligned_words" : "words"] as? [[String: Any]] ?? []
+        return rows.compactMap { row in
+            guard let text = row["text"] as? String else {
+                return indexed ? Self(offsetMs: nil, durationMs: nil, text: "", wordIndex: -1) : nil
+            }
+            // Preserve legacy Edge's fractional-millisecond truncation; reject traps and booleans.
+            func milliseconds(_ value: Any?, integral: Bool = false) -> Int? {
+                guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                      number.doubleValue >= 0,
+                      !integral || number.doubleValue.rounded(.towardZero) == number.doubleValue else { return nil }
+                return Int(exactly: number.doubleValue.rounded(.towardZero))
+            }
+            let offset = milliseconds(row["offset_ms"])
+            let duration = milliseconds(row["duration_ms"])
+            let index = milliseconds(row["word_index"], integral: true)
+            if !indexed, offset == nil || duration == nil { return nil }
+            var globalOffset: Int?
+            if let offset, let duration, offset >= 0, duration > 0, chunkStartMs >= 0 {
+                let global = offset.addingReportingOverflow(chunkStartMs)
+                if !global.overflow && !global.partialValue.addingReportingOverflow(duration).overflow {
+                    globalOffset = global.partialValue
+                }
+            }
+            return Self(offsetMs: globalOffset, durationMs: globalOffset == nil ? nil : duration,
+                        text: text, wordIndex: indexed ? (index ?? -1) : nil)
+        }
+    }
 }
 
 public struct TeleprompterWord: Equatable, Identifiable {
@@ -149,6 +187,22 @@ public enum TeleprompterContentModel {
         text: String,
         wordBoundaries: [TeleprompterBoundary]
     ) -> [TeleprompterWord] {
+        if wordBoundaries.contains(where: { $0.wordIndex != nil }) {
+            let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            var byIndex: [Int: TeleprompterBoundary] = [:]
+            for boundary in wordBoundaries {
+                guard let index = boundary.wordIndex, tokens.indices.contains(index),
+                      tokens[index] == boundary.text, byIndex[index] == nil else {
+                    return words(text: text, wordBoundaries: [])
+                }
+                byIndex[index] = boundary
+            }
+            return assignStableIDs(to: tokens.enumerated().flatMap { index, token in
+                let boundary = byIndex[index]
+                return splitDisplayToken(TeleprompterWord(id: 0, text: token,
+                    offsetMs: boundary?.offsetMs, durationMs: boundary?.durationMs))
+            })
+        }
         let textWords = text
             .split(whereSeparator: { $0.isWhitespace })
             .map { word in
@@ -354,7 +408,8 @@ public enum TeleprompterPlaybackPolicy {
         let elapsedMilliseconds = max(0, elapsedMilliseconds)
         var currentWordID = firstWord.id
         for index in words.indices {
-            guard playbackOffsetMilliseconds(forWordAt: index, in: words) <= elapsedMilliseconds else {
+            guard let offset = playbackOffsetMilliseconds(forWordAt: index, in: words) else { continue }
+            guard offset <= elapsedMilliseconds else {
                 break
             }
             currentWordID = words[index].id
@@ -365,10 +420,10 @@ public enum TeleprompterPlaybackPolicy {
     public static func playbackOffsetMilliseconds(
         forWordAt index: Int,
         in words: [TeleprompterWord]
-    ) -> Int {
-        guard words.indices.contains(index) else { return 0 }
+    ) -> Int? {
+        guard words.indices.contains(index) else { return nil }
         if usesServerTimestamps(in: words) {
-            return words[index].offsetMs ?? 0
+            return words[index].offsetMs
         }
         let seconds = words[..<index].reduce(0.0) { partialResult, word in
             partialResult + TeleprompterPacePolicy.estimatedDelay(for: word.text)
@@ -377,7 +432,7 @@ public enum TeleprompterPlaybackPolicy {
     }
 
     public static func usesServerTimestamps(in words: [TeleprompterWord]) -> Bool {
-        !words.isEmpty && words.allSatisfy { $0.offsetMs != nil }
+        words.contains { $0.offsetMs != nil }
     }
 
     public static func animatesTimeline(isReadback: Bool) -> Bool {
@@ -428,7 +483,7 @@ public struct TeleprompterView: View {
     public let text: String
     public var playbackEpoch = 0
     /// Server-provided word boundary timestamps (ms offsets from audio start).
-    public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+    public var wordBoundaries: [TeleprompterBoundary] = []
     public var isReadback = false
     public let playbackElapsedMilliseconds: () -> Int
     public var onSeek: ((Int) -> Void)?
@@ -439,7 +494,7 @@ public struct TeleprompterView: View {
 
     public init(
         text: String,
-        wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = [],
+        wordBoundaries: [TeleprompterBoundary] = [],
         isReadback: Bool = false,
         playbackEpoch: Int = 0,
         playbackElapsedMilliseconds: @escaping () -> Int,
@@ -461,13 +516,7 @@ public struct TeleprompterView: View {
         self.contentInset = contentInset
         let initialWords = TeleprompterContentModel.words(
             text: text,
-            wordBoundaries: wordBoundaries.map {
-                TeleprompterBoundary(
-                    offsetMs: $0.offsetMs,
-                    durationMs: $0.durationMs,
-                    text: $0.text
-                )
-            }
+            wordBoundaries: wordBoundaries
         )
         let initialWordIndex = isReadback || wordBoundaries.isEmpty
             ? 0
@@ -490,13 +539,7 @@ public struct TeleprompterView: View {
     private var teleprompterWords: [TeleprompterWord] {
         TeleprompterContentModel.words(
             text: text,
-            wordBoundaries: wordBoundaries.map {
-                TeleprompterBoundary(
-                    offsetMs: $0.offsetMs,
-                    durationMs: $0.durationMs,
-                    text: $0.text
-                )
-            }
+            wordBoundaries: wordBoundaries
         )
     }
 
@@ -541,7 +584,7 @@ public struct TeleprompterView: View {
                 restart()
                 scrollToCurrentWord(with: proxy, animated: false)
             }
-            .onChange(of: wordBoundaries.count) { _, _ in
+            .onChange(of: wordBoundaries) { _, _ in
                 restart()
                 scrollToCurrentWord(with: proxy, animated: false)
             }
@@ -594,13 +637,13 @@ public struct TeleprompterView: View {
 
     private func wordLabel(_ word: TeleprompterWord, highlightedIndex: Int) -> some View {
         Text(word.text)
-            .font(.system(size: 16, weight: !wordBoundaries.isEmpty && word.id == highlightedIndex ? .semibold : .medium))
+            .font(.system(size: 16, weight: word.offsetMs != nil && word.id == highlightedIndex ? .semibold : .medium))
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: wrapWidth, alignment: .leading)
             .foregroundStyle(wordForeground(word, highlightedIndex: highlightedIndex))
             .background {
-                if !isReadback, !wordBoundaries.isEmpty,
+                if !isReadback, word.offsetMs != nil,
                    word.id == highlightedIndex || hoveredWordID == word.id {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color(red: 92/255, green: 124/255, blue: 1).opacity(word.id == highlightedIndex ? 0.30 : 0.12))
@@ -609,6 +652,7 @@ public struct TeleprompterView: View {
     }
 
     private func wordForeground(_ word: TeleprompterWord, highlightedIndex: Int) -> Color {
+        if !isReadback, word.offsetMs == nil { return notchPalette.primary.color.opacity(0.78) }
         if notchAppearance == .dark, !isReadback, !wordBoundaries.isEmpty {
             return word.id == highlightedIndex ? .white : Color(red: 234/255, green: 234/255, blue: 240/255)
         }
@@ -648,7 +692,7 @@ public struct TeleprompterView: View {
     }
 
     private func startAnimating() {
-        guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), !wordBoundaries.isEmpty else { return }
+        guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), !timedWords.isEmpty else { return }
         currentIndex = TeleprompterPlaybackPolicy.currentWordIndex(
             in: teleprompterWords,
             elapsedMilliseconds: highlightElapsedMilliseconds
@@ -698,10 +742,10 @@ public struct TeleprompterView: View {
             for index in words.indices {
                 let word = words[index]
                 guard word.id > startingWordID else { continue }
-                let targetOffsetMilliseconds = TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(
+                guard let targetOffsetMilliseconds = TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(
                     forWordAt: index,
                     in: words
-                )
+                ) else { continue }
                 let remainingMilliseconds = targetOffsetMilliseconds - highlightElapsedMilliseconds
                 if remainingMilliseconds > 0 {
                     try? await Task.sleep(for: .milliseconds(remainingMilliseconds))

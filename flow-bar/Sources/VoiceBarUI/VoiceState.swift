@@ -320,9 +320,9 @@ public final class VoiceState {
     }
 
     /// Word boundary timestamps from TTS engine (ms offsets from audio start).
-    public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+    public var wordBoundaries: [TeleprompterBoundary] = []
     private var retainedTeleprompterText: String?
-    private var retainedTeleprompterWordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+    private var retainedTeleprompterWordBoundaries: [TeleprompterBoundary] = []
     public private(set) var isTeleprompterDismissed = false
 
     public var teleprompterText: String? {
@@ -335,7 +335,7 @@ public final class VoiceState {
         return nil
     }
 
-    public var teleprompterWordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] {
+    public var teleprompterWordBoundaries: [TeleprompterBoundary] {
         mode == .idle ? retainedTeleprompterWordBoundaries : wordBoundaries
     }
 
@@ -1833,16 +1833,7 @@ public final class VoiceState {
             }
 
         case "subtitle":
-            if let words = event["words"] as? [[String: Any]] {
-                wordBoundaries = words.compactMap { w in
-                    // JSONSerialization may decode numbers as Int or Double
-                    guard let offset = (w["offset_ms"] as? Int) ?? (w["offset_ms"] as? Double).map({ Int($0) }),
-                          let duration = (w["duration_ms"] as? Int) ?? (w["duration_ms"] as? Double).map({ Int($0) }),
-                          let text = w["text"] as? String
-                    else { return nil }
-                    return (offsetMs: offset + playbackChunkStartMilliseconds, durationMs: duration, text: text)
-                }
-            }
+            wordBoundaries = TeleprompterBoundary.subtitleWords(event, chunkStartMs: playbackChunkStartMilliseconds)
 
         case "queue":
             if let depth = event["depth"] as? Int {

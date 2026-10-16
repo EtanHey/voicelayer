@@ -218,21 +218,23 @@ final class TeleprompterContentModelTests: XCTestCase {
         )
     }
 
-    func testPartialTimestampPayloadUsesOneEstimatedTimeline() {
+    func testPartialTimestampPayloadAdvancesOnlyAtMeasuredWords() {
         let words = [
             TeleprompterWord(id: 0, text: "one", offsetMs: 0, durationMs: 200),
             TeleprompterWord(id: 1, text: "two", offsetMs: nil, durationMs: nil),
             TeleprompterWord(id: 2, text: "three", offsetMs: 700, durationMs: 200),
         ]
 
-        XCTAssertFalse(TeleprompterPlaybackPolicy.usesServerTimestamps(in: words))
+        XCTAssertTrue(TeleprompterPlaybackPolicy.usesServerTimestamps(in: words))
+        XCTAssertNil(TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(forWordAt: 1, in: words))
         XCTAssertEqual(
             TeleprompterPlaybackPolicy.currentWordIndex(
                 in: words,
                 elapsedMilliseconds: 660
             ),
-            2
+            0
         )
+        XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: words, elapsedMilliseconds: 700), 2)
     }
 
     func testTeleprompterMountConsumesVoiceStatesAbsolutePlaybackClock() throws {
