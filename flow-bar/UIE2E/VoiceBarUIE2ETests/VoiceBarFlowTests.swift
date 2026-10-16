@@ -130,12 +130,23 @@ final class VoiceBarFlowTests: XCTestCase {
 
     /// All input operations go through this wrapper, including scrolling, typing and menu dismissal.
     /// A failed assertion/action still produces a keepAlways attachment and a FAIL receipt.
-    func step(_ name: String, skipped: String? = nil, _ body: () -> Void) {
+    func step(_ name: String, skipped: String? = nil, expected issue: UIE2EKnownIssue? = nil,
+              surface: String? = nil, surfaces: [String] = [], _ body: () -> Void) {
         let number = steps.count + 1
         let attachment = String(format: "UIE2E-%04d", number)
         let before = testRun?.failureCount ?? 0
+        var matched: [String] = []
         XCTContext.runActivity(named: "\(attachment) \(name)") { activity in
-            body()
+            if let issue {
+                let options = XCTExpectedFailure.Options()
+                options.isStrict = true
+                options.issueMatcher = { recorded in
+                    guard recorded.type == .assertionFailure, issue.matches(recorded.compactDescription) else { return false }
+                    matched.append(recorded.compactDescription)
+                    return true
+                }
+                XCTExpectFailure("Known product packet " + issue.rawValue, options: options) { body() }
+            } else { body() }
             let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             screenshot.name = attachment
             screenshot.lifetime = .keepAlways
@@ -144,8 +155,17 @@ final class VoiceBarFlowTests: XCTestCase {
         let passed = (testRun?.failureCount ?? 0) == before
         var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed]
         if let skipped { receipt["skipped"] = skipped }
+        if let issue, !matched.isEmpty, passed {
+            var expectedReceipt: [String: Any] = ["packet": issue.rawValue, "surface": surface ?? "", "descriptions": matched]
+            if !surfaces.isEmpty {
+                expectedReceipt["surfaces"] = surfaces
+                for id in surfaces { XCTAssertTrue(ledger.recordExpected(surface: id, issue: issue, descriptions: matched)) }
+            }
+            receipt["expectedFailure"] = expectedReceipt
+        }
         steps.append(receipt)
-        print("UIE2E \(passed ? "PASS" : "FAIL") \(number) \(name)")
+        let result = !passed ? "FAIL" : !matched.isEmpty ? "XFAIL [\(issue!.rawValue)]" : "PASS"
+        print("UIE2E \(result) \(number) \(name)")
         // Individual receipts survive an aborted method; only the final ledger can complete a run.
         attachJSON(String(format: "UIE2E-RECEIPT-%04d", number), receipt)
     }
@@ -951,88 +971,184 @@ extension VoiceBarFlowTests {
     func pillFlow() {
         for (name, text) in [("transcribing", "Cancel transcription"), ("confirmation", "Pasted"),
                              ("paste-failed", "Paste failed — click input and press Shift+F5"),
-                             ("error", "QA fixture failure"), ("disconnected", "VoiceLayer")] {
+                             ("error", "QA fixture failure"), ("disconnected", "Disconnected")] {
             click(app.buttons["qa-fixture-\(name)"])
             receipt("fixture:" + name)
             step("assert actual pill \(name) content") {
-                let pill = app.windows["VoiceBar QA Pill"]
+                let pill = app.dialogs["VoiceBar QA Pill"]
                 XCTAssertTrue(pill.exists)
-                XCTAssertTrue(pill.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
-                              pill.debugDescription)
+                if name == "disconnected" {
+                    attachJSON("UIE2E-DISCONNECTED", ["expected": text, "AX": pill.debugDescription])
+                }
+                let content = pill.descendants(matching: .any).matching(UIE2EAXText.predicate(text,
+                    staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+                XCTAssertTrue(content.exists || content.waitForExistence(timeout: 4), pill.debugDescription)
             }
             if name == "error" { click(app.buttons["Dismiss error"]) }
         }
-        let feedback = [("paste-not-inserted", "Not inserted — transcript kept in History. Click input and press Shift+F5, or Copy."),
-                        ("paste-unverified", "Insertion unverified — transcript kept in History. Check the input before retrying or Copy."),
-                        ("paste-partial", "Partially inserted — full transcript kept in History. Check the input before retrying or Copy.")]
+        let feedback = [("paste-not-inserted", "Not pasted\nIn History"),
+                        ("paste-unverified", "Unverified\nIn History"),
+                        ("paste-partial", "Part pasted\nHistory: full")]
         if !app.buttons["qa-fixture-paste-not-inserted"].exists { skipCapability("P1b #338 not in this build") }
         else {
-            knownVisualGaps.append("P1b pill feedback visibly truncates despite full AX text (native walkthrough rc-2.2.44). AX assertions below check content only; full-text visual readability is NOT_PROVEN.")
             for (name, expected) in feedback {
                 click(app.buttons["qa-fixture-\(name)"])
                 step("assert P1b AX content only \(name)") {
-                    XCTAssertTrue(app.windows["VoiceBar QA Pill"].descendants(matching: .any)
-                        .matching(NSPredicate(format: "label CONTAINS %@", expected)).firstMatch.exists)
+                    let note = app.dialogs["VoiceBar QA Pill"].staticTexts
+                        .matching(UIE2EAXText.predicate(expected, staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+                    XCTAssertTrue(note.exists)
+                    if note.exists {
+                        attachJSON("UIE2E-FEEDBACK-\(name)", ["expected": expected, "label": note.label,
+                            "value": note.value as? String ?? "", "frame": NSStringFromRect(note.frame),
+                            "visualReadability": "AX content only; separate P1e rendered-frame assertion follows"])
+                    }
+                }
+                step("P1e normal visible feedback frame \(name)") {
+                    let note = app.dialogs["VoiceBar QA Pill"].staticTexts
+                        .matching(UIE2EAXText.predicate(expected, staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
+                    guard note.exists else { XCTFail("Missing feedback text for visual frame measurement"); return }
+                    let required = UIE2EFeedbackFrame.requiredSize(text: expected, width: note.frame.width)
+                    attachJSON("UIE2E-FEEDBACK-FRAME-\(name)", ["text": expected, "frame": NSStringFromRect(note.frame),
+                        "requiredTextSize": NSStringFromSize(required), "font": "system12medium", "packet": "P1e"])
+                    XCTAssertTrue(UIE2EFeedbackFrame.isReadable(text: expected, frame: note.frame),
+                        "[P1e] Full feedback does not fit its visible text frame: \(note.frame); required \(required)")
                 }
             }
         }
         click(app.buttons["qa-fixture-idle"])
     }
 
-    func openContextMenu() {
-        step("right-click actual pill") {
-            let pill = app.windows["VoiceBar QA Pill"]
-            XCTAssertTrue(pill.exists)
-            pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
-            XCTAssertTrue(app.menuItems["Settings…"].waitForExistence(timeout: 3))
+    func openContextMenu() -> Bool {
+        var opened = false
+        if app.menuItems["Settings…"].exists, app.menuItems["Settings…"].isHittable {
+            step("reuse the still-open QA context menu") { opened = true }
+            return opened
         }
+        step("right-click actual pill") {
+            let pill = app.dialogs["VoiceBar QA Pill"]
+            if pill.exists {
+                pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
+            } else {
+                let hiddenMenu = app.buttons["qa-fixture-hidden-menu"]
+                guard hiddenMenu.exists else { XCTFail("Neither pill nor isolated hidden-menu fixture is reachable"); return }
+                hiddenMenu.click() // Real controller's Show action when the actual panel is hidden.
+            }
+            let marker = app.menuItems["Settings…"]
+            guard marker.exists || marker.waitForExistence(timeout: 3), marker.isHittable else {
+                XCTFail("QA context menu did not remain open and reachable; refusing stale/foreign menu controls")
+                return
+            }
+            opened = true
+        }
+        return opened
     }
 
-    func menuBarFlow() {
-        let status = app.menuBars.menuBarItems["VoiceBar QA"]
-        click(status, "open QA menu-bar item")
-        assertCopy("Copy last transcript", equals: "QA fixture transcript שלום 👋")
-        click(app.buttons["popover-settings"])
-        receipt("popover-settings")
-        click(status, "reopen QA menu-bar item")
-        click(app.buttons["popover-microphone-change"])
-        receipt("popover-microphone")
-        click(status, "reopen QA menu-bar item")
-        click(app.buttons["Run setup…"])
-        receipt("popover-setup")
-        click(status, "reopen QA menu-bar item")
-        click(app.buttons["popover-quit"])
-        step("assert QA popover Quit") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
-        receipt("popover-quit")
-        step("relaunch isolated QA app for context-menu flow") {
+    func relaunchQA() {
+        step("relaunch isolated QA app") {
             app.launch()
             XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+            activePage = "General"; activeHistoryScope = "Dictations"; selectedHistoryRow = "qa-recording"
         }
     }
 
+
+    func menuBarFlow() {
+        defer {
+            if app.state != .notRunning, app.buttons["popover-settings"].exists {
+                step("dismiss remaining QA popover with Escape") { app.typeKey(.escape, modifierFlags: []) }
+            }
+        }
+        guard openQAPopover() else { return }
+        assertCopy("Copy last transcript", equals: "QA fixture transcript שלום 👋")
+        guard click(app.buttons["popover-settings"]) else { return }
+        receipt("popover-settings")
+        guard openQAPopover() else { return }
+        // Native AX collapses the inner Change identifier into its mic row.
+        guard click(app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@",
+            "popover-microphone", "Change default microphone in Settings")).firstMatch) else { return }
+        receipt("popover-microphone")
+        guard openQAPopover(), click(app.descendants(matching: .any).matching(identifier: "popover-setup").firstMatch,
+            "popover Run setup") else { return }
+        receipt("popover-setup")
+        wizardFlow()
+        guard openQAPopover(), click(app.buttons["popover-quit"]) else { return }
+        step("assert QA popover Quit") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
+        receipt("popover-quit")
+        if app.state == .notRunning { relaunchQA() }
+    }
+
+    func openQAPopover() -> Bool {
+        let marker = app.buttons["popover-settings"]
+        if !marker.exists {
+            guard click(app.statusItems["uie2e-status-item"], "open QA menu-bar item") else { return false }
+        }
+        var opened = false
+        step("assert QA popover is open") {
+            opened = (marker.exists || marker.waitForExistence(timeout: 3)) && marker.isHittable
+            XCTAssertTrue(opened, "QA popover did not open; no further popover control will be targeted")
+        }
+        return opened
+    }
+
+
     func contextMenuFlow() {
+        defer {
+            if app.state != .notRunning {
+                let events = fixtureEvents()
+                if let opened = events.lastIndex(of: "qa-menu-open"),
+                   opened > (events.lastIndex(of: "qa-menu-close") ?? -1) {
+                    step("dismiss remaining QA context menu with Escape") { app.typeKey(.escape, modifierFlags: []) }
+                }
+            }
+        }
         for (label, intent) in [("Settings…", "menu-settings"), ("Hide for 1 hour", "menu-hide"),
                                 ("Show VoiceBar", "menu-show"), ("Paste Last Transcript", "menu-paste-last"),
                                 ("Re-transcribe latest", "menu-retranscribe")] {
-            openContextMenu(); click(app.menuItems[label]); receipt(intent)
+            if intent == "menu-hide" {
+                step("assert context Hide starts with visible panel") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].exists) }
+            }
+            guard openContextMenu() else { return }
+            click(app.menuItems[label], "context " + label); receipt(intent)
+            if intent == "menu-hide" { step("assert context Hide removes panel") { waitUntil { !self.app.dialogs["VoiceBar QA Pill"].exists } } }
+            if intent == "menu-show" { step("assert context Show restores panel") { XCTAssertTrue(app.dialogs["VoiceBar QA Pill"].waitForExistence(timeout: 3)) } }
         }
-        openContextMenu()
+        guard openContextMenu() else { return }
         assertCopy("Copy Last Transcript", equals: "QA fixture transcript שלום 👋")
-        openContextMenu()
-        step("open Recent Transcriptions submenu") { app.menuItems["Recent Transcriptions"].hover() }
-        click(app.menuItems.matching(NSPredicate(format: "label CONTAINS 'QA fixture transcript'")).firstMatch)
+        guard openContextMenu(), openQASubmenu("Recent Transcriptions") else { return }
+        click(app.menuItems["uie2e-recent-qa-recording"], "paste Recent QA fixture transcript")
         receipt("menu-paste-recent:QA fixture transcript שלום 👋")
-        openContextMenu()
-        step("open Microphone submenu") { app.menuItems["Microphone"].hover() }
+        guard openContextMenu(), openQASubmenu("Microphone") else { return }
         step("assert read-only microphone default") {
-            XCTAssertTrue(app.menuItems["Default: QA microphone A"].exists)
-            XCTAssertFalse(app.menuItems["Default: QA microphone A"].isEnabled)
+            XCTAssertTrue(app.menuItems["uie2e-microphone-default"].exists)
+            XCTAssertFalse(app.menuItems["uie2e-microphone-default"].isEnabled)
         }
-        click(app.menuItems["Change default microphone in Settings"])
+        click(app.menuItems["uie2e-microphone-change"], "context Change default microphone in Settings")
         receipt("menu-microphone")
-        openContextMenu()
-        click(app.menuItems["Quit VoiceBar"])
+        guard openContextMenu() else { return }
+        click(app.menuItems["Quit VoiceBar"], "context Quit VoiceBar")
         step("assert QA quit, no resident process targeted") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
         receipt("menu-quit")
+        attachJSON("UIE2E-MENU-LIFECYCLE", fixtureEvents())
     }
+
+    func openQASubmenu(_ title: String) -> Bool {
+        var opened = false
+        step("open \(title) submenu") {
+            let submenu = app.menuItems[title == "Microphone" ? "uie2e-microphone-menu" : title]
+            guard submenu.exists, submenu.isHittable else {
+                XCTFail("QA context submenu \(title) disappeared or is unreachable; no foreign control touched")
+                return
+            }
+            attachJSON("UIE2E-SUBMENU-\(title)", ["frame": NSStringFromRect(submenu.frame), "AX": submenu.debugDescription])
+            // Native RED: hover only highlighted the parent, then lost tracking.
+            // Click the real submenu parent and require its exposed child before credit.
+            submenu.click()
+            let child = app.menuItems[title == "Recent Transcriptions"
+                ? "uie2e-recent-qa-recording" : "uie2e-microphone-change"]
+            opened = (child.exists || child.waitForExistence(timeout: 3)) && child.isHittable
+            XCTAssertTrue(opened, "QA \(title) submenu child did not appear after parent activation")
+        }
+        return opened
+    }
+
 }
