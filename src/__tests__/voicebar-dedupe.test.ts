@@ -3,6 +3,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdi
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 2787 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 12_000;
+
 test("dedupe preserves the exact TTS label but backs up a duplicate VoiceBar agent", () => {
   const dir = mkdtempSync(join(tmpdir(), "vb-dedupe-"));
   try {
@@ -54,4 +57,4 @@ print(value)
     expect(readFileSync(join(dir, "launchctl.log"), "utf8")).not.toContain("/renamed-tts");
     expect(result.stdout.toString()).toContain("prune:");
   } finally { rmSync(dir, { recursive: true, force: true }); }
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);

@@ -15,6 +15,9 @@ import {
 import { WhisperServerBackend } from "../stt";
 import type { TranscriptSegment } from "../stt-sentence-boundaries";
 
+// Cold speech fixture is unmeasured (TEST2 forbids synthesis); allow 15 s for say + ffmpeg fixture creation.
+const SUBPROCESS_TEST_TIMEOUT_MS = 15_000;
+
 /**
  * The hallucinated-closer gate, against the four real specimens plus synthetic
  * audio.
@@ -924,7 +927,7 @@ describe("stripHallucinatedOutro — real speech plus 2 s of silence", () => {
 
     expect(decision.reason).toBe("removed");
     expect(decision.text).toBe(spoken);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   sayTest("keeps the same farewell when it is inside the spoken region", () => {
     const wav = buildSayFixture();
@@ -940,7 +943,7 @@ describe("stripHallucinatedOutro — real speech plus 2 s of silence", () => {
 
     expect(decision.removed).toEqual([]);
     expect(decision.text).toBe(`${spoken}. Thank you.`);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 // --- the archived specimens ---

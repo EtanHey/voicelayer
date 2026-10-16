@@ -27,6 +27,9 @@ import {
 } from "../corpus-replay-verify";
 import { normalizeOutroKey } from "../stt-outro-gate";
 
+// Real subprocesses: standalone p95 <= 1113 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 test("private caption expectation detects a deliberate over-cut without exposing text", () => {
   const kept = "Keep every spoken word at the end.";
   const expected = {
@@ -751,7 +754,7 @@ describe("corpus replay verification", () => {
 
     expect(childPid).toBeGreaterThan(1);
     expect(childRunning).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("treats an unreaped Linux zombie as not running", () => {
     expect(linuxProcessStatIsRunning("4242 (sleep) Z 1 4242 4242 0")).toBe(false);
@@ -840,7 +843,7 @@ describe("corpus replay verification", () => {
     expect(childPid).toBeGreaterThan(1);
     expect(childRunning).toBe(false);
     expect(Date.now() - startedAt).toBeLessThan(2_500);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("production Swift handoff propagates the isolated runtime environment", async () => {
     const root = makeTempRoot();
@@ -890,7 +893,7 @@ describe("corpus replay verification", () => {
     expect(await Bun.file(receipt).text()).toBe(
       `${workDir}\n${join(workDir, "voicebar.sock")}\n${join(workDir, "mcp.sock")}\n4242\n${join(workDir, "audio.wav")}\n`,
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("does not manufacture terminal proofs when the default runtime runner omits the scenarios", async () => {
     const root = makeTempRoot();
@@ -950,7 +953,7 @@ describe("corpus replay verification", () => {
 
     expect(await Bun.file(normalProof).exists()).toBe(false);
     expect(await Bun.file(veryLongProof).exists()).toBe(false);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("drives record/cancel and record/stop transitions on the daemon NDJSON stream", async () => {
     const events: Record<string, unknown>[] = [];

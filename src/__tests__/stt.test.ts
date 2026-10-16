@@ -12,6 +12,9 @@ import {
   buildWhisperServerOptions,
 } from "../stt";
 
+// Real subprocesses: standalone p95 <= 3 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 function makePcm16Wav(
   durationSeconds: number,
   speechEndSeconds = durationSeconds,
@@ -105,14 +108,14 @@ describe("STT backends", () => {
       // This may return true or false depending on the machine
       const available = await backend.isAvailable();
       expect(typeof available).toBe("boolean");
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("getModelInfo returns binary and model paths", () => {
       const backend = new WhisperCppBackend();
       const info = backend.getModelInfo();
       expect(info).toHaveProperty("binary");
       expect(info).toHaveProperty("model");
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("transcribe throws when binary not found", async () => {
       const backend = new WhisperCppBackend();
@@ -133,7 +136,7 @@ describe("STT backends", () => {
       await expect(backend.transcribe("/tmp/test.wav")).rejects.toThrow(
         "whisper-cpp",
       );
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("transcribe resolves brew by absolute path for launchd-style PATHs", async () => {
       const backend = new WhisperCppBackend();
@@ -2244,7 +2247,7 @@ describe("STT backends", () => {
       } catch {
         // If no backend is available on this machine, that's OK for CI
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("throws clear error when wispr explicitly requested but key missing", async () => {
       const savedBackend = process.env.QA_VOICE_STT_BACKEND;
@@ -2279,7 +2282,7 @@ describe("STT backends", () => {
         if (savedModel) process.env.QA_VOICE_WHISPER_MODEL = savedModel;
         else delete process.env.QA_VOICE_WHISPER_MODEL;
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("respects QA_VOICE_STT_BACKEND=auto", async () => {
       const saved = process.env.QA_VOICE_STT_BACKEND;
@@ -2296,7 +2299,7 @@ describe("STT backends", () => {
         if (saved) process.env.QA_VOICE_STT_BACKEND = saved;
         else delete process.env.QA_VOICE_STT_BACKEND;
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
 
     it("supports explicit QA_VOICE_STT_BACKEND=whisper-server", async () => {
       const saved = process.env.QA_VOICE_STT_BACKEND;
@@ -2310,7 +2313,7 @@ describe("STT backends", () => {
         if (saved) process.env.QA_VOICE_STT_BACKEND = saved;
         else delete process.env.QA_VOICE_STT_BACKEND;
       }
-    });
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   });
 
   describe("Phase 7 chunk assembly", () => {

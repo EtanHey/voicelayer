@@ -14,6 +14,9 @@ import {
 import { tmpdir } from "os";
 import { basename, dirname, join } from "path";
 
+// Real subprocesses: standalone p95 <= 762 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const repoRoot = join(import.meta.dir, "..", "..");
 const updateScript = join(repoRoot, "scripts", "voicelayer-update.sh");
 const syncLib = join(repoRoot, "scripts", "lib", "brew-cask-sync.sh");
@@ -102,7 +105,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).not.toContain("open /Applications/VoiceBar.app");
     expect(stdout).toContain("Qwen3 model");
     expect(stdout).toContain("Personal data sync: skipped");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("update requires the stable Developer ID signing identity for resident rebuilds", () => {
     const result = run(["bash", updateScript, "--dry-run"]);
@@ -114,7 +117,7 @@ describe("voicelayer-update.sh", () => {
       "Developer\\ ID\\ Application:\\ Etan\\ Heyman\\ \\(PPN23G925Y\\)",
     );
     expect(stdout).not.toContain("Apple Development");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("dry-run passes VoiceBar stop and relaunch opt-outs to build-app", () => {
     const result = run([
@@ -134,7 +137,7 @@ describe("voicelayer-update.sh", () => {
       "postflight performs the single requested VoiceBar relaunch",
     );
     expect(stdout).not.toContain("--no-relaunch --no-relaunch");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("brew-cask-managed VoiceBar goes through the drift-proof cask sync", () => {
     const result = run(["bash", updateScript, "--dry-run"], {
@@ -147,7 +150,7 @@ describe("voicelayer-update.sh", () => {
       "VOICEBAR APP UPDATE: drift-proof brew cask sync of etanhey/layers/voicebar",
     );
     expect(stdout).not.toContain("bash flow-bar/build-app.sh");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a machine with no cask registration still syncs through brew, not a local build", () => {
     const result = run(["bash", updateScript, "--dry-run"], {
@@ -160,7 +163,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain(
       "VOICEBAR APP UPDATE: drift-proof brew cask sync of etanhey/layers/voicebar",
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("cask path reinstalls only when the synced resident app is still damaged", () => {
     const result = run(["bash", updateScript], {
@@ -176,7 +179,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain(
       "Resident VoiceBar failed canonical signature checks",
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("standard updates restore and verify the complete canonical hotkey path after the app update", () => {
     const result = run(["bash", updateScript], {
@@ -210,7 +213,7 @@ describe("voicelayer-update.sh", () => {
     expect(verify).toBeGreaterThan(autostart);
     expect(stdout).not.toContain("launchctl kickstart -k gui/");
     expect(stdout).not.toContain("hotkey postflight skipped");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("explicit no-relaunch updates still run static hotkey checks without restarting VoiceBar", () => {
     const result = run(
@@ -233,7 +236,7 @@ describe("voicelayer-update.sh", () => {
       `bash ${repoRoot}/scripts/install-voicebar-autostart.sh --reload`,
     );
     expect(stdout).not.toContain("launchctl kickstart -k gui/");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("no-relaunch without no-stop still stops and dedupes the old VoiceBar process", () => {
     const result = run(
@@ -256,7 +259,7 @@ describe("voicelayer-update.sh", () => {
       `bash ${repoRoot}/scripts/install-voicebar-autostart.sh --no-start`,
     );
     expect(stdout).not.toContain("launchctl kickstart -k gui/");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("non-dry-run updates can skip personal data sync", () => {
     const result = run(["bash", updateScript], {
@@ -265,7 +268,7 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("VoiceLayer update complete.");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("accepts either direct or brain-drive data source mode in dry-run", () => {
     const direct = run([
@@ -297,14 +300,14 @@ describe("voicelayer-update.sh", () => {
     expect(text(brainDrive.stdout)).toContain(
       "/Volumes/BrainDrive/VoiceLayerBackup/fixture-user/.voicelayer/voices/",
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("CLI dispatches `voicelayer update` to the update script", () => {
     const result = run(["bash", cliScript, "update", "--dry-run"]);
 
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("VoiceLayer M1 update plan");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("CLI exposes `voicelayer doctor` as the dry-run VoiceBar dedupe tool", () => {
     const body = readFileSync(cliScript, "utf8");
@@ -357,7 +360,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain("PACKAGE UPDATE: bun update -g voicelayer-mcp");
     expect(stdout).toContain("+ bun update -g voicelayer-mcp");
     expect(stdout).not.toContain("bun pm update");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("package copy nested inside another git repo still uses global update path", () => {
     const outerRepo = fixtureRoot("voicelayer-update-nested-");
@@ -384,7 +387,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain("+ bun update -g voicelayer-mcp");
     expect(stdout).not.toContain(`git -C ${packageRoot}`);
     expect(stdout).not.toContain(`bun install --cwd ${packageRoot}`);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("git checkout dependency install runs from the package root", () => {
     const result = run(["bash", updateScript], {
@@ -395,7 +398,7 @@ describe("voicelayer-update.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain(`+ bun install --cwd ${repoRoot}`);
     expect(stdout).not.toContain("+ bun install\n");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("CLI exposes build-app and launches the canonical VoiceBar app bundle", () => {
     const body = readFileSync(cliScript, "utf8");
@@ -434,7 +437,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain("OK    cask ledger: 2.2.6");
     expect(stdout).toContain("OK    formula: voicelayer 2.2.6");
     expect(stdout).toContain("GREEN: this Mac is canonical at 2.2.6");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a Mac whose brew ledger disagrees with the disk fails loudly", () => {
     const result = run(
@@ -462,7 +465,7 @@ describe("voicelayer-update.sh", () => {
     expect(text(result.stdout)).toContain("FAIL  app bundle: 2.2.5");
     expect(text(result.stdout)).toContain("FAIL  cask ledger: 2.1.10");
     expect(text(result.stderr)).toContain("VoiceLayer is NOT canonical on this Mac");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a live update ends by verifying the machine is canonical", () => {
     const body = readFileSync(updateScript, "utf8");
@@ -549,7 +552,7 @@ describe("voicelayer-update.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(readFileSync(attemptFile, "utf8").trim()).toBe("3");
     expect(text(result.stdout).match(/verify-voicebar-hotkey-health\.sh/g)).toHaveLength(3);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("hotkey verification fails after exhausting its bounded retries", () => {
     const tempRoot = fixtureRoot("voicelayer-health-exhaust-");
@@ -594,7 +597,7 @@ describe("voicelayer-update.sh", () => {
     expect(text(result.stderr)).toContain(
       "VoiceBar hotkey health did not become ready after 3 attempts",
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("Secure Input held by another app warns and lets the summary run", () => {
     const tempRoot = fixtureRoot("voicelayer-secure-input-");
@@ -612,7 +615,7 @@ describe("voicelayer-update.sh", () => {
     expect(text(result.stdout)).toContain("SUMMARY REACHED");
     expect(text(result.stdout)).toContain("WARNING: macOS Secure Input is held by PID 76956 (/Applications/Zed.app/Contents/MacOS/zed)");
     expect(text(result.stdout)).toContain("F5 won't work until that app releases Secure Input");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a missing hotkey relay still fails", () => {
     const tempRoot = fixtureRoot("voicelayer-relay-missing-");
@@ -626,7 +629,7 @@ describe("voicelayer-update.sh", () => {
     ].join("; "), "_", updateScript, tempRoot]);
     expect(result.exitCode).not.toBe(0);
     expect(text(result.stdout)).toContain("canonical LaunchAgent is not loaded");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("installed formula upgrades by absolute brew path and reports package and formula versions", () => {
     const result = run(["bash", "-c", [
@@ -650,7 +653,7 @@ describe("voicelayer-update.sh", () => {
     expect(text(result.stdout)).toContain("/opt/homebrew/bin/brew upgrade --formula etanhey/layers/voicelayer");
     expect(text(result.stdout)).toContain("global package: voicelayer-mcp 2.2.21");
     expect(text(result.stdout)).toContain("formula: voicelayer 2.2.21");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("formula sync skips absent and current installations", () => {
     for (const version of ["", "2.2.21"]) {
@@ -665,7 +668,7 @@ describe("voicelayer-update.sh", () => {
       expect(result.exitCode).toBe(0);
       expect(text(result.stdout)).not.toContain("UNEXPECTED BREW MUTATION");
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("missing Homebrew makes formula sync a clean no-op", () => {
     const result = run(["bash", "-c", [
@@ -680,7 +683,7 @@ describe("voicelayer-update.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("CONTINUED");
     expect(text(result.stdout)).toContain("skipping formula upgrade");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("absent Bun global package is unavailable without failing the summary", () => {
     const result = run(["bash", "-c", [
@@ -692,7 +695,7 @@ describe("voicelayer-update.sh", () => {
     ].join("; "), "_", updateScript]);
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("CONTINUED");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("installed formula upgrade failure remains fatal", () => {
     const result = run(["bash", "-c", [
@@ -703,7 +706,7 @@ describe("voicelayer-update.sh", () => {
       'update_formula',
     ].join("; "), "_", updateScript]);
     expect(result.exitCode).not.toBe(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("formula ahead of cask does not request a repeated upgrade", () => {
     const result = run(["bash", "-c", [
@@ -716,7 +719,7 @@ describe("voicelayer-update.sh", () => {
     ].join("; "), "_", updateScript]);
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).not.toContain("UNEXPECTED BREW MUTATION");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("formula behind while cask is equal upgrades once, then no-ops", () => {
     const result = run(["bash", "-c", [
@@ -732,7 +735,7 @@ describe("voicelayer-update.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout).match(/FORMULA UPGRADE/g)).toHaveLength(1);
     expect(text(result.stdout)).toContain("upgrade --formula etanhey/layers/voicelayer");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("formula offer reads formula JSON including a Homebrew revision", () => {
     const result = run(["bash", "-c", [
@@ -742,7 +745,7 @@ describe("voicelayer-update.sh", () => {
     ].join("; "), "_", updateScript]);
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout).trim()).toBe("2.2.21_1");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("M1 Cellar package selects formula update without a Bun global package", () => {
     const result = run(["bash", "-c", [
@@ -766,7 +769,7 @@ describe("voicelayer-update.sh", () => {
     expect(output).toContain("LABEL=/opt/homebrew/bin/brew upgrade --formula etanhey/layers/voicelayer");
     expect(output).toContain("+ env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 /opt/homebrew/bin/brew upgrade --formula etanhey/layers/voicelayer");
     expect(output).not.toContain("bun update -g");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("the installed VoiceBar path stays canonical despite environment overrides", () => {
     const result = run(
@@ -782,7 +785,7 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout).trim()).toBe("/Applications/VoiceBar.app");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("main completes model and data work before returning a hotkey repair failure", () => {
     const result = run([
@@ -814,7 +817,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout.indexOf("model")).toBeLessThan(stdout.indexOf("repair"));
     expect(stdout.indexOf("data")).toBeLessThan(stdout.indexOf("repair"));
     expect(stdout).not.toContain("VoiceLayer update complete.");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("the model step uses `hf download`, not the retired huggingface-cli", () => {
     const tempRoot = fixtureRoot("voicelayer-update-hf-");
@@ -835,7 +838,7 @@ describe("voicelayer-update.sh", () => {
       `${venvDir}/bin/hf download ${QWEN3_MODEL_REPO} --local-dir ${join(dirname(modelDir), `.${basename(modelDir)}.partial`)}`,
     );
     expect(stdout).not.toContain("huggingface-cli download");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("the model step falls back to huggingface-cli only when hf is absent", () => {
     const tempRoot = fixtureRoot("voicelayer-update-hf-absent-");
@@ -857,7 +860,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain(
       `${venvDir}/bin/huggingface-cli download ${QWEN3_MODEL_REPO} --local-dir ${join(dirname(modelDir), `.${basename(modelDir)}.partial`)}`,
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("the model step is skipped when the model is already on disk", () => {
     const tempRoot = fixtureRoot("voicelayer-update-model-present-");
@@ -876,7 +879,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain(modelDir);
     expect(stdout).not.toContain("hf download");
     expect(stdout).not.toContain("--local-dir");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a model dir symlinked into the HF cache still counts as present", () => {
     // The 2026-09-05 rc=1 receipt: ~/.voicelayer/models/qwen3-tts-4bit is a
@@ -900,7 +903,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain("skipping the fetch");
     expect(stdout).not.toContain("hf download");
     expect(stdout).not.toContain("--local-dir");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
 
   test.each(["custom_voice", "voice_design", "unknown", "malformed", "missing"])(
@@ -918,7 +921,7 @@ describe("voicelayer-update.sh", () => {
       expect(result.exitCode).toBe(0);
       expect(text(result.stdout)).toContain(`hf download ${QWEN3_MODEL_REPO} --local-dir ${join(dirname(modelDir), `.${basename(modelDir)}.partial`)}`);
       expect(text(result.stdout)).not.toContain("CustomVoice-4bit");
-    },
+    }, SUBPROCESS_TEST_TIMEOUT_MS,
   );
 
   test.each(["base", "base-no-weights", "linked-custom", "linked-base", "dangling-link"])(
@@ -946,7 +949,7 @@ describe("voicelayer-update.sh", () => {
         expect(text(result.stdout) + text(result.stderr)).toContain("not a verified Base model");
       }
       expect(readFileSync(join(targetDir, "config.json"), "utf8")).toBe(originalConfig);
-    },
+    }, SUBPROCESS_TEST_TIMEOUT_MS,
   );
 
 
@@ -1007,7 +1010,7 @@ case "$1" in */hf|mkdir|mv|rm) "$@" ;; *) : ;; esac
       expect(second.exitCode === 0).toBe(mode === "success");
       expect(existsSync(join(root, ".model.old-other"))).toBe(true);
       expect(existsSync(join(root, ".model.partial-other"))).toBe(true);
-    },
+    }, SUBPROCESS_TEST_TIMEOUT_MS,
   );
 
 
@@ -1055,7 +1058,7 @@ case "$1" in */hf|mkdir|mv|rm) "$@" ;; *) : ;; esac
         if (kind === "target-link") expect(readlinkSync(modelDir)).toBe(join(root, "absent"));
         if (kind === "target-exists") expect(JSON.parse(readFileSync(join(modelDir, "config.json"), "utf8")).tts_model_type).toBe("base");
       }
-    },
+    }, SUBPROCESS_TEST_TIMEOUT_MS,
   );
 
   test("a failed model fetch is a red summary row, not an aborted restore", () => {
