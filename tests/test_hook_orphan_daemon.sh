@@ -27,16 +27,16 @@ def publish(path, value):
     temporary.replace(path)
 
 def build_native(destination):
-    try:
-        result = subprocess.run(["cc", "-shared", "-fPIC", str(root / "tests/hook-term-sender.c"),
-                                 "-o", str(destination)], capture_output=True, text=True)
-        if result.returncode == 0:
-            return True
-        reason = result.stderr.strip()
-    except OSError as error:
-        reason = str(error)
-    print("SKIP HO3 native sender helper unavailable: " + reason, flush=True)
-    return False
+    compiler = shutil.which("cc")
+    if compiler is None:
+        print("SKIP HO3 native sender helper: cc toolchain missing", flush=True)
+        return False
+    result = subprocess.run([compiler, "-shared", "-fPIC", str(root / "tests/hook-term-sender.c"),
+                             "-o", str(destination)], capture_output=True, text=True)
+    if result.returncode != 0:
+        print("FAIL HO3 native sender compilation: " + result.stderr.strip(), flush=True)
+        raise SystemExit(1)
+    return True
 
 if "--native-check" in sys.argv[2:]:
     with tempfile.TemporaryDirectory(prefix="vlho-cc-", dir="/tmp") as scratch:
@@ -115,7 +115,7 @@ bin_dir = base / "bin"
 bin_dir.mkdir()
 real_bun = shutil.which("bun")
 term_library = base / "term-sender.so"
-if not build_native(term_library):
+if "--policy-check" not in sys.argv[2:] and not build_native(term_library):
     shutil.rmtree(base)
     raise SystemExit(77)
 nonce = base.name
