@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own the native gate lifecycle: read-only preflight, own-UI Hide/Show, mute guard, restore."""
+"""Guard the native gate lifecycle; refuse UI mutation without causal Settings ownership."""
 import argparse
 import datetime
 import importlib.util
@@ -121,16 +121,13 @@ class NativeHost:
             raise RuntimeError('Mute change unconfirmed')
 
     def ax(self, mode):
+        if mode != 'read':
+            self.refuse_settings_mutation(mode)
         self.guard_mute()
         if self.identity(self.resident['pid']) != self.resident['started']:
             raise RuntimeError('Resident identity changed; no AX action permitted')
         args = [str(self.output / 'voicebar-ui-e2e-resident'), str(self.resident['pid']), mode]
-        if mode in ['close', 'hide', 'show']:
-            args.append(str(self.resident['settingsWindowId']))
         result = json.loads(self.run(args))
-        if mode != 'read':
-            self.resident.setdefault('actions', []).append(mode)
-            self.save_resident()
         return result
 
     def guard_mute(self):
@@ -139,45 +136,38 @@ class NativeHost:
         if not self.muted():
             raise RuntimeError('Shutdown mute guard unconfirmed')
 
+    def retire_settings_claim(self):
+        # A physical window ID is neither causality nor a lifecycle generation.
+        if self.resident.get('settingsOpened') or 'settingsWindowId' in self.resident:
+            self.resident['settingsRestoreRequired'] = True
+            self.resident['restored'] = False
+        self.resident['settingsOpened'] = False
+        self.resident.pop('settingsWindowId', None)
+        self.save_resident()
+
+    def refuse_settings_mutation(self, mode):
+        self.retire_settings_claim()
+        self.resident['settingsOwnership'] = 'NOT_PROVEN'
+        self.resident['refusedSettingsAction'] = mode
+        self.save_resident()
+        raise RuntimeError('Settings causal/lifecycle ownership NOT_PROVEN; native mutation refused before dispatch')
+
     def settings_state(self):
+        # Retire before reading: even an unreadable/absent snapshot cannot renew a lease.
+        self.retire_settings_claim()
         result = self.ax('read')
         opened = any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings'
                      for n in result['nodes'])
         if opened:
-            window_id = result.get('settingsWindowId')
-            if not isinstance(window_id, int) or window_id <= 0:
-                raise RuntimeError('Settings identity unreadable; no close permitted')
-            if (not self.resident.get('settingsOpened') or
-                    self.resident.get('settingsWindowId') != window_id):
-                raise RuntimeError('Settings is user-owned or replaced; no action permitted')
-        self.resident['settingsOpened'] = opened
-        self.save_resident()
+            raise RuntimeError('Settings ownership NOT_PROVEN; preserve possibly user-owned window')
         return opened
 
     def settings(self, opened):
         if self.settings_state() == opened:
             return
-        if opened:
-            # Only the helper's successful action/window evidence confers ownership.
-            # Rejection, timeout or lost response preserves any window; never adopt by observation.
-            result = self.ax('open')
-            window_id = result.get('openedSettingsWindowId')
-            if (result.get('pid') != self.resident['pid'] or result.get('action') != 'open' or
-                    type(window_id) is not int or window_id <= 0 or
-                    result.get('settingsWindowId') != window_id):
-                raise RuntimeError('Settings open ownership NOT_PROVEN; preserve window')
-            self.resident['settingsOpened'] = True
-            self.resident['settingsWindowId'] = window_id
-            self.save_resident()
-        else:
-            try:
-                self.ax('close')
-            except Exception as error:
-                self.resident.setdefault('reconciledActionErrors', []).append(repr(error))
-                if self.settings_state() != opened:
-                    raise
-        if self.settings_state() != opened:
-            raise RuntimeError('Settings transition unconfirmed; action not retried')
+        # The installed resident has no causal, generation-bound ownership protocol.
+        # Refuse before any possibly applied action; matching/new IDs cannot repair that.
+        self.refuse_settings_mutation('open' if opened else 'close')
 
     def surface(self, snapshot):
         windows = snapshot.get('screenWindows')
@@ -256,7 +246,8 @@ class NativeHost:
         if any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings' for n in nodes):
             raise RuntimeError('Resident Settings already open; cannot close a user-owned window')
         self.resident['initialSurface'] = self.surface(snapshot)
-        # Own Settings exposes a positive recording-state footer even with a collapsed pill.
+        # Settings would expose the footer, but current resident ownership cannot be proven.
+        # settings(True) must STOP before dispatch; this path cannot authorize a runner.
         self.settings(True)
         wait_until_safe(self)
         nodes = self.ax('read')['nodes']
@@ -438,12 +429,19 @@ class NativeHost:
     def restore_resident(self):
         if not self.resident:
             return
-        required = self.resident.get('restoreRequired', False)
+        required = any(self.resident.get(key) for key in
+                       ['restoreRequired', 'settingsRestoreRequired', 'settingsActionPending',
+                        'settingsOpened', 'settingsWindowId'])
         if required:
             self.resident['restored'] = False
             self.save_resident()
         if self.identity(self.resident['pid']) != self.resident['started']:
             raise RuntimeError('Cannot restore changed resident identity')
+        self.settings_state()  # Always check, including prepare failures before Hide.
+        if self.resident.get('settingsRestoreRequired') or self.resident.get('settingsActionPending'):
+            # A lost action response may precede delayed application. Absence and a completed
+            # no-op process cleanup cannot discharge it. Retain the obligation for recovery.
+            raise RuntimeError('Settings restoration NOT_PROVEN; pending action/retired claim requires recovery')
         if self.resident.get('restoreRequired'):
             self.settings(True)
             result = self.ax('read')

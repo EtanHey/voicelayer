@@ -44,7 +44,11 @@ class SupervisorTests(unittest.TestCase):
                 host.guard_mute = lambda: None
                 actions = []
                 def io(args):
-                    actions.append(args[2])
+                    mode = args[2]
+                    actions.append(mode)
+                    if mode == 'close' and boundary == 'close-ack-read-gap':
+                        # Own close ACK says absent; the user reopens ID77 before next read.
+                        return json.dumps(dict(pid=100, action=mode, nodes=[], screenWindows=[]))
                     return json.dumps(dict(pid=100, action=args[2], settingsWindowId=77,
                         nodes=[] if boundary == 'absent' else
                         [dict(role='AXWindow', title='VoiceBar Settings')], screenWindows=[]))
@@ -87,6 +91,39 @@ class SupervisorTests(unittest.TestCase):
                         self.assertEqual(saved['settingsActionPending'], 'open')
                         self.assertFalse(saved['restored'])
                     self.assertTrue(all(mode == 'read' for mode in actions))
+                    host.prepare_resident = lambda: None
+                    host.start = lambda: (_ for _ in ()).throw(RuntimeError('synthetic abort'))
+                    host.muted = lambda: True
+                    host.set_mute = lambda value: None
+                    self.assertNotEqual(self.module().supervise(host), 0)
+                    receipt = json.loads((host.output / 'operator-state.json').read_text())
+                    self.assertTrue(receipt['ownedTerminationProven'])
+                    self.assertTrue(any('restore_resident:' in e for e in receipt['cleanupErrors']))
+                    self.assertTrue(host.resident['settingsRestoreRequired'])
+
+    def test_hrest3_prepare_never_dispatches_possibly_applied_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            actions, before_open = [], []
+            host.guard_mute = lambda: None
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')}
+            def io(args):
+                if len(args) == 1: return json.dumps(dict(axTrusted=True, prompts=[]))
+                mode = args[2]
+                actions.append(mode)
+                if mode == 'open':
+                    before_open.append(json.loads((host.output / 'resident-visibility.json').read_text()))
+                    raise subprocess.TimeoutExpired(args, 15)  # Press applied, response lost.
+                return json.dumps(dict(pid=100, action=mode, nodes=[], screenWindows=[]))
+            host.run = io
+            with self.assertRaises(RuntimeError): host.prepare_resident()
+            self.assertEqual(actions, ['read', 'read'])
+            self.assertFalse(before_open)  # No possibly-applied action needs a new obligation.
+            self.assertFalse(host.runner_launch_attempted)
+            source = (ROOT / 'scripts/voicebar-ui-e2e-resident.swift').read_text()
+            self.assertLess(source.index('guard mode=="read"'), source.index('AXIsProcessTrusted()'))
+            self.assertNotIn('AXUIElementPerformAction', source)
+            self.assertNotIn('resident.activate', source)
 
     def test_open_requires_positive_helper_provenance_not_intent(self):
         for outcome in ['rejected', 'timeout', 'missing-proof', 'mismatched-proof', 'success']:
@@ -112,18 +149,11 @@ class SupervisorTests(unittest.TestCase):
                         result['openedSettingsWindowId'] = 99 if outcome == 'mismatched-proof' else window_id
                     return json.dumps(result)
                 host.run = io  # Real settings/settings_state/ax, only native I/O injected.
-                if outcome == 'success':
-                    host.settings(True)
-                    self.assertEqual(host.resident['settingsWindowId'], 88)
-                    host.settings(False)
-                    self.assertFalse(state['opened'])
-                else:
-                    with self.assertRaises(Exception): host.settings(True)
-                    self.assertFalse(host.resident.get('settingsOpened'))
-                    self.assertNotIn('settingsWindowId', host.resident)
-                    with self.assertRaises(RuntimeError): host.settings(False)
-                    self.assertTrue(state['opened'])
-                    self.assertNotIn('close', state['actions'])
+                with self.assertRaisesRegex(RuntimeError, 'ownership NOT_PROVEN'): host.settings(True)
+                self.assertFalse(host.resident.get('settingsOpened'))
+                self.assertNotIn('settingsWindowId', host.resident)
+                self.assertFalse(state['opened'])
+                self.assertEqual(state['actions'], ['read'])  # None of the receipts is requested.
 
     def test_parent_death_before_scan_never_proves_launch_completeness(self):
         for initial_muted in [False, True]:
@@ -222,10 +252,13 @@ class SupervisorTests(unittest.TestCase):
         host.resident = dict(pid=100, started='resident-start', restoreRequired=True,
                              settingsOpened=True, settingsWindowId=77, initialHidden=False)
         host.identity = lambda pid: 'resident-start'
+        host.guard_mute = lambda: None  # Synthetic tests must never query/change host audio.
         host.resident['initialSurface'] = [dict(bounds=dict(X=500, Y=0, Width=200, Height=32), layer=25)]
         return host
 
     def ax_fixture(self, host, *, surface=True, timeout=None):
+        # Hypothetical owned UI adapter for downstream restoration invariants only.
+        # NativeHost settings/settings_state/ax are tested separately above and refuse.
         state = dict(settings=host.resident['settingsOpened'], hidden=True, actions=[])
         def ax(mode):
             state['actions'].append(mode)
@@ -242,6 +275,18 @@ class SupervisorTests(unittest.TestCase):
                         nodes=nodes, settingsWindowId=77 if state['settings'] else None, screenWindows=(host.resident['initialSurface']
                         if surface and not state['settings'] and not state['hidden'] else []))
         host.ax = ax
+        def settings(opened):
+            if state['settings'] != opened:
+                try:
+                    host.ax('open' if opened else 'close')
+                except subprocess.TimeoutExpired:
+                    if state['settings'] != opened: raise
+            host.resident['settingsOpened'] = state['settings']
+            if opened: host.resident['settingsWindowId'] = 77
+            else: host.resident.pop('settingsWindowId', None)
+            host.save_resident()
+        host.settings = settings
+        host.settings_state = lambda: state['settings']
         return state
 
     def test_applied_close_timeout_reconciles_settings_and_restores_surface(self):
