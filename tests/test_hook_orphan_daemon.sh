@@ -7,6 +7,8 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
+import uuid
 from pathlib import Path
 import shutil
 import signal
@@ -16,6 +18,73 @@ import tempfile
 import time
 
 root = Path(sys.argv[1])
+os.environ.setdefault("HOOK_TREE_PID", str(os.getpid()))
+os.environ.setdefault("HOOK_TREE_TOKEN", uuid.uuid4().hex)
+
+def publish(path, value):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(value)
+    temporary.replace(path)
+
+def build_native(destination):
+    compiler = shutil.which("cc")
+    if compiler is None:
+        print("SKIP HO3 native sender helper: cc toolchain missing", flush=True)
+        return False
+    result = subprocess.run([compiler, "-shared", "-fPIC", str(root / "tests/hook-term-sender.c"),
+                             "-o", str(destination)], capture_output=True, text=True)
+    if result.returncode != 0:
+        print("FAIL HO3 native sender compilation: " + result.stderr.strip(), flush=True)
+        raise SystemExit(1)
+    return True
+
+if "--native-check" in sys.argv[2:]:
+    with tempfile.TemporaryDirectory(prefix="vlho-cc-", dir="/tmp") as scratch:
+        raise SystemExit(0 if build_native(Path(scratch) / "sender.so") else 77)
+def retry_interrupted(status, run):
+    if status != 75:
+        return status
+    # INTERIM HO-3.1: remove once BrainLayer's installed hook is fixed.
+    print("EXTERNAL_INTERFERENCE: retry affected lane once (interim HO-3.1)", flush=True)
+    result = run()
+    if result == 75:
+        print("FAIL repeated EXTERNAL_INTERFERENCE; native sender pid/exe/script below", flush=True)
+        return 1
+    return result
+
+if "--cross-run" in sys.argv[2:]:
+    # Separate Bun processes, preloads and repository roots, as in two worktrees.
+    with tempfile.TemporaryDirectory(prefix="vlho-runs-", dir="/tmp") as runs:
+        children = []
+        for run in ("X", "Y"):
+            checkout = Path(runs) / run
+            (checkout / "tests").mkdir(parents=True)
+            (checkout / "scripts").mkdir()
+            for name in ("src", "node_modules", "flow-bar", "launchd"):
+                (checkout / name).symlink_to(root / name, target_is_directory=True)
+            shutil.copy(root / "bunfig.toml", checkout)
+            for name in ("hook-orphan-daemon.test.ts", "test_hook_orphan_daemon.sh", "hook-term-sender.c"):
+                shutil.copy(root / "tests" / name, checkout / "tests")
+            for name in ("supervise-test-daemon.py", "run_tests.sh", "apply-voicebar-f5-hidutil.sh"):
+                shutil.copy(root / "scripts" / name, checkout / "scripts")
+            env = dict(os.environ, HOOK_CROSS_RUN_CHILD="1", HOOK_CROSS_RUN_DIR=runs,
+                       HOOK_CROSS_RUN_LANE=run)
+            output = open(Path(runs) / (run + ".log"), "w+")
+            child = subprocess.Popen([shutil.which("bun"), "test", "tests/hook-orphan-daemon.test.ts"],
+                                     cwd=checkout, env=env, stdout=output, stderr=subprocess.STDOUT)
+            children.append((child, output))
+        failed = False
+        for child, output in children:
+            try:
+                status = child.wait(timeout=290)
+            except subprocess.TimeoutExpired:
+                child.terminate()
+                status = child.wait(timeout=10)
+            output.seek(0)
+            print(output.read(), end="", flush=True)
+            output.close()
+            failed |= status != 0
+        raise SystemExit(int(failed))
 if "--concurrent" in sys.argv[2:]:
     with tempfile.TemporaryDirectory(prefix="vlho-pair-", dir="/tmp") as pair:
         children = []
@@ -32,6 +101,10 @@ if "--concurrent" in sys.argv[2:]:
             except subprocess.TimeoutExpired:
                 child.terminate()
                 status = child.wait(timeout=30)
+            retry_env = {k: v for k, v in os.environ.items() if k not in ("HOOK_PAIR_DIR", "HOOK_CROSS_RUN_DIR")}
+            status = retry_interrupted(status, lambda: subprocess.run(
+                ["bash", str(root / "tests/test_hook_orphan_daemon.sh")], env=retry_env,
+                stdout=output, stderr=subprocess.STDOUT, timeout=240).returncode)
             output.seek(0)
             print(output.read(), end="", flush=True)
             output.close()
@@ -41,8 +114,13 @@ base = Path(tempfile.mkdtemp(prefix="vlho-", dir="/tmp"))
 bin_dir = base / "bin"
 bin_dir.mkdir()
 real_bun = shutil.which("bun")
+term_library = base / "term-sender.so"
+if "--policy-check" not in sys.argv[2:] and not build_native(term_library):
+    shutil.rmtree(base)
+    raise SystemExit(77)
 nonce = base.name
 os.environ["VOICELAYER_HOOK_TEST_NONCE"] = nonce
+os.environ["VOICELAYER_HOOK_TEST_SCOPE"] = str(base)
 owner_path = base / "fixture-owner.lock"
 owner_lock = owner_path.open("w+")
 fcntl.flock(owner_lock, fcntl.LOCK_EX)
@@ -56,6 +134,12 @@ os.environ["VOICELAYER_HOOK_TEST_OWNER"] = str(owner_path)
 os.environ["VOICELAYER_HOOK_AUDIT_LOG"] = str(base / "decisions.jsonl")
 print("HOOK evidence: " + str(base), flush=True)
 succeeded = False
+external_terms = set()
+barriers_done = False
+negative_names = ("concurrent", "parented", "live", "unrelated", "argv-only", "unreadable",
+                  "outside-root", "symlink-escape", "foreign-cleanup")
+class ExternalInterference(BaseException):
+    pass
 signal_reason = "fixture cleanup"
 
 def audit(event, **fields):
@@ -87,6 +171,55 @@ def owned_signal(target, signum, group=False):
             identity[1].get("VOICELAYER_HOOK_AUDIT_LOG") == str(base / "decisions.jsonl")) for identity in identities):
         raise RuntimeError(f"refusing signal to unverified fixture {target}")
     (os.killpg if group else os.kill)(target, signum)
+
+def external_sender(row):
+    match = re.search(r"sender_pid=(\d+).*sender_executable=(.*?) sender_entrypoint=(\S+) sender_in_run=(-?\d+)$", row)
+    return match and int(match[1]) > 1 and match[2] not in ("", "unknown") and match[3] not in (
+        "unknown", "inline-python") and match[4] == "0"
+
+def term_free(name):
+    marker = base / (name + ".pid.term")
+    clean = True
+    for row in marker.read_text().splitlines() if marker.exists() else ():
+        external = external_sender(row)
+        if external:
+            if row not in external_terms:
+                print("EXTERNAL_INTERFERENCE " + row, flush=True)
+                external_terms.add(row)
+        else:
+            clean = False  # Internal and unattributed TERM always fail, never retry.
+            print("FAIL protected TERM (internal/unattributed): " + row, flush=True)
+    return clean
+
+def check_interference():
+    if not barriers_done:
+        return
+    # Capture all receivers without masking any owned negative signal.
+    assert all(term_free(name) for name in negative_names), "owned/unattributed protected TERM"
+    for marker in base.glob("*.term"):
+        for row in marker.read_text().splitlines():
+            if external_sender(row) and row not in external_terms:
+                print("EXTERNAL_INTERFERENCE " + row, flush=True)
+                external_terms.add(row)
+    if external_terms and not failures:
+        raise ExternalInterference()
+
+if "--policy-check" in sys.argv[2:]:
+    assert not issubclass(ExternalInterference, Exception), "lifecycle error handlers must not swallow interference"
+    for membership, script in ((1, "foreign.py"), (-1, "foreign.py"), (0, "foreign.py"), (0, "supervise-test-daemon.py")):
+        (base / "policy.pid.term").write_text("sender_pid=42 sender_executable=/python sender_entrypoint=" + script + " sender_in_run=" + str(membership) + "\n")
+        assert term_free("policy") == (membership == 0)
+    with (base / "policy.pid.term").open("a") as marker:
+        marker.write("sender_pid=43 sender_executable=/python sender_entrypoint=supervise-test-daemon.py sender_in_run=1\n")
+    assert not term_free("policy"), "external TERM hid an internal TERM"
+    for first, second, expected, count in ((1, 0, 1, 0), (0, 75, 0, 0), (75, 0, 0, 1), (75, 75, 1, 1)):
+        calls = []
+        assert retry_interrupted(first, lambda: calls.append(1) or second) == expected
+        assert len(calls) == count
+    owner_lock.close()
+    shutil.rmtree(base)
+    print("PASS attribution: internal/unknown fail; external retries once; second hit fails", flush=True)
+    raise SystemExit(0)
 
 def executable(name, body):
     path = bin_dir / name
@@ -147,6 +280,7 @@ while True:
 def wait_until(predicate, seconds=8):
     end = time.monotonic() + seconds
     while time.monotonic() < end:
+        check_interference()
         if predicate():
             return True
         time.sleep(0.05)
@@ -201,6 +335,10 @@ if len(sys.argv) > 2 and sys.argv[1].endswith("/scripts/supervise-test-daemon.py
     def owned_signal(pgid, signum):
         members = [p for p in snapshot() if p[2] == pgid]
         assert members and all(p[0] in owned for p in members), "non-fixture signal refused"
+        module.audit("fixture-signal", "guarded native signal", pgid, members,
+                     sender_pid=os.getpid(), parent_pid=os.getppid(), signal=int(signum),
+                     sender_scope=os.environ.get("VOICELAYER_HOOK_TEST_SCOPE"),
+                     target_scopes=[p[4].get("VOICELAYER_HOOK_TEST_SCOPE") for p in members])
         killpg(pgid, signum)
     os.killpg = owned_signal
     module.sweep_orphans()
@@ -224,7 +362,7 @@ try:
     finally:
         zombie.wait()
     # Real PPID-1 fixtures, all owned by this test. Never signal resident processes.
-    def fixture(name, run_dir, orphan=True, impersonate=False, stubborn_child=False, tagged=True, owner=None):
+    def fixture(name, run_dir, orphan=True, impersonate=False, stubborn_child=False, tagged=True, owner=None, scoped=True):
         env = dict(os.environ, VOICELAYER_TMP_ROOT=str(run_dir),
                    VOICELAYER_MCP_SOCKET_PATH=str(run_dir / "voicelayer-mcp.sock"),
                    VOICELAYER_SOCKET_PATH=str(run_dir / "voicelayer.sock"))
@@ -234,13 +372,15 @@ try:
         if not tagged:
             env.pop("VOICELAYER_HOOK_TEST_NONCE")
             env.pop("VOICELAYER_HOOK_TEST_OWNER")
+        if not scoped:
+            env.pop("VOICELAYER_HOOK_TEST_SCOPE", None)
         if impersonate:
             for key in list(env):
                 if key.startswith(("VOICELAYER_", "QA_VOICE_")) and key != "VOICELAYER_HOOK_TEST_NONCE":
                     del env[key]
         record = base / (name + ".pid")
         code = '''
-import os, pathlib, signal, sys, time
+import ctypes, os, pathlib, signal, sys, time
 if sys.argv[2] == "orphan" and os.fork():
     raise SystemExit(0)
 os.setsid()
@@ -250,17 +390,16 @@ if sys.argv[3] == "child":
         os.execv(sys.executable, [sys.executable, "-c",
             "import os,pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
             "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)", sys.argv[1] + ".child"])
-else:
-    def record_term(_signum, _frame):
-        pathlib.Path(sys.argv[1] + ".term").write_text(
-            f"time_ns={time.time_ns()} receiver_pid={os.getpid()} signal={_signum}\\n")
-    signal.signal(signal.SIGTERM, record_term)
+library = ctypes.CDLL(sys.argv[4])
+library.hook_term_sender.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+assert library.hook_term_sender(os.fsencode(sys.argv[1] + ".term"),
+    int(os.environ["HOOK_TREE_PID"]), os.fsencode(os.environ["HOOK_TREE_TOKEN"]), sys.argv[3] == "child") == 0
 pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
 while True: time.sleep(.05)
 '''
         proc = subprocess.Popen([sys.executable, "-c", code, str(record),
                                  "orphan" if orphan else "parented", "child" if stubborn_child else "single",
-                                 "src/mcp-server-daemon.ts", "VOICELAYER_TMP_ROOT=" + str(run_dir),
+                                 str(term_library), "src/mcp-server-daemon.ts", "VOICELAYER_TMP_ROOT=" + str(run_dir),
                                  "VOICELAYER_MCP_SOCKET_PATH=" + str(run_dir / "voicelayer-mcp.sock"),
                                  "VOICELAYER_SOCKET_PATH=" + str(run_dir / "voicelayer.sock")], env=env)
         if orphan:
@@ -300,11 +439,35 @@ while True: time.sleep(.05)
     # failures so RED must observe the safety defect AND the leaked descendant.
     env = dict(os.environ, PATH=str(bin_dir) + ":" + os.environ["PATH"], HOOK_OWNED_PIDS=str(owned_pid_file),
                HOOK_UNREADABLE_PID=str(unreadable))
+    cross = os.environ.get("HOOK_CROSS_RUN_DIR")
+    if cross:
+        # Exercise a peer's untagged orphan without HO2 lease exemptions.
+        sentinel = fixture("cross-untagged", base / "voicelayer-run-tests.900020", tagged=False)
+        lane = os.environ["HOOK_CROSS_RUN_LANE"] + os.environ["HOOK_PAIR_LANE"]
+        peer = ("Y" if lane[0] == "X" else "X") + lane[1]
+        manifest = Path(cross) / (lane + ".json")
+        publish(manifest, json.dumps(dict(pid=sentinel, base=str(base))))
+        peer_manifest = Path(cross) / (peer + ".json")
+        assert wait_until(peer_manifest.exists, 30), "other Bun process never published"
+        target = json.loads(peer_manifest.read_text())
+        selected = base / "cross-target"
+        selected.write_text(str(target["pid"]))
+        subprocess.run([str(bin_dir / "python3"), str(root / "scripts/supervise-test-daemon.py"), "--sweep"],
+                       env=dict(env, HOOK_OWNED_PIDS=str(selected), HOOK_FOREIGN_ROOT=target["base"]), check=True, timeout=15)
+        (Path(cross) / (lane + ".swept")).touch()
+        assert wait_until(lambda: (Path(cross) / (peer + ".swept")).exists(), 30)
+        if not term_free("cross-untagged") or not alive(sentinel):
+            failures.append("cross-run TERM")
+            print("FAIL cross-run TERM: " + str(base / "cross-untagged.pid.term"), flush=True)
+        else:
+            print("PASS independent Bun roots: no sweep cross-TERM", flush=True)
+        (Path(cross) / (lane + ".checked")).touch()
+        assert wait_until(lambda: (Path(cross) / (peer + ".checked")).exists(), 30)
     pair = os.environ.get("HOOK_PAIR_DIR")
     if pair:
         lane = os.environ["HOOK_PAIR_LANE"]
         peer = Path(pair) / ("B" if lane == "A" else "A")
-        (Path(pair) / lane).write_text(str(base))
+        publish(Path(pair) / lane, str(base))
         assert wait_until(peer.exists, 30), "peer never published fixtures"
         peer_base = Path(peer.read_text())
         # Restrict the REAL sweep to peer fixtures: no resident is ever eligible.
@@ -319,6 +482,8 @@ while True: time.sleep(.05)
             print("FAIL foreign sweep touched fixtures", flush=True)
         else:
             print("PASS foreign sweep leaves peer fixtures alive", flush=True)
+    barriers_done = True
+    check_interference()
     def sweep_selected(pids, sweep_env):
         selected = base / "selected-pids"
         selected.write_text(" ".join(map(str, pids)))
@@ -333,6 +498,37 @@ while True: time.sleep(.05)
             failures.append(label)
             print("FAIL " + label, flush=True)
         snapshot(label, orphan_pids)
+
+    # Actual native fixtures: neither a live-shaped path nor a test-looking
+    # directory outside this run may authorize a signal. Also cover --cleanup.
+    outside_dir = base.parent / (nonce + "-outside") / "voicelayer-run-tests.900021"
+    outside = fixture("outside-root", outside_dir)
+    sweep_selected([outside], env)
+    check_case("outside-root fixture receives no owned TERM", lambda: alive(outside) and term_free("outside-root"))
+    (base / "escape").symlink_to(outside_dir.parent, target_is_directory=True)
+    escaped = fixture("symlink-escape", base / "escape" / "voicelayer-run-tests.900024")
+    sweep_selected([escaped], env)
+    check_case("symlink escape receives no owned TERM", lambda: alive(escaped) and term_free("symlink-escape"))
+    scoped = fixture("unscoped-negative", base / "voicelayer-run-tests.900022", tagged=False)
+    production_env = {k: v for k, v in env.items() if k not in (
+        "VOICELAYER_HOOK_TEST_SCOPE", "VOICELAYER_HOOK_TEST_NONCE", "VOICELAYER_HOOK_TEST_OWNER")}
+    sweep_selected([scoped], production_env)
+    check_case("unscoped sweep cannot signal scoped fixture", lambda: alive(scoped) and term_free("unscoped-negative"))
+    production = fixture("production-untagged", base / "voicelayer-run-tests.900025", tagged=False, scoped=False)
+    sweep_selected([production], production_env)
+    check_case("production sweep still reaps unscoped orphan", lambda: not alive(production))
+    cleanup_dir = base / "voicelayer-run-tests.900023"
+    cleanup_dir.mkdir()
+    saved_scope = os.environ["VOICELAYER_HOOK_TEST_SCOPE"]
+    try:
+        os.environ["VOICELAYER_HOOK_TEST_SCOPE"] = str(base.parent / (nonce + "-foreign"))
+        foreign = fixture("foreign-cleanup", cleanup_dir)
+    finally:
+        os.environ["VOICELAYER_HOOK_TEST_SCOPE"] = saved_scope
+    (cleanup_dir / "daemon-group.json").write_text(json.dumps(dict(pid=foreign, pgid=foreign)))
+    subprocess.run([sys.executable, str(root / "scripts/supervise-test-daemon.py"), "--cleanup", str(cleanup_dir)],
+                   env=env, check=True, timeout=15)
+    check_case("cleanup cannot signal foreign scope", lambda: alive(foreign) and term_free("foreign-cleanup"))
 
     # Inherited test state must never exempt an ordinary production orphan.
     inherited = fixture("inherited-untagged", base / "voicelayer-run-tests.900012", tagged=False)
@@ -358,7 +554,7 @@ with path.open("w+") as lock:
         assert wait_until(lambda: dead_owner_path.exists() and dead_owner_path.stat().st_size > 0)
         leaked = fixture("dead-owner", base / "voicelayer-run-tests.900013", owner=dead_owner_path)
         sweep_selected([leaked], env)
-        check_case("tagged orphan protected while owner alive", lambda: alive(leaked) and not (base / "dead-owner.pid.term").exists())
+        check_case("tagged orphan protected while owner alive", lambda: alive(leaked) and term_free("dead-owner"))
     finally:
         signal_reason = "SIGKILL fixture owner to release lease"
         owner_process.kill()
@@ -391,8 +587,8 @@ with path.open("w+") as lock:
     print("PASS unscoped sweep protects tagged fixtures and reaps untagged orphan", flush=True)
     subprocess.run([str(bin_dir / "python3"), str(root / "scripts/supervise-test-daemon.py"), "--sweep"],
                    env=env, check=True, timeout=15)
-    for label, predicate in (("argv-only impersonator survives", lambda: alive(impersonator) and not (base / "argv-only.pid.term").exists()),
-                             ("unreadable environment is skipped", lambda: alive(unreadable) and not (base / "unreadable.pid.term").exists()),
+    for label, predicate in (("argv-only impersonator survives", lambda: alive(impersonator) and term_free("argv-only")),
+                             ("unreadable environment is skipped", lambda: alive(unreadable) and term_free("unreadable")),
                              ("TERM leader and stubborn descendant reaped", lambda: not alive(terminating_leader) and not alive(stubborn))):
         if wait_until(predicate):
             print("PASS " + label, flush=True)
@@ -509,7 +705,7 @@ with path.open("w+") as lock:
             try:
                 assert wait_until(lambda: not alive(stale)), "deleted-run orphan was not swept"
                 assert all(alive(p) for p in (concurrent, parented, live, unrelated, impersonator, unreadable)), "sweep killed a protected daemon"
-                assert not any((base / (name + ".pid.term")).exists() for name in
+                assert all(term_free(name) for name in
                                ("concurrent", "parented", "live", "unrelated", "argv-only", "unreadable")), "protected fixture received TERM"
                 # A stale/forged persisted PID cannot authorize killing a different run.
                 import fcntl, json
@@ -528,6 +724,12 @@ with path.open("w+") as lock:
             except Exception as error:
                 failures.append("sweep")
                 print(f"FAIL sweep: {error}", flush=True)
+    unexpected_terms = [name for name in negative_names if not term_free(name)]
+    if unexpected_terms:
+        failures.append("protected fixture TERM after lifecycle")
+        print("FAIL protected fixture TERM after lifecycle: " + ", ".join(unexpected_terms), flush=True)
+    else:
+        print("PASS protected fixtures: no owned/unattributed TERM throughout lifecycle", flush=True)
     decisions = [json.loads(line) for line in (base / "decisions.jsonl").read_text().splitlines()]
     sent = [row for row in decisions if row["event"] == "signal-sent" and row.get("pgid")]
     assert sent and all(row["sender_pid"] > 1 and row["time_ns"] > 0 and
@@ -537,6 +739,8 @@ with path.open("w+") as lock:
     assert any(row["reason"] == "fixture owner alive" for row in decisions)
     print("PASS audit records scoped senders, targets, signals, times and reasons", flush=True)
     succeeded = not failures
+except ExternalInterference:
+    pass
 finally:
     # Snapshot before cleanup so a failed predicate is distinguishable from our teardown.
     audit("final-snapshot", failures=failures, processes=subprocess.run(
@@ -552,10 +756,12 @@ finally:
     for proc in protected:
         proc.wait(timeout=5)
     owner_lock.close()
-    if succeeded and os.environ.get("HOOK_KEEP_EVIDENCE") != "1":
+    if succeeded and not external_terms and os.environ.get("HOOK_KEEP_EVIDENCE") != "1":
         shutil.rmtree(base)
     else:
         print("Retained HOOK evidence: " + str(base), flush=True)
 if failures:
     raise SystemExit("failed cases: " + ", ".join(failures))
+if external_terms:
+    raise SystemExit(75)  # Only an otherwise successful, positively attributed lane may retry.
 PY
