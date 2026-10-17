@@ -98,6 +98,30 @@ def carries_run(env, run_dir):
                                   ("VOICELAYER_SOCKET_PATH", run_dir / "voicelayer.sock")))
 
 
+def matches_test_scope(env, run_dir):
+    """A test sweeper needs native, per-process proof of its private root.
+
+    Scope is independent of the legacy fixture tag/lease: tests intentionally
+    remove those to exercise production orphan recovery. An unscoped production
+    hook must also leave scoped fixtures alone, even if their lease is unreadable.
+    """
+    scope = os.environ.get("VOICELAYER_HOOK_TEST_SCOPE")
+    target_scope = (env or {}).get("VOICELAYER_HOOK_TEST_SCOPE")
+    if scope is None and target_scope is None:
+        return True  # Ordinary production hook orphan recovery.
+    if not scope or scope != target_scope or not os.path.isabs(scope):
+        return False
+    try:
+        root = Path(scope)
+        if root.is_symlink() or not root.is_dir():
+            return False
+        # Resolve symlinks before checking containment; argv/path prefixes alone
+        # cannot prove ownership. Each harness exclusively creates this root.
+        return run_dir.resolve().is_relative_to(root.resolve(strict=True))
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def live_peer_fixture(env):
     """Only a matching, held lease plus a live owner can exempt a tagged fixture."""
     nonce = (env or {}).get("VOICELAYER_HOOK_TEST_NONCE")
@@ -141,6 +165,9 @@ def daemon_argv(argv):
 def reap_group(pgid, run_dir, orphan_only=False):
     def owned_members():
         members = [p for p in processes() if p[2] == pgid]
+        if any(p[4] is not None and not matches_test_scope(p[4], run_dir) for p in members):
+            audit("skip", "outside test sweep scope", pgid, members)
+            return []
         unverified = [p for p in members if not carries_run(p[4], run_dir)]
         if unverified:
             # A different real environment is never ours. An unavailable native
