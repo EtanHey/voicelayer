@@ -111,7 +111,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
             (1820, 120, "on"),
             (1960, 200, "version"),
             (2180, 180, "2.1"),
-        ]
+        ].map { TeleprompterBoundary(offsetMs: $0.0, durationMs: $0.1, text: $0.2) }
 
         let layout = VoiceBarPanelLayout.make(
             presentation: notchPresentation(for: state)
@@ -179,7 +179,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
                 (450, 300, "this"),
                 (800, 400, "sample"),
                 (1250, 300, "line"),
-            ]
+            ].map { TeleprompterBoundary(offsetMs: $0.0, durationMs: $0.1, text: $0.2) }
         case .error:
             state.errorMessage = "Try again"
         case .disconnected:

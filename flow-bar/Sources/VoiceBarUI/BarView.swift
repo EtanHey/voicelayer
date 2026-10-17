@@ -341,9 +341,7 @@ public struct BarView: View {
     private var appearanceAwareNotchContent: some View {
         notchContent
             .overlay(alignment: .bottom) {
-                if let note = VoiceBarPresentation.selectionBusyNote(
-                    isRequested: state.showsSelectionBusyNote, mode: state.mode, hotkeyPhase: state.hotkeyPhase
-                ) {
+                if let note = state.selectionFeedbackNote {
                     compactStatusLabel(note)
                         .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
                         .frame(height: 17)

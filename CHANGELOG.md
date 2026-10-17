@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.45] - 2026-10-17
+
+### Changed
+- Show word timings for cloned-voice speech in the teleprompter, and display words without timings plainly (#366, #372).
+- Read a new selection when Option+F5 is pressed during speech (#398).
+
+### Fixed
+- Keep every VoiceBar panel hidden during “Hide for 1 hour” and defer setup until Show (#397).
+- Keep the recordings-backup path stable across Homebrew upgrades (#378).
+
+Command-log privacy, test-process cleanup, private-corpus isolation and UI test coverage also improved (#400, #402, #395, #396, #403–#406, #379–#394, #401).
+
 ## [2.2.44] - 2026-10-16
 
 ### Added

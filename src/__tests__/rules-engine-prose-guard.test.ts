@@ -11,9 +11,9 @@
  */
 import { describe, it, expect } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
 import { join } from "path";
 import { applyRules } from "../rules-engine";
+import { privateCorpusPaths } from "./setup/private-specimens";
 
 const wordCount = (s: string): number =>
   s.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
@@ -189,21 +189,16 @@ describe("spoken-command prose guard", () => {
 
   // --- Hard invariant over the recon corpus ---------------------------------
   //
-  // Corpus lives outside the repo (personal dictation, docs.local is
-  // gitignored), so these skip when it is absent — e.g. in CI.
-
-  const REPO_CORPUS_ROOT = join(homedir(), "Gits", "voicelayer", "docs.local");
-  const PAIRS_PATH = join(REPO_CORPUS_ROOT, "recon-2026-09-06", "pairs.json");
-  const GOLD_DIR = join(REPO_CORPUS_ROOT, "recon-2026-09-05", "gold");
-  const SHADOW_PATH = join(
-    homedir(),
-    ".voicelayer",
-    "eval",
-    "polish-shadow.jsonl",
-  );
-
-  const corpusAvailable =
+  // Corpus stays outside the repo and requires explicit read-only opt-in.
+  const corpus = privateCorpusPaths("prose-guard");
+  const PAIRS_PATH = corpus?.prosePairs ?? "";
+  const GOLD_DIR = corpus?.proseGold ?? "";
+  const SHADOW_PATH = corpus?.polishShadow ?? "";
+  const corpusAvailable = Boolean(corpus) &&
     existsSync(PAIRS_PATH) && existsSync(SHADOW_PATH) && existsSync(GOLD_DIR);
+  if (corpus && !corpusAvailable) {
+    console.error("[prose-guard] SKIPPING: private recon corpus files absent.");
+  }
 
   function loadCorpus(): string[] {
     const shadow = readFileSync(SHADOW_PATH, "utf8").split("\n");

@@ -10,6 +10,11 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 26 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+// Real subprocesses: standalone p95 <= 3963 ms; 4x rounded up, with a 5 s scheduling floor.
+const SLOW_SUBPROCESS_TEST_TIMEOUT_MS = 16_000;
+
 const healthScript = join(
   import.meta.dir,
   "..",
@@ -72,7 +77,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(f5.status).toBe(0);
     expect(dictation.status).toBe(0);
     expect(missing.status).not.toBe(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("extracts the app holding macOS Secure Input", () => {
     const enabled = callFunction(
@@ -98,7 +103,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(enabled.stdout.trim()).toBe("59247");
     expect(disabled.status).not.toBe(0);
     expect(zero.status).not.toBe(0);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("extracts the program from the loaded LaunchAgent definition", () => {
     const result = callFunction(
@@ -117,7 +122,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(result.stdout.trim()).toBe(
       "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar",
     );
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("enumerates canonical and stray VoiceBar bundle processes, including paths with spaces", () => {
     const result = callFunction(
@@ -136,7 +141,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
       "456 /Users/test/Test Builds/VoiceBar.app/Contents/MacOS/VoiceBar",
       "789 /tmp/Stale Build/VoiceBar.app/Contents/MacOS/VoiceBar --restored",
     ]);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("reads the full process command rather than the truncated comm column", async () => {
     const body = await healthScriptBody;
@@ -167,7 +172,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(listenEventMissing.stdout.trim()).toBe("input-monitoring-missing");
     expect(accessibilityMissing.stdout.trim()).toBe("accessibility-missing");
     expect(unknown.stdout.trim()).toBe("unknown");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("uses the most recent event-tap status instead of a stale startup failure", () => {
     const recovered = callFunction(
@@ -191,7 +196,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
 
     expect(recovered.stdout.trim()).toBe("ready");
     expect(regressed.stdout.trim()).toBe("event-tap-failed");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("preserves source order when event-tap records share a timestamp", () => {
     const failed = "2026-07-28 19:49:53 [HotkeyManager] Failed to create CGEventTap";
@@ -211,7 +216,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(forward.stdout.trim()).toBe(failureThenReady);
     expect(reverse.status).toBe(0);
     expect(reverse.stdout.trim()).toBe(readyThenFailure);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("health exempts TTS resources but rejects executable strays and stale loaded programs", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "voicebar-health-stopped-"));
@@ -399,5 +404,5 @@ print(value)
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
-  });
+  }, SLOW_SUBPROCESS_TEST_TIMEOUT_MS);
 });

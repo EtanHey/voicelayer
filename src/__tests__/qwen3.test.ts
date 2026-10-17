@@ -9,6 +9,9 @@ import {
 import { chmodSync, existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 30 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // --- Profile YAML parsing tests ---
 
 describe("parseProfileYaml", () => {
@@ -269,7 +272,7 @@ try {
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("returns null when no profile exists", async () => {
     const { synthesizeCloned } = await import("../tts/qwen3");
@@ -331,7 +334,7 @@ await synthesizeCloned("hello", "pinned");
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 describe("daemon auth token helpers", () => {
@@ -426,7 +429,7 @@ created: 2026-06-06
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("resolves a speaker alias to the latest accepted cloned profile", () => {
     const homeDir = join("/tmp", `voicelayer-alias-${process.pid}`);
@@ -493,7 +496,7 @@ created: 2026-06-24
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("prefers the latest accepted alias over a legacy direct profile directory", () => {
     const homeDir = join("/tmp", `voicelayer-legacy-alias-${process.pid}`);
@@ -559,7 +562,7 @@ created: 2026-06-24
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("invalidates alias miss cache when accepted profiles are installed later", () => {
     const homeDir = join("/tmp", `voicelayer-late-alias-${process.pid}`);
@@ -616,7 +619,7 @@ console.log(JSON.stringify(resolveVoice("theo")));
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("resolves canonical profile ids even when the voice folder has a different name", () => {
     const homeDir = join("/tmp", `voicelayer-profile-id-${process.pid}`);
@@ -662,7 +665,7 @@ created: 2026-06-24
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("preserves directory casing for direct cloned voice lookup and listing", () => {
     const homeDir = join("/tmp", `voicelayer-case-profile-${process.pid}`);
@@ -716,7 +719,7 @@ console.log(JSON.stringify({
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("does not list invalid directories that only resolve through an alias", () => {
     const homeDir = join("/tmp", `voicelayer-list-direct-${process.pid}`);
@@ -767,7 +770,7 @@ console.log(JSON.stringify(listClonedVoiceProfiles()));
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("invalidates cached profile metadata after profile.yaml changes", () => {
     const homeDir = join("/tmp", `voicelayer-profile-refresh-${process.pid}`);
@@ -838,7 +841,7 @@ console.log(JSON.stringify(resolveVoice("theo")));
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("warns loudly when a non-accepted cloned profile is used directly", () => {
     const homeDir = join("/tmp", `voicelayer-nonaccepted-${process.pid}`);
@@ -887,7 +890,7 @@ created: 2026-06-20
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("returns edge-tts engine for raw edge-tts voice name", async () => {
     const { resolveVoice } = await import("../tts");

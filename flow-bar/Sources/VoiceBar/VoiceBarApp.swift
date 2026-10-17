@@ -159,6 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panelDiagnosticObservers: [Any] = []
     private var workspaceNotificationObservers: [Any] = []
     private var snoozeTask: Task<Void, Never>?
+    private var snoozeSleep: () async throws -> Void = { try await Task.sleep(for: .seconds(3600)) }
     private var playbackEdgeLayoutTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
@@ -171,6 +172,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var setupWizard = SetupWizardWindowController(defaults: defaults) { [weak self] in
         self?.makeSetupWizardDependencies() ?? SetupWizardDependencies()
     }
+    private lazy var presentSetupWizard: () -> Void = { [weak self] in
+        self?.refreshRelaySetupStatusAsync()
+        self?.setupWizard.show()
+    }
+    private var pendingAutomaticSetupCheck: (() -> Bool)?
+    private var hasPresentedSetupWizard = false
 
     /// The last tab the app asked Settings to show (see `SettingsTabRequest`).
     private var settingsTabRequest: SettingsTabRequest?
@@ -630,12 +637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.sendCommand = { [weak server] cmd in
             server?.sendCommandToOwner(command: cmd)
         }
-        voiceState.onModeChange = { [weak self] mode in
-            self?.handleVoiceModeChange(mode)
-        }
-        voiceState.onPanelLayoutChange = { [weak self] in
-            self?.refreshNotchPresentationAndPanelLayout(animated: true)
-        }
+        configurePanelStateObservation()
         voiceState.onHistoryArchiveChange = { path in
             // Drop that entry from the History index first, so the reload the notification triggers can't serve a
             // stale transcript (a re-transcription rewrites an old entry in place).
@@ -746,8 +748,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             reason: "pre_attach",
             forceRerasterization: true
         )
-        pill.orderFront(nil)
-        logDiagnostic(event: "panel_order_front", details: ["reason": "launch"])
+        orderPanelFront(reason: "launch")
         completePanelFirstRender()
         voiceState.beginIdleCollapseCountdown()
         if let panelScreen = pill.screen {
@@ -1164,8 +1165,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel?.orderOut(nil)
         logDiagnostic(event: "panel_order_out", details: ["reason": "snooze"])
 
+        let sleep = snoozeSleep
         snoozeTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(3600))
+            try? await sleep()
             guard let self, !Task.isCancelled else { return }
             unsnoozeNow()
         }
@@ -1173,12 +1175,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func unsnoozeNow() {
         snoozeTask?.cancel()
+        playbackEdgeLayoutTask?.cancel()
         isSnoozed = false
         snoozedUntil = nil
         voiceState.unsnooze()
-        panel?.orderFront(nil)
-        logDiagnostic(event: "panel_order_front", details: ["reason": "unsnooze"])
+        refreshNotchPresentationAndPanelLayout(animated: false)
         reapplyAnchoredPanelPosition()
+        orderPanelFront(reason: "unsnooze")
+        presentAutomaticSetupIfNeeded()
+    }
+
+    private func orderPanelFront(reason: String, regardless: Bool = false) {
+        guard let panel,
+              NotchPanelVisibility.present(panel, isHidden: isSnoozed || voiceState.isHidden,
+                                             regardless: regardless) else { return }
+        logDiagnostic(event: "panel_order_front", details: ["reason": reason])
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -1413,6 +1424,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configureHotkeyCallbacks()
     }
 
+    private func configurePanelStateObservation() {
+        voiceState.onModeChange = { [weak self] mode in
+            self?.handleVoiceModeChange(mode)
+        }
+        voiceState.onPanelLayoutChange = { [weak self] in
+            self?.refreshNotchPresentationAndPanelLayout(animated: true)
+        }
+    }
+
+    func configurePanelVisibilityForTesting(_ panel: FloatingPillPanel,
+                                           snoozeSleep: @escaping () async throws -> Void = {
+                                               try await Task.sleep(for: .seconds(3600))
+                                           }) {
+        self.panel = panel
+        self.snoozeSleep = snoozeSleep
+        configurePanelStateObservation()
+    }
+
     private func configureHotkeyCallbacks() {
         // Hold start → push-to-talk recording
         gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
@@ -1502,11 +1531,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if !collapsesConverseHandoff {
             if VoiceBarIsolatedCapturePlacement.isEnabled() {
-                panel?.orderFrontRegardless()
-                logDiagnostic(event: "panel_order_front", details: ["reason": "mode-change-isolated"])
+                orderPanelFront(reason: "mode-change-isolated", regardless: true)
             } else if mode != .idle, panel?.isVisible == false {
-                panel?.orderFront(nil)
-                logDiagnostic(event: "panel_order_front", details: ["reason": "mode-change"])
+                orderPanelFront(reason: "mode-change")
             } else if let panel {
                 NotchPanelVisibility.selfHeal(panel, mode: mode, isHidden: isSnoozed || voiceState.isHidden) {
                     logDiagnostic(event: "notch_reorder_selfheal", details:
@@ -2766,10 +2793,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - Setup wizard (F3)
 
-    /// Opens the setup wizard (Settings › General › Run setup again, the menu, or first launch).
+    /// Explicit Run setup stays available while hidden and consumes any automatic launch request.
     func openSetupWizard() {
-        refreshRelaySetupStatusAsync()
-        setupWizard.show()
+        hasPresentedSetupWizard = true
+        pendingAutomaticSetupCheck = nil
+        presentSetupWizard()
+    }
+
+    func configureSetupWizardPresentationForTesting(_ present: @escaping () -> Void) {
+        presentSetupWizard = present
+    }
+
+    func completeFirstRunSetupDetection(shouldShow: @escaping () -> Bool) {
+        guard !hasPresentedSetupWizard else { return }
+        pendingAutomaticSetupCheck = shouldShow
+        presentAutomaticSetupIfNeeded()
+    }
+
+    private func presentAutomaticSetupIfNeeded() {
+        guard !isSnoozed, !voiceState.isHidden,
+              let shouldShow = pendingAutomaticSetupCheck else { return }
+        pendingAutomaticSetupCheck = nil
+        // Re-read completion/readiness when shown: setup may have been finished during the snooze.
+        if shouldShow() { openSetupWizard() }
     }
 
     /// "Run setup…" in the menu-bar popover: close the popover first, as Open Settings… does.
@@ -2795,12 +2841,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                let readiness = SetupLaunchReadiness(
-                    permissionsGranted: SetupPermissionsStep(snapshot: currentSetupPermissionSnapshot()).allGranted,
-                    listenerActive: hotkeyEnabled
-                )
-                if SetupWizardLaunchPolicy.resolve(store: store, hasPriorUse: hasPriorUse, readiness: readiness) {
-                    openSetupWizard()
+                completeFirstRunSetupDetection { [weak self] in
+                    guard let self else { return false }
+                    let readiness = SetupLaunchReadiness(
+                        permissionsGranted: SetupPermissionsStep(snapshot: currentSetupPermissionSnapshot()).allGranted,
+                        listenerActive: hotkeyEnabled
+                    )
+                    return SetupWizardLaunchPolicy.resolve(store: store, hasPriorUse: hasPriorUse, readiness: readiness)
                 }
             }
         }

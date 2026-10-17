@@ -2,6 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { homedir } from "os";
 import { join } from "path";
 
+// Real subprocesses: standalone p95 <= 35 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const preload = join(import.meta.dir, "setup", "preload.ts");
 const journal = join(import.meta.dir, "..", "control-layer-journal.ts");
 
@@ -44,10 +47,10 @@ describe("preload isolates the control-layer journal", () => {
     expect(result.base).not.toStartWith(join(homedir(), ".local", "share", "orc"));
     expect(result.rows).toBe(1);
     expect(result.marker).toBe(true);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("preserves an explicit caller-provided journal base", () => {
     const override = join(process.cwd(), ".test-tmp", "orc-manual");
     expect(probe(override).base).toBe(override);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

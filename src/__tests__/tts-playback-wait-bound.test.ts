@@ -9,6 +9,9 @@ import { handleSocketCommand } from "../socket-handlers";
 import { handleVoiceAsk } from "../handlers";
 import { deferredFixture, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
+// Real subprocesses: standalone p95 <= 44 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 describe("cancelled read settling and bounded playback wait", () => {
   let completion: ReturnType<typeof deferredFixture<void>>;
   let handle: ReturnType<typeof tts.speakLongRead> | undefined;
@@ -112,5 +115,5 @@ describe("cancelled read settling and bounded playback wait", () => {
     expect(failure?.message).toBe("Playback wait timed out after 35000ms");
     expect(warning).toHaveBeenCalledTimes(1); expect(tts.getPlaybackQueueDepth()).toBeGreaterThan(0);
     await wait; tts.stopPlayback(); await playback.exited;
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

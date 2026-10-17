@@ -8,6 +8,9 @@ import { sanitizeTtsText, stripMarkupForSpeech } from "../sanitize";
 import { buildSTTQualityMiningReport, formatSTTQualityMiningMarkdown } from "../stt-quality-mining";
 import { createVoiceReviewApp, humanizeSpokenText } from "../voicereview-web/server";
 
+// Real subprocesses: standalone p95 <= 45 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // Frozen pre-fix oracle: exercised only on short synthetic strings (<= 28 chars).
 // Never use this backtracking pattern on caller data or the 50k regression.
 function legacyPathTokens(text: string): string {
@@ -194,7 +197,7 @@ describe("CodeQL TypeScript regressions", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   for (const [alert, target] of [[10, "recurring"], [11, "pattern"], [12, "detail"]] as const) {
     it(`#${alert} keeps backslashes, pipes, HTML and line breaks inside one Markdown table cell`, () => {

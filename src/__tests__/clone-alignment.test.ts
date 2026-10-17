@@ -7,6 +7,13 @@ import { dirname, join } from "node:path";
 import { alignCloneAudio, type CloneAlignmentRequest } from "../tts/clone-alignment";
 import { projectSpeakableText } from "../speakable-text";
 
+// Real subprocesses: standalone p95 <= 1108 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+// Real subprocesses: standalone p95 <= 1723 ms; 4x rounded up, with a 5 s scheduling floor.
+const BATCH_SUBPROCESS_TEST_TIMEOUT_MS = 7_000;
+// Real subprocesses: standalone p95 <= 2176 ms; 4x rounded up, with a 5 s scheduling floor.
+const SLOW_SUBPROCESS_TEST_TIMEOUT_MS = 9_000;
+
 // Frozen June 6 Edge harness audio, not synthesized by these tests. Generated
 // base64 and its recorded decoder response are appended below; benchmark receipt
 // docs.local/CLN1A/benchmark.json compares the original WordBoundary sidecar.
@@ -49,6 +56,14 @@ async function started(prefix: string) {
 }
 function reaped(pid: number) { expect(() => process.kill(pid, 0)).toThrow(); }
 
+test("R2 PID readiness rejects empty and nonpositive or fractional readbacks", async () => {
+  for (const invalid of ["", "0", "-1", "1.5", "not-a-pid"]) {
+    const read = spyOn(fsPromises, "readFile").mockResolvedValueOnce(invalid).mockResolvedValueOnce(String(process.pid));
+    try { expect(await started("pid-readback-fixture")).toBe(process.pid); expect(read).toHaveBeenCalledTimes(2); }
+    finally { read.mockRestore(); }
+  }
+});
+
 test("decoder PID observation waits for the marker contents", async () => {
   const prefix = join(root, String(++serial));
   // writeFileSync creates/truncates the marker before writing the PID bytes.
@@ -65,7 +80,7 @@ test("frozen Edge audio retains only spans corroborated by the same token's DTW 
   expect(result.status).toBe("partial");
   expect(offsets(result)).toEqual([240, 390, 640, 1030, 1220, 1410, 1860, null, null, null]);
   expect(result.identity).toEqual({ requestId: "request-a", chunkId: "chunk-2", playbackRate: 1, audioSha256: EDGE_SHA });
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("frozen audio maps a multiword SPK replacement and JSON escape without new acoustic times", async () => {
   const expanded = await request("Should the CP merge, or stay separate?", EDGE_DECODE);
   Object.assign(expanded.input, projectSpeakableText(expanded.input.displayText, [{ pattern: /\bCP\b/g, replacement: "company and the project" }]));
@@ -75,43 +90,43 @@ test("frozen audio maps a multiword SPK replacement and JSON escape without new 
   expect((await alignCloneAudio(escaped.input)).words[2]).toMatchObject({ text: "\\u0063ompany", offset_ms: 640 });
   const mismatch = await request("Should the business and the project merge, or stay separate?", EDGE_DECODE);
   expect((await alignCloneAudio(mismatch.input)).words[2].offset_ms).toBeNull();
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("SPK expansion uses the full measured replacement span", async () => {
   const { input } = await request("Ship API now");
   const result = await alignCloneAudio(input);
   expect(offsets(result)).toEqual([100, 300, 900]);
   expect(result.words[1]).toMatchObject({ text: "API", duration_ms: 560, displayRange: { start: 5, end: 8 } });
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("an incompletely matched expansion remains untimed", async () => {
   const { input } = await request("Ship API now", payload(["Ship", "A", "I", "now"]));
   expect(offsets(await alignCloneAudio(input))).toEqual([100, null, 700]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("repeated words retain occurrence identity; ambiguous deletions abstain", async () => {
   const exact = await request("go go now");
   expect(offsets(await alignCloneAudio(exact.input))).toEqual([100, 300, 500]);
   const missing = await request("go go now", payload(["go", "now"]));
   expect(offsets(await alignCloneAudio(missing.input))).toEqual([null, null, 300]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("a mismatch never borrows the neighboring word's timing", async () => {
   const { input } = await request("red wrong blue", payload(["red", "green", "blue"]));
   expect(offsets(await alignCloneAudio(input))).toEqual([100, null, 500]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("JSON escape ranges preserve the exact original display token", async () => {
   const text = '{"name":"a\\nb"}', { input } = await request(text, payload(["name", "a", "b"]));
   const result = await alignCloneAudio(input);
   expect(result.words).toEqual([{ text, displayRange: { start: 0, end: text.length }, offset_ms: 100, duration_ms: 560 }]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("omitted decorations stay untimed", async () => {
   const { input } = await request("# Hello");
   expect(offsets(await alignCloneAudio(input))).toEqual([null, 100]);
-});
+}, BATCH_SUBPROCESS_TEST_TIMEOUT_MS);
 test("playback rate scales file-relative timestamps exactly once", async () => {
   const { input } = await request("hello world"); input.playbackRate = 2;
   const result = await alignCloneAudio(input);
   expect(offsets(result)).toEqual([50, 150]);
   expect(result.words.map(w => w.duration_ms)).toEqual([80, 80]);
   expect(result.identity.playbackRate).toBe(2);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 // This test spawns 8 real native decoders; this budget is not a product deadline.
 const INVALID_INPUT_TEST_TIMEOUT_MS = 20_000;
 test("invalid projection, time, confidence, and DTW disagreement never gain offsets", async () => {
@@ -134,7 +149,7 @@ test("request text, audio and identity are snapshotted before asynchronous decod
   const result = await pending;
   expect(result.words[0].text).toBe("hello"); expect(result.identity.requestId).toBe("request-a");
   expect(result.identity.audioSha256).toBe(EDGE_SHA); expect(await readFile(prefix + ".hash", "utf8")).toBe(EDGE_SHA);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("cancellation reaps owned decoding before returning, including pre-abort", async () => {
   const { input, prefix } = await request("hello", payload(["hello"]), 5000), controller = new AbortController();
   input.signal = controller.signal; const pending = alignCloneAudio(input), pid = await started(prefix);
@@ -142,14 +157,14 @@ test("cancellation reaps owned decoding before returning, including pre-abort", 
   const before = await request("hello"); before.input.signal = AbortSignal.abort();
   expect((await alignCloneAudio(before.input)).reason).toBe("cancelled");
   expect(await Bun.file(before.prefix + ".pid").exists()).toBe(false);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("the half-duration deadline kills and reaps a slow decoder", async () => {
   const { input, prefix } = await request("hello", payload(["hello"]), 5000);
   // Hold open the create-before-write window in the decoder's PID marker.
   await writeFile(prefix + ".pid", "");
   const pending = alignCloneAudio(input), pid = await started(prefix);
   expect((await pending).reason).toBe("deadline"); reaped(pid);
-});
+}, SLOW_SUBPROCESS_TEST_TIMEOUT_MS);
 test("missing local decoder is a truthful untimed result", async () => {
   const { input } = await request("hello"); input.decoder.binary = join(root, "absent");
   expect((await alignCloneAudio(input)).reason).toBe("unavailable");
@@ -258,29 +273,29 @@ writeFileSync(${JSON.stringify(prep + ".pid")}, String(process.pid)); setInterva
   input.signal = controller.signal; const pending = alignCloneAudio(input), pid = await started(prep);
   controller.abort(); expect((await pending).reason).toBe("cancelled"); reaped(pid);
   expect(await Bun.file(prefix + ".pid").exists()).toBe(false);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("an extra repeated acoustic word is ambiguous in both optimal tracebacks", async () => {
   const { input } = await request("go now", payload(["go", "go", "now"]));
   expect(offsets(await alignCloneAudio(input))).toEqual([null, 500]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("BPE continuations keep their measured envelope without subdividing time", async () => {
   const response = payload(["se", "parate"]); response.transcription[0].tokens[1].text = "parate";
   const { input } = await request("separate", response);
   expect((await alignCloneAudio(input)).words[0]).toMatchObject({ offset_ms: 100, duration_ms: 360 });
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("Hebrew, emoji and SPK expansions preserve UTF-16 display identity", async () => {
   const { input } = await request("שלום API 😊"); input.language = "he";
   const result = await alignCloneAudio(input);
   expect(offsets(result)).toEqual([100, 300, null]);
   expect(result.words[2]).toMatchObject({ text: "😊", displayRange: { start: 9, end: 11 } });
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("unrecognized output and backward acoustic spans stay untimed", async () => {
   const unknown = await request("hello", {} as any);
   expect(offsets(await alignCloneAudio(unknown.input))).toEqual([null]);
   const response = payload(["hello", "world"]); response.transcription[0].tokens[1].offsets.from = 50;
   const backwards = await request("hello world", response);
   expect(offsets(await alignCloneAudio(backwards.input))).toEqual([null, null]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 for (const row of [
   { name: "straight suffix", parts: ["we", "'re"], duration: 360 },
@@ -299,13 +314,13 @@ for (const row of [
   test(`BPE ${row.name} cannot falsely time were`, async () => {
     const { input } = await request("were", contraction());
     expect(offsets(await alignCloneAudio(input))).toEqual([null]);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
   test(`BPE ${row.name} times the matching contraction`, async () => {
     for (const display of ["we're", "we’re"]) {
       const { input } = await request(display, contraction());
       expect((await alignCloneAudio(input)).words[0]).toMatchObject({ text: display, offset_ms: 100, duration_ms: row.duration });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 }
 test("apostrophe-only tokens preserve whitespace boundaries between different words", async () => {
   const response = payload(["we", "' ", "re"]);
@@ -313,7 +328,7 @@ test("apostrophe-only tokens preserve whitespace boundaries between different wo
   const different = await request("were", response), separate = await request("we re", response);
   expect(offsets(await alignCloneAudio(different.input))).toEqual([null]);
   expect(offsets(await alignCloneAudio(separate.input))).toEqual([100, 500]);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 
 // GENERATED_FIXTURE_DATA
 const EDGE_SHA = "f997b15bc94e9a8ee35d65424e9c758c06eceb166939ece36eefeeff60426152";

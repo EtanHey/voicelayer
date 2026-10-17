@@ -11,6 +11,15 @@ const VALID_STATES = new Set<RecordingState>([
 ]);
 
 let recordingState: RecordingState = "idle";
+const observers = new Set<(state: RecordingState) => void>();
+/** Passive priority notification; capture never waits for background work. */
+export function onRecordingStateChange(observer: (state: RecordingState) => void): () => void {
+  observers.add(observer);
+  return () => { observers.delete(observer); };
+}
+function notifyState(state: RecordingState): void {
+  for (const observer of observers) { try { observer(state); } catch {} }
+}
 
 interface PersistedRecordingState {
   state: RecordingState;
@@ -80,6 +89,7 @@ function recordingStatePublishError(state: RecordingState): Error {
 export function setRecordingState(state: RecordingState): void {
   if (state === "idle") {
     recordingState = "idle";
+    notifyState(state);
     if (!persistRecordingState(state)) {
       console.error(recordingStatePublishError(state).message);
     }
@@ -90,6 +100,7 @@ export function setRecordingState(state: RecordingState): void {
     throw recordingStatePublishError(state);
   }
   recordingState = state;
+  notifyState(state);
 }
 
 export function getRecordingState(): RecordingState {

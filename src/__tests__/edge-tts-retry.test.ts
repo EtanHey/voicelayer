@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { TEST_TMP } from "./setup/test-tmp";
 
+// Real subprocesses: standalone p95 <= 156 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 /**
  * Tests for edge-tts health check and retry logic.
  *
@@ -96,7 +99,7 @@ describe("edge-tts health and retry", () => {
     expect(path.startsWith("/")).toBe(true);
     // getPython3Path should return the cached value
     expect(getPython3Path()).toBe(path);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("resolvePython3Path falls back to known paths when which fails", async () => {
     const originalSpawnSyncLocal = Bun.spawnSync;
@@ -118,7 +121,7 @@ describe("edge-tts health and retry", () => {
     expect(path).toContain("python3");
 
     Bun.spawnSync = originalSpawnSyncLocal;
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("synthesizeWithRetry retries once on failure then succeeds", async () => {
     let attempts = 0;
@@ -181,7 +184,7 @@ describe("edge-tts health and retry", () => {
     expect(result.attempts).toBe(2); // 1 original + 1 retry
     // Error should include the actual exit code, not a misleading message
     expect(result.error).toContain("exit code 2");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("synthesizeWithRetry preserves spawn errors in failure message", async () => {
     // @ts-ignore — throw on spawn
@@ -200,5 +203,5 @@ describe("edge-tts health and retry", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("python3 not found");
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
+// Real subprocesses: standalone p95 <= 7 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const repo = resolve(import.meta.dir, "..");
 
 test("package and hook roots cover every tracked Bun test", () => {
@@ -24,4 +27,4 @@ test("package and hook roots cover every tracked Bun test", () => {
   const gateRoots = gate.match(/^\s*VOICELAYER_FIXTURE_DIR="\$FIXTURE_DIR" bun test (.+)$/m);
   expect(gateRoots).not.toBeNull();
   expect(gateRoots![1].trim().split(/\s+/)).toEqual(roots);
-});
+}, SUBPROCESS_TEST_TIMEOUT_MS);

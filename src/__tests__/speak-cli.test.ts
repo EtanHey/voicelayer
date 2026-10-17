@@ -8,6 +8,9 @@ import { createConnection } from "node:net";
 import { STATE_DIR } from "../paths";
 import { testSocket } from "./setup/test-tmp";
 
+// Real subprocesses: standalone p95 <= 987 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 const io = (stdin = "") => ({ readStdin: async () => stdin, readFile: async () => "# File", stderr: (_s: string) => {}, stdout: (_s: string) => {} });
 
 describe("speak CLI", () => {
@@ -75,7 +78,7 @@ describe("speak CLI", () => {
       expect((await run(["--file", `${file}.missing`])).code).toBe(1);
       expect((await run(["--profile", "bad"])).code).toBe(1);
     } finally { daemon.stop(); unlinkSync(secretPath); unlinkSync(file); }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
   test("local fallback runs in the foreground until completion", async () => {
     const dir = join(STATE_DIR, "fallback"); mkdirSync(dir, { recursive: true });
     const scripts: Record<string, string> = {
@@ -94,7 +97,7 @@ describe("speak CLI", () => {
       expect(stderr).toContain("daemon unavailable; speaking locally");
       expect(code).toBe(0);
     } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
   test("secret isolation follows canonical and legacy socket overrides", () => {
     const old = { ...process.env };
     try {
@@ -251,5 +254,5 @@ setInterval(() => {}, 1000);
       for (const pid of pids) if (alive(pid)) try { process.kill(pid, "SIGKILL"); } catch {}
       await child.exited; await Bun.sleep(50); rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

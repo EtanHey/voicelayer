@@ -17,6 +17,14 @@ export interface CloneAlignmentRequest {
   /** Player speed relative to this file. Already rate-adjusted files use 1. */
   playbackRate: number;
   signal?: AbortSignal;
+  /** Background integration yields CPU scheduling to dictation. */
+  lowPriority?: boolean;
+  /** Synchronous admission immediately before EACH native child; false yields. */
+  canSpawn?: () => boolean;
+  /** Observe physical exit independently of preparation and artifact cleanup. */
+  onChildSpawned?: (exited: Promise<number>) => void;
+  /** Final physical-exit result before artifact cleanup; an error means unknown. */
+  onChildrenReaped?: (error?: Error) => void;
   /** Existing whisper.cpp, large-v3-turbo and ffmpeg; no download or daemon. */
   decoder: { binary: string; model: string; ffmpeg: string };
 }
@@ -143,13 +151,18 @@ export async function alignCloneAudio(request: CloneAlignmentRequest): Promise<C
     // Pin decoding to the benchmark's PCM path: whisper.cpp's direct MP3
     // reader produced different, less accurate spans for the same fixture.
     const wav = join(directory, "decoded.wav");
-    child = Bun.spawn([input.decoder.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", file,
+    const priority = input.lowPriority ? ["/usr/bin/nice", "-n", "19"] : [];
+    if (input.canSpawn?.() === false || expired()) return untimed(deadline ? "deadline" : "cancelled");
+    child = Bun.spawn([...priority, input.decoder.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", file,
       "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    input.onChildSpawned?.(child.exited);
     const prepared = await child.exited;
     if (expired()) return untimed(deadline ? "deadline" : "cancelled");
     if (prepared !== 0) return untimed("unavailable");
-    child = Bun.spawn([input.decoder.binary, "-m", input.decoder.model, "-f", wav, "-l", input.language,
+    if (input.canSpawn?.() === false || expired()) return untimed(deadline ? "deadline" : "cancelled");
+    child = Bun.spawn([...priority, input.decoder.binary, "-m", input.decoder.model, "-f", wav, "-l", input.language,
       "-dtw", "large.v3.turbo", "-nfa", "-ojf", "-of", output], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    input.onChildSpawned?.(child.exited);
     const code = await child.exited;
     if (expired()) return untimed(deadline ? "deadline" : "cancelled");
     if (code !== 0) return untimed("unavailable");
@@ -187,7 +200,16 @@ export async function alignCloneAudio(request: CloneAlignmentRequest): Promise<C
     let cleanupFailed = stopFailed;
     // Every cleanup step still runs if killing or reaping the child fails.
     try { if (child?.exitCode === null) child.kill("SIGKILL"); } catch { cleanupFailed = true; }
-    try { if (child) await child.exited; } catch { cleanupFailed = true; }
+    let reapError: Error | undefined;
+    try { if (child) await child.exited; } catch (error) {
+      cleanupFailed = true;
+      // Exit/signal status can confirm termination when its watcher fails;
+      // merely requesting a kill does not.
+      if (child?.exitCode == null && child?.signalCode == null) {
+        reapError = new Error("Alignment child termination unconfirmed", { cause: error });
+      }
+    }
+    input.onChildrenReaped?.(reapError);
     try { if (directory) await rm(directory, { recursive: true, force: true }); } catch { cleanupFailed = true; }
     if (cleanupFailed) untimed(controller.signal.aborted ? deadline ? "deadline" : "cancelled" : "unavailable");
     // Include cleanup in the deadline, and reject cancellation during cleanup.

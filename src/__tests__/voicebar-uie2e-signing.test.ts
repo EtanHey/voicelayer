@@ -3,6 +3,9 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// Real subprocesses: standalone p95 <= 60 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // Exercise the build script's actual policy without building/signing/launching anything.
 describe("UI E2E ad-hoc signing boundary", () => {
   test("requires a marked throwaway QA bundle and disabled lifecycle", () => {
@@ -26,5 +29,5 @@ describe("UI E2E ad-hoc signing boundary", () => {
         expect(result.exitCode).toBe(expected);
       }
     } finally { rmSync(root, { recursive: true }); }
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });

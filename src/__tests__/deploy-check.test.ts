@@ -8,6 +8,9 @@ import {
 } from "../deploy-check";
 import { fixtureGitEnv } from "./setup/git-env";
 
+// Real subprocesses: standalone p95 <= 113 ms; 4x rounded up, with a 5 s scheduling floor.
+const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+
 // Run production probes with the same isolated environment as fixture Git.
 function probe(name: string, packageRoot: string, override: string | undefined) {
   const result = Bun.spawnSync([process.execPath, "-e",
@@ -73,7 +76,7 @@ describe("readRepoGitCommit", () => {
     initRepo(unrelatedRoot, "homebrew", "unrelated parent");
 
     expect(readRepoGitCommit(packageRoot, undefined)).toBeNull();
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("returns HEAD when the package root is the VoiceLayer checkout", () => {
     const checkoutRoot = join(process.env.VOICELAYER_STATE_DIR!, "probe-checkout");
@@ -89,7 +92,7 @@ describe("readRepoGitCommit", () => {
       .trim();
 
     expect(readRepoGitCommit(checkoutRoot, undefined)).toBe(expected);
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   it("uses a valid VOICELAYER_REPO_ROOT override before the package root", () => {
     const checkoutRoot = join(process.env.VOICELAYER_STATE_DIR!, "override-checkout");
@@ -124,7 +127,7 @@ describe("readRepoGitCommit", () => {
       version: checkoutVersion,
       gitCommit: expected,
     });
-  });
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 describe("evaluateDeployFreshness — GREEN (genuinely deployed)", () => {
