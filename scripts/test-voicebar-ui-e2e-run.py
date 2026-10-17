@@ -155,10 +155,10 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(args[0], str(self.output / 'voicebar-ui-e2e-capture'))
         self.assertNotIn('avfoundation', args)
 
-    def test_runner_source_uses_the_recorded_builder_after_build_only_exit(self):
+    def test_runner_source_uses_supervised_recording_after_build_only_exit(self):
         source = MODULE.with_name('voicebar-ui-e2e.sh').read_text()
         self.assertNotIn('-test-iterations', source)
-        self.assertLess(source.index('[[ $build_only == 0 ]] || exit 0'), source.index('voicebar-ui-e2e-run.py'))
+        self.assertLess(source.index('[[ $build_only == 0 ]] || exit 0'), source.index('voicebar-ui-e2e-supervisor.py'))
 
     def test_early_recorder_exit_cannot_pass_even_with_a_valid_video(self):
         (self.root / 'early-end').touch()

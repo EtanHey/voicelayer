@@ -244,10 +244,8 @@ extension UIE2EGate2245 {
             server.parseLine(#"{"type":"transcription","text":"Synthetic recovery","recording_is_latest":false}"#)
             server.parseLine(#"{"type":"state","state":"idle","source":"recording"}"#)
         }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(350))
-            self?.fitVisualPanel(); self?.snapshot("failure:" + name)
-        }
+        // NSAlert runs a modal loop. Its visible state is observed out of process by XCUI;
+        // a delayed MainActor snapshot can remain queued behind the alert until dismissal.
     }
 
     func selectionCase(_ name: String) {

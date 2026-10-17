@@ -15,6 +15,9 @@ if [[ ! -f "$binary" ]]; then
 fi
 
 markers=(
+  configureAudioLevelMonitoringForTesting
+  UIE2EGate2245
+  VOICEBAR_UIE2E_GATE2245
   VoiceBarUIE2EOnly
   VOICEBAR_UIE2E_ROOT
   voicebar-ui-e2e-v1
