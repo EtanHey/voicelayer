@@ -40,6 +40,19 @@ public struct SelectionCaptureResult: Equatable {
     }
     public enum AXRead: String { case notAttempted = "not_attempted", unavailable, empty, text }
     public enum Path: String { case unknown, ax, copy }
+    public enum PreflightStage: String { case initial, recheck }
+    public enum PreflightReason: String {
+        case axUntrusted = "ax_untrusted"
+        case focusQueryFailed = "focus_query_failed", focusAbsent = "focus_absent", focusWrongType = "focus_wrong_type"
+        case roleQueryFailed = "role_query_failed", roleAbsent = "role_absent", roleWrongType = "role_wrong_type"
+        case secureInput = "secure_input", secureRole = "secure_role"
+    }
+    public struct PreflightDiagnostic: Equatable {
+        public let stage: PreflightStage
+        public let reason: PreflightReason
+        public let axStatus: Int32?
+    }
+    public private(set) var preflightDiagnostic: PreflightDiagnostic?
 
     public let outcome: Outcome
     public let text: String?
@@ -67,6 +80,12 @@ public struct SelectionCaptureResult: Equatable {
         return result
     }
 
+    public func preflightFailure(stage: PreflightStage, reason: PreflightReason, axStatus: Int32? = nil) -> Self {
+        var result = self
+        result.preflightDiagnostic = PreflightDiagnostic(stage: stage, reason: reason, axStatus: axStatus)
+        return result
+    }
+
     /// Counts describe the observed String, never host blocks, list items or table nodes.
     /// Do not serialize this result or its text into diagnostics.
     public var diagnosticDetails: [String: String] {
@@ -74,6 +93,11 @@ public struct SelectionCaptureResult: Equatable {
                       "path": path.rawValue, "host_structure": "not_observed",
                       // The app's generic logger merges in a window title; never include it here.
                       "appKeyWindowTitle": "not_recorded"]
+        if let diagnostic = preflightDiagnostic {
+            fields["preflight_stage"] = diagnostic.stage.rawValue
+            fields["preflight_reason"] = diagnostic.reason.rawValue
+            if let status = diagnostic.axStatus { fields["preflight_ax_status"] = String(status) }
+        }
         if let text {
             let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: .newlines)
             fields["utf16_count"] = String(text.utf16.count)
