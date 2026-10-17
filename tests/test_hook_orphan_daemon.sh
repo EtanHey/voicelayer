@@ -7,7 +7,6 @@ import fcntl
 import importlib.util
 import json
 import os
-import re
 import uuid
 from pathlib import Path
 import shutil
@@ -41,17 +40,6 @@ def build_native(destination):
 if "--native-check" in sys.argv[2:]:
     with tempfile.TemporaryDirectory(prefix="vlho-cc-", dir="/tmp") as scratch:
         raise SystemExit(0 if build_native(Path(scratch) / "sender.so") else 77)
-def retry_interrupted(status, run):
-    if status != 75:
-        return status
-    # INTERIM HO-3.1: remove once BrainLayer's installed hook is fixed.
-    print("EXTERNAL_INTERFERENCE: retry affected lane once (interim HO-3.1)", flush=True)
-    result = run()
-    if result == 75:
-        print("FAIL repeated EXTERNAL_INTERFERENCE; native sender pid/exe/script below", flush=True)
-        return 1
-    return result
-
 if "--cross-run" in sys.argv[2:]:
     # Separate Bun processes, preloads and repository roots, as in two worktrees.
     with tempfile.TemporaryDirectory(prefix="vlho-runs-", dir="/tmp") as runs:
@@ -101,10 +89,6 @@ if "--concurrent" in sys.argv[2:]:
             except subprocess.TimeoutExpired:
                 child.terminate()
                 status = child.wait(timeout=30)
-            retry_env = {k: v for k, v in os.environ.items() if k not in ("HOOK_PAIR_DIR", "HOOK_CROSS_RUN_DIR")}
-            status = retry_interrupted(status, lambda: subprocess.run(
-                ["bash", str(root / "tests/test_hook_orphan_daemon.sh")], env=retry_env,
-                stdout=output, stderr=subprocess.STDOUT, timeout=240).returncode)
             output.seek(0)
             print(output.read(), end="", flush=True)
             output.close()
@@ -134,11 +118,13 @@ os.environ["VOICELAYER_HOOK_TEST_OWNER"] = str(owner_path)
 os.environ["VOICELAYER_HOOK_AUDIT_LOG"] = str(base / "decisions.jsonl")
 print("HOOK evidence: " + str(base), flush=True)
 succeeded = False
-external_terms = set()
 barriers_done = False
 negative_names = ("concurrent", "parented", "live", "unrelated", "argv-only", "unreadable",
-                  "outside-root", "symlink-escape", "foreign-cleanup")
-class ExternalInterference(BaseException):
+                  "outside-root", "symlink-escape", "foreign-cleanup", "unscoped-negative", "dead-owner")
+if os.environ.get("HOOK_CROSS_RUN_DIR") or "cross-untagged" in sys.argv[2:]:
+    negative_names += ("cross-untagged",)
+protected_names = set()
+class ProtectedTerm(BaseException):
     pass
 signal_reason = "fixture cleanup"
 
@@ -172,53 +158,40 @@ def owned_signal(target, signum, group=False):
         raise RuntimeError(f"refusing signal to unverified fixture {target}")
     (os.killpg if group else os.kill)(target, signum)
 
-def external_sender(row):
-    match = re.search(r"sender_pid=(\d+).*sender_executable=(.*?) sender_entrypoint=(\S+) sender_in_run=(-?\d+)$", row)
-    return match and int(match[1]) > 1 and match[2] not in ("", "unknown") and match[3] not in (
-        "unknown", "inline-python") and match[4] == "0"
-
 def term_free(name):
     marker = base / (name + ".pid.term")
     clean = True
     for row in marker.read_text().splitlines() if marker.exists() else ():
-        external = external_sender(row)
-        if external:
-            if row not in external_terms:
-                print("EXTERNAL_INTERFERENCE " + row, flush=True)
-                external_terms.add(row)
-        else:
-            clean = False  # Internal and unattributed TERM always fail, never retry.
-            print("FAIL protected TERM (internal/unattributed): " + row, flush=True)
+        clean = False
+        print("FAIL protected TERM: " + row, flush=True)
     return clean
 
 def check_interference():
     if not barriers_done:
         return
-    # Capture all receivers without masking any owned negative signal.
-    assert all(term_free(name) for name in negative_names), "owned/unattributed protected TERM"
-    for marker in base.glob("*.term"):
-        for row in marker.read_text().splitlines():
-            if external_sender(row) and row not in external_terms:
-                print("EXTERNAL_INTERFERENCE " + row, flush=True)
-                external_terms.add(row)
-    if external_terms and not failures:
-        raise ExternalInterference()
+    # Abort outside ordinary lifecycle error handlers; teardown still runs.
+    if not all(term_free(name) for name in negative_names):
+        raise ProtectedTerm("protected fixture received TERM; native sender above")
+
+def final_protected_terms():
+    return [name for name in negative_names if not term_free(name)]
 
 if "--policy-check" in sys.argv[2:]:
-    assert not issubclass(ExternalInterference, Exception), "lifecycle error handlers must not swallow interference"
+    assert not issubclass(ProtectedTerm, Exception), "lifecycle error handlers must not swallow protected TERM"
+    barriers_done = True
     for membership, script in ((1, "foreign.py"), (-1, "foreign.py"), (0, "foreign.py"), (0, "supervise-test-daemon.py")):
-        (base / "policy.pid.term").write_text("sender_pid=42 sender_executable=/python sender_entrypoint=" + script + " sender_in_run=" + str(membership) + "\n")
-        assert term_free("policy") == (membership == 0)
-    with (base / "policy.pid.term").open("a") as marker:
-        marker.write("sender_pid=43 sender_executable=/python sender_entrypoint=supervise-test-daemon.py sender_in_run=1\n")
-    assert not term_free("policy"), "external TERM hid an internal TERM"
-    for first, second, expected, count in ((1, 0, 1, 0), (0, 75, 0, 0), (75, 0, 0, 1), (75, 75, 1, 1)):
-        calls = []
-        assert retry_interrupted(first, lambda: calls.append(1) or second) == expected
-        assert len(calls) == count
+        marker = base / "concurrent.pid.term"
+        marker.write_text("sender_pid=42 sender_executable=/python sender_entrypoint=" + script + " sender_in_run=" + str(membership) + "\n")
+        assert not term_free("concurrent"), "protected TERM was accepted"
+        try:
+            check_interference()
+        except ProtectedTerm:
+            pass
+        else:
+            raise AssertionError("protected TERM did not abort immediately")
     owner_lock.close()
     shutil.rmtree(base)
-    print("PASS attribution: internal/unknown fail; external retries once; second hit fails", flush=True)
+    print("PASS attribution: every protected TERM fails immediately; no retry", flush=True)
     raise SystemExit(0)
 
 def executable(name, body):
@@ -362,7 +335,10 @@ try:
     finally:
         zombie.wait()
     # Real PPID-1 fixtures, all owned by this test. Never signal resident processes.
-    def fixture(name, run_dir, orphan=True, impersonate=False, stubborn_child=False, tagged=True, owner=None, scoped=True):
+    def fixture(name, run_dir, orphan=True, impersonate=False, stubborn_child=False, tagged=True, owner=None, scoped=True, protect=True):
+        if protect:
+            protected_names.add(name)
+            assert protected_names <= set(negative_names), "protected fixture missing from monitoring"
         env = dict(os.environ, VOICELAYER_TMP_ROOT=str(run_dir),
                    VOICELAYER_MCP_SOCKET_PATH=str(run_dir / "voicelayer-mcp.sock"),
                    VOICELAYER_SOCKET_PATH=str(run_dir / "voicelayer.sock"))
@@ -419,9 +395,32 @@ while True: time.sleep(.05)
         snapshot("created " + name, orphan_pids)
         return pid
 
+    if "--protected-term-check" in sys.argv[2:]:
+        name, phase = sys.argv[-2:]
+        assert name in ("cross-untagged", "unscoped-negative")
+        assert phase in ("ongoing", "final")
+        pid = fixture(name, base / "voicelayer-run-tests.900022", tagged=False)
+        assert alive(pid) and term_free(name), "one-off protection check failed"
+        print("PASS one-off protection check: " + name, flush=True)
+        signal_reason = "regression: TERM after one-off check"
+        owned_signal(pid, signal.SIGTERM)
+        # Wait directly: the ongoing checker is the subject of this regression.
+        marker = base / (name + ".pid.term")
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert marker.exists(), "native TERM receipt missing"
+        barriers_done = True
+        if phase == "ongoing":
+            check_interference()
+        elif final_protected_terms():
+            raise ProtectedTerm("protected fixture TERM after lifecycle")
+        succeeded = True
+        raise SystemExit(0)
+
     stale_dir = base / "voicelayer-run-tests.900001"
     stale_dir.mkdir()
-    stale = fixture("stale", stale_dir)
+    stale = fixture("stale", stale_dir, protect=False)
     stale_dir.rmdir()
     concurrent_dir = base / "voicelayer-run-tests.900002"
     concurrent_dir.mkdir()
@@ -430,7 +429,7 @@ while True: time.sleep(.05)
     live = fixture("live", Path("/tmp"))
     unrelated = fixture("unrelated", base / "unrelated-run.900004")
     impersonator = fixture("argv-only", base / "voicelayer-run-tests.900008", impersonate=True)
-    terminating_leader = fixture("terminating-leader", base / "voicelayer-run-tests.900009", stubborn_child=True)
+    terminating_leader = fixture("terminating-leader", base / "voicelayer-run-tests.900009", stubborn_child=True, protect=False)
     stubborn = orphan_pids[-1]
     unreadable = fixture("unreadable", base / "voicelayer-run-tests.900010")
     owned_pid_file.write_text(" ".join(str(p) for p in orphan_pids))
@@ -514,7 +513,7 @@ while True: time.sleep(.05)
         "VOICELAYER_HOOK_TEST_SCOPE", "VOICELAYER_HOOK_TEST_NONCE", "VOICELAYER_HOOK_TEST_OWNER")}
     sweep_selected([scoped], production_env)
     check_case("unscoped sweep cannot signal scoped fixture", lambda: alive(scoped) and term_free("unscoped-negative"))
-    production = fixture("production-untagged", base / "voicelayer-run-tests.900025", tagged=False, scoped=False)
+    production = fixture("production-untagged", base / "voicelayer-run-tests.900025", tagged=False, scoped=False, protect=False)
     sweep_selected([production], production_env)
     check_case("production sweep still reaps unscoped orphan", lambda: not alive(production))
     cleanup_dir = base / "voicelayer-run-tests.900023"
@@ -531,7 +530,7 @@ while True: time.sleep(.05)
     check_case("cleanup cannot signal foreign scope", lambda: alive(foreign) and term_free("foreign-cleanup"))
 
     # Inherited test state must never exempt an ordinary production orphan.
-    inherited = fixture("inherited-untagged", base / "voicelayer-run-tests.900012", tagged=False)
+    inherited = fixture("inherited-untagged", base / "voicelayer-run-tests.900012", tagged=False, protect=False)
     sweep_selected([inherited], env)
     check_case("inherited-nonce sweeper reaps untagged orphan", lambda: not alive(inherited))
 
@@ -556,28 +555,37 @@ with path.open("w+") as lock:
         sweep_selected([leaked], env)
         check_case("tagged orphan protected while owner alive", lambda: alive(leaked) and term_free("dead-owner"))
     finally:
+        # Protection ends deliberately when its owner dies; the next sweep must reap it.
+        negative_names = tuple(name for name in negative_names if name != "dead-owner")
+        protected_names.discard("dead-owner")
         signal_reason = "SIGKILL fixture owner to release lease"
         owner_process.kill()
         owner_process.wait(timeout=5)
     sweep_selected([leaked], env)
     check_case("tagged orphan reaped after owner SIGKILL", lambda: not alive(leaked))
     # A stray tag with no verifiable owner must not be a permanent exemption.
-    stray = fixture("stray", base / "voicelayer-run-tests.900014", owner=base / "missing-owner" / "fixture-owner.lock")
+    stray = fixture("stray", base / "voicelayer-run-tests.900014", owner=base / "missing-owner" / "fixture-owner.lock", protect=False)
     sweep_selected([stray], env)
     check_case("stray nonce without live owner is reaped", lambda: not alive(stray))
 
     unheld_owner = base / "unheld-owner" / "fixture-owner.lock"
     unheld_owner.parent.mkdir()
     unheld_owner.write_text(json.dumps(dict(pid=os.getpid(), nonce=unheld_owner.parent.name, started=owner_started)))
-    unheld = fixture("unheld-owner", base / "voicelayer-run-tests.900015", owner=unheld_owner)
+    unheld = fixture("unheld-owner", base / "voicelayer-run-tests.900015", owner=unheld_owner, protect=False)
     sweep_selected([unheld], env)
     check_case("live PID without held owner lock is not exempt", lambda: not alive(unheld))
 
     # An ordinary hook has no test nonce and must also leave ALL fixtures alone.
     tagged_pids = [stale, concurrent, parented, live, unrelated, impersonator,
                    terminating_leader, stubborn, unreadable]
-    untagged = fixture("untagged", base / "voicelayer-run-tests.900011", tagged=False)
-    owned_pid_file.write_text(" ".join(str(p) for p in orphan_pids))
+    untagged = fixture("untagged", base / "voicelayer-run-tests.900011", tagged=False, protect=False)
+    # These scoped, untagged sentinels are protected against OTHER scopes above.
+    # Our own scoped sweep may legitimately reap them, so never select them in
+    # the broad lifecycle sweeps. Keep monitoring their native TERM receipts.
+    protected_untagged = {scoped}
+    if cross:
+        protected_untagged.add(sentinel)
+    owned_pid_file.write_text(" ".join(str(p) for p in orphan_pids if p not in protected_untagged))
     unscoped_env = dict(env)
     unscoped_env.pop("VOICELAYER_HOOK_TEST_NONCE")
     subprocess.run([str(bin_dir / "python3"), str(root / "scripts/supervise-test-daemon.py"), "--sweep"],
@@ -724,12 +732,14 @@ with path.open("w+") as lock:
             except Exception as error:
                 failures.append("sweep")
                 print(f"FAIL sweep: {error}", flush=True)
-    unexpected_terms = [name for name in negative_names if not term_free(name)]
+    assert set(negative_names) == protected_names, "monitored set differs from created protected fixtures"
+    print("PASS monitored set equals protected fixtures: " + ", ".join(sorted(protected_names)), flush=True)
+    unexpected_terms = final_protected_terms()
     if unexpected_terms:
         failures.append("protected fixture TERM after lifecycle")
         print("FAIL protected fixture TERM after lifecycle: " + ", ".join(unexpected_terms), flush=True)
     else:
-        print("PASS protected fixtures: no owned/unattributed TERM throughout lifecycle", flush=True)
+        print("PASS protected fixtures: no TERM throughout lifecycle", flush=True)
     decisions = [json.loads(line) for line in (base / "decisions.jsonl").read_text().splitlines()]
     sent = [row for row in decisions if row["event"] == "signal-sent" and row.get("pgid")]
     assert sent and all(row["sender_pid"] > 1 and row["time_ns"] > 0 and
@@ -739,8 +749,8 @@ with path.open("w+") as lock:
     assert any(row["reason"] == "fixture owner alive" for row in decisions)
     print("PASS audit records scoped senders, targets, signals, times and reasons", flush=True)
     succeeded = not failures
-except ExternalInterference:
-    pass
+except ProtectedTerm as error:
+    failures.append(str(error))
 finally:
     # Snapshot before cleanup so a failed predicate is distinguishable from our teardown.
     audit("final-snapshot", failures=failures, processes=subprocess.run(
@@ -756,12 +766,10 @@ finally:
     for proc in protected:
         proc.wait(timeout=5)
     owner_lock.close()
-    if succeeded and not external_terms and os.environ.get("HOOK_KEEP_EVIDENCE") != "1":
+    if succeeded and os.environ.get("HOOK_KEEP_EVIDENCE") != "1":
         shutil.rmtree(base)
     else:
         print("Retained HOOK evidence: " + str(base), flush=True)
 if failures:
     raise SystemExit("failed cases: " + ", ".join(failures))
-if external_terms:
-    raise SystemExit(75)  # Only an otherwise successful, positively attributed lane may retry.
 PY
