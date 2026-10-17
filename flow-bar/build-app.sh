@@ -994,6 +994,11 @@ clear_app_bundle_for_rebuild() {
 
 configure_qa_swift_flags() {
     QA_SWIFT_FLAGS=()
+    case "${VOICEBAR_UIE2E_GATE2245:-0}" in
+        0) ;;
+        1) [[ "${VOICEBAR_QA_BUILD:-0}" == 1 ]] || { echo 'GATE2245 requires QA build' >&2; return 1; } ;;
+        *) echo 'Invalid VOICEBAR_UIE2E_GATE2245' >&2; return 1 ;;
+    esac
     case "${VOICEBAR_UIE2E_FOCUSED_338:-0}" in
         0|1) ;;
         *) echo '[build-app] ERROR: VOICEBAR_UIE2E_FOCUSED_338 must be 0 or 1.' >&2; return 1 ;;
@@ -1008,6 +1013,9 @@ configure_qa_swift_flags() {
         return 1
     fi
     QA_SWIFT_FLAGS=(-Xswiftc -DVOICEBAR_QA)
+    if [[ "${VOICEBAR_UIE2E_GATE2245:-0}" == 1 ]]; then
+        QA_SWIFT_FLAGS+=(-Xswiftc -DVOICEBAR_UIE2E_GATE2245)
+    fi
     if [[ "${VOICEBAR_UIE2E_FOCUSED_338:-0}" == 1 ]]; then
         # Check product declarations, never QA fixture references or comments. Main may lack #338.
         python3 - "$PACKAGE_DIR" <<'PYFOCUSED' || return 1

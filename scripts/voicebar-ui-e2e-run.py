@@ -14,7 +14,7 @@ import sys
 import time
 
 
-SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery'}
+SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow'}
 
 
 def selected_scenario(output, scenario=None):
@@ -198,5 +198,16 @@ if __name__ == '__main__':
     parser.add_argument('--scenario', choices=SCENARIOS)
     args = parser.parse_args()
     output = args.output.resolve()
+    # Refuse BEFORE visibility/capture/UI unless the exact built guard passed its probes.
+    if selected_scenario(output, args.scenario) == 'gate2246':
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        guard.verify(pathlib.Path(__file__).resolve().parent.parent, output)
+        # The lead authorized ONE retry after the seam. Claim it atomically, once.
+        with (output / 'native-retry-claimed.json').open('x') as receipt:
+            json.dump({'authorizedBy': 'GATE2246B-BRIEF and QA-only seam ruling',
+                       'claimedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}, receipt)
     # Validate selection before changing visibility or starting the recorder.
     sys.exit(run_suite(output, test_arguments(output, args.scenario)))

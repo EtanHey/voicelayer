@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # UI-only runner. --build-only is the only mode permitted on an occupied Mac.
 set -euo pipefail
-usage() { echo "usage: $0 --output NEW_DIRECTORY [--build-only] [--scenario full|focused-338]"; }
+usage() { echo "usage: $0 --output NEW_DIRECTORY [--build-only] [--scenario full|focused-338|hide1|gate2246]"; }
 build_only=0
 scenario=full
 focused_338=0
@@ -19,6 +19,7 @@ done
 case "$scenario" in
   full) ;;
   focused-338) focused_338=1 ;;
+  hide1|gate2246) export VOICEBAR_UIE2E_GATE2245=1 ;;
   *) echo "FAIL unknown scenario: $scenario (expected full or focused-338)" >&2; exit 2 ;;
 esac
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -61,6 +62,8 @@ data['UIE2EPasteFeedback'] = bool(outcomes and all(
     re.search(r'\bcase\s+' + name + r'\b', outcomes.group(1))
     for name in ('notInserted', 'unverified', 'partial')
 ))
+import os
+data['UIE2EGate2245'] = os.environ.get('VOICEBAR_UIE2E_GATE2245') == '1'
 p.write_bytes(plistlib.dumps(data))
 PYMETA
 /usr/bin/codesign --force --sign - "$app" > "$output/qa-sign.log" 2>&1
@@ -77,6 +80,9 @@ xcodebuild build-for-testing -project "$repo/flow-bar/UIE2E/VoiceBarUIE2E.xcodep
     echo "FAIL build-for-testing (see $output/build-for-testing.log)"; exit 1;
   }
 echo 'PASS build-for-testing (UI execution NOT_PROVEN)'
+if [[ $scenario == gate2246 ]]; then
+  python3 "$repo/scripts/voicebar-ui-e2e-guard-proof.py" build "$output"
+fi
 [[ $build_only == 0 ]] || exit 0
 python3 "$repo/scripts/voicebar-ui-e2e-results.py" configure "$output" "$app" "$sandbox" --scenario "$scenario"
 # Reconfirm immediately before XCUITest takes the screen. Leave output muted after the run.

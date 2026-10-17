@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 
-SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery'}
+SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow'}
 
 
 def selected_scenario(output, scenario=None):
@@ -68,6 +68,12 @@ def configure(output, app, sandbox, scenario=None):
     env = target.setdefault('EnvironmentVariables', {})
     env.update(VOICEBAR_UIE2E_APP=str(app), VOICEBAR_UIE2E_ROOT=str(sandbox),
                VOICEBAR_UIE2E_SCENARIO=scenario)
+    if scenario == 'gate2246':
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        env['VOICEBAR_UIE2E_DEVICE_GUARD'] = str(guard.verify(pathlib.Path(__file__).resolve().parent.parent, output))
     # Moving the plist changes __TESTROOT__. Resolve it before writing the configured copy.
     def resolve(value):
         if isinstance(value, str):
@@ -198,7 +204,7 @@ def export(output, sandbox, scenario=None):
     steps, ledger, issues = receipts(directory, manifest)
     if ledger is not None:
         labels = [ledger.get('scenario'), ledger.get('scope'), ledger['coverage'].get('scenario')]
-        if ((scenario == 'focused-338' and labels != [scenario] * 3)
+        if ((scenario in {'focused-338', 'hide1', 'gate2246'} and labels != [scenario] * 3)
                 or any(label is not None and label != scenario for label in labels)):
             raise ValueError('Ledger scenario/scope differs from selected scenario: ' + scenario)
     if scenario == 'focused-338':
@@ -208,6 +214,23 @@ def export(output, sandbox, scenario=None):
         if waived_packets:
             issues.append('FAIL focused-338 cannot use expected-failure waivers after P1e/P1f merge: '
                           + ', '.join(waived_packets))
+    if scenario == 'gate2246':
+        required = {'GATE2246 HIDE ' + name + ' ' + phase
+                    for name in ['user-f5', 'user-ask', 'unknown', 'background', 'recovered', 'visible']
+                    for phase in ['before', 'failure', 'shown']}
+        required |= {'GATE2246 SEL ' + name for name in ['same-hash', 'different', 'pending', 'fast-bc', 'no-hash', 'busy']}
+        if not required.issubset({step['name'] for step in steps}):
+            issues.append('FAIL gate2246 missing required evidence')
+        if any(step.get('skipped') or expected_packet(step) is not None for step in steps):
+            issues.append('FAIL gate2246 cannot skip or waive a case')
+    if scenario == 'hide1':
+        required = {'HIDE1VIS ' + event + ' ' + phase
+                    for event in ['speaking', 'preparing', 'readback', 'error', 'reconnect', 'notes', 'wizard']
+                    for phase in ['before', 'hidden', 'shown']}
+        if not required.issubset({step['name'] for step in steps}):
+            issues.append('FAIL hide1 missing required before/hidden/shown evidence')
+        if any(step.get('skipped') or expected_packet(step) is not None for step in steps):
+            issues.append('FAIL hide1 cannot skip or waive a case')
     (output / 'steps.json').write_text(json.dumps(steps, indent=2))
     if ledger is not None:
         (output / 'ledger.json').write_text(json.dumps(ledger, indent=2))
@@ -237,7 +260,7 @@ def export(output, sandbox, scenario=None):
                     ledger.get('limitations', []) if ledger else [], scenario)
     write_scenario(output, scenario)
     qa = dict(version=1, scenario=scenario, scope=scenario, scenarioPassed=passed,
-              verdict=('FOCUSED_SCENARIO_PASS' if scenario == 'focused-338' else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
+              verdict=('FOCUSED_SCENARIO_PASS' if scenario in {'focused-338', 'hide1', 'gate2246'} else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
               fullReleasePass=False, fullReleaseCoverage='NOT_PROVEN', issues=issues)
     (output / 'qa-report.json').write_text(json.dumps(qa, indent=2, sort_keys=True) + '\n')
     return passed

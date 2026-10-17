@@ -114,6 +114,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self?.voiceState.setLocalRecordingLevel(level)
     }
 
+    #if VOICEBAR_QA
+    /// Install before panel observation; the QA fixture supplies a device-free engine.
+    func configureAudioLevelMonitoringForTesting(engine: AudioLevelMonitoringEngine) {
+        audioLevelMonitor = AudioLevelMonitor(engine: engine) { [weak self] level in
+            self?.voiceState.setLocalRecordingLevel(level)
+        }
+    }
+    #endif
+
     private let commandModeAXHelper = CommandModeAXHelper()
 
     private let defaults = VoiceBarDefaults.make()

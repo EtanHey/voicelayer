@@ -13,6 +13,7 @@ final class VoiceBarFlowTests: XCTestCase {
     var limitations = ["NOT_PROVEN: external T3-client selection Speak is outside this isolated VoiceBar run. SEL1 probes the real VoiceState method with synthetic selection capture only."]
     var ledger = UIE2ECoverageLedger()
     var terminalFullTextProven = false
+    var gate2245Enabled = false
     var observed: Set<String> { get { ledger.observed } set { ledger.observed = newValue } }
     var exercised: Set<String> { get { ledger.exercised } set { ledger.exercised = newValue } }
     var activePage = "General"
@@ -27,7 +28,7 @@ final class VoiceBarFlowTests: XCTestCase {
         continueAfterFailure = true
         let env = ProcessInfo.processInfo.environment
         scenario = env["VOICEBAR_UIE2E_SCENARIO"] ?? "full"
-        guard ["full", "focused-338"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
+        guard ["full", "focused-338", "hide1", "gate2246"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
         if scenario == "focused-338" {
             limitations = ["Gallery variants use real production BarView/DictationCard in arbitrary page positions; they do not prove notch placement. One actual production-geometry notch render per family is checked separately.",
                 "Static confirmation holds are synthetic presentations of actual production outcomes; synchronized lifetime uses fresh production timers. No real microphone, audio, global hotkey, external insertion or installed-app acceptance is claimed.",
@@ -47,11 +48,23 @@ final class VoiceBarFlowTests: XCTestCase {
               Bundle(url: appURL)?.object(forInfoDictionaryKey: "VoiceBarUIE2EOnly") as? Bool == true
         else { throw NSError(domain: "UIE2E unsafe app", code: 1) }
         app = XCUIApplication(url: appURL)
+        gate2245Enabled = Bundle(url: appURL)?.object(forInfoDictionaryKey: "UIE2EGate2245") as? Bool == true
         app.launchEnvironment = ["VOICEBAR_UIE2E": "1", "VOICEBAR_UIE2E_SCENARIO": scenario, "VOICEBAR_UIE2E_ROOT": root.path,
             "HOME": root.appendingPathComponent("home").path, "CFFIXED_USER_HOME": root.appendingPathComponent("home").path,
+            "QA_VOICE_DISABLE_FLAG_PATH": root.appendingPathComponent("disabled").path,
             "VOICEBAR_USER_DEFAULTS_SUITE": "com.voicelayer.uie2e.\(root.lastPathComponent)",
             "VOICELAYER_SOCKET_PATH": root.appendingPathComponent("v.sock").path,
             "VOICELAYER_MCP_SOCKET_PATH": root.appendingPathComponent("m.sock").path]
+        if gate2245Enabled {
+            app.launchEnvironment["QA_VOICEBAR_CAPTURE_TOP_RIGHT"] = "1"
+            app.launchEnvironment["VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE"] = "1"
+        }
+        if scenario == "gate2246" {
+            let library = try XCTUnwrap(env["VOICEBAR_UIE2E_DEVICE_GUARD"])
+            XCTAssertTrue(FileManager.default.fileExists(atPath: library))
+            app.launchEnvironment["DYLD_INSERT_LIBRARIES"] = library
+            app.launchEnvironment["VOICEBAR_UIE2E_GUARD_RECEIPT"] = root.appendingPathComponent("no-device-guard.log").path
+        }
         addUIInterruptionMonitor(withDescription: "Known benign foreign overlay; never grant permissions") { [unowned self] alert in
             switch UIE2EInterruptionPolicy.classify(alertDescription: alert.debugDescription) {
             case .permissionPrompt:
@@ -93,7 +106,9 @@ final class VoiceBarFlowTests: XCTestCase {
         step("launch isolated QA app") {
             app.launch()
             app.activate()
-            XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+            if ["hide1", "gate2246"].contains(scenario) {
+                XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
+            } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             XCTAssertEqual(app.state, .runningForeground)
         }
     }
@@ -149,10 +164,26 @@ final class VoiceBarFlowTests: XCTestCase {
                 }
                 XCTExpectFailure("Known product packet " + issue.rawValue, options: options) { body() }
             } else { body() }
-            let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            let sample = XCUIScreen.main.screenshot()
+            let screenshot = XCTAttachment(screenshot: sample)
             screenshot.name = attachment
             screenshot.lifetime = .keepAlways
             activity.add(screenshot)
+            if scenario == "hide1", name.hasPrefix("HIDE1VIS ") {
+                // Same lossless sample as the full-screen attachment; CGImage uses top-left pixels.
+                let full = sample.image
+                if let cg = full.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                    let screenSize = NSScreen.main?.frame.size ?? full.size
+                    let scale = CGFloat(cg.width) / screenSize.width
+                    let region = CGRect(x: max(0, screenSize.width / 2 - 500) * scale,
+                        y: 60 * scale, width: min(1000, screenSize.width) * scale, height: 540 * scale)
+                    if let crop = cg.cropping(to: region) {
+                        let attachment = XCTAttachment(image: NSImage(cgImage: crop, size: .zero))
+                        attachment.name = String(format: "HIDE1VIS-CROP-%04d", number)
+                        attachment.lifetime = .keepAlways; activity.add(attachment)
+                    } else { XCTFail("Cannot crop panel screen region") }
+                } else { XCTFail("Cannot read lossless screenshot") }
+            }
         }
         let passed = (testRun?.failureCount ?? 0) == before
         var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed]
@@ -300,6 +331,10 @@ final class VoiceBarFlowTests: XCTestCase {
 
     func testFullUIOnlyFlow() throws {
         guard scenario == "full" else { throw NSError(domain: "UIE2E full test selected in focused run", code: 1) }
+        if gate2245Enabled {
+            gate2245Flow()
+            guard (testRun?.failureCount ?? 1) == 0 else { return }
+        }
         // Dictionary's animated top-level edit sheet and inline delete confirmation
         // have separate Cancel controls. Exercise both before the long tab sweeps.
         for (name, run) in [("Dictionary", dictionaryFlow), ("History", historyFlow), ("Pill", pillFlow),
@@ -1293,7 +1328,9 @@ extension VoiceBarFlowTests {
     func relaunchQA() {
         step("relaunch isolated QA app") {
             app.launch()
-            XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+            if ["hide1", "gate2246"].contains(scenario) {
+                XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
+            } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             activePage = "General"; activeHistoryScope = "Dictations"; selectedHistoryRow = "qa-recording"
         }
     }

@@ -14,6 +14,7 @@ struct VisibilityReceipt: Codable {
     var visibleBefore: [VisibleApplication]
     var restored: Bool
     var failures: [String]
+    var residentUserVisibilitySnapshot: String? = nil
 }
 
 @main struct VisibilityTool {
@@ -35,8 +36,13 @@ struct VisibilityReceipt: Codable {
                     throw NSError(domain: "Refusing to overwrite visibility snapshot", code: 3)
                 }
                 let owners = windowOwners()
+                let resident = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == "com.voicelayer.voicebar" }
+                guard !resident.contains(where: { owners.contains($0.processIdentifier) }) else {
+                    throw NSError(domain: "Resident VoiceBar surface visible: authorized AX Hide for 1 hour required; no application hide fallback", code: 6)
+                }
                 let apps = NSWorkspace.shared.runningApplications.filter {
-                    $0.activationPolicy == .regular && !$0.isHidden && !$0.isTerminated &&
+                    $0.activationPolicy == .regular && $0.bundleIdentifier != "com.voicelayer.voicebar" &&
+                    !$0.isHidden && !$0.isTerminated &&
                     owners.contains($0.processIdentifier) &&
                     $0.bundleIdentifier != "com.voicelayer.voicebar.uie2e" && $0.processIdentifier != getpid()
                 }
@@ -44,7 +50,15 @@ struct VisibilityReceipt: Codable {
                     VisibleApplication(pid: $0.processIdentifier, bundleIdentifier: $0.bundleIdentifier,
                         bundlePath: $0.bundleURL?.path, launched: $0.launchDate, name: $0.localizedName)
                 }, restored: false, failures: [])
+                if let snapshot = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_RESIDENT_SNAPSHOT"] {
+                    guard FileManager.default.fileExists(atPath: snapshot) else {
+                        throw NSError(domain: "Missing resident AX reversible snapshot", code: 7)
+                    }
+                    receipt.residentUserVisibilitySnapshot = snapshot
+                }
                 try encoder.encode(receipt).write(to: url, options: .atomic)
+                // Resident restoration is owned by the linked AX operator snapshot;
+                // this helper restores only the regular applications it actually hid.
                 // These requests are asynchronous; their Bool can be false even when
                 // the window disappears. Only observed completion decides success.
                 for app in apps { _ = app.hide() }
@@ -63,6 +77,10 @@ struct VisibilityReceipt: Codable {
                 var restoreFailures: [String] = []
                 var restoredApps: [NSRunningApplication] = []
                 for entry in receipt.visibleBefore {
+                    if entry.bundleIdentifier == "com.voicelayer.voicebar" {
+                        restoreFailures.append("Resident restoration requires AX Show VoiceBar; no application unhide fallback")
+                        continue
+                    }
                     guard let app = NSRunningApplication(processIdentifier: entry.pid), !app.isTerminated,
                           app.bundleIdentifier == entry.bundleIdentifier, app.bundleURL?.path == entry.bundlePath,
                           app.launchDate == entry.launched else { continue } // Never reopen/relaunch or adopt a reused PID.
