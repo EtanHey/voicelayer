@@ -6,43 +6,48 @@ import VoiceBarUI
 final class SpeakSelectionCapture {
     private static let captureQueue = DispatchQueue(label: "com.voicelayer.speak-selection", qos: .utility)
     typealias Snapshot = [[(NSPasteboard.PasteboardType, Data)]]
-    private let captureBlockReason: () -> SelectionCaptureResult?
+    private let captureBlockReason: (SelectionCaptureResult.PreflightStage) -> SelectionCaptureResult?
     private let snapshotReader: () -> Snapshot?
     private let writeRestoredItems: ([NSPasteboardItem]) -> Bool
     private let readAXSelection: () -> String?
-    private let pasteboard: NSPasteboard
+    private let pasteboardProvider: () -> NSPasteboard
+    private var pasteboard: NSPasteboard { pasteboardProvider() }
+    private let pasteboardChangeCount: () -> Int
     private let postCopy: () -> Bool
     private let readCopiedString: () -> String?
     private let schedule: (TimeInterval, @escaping () -> Void) -> Void
     private let now: () -> TimeInterval
 
     init(canCapture: (() -> Bool)? = nil,
+         preflight: PreflightProviders? = nil,
          snapshotReader: (() -> Snapshot?)? = nil,
          writeRestoredItems: (([NSPasteboardItem]) -> Bool)? = nil,
          readAXSelection: @escaping () -> String? = SpeakSelectionCapture.readFocusedSelectedText,
-         pasteboard: NSPasteboard = .general,
+         pasteboard: NSPasteboard? = nil,
          postCopy: @escaping () -> Bool = SpeakSelectionCapture.postCopyShortcut,
          readCopiedString: (() -> String?)? = nil,
+         pasteboardChangeCount: (() -> Int)? = nil,
          schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void = {
              SpeakSelectionCapture.captureQueue.asyncAfter(deadline: .now() + $0, execute: $1)
          },
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
-        self.captureBlockReason = canCapture.map { check in { check() ? nil : .secureField } }
-            ?? SpeakSelectionCapture.focusedCaptureBlockReason
-        let pasteboardName = pasteboard.name.rawValue
-        self.snapshotReader = snapshotReader ?? { SelectionPasteboardSnapshot.readInHelper(name: pasteboardName) }
-        self.writeRestoredItems = writeRestoredItems ?? { pasteboard.writeObjects($0) }
+        self.captureBlockReason = canCapture.map { check in { _ in check() ? nil : .secureField } }
+            ?? { Self.focusedCaptureBlockReason(stage: $0, providers: preflight ?? .live) }
+        let board = { pasteboard ?? NSPasteboard.general }
+        self.pasteboardProvider = board
+        self.pasteboardChangeCount = pasteboardChangeCount ?? { board().changeCount }
+        self.snapshotReader = snapshotReader ?? { SelectionPasteboardSnapshot.readInHelper(name: board().name.rawValue) }
+        self.writeRestoredItems = writeRestoredItems ?? { board().writeObjects($0) }
         self.readAXSelection = readAXSelection
-        self.pasteboard = pasteboard
         self.postCopy = postCopy
-        self.readCopiedString = readCopiedString ?? { pasteboard.string(forType: .string) }
+        self.readCopiedString = readCopiedString ?? { board().string(forType: .string) }
         self.schedule = schedule
         self.now = now
     }
 
     func capture(completion: @escaping (SelectionCaptureResult) -> Void) {
         Self.captureQueue.async {
-            if let reason = self.captureBlockReason() {
+            if let reason = self.captureBlockReason(.initial) {
                 Self.onMain { completion(reason) }
                 return
             }
@@ -63,13 +68,13 @@ final class SpeakSelectionCapture {
     private func captureUsingPasteboard(completion: @escaping (SelectionCaptureResult) -> Void) {
         // Unlike the transcript-paste snapshot, keep dynamic and org.nspasteboard
         // types too. Fail closed if any advertised representation cannot be saved.
-        let changeCount = pasteboard.changeCount
+        let changeCount = pasteboardChangeCount()
         Self.captureQueue.async {
             let snapshot = self.snapshotReader()
-            let blockReason = self.captureBlockReason()
+            let blockReason = self.captureBlockReason(.recheck)
             Self.onMain {
                 guard let snapshot else { completion(.captureFailed); return }
-                guard self.pasteboard.changeCount == changeCount else { completion(.clipboardChanged); return }
+                guard self.pasteboardChangeCount() == changeCount else { completion(.clipboardChanged); return }
                 if let blockReason { completion(blockReason); return }
                 self.copyAndPoll(snapshot: snapshot, changeCount: changeCount, completion: completion)
             }
@@ -154,26 +159,59 @@ final class SpeakSelectionCapture {
         secureInput || role == (kAXSecureTextFieldSubrole as String) || subrole == (kAXSecureTextFieldSubrole as String)
     }
 
-    private static func focusedCaptureBlockReason() -> SelectionCaptureResult? {
-        if IsSecureEventInputEnabled() { return .secureField }
-        guard AXIsProcessTrusted() else { return .captureFailed }
-        let system = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(system, 0.2)
-        var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return .captureFailed }
-        let element = focused as! AXUIElement
-        AXUIElementSetMessagingTimeout(element, 0.2)
-        func attribute(_ key: String) -> String? {
-            var value: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success else { return nil }
-            return value as? String
+    /// Only the live adapter performs AX IPC; tests supply inert values and closures.
+    struct PreflightProviders {
+        var secureInput: () -> Bool
+        var trusted: () -> Bool
+        var focused: () -> (AXError, CFTypeRef?)
+        var attribute: (CFTypeRef, String) -> (AXError, CFTypeRef?)
+
+        static var live: Self {
+            Self(secureInput: { IsSecureEventInputEnabled() }, trusted: { AXIsProcessTrusted() }, focused: {
+                let system = AXUIElementCreateSystemWide()
+                AXUIElementSetMessagingTimeout(system, 0.2)
+                var value: CFTypeRef?
+                let status = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &value)
+                if status == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() {
+                    AXUIElementSetMessagingTimeout(value as! AXUIElement, 0.2)
+                }
+                return (status, value)
+            }, attribute: { element, key in
+                var value: CFTypeRef?
+                let status = AXUIElementCopyAttributeValue(element as! AXUIElement, key as CFString, &value)
+                return (status, value)
+            })
         }
-        let role = attribute(kAXRoleAttribute)
-        // An unreadable focus cannot establish permission to synthesize Copy.
-        if isSecureFocus(role: role, subrole: attribute(kAXSubroleAttribute),
-                         secureInput: IsSecureEventInputEnabled()) { return .secureField }
-        return role == nil ? .captureFailed : nil
+    }
+
+    private static func focusedCaptureBlockReason(stage: SelectionCaptureResult.PreflightStage,
+                                                   providers: PreflightProviders) -> SelectionCaptureResult? {
+        func blocked(_ reason: SelectionCaptureResult.PreflightReason, status: AXError? = nil,
+                     secure: Bool = false) -> SelectionCaptureResult {
+            (secure ? SelectionCaptureResult.secureField : .captureFailed)
+                .preflightFailure(stage: stage, reason: reason, axStatus: status?.rawValue)
+        }
+        if providers.secureInput() { return blocked(.secureInput, secure: true) }
+        guard providers.trusted() else { return blocked(.axUntrusted) }
+        let (focusStatus, focused) = providers.focused()
+        guard focusStatus == .success else { return blocked(.focusQueryFailed, status: focusStatus) }
+        guard let focused else { return blocked(.focusAbsent, status: focusStatus) }
+        guard CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+            return blocked(.focusWrongType, status: focusStatus)
+        }
+        let (roleStatus, roleValue) = providers.attribute(focused, kAXRoleAttribute)
+        let role = roleStatus == .success ? roleValue as? String : nil
+        let (subroleStatus, subroleValue) = providers.attribute(focused, kAXSubroleAttribute)
+        let subrole = subroleStatus == .success ? subroleValue as? String : nil
+        let secureInput = providers.secureInput()
+        if isSecureFocus(role: role, subrole: subrole, secureInput: secureInput) {
+            return blocked(secureInput ? .secureInput : .secureRole, status: roleStatus, secure: true)
+        }
+        // Preserve secure-input/subrole precedence even when the role query failed.
+        guard roleStatus == .success else { return blocked(.roleQueryFailed, status: roleStatus) }
+        guard let roleValue else { return blocked(.roleAbsent, status: roleStatus) }
+        guard roleValue is String else { return blocked(.roleWrongType, status: roleStatus) }
+        return nil
     }
 
     private static func readFocusedSelectedText() -> String? {
