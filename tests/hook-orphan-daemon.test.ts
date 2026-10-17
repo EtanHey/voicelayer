@@ -12,7 +12,7 @@ test.skipIf(!hasCompiler)("independent hook test roots isolate fixtures and reap
   const result = spawnSync("bash", [script, process.env.HOOK_CROSS_RUN_CHILD ? "--concurrent" : "--cross-run"], {
     encoding: "utf8", timeout: 300_000,
   });
-  if (process.env.HOOK_CROSS_RUN_CHILD || process.env.HOOK_KEEP_EVIDENCE === "1" || result.stdout?.includes("EXTERNAL_INTERFERENCE")) console.log(result.stdout + result.stderr);
+  if (process.env.HOOK_CROSS_RUN_CHILD || process.env.HOOK_KEEP_EVIDENCE === "1" || result.status !== 0) console.log(result.stdout + result.stderr);
   expect(result.error).toBeUndefined();
   expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({
     status: 0,
@@ -20,7 +20,9 @@ test.skipIf(!hasCompiler)("independent hook test roots isolate fixtures and reap
   });
 }, 305_000);
 
-test("native TERM attribution never retries internal/unknown senders or a second external hit", () => {
+test("native TERM attribution immediately fails every protected sender without retry", () => {
   const result = spawnSync("bash", [script, "--policy-check"], { encoding: "utf8" });
-  expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({ status: 0, output: expect.stringContaining("PASS attribution:") });
+  expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({ status: 0, output: expect.stringContaining("PASS attribution: every protected TERM fails immediately; no retry") });
+  expect(result.stdout).toContain("FAIL protected TERM: sender_pid=42 sender_executable=/python sender_entrypoint=foreign.py sender_in_run=0");
+  expect(result.stdout).not.toContain("EXTERNAL_INTERFERENCE");
 });
