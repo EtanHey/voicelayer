@@ -539,7 +539,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertTrue(controller.ownsLaunchedProcess)
 
         controller.handleCaptureFailure(type: "broken-mic")
-        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } && promptedMessages.count == 1 })
         scheduledBlocks.first(where: { $0.delay == 1 })?.block()
 
         XCTAssertTrue(firstProcess.didReceiveTerminate)
