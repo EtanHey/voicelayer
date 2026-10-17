@@ -1884,7 +1884,7 @@ public final class VoiceState {
                     let superseded = selectionSubmissions.filter { $0.value.order < submission.order }.map(\.key)
                     for id in superseded { retireSelectionRequest(id) }
                 }
-                selectionReadIsPreparing = (event["long_read"] as? [String: Any])?["preparing"] as? Bool == true
+                let isPreparing = (event["long_read"] as? [String: Any])?["preparing"] as? Bool == true
                 let readID = (event["long_read"] as? [String: Any])?["id"] as? String
                 let acknowledgesSubmission: Bool
                 if requestID != nil {
@@ -1892,7 +1892,7 @@ public final class VoiceState {
                 } else {
                     // Legacy peers have no identity; preserve their existing heuristic.
                     acknowledgesSubmission = selectionSubmittedText.map { submitted in
-                        selectionReadIsPreparing || (event["text"] as? String).map {
+                        isPreparing || (event["text"] as? String).map {
                             Self.normalizedSelection($0) == Self.normalizedSelection(submitted)
                         } == true
                     } ?? false
@@ -1912,6 +1912,7 @@ public final class VoiceState {
                         selectionSpeechRequestID = nil
                     }
                 }
+                selectionReadIsPreparing = isPreparing
                 selectionReadHash = event["text_hash"] as? String
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 pendingRecordingIdleAfterFinal = false
