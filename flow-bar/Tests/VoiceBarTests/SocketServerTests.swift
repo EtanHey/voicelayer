@@ -50,7 +50,8 @@ final class SocketServerTests: XCTestCase {
         let requestID = try XCTUnwrap(command.removeValue(forKey: "id"))
         XCTAssertNotNil(UUID(uuidString: requestID), "Selection acks must correlate to this exact request")
         XCTAssertEqual(command, ["cmd": "speak_text", "text": selection, "profile": "auto",
-                                 "format": "markdown", "source": "selection"])
+                                 "format": "markdown", "source": "selection",
+                                 "text_hash": "faa53a985af19b9b92d489bb22b001a75ae497c3889e4b907def95b60aeb1d41"])
         XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.1))
     }
 

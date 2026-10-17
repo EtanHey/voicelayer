@@ -5,6 +5,7 @@
 // VoiceMode values must match socket-protocol.ts VoiceLayerState.
 
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 import SwiftUI
@@ -336,10 +337,8 @@ public final class VoiceState {
             clearSelectionBusyNoteIfSessionEnded()
             if mode == .recording || mode == .transcribing || mode == .disconnected || mode == .error {
                 if selectionCaptureInFlight { selectionCaptureCancelled = true }
-                selectionSpeechRequestID = nil
-                selectionSubmittedText = nil
-                selectionReadText = nil
             }
+            if mode != .speaking { invalidateSelectionSpeechIdentity() }
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
@@ -887,6 +886,12 @@ public final class VoiceState {
     private var selectionCaptureID: UUID?
     private var selectionSpeechRequestID: String?
     private var selectionSubmittedText: String?
+    private var selectionSubmissions: [String: (text: String, order: Int)] = [:]
+    private var selectionSubmissionOrder = 0
+    private var selectionReceiptOrder = 0
+    private var selectionRetiredRequestIDs: [String] = []
+    private static let selectionIdentityLimit = 32
+    private var selectionReadHash: String?
     // Retain the original selection across preparation, markdown projection and chunk receipts.
     private var selectionReadText: String?
     private var selectionReadRequestID: String?
@@ -928,9 +933,42 @@ public final class VoiceState {
         text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 
-    private func stopSelectionRead() {
+    private static func selectionHash(_ text: String) -> String {
+        let normalized = text.unicodeScalars.split(whereSeparator: { $0.properties.isWhitespace })
+            .map(String.init).joined(separator: " ")
+        return SHA256.hash(data: Data(normalized.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func retireSelectionRequest(_ id: String) {
+        selectionSubmissions.removeValue(forKey: id)
+        guard !selectionRetiredRequestIDs.contains(id) else { return }
+        selectionRetiredRequestIDs.append(id)
+        if selectionRetiredRequestIDs.count > Self.selectionIdentityLimit {
+            selectionRetiredRequestIDs.removeFirst()
+        }
+    }
+
+    private func invalidateSelectionSpeechIdentity() {
+        let ids = selectionSubmissions.sorted { $0.value.order < $1.value.order }.map(\.key)
+        for id in ids { retireSelectionRequest(id) }
+        if let id = selectionReadRequestID { retireSelectionRequest(id) }
+        if let id = selectionSpeechRequestID { retireSelectionRequest(id) }
+        if !ids.isEmpty || selectionReadID != nil || selectionSubmittedText != nil {
+            selectionSpeechEpoch += 1
+        }
         selectionSpeechRequestID = nil
         selectionSubmittedText = nil
+        selectionReadText = nil
+        selectionReadHash = nil
+        selectionReadRequestID = nil
+        selectionReadID = nil
+        selectionReadIsPreparing = false
+        selectionSubmissionOrder = 0
+        selectionReceiptOrder = 0
+    }
+
+    private func stopSelectionRead() {
+        invalidateSelectionSpeechIdentity()
         sendCommand?(["cmd": "stop"])
     }
 
@@ -972,7 +1010,12 @@ public final class VoiceState {
             // speaking text at completion; a same-read receipt may have arrived during capture.
             let currentText = selectionSubmittedText ?? selectionReadText
                 ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
-            let sameSelection = currentText.map { normalized == Self.normalizedSelection($0) } ?? false
+            let sameSelection: Bool
+            if selectionSubmittedText == nil, let hash = selectionReadHash {
+                sameSelection = Self.selectionHash(result.text ?? "") == hash
+            } else {
+                sameSelection = currentText.map { normalized == Self.normalizedSelection($0) } ?? false
+            }
             if replacing, normalized.isEmpty || sameSelection {
                 stopSelectionRead()
                 return
@@ -995,9 +1038,15 @@ public final class VoiceState {
             let requestID = UUID().uuidString
             selectionSpeechRequestID = requestID
             selectionSubmittedText = text
+            selectionSubmissionOrder += 1
+            selectionSubmissions[requestID] = (text, selectionSubmissionOrder)
+            if selectionSubmissions.count > Self.selectionIdentityLimit,
+               let oldest = selectionSubmissions.min(by: { $0.value.order < $1.value.order })?.key {
+                retireSelectionRequest(oldest)
+            }
             // speak_text preempts only the owned read and awaits its player teardown (PLAYER0/FX).
             sendCommand?(["cmd": "speak_text", "id": requestID, "text": text, "profile": "auto",
-                          "format": "markdown", "source": "selection"])
+                          "format": "markdown", "source": "selection", "text_hash": Self.selectionHash(text)])
         }
     }
 
@@ -1805,22 +1854,46 @@ public final class VoiceState {
                 }
                 if idleSource == "recording" { refreshModelsBusy() }
             case "speaking":
+                let requestID = event["request_id"] as? String
+                if let requestID, selectionRetiredRequestIDs.contains(requestID) { return }
+                let submission = requestID.flatMap { selectionSubmissions[$0] }
+                if let requestID, submission == nil, requestID != selectionReadRequestID {
+                    invalidateSelectionSpeechIdentity()
+                }
+                // Receipts may arrive out of order; never roll a newer read back to an older one.
+                if let submission, submission.order < selectionReceiptOrder { return }
+                if let submission {
+                    selectionReceiptOrder = submission.order
+                    let superseded = selectionSubmissions.filter { $0.value.order < submission.order }.map(\.key)
+                    for id in superseded { retireSelectionRequest(id) }
+                }
                 selectionReadIsPreparing = (event["long_read"] as? [String: Any])?["preparing"] as? Bool == true
                 let readID = (event["long_read"] as? [String: Any])?["id"] as? String
-                let acknowledgesSubmission = selectionSubmittedText.map { submitted in
-                    selectionReadIsPreparing || (event["text"] as? String).map {
-                        Self.normalizedSelection($0) == Self.normalizedSelection(submitted)
-                    } == true
-                } ?? false
-                if readID == nil || readID != selectionReadID {
-                    // A newer press may already be capturing against this pending submission.
-                    // Its first receipt acknowledges that read; only an unrelated owner invalidates it.
+                let acknowledgesSubmission: Bool
+                if requestID != nil {
+                    acknowledgesSubmission = submission != nil
+                } else {
+                    // Legacy peers have no identity; preserve their existing heuristic.
+                    acknowledgesSubmission = selectionSubmittedText.map { submitted in
+                        selectionReadIsPreparing || (event["text"] as? String).map {
+                            Self.normalizedSelection($0) == Self.normalizedSelection(submitted)
+                        } == true
+                    } ?? false
+                }
+                if readID == nil || readID != selectionReadID || (requestID != nil && requestID != selectionReadRequestID) {
                     if !acknowledgesSubmission { selectionSpeechEpoch += 1 }
                     selectionReadID = readID
-                    selectionReadText = acknowledgesSubmission ? selectionSubmittedText : nil
-                    selectionReadRequestID = acknowledgesSubmission ? selectionSpeechRequestID : nil
-                    if acknowledgesSubmission { selectionSubmittedText = nil }
+                    selectionReadText = submission?.text ?? (acknowledgesSubmission ? selectionSubmittedText : nil)
+                    selectionReadRequestID = requestID ?? (acknowledgesSubmission ? selectionSpeechRequestID : nil)
+                    if acknowledgesSubmission, requestID == nil || requestID == selectionSpeechRequestID {
+                        selectionSubmittedText = nil
+                    } else if requestID != nil, !acknowledgesSubmission {
+                        selectionSubmittedText = nil
+                        selectionSpeechRequestID = nil
+                        selectionReceiptOrder = selectionSubmissionOrder + 1
+                    }
                 }
+                selectionReadHash = event["text_hash"] as? String
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
@@ -3525,6 +3598,8 @@ public final class VoiceState {
         payload: [String: Any],
         trackPending: Bool = true
     ) {
+        // Speech-only retirement; recorder intent payloads and stop/cancel bodies stay unchanged.
+        if command == .stop || command == .cancel { invalidateSelectionSpeechIdentity() }
         let id = UUID().uuidString
         var payloadWithID = payload
         payloadWithID["id"] = id
@@ -3668,8 +3743,9 @@ public final class VoiceState {
         // speak_text is not a recorder intent. Match its raw ack without changing that contract.
         if event["command"] as? String == "speak_text" {
             guard let id = event["id"] as? String, id == selectionSpeechRequestID else { return }
-            selectionSpeechRequestID = nil
             if event["outcome"] as? String == "reject" {
+                selectionSpeechRequestID = nil
+                retireSelectionRequest(id)
                 if selectionReadRequestID == id { selectionReadText = nil }
                 selectionSubmittedText = nil
                 showSelectionBusyNote(message: event["reason"] as? String == "busy"
