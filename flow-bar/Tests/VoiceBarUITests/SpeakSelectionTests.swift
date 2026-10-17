@@ -529,6 +529,26 @@ final class SpeakSelectionTests: XCTestCase {
         }
     }
 
+    func testExternalPreparingWithoutHashReplacesAfterIdentityCleanup() {
+        for text in ["different selection", "Preparing speech…"] {
+            for requestID in [nil, "external-request"] as [String?] {
+                let state = VoiceState()
+                state.handleEvent(["type": "state", "state": "speaking", "request_id": "previous-request",
+                    "text": "previous read", "long_read": ["id": "previous-read", "preparing": false]])
+                var event: [String: Any] = ["type": "state", "state": "speaking", "text": "Preparing speech…",
+                    "long_read": ["id": "external-read", "preparing": true]]
+                if let requestID { event["request_id"] = requestID }
+                state.handleEvent(event)
+                var commands: [[String: Any]] = []
+                state.sendCommand = { commands.append($0) }
+                state.selectionTextCaptureHandler = { $0(.completed(text)) }
+                state.speakSelection()
+                XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text"])
+                XCTAssertEqual(commands.first?["text"] as? String, text)
+            }
+        }
+    }
+
     func testOwnPreparingUsesKnownInputForBothSameAndDifferentSelections() {
         for next in ["Preparing speech…", "different selection"] {
             let state = VoiceState()
