@@ -21,6 +21,11 @@ root = Path(sys.argv[1])
 os.environ.setdefault("HOOK_TREE_PID", str(os.getpid()))
 os.environ.setdefault("HOOK_TREE_TOKEN", uuid.uuid4().hex)
 
+def publish(path, value):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(value)
+    temporary.replace(path)
+
 def build_native(destination):
     try:
         result = subprocess.run(["cc", "-shared", "-fPIC", str(root / "tests/hook-term-sender.c"),
@@ -60,9 +65,8 @@ if "--cross-run" in sys.argv[2:]:
             shutil.copy(root / "bunfig.toml", checkout)
             for name in ("hook-orphan-daemon.test.ts", "test_hook_orphan_daemon.sh", "hook-term-sender.c"):
                 shutil.copy(root / "tests" / name, checkout / "tests")
-            for source in (root / "scripts").iterdir():
-                if source.is_file():
-                    shutil.copy(source, checkout / "scripts")
+            for name in ("supervise-test-daemon.py", "run_tests.sh", "apply-voicebar-f5-hidutil.sh"):
+                shutil.copy(root / "scripts" / name, checkout / "scripts")
             env = dict(os.environ, HOOK_CROSS_RUN_CHILD="1", HOOK_CROSS_RUN_DIR=runs,
                        HOOK_CROSS_RUN_LANE=run)
             output = open(Path(runs) / (run + ".log"), "w+")
@@ -190,8 +194,7 @@ def term_free(name):
 def check_interference():
     if not barriers_done:
         return
-    # An external hit can also kill the positive leader before our sweep sees
-    # it. Capture all receivers, while never masking an owned negative signal.
+    # Capture all receivers without masking any owned negative signal.
     assert all(term_free(name) for name in negative_names), "owned/unattributed protected TERM"
     for marker in base.glob("*.term"):
         for row in marker.read_text().splitlines():
@@ -438,13 +441,12 @@ while True: time.sleep(.05)
                HOOK_UNREADABLE_PID=str(unreadable))
     cross = os.environ.get("HOOK_CROSS_RUN_DIR")
     if cross:
-        # Deliberately untagged: HO2's live-owner exemption cannot hide this
-        # ordinary orphan from a foreign test process's production sweep.
+        # Exercise a peer's untagged orphan without HO2 lease exemptions.
         sentinel = fixture("cross-untagged", base / "voicelayer-run-tests.900020", tagged=False)
         lane = os.environ["HOOK_CROSS_RUN_LANE"] + os.environ["HOOK_PAIR_LANE"]
         peer = ("Y" if lane[0] == "X" else "X") + lane[1]
         manifest = Path(cross) / (lane + ".json")
-        manifest.write_text(json.dumps(dict(pid=sentinel, base=str(base))))
+        publish(manifest, json.dumps(dict(pid=sentinel, base=str(base))))
         peer_manifest = Path(cross) / (peer + ".json")
         assert wait_until(peer_manifest.exists, 30), "other Bun process never published"
         target = json.loads(peer_manifest.read_text())
@@ -459,14 +461,13 @@ while True: time.sleep(.05)
             print("FAIL cross-run TERM: " + str(base / "cross-untagged.pid.term"), flush=True)
         else:
             print("PASS independent Bun roots: no sweep cross-TERM", flush=True)
-        # Keep fixtures alive until both receivers have checked the native TERM.
         (Path(cross) / (lane + ".checked")).touch()
         assert wait_until(lambda: (Path(cross) / (peer + ".checked")).exists(), 30)
     pair = os.environ.get("HOOK_PAIR_DIR")
     if pair:
         lane = os.environ["HOOK_PAIR_LANE"]
         peer = Path(pair) / ("B" if lane == "A" else "A")
-        (Path(pair) / lane).write_text(str(base))
+        publish(Path(pair) / lane, str(base))
         assert wait_until(peer.exists, 30), "peer never published fixtures"
         peer_base = Path(peer.read_text())
         # Restrict the REAL sweep to peer fixtures: no resident is ever eligible.

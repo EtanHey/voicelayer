@@ -99,11 +99,9 @@ def carries_run(env, run_dir):
 
 
 def matches_test_scope(env, run_dir):
-    """A test sweeper needs native, per-process proof of its private root.
-
-    Scope is independent of the legacy fixture tag/lease: tests intentionally
-    remove those to exercise production orphan recovery. An unscoped production
-    hook must also leave scoped fixtures alone, even if their lease is unreadable.
+    """Require native scope equality and resolved private-root containment.
+    Scope is independent of deliberately removed legacy fixture tags/leases.
+    Unscoped production hooks must leave scoped fixtures alone.
     """
     scope = os.environ.get("VOICELAYER_HOOK_TEST_SCOPE")
     target_scope = (env or {}).get("VOICELAYER_HOOK_TEST_SCOPE")
