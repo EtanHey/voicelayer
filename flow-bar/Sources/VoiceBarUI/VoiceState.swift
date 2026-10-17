@@ -338,7 +338,11 @@ public final class VoiceState {
             if mode == .recording || mode == .transcribing || mode == .disconnected || mode == .error {
                 if selectionCaptureInFlight { selectionCaptureCancelled = true }
             }
-            if mode != .speaking { invalidateSelectionSpeechIdentity() }
+            if mode == .disconnected {
+                invalidateSelectionSpeechIdentity()
+            } else if mode != .speaking {
+                clearCurrentSelectionReadIdentity()
+            }
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
@@ -948,21 +952,34 @@ public final class VoiceState {
         }
     }
 
-    private func invalidateSelectionSpeechIdentity() {
-        let ids = selectionSubmissions.sorted { $0.value.order < $1.value.order }.map(\.key)
-        for id in ids { retireSelectionRequest(id) }
-        if let id = selectionReadRequestID { retireSelectionRequest(id) }
-        if let id = selectionSpeechRequestID { retireSelectionRequest(id) }
-        if !ids.isEmpty || selectionReadID != nil || selectionSubmittedText != nil {
+    /// Current playback owns only its acknowledged identity, never other pending submissions.
+    private func clearCurrentSelectionReadIdentity(advanceEpoch: Bool = true) {
+        if let id = selectionReadRequestID {
+            retireSelectionRequest(id)
+            if selectionSpeechRequestID == id {
+                selectionSpeechRequestID = nil
+                selectionSubmittedText = nil
+            }
+        }
+        if advanceEpoch, selectionReadID != nil || selectionReadRequestID != nil {
             selectionSpeechEpoch += 1
         }
-        selectionSpeechRequestID = nil
-        selectionSubmittedText = nil
         selectionReadText = nil
         selectionReadHash = nil
         selectionReadRequestID = nil
         selectionReadID = nil
         selectionReadIsPreparing = false
+    }
+
+    /// Explicit user stop/cancel and disconnect end all pending own requests as well.
+    private func invalidateSelectionSpeechIdentity() {
+        let ids = selectionSubmissions.sorted { $0.value.order < $1.value.order }.map(\.key)
+        for id in ids { retireSelectionRequest(id) }
+        if let id = selectionSpeechRequestID { retireSelectionRequest(id) }
+        if !ids.isEmpty || selectionSubmittedText != nil { selectionSpeechEpoch += 1 }
+        clearCurrentSelectionReadIdentity()
+        selectionSpeechRequestID = nil
+        selectionSubmittedText = nil
         selectionSubmissionOrder = 0
         selectionReceiptOrder = 0
     }
@@ -1042,7 +1059,8 @@ public final class VoiceState {
             selectionSubmissions[requestID] = (text, selectionSubmissionOrder)
             if selectionSubmissions.count > Self.selectionIdentityLimit,
                let oldest = selectionSubmissions.min(by: { $0.value.order < $1.value.order })?.key {
-                retireSelectionRequest(oldest)
+                // Forget only the text: an unresolved request may still receive a valid receipt.
+                selectionSubmissions.removeValue(forKey: oldest)
             }
             // speak_text preempts only the owned read and awaits its player teardown (PLAYER0/FX).
             sendCommand?(["cmd": "speak_text", "id": requestID, "text": text, "profile": "auto",
@@ -1857,9 +1875,8 @@ public final class VoiceState {
                 let requestID = event["request_id"] as? String
                 if let requestID, selectionRetiredRequestIDs.contains(requestID) { return }
                 let submission = requestID.flatMap { selectionSubmissions[$0] }
-                if let requestID, submission == nil, requestID != selectionReadRequestID {
-                    invalidateSelectionSpeechIdentity()
-                }
+                // An external read changes the current read, but cannot supersede pending own
+                // submissions. Only an acknowledged newer own request establishes their order.
                 // Receipts may arrive out of order; never roll a newer read back to an older one.
                 if let submission, submission.order < selectionReceiptOrder { return }
                 if let submission {
@@ -1881,6 +1898,9 @@ public final class VoiceState {
                     } ?? false
                 }
                 if readID == nil || readID != selectionReadID || (requestID != nil && requestID != selectionReadRequestID) {
+                    if requestID != selectionReadRequestID {
+                        clearCurrentSelectionReadIdentity(advanceEpoch: false)
+                    }
                     if !acknowledgesSubmission { selectionSpeechEpoch += 1 }
                     selectionReadID = readID
                     selectionReadText = submission?.text ?? (acknowledgesSubmission ? selectionSubmittedText : nil)
@@ -1890,7 +1910,6 @@ public final class VoiceState {
                     } else if requestID != nil, !acknowledgesSubmission {
                         selectionSubmittedText = nil
                         selectionSpeechRequestID = nil
-                        selectionReceiptOrder = selectionSubmissionOrder + 1
                     }
                 }
                 selectionReadHash = event["text_hash"] as? String
@@ -3742,12 +3761,14 @@ public final class VoiceState {
     private func handleAckEvent(_ event: [String: Any]) {
         // speak_text is not a recorder intent. Match its raw ack without changing that contract.
         if event["command"] as? String == "speak_text" {
-            guard let id = event["id"] as? String, id == selectionSpeechRequestID else { return }
+            guard let id = event["id"] as? String, selectionSubmissions[id] != nil else { return }
             if event["outcome"] as? String == "reject" {
-                selectionSpeechRequestID = nil
                 retireSelectionRequest(id)
-                if selectionReadRequestID == id { selectionReadText = nil }
-                selectionSubmittedText = nil
+                if selectionReadRequestID == id { clearCurrentSelectionReadIdentity() }
+                if selectionSpeechRequestID == id {
+                    selectionSpeechRequestID = nil
+                    selectionSubmittedText = nil
+                }
                 showSelectionBusyNote(message: event["reason"] as? String == "busy"
                     ? "Busy. Selection not read" : "Selection not read. Try again")
                 logDiagnostic("selection_rejected", details: ["outcome": "reject", "appKeyWindowTitle": "not_recorded"])
