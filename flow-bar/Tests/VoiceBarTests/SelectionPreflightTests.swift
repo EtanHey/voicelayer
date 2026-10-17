@@ -61,7 +61,7 @@ final class SelectionPreflightTests: XCTestCase {
                     snapshots += 1
                     return []
                 }, readAXSelection: { selections += 1; return nil }, postCopy: {
-                    XCTFail("denied preflight must never Copy: \(reason)"); return false
+                    XCTFail("denied preflight must never Copy: \(reason)"); return self.unexpectedCopy()
                 }, pasteboardChangeCount: { generations += 1; return 4 })
                 let result = run(capture)
                 XCTAssertEqual(result.outcome, .captureFailed, reason)
@@ -112,7 +112,7 @@ final class SelectionPreflightTests: XCTestCase {
                 let result = run(SpeakSelectionCapture(preflight: input,
                     snapshotReader: { if !recheck { XCTFail("secure initial preflight must not snapshot") }; return [] },
                     readAXSelection: { if !recheck { XCTFail("secure initial preflight must not read selection") }; return nil },
-                    postCopy: { XCTFail("secure preflight must not Copy"); return false },
+                    postCopy: { XCTFail("secure preflight must not Copy"); return self.unexpectedCopy() },
                     pasteboardChangeCount: { if !recheck { XCTFail("must not inspect clipboard") }; return 0 }))
                 XCTAssertEqual(result.outcome, .secureField)
                 XCTAssertEqual(result.diagnosticDetails["preflight_reason"], reason)
@@ -126,7 +126,7 @@ final class SelectionPreflightTests: XCTestCase {
         let result = run(SpeakSelectionCapture(preflight: providers(),
             snapshotReader: { XCTFail("AX text must not snapshot"); return nil },
             readAXSelection: { reads += 1; return self.sentinel },
-            postCopy: { XCTFail("AX text must not Copy"); return false },
+            postCopy: { XCTFail("AX text must not Copy"); return self.unexpectedCopy() },
             pasteboardChangeCount: { XCTFail("AX text must not inspect clipboard"); return 0 }))
         XCTAssertEqual(reads, 1)
         XCTAssertEqual(result.text, sentinel)
@@ -143,12 +143,17 @@ final class SelectionPreflightTests: XCTestCase {
             let input = providers(secure: { checks += 1; return checks == 3 })
             let result = run(SpeakSelectionCapture(preflight: input,
                 snapshotReader: { snapshotFails ? nil : [] }, readAXSelection: { nil },
-                postCopy: { XCTFail("failed snapshot/generation must not Copy"); return false },
+                postCopy: { XCTFail("failed snapshot/generation must not Copy"); return self.unexpectedCopy() },
                 pasteboardChangeCount: { generations += 1; return generations }))
             XCTAssertEqual(checks, 3, "recheck still runs even if snapshot fails")
             XCTAssertEqual(result.outcome, snapshotFails ? .captureFailed : .clipboardChanged)
             XCTAssertNil(result.diagnosticDetails["preflight_stage"], "do not blame the lower-priority guard")
         }
+    }
+
+    private func unexpectedCopy() -> Bool {
+        // Stop before copyAndPoll can restore/poll a real pasteboard on a regression.
+        fatalError("Offline selection test crossed the Copy boundary")
     }
 
     private func run(_ capture: SpeakSelectionCapture) -> SelectionCaptureResult {
