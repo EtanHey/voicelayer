@@ -9,6 +9,85 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 class SupervisorTests(unittest.TestCase):
+    def test_hrest3_native_mutations_refuse_before_helper_dispatch(self):
+        # A successful receipt, including a new ID, can describe a concurrent user open.
+        for outcome in ['concurrent-open', 'same-id-reopen', 'rejected', 'lost-response']:
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                host = self.host(pathlib.Path(tmp))
+                host.resident.update(restoreRequired=False, settingsOpened=False)
+                host.resident.pop('settingsWindowId', None)
+                host.guard_mute = lambda: None
+                actions = []
+                def io(args):
+                    mode = args[2]
+                    actions.append(mode)
+                    if mode != 'read':
+                        if outcome == 'rejected': raise subprocess.CalledProcessError(2, args)
+                        if outcome == 'lost-response': raise subprocess.TimeoutExpired(args, 15)
+                    return json.dumps(dict(pid=100, action=mode, settingsWindowId=88,
+                        openedSettingsWindowId=88, nodes=[] if mode == 'read' else
+                        [dict(role='AXWindow', title='VoiceBar Settings')], screenWindows=[]))
+                host.run = io  # Actual settings/settings_state/ax; no helper execution.
+                with self.assertRaisesRegex(RuntimeError, 'ownership NOT_PROVEN'):
+                    host.settings(True)
+                self.assertEqual(actions, ['read'])
+                for mode in ['open', 'close', 'hide', 'show']:
+                    with self.assertRaisesRegex(RuntimeError, 'ownership NOT_PROVEN'): host.ax(mode)
+                self.assertEqual(actions, ['read'])
+                self.assertFalse(host.resident.get('settingsOpened'))
+                self.assertNotIn('settingsWindowId', host.resident)
+
+    def test_hrest3_same_id_is_not_a_lifecycle_lease(self):
+        for boundary in ['absent', 'close-ack-read-gap', 'concurrent-close-reopen']:
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as tmp:
+                host = self.host(pathlib.Path(tmp))
+                host.guard_mute = lambda: None
+                actions = []
+                def io(args):
+                    actions.append(args[2])
+                    return json.dumps(dict(pid=100, action=args[2], settingsWindowId=77,
+                        nodes=[] if boundary == 'absent' else
+                        [dict(role='AXWindow', title='VoiceBar Settings')], screenWindows=[]))
+                host.run = io
+                if boundary == 'absent':
+                    self.assertFalse(host.settings_state())
+                else:
+                    # Same physical ID may belong to a new user lifecycle; no OS invariant assumed.
+                    with self.assertRaises(RuntimeError): host.settings(False)
+                    with self.assertRaises(RuntimeError): host.restore_resident()
+                self.assertNotIn('settingsWindowId', host.resident)
+                self.assertFalse(host.resident['settingsOpened'])
+                self.assertTrue(all(mode == 'read' for mode in actions))
+
+    def test_hrest3_lost_open_obligation_survives_noop_cleanup(self):
+        for phase in ['prepare', 'restore']:
+            for evidence in ['visible', 'absent', 'unreadable']:
+                with self.subTest(phase=phase, evidence=evidence), tempfile.TemporaryDirectory() as tmp:
+                    host = self.host(pathlib.Path(tmp))
+                    # Retained state at a possibly-applied dispatch, before a lost response.
+                    host.resident.update(restoreRequired=phase == 'restore', settingsOpened=False,
+                        settingsRestoreRequired=True, settingsActionPending='open', restored=False)
+                    host.resident.pop('settingsWindowId', None)
+                    host.save_resident()
+                    host.guard_mute = lambda: None
+                    actions = []
+                    def io(args):
+                        actions.append(args[2])
+                        if evidence == 'unreadable': raise RuntimeError('AX unavailable')
+                        return json.dumps(dict(pid=100, action=args[2], screenWindows=[],
+                            nodes=[dict(role='AXWindow', title='VoiceBar Settings')]
+                            if evidence == 'visible' else []))
+                    host.run = io
+                    host.process_rows = lambda: {}
+                    self.assertTrue(host.stop())  # No runner: independent no-op cleanup succeeds.
+                    for _ in range(2):
+                        with self.assertRaises(RuntimeError): host.restore_resident()
+                        saved = json.loads((host.output / 'resident-visibility.json').read_text())
+                        self.assertTrue(saved['settingsRestoreRequired'])
+                        self.assertEqual(saved['settingsActionPending'], 'open')
+                        self.assertFalse(saved['restored'])
+                    self.assertTrue(all(mode == 'read' for mode in actions))
+
     def test_open_requires_positive_helper_provenance_not_intent(self):
         for outcome in ['rejected', 'timeout', 'missing-proof', 'mismatched-proof', 'success']:
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
