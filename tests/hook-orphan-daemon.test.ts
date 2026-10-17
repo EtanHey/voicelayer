@@ -10,7 +10,7 @@ test.skipIf(native.status === 77)("independent hook test roots isolate fixtures 
   const result = spawnSync("bash", [script, process.env.HOOK_CROSS_RUN_CHILD ? "--concurrent" : "--cross-run"], {
     encoding: "utf8", timeout: 300_000,
   });
-  if (process.env.HOOK_CROSS_RUN_CHILD || process.env.HOOK_KEEP_EVIDENCE === "1") console.log(result.stdout + result.stderr);
+  if (process.env.HOOK_CROSS_RUN_CHILD || process.env.HOOK_KEEP_EVIDENCE === "1" || result.stdout?.includes("EXTERNAL_INTERFERENCE")) console.log(result.stdout + result.stderr);
   expect(result.error).toBeUndefined();
   expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({
     status: 0,
