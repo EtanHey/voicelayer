@@ -171,7 +171,7 @@ def owned_signal(target, signum, group=False):
 def external_sender(row):
     match = re.search(r"sender_pid=(\d+).*sender_executable=(.*?) sender_entrypoint=(\S+) sender_in_run=(-?\d+)$", row)
     return match and int(match[1]) > 1 and match[2] not in ("", "unknown") and match[3] not in (
-        "unknown", "inline-python", "supervise-test-daemon.py") and match[4] == "0"
+        "unknown", "inline-python") and match[4] == "0"
 
 def term_free(name):
     marker = base / (name + ".pid.term")
@@ -203,8 +203,8 @@ def check_interference():
 
 if "--policy-check" in sys.argv[2:]:
     assert not issubclass(ExternalInterference, Exception), "lifecycle error handlers must not swallow interference"
-    for membership in (1, -1, 0):
-        (base / "policy.pid.term").write_text("sender_pid=42 sender_executable=/python sender_entrypoint=foreign.py sender_in_run=" + str(membership) + "\n")
+    for membership, script in ((1, "foreign.py"), (-1, "foreign.py"), (0, "foreign.py"), (0, "supervise-test-daemon.py")):
+        (base / "policy.pid.term").write_text("sender_pid=42 sender_executable=/python sender_entrypoint=" + script + " sender_in_run=" + str(membership) + "\n")
         assert term_free("policy") == (membership == 0)
     with (base / "policy.pid.term").open("a") as marker:
         marker.write("sender_pid=43 sender_executable=/python sender_entrypoint=supervise-test-daemon.py sender_in_run=1\n")

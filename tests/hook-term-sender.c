@@ -79,8 +79,7 @@ static void received(int signum, siginfo_t *info, void *context) {
             }
             offset += length + 1;
         }
-        // Keep only a membership bit. Inherited identity also catches our own
-        // detached/reparented supervisors after their process ancestry changes.
+        // Inherited identity also catches our own
         while (offset < argument_size && arguments[offset]) {
             const char *env = arguments + offset;
             size_t length = strnlen(env, argument_size - offset);
@@ -101,6 +100,7 @@ static void received(int signum, siginfo_t *info, void *context) {
         if (strncmp(environment + offset, "HOOK_TREE_TOKEN=", 16) == 0 && strcmp(environment + offset + 16, tree_token) == 0) belongs = 1;
         offset += length + 1;
     }
+    if ((size < 0 || size == (ssize_t)sizeof(environment)) && belongs == 0) belongs = -1;
     snprintf(path, sizeof(path), "/proc/%d/cmdline", info->si_pid);
     int cmd_fd = open(path, O_RDONLY);
     size = cmd_fd < 0 ? -1 : read(cmd_fd, environment, sizeof(environment));
