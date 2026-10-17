@@ -154,7 +154,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         configureStatusItem()
 #if VOICEBAR_UIE2E_GATE2245
-        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1" {
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1" || ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
             installHide1VisualMenu()
         }
 #endif

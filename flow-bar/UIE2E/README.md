@@ -316,3 +316,11 @@ regular apps hidden by the helper, while resident restoration is confirmed in
 the linked snapshot. The helper never calls application hide/unhide on the
 resident and fails closed if any resident-owned screen window remains. Close
 only operator-opened Settings before capture and return it to its initial state.
+
+## GATE2246 focused harness (BLOCKED)
+
+`--scenario gate2246 --build-only` compiles the focused HIDE1.1 / SEL1.x scenario.
+Native execution is disabled after run-01 unexpectedly reached the product recording
+mode observer's AudioLevelMonitor and displayed a macOS microphone permission prompt.
+No permission was granted; do not rerun until a reviewed no-device seam exists and
+the lead arranges the retry. See the packet's PR-VERDICTS.md.

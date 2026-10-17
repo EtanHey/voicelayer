@@ -11,6 +11,9 @@ final class UIE2EGate2245 {
     let panel: FloatingPillPanel
     unowned let host: UIE2EHost
     var beforeShow: [String: Any] = [:]
+    var captureServer: SocketServer?
+    var captureController: VoiceBarDaemonController?
+    var gateCommands: [[String: Any]] = []
     var placementObservers: [NSObjectProtocol] = []
 
     init(host: UIE2EHost) {
@@ -29,7 +32,7 @@ final class UIE2EGate2245 {
         if let screen = NSScreen.main {
             UIE2EHost.fitPill(panel, layout: UIE2EHost.panelLayout(for: state), in: screen.visibleFrame)
         }
-        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1" {
+        if ["hide1", "gate2246"].contains(ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] ?? "") {
             for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
                 placementObservers.append(NotificationCenter.default.addObserver(forName: name, object: panel, queue: .main) { [weak self] _ in
                     Task { @MainActor [weak self] in self?.fitVisualPanel() }
@@ -42,7 +45,7 @@ final class UIE2EGate2245 {
     }
 
     func fitVisualPanel() {
-        guard ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1",
+        guard ["hide1", "gate2246"].contains(ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] ?? ""),
               let screen = NSScreen.main else { return }
         let layout = UIE2EHost.panelLayout(for: app.voiceState)
         panel.contentView?.setFrameSize(layout.panelSize)
@@ -60,7 +63,7 @@ final class UIE2EGate2245 {
     }
 
     func snapshot(_ action: String) {
-        host.sandbox.writeObject(["action": action, "state": current(), "beforeShow": beforeShow,
+        host.sandbox.writeObject(["action": action, "commands": gateCommands, "statusText": app.voiceState.statusText, "state": current(), "beforeShow": beforeShow,
             "snoozed": app.isSnoozed, "hidden": app.voiceState.isHidden, "connected": app.voiceState.isConnected,
             "panelVisible": panel.isVisible, "windowNumber": panel.windowNumber,
             "visiblePanels": NSApp.windows.filter { $0 is NSPanel && $0.isVisible }.map(\.title),
@@ -115,8 +118,11 @@ extension UIE2EHost {
         statusItem?.isVisible = false
         let item = NSMenuItem(); let menu = NSMenu(title: "HIDE1VIS")
         item.title = "HIDE1VIS"; item.submenu = menu
-        for (index, name) in ["start", "speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard", "show", "end"].enumerated() {
-            let command = NSMenuItem(title: "HIDE1VIS " + name, action: #selector(hide1VisualCommand(_:)), keyEquivalent: String(index))
+        let names = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246"
+            ? ["start", "user-f5", "user-ask", "unknown", "background", "recovered", "visible", "show", "selection", "end", "same-hash", "different", "pending", "fast-bc", "no-hash", "busy"]
+            : ["start", "speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard", "show", "end"]
+        for (index, name) in names.enumerated() {
+            let command = NSMenuItem(title: "HIDE1VIS " + name, action: #selector(hide1VisualCommand(_:)), keyEquivalent: Array("0123456789abcdef").map(String.init)[index])
             command.target = self; command.representedObject = name
             menu.addItem(command)
         }
@@ -125,6 +131,9 @@ extension UIE2EHost {
 
     @objc func hide1VisualCommand(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
+            gate2246Command(name); return
+        }
         if name == "start" {
             gateHide("start")
         } else if name == "show" { gate2245?.show() }
@@ -191,6 +200,99 @@ extension UIE2EModel {
             }
         }
         receipt("gate:" + name)
+    }
+}
+
+extension UIE2EHost {
+    func gate2246Command(_ name: String) {
+        if name == "end" { gateHide("end"); return }
+        if name == "show" { gate2245?.show(); return }
+        if ["start", "selection", "user-f5", "user-ask", "unknown", "background", "recovered", "visible"].contains(name) { gateHide("start") }
+        guard let gate = gate2245 else { return }
+        if ["start", "selection"].contains(name) { return }
+        if ["user-f5", "user-ask", "unknown", "background", "recovered", "visible"].contains(name) {
+            gate.captureFailure(name)
+        } else { gate.selectionCase(name) }
+    }
+}
+
+extension UIE2EGate2245 {
+    func captureFailure(_ name: String) {
+        // BLOCKED: although this server never binds, recording events reach the product
+        // mode observer and AudioLevelMonitor. Native runner refuses this scenario.
+        let server = SocketServer(state: app.voiceState, socketPath: host.sandbox.root.appendingPathComponent("unused.sock").path)
+        let controller = VoiceBarDaemonController(restartScheduler: { _, _ in }, microphonePromptDisabled: { false })
+        captureServer = server; captureController = controller
+        app.configureCaptureFailurePresentation(server, controller: controller)
+        if name != "visible" { app.quickMenuActions().first { $0.title == "Hide for 1 hour" }!.perform() }
+        let failure = #"{"type":"error","capture_failure":"broken-mic","show_during_bar_recording":true}"#
+        if ["background", "recovered"].contains(name) {
+            controller.handleCaptureFailure(type: "broken-mic", userInitiated: false)
+            controller.handleCaptureFailure(type: "broken-mic", userInitiated: false)
+        } else {
+            for _ in 0..<2 {
+                if name == "user-f5" { server.parseLine(#"{"type":"state","state":"recording","bar_owned":true}"#) }
+                if name == "user-ask" { server.parseLine(#"{"type":"state","state":"recording","bar_owned":false}"#) }
+                server.parseLine(failure)
+            }
+        }
+        if name == "recovered" {
+            server.parseLine(#"{"type":"state","state":"recording","bar_owned":false}"#)
+            server.parseLine(#"{"type":"state","state":"transcribing"}"#)
+            server.parseLine(#"{"type":"transcription","text":"Synthetic recovery","recording_is_latest":false}"#)
+            server.parseLine(#"{"type":"state","state":"idle","source":"recording"}"#)
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            self?.fitVisualPanel(); self?.snapshot("failure:" + name)
+        }
+    }
+
+    func selectionCase(_ name: String) {
+        let state = app.voiceState
+        gateCommands.removeAll()
+        state.sendCommand = { [weak self] in self?.gateCommands.append($0) }
+        // Clear only this QA model's preceding read and preserve the silent command sink.
+        state.stop(); gateCommands.removeAll()
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        func read(_ id: String, _ text: String, _ preparing: Bool, request: String = "external-X", hash: String? = nil) {
+            var event: [String: Any] = ["type": "state", "state": "speaking", "text": text, "duration_ms": 600_000,
+                "request_id": request, "long_read": ["id": id, "preparing": preparing]]
+            if let hash { event["text_hash"] = hash }
+            state.handleEvent(event)
+        }
+        func select(_ text: String) {
+            state.selectionTextCaptureHandler = { $0(.completed(text)) }; state.speakSelection()
+        }
+        switch name {
+        case "same-hash", "different", "no-hash":
+            read("external-X", "Preparing speech…", true, hash: name == "no-hash" ? nil : hash)
+            select(name == "same-hash" ? "hello world" : "Replacement selection B")
+            if name != "same-hash", let request = gateCommands.last?["id"] as? String {
+                read("own-B", "Replacement selection B", false, request: request)
+            }
+        case "pending":
+            read("external-A", "Playing selection A", false)
+            select("Own selection B")
+            let request = gateCommands.last?["id"] as? String ?? "MISSING"
+            read("external-X", "Preparing external X…", true)
+            read("external-X", "External selection X", false)
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            read("own-B", "Own selection B", false, request: request)
+        case "fast-bc":
+            read("external-A", "Playing selection A", false)
+            select("Own selection B"); select("Own selection C")
+            guard gateCommands.count == 2 else { snapshot("selection:" + name); return }
+            let b = gateCommands[0]["id"] as? String ?? "MISSING"
+            let c = gateCommands[1]["id"] as? String ?? "MISSING"
+            read("own-C", "Own selection C", false, request: c)
+            read("own-B", "Stale selection B", false, request: b)
+        case "busy": state.mode = .transcribing; state.speakSelection()
+        default: fatalError("Unknown gate2246 selection")
+        }
+        state.isHovering = true
+        fitVisualPanel(); snapshot("selection:" + name)
     }
 }
 #endif

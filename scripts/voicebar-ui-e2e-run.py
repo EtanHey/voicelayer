@@ -14,7 +14,7 @@ import sys
 import time
 
 
-SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow'}
+SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow'}
 
 
 def selected_scenario(output, scenario=None):
@@ -198,5 +198,9 @@ if __name__ == '__main__':
     parser.add_argument('--scenario', choices=SCENARIOS)
     args = parser.parse_args()
     output = args.output.resolve()
+    # GATE2246 run-01 reached AudioLevelMonitor via AppDelegate's recording observer.
+    # Fail before visibility/capture/UI until a reviewed no-device seam and a lead retry.
+    if selected_scenario(output, args.scenario) == 'gate2246':
+        sys.exit('BLOCKED GATE2246: synthetic recording reaches AudioLevelMonitor; see docs.local/GATE2246/PR-VERDICTS.md. Native retry requires lead arrangement.')
     # Validate selection before changing visibility or starting the recorder.
     sys.exit(run_suite(output, test_arguments(output, args.scenario)))

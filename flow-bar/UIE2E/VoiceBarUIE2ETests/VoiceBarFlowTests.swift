@@ -28,7 +28,7 @@ final class VoiceBarFlowTests: XCTestCase {
         continueAfterFailure = true
         let env = ProcessInfo.processInfo.environment
         scenario = env["VOICEBAR_UIE2E_SCENARIO"] ?? "full"
-        guard ["full", "focused-338", "hide1"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
+        guard ["full", "focused-338", "hide1", "gate2246"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
         if scenario == "focused-338" {
             limitations = ["Gallery variants use real production BarView/DictationCard in arbitrary page positions; they do not prove notch placement. One actual production-geometry notch render per family is checked separately.",
                 "Static confirmation holds are synthetic presentations of actual production outcomes; synchronized lifetime uses fresh production timers. No real microphone, audio, global hotkey, external insertion or installed-app acceptance is claimed.",
@@ -51,6 +51,7 @@ final class VoiceBarFlowTests: XCTestCase {
         gate2245Enabled = Bundle(url: appURL)?.object(forInfoDictionaryKey: "UIE2EGate2245") as? Bool == true
         app.launchEnvironment = ["VOICEBAR_UIE2E": "1", "VOICEBAR_UIE2E_SCENARIO": scenario, "VOICEBAR_UIE2E_ROOT": root.path,
             "HOME": root.appendingPathComponent("home").path, "CFFIXED_USER_HOME": root.appendingPathComponent("home").path,
+            "QA_VOICE_DISABLE_FLAG_PATH": root.appendingPathComponent("disabled").path,
             "VOICEBAR_USER_DEFAULTS_SUITE": "com.voicelayer.uie2e.\(root.lastPathComponent)",
             "VOICELAYER_SOCKET_PATH": root.appendingPathComponent("v.sock").path,
             "VOICELAYER_MCP_SOCKET_PATH": root.appendingPathComponent("m.sock").path]
@@ -99,7 +100,7 @@ final class VoiceBarFlowTests: XCTestCase {
         step("launch isolated QA app") {
             app.launch()
             app.activate()
-            if scenario == "hide1" {
+            if ["hide1", "gate2246"].contains(scenario) {
                 XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
             } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             XCTAssertEqual(app.state, .runningForeground)
@@ -1321,7 +1322,7 @@ extension VoiceBarFlowTests {
     func relaunchQA() {
         step("relaunch isolated QA app") {
             app.launch()
-            if scenario == "hide1" {
+            if ["hide1", "gate2246"].contains(scenario) {
                 XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
             } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             activePage = "General"; activeHistoryScope = "Dictations"; selectedHistoryRow = "qa-recording"
