@@ -120,7 +120,10 @@ print("HOOK evidence: " + str(base), flush=True)
 succeeded = False
 barriers_done = False
 negative_names = ("concurrent", "parented", "live", "unrelated", "argv-only", "unreadable",
-                  "outside-root", "symlink-escape", "foreign-cleanup")
+                  "outside-root", "symlink-escape", "foreign-cleanup", "unscoped-negative", "dead-owner")
+if os.environ.get("HOOK_CROSS_RUN_DIR") or "cross-untagged" in sys.argv[2:]:
+    negative_names += ("cross-untagged",)
+protected_names = set()
 class ProtectedTerm(BaseException):
     pass
 signal_reason = "fixture cleanup"
@@ -169,6 +172,9 @@ def check_interference():
     # Abort outside ordinary lifecycle error handlers; teardown still runs.
     if not all(term_free(name) for name in negative_names):
         raise ProtectedTerm("protected fixture received TERM; native sender above")
+
+def final_protected_terms():
+    return [name for name in negative_names if not term_free(name)]
 
 if "--policy-check" in sys.argv[2:]:
     assert not issubclass(ProtectedTerm, Exception), "lifecycle error handlers must not swallow protected TERM"
@@ -329,7 +335,10 @@ try:
     finally:
         zombie.wait()
     # Real PPID-1 fixtures, all owned by this test. Never signal resident processes.
-    def fixture(name, run_dir, orphan=True, impersonate=False, stubborn_child=False, tagged=True, owner=None, scoped=True):
+    def fixture(name, run_dir, orphan=True, impersonate=False, stubborn_child=False, tagged=True, owner=None, scoped=True, protect=True):
+        if protect:
+            protected_names.add(name)
+            assert protected_names <= set(negative_names), "protected fixture missing from monitoring"
         env = dict(os.environ, VOICELAYER_TMP_ROOT=str(run_dir),
                    VOICELAYER_MCP_SOCKET_PATH=str(run_dir / "voicelayer-mcp.sock"),
                    VOICELAYER_SOCKET_PATH=str(run_dir / "voicelayer.sock"))
@@ -386,9 +395,32 @@ while True: time.sleep(.05)
         snapshot("created " + name, orphan_pids)
         return pid
 
+    if "--protected-term-check" in sys.argv[2:]:
+        name, phase = sys.argv[-2:]
+        assert name in ("cross-untagged", "unscoped-negative")
+        assert phase in ("ongoing", "final")
+        pid = fixture(name, base / "voicelayer-run-tests.900022", tagged=False)
+        assert alive(pid) and term_free(name), "one-off protection check failed"
+        print("PASS one-off protection check: " + name, flush=True)
+        signal_reason = "regression: TERM after one-off check"
+        owned_signal(pid, signal.SIGTERM)
+        # Wait directly: the ongoing checker is the subject of this regression.
+        marker = base / (name + ".pid.term")
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert marker.exists(), "native TERM receipt missing"
+        barriers_done = True
+        if phase == "ongoing":
+            check_interference()
+        elif final_protected_terms():
+            raise ProtectedTerm("protected fixture TERM after lifecycle")
+        succeeded = True
+        raise SystemExit(0)
+
     stale_dir = base / "voicelayer-run-tests.900001"
     stale_dir.mkdir()
-    stale = fixture("stale", stale_dir)
+    stale = fixture("stale", stale_dir, protect=False)
     stale_dir.rmdir()
     concurrent_dir = base / "voicelayer-run-tests.900002"
     concurrent_dir.mkdir()
@@ -397,7 +429,7 @@ while True: time.sleep(.05)
     live = fixture("live", Path("/tmp"))
     unrelated = fixture("unrelated", base / "unrelated-run.900004")
     impersonator = fixture("argv-only", base / "voicelayer-run-tests.900008", impersonate=True)
-    terminating_leader = fixture("terminating-leader", base / "voicelayer-run-tests.900009", stubborn_child=True)
+    terminating_leader = fixture("terminating-leader", base / "voicelayer-run-tests.900009", stubborn_child=True, protect=False)
     stubborn = orphan_pids[-1]
     unreadable = fixture("unreadable", base / "voicelayer-run-tests.900010")
     owned_pid_file.write_text(" ".join(str(p) for p in orphan_pids))
@@ -481,7 +513,7 @@ while True: time.sleep(.05)
         "VOICELAYER_HOOK_TEST_SCOPE", "VOICELAYER_HOOK_TEST_NONCE", "VOICELAYER_HOOK_TEST_OWNER")}
     sweep_selected([scoped], production_env)
     check_case("unscoped sweep cannot signal scoped fixture", lambda: alive(scoped) and term_free("unscoped-negative"))
-    production = fixture("production-untagged", base / "voicelayer-run-tests.900025", tagged=False, scoped=False)
+    production = fixture("production-untagged", base / "voicelayer-run-tests.900025", tagged=False, scoped=False, protect=False)
     sweep_selected([production], production_env)
     check_case("production sweep still reaps unscoped orphan", lambda: not alive(production))
     cleanup_dir = base / "voicelayer-run-tests.900023"
@@ -498,7 +530,7 @@ while True: time.sleep(.05)
     check_case("cleanup cannot signal foreign scope", lambda: alive(foreign) and term_free("foreign-cleanup"))
 
     # Inherited test state must never exempt an ordinary production orphan.
-    inherited = fixture("inherited-untagged", base / "voicelayer-run-tests.900012", tagged=False)
+    inherited = fixture("inherited-untagged", base / "voicelayer-run-tests.900012", tagged=False, protect=False)
     sweep_selected([inherited], env)
     check_case("inherited-nonce sweeper reaps untagged orphan", lambda: not alive(inherited))
 
@@ -523,28 +555,37 @@ with path.open("w+") as lock:
         sweep_selected([leaked], env)
         check_case("tagged orphan protected while owner alive", lambda: alive(leaked) and term_free("dead-owner"))
     finally:
+        # Protection ends deliberately when its owner dies; the next sweep must reap it.
+        negative_names = tuple(name for name in negative_names if name != "dead-owner")
+        protected_names.discard("dead-owner")
         signal_reason = "SIGKILL fixture owner to release lease"
         owner_process.kill()
         owner_process.wait(timeout=5)
     sweep_selected([leaked], env)
     check_case("tagged orphan reaped after owner SIGKILL", lambda: not alive(leaked))
     # A stray tag with no verifiable owner must not be a permanent exemption.
-    stray = fixture("stray", base / "voicelayer-run-tests.900014", owner=base / "missing-owner" / "fixture-owner.lock")
+    stray = fixture("stray", base / "voicelayer-run-tests.900014", owner=base / "missing-owner" / "fixture-owner.lock", protect=False)
     sweep_selected([stray], env)
     check_case("stray nonce without live owner is reaped", lambda: not alive(stray))
 
     unheld_owner = base / "unheld-owner" / "fixture-owner.lock"
     unheld_owner.parent.mkdir()
     unheld_owner.write_text(json.dumps(dict(pid=os.getpid(), nonce=unheld_owner.parent.name, started=owner_started)))
-    unheld = fixture("unheld-owner", base / "voicelayer-run-tests.900015", owner=unheld_owner)
+    unheld = fixture("unheld-owner", base / "voicelayer-run-tests.900015", owner=unheld_owner, protect=False)
     sweep_selected([unheld], env)
     check_case("live PID without held owner lock is not exempt", lambda: not alive(unheld))
 
     # An ordinary hook has no test nonce and must also leave ALL fixtures alone.
     tagged_pids = [stale, concurrent, parented, live, unrelated, impersonator,
                    terminating_leader, stubborn, unreadable]
-    untagged = fixture("untagged", base / "voicelayer-run-tests.900011", tagged=False)
-    owned_pid_file.write_text(" ".join(str(p) for p in orphan_pids))
+    untagged = fixture("untagged", base / "voicelayer-run-tests.900011", tagged=False, protect=False)
+    # These scoped, untagged sentinels are protected against OTHER scopes above.
+    # Our own scoped sweep may legitimately reap them, so never select them in
+    # the broad lifecycle sweeps. Keep monitoring their native TERM receipts.
+    protected_untagged = {scoped}
+    if cross:
+        protected_untagged.add(sentinel)
+    owned_pid_file.write_text(" ".join(str(p) for p in orphan_pids if p not in protected_untagged))
     unscoped_env = dict(env)
     unscoped_env.pop("VOICELAYER_HOOK_TEST_NONCE")
     subprocess.run([str(bin_dir / "python3"), str(root / "scripts/supervise-test-daemon.py"), "--sweep"],
@@ -691,7 +732,9 @@ with path.open("w+") as lock:
             except Exception as error:
                 failures.append("sweep")
                 print(f"FAIL sweep: {error}", flush=True)
-    unexpected_terms = [name for name in negative_names if not term_free(name)]
+    assert set(negative_names) == protected_names, "monitored set differs from created protected fixtures"
+    print("PASS monitored set equals protected fixtures: " + ", ".join(sorted(protected_names)), flush=True)
+    unexpected_terms = final_protected_terms()
     if unexpected_terms:
         failures.append("protected fixture TERM after lifecycle")
         print("FAIL protected fixture TERM after lifecycle: " + ", ".join(unexpected_terms), flush=True)

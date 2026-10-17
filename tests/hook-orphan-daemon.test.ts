@@ -6,6 +6,23 @@ const script = resolve(import.meta.dir, "test_hook_orphan_daemon.sh");
 const hasCompiler = !!Bun.which("cc");
 if (!hasCompiler) console.warn("SKIP HO3 native sender helper: cc toolchain missing");
 
+for (const name of ["cross-untagged", "unscoped-negative"]) {
+  for (const phase of ["ongoing", "final"]) {
+    test.skipIf(!hasCompiler)(`late TERM to ${name} fails ${phase} monitoring`, () => {
+      const result = spawnSync("bash", [script, "--protected-term-check", name, phase], {
+        encoding: "utf8", timeout: 20_000,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.stdout).toContain(`PASS one-off protection check: ${name}`);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("FAIL protected TERM:");
+      expect(result.stderr).toContain(phase === "ongoing"
+        ? "protected fixture received TERM; native sender above"
+        : "protected fixture TERM after lifecycle");
+    }, 25_000);
+  }
+}
+
 test.skipIf(!hasCompiler)("independent hook test roots isolate fixtures and reap daemons on every exit path", () => {
   const native = spawnSync("bash", [script, "--native-check"], { encoding: "utf8", timeout: 15_000 });
   expect({ status: native.status, output: native.stdout + native.stderr }).toEqual({ status: 0, output: expect.any(String) });
@@ -14,6 +31,7 @@ test.skipIf(!hasCompiler)("independent hook test roots isolate fixtures and reap
   });
   if (process.env.HOOK_CROSS_RUN_CHILD || process.env.HOOK_KEEP_EVIDENCE === "1" || result.status !== 0) console.log(result.stdout + result.stderr);
   expect(result.error).toBeUndefined();
+  expect(result.stdout).toContain("PASS monitored set equals protected fixtures:");
   expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({
     status: 0,
     output: expect.stringContaining("PASS real:"),
