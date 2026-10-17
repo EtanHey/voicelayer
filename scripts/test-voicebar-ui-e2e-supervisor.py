@@ -18,14 +18,17 @@ class SupervisorTests(unittest.TestCase):
                 host.resident.pop('settingsWindowId', None)
                 host.guard_mute = lambda: None
                 actions = []
+                visible = [False]
                 def io(args):
                     mode = args[2]
                     actions.append(mode)
+                    if mode == 'open': visible[0] = True  # Concurrent user's post-check lifecycle.
+                    if mode == 'close': visible[0] = False
                     if mode != 'read':
                         if outcome == 'rejected': raise subprocess.CalledProcessError(2, args)
                         if outcome == 'lost-response': raise subprocess.TimeoutExpired(args, 15)
-                    return json.dumps(dict(pid=100, action=mode, settingsWindowId=88,
-                        openedSettingsWindowId=88, nodes=[] if mode == 'read' else
+                    return json.dumps(dict(pid=100, action=mode, settingsWindowId=88 if visible[0] else None,
+                        openedSettingsWindowId=88, nodes=[] if not visible[0] else
                         [dict(role='AXWindow', title='VoiceBar Settings')], screenWindows=[]))
                 host.run = io  # Actual settings/settings_state/ax; no helper execution.
                 with self.assertRaisesRegex(RuntimeError, 'ownership NOT_PROVEN'):
