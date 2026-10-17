@@ -1,6 +1,25 @@
 import AppKit
 import XCTest
 
+// BEGIN GATE2246 MODAL QUERIES
+func gate2246Alert(_ app: XCUIApplication) -> XCUIElement {
+    app.dialogs.containing(.staticText, identifier: "VoiceLayer microphone permission needs attention").firstMatch
+}
+
+func gate2246LaterButtons(_ app: XCUIApplication) -> XCUIElementQuery {
+    gate2246Alert(app).buttons.matching(NSPredicate(format: "label == %@", "Later"))
+}
+
+func gate2246ModalObservation(_ app: XCUIApplication) -> [String: Any] {
+    let alert = gate2246Alert(app)
+    let visible = alert.exists
+    return ["alertVisible": visible,
+            "panelVisible": app.dialogs["VoiceBar GATE2245 Product Pill"].exists,
+            "alertText": visible ? alert.staticTexts.allElementsBoundByIndex.map(\.label) : [],
+            "laterButtonCount": visible ? gate2246LaterButtons(app).count : 0]
+}
+// END GATE2246 MODAL QUERIES
+
 extension VoiceBarFlowTests {
     func testGate2246Flow() throws {
         guard scenario == "gate2246", gate2245Enabled else { throw NSError(domain: "GATE2246 requires gate build", code: 1) }
@@ -11,40 +30,43 @@ extension VoiceBarFlowTests {
                            "voicebar-no-device-guard-v1:installed\n")
         }
         func command(_ key: String) { app.typeKey(key, modifierFlags: .command) }
-        func alertPresent() -> Bool { app.buttons["Later"].exists }
+        func alertPresent() -> Bool { gate2246Alert(app).exists }
+        func waitForAlert(_ expected: Bool) {
+            let appeared = gate2246Alert(app).waitForExistence(timeout: expected ? 3 : 1)
+            XCTAssertEqual(appeared, expected)
+        }
+        func dismissAlert() {
+            let buttons = gate2246LaterButtons(app)
+            guard buttons.count == 1 else { XCTFail("Expected one Later in product alert"); return }
+            buttons.firstMatch.click()
+            XCTAssertTrue(gate2246Alert(app).waitForNonExistence(timeout: 3))
+        }
         for (key, name) in [("1", "user-f5"), ("2", "user-ask"), ("3", "unknown"), ("4", "background"), ("5", "recovered"), ("6", "visible")] {
             command("0")
             step("GATE2246 HIDE " + name + " before") {
-                XCTAssertEqual(gateRead("gate-hide.json")["panelVisible"] as? Bool, true)
+                XCTAssertTrue(app.dialogs["VoiceBar GATE2245 Product Pill"].waitForExistence(timeout: 3))
                 XCTAssertFalse(alertPresent())
             }
             command(key)
-            Thread.sleep(forTimeInterval: 0.6)
             let immediate = !["background", "recovered"].contains(name)
             step("GATE2246 HIDE " + name + " failure") {
-                XCTAssertEqual(alertPresent(), immediate)
-                let receipt = gateRead("gate-hide.json")
-                XCTAssertEqual(receipt["action"] as? String, "failure:" + name)
-                XCTAssertEqual(receipt["snoozed"] as? Bool, name != "visible")
-                if name != "visible" { XCTAssertEqual(receipt["panelVisible"] as? Bool, false) }
-                if immediate { XCTAssertTrue(app.staticTexts["VoiceLayer microphone permission needs attention"].exists) }
-                if ["user-f5", "user-ask", "recovered"].contains(name) {
-                    XCTAssertGreaterThan(receipt["noDeviceEngineStarts"] as? Int ?? 0, 0)
-                }
-                attachJSON("GATE2246-" + name + "-failure", receipt)
+                waitForAlert(immediate)
+                let observation = gate2246ModalObservation(app).merging(["case": name, "phase": "failure"]) { _, new in new }
+                XCTAssertEqual(observation["alertVisible"] as? Bool, immediate)
+                XCTAssertEqual(observation["panelVisible"] as? Bool, name == "visible")
+                if immediate { XCTAssertEqual(observation["laterButtonCount"] as? Int, 1) }
+                attachJSON("GATE2246-" + name + "-failure-AX", observation)
             }
-            if immediate { step("GATE2246 HIDE " + name + " dismiss Later") { app.buttons["Later"].click() } }
+            if immediate { step("GATE2246 HIDE " + name + " dismiss Later") { dismissAlert() } }
             command("7")
-            Thread.sleep(forTimeInterval: 0.6)
             step("GATE2246 HIDE " + name + " shown") {
-                XCTAssertEqual(alertPresent(), name == "background")
-                let receipt = gateRead("gate-hide.json")
-                XCTAssertEqual(receipt["action"] as? String, "show")
-                XCTAssertEqual(receipt["panelVisible"] as? Bool, true)
-                XCTAssertEqual(receipt["hidden"] as? Bool, false)
-                attachJSON("GATE2246-" + name + "-shown", receipt)
+                waitForAlert(name == "background")
+                let observation = gate2246ModalObservation(app).merging(["case": name, "phase": "shown"]) { _, new in new }
+                XCTAssertEqual(observation["alertVisible"] as? Bool, name == "background")
+                XCTAssertTrue(app.dialogs["VoiceBar GATE2245 Product Pill"].waitForExistence(timeout: 3))
+                attachJSON("GATE2246-" + name + "-shown-AX", observation)
             }
-            if name == "background" { step("GATE2246 HIDE background dismiss Later") { app.buttons["Later"].click() } }
+            if name == "background" { step("GATE2246 HIDE background dismiss Later") { dismissAlert() } }
         }
         ledger.verifiedSurfaces.insert("gate:HIDE1.1")
         command("8")

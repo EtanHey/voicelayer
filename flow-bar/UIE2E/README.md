@@ -329,3 +329,17 @@ bound to the exact app, test executable, library and fixture sources. The QA hos
 also refuses fixture startup unless the library is active. The runner atomically
 claims the single authorized retry in its fresh output directory. Do not create a
 second run without a new lead ruling. Stop on any OS permission prompt; never grant it.
+
+## Committed native safety supervisor
+
+All native runner entry points use `voicebar-ui-e2e-supervisor.py`; direct native
+launch refuses without the live parent supervisor's per-run authority. Build-only
+compiles its AX helpers without running them. The supervisor reads process/lock
+state and positive recording state through AX (the resident Settings footer when
+the pill is collapsed), waits two minutes and rechecks on unknown/unsafe state,
+and never accesses resident sockets or interrupts capture. Only the resident's
+own Hide for 1 hour and Show VoiceBar controls change visibility. It records its
+restore intent before Hide, supervises mute/disk/permissions continuously, and
+restores own visibility and the initial mute state independently on all ordinary
+exits, errors and catchable signals. A user-opened Settings window aborts preparation.
+Failed restoration is retained as a failed gate, never silently accepted.

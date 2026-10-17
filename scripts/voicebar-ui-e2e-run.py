@@ -198,6 +198,11 @@ if __name__ == '__main__':
     parser.add_argument('--scenario', choices=SCENARIOS)
     args = parser.parse_args()
     output = args.output.resolve()
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('safety_supervisor', pathlib.Path(__file__).with_name('voicebar-ui-e2e-supervisor.py'))
+    safety = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(safety)
+    safety.require_supervisor(output, os.environ)
     # Refuse BEFORE visibility/capture/UI unless the exact built guard passed its probes.
     if selected_scenario(output, args.scenario) == 'gate2246':
         import importlib.util
