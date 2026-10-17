@@ -68,6 +68,12 @@ def configure(output, app, sandbox, scenario=None):
     env = target.setdefault('EnvironmentVariables', {})
     env.update(VOICEBAR_UIE2E_APP=str(app), VOICEBAR_UIE2E_ROOT=str(sandbox),
                VOICEBAR_UIE2E_SCENARIO=scenario)
+    if scenario == 'gate2246':
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        env['VOICEBAR_UIE2E_DEVICE_GUARD'] = str(guard.verify(pathlib.Path(__file__).resolve().parent.parent, output))
     # Moving the plist changes __TESTROOT__. Resolve it before writing the configured copy.
     def resolve(value):
         if isinstance(value, str):

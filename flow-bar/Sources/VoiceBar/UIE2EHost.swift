@@ -2,6 +2,29 @@
 import AppKit
 import SwiftUI
 import VoiceBarUI
+import AVFoundation
+import Darwin
+
+/// No engine/input node is constructed; the product monitor lifecycle remains exercised.
+final class UIE2ENoDeviceLevelEngine: AudioLevelMonitoringEngine, AudioLevelMonitoringInputNode {
+    private(set) var starts = 0
+    var monitoringInputNode: AudioLevelMonitoringInputNode { self }
+    func inputFormat() -> AVAudioFormat? { nil }
+    func installTap(bufferSize: AVAudioFrameCount, format: AVAudioFormat?,
+                    block: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void) {}
+    func removeTap() {}
+    func prepare() {}
+    func start() throws { starts += 1 }
+    func stop() {}
+}
+
+enum UIE2ENoDeviceGuard {
+    static func requireInstalled() {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "voicebar_no_device_guard_version"),
+              unsafeBitCast(symbol, to: (@convention(c) () -> Int32).self)() == 1
+        else { fatalError("GATE2246 refuses fixture startup without the device tripwire library") }
+    }
+}
 
 /// The real Settings/BarView/menu with fixture dependencies. This entry point intentionally
 /// precedes AppDelegate construction: no daemon, global hotkeys, audio engine or live sockets.
@@ -36,6 +59,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 marker: Bundle.main.object(forInfoDictionaryKey: UIE2ELaunchPolicy.markerKey),
                 environment: environment, confirmMute: confirmedMute)
             guard mode == .fixture else { return false }
+            if environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
+                UIE2ENoDeviceGuard.requireInstalled()
+            }
             let sandbox = try UIE2ESandbox(environment: environment)
             let app = NSApplication.shared
             let host = UIE2EHost(sandbox: sandbox)

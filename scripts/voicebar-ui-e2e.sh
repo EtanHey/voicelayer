@@ -22,10 +22,6 @@ case "$scenario" in
   hide1|gate2246) export VOICEBAR_UIE2E_GATE2245=1 ;;
   *) echo "FAIL unknown scenario: $scenario (expected full or focused-338)" >&2; exit 2 ;;
 esac
-if [[ $scenario == gate2246 && $build_only == 0 ]]; then
-  echo 'BLOCKED GATE2246: recording observer can open the microphone; reviewed no-device seam and lead-arranged retry required.' >&2
-  exit 1
-fi
 repo=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$(dirname "$output")"
 mkdir "$output" # Refuse to overwrite a previous run or any of its evidence.
@@ -84,6 +80,9 @@ xcodebuild build-for-testing -project "$repo/flow-bar/UIE2E/VoiceBarUIE2E.xcodep
     echo "FAIL build-for-testing (see $output/build-for-testing.log)"; exit 1;
   }
 echo 'PASS build-for-testing (UI execution NOT_PROVEN)'
+if [[ $scenario == gate2246 ]]; then
+  python3 "$repo/scripts/voicebar-ui-e2e-guard-proof.py" build "$output"
+fi
 [[ $build_only == 0 ]] || exit 0
 python3 "$repo/scripts/voicebar-ui-e2e-results.py" configure "$output" "$app" "$sandbox" --scenario "$scenario"
 # Reconfirm immediately before XCUITest takes the screen. Leave output muted after the run.

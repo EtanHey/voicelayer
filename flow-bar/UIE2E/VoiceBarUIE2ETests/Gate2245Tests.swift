@@ -6,6 +6,10 @@ extension VoiceBarFlowTests {
         guard scenario == "gate2246", gate2245Enabled else { throw NSError(domain: "GATE2246 requires gate build", code: 1) }
         limitations = ["Focused muted native gate: real panels and NSAlert, synthetic wire/selection; no capture, daemon launch, physical hotkeys, permissions or installed-app acceptance."]
         ledger.requiredScope = ["gate:HIDE1.1", "gate:SEL1.x"]
+        step("GATE2246 no-device guard installed before fixtures") {
+            XCTAssertEqual(try? String(contentsOf: root.appendingPathComponent("no-device-guard.log")),
+                           "voicebar-no-device-guard-v1:installed\n")
+        }
         func command(_ key: String) { app.typeKey(key, modifierFlags: .command) }
         func alertPresent() -> Bool { app.buttons["Later"].exists }
         for (key, name) in [("1", "user-f5"), ("2", "user-ask"), ("3", "unknown"), ("4", "background"), ("5", "recovered"), ("6", "visible")] {
@@ -24,6 +28,9 @@ extension VoiceBarFlowTests {
                 XCTAssertEqual(receipt["snoozed"] as? Bool, name != "visible")
                 if name != "visible" { XCTAssertEqual(receipt["panelVisible"] as? Bool, false) }
                 if immediate { XCTAssertTrue(app.staticTexts["VoiceLayer microphone permission needs attention"].exists) }
+                if ["user-f5", "user-ask", "recovered"].contains(name) {
+                    XCTAssertGreaterThan(receipt["noDeviceEngineStarts"] as? Int ?? 0, 0)
+                }
                 attachJSON("GATE2246-" + name + "-failure", receipt)
             }
             if immediate { step("GATE2246 HIDE " + name + " dismiss Later") { app.buttons["Later"].click() } }
@@ -71,6 +78,10 @@ extension VoiceBarFlowTests {
         }
         ledger.verifiedSurfaces.insert("gate:SEL1.x")
         command("9")
+        step("GATE2246 no device-start or process tripwire invoked") {
+            XCTAssertEqual(try? String(contentsOf: root.appendingPathComponent("no-device-guard.log")),
+                           "voicebar-no-device-guard-v1:installed\n")
+        }
         completed = true
     }
 

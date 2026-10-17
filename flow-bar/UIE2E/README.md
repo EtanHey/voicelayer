@@ -317,10 +317,15 @@ the linked snapshot. The helper never calls application hide/unhide on the
 resident and fails closed if any resident-owned screen window remains. Close
 only operator-opened Settings before capture and return it to its initial state.
 
-## GATE2246 focused harness (BLOCKED)
+## GATE2246 focused harness
 
 `--scenario gate2246 --build-only` compiles the focused HIDE1.1 / SEL1.x scenario.
-Native execution is disabled after run-01 unexpectedly reached the product recording
-mode observer's AudioLevelMonitor and displayed a macOS microphone permission prompt.
-No permission was granted; do not rerun until a reviewed no-device seam exists and
-the lead arranges the retry. See the packet's PR-VERDICTS.md.
+Run-01 stopped on an OS microphone permission prompt; nothing was granted. GATE2246B
+uses the lead-approved QA-only engine setter before installing the real mode observer.
+The device-free engine has no AVAudioEngine or device node. A separate injected QA
+library aborts on device access and child launches (only the exact output-mute read
+is permitted). Native execution requires all tripwire probes to pass, with proof
+bound to the exact app, test executable, library and fixture sources. The QA host
+also refuses fixture startup unless the library is active. The runner atomically
+claims the single authorized retry in its fresh output directory. Do not create a
+second run without a new lead ruling. Stop on any OS permission prompt; never grant it.

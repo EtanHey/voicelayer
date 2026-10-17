@@ -59,6 +59,12 @@ final class VoiceBarFlowTests: XCTestCase {
             app.launchEnvironment["QA_VOICEBAR_CAPTURE_TOP_RIGHT"] = "1"
             app.launchEnvironment["VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE"] = "1"
         }
+        if scenario == "gate2246" {
+            let library = try XCTUnwrap(env["VOICEBAR_UIE2E_DEVICE_GUARD"])
+            XCTAssertTrue(FileManager.default.fileExists(atPath: library))
+            app.launchEnvironment["DYLD_INSERT_LIBRARIES"] = library
+            app.launchEnvironment["VOICEBAR_UIE2E_GUARD_RECEIPT"] = root.appendingPathComponent("no-device-guard.log").path
+        }
         addUIInterruptionMonitor(withDescription: "Known benign foreign overlay; never grant permissions") { [unowned self] alert in
             switch UIE2EInterruptionPolicy.classify(alertDescription: alert.debugDescription) {
             case .permissionPrompt:

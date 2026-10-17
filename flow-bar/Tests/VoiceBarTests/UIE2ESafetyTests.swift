@@ -6,6 +6,16 @@ import SwiftUI
 import VoiceBarUI
 
 final class UIE2ESafetyTests: XCTestCase {
+    func testDeviceFreeLevelEngineExercisesMonitorWithoutConstructingAVAudioEngine() throws {
+        let engine = UIE2ENoDeviceLevelEngine()
+        let monitor = AudioLevelMonitor(engine: engine) { _ in }
+        monitor.start()
+        XCTAssertEqual(engine.starts, 1)
+        monitor.stop()
+        monitor.start()
+        XCTAssertEqual(engine.starts, 2)
+        monitor.shutdown()
+    }
     func testRejectsMissingOrUnmarkedSandbox() throws {
         XCTAssertThrowsError(try UIE2ESandbox(environment: [:]))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)

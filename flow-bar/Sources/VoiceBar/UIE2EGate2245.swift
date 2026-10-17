@@ -15,9 +15,12 @@ final class UIE2EGate2245 {
     var captureController: VoiceBarDaemonController?
     var gateCommands: [[String: Any]] = []
     var placementObservers: [NSObjectProtocol] = []
+    let noDeviceEngine = UIE2ENoDeviceLevelEngine()
 
     init(host: UIE2EHost) {
         self.host = host
+        // Replace the lazy default BEFORE the real AppDelegate mode observer is installed.
+        app.configureAudioLevelMonitoringForTesting(engine: noDeviceEngine)
         let state = app.voiceState
         state.controlLayerEventWriter = { _, _ in }
         state.sendCommand = { _ in }
@@ -63,7 +66,7 @@ final class UIE2EGate2245 {
     }
 
     func snapshot(_ action: String) {
-        host.sandbox.writeObject(["action": action, "commands": gateCommands, "statusText": app.voiceState.statusText, "state": current(), "beforeShow": beforeShow,
+        host.sandbox.writeObject(["action": action, "noDeviceEngineStarts": noDeviceEngine.starts, "commands": gateCommands, "statusText": app.voiceState.statusText, "state": current(), "beforeShow": beforeShow,
             "snoozed": app.isSnoozed, "hidden": app.voiceState.isHidden, "connected": app.voiceState.isConnected,
             "panelVisible": panel.isVisible, "windowNumber": panel.windowNumber,
             "visiblePanels": NSApp.windows.filter { $0 is NSPanel && $0.isVisible }.map(\.title),
@@ -218,8 +221,7 @@ extension UIE2EHost {
 
 extension UIE2EGate2245 {
     func captureFailure(_ name: String) {
-        // BLOCKED: although this server never binds, recording events reach the product
-        // mode observer and AudioLevelMonitor. Native runner refuses this scenario.
+        // Parser-only server; real observer uses the device-free injected level engine.
         let server = SocketServer(state: app.voiceState, socketPath: host.sandbox.root.appendingPathComponent("unused.sock").path)
         let controller = VoiceBarDaemonController(restartScheduler: { _, _ in }, microphonePromptDisabled: { false })
         captureServer = server; captureController = controller
