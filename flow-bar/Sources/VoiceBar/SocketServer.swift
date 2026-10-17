@@ -36,7 +36,19 @@ func classifySocketWriteResult(bytesWritten: Int, errnoCode: Int32) -> SocketWri
     }
 }
 
+private enum CapturePresentationClient: Hashable {
+    case process(Int)
+    case connection(UUID)
+    case unidentified
+}
+
 private struct ClientConnection {
+    let presentationID = UUID()
+    var presentationClient: CapturePresentationClient {
+        if let pid, pid > 0 { return .process(pid) }
+        return .connection(presentationID)
+    }
+
     let source: DispatchSourceRead
     var framer: NDJSONLineFramer
     var role: String?
@@ -120,6 +132,10 @@ final class SocketServer {
     private let state: VoiceState
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
+    var onCaptureResolved: (() -> Void)?
+    // Presentation only. A PID from client_hello lets an in-flight capture survive
+    // reconnect; anonymous connections never inherit another connection's capture.
+    private var capturesAwaitingPresentationResult: Set<CapturePresentationClient> = []
     #if VOICEBAR_QA
         var onQAContextMenuProbe: (() -> Void)?
         var onQAVerticalHitProbe: (() -> Void)?
@@ -389,11 +405,28 @@ final class SocketServer {
         }
 
         let playbackAmplitude = SocketPlaybackAmplitudeParser.parse(event: dict)
+        let presentationClient = fd.flatMap { clients[$0]?.presentationClient } ?? .unidentified
 
         DispatchQueue.main.async { [weak self] in
+            if dict["type"] as? String == "state", dict["state"] as? String == "recording" {
+                self?.capturesAwaitingPresentationResult.insert(presentationClient)
+            }
             if dict["type"] as? String == "error",
                let captureFailure = dict["capture_failure"] as? String {
                 self?.onCaptureFailure?(captureFailure)
+                self?.capturesAwaitingPresentationResult.remove(presentationClient)
+            }
+            // Archive ordering is unrelated to capture success: Ask replies are never
+            // "latest dictation". Require a capture from THIS client, not a global flag.
+            if dict["type"] as? String == "transcription",
+               let text = dict["text"] as? String,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               self?.capturesAwaitingPresentationResult.remove(presentationClient) != nil {
+                self?.onCaptureResolved?()
+            }
+            if dict["type"] as? String == "state", dict["state"] as? String == "idle",
+               dict["source"] as? String == "recording" {
+                self?.capturesAwaitingPresentationResult.remove(presentationClient)
             }
             self?.state.handleEvent(dict, playbackAmplitude: playbackAmplitude)
         }

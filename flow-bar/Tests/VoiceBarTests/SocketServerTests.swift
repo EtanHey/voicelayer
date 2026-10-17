@@ -166,6 +166,51 @@ final class SocketServerTests: XCTestCase {
         XCTAssertEqual(state.errorMessage, "Microphone returned silence")
     }
 
+    func testMicrophoneRecoveryIsPerClientAndIgnoresArchiveOrdering() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        var resolved = 0
+        fixture.server.onCaptureResolved = { resolved += 1 }
+        try writeLine(#"{"type":"state","state":"recording","bar_owned":false}"#, to: fixture.commandClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .recording, timeout: 1))
+        try writeLine(#"{"type":"transcription","text":"Synthetic other-client archive","recording_is_latest":true}"#, to: fixture.legacyClient)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(resolved, 0, "Another client's archive must not clear this capture")
+        try writeLine(#"{"type":"transcription","text":"Synthetic Ask reply","recording_is_latest":false}"#, to: fixture.commandClient)
+        XCTAssertTrue(waitForCondition(timeout: 1) { resolved == 1 })
+    }
+
+    func testMicrophoneCaptureReceiptSurvivesSamePIDReconnectWithOrWithoutPeer() throws {
+        for keepPeer in [false, true] {
+            let directory = URL(fileURLWithPath: "/tmp/h11-" + String(UUID().uuidString.prefix(8)))
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let state = VoiceState()
+            let server = SocketServer(state: state, socketPath: directory.appendingPathComponent("v.sock").path, bindAllowed: { true })
+            server.start()
+            defer { server.stop() }
+            let path = directory.appendingPathComponent("v.sock").path
+            XCTAssertTrue(waitForSocket(at: path))
+            var capture = try connectUnixSocket(path: path)
+            defer { if capture >= 0 { close(capture) } }
+            let peer = keepPeer ? try connectUnixSocket(path: path) : -1
+            defer { if peer >= 0 { close(peer) } }
+            try writeLine(#"{"type":"client_hello","role":"capture","pid":424201,"accepts_commands":false}"#, to: capture)
+            XCTAssertTrue(waitForRegisteredRoles(server, ["capture"]))
+            try writeLine(#"{"type":"state","state":"recording","bar_owned":true}"#, to: capture)
+            XCTAssertTrue(waitForMode(state, mode: .recording, timeout: 1))
+            shutdown(capture, SHUT_RDWR); close(capture); capture = -1
+            XCTAssertTrue(waitForCondition(timeout: 1) { !server.registeredClientRolesForTesting().contains("capture") })
+            capture = try connectUnixSocket(path: path)
+            try writeLine(#"{"type":"client_hello","role":"capture-again","pid":424201,"accepts_commands":false}"#, to: capture)
+            XCTAssertTrue(waitForRegisteredRoles(server, ["capture-again"]))
+            var resolved = 0
+            server.onCaptureResolved = { resolved += 1 }
+            try writeLine(#"{"type":"transcription","text":"Synthetic reconnect Ask reply","recording_is_latest":false}"#, to: capture)
+            XCTAssertTrue(waitForCondition(timeout: 1) { resolved == 1 }, "keepPeer=\(keepPeer)")
+        }
+    }
+
     func testCommandsAreSentOnlyToClientHelloCommandOwner() throws {
         let directory = URL(fileURLWithPath: "/tmp")
             .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)

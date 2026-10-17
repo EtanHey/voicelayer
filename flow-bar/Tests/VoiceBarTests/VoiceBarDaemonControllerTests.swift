@@ -515,6 +515,14 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
     }
 
     func testBrokenMicSignalRespawnsOwnedChildAfterSecondConsecutiveFailure() {
+        let oldDisablePath = ProcessInfo.processInfo.environment["QA_VOICE_DISABLE_FLAG_PATH"]
+        let isolatedDisablePath = NSTemporaryDirectory() + "hide11-disabled-" + UUID().uuidString
+        setenv("QA_VOICE_DISABLE_FLAG_PATH", isolatedDisablePath, 1)
+        defer {
+            if let oldDisablePath { setenv("QA_VOICE_DISABLE_FLAG_PATH", oldDisablePath, 1) }
+            else { unsetenv("QA_VOICE_DISABLE_FLAG_PATH") }
+        }
+        XCTAssertEqual(VoiceLayerPaths.voiceDisabledFlagPath(), isolatedDisablePath)
         let firstProcess = ProcessSpy()
         let secondProcess = ProcessSpy()
         var processQueue = [firstProcess, secondProcess]
@@ -527,7 +535,8 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             socketBindingAllowed: { _ in true }, // These lifecycle tests use ProcessSpy, not a socket owner.
             processFactory: { processQueue.removeFirst() },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) },
-            microphonePermissionPrompter: { message in promptedMessages.append(message) }
+            microphonePermissionPrompter: { message in promptedMessages.append(message) },
+            microphonePromptDisabled: { false }
         )
         _ = controller.activateIfNeeded()
 
@@ -539,7 +548,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertTrue(controller.ownsLaunchedProcess)
 
         controller.handleCaptureFailure(type: "broken-mic")
-        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } && promptedMessages.count == 1 })
         scheduledBlocks.first(where: { $0.delay == 1 })?.block()
 
         XCTAssertTrue(firstProcess.didReceiveTerminate)
