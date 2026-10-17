@@ -17,6 +17,11 @@ import tempfile
 import time
 
 root = Path(sys.argv[1])
+sys.dont_write_bytecode = True
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+sys.path.insert(0, str(root / "tests"))
+import hook_fixture_registry as registry
+registry.sweep(root)
 os.environ.setdefault("HOOK_TREE_PID", str(os.getpid()))
 os.environ.setdefault("HOOK_TREE_TOKEN", uuid.uuid4().hex)
 
@@ -51,7 +56,7 @@ if "--cross-run" in sys.argv[2:]:
             for name in ("src", "node_modules", "flow-bar", "launchd"):
                 (checkout / name).symlink_to(root / name, target_is_directory=True)
             shutil.copy(root / "bunfig.toml", checkout)
-            for name in ("hook-orphan-daemon.test.ts", "test_hook_orphan_daemon.sh", "hook-term-sender.c"):
+            for name in ("hook-orphan-daemon.test.ts", "test_hook_orphan_daemon.sh", "hook-term-sender.c", "hook_fixture_registry.py"):
                 shutil.copy(root / "tests" / name, checkout / "tests")
             for name in ("supervise-test-daemon.py", "run_tests.sh", "apply-voicebar-f5-hidutil.sh"):
                 shutil.copy(root / "scripts" / name, checkout / "scripts")
@@ -116,6 +121,8 @@ owner_lock.write(json.dumps(dict(pid=os.getpid(), nonce=nonce, started=owner_sta
 owner_lock.flush()
 os.environ["VOICELAYER_HOOK_TEST_OWNER"] = str(owner_path)
 os.environ["VOICELAYER_HOOK_AUDIT_LOG"] = str(base / "decisions.jsonl")
+os.environ["HOOK_FIXTURE_HELPER"] = str(root / "tests")
+guardian, fixture_fd = registry.start(base, root)
 print("HOOK evidence: " + str(base), flush=True)
 succeeded = False
 barriers_done = False
@@ -156,6 +163,12 @@ def owned_signal(target, signum, group=False):
             identity[1].get("VOICELAYER_HOOK_TEST_NONCE") == nonce or
             identity[1].get("VOICELAYER_HOOK_AUDIT_LOG") == str(base / "decisions.jsonl")) for identity in identities):
         raise RuntimeError(f"refusing signal to unverified fixture {target}")
+    for pid in pids:
+        record = base / f"fixture-{pid}.json"
+        if record.exists():
+            saved = json.loads(record.read_text())
+            if registry.metadata(pid) != saved["started"]:
+                raise RuntimeError(f"refusing signal to reused fixture PID {pid}")
     (os.killpg if group else os.kill)(target, signum)
 
 def term_free(name):
@@ -189,6 +202,8 @@ if "--policy-check" in sys.argv[2:]:
             pass
         else:
             raise AssertionError("protected TERM did not abort immediately")
+    os.close(fixture_fd)
+    assert guardian.wait(timeout=8) == 0
     owner_lock.close()
     shutil.rmtree(base)
     print("PASS attribution: every protected TERM fails immediately; no retry", flush=True)
@@ -277,7 +292,6 @@ def alive(pid):
 failures = []
 protected = []
 orphan_pids = []
-orphan_groups = []
 owned_pid_file = base / "owned-pids"
 
 # All sweep candidates in this test are explicitly owned fixture PIDs. The
@@ -357,15 +371,20 @@ try:
         record = base / (name + ".pid")
         code = '''
 import ctypes, os, pathlib, signal, sys, time
+sys.path.insert(0, os.environ["HOOK_FIXTURE_HELPER"])
+import hook_fixture_registry as registry
 if sys.argv[2] == "orphan" and os.fork():
     raise SystemExit(0)
 os.setsid()
+registry.register()
 if sys.argv[3] == "child":
     child = os.fork()
     if child == 0:
         os.execv(sys.executable, [sys.executable, "-c",
-            "import os,pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "import os,pathlib,signal,sys,time; sys.path.insert(0, os.environ['HOOK_FIXTURE_HELPER']); "
+            "import hook_fixture_registry as registry; registry.register(); os.close(int(os.environ['HOOK_FIXTURE_FD'])); signal.signal(signal.SIGTERM, signal.SIG_IGN); "
             "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)", sys.argv[1] + ".child"])
+os.close(int(os.environ["HOOK_FIXTURE_FD"]))
 library = ctypes.CDLL(sys.argv[4])
 library.hook_term_sender.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
 assert library.hook_term_sender(os.fsencode(sys.argv[1] + ".term"),
@@ -373,11 +392,12 @@ assert library.hook_term_sender(os.fsencode(sys.argv[1] + ".term"),
 pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
 while True: time.sleep(.05)
 '''
+        env["HOOK_FIXTURE_HELPER"] = str(root / "tests")
         proc = subprocess.Popen([sys.executable, "-c", code, str(record),
                                  "orphan" if orphan else "parented", "child" if stubborn_child else "single",
                                  str(term_library), "src/mcp-server-daemon.ts", "VOICELAYER_TMP_ROOT=" + str(run_dir),
                                  "VOICELAYER_MCP_SOCKET_PATH=" + str(run_dir / "voicelayer-mcp.sock"),
-                                 "VOICELAYER_SOCKET_PATH=" + str(run_dir / "voicelayer.sock")], env=env)
+                                 "VOICELAYER_SOCKET_PATH=" + str(run_dir / "voicelayer.sock")], env=env, pass_fds=(fixture_fd,))
         if orphan:
             proc.wait(timeout=5)
         else:
@@ -385,7 +405,6 @@ while True: time.sleep(.05)
         assert wait_until(lambda: record.exists() and record.stat().st_size > 0)
         pid = int(record.read_text())
         orphan_pids.append(pid)
-        orphan_groups.append(pid)
         if stubborn_child:
             child_record = Path(str(record) + ".child")
             assert wait_until(lambda: child_record.exists() and child_record.stat().st_size > 0)
@@ -417,6 +436,16 @@ while True: time.sleep(.05)
             raise ProtectedTerm("protected fixture TERM after lifecycle")
         succeeded = True
         raise SystemExit(0)
+
+    if "--abort-fixture-check" in sys.argv[2:]:
+        (base / "escape").symlink_to(base.parent / (nonce + "-outside"))
+        fixture("symlink-escape", base / "escape" / "voicelayer-run-tests.900024")
+        parent = os.getppid()
+        print("ABORT READY", flush=True)
+        while True:
+            assert os.getppid() == parent, "abort driver disappeared"
+            assert not (base / "fail-assertion").exists(), "injected assertion failure"
+            time.sleep(.05)
 
     stale_dir = base / "voicelayer-run-tests.900001"
     stale_dir.mkdir()
@@ -539,6 +568,10 @@ while True: time.sleep(.05)
     dead_owner_path.parent.mkdir()
     owner_code = """
 import fcntl, json, os, pathlib, subprocess, sys, time
+sys.path.insert(0, os.environ["HOOK_FIXTURE_HELPER"])
+import hook_fixture_registry as registry
+registry.register()
+os.close(int(os.environ["HOOK_FIXTURE_FD"]))
 path = pathlib.Path(sys.argv[1])
 with path.open("w+") as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
@@ -548,7 +581,7 @@ with path.open("w+") as lock:
     lock.flush()
     while True: time.sleep(.05)
 """
-    owner_process = subprocess.Popen([sys.executable, "-c", owner_code, str(dead_owner_path)])
+    owner_process = subprocess.Popen([sys.executable, "-c", owner_code, str(dead_owner_path)], pass_fds=(fixture_fd,))
     try:
         assert wait_until(lambda: dead_owner_path.exists() and dead_owner_path.stat().st_size > 0)
         leaked = fixture("dead-owner", base / "voicelayer-run-tests.900013", owner=dead_owner_path)
@@ -758,11 +791,8 @@ finally:
          "-o", "pid=,ppid=,pgid=,stat=,lstart=,command="], text=True, capture_output=True).stdout.splitlines()
         if not succeeded else [], term_markers=[p.name for p in base.glob("*.term")])
     signal_reason = "final fixture teardown"
-    for pid in orphan_groups:
-        try:
-            owned_signal(pid, signal.SIGKILL, group=True)
-        except ProcessLookupError:
-            pass
+    os.close(fixture_fd)
+    assert guardian.wait(timeout=8) == 0, "fixture guardian failed; evidence retained"
     for proc in protected:
         proc.wait(timeout=5)
     owner_lock.close()
