@@ -199,6 +199,15 @@ class SupervisorTests(unittest.TestCase):
                 self.assertFalse(host.stop())
                 kill.assert_not_called()
 
+    def test_empty_failed_ps_is_not_termination_proof_without_esrch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            host.run = lambda args: (_ for _ in ()).throw(subprocess.CalledProcessError(1, args, output=''))
+            with patch('os.kill', return_value=None):
+                with self.assertRaisesRegex(RuntimeError, 'identity unreadable'): host.process_state(200)
+            with patch('os.kill', side_effect=ProcessLookupError):
+                self.assertIsNone(host.process_state(200))
+
     def module(self):
         path = ROOT / 'scripts/voicebar-ui-e2e-supervisor.py'
         self.assertTrue(path.exists(), 'Committed safety supervisor missing')

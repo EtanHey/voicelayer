@@ -320,7 +320,11 @@ class NativeHost:
             raw = self.run(['ps', '-p', str(pid), '-o', 'lstart=,stat=,ppid=,comm='])
         except subprocess.CalledProcessError as error:
             if error.returncode == 1 and not (error.output or '').strip():
-                return None
+                try:
+                    os.kill(pid, 0)  # Existence probe only; unreadable ps is not proof of death.
+                except ProcessLookupError:
+                    return None
+                raise RuntimeError('Process identity unreadable; PID still exists: ' + str(pid)) from error
             raise
         fields = raw.split(None, 7)
         if len(fields) != 8:
