@@ -203,6 +203,111 @@ final class SpeakSelectionTests: XCTestCase {
         }
     }
 
+    private func identityField(_ name: String, in state: VoiceState) -> Any? {
+        Mirror(reflecting: state).children.first { $0.label == name || $0.label == "_" + name }?.value
+    }
+
+    private func submissionCount(_ state: VoiceState) throws -> Int {
+        let entries = try XCTUnwrap(identityField("selectionSubmissions", in: state))
+        return Mirror(reflecting: entries).children.count
+    }
+
+    func testRetiredIdentityCannotRebindAfterStopCancelOrCompletion() throws {
+        for received in [false, true] {
+            for end in ["stop", "cancel", "completion", "selection-stop", "error", "disconnect", "recording"] {
+                let state = VoiceState()
+                state.isConnected = true
+                var commands: [[String: Any]] = []
+                state.sendCommand = { commands.append($0) }
+                state.selectionTextCaptureHandler = { $0(.completed("retire this selection")) }
+                state.speakSelection()
+                let id = try XCTUnwrap(commands.first?["id"] as? String)
+                let receipt: [String: Any] = ["type": "state", "state": "speaking", "request_id": id,
+                    "text_hash": commands.first?["text_hash"] as? String ?? "", "text": "Preparing speech…",
+                    "long_read": ["id": "retired-read", "preparing": true]]
+                if received { state.handleEvent(receipt) }
+                switch end {
+                case "stop": state.stop()
+                case "cancel": state.cancel()
+                case "completion": state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+                case "selection-stop": state.speakSelection()
+                case "error": state.mode = .error
+                case "disconnect": state.mode = .disconnected
+                default: state.mode = .recording
+                }
+                let mode = state.mode
+                let text = state.statusText
+                XCTAssertEqual(try submissionCount(state), 0, "\(end), received=\(received)")
+                for field in ["selectionReadText", "selectionReadHash", "selectionReadRequestID", "selectionReadID"] {
+                    if let value = identityField(field, in: state) {
+                        XCTAssertEqual(Mirror(reflecting: value).children.count, 0, "\(end): \(field)")
+                    }
+                }
+                state.handleEvent(receipt)
+                XCTAssertEqual(state.mode, mode, "Late receipt after \(end)")
+                XCTAssertEqual(state.statusText, text, "Late receipt after \(end)")
+                XCTAssertEqual(try submissionCount(state), 0)
+            }
+        }
+    }
+
+    func testThirdPressAfterStopStartsFreshSelectionInsteadOfZombieToggle() throws {
+        let state = VoiceState()
+        state.isConnected = true
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.selectionTextCaptureHandler = { $0(.completed("same selection")) }
+        state.speakSelection()
+        let id = try XCTUnwrap(commands.first?["id"] as? String)
+        state.stop()
+        state.handleEvent(["type": "state", "state": "speaking", "request_id": id,
+            "text": "Preparing speech…", "long_read": ["id": "stopped-read", "preparing": true]])
+        state.speakSelection()
+        XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text", "stop", "speak_text"])
+    }
+
+    func testUnacknowledgedBurstIsBoundedAndNewReceiptReleasesSupersededText() throws {
+        let state = VoiceState()
+        var request: [String: Any] = [:]
+        state.sendCommand = { request = $0 }
+        for index in 0..<80 {
+            state.selectionTextCaptureHandler = { $0(.completed("pending selection \(index)")) }
+            state.speakSelection()
+            XCTAssertLessThanOrEqual(try submissionCount(state), 32)
+        }
+        let id = try XCTUnwrap(request["id"] as? String)
+        state.handleEvent(["type": "state", "state": "speaking", "request_id": id,
+            "text": "Preparing speech…", "long_read": ["id": "newest-read", "preparing": true]])
+        XCTAssertEqual(try submissionCount(state), 1)
+        state.stop()
+        XCTAssertEqual(try submissionCount(state), 0)
+        let retired = try XCTUnwrap(identityField("selectionRetiredRequestIDs", in: state) as? [String])
+        XCTAssertLessThanOrEqual(retired.count, 32)
+    }
+
+    func testRepeatedCompletedReadsReleaseTextAndBoundRetiredIDs() throws {
+        let state = VoiceState()
+        var request: [String: Any] = [:]
+        state.sendCommand = { request = $0 }
+        var lastID = ""
+        for index in 0..<80 {
+            state.selectionTextCaptureHandler = { $0(.completed("completed selection \(index)")) }
+            state.speakSelection()
+            lastID = try XCTUnwrap(request["id"] as? String)
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": lastID,
+                "text": "Preparing speech…", "long_read": ["id": "read-\(index)", "preparing": true]])
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            XCTAssertEqual(try submissionCount(state), 0)
+        }
+        let retired = try XCTUnwrap(identityField("selectionRetiredRequestIDs", in: state) as? [String])
+        XCTAssertEqual(retired.count, 32)
+        XCTAssertEqual(Set(retired).count, 32)
+        XCTAssertEqual(retired.last, lastID)
+        state.handleEvent(["type": "state", "state": "speaking", "request_id": lastID,
+            "text": "Preparing speech…", "long_read": ["id": "late-completion", "preparing": true]])
+        XCTAssertEqual(state.mode, .idle)
+    }
+
     func testDifferentSelectionReplacesSpeakingAndPreparingWithoutGlobalStop() {
         for preparing in [false, true] {
             let state = speakingState(preparing: preparing)
