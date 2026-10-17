@@ -1152,12 +1152,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return true }
             return isSnoozed || voiceState.isHidden
         }
-        server.onCaptureFailure = { [weak self, weak server] failureType in
-            // Both F5 and remote Ask publish recording before a capture failure.
-            // Archive transcribing or other UI state alone is not a user capture.
-            self?.daemonController.handleCaptureFailure(
-                type: failureType, userInitiated: server?.captureAwaitingPresentationResult == true
-            )
+        server.onCaptureFailure = { [weak self] failureType in
+            // The existing wire identifies capture failures, but cannot positively
+            // identify background origin. Missing/ambiguous provenance must surface.
+            self?.daemonController.handleCaptureFailure(type: failureType, userInitiated: true)
         }
         server.onCaptureResolved = { [weak self] in
             self?.daemonController.clearDeferredMicrophonePermissionPrompt()

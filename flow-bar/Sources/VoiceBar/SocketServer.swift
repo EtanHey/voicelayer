@@ -36,7 +36,19 @@ func classifySocketWriteResult(bytesWritten: Int, errnoCode: Int32) -> SocketWri
     }
 }
 
+private enum CapturePresentationClient: Hashable {
+    case process(Int)
+    case connection(UUID)
+    case unidentified
+}
+
 private struct ClientConnection {
+    let presentationID = UUID()
+    var presentationClient: CapturePresentationClient {
+        if let pid, pid > 0 { return .process(pid) }
+        return .connection(presentationID)
+    }
+
     let source: DispatchSourceRead
     var framer: NDJSONLineFramer
     var role: String?
@@ -121,7 +133,9 @@ final class SocketServer {
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
     var onCaptureResolved: (() -> Void)?
-    private(set) var captureAwaitingPresentationResult = false
+    // Presentation only. A PID from client_hello lets an in-flight capture survive
+    // reconnect; anonymous connections never inherit another connection's capture.
+    private var capturesAwaitingPresentationResult: Set<CapturePresentationClient> = []
     #if VOICEBAR_QA
         var onQAContextMenuProbe: (() -> Void)?
         var onQAVerticalHitProbe: (() -> Void)?
@@ -391,29 +405,28 @@ final class SocketServer {
         }
 
         let playbackAmplitude = SocketPlaybackAmplitudeParser.parse(event: dict)
+        let presentationClient = fd.flatMap { clients[$0]?.presentationClient } ?? .unidentified
 
         DispatchQueue.main.async { [weak self] in
             if dict["type"] as? String == "state", dict["state"] as? String == "recording" {
-                self?.captureAwaitingPresentationResult = true
+                self?.capturesAwaitingPresentationResult.insert(presentationClient)
             }
             if dict["type"] as? String == "error",
                let captureFailure = dict["capture_failure"] as? String {
                 self?.onCaptureFailure?(captureFailure)
-                self?.captureAwaitingPresentationResult = false
+                self?.capturesAwaitingPresentationResult.remove(presentationClient)
             }
-            // Idle also follows cancellation and archive re-transcription failures. Only
-            // words from a fresh capture prove that the microphone condition cleared.
+            // Archive ordering is unrelated to capture success: Ask replies are never
+            // "latest dictation". Require a capture from THIS client, not a global flag.
             if dict["type"] as? String == "transcription",
-               self?.captureAwaitingPresentationResult == true,
-               dict["recording_is_latest"] as? Bool != false,
                let text = dict["text"] as? String,
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                self?.captureAwaitingPresentationResult = false
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               self?.capturesAwaitingPresentationResult.remove(presentationClient) != nil {
                 self?.onCaptureResolved?()
             }
             if dict["type"] as? String == "state", dict["state"] as? String == "idle",
                dict["source"] as? String == "recording" {
-                self?.captureAwaitingPresentationResult = false
+                self?.capturesAwaitingPresentationResult.remove(presentationClient)
             }
             self?.state.handleEvent(dict, playbackAmplitude: playbackAmplitude)
         }
@@ -607,10 +620,8 @@ final class SocketServer {
 
     private func updateConnectionState() {
         let hasCommandClient = clients.values.contains { $0.acceptsCommands }
-        let hasAnyClient = !clients.isEmpty
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if !hasAnyClient { captureAwaitingPresentationResult = false }
             state.setConnectionStatus(hasCommandClient)
         }
     }

@@ -359,6 +359,7 @@ final class VoiceBarDaemonController {
     private let forceKillProcess: ForceKillProcess
     var isMicrophonePromptHidden: () -> Bool = { false }
     private let microphonePromptScheduler: (@escaping () -> Void) -> Void
+    private let microphonePromptDisabled: () -> Bool
     private let microphonePermissionPrompter: MicrophonePermissionPrompter
     private let livenessProbe: () -> Bool
     private let heartbeatReader: HeartbeatReader?
@@ -418,7 +419,8 @@ final class VoiceBarDaemonController {
         },
         microphonePermissionPrompter: @escaping MicrophonePermissionPrompter = VoiceBarDaemonController
             .showMicrophonePermissionPrompt,
-        microphonePromptScheduler: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }
+        microphonePromptScheduler: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) },
+        microphonePromptDisabled: @escaping () -> Bool = VoiceLayerPaths.isVoicelayerDisabled
     ) {
         self.executableURLProvider = executableURLProvider
         self.configurationProvider = configurationProvider
@@ -427,6 +429,7 @@ final class VoiceBarDaemonController {
         self.restartScheduler = restartScheduler
         self.processExitWaiter = processExitWaiter
         self.forceKillProcess = forceKillProcess
+        self.microphonePromptDisabled = microphonePromptDisabled
         self.microphonePromptScheduler = microphonePromptScheduler
         self.microphonePermissionPrompter = microphonePermissionPrompter
         self.livenessProbe = livenessProbe
@@ -450,7 +453,7 @@ final class VoiceBarDaemonController {
         return launch()
     }
 
-    func handleCaptureFailure(type: String, userInitiated: Bool = false) {
+    func handleCaptureFailure(type: String, userInitiated: Bool = true) {
         guard type == "broken-mic" else { return }
         guard !VoiceLayerPaths.isVoicelayerDisabled() else {
             NSLog("[VoiceBar] Broken-mic capture failure while VoiceLayer disabled — not restarting daemon")
@@ -494,7 +497,7 @@ final class VoiceBarDaemonController {
             guard let self else { return }
             microphonePromptScheduled = false
             // A successful capture, disable, or another snooze may arrive before this turn.
-            guard !VoiceLayerPaths.isVoicelayerDisabled() else {
+            guard !microphonePromptDisabled() else {
                 clearDeferredMicrophonePermissionPrompt()
                 return
             }
