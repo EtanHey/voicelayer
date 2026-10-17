@@ -47,7 +47,7 @@ test("native TERM attribution immediately fails every protected sender without r
 
 test.skipIf(!hasCompiler || !!process.env.HOOK_CROSS_RUN_CHILD)("aborted fixture harness reaps escape fixtures and refuses unrelated identities", () => {
   const result = spawnSync("python3", [resolve(import.meta.dir, "hook_fixture_registry_test.py"), resolve(import.meta.dir, "..")], {
-    encoding: "utf8", timeout: 90_000,
+    encoding: "utf8", timeout: 180_000,
   });
   expect(result.error).toBeUndefined();
   expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({
@@ -56,4 +56,8 @@ test.skipIf(!hasCompiler || !!process.env.HOOK_CROSS_RUN_CHILD)("aborted fixture
   for (const mode of ["INT", "TERM", "KILL", "timeout", "assertion", "stale"]) {
     expect(result.stdout).toContain(`PASS ${mode}:`);
   }
-}, 95_000);
+  expect(result.stdout).toContain("PASS late registration:");
+  for (const point of ["KILL-supervisor", "KILL-group", "KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test", "KILL", "KILL-late"]) {
+    expect(result.stdout).toContain(`PASS full-harness abort ${point}: zero run-tagged survivors`);
+  }
+}, 185_000);

@@ -23,15 +23,15 @@ def wait(predicate, seconds=8):
     return False
 
 
-def launch():
-    child = subprocess.Popen(['bash', str(root / 'tests/test_hook_orphan_daemon.sh'), '--abort-fixture-check'],
+def launch(args=None):
+    child = subprocess.Popen(['bash', str(root / 'tests/test_hook_orphan_daemon.sh'), *(args or ['--abort-fixture-check'])],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              start_new_session=True)
     base = None
     for line in child.stdout:
         if line.startswith('HOOK evidence: '):
             base = Path(line.strip().split(': ', 1)[1])
-        if line.strip() == 'ABORT READY':
+        if line.startswith('ABORT READY'):
             return child, base
     raise AssertionError(f'fixture failed to start: {child.wait()}')
 
@@ -84,3 +84,77 @@ try:
 finally:
     sentinel.stdin.close()
     sentinel.wait(timeout=5)
+
+
+def kill_guardian(base):
+    saved = json.loads((base / 'fixture-guardian.identity').read_text())
+    assert registry.metadata(saved['pid']) == saved['started']
+    observed = registry.identities(root)(saved['pid'])
+    assert observed[1]['HOOK_FIXTURE_TOKEN'] == saved['token']
+    os.kill(saved['pid'], signal.SIGKILL)
+
+
+def survivors(base):
+    read_identity = registry.identities(root)
+    rows = subprocess.check_output(['ps', '-ax', '-o', 'pid=,uid=,stat='], text=True)
+    result = []
+    for line in rows.splitlines():
+        fields = line.split()
+        if len(fields) != 3 or fields[1] != str(os.getuid()) or 'Z' in fields[2]:
+            continue
+        pid = int(fields[0])
+        observed = read_identity(pid)
+        if observed and any(observed[1].get(key) == str(base) for key in (
+                'HOOK_FIXTURE_RUN', 'HOOK_FIXTURE_BIRTH_RUN')):
+            result.append(pid)
+    return result
+
+
+# The actual pre-exec launcher is paused before registration. The owner AND
+# guardian die; stale cleanup closes registration, then the launcher resumes.
+child, base = launch()
+state = json.loads((base / 'fixture-registry.json').read_text())
+env = dict(os.environ, HOOK_FIXTURE_RUN=str(base), HOOK_FIXTURE_TOKEN=state['token'],
+           HOOK_FIXTURE_REGISTRATION_GATE='1')
+late = registry.spawn([sys.executable, '-c', 'raise SystemExit("payload must never exec")'],
+                      env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+try:
+    assert late.stdout.readline().strip() == 'REGISTRATION WAITING'
+    kill_guardian(base)
+    child.kill()
+    child.wait(timeout=5)
+    registry.sweep(root)
+    assert (base / 'fixture-cleanup.done').exists()
+    assert (base / 'fixture-registration.closed').exists()
+    late.stdin.write('x')
+    late.stdin.flush()
+    assert late.wait(timeout=5) == 75, 'late launcher executed after closure'
+    registry.sweep(root)
+    assert not survivors(base), f'late registration survivors: {survivors(base)}'
+    print('PASS late registration: stale sweep closes registration before completion; late exec refused', flush=True)
+finally:
+    late.stdin.close()
+    if late.poll() is None:
+        # Closing the gate on EOF lets the same register/closed check settle it.
+        late.wait(timeout=5)
+    if child.poll() is None:
+        child.kill()
+        child.wait(timeout=5)
+
+
+for point in ('KILL-supervisor', 'KILL-group', 'KILL-swift-build', 'KILL-group-swift-build',
+              'KILL-swift-test', 'KILL', 'KILL-late'):
+    child, base = launch(['--abort-lifecycle-check', point])
+    try:
+        # Readiness is emitted by the FULL harness after reaching the actual
+        # lifecycle point, with its negatives, runner and real supervisor active.
+        child.kill()
+        child.wait(timeout=5)
+        assert wait(lambda: not survivors(base), 15), f'{point}: survivors {survivors(base)}'
+        assert (base / 'fixture-registration.closed').exists()
+        assert (base / 'fixture-cleanup.done').exists()
+        print(f'PASS full-harness abort {point}: zero run-tagged survivors', flush=True)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)

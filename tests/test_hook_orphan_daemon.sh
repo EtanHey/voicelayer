@@ -17,10 +17,13 @@ import tempfile
 import time
 
 root = Path(sys.argv[1])
+harness_parent = os.getppid()
 sys.dont_write_bytecode = True
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(root / "tests"))
 import hook_fixture_registry as registry
+if os.environ.get("HOOK_FIXTURE_RUN"):
+    registry.register()
 registry.sweep(root)
 os.environ.setdefault("HOOK_TREE_PID", str(os.getpid()))
 os.environ.setdefault("HOOK_TREE_TOKEN", uuid.uuid4().hex)
@@ -42,9 +45,41 @@ def build_native(destination):
         raise SystemExit(1)
     return True
 
+base = Path(tempfile.mkdtemp(prefix="vlho-", dir="/tmp"))
+bin_dir = base / "bin"
+bin_dir.mkdir()
+real_bun = shutil.which("bun")
+term_library = base / "term-sender.so"
+nonce = base.name
+os.environ["VOICELAYER_HOOK_TEST_NONCE"] = nonce
+os.environ["VOICELAYER_HOOK_TEST_SCOPE"] = str(base)
+owner_path = base / "fixture-owner.lock"
+owner_lock = owner_path.open("w+")
+fcntl.flock(owner_lock, fcntl.LOCK_EX)
+assert not os.get_inheritable(owner_lock.fileno())
+# Popen closes this non-inheritable FD; SIGKILL of the harness releases the lease.
+owner_started = subprocess.check_output(["ps", "-p", str(os.getpid()), "-o", "lstart="], text=True,
+    env=dict(os.environ, LC_ALL="C", TZ="UTC")).strip()
+owner_lock.write(json.dumps(dict(pid=os.getpid(), nonce=nonce, started=owner_started)))
+owner_lock.flush()
+os.environ["VOICELAYER_HOOK_TEST_OWNER"] = str(owner_path)
+os.environ["VOICELAYER_HOOK_AUDIT_LOG"] = str(base / "decisions.jsonl")
+os.environ["HOOK_FIXTURE_HELPER"] = str(root / "tests")
+guardian, fixture_fd = registry.start(base, root)
+print("HOOK evidence: " + str(base), flush=True)
+
+def finish_wrapper(success):
+    registry.finish(guardian, fixture_fd)
+    owner_lock.close()
+    if success and os.environ.get("HOOK_KEEP_EVIDENCE") != "1":
+        shutil.rmtree(base)
+
+
 if "--native-check" in sys.argv[2:]:
     with tempfile.TemporaryDirectory(prefix="vlho-cc-", dir="/tmp") as scratch:
-        raise SystemExit(0 if build_native(Path(scratch) / "sender.so") else 77)
+        available = build_native(Path(scratch) / "sender.so")
+        finish_wrapper(available)
+        raise SystemExit(0 if available else 77)
 if "--cross-run" in sys.argv[2:]:
     # Separate Bun processes, preloads and repository roots, as in two worktrees.
     with tempfile.TemporaryDirectory(prefix="vlho-runs-", dir="/tmp") as runs:
@@ -63,7 +98,7 @@ if "--cross-run" in sys.argv[2:]:
             env = dict(os.environ, HOOK_CROSS_RUN_CHILD="1", HOOK_CROSS_RUN_DIR=runs,
                        HOOK_CROSS_RUN_LANE=run)
             output = open(Path(runs) / (run + ".log"), "w+")
-            child = subprocess.Popen([shutil.which("bun"), "test", "tests/hook-orphan-daemon.test.ts"],
+            child = registry.spawn([shutil.which("bun"), "test", "tests/hook-orphan-daemon.test.ts"],
                                      cwd=checkout, env=env, stdout=output, stderr=subprocess.STDOUT)
             children.append((child, output))
         failed = False
@@ -77,6 +112,7 @@ if "--cross-run" in sys.argv[2:]:
             print(output.read(), end="", flush=True)
             output.close()
             failed |= status != 0
+        finish_wrapper(not failed)
         raise SystemExit(int(failed))
 if "--concurrent" in sys.argv[2:]:
     with tempfile.TemporaryDirectory(prefix="vlho-pair-", dir="/tmp") as pair:
@@ -84,7 +120,7 @@ if "--concurrent" in sys.argv[2:]:
         for lane in ("A", "B"):
             env = dict(os.environ, HOOK_PAIR_DIR=pair, HOOK_PAIR_LANE=lane)
             output = open(Path(pair) / (lane + ".log"), "w+")
-            child = subprocess.Popen(["bash", str(root / "tests/test_hook_orphan_daemon.sh")],
+            child = registry.spawn(["bash", str(root / "tests/test_hook_orphan_daemon.sh")],
                                      env=env, stdout=output, stderr=subprocess.STDOUT)
             children.append((child, output))
         failed = False
@@ -98,32 +134,13 @@ if "--concurrent" in sys.argv[2:]:
             print(output.read(), end="", flush=True)
             output.close()
             failed |= status != 0
+        finish_wrapper(not failed)
         raise SystemExit(int(failed))
-base = Path(tempfile.mkdtemp(prefix="vlho-", dir="/tmp"))
-bin_dir = base / "bin"
-bin_dir.mkdir()
-real_bun = shutil.which("bun")
-term_library = base / "term-sender.so"
 if "--policy-check" not in sys.argv[2:] and not build_native(term_library):
+    registry.finish(guardian, fixture_fd)
+    owner_lock.close()
     shutil.rmtree(base)
     raise SystemExit(77)
-nonce = base.name
-os.environ["VOICELAYER_HOOK_TEST_NONCE"] = nonce
-os.environ["VOICELAYER_HOOK_TEST_SCOPE"] = str(base)
-owner_path = base / "fixture-owner.lock"
-owner_lock = owner_path.open("w+")
-fcntl.flock(owner_lock, fcntl.LOCK_EX)
-assert not os.get_inheritable(owner_lock.fileno())
-# Popen closes this non-inheritable FD; SIGKILL of the harness releases the lease.
-owner_started = subprocess.check_output(["ps", "-p", str(os.getpid()), "-o", "lstart="], text=True,
-    env=dict(os.environ, LC_ALL="C", TZ="UTC")).strip()
-owner_lock.write(json.dumps(dict(pid=os.getpid(), nonce=nonce, started=owner_started)))
-owner_lock.flush()
-os.environ["VOICELAYER_HOOK_TEST_OWNER"] = str(owner_path)
-os.environ["VOICELAYER_HOOK_AUDIT_LOG"] = str(base / "decisions.jsonl")
-os.environ["HOOK_FIXTURE_HELPER"] = str(root / "tests")
-guardian, fixture_fd = registry.start(base, root)
-print("HOOK evidence: " + str(base), flush=True)
 succeeded = False
 barriers_done = False
 negative_names = ("concurrent", "parented", "live", "unrelated", "argv-only", "unreadable",
@@ -202,8 +219,7 @@ if "--policy-check" in sys.argv[2:]:
             pass
         else:
             raise AssertionError("protected TERM did not abort immediately")
-    os.close(fixture_fd)
-    assert guardian.wait(timeout=8) == 0
+    registry.finish(guardian, fixture_fd)
     owner_lock.close()
     shutil.rmtree(base)
     print("PASS attribution: every protected TERM fails immediately; no retry", flush=True)
@@ -211,7 +227,14 @@ if "--policy-check" in sys.argv[2:]:
 
 def executable(name, body):
     path = bin_dir / name
-    path.write_text(body)
+    payload = bin_dir / (name + "-fixture")
+    payload.write_text(body)
+    payload.chmod(0o755)
+    path.write_text("#!" + sys.executable + "\nimport os, sys\n"
+        "sys.dont_write_bytecode = True\n"
+        "sys.path.insert(0, os.environ['HOOK_FIXTURE_HELPER'])\n"
+        "import hook_fixture_registry as registry\n"
+        "registry.exec_registered([" + repr(str(payload)) + ", *sys.argv[1:]])\n")
     path.chmod(0o755)
 
 executable("swift", "#!" + sys.executable + "\n" + '''
@@ -226,6 +249,8 @@ if case in ("KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test"):
 executable("plutil", "#!/bin/sh\nexit 0\n")
 executable("bun", "#!" + sys.executable + "\n" + '''
 import os, pathlib, signal, socket, subprocess, sys, time
+sys.path.insert(0, os.environ["HOOK_FIXTURE_HELPER"])
+import hook_fixture_registry as registry
 if sys.argv[1] == "test":
     if os.environ["HOOK_CASE"] == "KILL-late":
         pathlib.Path(os.environ["HOOK_RECORD"] + ".suite").write_text(str(os.getpid()))
@@ -244,7 +269,7 @@ if case == "real":
     os.execv(os.environ["HOOK_REAL_BUN"], [os.environ["HOOK_REAL_BUN"], *sys.argv[1:]])
 if case in ("stubborn", "KILL-supervisor"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    child = subprocess.Popen([sys.executable, "-c",
+    child = registry.spawn([sys.executable, "-c",
         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)", run_dir])
     record.write_text(f"{os.getpid()} {child.pid}")
 else:
@@ -338,7 +363,7 @@ try:
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, interrupted)
     # A dead child awaiting wait() must never count as a running fixture.
-    zombie = subprocess.Popen([sys.executable, "-c", "pass"])
+    zombie = registry.spawn([sys.executable, "-c", "pass"])
     try:
         assert wait_until(lambda: "Z" in subprocess.run(
             ["ps", "-p", str(zombie.pid), "-o", "stat="],
@@ -373,18 +398,10 @@ try:
 import ctypes, os, pathlib, signal, sys, time
 sys.path.insert(0, os.environ["HOOK_FIXTURE_HELPER"])
 import hook_fixture_registry as registry
-if sys.argv[2] == "orphan" and os.fork():
-    raise SystemExit(0)
-os.setsid()
-registry.register()
 if sys.argv[3] == "child":
-    child = os.fork()
-    if child == 0:
-        os.execv(sys.executable, [sys.executable, "-c",
-            "import os,pathlib,signal,sys,time; sys.path.insert(0, os.environ['HOOK_FIXTURE_HELPER']); "
-            "import hook_fixture_registry as registry; registry.register(); os.close(int(os.environ['HOOK_FIXTURE_FD'])); signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-            "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)", sys.argv[1] + ".child"])
-os.close(int(os.environ["HOOK_FIXTURE_FD"]))
+    registry.spawn([sys.executable, "-c",
+        "import os,pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)", sys.argv[1] + ".child"])
 library = ctypes.CDLL(sys.argv[4])
 library.hook_term_sender.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
 assert library.hook_term_sender(os.fsencode(sys.argv[1] + ".term"),
@@ -393,11 +410,11 @@ pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
 while True: time.sleep(.05)
 '''
         env["HOOK_FIXTURE_HELPER"] = str(root / "tests")
-        proc = subprocess.Popen([sys.executable, "-c", code, str(record),
+        proc = registry.spawn([sys.executable, "-c", code, str(record),
                                  "orphan" if orphan else "parented", "child" if stubborn_child else "single",
                                  str(term_library), "src/mcp-server-daemon.ts", "VOICELAYER_TMP_ROOT=" + str(run_dir),
                                  "VOICELAYER_MCP_SOCKET_PATH=" + str(run_dir / "voicelayer-mcp.sock"),
-                                 "VOICELAYER_SOCKET_PATH=" + str(run_dir / "voicelayer.sock")], env=env, pass_fds=(fixture_fd,))
+                                 "VOICELAYER_SOCKET_PATH=" + str(run_dir / "voicelayer.sock")], env=env, orphan=orphan)
         if orphan:
             proc.wait(timeout=5)
         else:
@@ -440,10 +457,9 @@ while True: time.sleep(.05)
     if "--abort-fixture-check" in sys.argv[2:]:
         (base / "escape").symlink_to(base.parent / (nonce + "-outside"))
         fixture("symlink-escape", base / "escape" / "voicelayer-run-tests.900024")
-        parent = os.getppid()
         print("ABORT READY", flush=True)
         while True:
-            assert os.getppid() == parent, "abort driver disappeared"
+            assert os.getppid() == harness_parent, "abort driver disappeared"
             assert not (base / "fail-assertion").exists(), "injected assertion failure"
             time.sleep(.05)
 
@@ -570,8 +586,6 @@ while True: time.sleep(.05)
 import fcntl, json, os, pathlib, subprocess, sys, time
 sys.path.insert(0, os.environ["HOOK_FIXTURE_HELPER"])
 import hook_fixture_registry as registry
-registry.register()
-os.close(int(os.environ["HOOK_FIXTURE_FD"]))
 path = pathlib.Path(sys.argv[1])
 with path.open("w+") as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
@@ -581,7 +595,7 @@ with path.open("w+") as lock:
     lock.flush()
     while True: time.sleep(.05)
 """
-    owner_process = subprocess.Popen([sys.executable, "-c", owner_code, str(dead_owner_path)], pass_fds=(fixture_fd,))
+    owner_process = registry.spawn([sys.executable, "-c", owner_code, str(dead_owner_path)])
     try:
         assert wait_until(lambda: dead_owner_path.exists() and dead_owner_path.stat().st_size > 0)
         leaked = fixture("dead-owner", base / "voicelayer-run-tests.900013", owner=dead_owner_path)
@@ -640,6 +654,8 @@ with path.open("w+") as lock:
 
     cases = ("KILL-supervisor", "KILL-group", "KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test",
              "success", "failure", "timeout", "INT", "TERM", "HUP", "KILL", "KILL-late", "stubborn", "debug", "suite-failure", "real")
+    if "--abort-lifecycle-check" in sys.argv[2:]:
+        cases = (sys.argv[-1],)
     for case in cases:
         signal_reason = case + " fault injection"
         lane = base / case
@@ -656,7 +672,7 @@ with path.open("w+") as lock:
         daemon_group = None
         with (lane / "output").open("w+") as output:
             try:
-                runner = subprocess.Popen(["bash", "-c",
+                runner = registry.spawn(["bash", "-c",
                     "PS4='+ elapsed=${SECONDS}s sender=$$ '; set -x; source \"$1\"",
                     "hook-runner", str(root / "scripts/run_tests.sh")], env=env,
                                           stdout=output, stderr=output, start_new_session=True)
@@ -673,6 +689,13 @@ with path.open("w+") as lock:
                 if case in ("KILL-group", "KILL-supervisor"):
                     daemon_group = os.getpgid(pids[0])
                     assert daemon_group != runner.pid, "daemon shares caller group"
+                if "--abort-lifecycle-check" in sys.argv[2:]:
+                    if case == "KILL-late":
+                        assert wait_until(lambda: Path(str(record) + ".suite").exists()), "suite never started"
+                    print("ABORT READY " + case, flush=True)
+                    while True:
+                        assert os.getppid() == harness_parent, "abort driver disappeared"
+                        time.sleep(.05)
                 if "group" in case:
                     # runner is our new session/group leader; never signal the caller's group.
                     assert os.getpgid(runner.pid) == runner.pid
@@ -754,7 +777,7 @@ with path.open("w+") as lock:
                 state_dir.mkdir()
                 with (state_dir / "daemon-spawn.lock").open("a") as lock:
                     fcntl.flock(lock, fcntl.LOCK_SH)
-                    cleanup = subprocess.Popen([sys.executable, str(root / "scripts/supervise-test-daemon.py"),
+                    cleanup = registry.spawn([sys.executable, str(root / "scripts/supervise-test-daemon.py"),
                                                 "--cleanup", str(state_dir)])
                     time.sleep(.15)
                     assert cleanup.poll() is None, "cleanup raced unfinished group publication"
@@ -791,8 +814,7 @@ finally:
          "-o", "pid=,ppid=,pgid=,stat=,lstart=,command="], text=True, capture_output=True).stdout.splitlines()
         if not succeeded else [], term_markers=[p.name for p in base.glob("*.term")])
     signal_reason = "final fixture teardown"
-    os.close(fixture_fd)
-    assert guardian.wait(timeout=8) == 0, "fixture guardian failed; evidence retained"
+    registry.finish(guardian, fixture_fd)
     for proc in protected:
         proc.wait(timeout=5)
     owner_lock.close()

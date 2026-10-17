@@ -1,4 +1,5 @@
 """Harness-only fixture ownership. Never used by the production orphan reaper."""
+import atexit
 import fcntl
 import importlib.util
 import json
@@ -20,25 +21,65 @@ def metadata(pid):
     return ' '.join(fields[2:])
 
 
+_identity_readers = {}
+
+
 def identities(root):
+    key = str(root)
+    if key in _identity_readers:
+        return _identity_readers[key]
     spec = importlib.util.spec_from_file_location('fixture_identity', root / 'scripts/supervise-test-daemon.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    _identity_readers[key] = module.process_identity
     return module.process_identity
 
 
 def register():
-    """Called by the actual fixture before publishing its ready PID, including after fork."""
+    """Publish under the same lock that closes registration before teardown."""
     base = Path(os.environ['HOOK_FIXTURE_RUN'])
-    pid = os.getpid()
-    row = dict(pid=pid, started=metadata(pid), token=os.environ['HOOK_FIXTURE_TOKEN'])
-    assert row['started']
-    temporary = base / f'fixture-{pid}.tmp'
-    temporary.write_text(json.dumps(row))
-    temporary.replace(base / f'fixture-{pid}.json')
+    with (base / 'fixture-registration.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if (base / 'fixture-registration.closed').exists() or (base / 'fixture-cleanup.done').exists():
+            raise SystemExit(75)
+        pid = os.getpid()
+        row = dict(pid=pid, started=metadata(pid), token=os.environ['HOOK_FIXTURE_TOKEN'])
+        assert row['started']
+        temporary = base / f'fixture-{pid}.tmp'
+        temporary.write_text(json.dumps(row))
+        temporary.replace(base / f'fixture-{pid}.json')
+
+
+def exec_registered(argv, orphan=False):
+    if orphan:
+        if os.fork():
+            os._exit(0)
+        os.setsid()
+    if os.environ.pop('HOOK_FIXTURE_REGISTRATION_GATE', None):
+        print('REGISTRATION WAITING', flush=True)
+        sys.stdin.buffer.read(1)
+    register()
+    os.execvpe(argv[0], argv, os.environ)
+
+
+def spawn(argv, *, orphan=False, **kwargs):
+    """The only fixture Popen: the child registers itself before executing argv."""
+    env = dict(kwargs.pop('env', os.environ))
+    env['HOOK_FIXTURE_BIRTH_RUN'] = env['HOOK_FIXTURE_RUN']
+    env['HOOK_FIXTURE_BIRTH_TOKEN'] = env['HOOK_FIXTURE_TOKEN']
+    return subprocess.Popen([sys.executable, __file__, '--orphan' if orphan else '--exec', *argv],
+                            env=env, **kwargs)
 
 
 def cleanup(base, root):
+    with (base / 'fixture-registration.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        # A late child must observe this before it can exec any fixture payload.
+        (base / 'fixture-registration.closed').touch()
+        _cleanup_closed(base, root)
+
+
+def _cleanup_closed(base, root):
     identity = identities(root)
     token = json.loads((base / 'fixture-registry.json').read_text())['token']
     rows = []
@@ -60,8 +101,11 @@ def cleanup(base, root):
             report(pid, 'exited or unverifiable start; never signalled')
             return False
         observed = identity(pid)
-        if started != row['started'] or observed is None or any(observed[1].get(k) != v for k, v in (
-                ('HOOK_FIXTURE_RUN', str(base)), ('HOOK_FIXTURE_TOKEN', token))):
+        owned = observed is not None and any(
+            observed[1].get(run_key) == str(base) and observed[1].get(token_key) == token
+            for run_key, token_key in (('HOOK_FIXTURE_RUN', 'HOOK_FIXTURE_TOKEN'),
+                                       ('HOOK_FIXTURE_BIRTH_RUN', 'HOOK_FIXTURE_BIRTH_TOKEN')))
+        if started != row['started'] or not owned:
             report(pid, 'identity mismatch or unreadable; never signalled')
             return False
         return True
@@ -114,7 +158,7 @@ def sweep(root):
             if marker.is_symlink() or lock.is_symlink() or not marker.is_file() or not lock.is_file():
                 continue
             state = json.loads(marker.read_text())
-            if (base / 'fixture-cleanup.done').is_file():
+            if (base / 'fixture-cleanup.done').is_file() and (base / 'fixture-registration.closed').is_file():
                 continue
             if state.get('harness') != harness:
                 continue
@@ -147,14 +191,36 @@ def start(base, root):
     (base / 'fixture-guardian.identity').write_text(json.dumps(dict(
         pid=guardian.pid, started=metadata(guardian.pid), token=token)))
     os.close(read_fd)
-    os.environ['HOOK_FIXTURE_FD'] = str(write_fd)
+    atexit.register(finish, guardian, write_fd)
+    deadline = time.monotonic() + 5
+    while not (base / 'fixture-guardian.ready').exists():
+        assert guardian.poll() is None and time.monotonic() < deadline, 'guardian failed to become ready'
+        time.sleep(.01)
     return guardian, write_fd
 
 
+_finished = set()
+
+
+def finish(guardian, write_fd):
+    key = (guardian.pid, write_fd)
+    if key in _finished:
+        return
+    _finished.add(key)
+    os.close(write_fd)
+    assert guardian.wait(timeout=10) == 0, 'fixture guardian failed; evidence retained'
+
+
 if __name__ == '__main__':
+    if sys.argv[1] in ('--exec', '--orphan'):
+        exec_registered(sys.argv[2:], orphan=sys.argv[1] == '--orphan')
     base, root = map(Path, sys.argv[1:])
-    # Only the harness and still-starting fixture launchers hold the write end.
-    # EOF covers success, assertions, signals, subprocess timeouts and SIGKILL.
+    # Load native identity code before allowing payloads to spawn: wrapper
+    # checkouts can disappear on abort, but the guardian must remain independent.
+    identities(root)
+    (base / 'fixture-guardian.ready').touch()
+    # Only the owner holds the write end. Unregistered launchers cannot exec
+    # after EOF closes registration, including when stale cleanup wins the race.
     while os.read(0, 4096):
         pass
     with (base / 'fixture-cleanup.lock').open('a') as serial:
