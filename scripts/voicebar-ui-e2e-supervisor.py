@@ -56,16 +56,27 @@ def supervise(host):
     except BaseException as error:
         receipt['error'] = repr(error)
     finally:
-        # Independent cleanup legs: child cleanup/Show failure must never skip mute restore.
+        # Unmute only after positive owned-process termination proof, including on abort.
+        terminated = False
         for name in ['stop', 'restore_resident']:
             try:
-                getattr(host, name)()
+                host.guard_mute()
+            except BaseException as error:
+                receipt['cleanupErrors'].append('mute guard: ' + repr(error))
+            try:
+                result = getattr(host, name)()
+                if name == 'stop':
+                    terminated = result is True
             except BaseException as error:
                 receipt['cleanupErrors'].append(name + ': ' + repr(error))
+        receipt['ownedTerminationProven'] = terminated
+        if not terminated:
+            receipt['cleanupErrors'].append('Owned termination NOT_PROVEN; output mute retained')
         if initial is not None:
             try:
-                host.set_mute(initial)
-                receipt['muteRestored'] = host.muted() == initial
+                host.set_mute(initial if terminated else True)
+                receipt['muteRestored'] = terminated and host.muted() == initial
+                receipt['muteRetained'] = not terminated and host.muted()
             except BaseException as error:
                 receipt['cleanupErrors'].append('mute: ' + repr(error))
         receipt['finished'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -91,6 +102,8 @@ class NativeHost:
         self.cancelled = []
         self.deadline = None
         self.log = None
+        self.owned = {}
+        self.shutdown = []
 
     def run(self, args):
         return subprocess.check_output(args, text=True, timeout=15).strip()
@@ -107,11 +120,68 @@ class NativeHost:
             raise RuntimeError('Mute change unconfirmed')
 
     def ax(self, mode):
-        result = json.loads(self.run([str(self.output / 'voicebar-ui-e2e-resident'), str(self.resident['pid']), mode]))
+        self.guard_mute()
+        if self.identity(self.resident['pid']) != self.resident['started']:
+            raise RuntimeError('Resident identity changed; no AX action permitted')
+        args = [str(self.output / 'voicebar-ui-e2e-resident'), str(self.resident['pid']), mode]
+        if mode in ['close', 'hide', 'show']:
+            args.append(str(self.resident['settingsWindowId']))
+        result = json.loads(self.run(args))
         if mode != 'read':
             self.resident.setdefault('actions', []).append(mode)
             self.save_resident()
         return result
+
+    def guard_mute(self):
+        if not self.muted():
+            self.set_mute(True)
+        if not self.muted():
+            raise RuntimeError('Shutdown mute guard unconfirmed')
+
+    def settings_state(self):
+        result = self.ax('read')
+        opened = any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings'
+                     for n in result['nodes'])
+        if opened:
+            window_id = result.get('settingsWindowId')
+            if not isinstance(window_id, int) or window_id <= 0:
+                raise RuntimeError('Settings identity unreadable; no close permitted')
+            if (not self.resident.get('settingsOpened') or
+                    self.resident.get('settingsWindowId', window_id) != window_id):
+                raise RuntimeError('Settings is user-owned or replaced; no action permitted')
+            self.resident['settingsWindowId'] = window_id
+        self.resident['settingsOpened'] = opened
+        self.save_resident()
+        return opened
+
+    def settings(self, opened):
+        if self.settings_state() == opened:
+            return
+        # Set intent before possibly-applied open. Reconcile via a fresh read even on timeout.
+        if opened:
+            self.resident['settingsOpened'] = True
+            self.resident.pop('settingsWindowId', None)
+            self.save_resident()
+        try:
+            self.ax('open' if opened else 'close')
+        except Exception as error:
+            self.resident.setdefault('reconciledActionErrors', []).append(repr(error))
+            if self.settings_state() != opened:
+                raise
+        if self.settings_state() != opened:
+            raise RuntimeError('Settings transition unconfirmed; action not retried')
+
+    def surface(self, snapshot):
+        windows = snapshot.get('screenWindows')
+        if not isinstance(windows, list):
+            raise RuntimeError('Resident surface evidence unreadable')
+        for window in windows:
+            bounds = window.get('bounds', {})
+            if (not isinstance(window.get('layer'), int) or
+                    not all(isinstance(bounds.get(k), (int, float)) for k in ['X', 'Y', 'Width', 'Height']) or
+                    bounds['Width'] <= 0 or bounds['Height'] <= 0):
+                raise RuntimeError('Resident surface geometry unreadable')
+        return [dict(bounds=w['bounds'], layer=w['layer']) for w in windows]
 
     def save_resident(self):
         (self.output / 'resident-visibility.json').write_text(json.dumps(self.resident, indent=2) + '\n')
@@ -173,16 +243,18 @@ class NativeHost:
         self.resident = dict(pid=residents[0], started=self.identity(residents[0]), restoreRequired=False,
                              settingsOpened=False)
         self.save_resident()
-        nodes = self.ax('read')['nodes']
+        snapshot = self.ax('read')
+        nodes = snapshot['nodes']
         if any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings' for n in nodes):
             raise RuntimeError('Resident Settings already open; cannot close a user-owned window')
+        self.resident['initialSurface'] = self.surface(snapshot)
         # Own Settings exposes a positive recording-state footer even with a collapsed pill.
-        self.resident['settingsOpened'] = True
-        self.save_resident()
-        self.ax('open')
+        self.settings(True)
         wait_until_safe(self)
         nodes = self.ax('read')['nodes']
         self.resident['initialHidden'] = any('Show VoiceBar' in [n.get('title'), n.get('description')] for n in nodes)
+        if bool(self.resident['initialSurface']) == self.resident['initialHidden']:
+            raise RuntimeError('Initial visibility and surface evidence disagree; no Hide permitted')
         if not self.resident['initialHidden']:
             self.resident['restoreRequired'] = True  # Write BEFORE a possibly applied AX press.
             self.save_resident()
@@ -193,9 +265,7 @@ class NativeHost:
 
     def start(self):
         wait_until_safe(self)  # Recheck before launch, with hidden-state AX footer readable.
-        self.ax('close')
-        self.resident['settingsOpened'] = False
-        self.save_resident()
+        self.settings(False)
         if self.ax('read')['screenWindows']:
             raise RuntimeError('Resident window remains on screen after own Hide')
         self.check()
@@ -212,12 +282,14 @@ class NativeHost:
         self.child = subprocess.Popen([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-run.py'),
                                       str(self.output), '--scenario', self.scenario], env=env,
                                      stdout=self.log, stderr=subprocess.STDOUT)
+        self.remember(self.child.pid, 'runner')
 
     def poll(self):
         return self.child.poll() if self.child is not None else None
 
     def check(self):
         import shutil
+        self.collect_owned()
         permissions = json.loads(self.run([str(self.output / 'voicebar-ui-e2e-permissions')]))
         free = shutil.disk_usage('/System/Volumes/Data').free
         muted = self.muted()
@@ -243,17 +315,107 @@ class NativeHost:
                 next_check = time.monotonic() + 1
             time.sleep(min(.2, max(0, end - time.monotonic())))
 
-    def stop(self):
-        if self.child is not None and self.child.poll() is None:
-            self.child.send_signal(signal.SIGINT)  # Only owned supervisor child; it flushes media/restores apps.
-            self.child.wait(timeout=45)
-        if self.log:
-            self.log.close()
-        # An interrupted XCTest can leave QA alive. Never match by name or resident PID.
+    def process_state(self, pid):
+        try:
+            raw = self.run(['ps', '-p', str(pid), '-o', 'lstart=,stat=,ppid=,comm='])
+        except subprocess.CalledProcessError as error:
+            if error.returncode == 1 and not (error.output or '').strip():
+                return None
+            raise
+        fields = raw.split(None, 7)
+        if len(fields) != 8:
+            raise RuntimeError('Process identity unreadable: ' + str(pid))
+        return dict(started=' '.join(fields[:5]), state=fields[5], parent=int(fields[6]), cmd=fields[7])
+
+    def remember(self, pid, kind, expected_cmd=None, parent=None):
+        if pid in [os.getpid(), self.resident.get('pid'), self.resident.get('daemonPid')]:
+            raise RuntimeError('Protected identity cannot be owned')
+        state = self.process_state(pid)
+        if state is not None and expected_cmd is not None and state['cmd'] != expected_cmd:
+            raise RuntimeError('Process changed during ownership capture; no signal: ' + str(pid))
+        if state is not None and parent is not None and (state['parent'] != parent or not self.owned_alive(parent)):
+            raise RuntimeError('Child ownership changed during capture; no signal: ' + str(pid))
+        if state is not None and pid not in self.owned:
+            self.owned[pid] = dict(state, kind=kind)
+
+    def collect_owned(self):
+        rows = self.process_rows()
         expected = str((self.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
-        for pid, (_, cmd) in self.process_rows().items():
+        for pid, (_, cmd) in rows.items():
             if cmd == expected:
-                os.kill(pid, signal.SIGTERM)
+                self.remember(pid, 'qa', expected)  # Unique sandbox executable, never a name match.
+        while True:
+            added = False
+            for pid, (parent, cmd) in rows.items():
+                if pid not in self.owned and parent in self.owned:
+                    self.remember(pid, 'child', cmd, parent)
+                    added = added or pid in self.owned
+            if not added:
+                break
+
+    def owned_alive(self, pid):
+        current = self.process_state(pid)
+        if current is None or current['state'].startswith('Z'):
+            return False
+        owned = self.owned[pid]
+        if any(current[k] != owned[k] for k in ['started', 'cmd']):
+            raise RuntimeError('Owned PID identity changed; no signal: ' + str(pid))
+        return True
+
+    def shutdown_wait(self, seconds):
+        # Ignore latched cancellation/deadline here: they must not interrupt cleanup or mute checks.
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            self.guard_mute()
+            time.sleep(min(.2, max(0, end - time.monotonic())))
+
+    def terminate_owned(self, pid, runner=False):
+        for sig, seconds in ([(signal.SIGINT, 45)] if runner else []) + [(signal.SIGTERM, 5), (signal.SIGKILL, 5)]:
+            self.guard_mute()
+            # Re-read PID/start/command immediately before EVERY individual signal, never killpg.
+            if not self.owned_alive(pid):
+                return
+            os.kill(pid, sig)
+            self.shutdown.append(dict(pid=pid, signal=int(sig), identity=self.owned[pid]))
+            for _ in range(seconds):
+                self.collect_owned()
+                self.shutdown_wait(1)
+                if self.child is not None:
+                    self.child.poll()  # Reap the direct child without a blocking wait.
+                if not self.owned_alive(pid):
+                    return
+        raise RuntimeError('Owned process still live after shutdown: ' + str(pid))
+
+    def stop(self):
+        errors = []
+        # Runner, QA/descendant cleanup and final proof are independent, even if a leg fails.
+        def attempt(action):
+            try:
+                action()
+            except BaseException as error:
+                errors.append(repr(error))
+        attempt(self.collect_owned)
+        if self.child is not None and self.child.poll() is None:
+            if self.child.pid not in self.owned:
+                errors.append('Runner identity was not captured at launch; no signal permitted')
+            else:
+                attempt(lambda: self.terminate_owned(self.child.pid, runner=True))
+        attempt(self.collect_owned)  # Include QA launched while the runner was shutting down.
+        for pid in list(self.owned):
+            if self.child is None or pid != self.child.pid:
+                attempt(lambda pid=pid: self.terminate_owned(pid))
+        attempt(self.collect_owned)
+        for pid in self.owned:
+            def prove(pid=pid):
+                if self.owned_alive(pid):
+                    raise RuntimeError('Owned termination NOT_PROVEN: ' + str(pid))
+            attempt(prove)
+        if self.child is not None and self.child.poll() is None:
+            errors.append('Runner termination NOT_PROVEN')
+        if self.log:
+            attempt(self.log.close)
+        self.shutdown.append(dict(errors=errors, terminationProven=not errors))
+        return not errors
 
     def restore_resident(self):
         if not self.resident:
@@ -261,15 +423,32 @@ class NativeHost:
         if self.identity(self.resident['pid']) != self.resident['started']:
             raise RuntimeError('Cannot restore changed resident identity')
         if self.resident.get('restoreRequired'):
-            if not self.resident.get('settingsOpened'):
-                self.ax('open'); self.resident['settingsOpened'] = True
-            result = self.ax('show')
+            self.settings(True)
+            result = self.ax('read')
+            if any('Show VoiceBar' in [n.get('title'), n.get('description')] for n in result['nodes']):
+                try:
+                    self.ax('show')
+                except Exception as error:
+                    self.resident.setdefault('reconciledActionErrors', []).append(repr(error))
+                result = self.ax('read')  # Never retry a possibly applied Show.
             if not any('Hide VoiceBar for 1 hour' in [n.get('title'), n.get('description')] for n in result['nodes']):
                 raise RuntimeError('Own Show unconfirmed')
+            self.settings(False)
+            snapshot = self.ax('read')
+            if any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings' for n in snapshot['nodes']):
+                raise RuntimeError('Settings reopened; restoration NOT_PROVEN, no user-owned close permitted')
+            restored = self.surface(snapshot)
+            initial = self.resident.get('initialSurface')
+            self.resident['restoredSurface'] = restored
+            self.save_resident()
+            if not initial or not all(window in restored for window in initial):
+                raise RuntimeError('Original resident surface restoration NOT_PROVEN')
             self.resident['restoreRequired'] = False
             self.resident['restored'] = True
         if self.resident.get('settingsOpened'):
-            self.ax('close'); self.resident['settingsOpened'] = False
+            self.settings(False)
+        if self.resident.get('initialHidden') and self.surface(self.ax('read')):
+            raise RuntimeError('Initially hidden resident is now visible; restoration NOT_PROVEN')
         self.resident['identitiesUnchanged'] = self.identity(self.resident['daemonPid']) == self.resident['daemonStarted'] if 'daemonPid' in self.resident else True
         self.save_resident()
         if not self.resident['identitiesUnchanged']:
@@ -281,6 +460,7 @@ class NativeHost:
 
     def save(self, receipt):
         receipt['checks'] = self.checks
+        receipt['shutdown'] = self.shutdown
         (self.output / 'operator-state.json').write_text(json.dumps(receipt, indent=2) + '\n')
 
 
