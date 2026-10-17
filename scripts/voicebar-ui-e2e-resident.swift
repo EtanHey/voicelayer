@@ -35,6 +35,7 @@ if mode=="open" {
  guard let item=children(bar).first(where:{string($0,"AXTitle")=="VoiceBar"}) else{fail("No VoiceBar menu")}
  press(item);Thread.sleep(forTimeInterval:0.2)
  guard let settings=walk(item).first(where:{string($0,"AXTitle")=="Settings…"}) else{fail("No Settings action")}
+ guard settingsWindowId()==nil else{fail("Settings opened before press; cannot claim a user-owned window")}
  press(settings)
 } else if mode=="hide" || mode=="show" {
  let name=mode=="hide" ? "Hide VoiceBar for 1 hour":"Show VoiceBar"
@@ -51,4 +52,5 @@ let screenWindows = cgWindows([.optionOnScreenOnly, .excludeDesktopElements]).fi
     ((($0[kCGWindowBounds as String] as? [String: Any])?["Width"] as? NSNumber)?.doubleValue ?? 0) > 0 &&
     ((($0[kCGWindowBounds as String] as? [String: Any])?["Height"] as? NSNumber)?.doubleValue ?? 0) > 0
 }.map { ["number": $0[kCGWindowNumber as String] ?? 0, "bounds": $0[kCGWindowBounds as String] ?? [:], "layer": $0[kCGWindowLayer as String] ?? NSNull()] }
-let data=try JSONSerialization.data(withJSONObject:["pid":pid,"action":mode,"nodes":labels,"screenWindows":screenWindows,"settingsWindowId":settingsWindowId() as Any? ?? NSNull()],options:[.prettyPrinted,.sortedKeys]);print(String(decoding:data,as:UTF8.self))
+let windowId=settingsWindowId()
+let data=try JSONSerialization.data(withJSONObject:["pid":pid,"action":mode,"nodes":labels,"screenWindows":screenWindows,"settingsWindowId":windowId as Any? ?? NSNull(),"openedSettingsWindowId":mode=="open" ? (windowId as Any? ?? NSNull()):NSNull()],options:[.prettyPrinted,.sortedKeys]);print(String(decoding:data,as:UTF8.self))

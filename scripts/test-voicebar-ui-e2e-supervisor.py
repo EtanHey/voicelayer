@@ -9,11 +9,139 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 class SupervisorTests(unittest.TestCase):
+    def test_open_requires_positive_helper_provenance_not_intent(self):
+        for outcome in ['rejected', 'timeout', 'missing-proof', 'mismatched-proof', 'success']:
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                host = self.host(pathlib.Path(tmp))
+                host.resident.update(settingsOpened=False)
+                host.resident.pop('settingsWindowId', None)
+                state = dict(opened=False, actions=[])
+                host.guard_mute = lambda: None
+                def io(args):
+                    mode = args[2]
+                    state['actions'].append(mode)
+                    if mode == 'open':
+                        state['opened'] = True  # User interleaves before helper precheck, or applied open.
+                        if outcome == 'rejected':
+                            raise subprocess.CalledProcessError(2, args, stderr='Settings already open')
+                        if outcome == 'timeout': raise subprocess.TimeoutExpired(args, 15)
+                    if mode == 'close': state['opened'] = False
+                    window_id = 88 if state['opened'] else None
+                    result = dict(pid=100, action=mode, settingsWindowId=window_id,
+                                  nodes=[dict(role='AXWindow', title='VoiceBar Settings')] if window_id else [])
+                    if mode == 'open' and outcome != 'missing-proof':
+                        result['openedSettingsWindowId'] = 99 if outcome == 'mismatched-proof' else window_id
+                    return json.dumps(result)
+                host.run = io  # Real settings/settings_state/ax, only native I/O injected.
+                if outcome == 'success':
+                    host.settings(True)
+                    self.assertEqual(host.resident['settingsWindowId'], 88)
+                    host.settings(False)
+                    self.assertFalse(state['opened'])
+                else:
+                    with self.assertRaises(Exception): host.settings(True)
+                    self.assertFalse(host.resident.get('settingsOpened'))
+                    self.assertNotIn('settingsWindowId', host.resident)
+                    with self.assertRaises(RuntimeError): host.settings(False)
+                    self.assertTrue(state['opened'])
+                    self.assertNotIn('close', state['actions'])
+
+    def test_parent_death_before_scan_never_proves_launch_completeness(self):
+        for initial_muted in [False, True]:
+            for exit_code in [-9, 0]:
+                with self.subTest(initial_muted=initial_muted, exit_code=exit_code), tempfile.TemporaryDirectory() as tmp:
+                    host = self.host(pathlib.Path(tmp))
+                    class Child:
+                        pid = 200
+                        def poll(self): return exit_code
+                    host.child = Child()
+                    # Non-QA capture/xcodebuild reparented before the first PPID scan.
+                    orphan = dict(started='child-start', cmd='/fixture/capture', parent=1, state='S')
+                    host.owned = {200: dict(started='runner-start', cmd='python', kind='runner')}
+                    host.process_rows = lambda: {201: (1, orphan['cmd'])}
+                    host.process_state = lambda pid: orphan if pid == 201 else None
+                    mute, writes = [initial_muted], []
+                    host.muted = lambda: mute[0]
+                    def set_mute(value): mute[0] = value; writes.append(value)
+                    host.set_mute = set_mute
+                    host.prepare_resident = host.start = host.check = host.restore_resident = lambda: None
+                    host.export = lambda: 0
+                    host.save = lambda receipt: setattr(host, 'receipt', dict(receipt))
+                    with patch('os.kill') as kill:
+                        self.assertNotEqual(self.module().supervise(host), 0)
+                        kill.assert_not_called()
+                    self.assertNotIn(201, host.owned)
+                    self.assertFalse(host.receipt['ownedTerminationProven'])
+                    self.assertTrue(host.receipt['muteRetained'])
+                    self.assertFalse(host.receipt['muteRestored'])
+                    self.assertTrue(all(writes))
+
+    def test_launch_attempt_without_returned_handle_retains_mute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            host.resident.update(settingsOpened=False)
+            self.ax_fixture(host)
+            host.preconditions = lambda: True
+            host.check = host.guard_mute = lambda: None
+            host.process_rows = lambda: {}
+            with patch('subprocess.run'), patch('subprocess.Popen', side_effect=RuntimeError('launch response lost')):
+                with self.assertRaisesRegex(RuntimeError, 'launch response lost'): host.start()
+            self.assertFalse(host.stop())
+            self.assertIn('Launch completeness NOT_PROVEN', str(host.shutdown))
+
+    def test_graceful_runner_cleanup_keeps_unknown_launch_proof_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            live = {200: dict(started='runner-start', cmd='runner', parent=1, state='S')}
+            class Child:
+                pid = 200
+                def poll(self): return None if 200 in live else 0
+            host.child = Child()
+            host.owned = {200: dict(live[200], kind='runner')}
+            host.process_rows = lambda: {pid: (s['parent'], s['cmd']) for pid, s in live.items()}
+            host.process_state = lambda pid: live.get(pid)
+            host.guard_mute = lambda: None
+            host.shutdown_wait = lambda seconds: None
+            signals = []
+            def kill(pid, sig):
+                signals.append((pid, sig))
+                live.pop(pid)
+                if pid == 200:  # Late known QA remains independently cleaned.
+                    expected = str((host.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
+                    live[202] = dict(started='qa-start', cmd=expected, parent=1, state='S')
+            with patch('os.kill', side_effect=kill): self.assertFalse(host.stop())
+            self.assertEqual(signals[0], (200, self.module().signal.SIGINT))
+            self.assertEqual({pid for pid, _ in signals}, {200, 202})
+            self.assertFalse(live)
+
+    def test_daemon_identity_failure_keeps_restore_flags_recoverable(self):
+        for failure in ['mismatch', 'unreadable']:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                host = self.host(pathlib.Path(tmp))
+                host.resident.update(daemonPid=101, daemonStarted='daemon-start')
+                state = self.ax_fixture(host)
+                def identity(pid):
+                    if pid == 101:
+                        if failure == 'unreadable': raise RuntimeError('identity unreadable')
+                        return 'changed'
+                    return 'resident-start'
+                host.identity = identity
+                with self.assertRaises(RuntimeError): host.restore_resident()
+                self.assertTrue(host.resident['restoreRequired'])
+                self.assertFalse(host.resident.get('restored', False))
+                saved = json.loads((host.output / 'resident-visibility.json').read_text())
+                self.assertTrue(saved['restoreRequired'])
+                self.assertFalse(saved.get('restored', False))
+                host.identity = lambda pid: 'daemon-start' if pid == 101 else 'resident-start'
+                host.restore_resident()
+                self.assertTrue(host.resident['restored'])
+                self.assertEqual(state['actions'].count('show'), 1)
+
     def host(self, output):
         (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
         host = self.module().NativeHost(output, 'gate2246')
         host.resident = dict(pid=100, started='resident-start', restoreRequired=True,
-                             settingsOpened=True, initialHidden=False)
+                             settingsOpened=True, settingsWindowId=77, initialHidden=False)
         host.identity = lambda pid: 'resident-start'
         host.resident['initialSurface'] = [dict(bounds=dict(X=500, Y=0, Width=200, Height=32), layer=25)]
         return host
@@ -31,7 +159,8 @@ class SupervisorTests(unittest.TestCase):
             if state['settings']:
                 nodes = [dict(role='AXWindow', title='VoiceBar Settings'),
                          dict(title='Show VoiceBar' if state['hidden'] else 'Hide VoiceBar for 1 hour')]
-            return dict(nodes=nodes, settingsWindowId=77 if state['settings'] else None, screenWindows=(host.resident['initialSurface']
+            return dict(pid=100, action=mode, openedSettingsWindowId=77 if mode == 'open' else None,
+                        nodes=nodes, settingsWindowId=77 if state['settings'] else None, screenWindows=(host.resident['initialSurface']
                         if surface and not state['settings'] and not state['hidden'] else []))
         host.ax = ax
         return state

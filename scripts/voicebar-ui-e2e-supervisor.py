@@ -104,6 +104,7 @@ class NativeHost:
         self.log = None
         self.owned = {}
         self.shutdown = []
+        self.runner_launch_attempted = False
 
     def run(self, args):
         return subprocess.check_output(args, text=True, timeout=15).strip()
@@ -147,9 +148,8 @@ class NativeHost:
             if not isinstance(window_id, int) or window_id <= 0:
                 raise RuntimeError('Settings identity unreadable; no close permitted')
             if (not self.resident.get('settingsOpened') or
-                    self.resident.get('settingsWindowId', window_id) != window_id):
+                    self.resident.get('settingsWindowId') != window_id):
                 raise RuntimeError('Settings is user-owned or replaced; no action permitted')
-            self.resident['settingsWindowId'] = window_id
         self.resident['settingsOpened'] = opened
         self.save_resident()
         return opened
@@ -157,17 +157,25 @@ class NativeHost:
     def settings(self, opened):
         if self.settings_state() == opened:
             return
-        # Set intent before possibly-applied open. Reconcile via a fresh read even on timeout.
         if opened:
+            # Only the helper's successful action/window evidence confers ownership.
+            # Rejection, timeout or lost response preserves any window; never adopt by observation.
+            result = self.ax('open')
+            window_id = result.get('openedSettingsWindowId')
+            if (result.get('pid') != self.resident['pid'] or result.get('action') != 'open' or
+                    type(window_id) is not int or window_id <= 0 or
+                    result.get('settingsWindowId') != window_id):
+                raise RuntimeError('Settings open ownership NOT_PROVEN; preserve window')
             self.resident['settingsOpened'] = True
-            self.resident.pop('settingsWindowId', None)
+            self.resident['settingsWindowId'] = window_id
             self.save_resident()
-        try:
-            self.ax('open' if opened else 'close')
-        except Exception as error:
-            self.resident.setdefault('reconciledActionErrors', []).append(repr(error))
-            if self.settings_state() != opened:
-                raise
+        else:
+            try:
+                self.ax('close')
+            except Exception as error:
+                self.resident.setdefault('reconciledActionErrors', []).append(repr(error))
+                if self.settings_state() != opened:
+                    raise
         if self.settings_state() != opened:
             raise RuntimeError('Settings transition unconfirmed; action not retried')
 
@@ -279,6 +287,8 @@ class NativeHost:
                    VOICEBAR_UIE2E_RESIDENT_SNAPSHOT=str(self.output / 'resident-visibility.json'))
         self.log = (self.output / 'supervisor.log').open('w')
         self.deadline = time.monotonic() + 300
+        # Popen may launch then fail before returning a handle. Polling cannot close this gap.
+        self.runner_launch_attempted = True
         self.child = subprocess.Popen([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-run.py'),
                                       str(self.output), '--scenario', self.scenario], env=env,
                                      stdout=self.log, stderr=subprocess.STDOUT)
@@ -416,6 +426,10 @@ class NativeHost:
             attempt(prove)
         if self.child is not None and self.child.poll() is None:
             errors.append('Runner termination NOT_PROVEN')
+        if self.runner_launch_attempted or self.child is not None:
+            # No acknowledged pre-exec registration exists in this runner. Even exit 0 and
+            # an empty descendant scan cannot exclude reparented capture/xcodebuild children.
+            errors.append('Launch completeness NOT_PROVEN; discovered subset is not all-owned proof')
         if self.log:
             attempt(self.log.close)
         self.shutdown.append(dict(errors=errors, terminationProven=not errors))
@@ -424,6 +438,10 @@ class NativeHost:
     def restore_resident(self):
         if not self.resident:
             return
+        required = self.resident.get('restoreRequired', False)
+        if required:
+            self.resident['restored'] = False
+            self.save_resident()
         if self.identity(self.resident['pid']) != self.resident['started']:
             raise RuntimeError('Cannot restore changed resident identity')
         if self.resident.get('restoreRequired'):
@@ -447,16 +465,21 @@ class NativeHost:
             self.save_resident()
             if not initial or not all(window in restored for window in initial):
                 raise RuntimeError('Original resident surface restoration NOT_PROVEN')
-            self.resident['restoreRequired'] = False
-            self.resident['restored'] = True
         if self.resident.get('settingsOpened'):
             self.settings(False)
         if self.resident.get('initialHidden') and self.surface(self.ax('read')):
             raise RuntimeError('Initially hidden resident is now visible; restoration NOT_PROVEN')
-        self.resident['identitiesUnchanged'] = self.identity(self.resident['daemonPid']) == self.resident['daemonStarted'] if 'daemonPid' in self.resident else True
+        self.resident['identitiesUnchanged'] = False
         self.save_resident()
-        if not self.resident['identitiesUnchanged']:
+        if (self.identity(self.resident['pid']) != self.resident['started'] or
+                ('daemonPid' in self.resident and
+                 self.identity(self.resident['daemonPid']) != self.resident['daemonStarted'])):
             raise RuntimeError('Resident daemon identity changed during gate')
+        self.resident['identitiesUnchanged'] = True
+        if required:
+            self.resident['restoreRequired'] = False
+            self.resident['restored'] = True
+        self.save_resident()
 
     def export(self):
         return subprocess.call([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-results.py'),
