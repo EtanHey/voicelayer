@@ -203,6 +203,72 @@ final class SpeakSelectionTests: XCTestCase {
         }
     }
 
+    func testPendingSubmissionSurvivesUnrelatedIdentifiedRead() throws {
+        for preparing in [true, false] {
+            let state = speakingState("playing A")
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            let raw = "# Own B\n\n- original selection שלום"
+            state.selectionTextCaptureHandler = { $0(.completed(raw)) }
+            state.speakSelection()
+            let id = try XCTUnwrap(commands.first?["id"] as? String)
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": "external-X",
+                "text": "Preparing external X…", "long_read": ["id": "read-X", "preparing": true]])
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": id,
+                "text": preparing ? "Preparing speech…" : "Own B original selection שלום",
+                "long_read": ["id": "read-B", "preparing": preparing]])
+            XCTAssertEqual(state.statusText, preparing ? "Preparing speech…" : "Own B original selection שלום")
+            // Compare against B's original input even when the displayed speech is projected.
+            state.speakSelection()
+            XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text", "stop"])
+        }
+    }
+
+    func testNewerOwnReceiptStillSupersedesPendingRequestAfterExternalRead() throws {
+        let state = speakingState("A")
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        for text in ["B", "C"] {
+            state.selectionTextCaptureHandler = { $0(.completed(text)) }
+            state.speakSelection()
+        }
+        state.handleEvent(["type": "state", "state": "speaking", "request_id": "external-X",
+            "text": "X", "long_read": ["id": "read-X", "preparing": true]])
+        for index in [1, 0] {
+            state.handleEvent(["type": "state", "state": "speaking",
+                "request_id": try XCTUnwrap(commands[index]["id"] as? String),
+                "text": index == 1 ? "C" : "stale B",
+                "long_read": ["id": "read-\(index)", "preparing": false]])
+        }
+        XCTAssertEqual(state.statusText, "C")
+        state.selectionTextCaptureHandler = { $0(.completed("C")) }
+        state.speakSelection()
+        XCTAssertEqual(commands.last?["cmd"] as? String, "stop")
+    }
+
+    func testCapacityEvictionAllowsLateReceiptAsExternalHashRead() throws {
+        for next in [" selection 0\n", "different selection"] {
+            let state = VoiceState()
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            for index in 0..<33 {
+                state.selectionTextCaptureHandler = { $0(.completed("selection \(index)")) }
+                state.speakSelection()
+            }
+            XCTAssertEqual(try submissionCount(state), 32)
+            let first = try XCTUnwrap(commands.first)
+            let id = try XCTUnwrap(first["id"] as? String)
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": id,
+                "text_hash": try XCTUnwrap(first["text_hash"] as? String),
+                "text": "Preparing evicted read…", "long_read": ["id": "read-0", "preparing": true]])
+            XCTAssertEqual(state.mode, .speaking)
+            XCTAssertEqual(state.statusText, "Preparing evicted read…")
+            state.selectionTextCaptureHandler = { $0(.completed(next)) }
+            state.speakSelection()
+            XCTAssertEqual(commands.last?["cmd"] as? String, next == "different selection" ? "speak_text" : "stop")
+        }
+    }
+
     private func identityField(_ name: String, in state: VoiceState) -> Any? {
         Mirror(reflecting: state).children.first { $0.label == name || $0.label == "_" + name }?.value
     }

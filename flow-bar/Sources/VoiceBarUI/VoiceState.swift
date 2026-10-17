@@ -1042,7 +1042,8 @@ public final class VoiceState {
             selectionSubmissions[requestID] = (text, selectionSubmissionOrder)
             if selectionSubmissions.count > Self.selectionIdentityLimit,
                let oldest = selectionSubmissions.min(by: { $0.value.order < $1.value.order })?.key {
-                retireSelectionRequest(oldest)
+                // Forget only the text: an unresolved request may still receive a valid receipt.
+                selectionSubmissions.removeValue(forKey: oldest)
             }
             // speak_text preempts only the owned read and awaits its player teardown (PLAYER0/FX).
             sendCommand?(["cmd": "speak_text", "id": requestID, "text": text, "profile": "auto",
@@ -1857,9 +1858,8 @@ public final class VoiceState {
                 let requestID = event["request_id"] as? String
                 if let requestID, selectionRetiredRequestIDs.contains(requestID) { return }
                 let submission = requestID.flatMap { selectionSubmissions[$0] }
-                if let requestID, submission == nil, requestID != selectionReadRequestID {
-                    invalidateSelectionSpeechIdentity()
-                }
+                // An external read changes the current read, but cannot supersede pending own
+                // submissions. Only an acknowledged newer own request establishes their order.
                 // Receipts may arrive out of order; never roll a newer read back to an older one.
                 if let submission, submission.order < selectionReceiptOrder { return }
                 if let submission {
@@ -1890,7 +1890,6 @@ public final class VoiceState {
                     } else if requestID != nil, !acknowledgesSubmission {
                         selectionSubmittedText = nil
                         selectionSpeechRequestID = nil
-                        selectionReceiptOrder = selectionSubmissionOrder + 1
                     }
                 }
                 selectionReadHash = event["text_hash"] as? String
