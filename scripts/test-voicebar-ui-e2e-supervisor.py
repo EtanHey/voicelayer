@@ -262,11 +262,21 @@ class SupervisorTests(unittest.TestCase):
     def ax_fixture(self, host, *, surface=True, timeout=None):
         # Hypothetical owned UI adapter for downstream restoration invariants only.
         # NativeHost settings/settings_state/ax are tested separately above and refuse.
-        state = dict(settings=host.resident['settingsOpened'], hidden=True, actions=[])
+        state = dict(settings=host.resident['settingsOpened'], hidden=True, actions=[],
+                     phase='initial', events=[])
         def ax(mode):
             state['actions'].append(mode)
             if mode == 'open': state['settings'] = True
-            if mode == 'close': state['settings'] = False
+            if mode == 'close':
+                state['settings'] = False
+                state['phase'] = 'closed-awaiting-observation'
+                state['events'].append('close-applied')
+            if mode == 'read' and state['phase'] == 'closed-awaiting-observation':
+                state['phase'] = 'close-observed'
+                state['events'].append('post-close-read')
+            elif mode == 'read' and state['phase'] == 'close-observed':
+                state['phase'] = 'final-surface-read'
+                state['events'].append('final-surface-read')
             if mode == 'show': state['hidden'] = False
             if mode == timeout:
                 raise subprocess.TimeoutExpired(mode, 15)
@@ -278,19 +288,59 @@ class SupervisorTests(unittest.TestCase):
                         nodes=nodes, settingsWindowId=77 if state['settings'] else None, screenWindows=(host.resident['initialSurface']
                         if surface and not state['settings'] and not state['hidden'] else []))
         host.ax = ax
+        def settings_state():
+            result = host.ax('read')
+            return any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings'
+                       for n in result['nodes'])
         def settings(opened):
-            if state['settings'] != opened:
+            if settings_state() != opened:
+                lost_response = None
                 try:
                     host.ax('open' if opened else 'close')
-                except subprocess.TimeoutExpired:
-                    if state['settings'] != opened: raise
-            host.resident['settingsOpened'] = state['settings']
+                except subprocess.TimeoutExpired as error:
+                    lost_response = error
+                # A dispatch response/cache is not observation of the applied lifecycle.
+                if settings_state() != opened:
+                    if lost_response is not None: raise lost_response
+                    raise RuntimeError('Hypothetical Settings transition unconfirmed')
+            host.resident['settingsOpened'] = opened
             if opened: host.resident['settingsWindowId'] = 77
             else: host.resident.pop('settingsWindowId', None)
             host.save_resident()
         host.settings = settings
-        host.settings_state = lambda: state['settings']
+        host.settings_state = settings_state
         return state
+
+    def test_hrest3t_adapter_observes_close_before_final_surface(self):
+        for timeout in [None, 'close']:
+            with self.subTest(timeout=timeout), tempfile.TemporaryDirectory() as tmp:
+                host = self.host(pathlib.Path(tmp))
+                state = self.ax_fixture(host, timeout=timeout)
+                host.settings(False)
+                self.assertEqual(state['actions'], ['read', 'close', 'read'])
+                self.assertFalse(host.resident['settingsOpened'])
+                self.assertNotIn('settingsWindowId', host.resident)
+                final = host.ax('read')
+                self.assertFalse(final['nodes'])
+                self.assertEqual(state['events'],
+                                 ['close-applied', 'post-close-read', 'final-surface-read'])
+
+    def test_hrest3t_adapter_rejects_cache_only_close_proof(self):
+        for timeout in [None, 'close']:
+            with self.subTest(timeout=timeout), tempfile.TemporaryDirectory() as tmp:
+                host = self.host(pathlib.Path(tmp))
+                state = self.ax_fixture(host, timeout=timeout)
+                original = host.ax
+                def ax(mode):
+                    result = original(mode)
+                    if mode == 'read' and not state['settings']:
+                        result['nodes'] = [dict(role='AXWindow', title='VoiceBar Settings')]
+                    return result
+                host.ax = ax
+                with self.assertRaises(Exception): host.settings(False)
+                self.assertTrue(host.resident['settingsOpened'])
+                self.assertEqual(host.resident['settingsWindowId'], 77)
+                self.assertEqual(state['actions'], ['read', 'close', 'read'])
 
     def test_applied_close_timeout_reconciles_settings_and_restores_surface(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -321,17 +371,18 @@ class SupervisorTests(unittest.TestCase):
                 host = self.host(pathlib.Path(tmp))
                 state = self.ax_fixture(host, timeout='close' if failure == 'applied-timeout' else None)
                 original = host.ax
-                closed_reads = [0]
                 def ax(mode):
                     if mode == 'close' and failure in ['failed', 'timeout']:
                         if failure == 'timeout': raise subprocess.TimeoutExpired(mode, 15)
                         raise RuntimeError('Close rejected')
+                    # User reopen occurs AFTER close reconciliation and BEFORE final proof.
+                    # Change the whole synthetic lifecycle, including ID and surface evidence.
+                    if mode == 'read' and failure == 'reopened' and state['phase'] == 'close-observed':
+                        state.update(settings=True, phase='user-reopened')
+                        state['events'].append('user-reopened')
                     result = original(mode)
                     if mode == 'read' and not state['settings']:
-                        closed_reads[0] += 1
                         if failure == 'unreadable': raise RuntimeError('AX evidence unavailable')
-                        if failure == 'reopened' and closed_reads[0] > 1:
-                            result['nodes'] = [dict(role='AXWindow', title='VoiceBar Settings')]
                         if failure == 'settings-only':
                             result['screenWindows'] = [dict(layer=0, bounds=dict(X=300, Y=300, Width=640, Height=480))]
                     return result
@@ -342,9 +393,14 @@ class SupervisorTests(unittest.TestCase):
                     self.assertFalse(host.resident['restoreRequired'])
                     self.assertFalse(state['settings'])
                 else:
-                    with self.assertRaises(Exception): host.restore_resident()
+                    with self.assertRaisesRegex(Exception, 'Settings reopened' if failure == 'reopened' else '.*'):
+                        host.restore_resident()
                     self.assertTrue(host.resident['restoreRequired'])
                     self.assertFalse(host.resident.get('restored', False))
+                    if failure == 'reopened':
+                        self.assertEqual(state['events'], ['close-applied', 'post-close-read', 'user-reopened'])
+                        self.assertTrue(state['settings'])
+                        self.assertEqual(state['actions'].count('close'), 1)  # No second/user close.
                     host.ax = original
                     host.restore_resident()
                     self.assertTrue(host.resident['restored'])
