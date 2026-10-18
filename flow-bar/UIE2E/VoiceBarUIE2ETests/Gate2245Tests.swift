@@ -7,6 +7,30 @@ func gate2245HasOwnedScreenWindows(_ screenWindows: [[String: Any]], pid: Int) -
 }
 // END GATE2245 WINDOW OWNERSHIP
 
+// BEGIN GATE2246 RENDERED WORDS
+func gate2246TeleprompterContains(_ pill: XCUIElement, text: String) -> Bool {
+    let expected = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    guard !expected.isEmpty else { return false }
+    let deadline = ProcessInfo.processInfo.systemUptime + 3
+    repeat {
+        let rendered = pill.staticTexts.allElementsBoundByIndex.flatMap { element -> [String] in
+            let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = label.isEmpty ? (element.value as? String ?? "") : label
+            return content.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        }
+        // Require contiguous whole words, so "B" cannot pass for a stale "Bogus".
+        if rendered.count >= expected.count,
+           (0...(rendered.count - expected.count)).contains(where: { start in
+               Array(rendered[start..<(start + expected.count)]) == expected
+           }) { return true }
+        let remaining = deadline - ProcessInfo.processInfo.systemUptime
+        guard remaining > 0 else { return false }
+        Thread.sleep(forTimeInterval: min(0.05, remaining))
+    } while ProcessInfo.processInfo.systemUptime < deadline
+    return false
+}
+// END GATE2246 RENDERED WORDS
+
 // BEGIN GATE2246 MODAL QUERIES
 func gate2246Alert(_ app: XCUIApplication) -> XCUIElement {
     app.dialogs.containing(.staticText, identifier: "VoiceLayer microphone permission needs attention").firstMatch
@@ -95,7 +119,7 @@ extension VoiceBarFlowTests {
                 if !text.isEmpty {
                     XCTAssertEqual(receipt["statusText"] as? String, text)
                     let pill = app.dialogs["VoiceBar GATE2245 Product Pill"]
-                    XCTAssertTrue(pill.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch.exists,
+                    XCTAssertTrue(gate2246TeleprompterContains(pill, text: text),
                         "Current teleprompter text missing: " + text)
                 }
                 if name == "busy" {
