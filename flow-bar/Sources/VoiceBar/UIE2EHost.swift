@@ -487,7 +487,7 @@ final class UIE2EModel {
         case "speaking", "readback":
             voice.isHovering = true
             voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
-                "text": "First QA item\nSecond QA item"])
+                "text": "First QA item\nSecond QA item", "readback_id": "qa-readback"])
             // Decode the legacy wire shape too: works on both main and CLN1b's typed boundaries.
             voice.handleEvent(["type": "subtitle", "words": [
                 ["offset_ms": 0, "duration_ms": 1000, "text": "First"],

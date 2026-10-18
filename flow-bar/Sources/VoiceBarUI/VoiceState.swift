@@ -455,6 +455,9 @@ public final class VoiceState {
 
     /// Word boundary timestamps from TTS engine (ms offsets from audio start).
     public var wordBoundaries: [TeleprompterBoundary] = []
+    private var playbackReadbackID: String?
+    private var retainedReadbackID: String?
+    private var pendingReadbackSeekIDs: Set<String> = []
     private var retainedTeleprompterText: String?
     private var retainedTeleprompterWordBoundaries: [TeleprompterBoundary] = []
     public private(set) var isTeleprompterDismissed = false
@@ -1604,8 +1607,21 @@ public final class VoiceState {
     }
 
     public func seek(offsetMs: Int) {
-        guard mode == .speaking, offsetMs >= 0 else { return }
-        sendCommand?(["cmd": "seek", "offset_ms": offsetMs])
+        guard mode == .speaking || isTeleprompterReadback, offsetMs >= 0 else { return }
+        var command: [String: Any] = ["cmd": "seek", "offset_ms": offsetMs]
+        if isTeleprompterReadback {
+            guard let retainedReadbackID else { showConfirmation("Replay prefix audio unavailable"); return }
+            command["scope"] = "readback"
+            command["readback_id"] = retainedReadbackID
+            let id = UUID().uuidString
+            command["id"] = id
+            pendingReadbackSeekIDs.insert(id)
+        }
+        sendCommand?(command)
+    }
+
+    public func reportWordTimingUnavailable() {
+        showConfirmation("Word timing unavailable")
     }
 
     public func playbackElapsedMilliseconds() -> Int {
@@ -1970,6 +1986,7 @@ public final class VoiceState {
                 let offset = (event["playback_offset_ms"] as? NSNumber)?.doubleValue
                 let validOffset = offset.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
                 playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000
+                playbackReadbackID = event["readback_id"] as? String
                 playbackDurationMilliseconds = (event["duration_ms"] as? NSNumber)?.intValue
                 playbackChunkStartMilliseconds = (event["long_read"] as? [String: Any])?["chunk_start_ms"] as? Int ?? 0
                 let longRead = event["long_read"] as? [String: Any]
@@ -2272,8 +2289,9 @@ public final class VoiceState {
             }
 
         case "error":
-            if event["source"] as? String == "seek", mode == .speaking {
-                errorMessage = event["message"] as? String ?? "Seek failed"
+            if event["source"] as? String == "seek" {
+                if mode == .speaking { errorMessage = event["message"] as? String ?? "Seek failed" }
+                else if isTeleprompterReadback { showConfirmation(event["message"] as? String ?? "Seek failed") }
                 return
             }
             let showDuringBarRecording = event["show_during_bar_recording"] as? Bool ?? false
@@ -2803,6 +2821,7 @@ public final class VoiceState {
         if clearQueue, mode == .speaking {
             let trimmed = statusText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
+                retainedReadbackID = playbackReadbackID
                 retainedTeleprompterText = statusText
                 retainedTeleprompterWordBoundaries = wordBoundaries
                 notifyPanelLayoutChangedIfNeeded(true)
@@ -2858,6 +2877,8 @@ public final class VoiceState {
 
     private func clearRetainedTeleprompter() {
         let hadRetainedTeleprompter = retainedTeleprompterText != nil
+        retainedReadbackID = nil
+        pendingReadbackSeekIDs.removeAll()
         retainedTeleprompterText = nil
         retainedTeleprompterWordBoundaries = []
         isTeleprompterDismissed = false
@@ -3804,6 +3825,13 @@ public final class VoiceState {
     }
 
     private func handleAckEvent(_ event: [String: Any]) {
+        if event["command"] as? String == "seek" {
+            guard let id = event["id"] as? String, pendingReadbackSeekIDs.remove(id) != nil else { return }
+            if event["outcome"] as? String != "accept", isTeleprompterReadback {
+                showConfirmation(event["reason"] as? String ?? "Seek failed")
+            }
+            return
+        }
         // speak_text is not a recorder intent. Match its raw ack without changing that contract.
         if event["command"] as? String == "speak_text" {
             guard let id = event["id"] as? String, selectionSubmissions[id] != nil else { return }

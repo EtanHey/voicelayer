@@ -13,6 +13,12 @@ spec.loader.exec_module(results)
 
 
 class ReportTests(unittest.TestCase):
+    def test_seek2_can_no_longer_be_waived_as_an_expected_failure(self):
+        step = dict(passed=True, expectedFailure=dict(packet='SEEK2', surface='notch:seek-idle',
+                    descriptions=['[SEEK2] readback must seek']))
+        with self.assertRaises(ValueError):
+            results.expected_packet(step)
+
     def test_expected_packet_failure_is_explicit_xfail_and_unmatched_cannot_pass(self):
         (self.root / 'a.png').write_bytes(b'png')
         step = dict(number=1, name='newline frame', attachment='UIE2E-0001', passed=True,

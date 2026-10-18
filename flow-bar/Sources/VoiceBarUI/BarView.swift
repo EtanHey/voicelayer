@@ -634,6 +634,7 @@ public struct BarView: View {
                     playbackEpoch: state.playbackEpoch,
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
                     onSeek: state.seek,
+                    onSeekUnavailable: state.reportWordTimingUnavailable,
                     estimatedPlaybackStartMilliseconds: state.playbackChunkStartMilliseconds,
                     wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth

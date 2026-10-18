@@ -37,7 +37,7 @@ def expected_packet(step):
         return None
     packet = expected.get('packet')
     descriptions = expected.get('descriptions')
-    if (step.get('passed') is not True or packet not in {'P14b', 'SEEK2', 'SEL1', 'P1e', 'P1f'}
+    if (step.get('passed') is not True or packet not in {'P14b', 'SEL1', 'P1e', 'P1f'}
             or not isinstance(descriptions, list) or not descriptions
             or not all(isinstance(d, str) and '[' + packet + ']' in d for d in descriptions)):
         raise ValueError('Invalid or unmatched expected product failure')

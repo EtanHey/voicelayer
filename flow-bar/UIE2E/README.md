@@ -135,7 +135,8 @@ The lead runs the visual gate on the integrated release candidate.
 
 Known product packets use **strict** `XCTExpectFailure`, an assertion-only matcher
 requiring the packet tag, and an explicit XFAIL receipt: P14b (list newline frames),
-SEEK2 (idle readback word seek), and SEL1 (selection replacement while Preparing).
+and SEL1 (selection replacement while Preparing).
+Idle readback word seek (SEEK2) is a normal assertion, including the exact word offset.
 An unexpected pass or unrelated assertion still fails.
 Expected surfaces are recorded separately from verified coverage and must have their
 matching observed packet receipt. The contact sheet labels each XFAIL and preserves
