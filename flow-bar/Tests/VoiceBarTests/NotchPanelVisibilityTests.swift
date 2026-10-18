@@ -162,14 +162,25 @@ final class NotchPanelVisibilityTests: XCTestCase {
 
     @MainActor func testProductSnoozeExpiryShowsCurrentSpeech() async throws {
         let (app, panel) = productPanel()
-        defer { app.unsnoozeNow(); panel.orderOut(nil) }
+        let sleepReturned = expectation(description: "injected snooze sleep returned")
+        let expiryCompleted = expectation(description: "expiry restored the speech panel")
+        var observingExpiry = true
+        defer {
+            observingExpiry = false // Cleanup must never fulfill acceptance.
+            app.unsnoozeNow()
+            panel.orderOut(nil)
+        }
         app.configurePanelVisibilityForTesting(panel, snoozeSleep: {
-            try await Task.sleep(for: .milliseconds(20))
+            sleepReturned.fulfill()
         })
         try hide(app)
         app.voiceState.handleEvent(["type": "state", "state": "speaking", "text": "current words"])
         XCTAssertFalse(panel.isVisible)
-        try await Task.sleep(for: .milliseconds(100))
+        app.completeFirstRunSetupDetection {
+            if observingExpiry { expiryCompleted.fulfill() }
+            return false // Completion witness only; never open a wizard.
+        }
+        await fulfillment(of: [sleepReturned, expiryCompleted], timeout: 5, enforceOrder: true)
         XCTAssertFalse(app.isSnoozed)
         XCTAssertFalse(app.voiceState.isHidden)
         XCTAssertNil(app.voiceState.hiddenUntil)
@@ -220,6 +231,7 @@ final class NotchPanelVisibilityTests: XCTestCase {
         let suite = "HIDE1-setup-\(UUID().uuidString)"
         var readiness = SetupLaunchReadiness(permissionsGranted: false, listenerActive: false)
         var presentations = 0
+        var onPresentation: (() -> Void)?
 
         init(app: AppDelegate) throws {
             self.app = app
@@ -230,6 +242,7 @@ final class NotchPanelVisibilityTests: XCTestCase {
                 guard let self else { return }
                 presentations += 1
                 wizard.show() // Real controller, synthetic dependencies, shared offscreen policy.
+                onPresentation?()
             }
         }
 
@@ -281,11 +294,14 @@ final class NotchPanelVisibilityTests: XCTestCase {
         let (app, panel) = productPanel()
         let setup = try SetupFixture(app: app)
         defer { app.unsnoozeNow(); setup.close(); panel.orderOut(nil) }
-        app.configurePanelVisibilityForTesting(panel, snoozeSleep: { try await Task.sleep(for: .milliseconds(20)) })
+        let presented = expectation(description: "automatic setup presented after snooze expiry")
+        setup.onPresentation = { presented.fulfill() }
+        // Release the injected timer immediately, then await the actual presentation.
+        app.configurePanelVisibilityForTesting(panel, snoozeSleep: {})
         try hide(app)
         setup.detectionFinished()
         XCTAssertEqual(setup.presentations, 0)
-        try await Task.sleep(for: .milliseconds(100))
+        await fulfillment(of: [presented], timeout: 5)
         XCTAssertFalse(app.isSnoozed)
         XCTAssertEqual(setup.presentations, 1)
         XCTAssertEqual(setup.wizard.windowForTesting?.isVisible, true)
