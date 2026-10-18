@@ -5,16 +5,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSION=""
-UPLOAD=0
 SKIP_TAP_CHECK=0
 NOTARY_PROFILE="${VOICEBAR_NOTARY_PROFILE:-notary-layers}"
 ENTITLEMENTS_PLIST="${VOICEBAR_ENTITLEMENTS:-$PACKAGE_ROOT/flow-bar/bundle/VoiceBar.entitlements}"
 ARTIFACT_ROOT="${VOICEBAR_RELEASE_ROOT:-$PACKAGE_ROOT/dist/voicebar-release}"
 TAP_ROOT="${VOICEBAR_HOMEBREW_TAP_ROOT:-}"
+T3_PROOF=""
 
 usage() {
     cat <<'EOF'
-Usage: scripts/release-voicebar.sh [--version VERSION] [--output-dir DIR] [--notary-profile PROFILE] [--tap-root DIR] [--skip-tap-check] [--upload]
+Usage: scripts/release-voicebar.sh [--version VERSION] [--output-dir DIR] [--notary-profile PROFILE] [--tap-root DIR --t3-proof PROOF.json] [--skip-tap-check]
 
 Builds an isolated Developer-ID-signed, notarized VoiceBar.zip for the GitHub
 release and prints the EtanHey/homebrew-layers formula and cask bump inputs.
@@ -24,8 +24,16 @@ Options:
   --output-dir DIR         Artifact root. Defaults to dist/voicebar-release.
   --notary-profile NAME    notarytool keychain profile. Defaults to notary-layers.
   --tap-root DIR           Homebrew tap checkout. Required unless --skip-tap-check is used.
+  --t3-proof PROOF.json    Installed-candidate T3 Option+F5 PASS proof. Required by the
+                           tap check, which gates the cask bump; there is no bypass.
   --skip-tap-check         Verify artifact only. Use before the matching tap bump exists.
-  --upload                 Run gh release upload vVERSION VoiceBar.zip --clobber.
+                           A fresh build is newer than any proof, so a release build
+                           always runs with this; the tap check runs after install.
+
+Delivery (asset upload, formula and cask commit and push) is gated on the
+installed-candidate T3 Option+F5 proof and lives only in
+scripts/promote-voicebar-release.sh. This script always rebuilds, and a fresh
+build is newer than any proof, so it cannot deliver.
 EOF
 }
 
@@ -67,13 +75,22 @@ while [[ $# -gt 0 ]]; do
             TAP_ROOT="$2"
             shift 2
             ;;
+        --t3-proof)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --t3-proof requires a value" >&2
+                exit 2
+            fi
+            T3_PROOF="$2"
+            shift 2
+            ;;
         --skip-tap-check)
             SKIP_TAP_CHECK=1
             shift
             ;;
         --upload)
-            UPLOAD=1
-            shift
+            echo "ERROR: --upload is retired. A fresh build can never carry a T3 Option+F5 proof." >&2
+            echo "Install the candidate, produce the proof, then: scripts/promote-voicebar-release.sh --t3-proof PROOF.json (docs/voicebar-release-runbook.md)" >&2
+            exit 2
             ;;
         -h|--help)
             usage
@@ -133,6 +150,9 @@ VERIFY_ARGS=(
 if [[ -n "$TAP_ROOT" ]]; then
     VERIFY_ARGS+=(--tap-root "$TAP_ROOT")
 fi
+if [[ -n "$T3_PROOF" ]]; then
+    VERIFY_ARGS+=(--t3-proof "$T3_PROOF")
+fi
 if [[ "$SKIP_TAP_CHECK" -eq 1 ]]; then
     VERIFY_ARGS+=(--skip-tap-check)
 fi
@@ -142,24 +162,13 @@ SHA256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
 
 echo "[release-voicebar] Artifact: $ZIP_PATH"
 echo "[release-voicebar] sha256: $SHA256"
-echo "[release-voicebar] Upload command:"
-echo "  gh release upload v$VERSION \"$ZIP_PATH\" --clobber --repo EtanHey/voicelayer"
-echo "[release-voicebar] Homebrew formula and cask bump:"
-echo "  repo: EtanHey/homebrew-layers"
-echo "  files: Formula/voicelayer.rb Casks/voicebar.rb"
-echo "  Formula/voicelayer.rb: update npm url to voicelayer-mcp-$VERSION.tgz and sha256 to the npm tarball checksum"
-echo "  Casks/voicebar.rb: version \"$VERSION\""
-echo "  Casks/voicebar.rb: sha256 \"$SHA256\""
-if [[ "$SKIP_TAP_CHECK" -eq 1 && -n "$TAP_ROOT" ]]; then
-    echo "  after updating the tap, rerun verification without --skip-tap-check:"
-    echo "    \"$PACKAGE_ROOT/scripts/verify-voicebar-release.sh\" --version \"$VERSION\" --app \"$APP_PATH\" --zip \"$ZIP_PATH\" --tap-root \"$TAP_ROOT\""
-fi
-if [[ -n "$TAP_ROOT" ]]; then
-    echo "  commit both formula and cask together:"
-    echo "    git -C \"$TAP_ROOT\" add Formula/voicelayer.rb Casks/voicebar.rb"
-    echo "    git -C \"$TAP_ROOT\" commit -m \"Update VoiceLayer formula and VoiceBar cask to $VERSION\""
-fi
-
-if [[ "$UPLOAD" -eq 1 ]]; then
-    gh release upload "v$VERSION" "$ZIP_PATH" --clobber --repo EtanHey/voicelayer
+echo "[release-voicebar] Next: install this candidate, produce the T3 Option+F5 proof"
+echo "  (docs/voicebar-release-runbook.md), then deliver it. Never write the tap by hand."
+echo "[release-voicebar] Delivery (asset upload + EtanHey/homebrew-layers formula and cask commit/push):"
+echo "  \"$PACKAGE_ROOT/scripts/promote-voicebar-release.sh\" --version \"$VERSION\" --app \"$APP_PATH\" --zip \"$ZIP_PATH\" \\"
+echo "    --tap-root \"${TAP_ROOT:-TAP_ROOT}\" --formula-sha256 NPM_TGZ_SHA256 --t3-proof PROOF.json"
+echo "  It writes Formula/voicelayer.rb (voicelayer-mcp-$VERSION.tgz + the published npm tarball sha256)"
+echo "  and Casks/voicebar.rb (version \"$VERSION\", sha256 \"$SHA256\")."
+if [[ "$SKIP_TAP_CHECK" -eq 1 ]]; then
+    echo "  Artifact-only run: the tap check with --t3-proof PROOF.json runs inside promote-voicebar-release.sh."
 fi

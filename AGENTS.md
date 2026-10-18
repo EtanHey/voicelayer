@@ -153,6 +153,10 @@ paths in both test roots.
   burned a cycle "retrying publish" and reported a false 401 blocker to Etan because of this.
 - `npm view <pkg> version` is **not** evidence your publish worked — it shows whatever is on the
   registry regardless of who put it there. Use the command's exit status and `npm view <pkg> time`.
+- VoiceBar reaches users only through `scripts/promote-voicebar-release.sh` (asset upload + tap
+  formula/cask commit and push). It refuses without an installed-candidate T3 Option+F5 release
+  proof (`--t3-proof`, made by `scripts/t3-optf5-proof.ts`). No bypass, and never write the tap by
+  hand. Procedure: `docs/voicebar-release-runbook.md`.
 - Formula/cask checksums must come from the **published** artifact, never a local `npm pack`:
   `npm publish` re-packs and gzip embeds a timestamp, so local bytes differ.
 
