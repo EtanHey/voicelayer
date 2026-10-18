@@ -26,6 +26,12 @@ import time
 SCENARIO_BUDGET_SECONDS = {'full': 2400, 'focused-338': 2400, 'gate2246': 600, 'hide1': 300}
 # Whole owned-process cleanup (runner SIGINT 45 s + TERM/KILL legs + late children), bounded.
 CLEANUP_BUDGET_SECONDS = 180
+# Held back from the drain for the final scan and termination proof.
+FINAL_PROOF_RESERVE_SECONDS = 20
+# First cleanup scan; the runner's TERM/KILL time is never spent on discovery.
+FIRST_SCAN_SECONDS = 15
+# Attempts for a target whose identity read fails transiently; never a signal without a read.
+IDENTITY_READ_ATTEMPTS = 3
 
 # The notch resident (2.2.45+) exposes one AX state group whose description is its visual
 # state (VoiceBarNotchContract.accessibilityLabel(for:)): exactly 'VoiceBar' when idle,
@@ -53,6 +59,14 @@ SUPERVISOR_LOCK_PATH = pathlib.Path('/tmp/voicebar-ui-e2e-supervisor-%d.lock' % 
 
 class OwnershipRace(RuntimeError):
     """A candidate's ownership could not be proven during a scan; it is skipped, never signalled."""
+
+
+class IdentityUnreadable(RuntimeError):
+    """A live PID's identity could not be read; it is reported, never signalled."""
+
+
+class StillLive(RuntimeError):
+    """An owned process survived its whole TERM/KILL escalation."""
 
 
 class _BsdInfo(ctypes.Structure):
@@ -85,7 +99,7 @@ def kernel_birth(pid):
         return birth
     if error == errno.ESRCH:
         return None
-    raise RuntimeError('Process identity unreadable: %d (errno %d)' % (pid, error))
+    raise IdentityUnreadable('Process identity unreadable: %d (errno %d)' % (pid, error))
 
 
 def birth_text(birth):
@@ -105,12 +119,24 @@ def token_digest(token):
 
 
 def register_owned(registry, token, kind, pid, birth):
-    """Append one acknowledged launch: the runner calls this in the child before exec."""
-    line = json.dumps(dict(token=token_digest(token), kind=kind, pid=pid, birth=list(birth))) + '\n'
-    fd = os.open(str(registry), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    """Append one acknowledged launch: the runner calls this in the child before exec.
+
+    Returns only once the complete record is durable and read back; anything else raises, and the
+    raising preexec_fn means the child never execs (fail closed)."""
+    record = json.dumps(dict(token=token_digest(token), kind=kind, pid=pid, birth=list(birth)))
+    # The leading newline frames this record even after a torn prefix left by a failed writer.
+    data = ('\n' + record + '\n').encode()
+    fd = os.open(str(registry), os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
     try:
-        os.write(fd, line.encode())
+        # One O_APPEND write keeps concurrent children's records whole. A short write is never
+        # completed piecemeal (another record could land in between); it refuses the launch.
+        written = os.write(fd, data)
+        if written != len(data):
+            raise RuntimeError('Owned registration incomplete (%d of %d bytes); launch refused' % (written, len(data)))
         os.fsync(fd)
+        end = os.lseek(fd, 0, os.SEEK_CUR)  # O_APPEND left the offset at the end of this record.
+        if os.pread(fd, len(data), end - len(data)) != data:
+            raise RuntimeError('Owned registration readback mismatch; launch refused')
     finally:
         os.close(fd)
 
@@ -355,9 +381,23 @@ class NativeHost:
         self.shutdown = []
         self.runner_launch_attempted = False
         self.mute_retention_reason = None
+        # Absolute monotonic limit for the current cleanup stage; caps every native command.
+        self.time_limit = None
+        self.discovery_seconds = 0
+        # (source, pid) -> {pid, path, reason}: live targets never signalled because unproven.
+        self.unproven = {}
+        self.unproven_noted = set()
+
+    def command_timeout(self, bound=15):
+        if self.time_limit is None:
+            return bound
+        remaining = self.time_limit - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('Cleanup stage deadline reached')
+        return min(bound, remaining)
 
     def run(self, args):
-        return subprocess.check_output(args, text=True, timeout=15).strip()
+        return subprocess.check_output(args, text=True, timeout=self.command_timeout()).strip()
 
     def note(self, message):
         note(message, self.preflight_log)
@@ -388,7 +428,8 @@ class NativeHost:
         return value == 'true'
 
     def set_mute(self, value):
-        subprocess.run(['osascript', '-e', 'set volume output muted ' + str(value).lower()], check=True, timeout=15)
+        subprocess.run(['osascript', '-e', 'set volume output muted ' + str(value).lower()], check=True,
+                       timeout=self.command_timeout())
         if self.muted() != value:
             raise RuntimeError('Mute change unconfirmed')
 
@@ -685,27 +726,29 @@ class NativeHost:
             time.sleep(min(.2, max(0, end - time.monotonic())))
 
     def process_state(self, pid):
+        # Lifetime-bound read: the kernel's microsecond birth (lstart is only whole seconds) is read
+        # BEFORE and AFTER the command/state/PPID metadata. A reused PID always has a new birth, so
+        # equal births prove every field below came from that one lifetime (SUP3.1, Sol R2.1).
+        before = self.kernel_birth(pid)
+        if before is None:
+            return None
         try:
             # lstart is local time: pin locale and zone so a DST change cannot fake a reuse.
             raw = self.run(['env', 'LC_ALL=C', 'TZ=UTC0', 'ps', '-p', str(pid), '-o', 'lstart=,stat=,ppid=,comm='])
         except subprocess.CalledProcessError as error:
             if error.returncode == 1 and not (error.output or '').strip():
-                try:
-                    os.kill(pid, 0)  # Existence probe only; unreadable ps is not proof of death.
-                except ProcessLookupError:
+                # Unreadable ps is not proof of death; only the kernel's ESRCH or a new birth is.
+                if self.kernel_birth(pid) != before:
                     return None
-                raise RuntimeError('Process identity unreadable; PID still exists: ' + str(pid)) from error
-            raise RuntimeError('Process identity unreadable: %d (ps exit %d, output %r)'
-                               % (pid, error.returncode, error.output)) from error
+                raise IdentityUnreadable('Process identity unreadable; PID still exists: ' + str(pid)) from error
+            raise IdentityUnreadable('Process identity unreadable: %d (ps exit %d, output %r)'
+                                     % (pid, error.returncode, error.output)) from error
         fields = raw.split(None, 7)
         if len(fields) != 8:
-            raise RuntimeError('Process identity unreadable: ' + str(pid))
-        # Birth identity is the kernel's microsecond start time (lstart is only whole seconds),
-        # read after ps and again; a change across the reads is never one identity.
-        before = self.kernel_birth(pid)
-        if before is None:
-            return None
+            raise IdentityUnreadable('Process identity unreadable: ' + str(pid))
         after = self.kernel_birth(pid)
+        if after is None:
+            return None  # That lifetime ended during the read.
         if after != before:
             raise OwnershipRace('Process identity changed during read; no signal: %d (%r then %r)' % (pid, before, after))
         return dict(started=birth_text(before), lstart=' '.join(fields[:5]), state=fields[5],
@@ -713,6 +756,10 @@ class NativeHost:
 
     def kernel_birth(self, pid):
         return kernel_birth(pid)
+
+    def current_birth(self, pid):
+        birth = self.kernel_birth(pid)
+        return None if birth is None else birth_text(birth)
 
     def remember(self, pid, kind, expected_cmd=None, parent=None, expected_started=None, born_after=None):
         if pid in [os.getpid(), self.resident.get('pid'), self.resident.get('daemonPid')]:
@@ -734,14 +781,44 @@ class NativeHost:
         if state is not None and pid not in self.owned:
             self.owned[pid] = dict(state, kind=kind)
 
-    def adopt(self, pid, kind, expected_cmd=None, parent=None, **identity):
+    def adopt(self, pid, kind, expected_cmd=None, parent=None, path=None, found=None, **identity):
         # A process that exits, is reparented or reused mid-scan is unprovable, not fatal:
         # skip it (never signal it) and keep scanning. Launch completeness stays NOT_PROVEN.
+        # Any other failure is isolated to this candidate: it is reported, never signalled.
         try:
+            self.check_time()
             self.remember(pid, kind, expected_cmd, parent, **identity)
         except OwnershipRace as error:
             if len(self.ownership_races) < 50:
                 self.ownership_races.append(dict(pid=pid, kind=kind, error=str(error)))
+        except TimeoutError:
+            raise
+        except Exception as error:
+            if found is not None:
+                found[pid] = dict(pid=pid, path=path or expected_cmd, reason='%s identity unreadable: %r' % (kind, error))
+
+    def check_time(self):
+        if self.time_limit is not None and time.monotonic() >= self.time_limit:
+            raise TimeoutError('Cleanup stage deadline reached')
+
+    def new_generation(self, pid, started, path, found):
+        # A new birth at a tracked PID is a different process. It is never adopted (no ownership
+        # transfer, no new heuristic) and never signalled; it is reported (SUP3.1, Sol R2.5).
+        found[pid] = dict(pid=pid, path=path, reason='new birth %s at previously tracked PID (tracked birth %s); '
+                          'not adopted' % (started, self.owned[pid].get('started')))
+
+    def report_unproven(self, source, found, complete):
+        # A completed phase replaces that source's reports; an interrupted one only adds to them.
+        if complete:
+            self.unproven = {key: value for key, value in self.unproven.items() if key[0] != source}
+        for pid, entry in found.items():
+            self.unproven[(source, pid)] = entry
+            if (source, pid, entry['reason']) not in self.unproven_noted:
+                self.unproven_noted.add((source, pid, entry['reason']))
+                self.note('UNPROVEN target never signalled: pid %d path %r (%s)' % (pid, entry['path'], entry['reason']))
+
+    def unproven_targets(self):
+        return [dict(entry, source=key[0]) for key, entry in sorted(self.unproven.items(), key=lambda item: (item[0][1], item[0][0]))]
 
     def registered(self):
         # Acknowledged launches: the runner appends PID + kernel birth in each child before exec,
@@ -761,26 +838,88 @@ class NativeHost:
         return rows
 
     def collect_owned(self):
-        for pid, kind, started in self.registered():
-            if pid not in self.owned:
-                self.adopt(pid, 'registered-' + kind, expected_started=started)
-        rows = self.process_rows()
+        began = time.monotonic()
+        try:
+            self.discover()
+        finally:
+            self.discovery_seconds = time.monotonic() - began
+
+    def discover(self):
+        # The global ps scan and the registry are independent proofs: a failed scan still lets
+        # every registration be checked, and one bad candidate never starves the rest (Sol R2.2).
+        try:
+            rows, scan_error = self.process_rows(), None
+        except TimeoutError:
+            raise
+        except Exception as error:
+            rows, scan_error = None, error
+        found = {}
+        complete = False
+        try:
+            for pid, kind, started in self.registered():
+                path = rows[pid][1] if rows and pid in rows else None
+                if pid not in self.owned:
+                    self.adopt(pid, 'registered-' + kind, path=path, found=found, expected_started=started)
+                elif self.owned[pid].get('started') != started:
+                    try:
+                        self.check_time()
+                        state = self.process_state(pid)
+                    except OwnershipRace:
+                        continue
+                    except TimeoutError:
+                        raise
+                    except Exception as error:
+                        found[pid] = dict(pid=pid, path=path, reason='registered identity unreadable: %r' % (error,))
+                        continue
+                    if state is not None and state['started'] == started:
+                        self.new_generation(pid, started, state['cmd'], found)
+            complete = True
+        finally:
+            self.report_unproven('registry', found, complete)
+        if rows is None:
+            raise scan_error
         # Unique run-local executables, never a name match. XCTest launches its runner app
         # through launchd, so no PPID chain from our runner reaches it (run-03 PID 47300).
         unique = {str((self.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve()): 'qa',
                   str((self.output / 'DerivedData/Build/Products/Debug/VoiceBarUIE2ETests-Runner.app/Contents'
                        '/MacOS/VoiceBarUIE2ETests-Runner').resolve()): 'xctest-runner'}
-        for pid, (_, cmd) in rows.items():
-            if cmd in unique and pid not in self.owned:
-                self.adopt(pid, unique[cmd], cmd, born_after=self.launch_birth)
-        while True:
-            added = False
-            for pid, (parent, cmd) in rows.items():
-                if pid not in self.owned and parent in self.owned:
-                    self.adopt(pid, 'child', cmd, parent)
-                    added = added or pid in self.owned
-            if not added:
-                break
+        found = {}
+        complete = False
+        try:
+            for pid, (_, cmd) in rows.items():
+                if cmd not in unique:
+                    continue
+                if pid not in self.owned:
+                    self.adopt(pid, unique[cmd], cmd, found=found, born_after=self.launch_birth)
+                    continue
+                try:
+                    self.check_time()
+                    state = self.process_state(pid)
+                except OwnershipRace:
+                    continue
+                except TimeoutError:
+                    raise
+                except Exception as error:
+                    found[pid] = dict(pid=pid, path=cmd, reason='%s identity unreadable: %r' % (unique[cmd], error))
+                    continue
+                if (state is not None and state['cmd'] == cmd and state['started'] != self.owned[pid].get('started')
+                        and (parse_birth(state['started']) or (0, 0)) >= self.launch_birth):
+                    self.new_generation(pid, state['started'], cmd, found)
+            while True:
+                added = False
+                for pid, (parent, cmd) in rows.items():
+                    if parent not in self.owned or self.owned[parent].get('retired'):
+                        continue
+                    if pid not in self.owned:
+                        self.adopt(pid, 'child', cmd, parent, found=found)
+                        added = added or pid in self.owned
+                    elif self.owned[pid].get('retired'):
+                        found[pid] = dict(pid=pid, path=cmd, reason='child at previously tracked, retired PID; not adopted')
+                if not added:
+                    break
+            complete = True
+        finally:
+            self.report_unproven('scan', found, complete)
 
     def owned_alive(self, pid):
         owned = self.owned[pid]
@@ -832,65 +971,143 @@ class NativeHost:
             self.cleanup_step('mute guard', self.guard_mute)
             time.sleep(min(.2, max(0, end - time.monotonic())))
 
+    def bounded(self, limit, label, action):
+        # Optional cleanup work (discovery, mute checks) runs only under an absolute stage limit
+        # that caps every native command it issues; failures are recorded, never fatal.
+        previous = self.time_limit
+        self.time_limit = limit if previous is None else min(previous, limit)
+        try:
+            self.cleanup_step(label, action)
+        finally:
+            self.time_limit = previous
+
+    def discovery_fits(self, limit):
+        # Skip optional discovery that the last measured scan says cannot finish before the limit.
+        return limit - time.monotonic() > self.discovery_seconds
+
     def terminate_owned(self, pid, runner=False, deadline=None):
-        for sig, seconds in ([(signal.SIGINT, 45)] if runner else []) + [(signal.SIGTERM, 5), (signal.SIGKILL, 5)]:
-            self.cleanup_step('mute guard', self.guard_mute)
-            # Re-read PID/birth immediately before EVERY individual signal, never killpg. A residual
-            # exit-and-recycle between this read and kill() remains possible for non-child PIDs.
+        legs = ([(signal.SIGINT, 45)] if runner else []) + [(signal.SIGTERM, 5), (signal.SIGKILL, 5)]
+        handle = self.child is not None and pid == self.child.pid
+        for index, (sig, seconds) in enumerate(legs):
+            # Absolute leg deadline: later legs' grace is reserved, so slow discovery or mute checks
+            # shorten this leg and advance escalation instead of abandoning it (Sol R2.3).
+            leg_end = time.monotonic() + seconds
+            if deadline is not None:
+                leg_end = min(leg_end, deadline - sum(later for _, later in legs[index + 1:]))
+            self.bounded(leg_end, 'mute guard', self.guard_mute)
+            # Re-read PID/birth immediately before EVERY individual signal, never killpg.
             if not self.owned_alive(pid):
                 return
+            if not handle:
+                # Final fresh kernel birth: signal only if it still equals the recorded birth (Sol
+                # R2.1). RESIDUAL: the PID can still exit and be recycled between this proc_pidinfo
+                # and kill(2); macOS has no pidfd to close that last syscall gap. An unreaped Popen
+                # child (handle) cannot be reused, so it is exempt.
+                current = self.current_birth(pid)
+                if current is None:
+                    return
+                if current != self.owned[pid].get('started'):
+                    self.owned[pid]['retired'] = dict(reason='pid-reused', observedBirth=current)
+                    self.note('owned PID %d replaced before signal (owned birth %s, observed %s); never signalled'
+                              % (pid, self.owned[pid].get('started'), current))
+                    return
             os.kill(pid, sig)
             self.shutdown.append(dict(pid=pid, signal=int(sig), identity=self.owned[pid]))
             for _ in range(seconds):
-                if deadline is not None and time.monotonic() > deadline:
-                    raise RuntimeError('Cleanup deadline reached; owned termination NOT_PROVEN: ' + str(pid))
-                self.cleanup_step('discovery', self.collect_owned)
-                self.cleanup_step('wait', lambda: self.shutdown_wait(1))
+                if time.monotonic() >= leg_end:
+                    break
+                if self.discovery_fits(leg_end):
+                    self.bounded(leg_end, 'discovery', self.collect_owned)
+                # The wait's mute checks are capped too (one second of slack keeps a healthy
+                # osascript from timing out at the leg boundary).
+                self.bounded(leg_end + 1, 'wait', lambda: self.shutdown_wait(max(0, min(1, leg_end - time.monotonic()))))
                 if self.child is not None:
                     self.child.poll()  # Reap the direct child without a blocking wait.
                 if not self.owned_alive(pid):
                     return
-        raise RuntimeError('Owned process still live after shutdown: ' + str(pid))
+            if self.child is not None:
+                self.child.poll()
+            if not self.owned_alive(pid):
+                return
+        late = deadline is not None and time.monotonic() >= deadline
+        raise StillLive('Owned process still live after shutdown%s: %d' % (' (cleanup deadline reached)' if late else '', pid))
 
     def stop(self):
         errors = []
         self.mute_retention_reason = None
         self.cleanup_notes = []
-        deadline = time.monotonic() + CLEANUP_BUDGET_SECONDS
+        began = time.monotonic()
+        deadline = began + CLEANUP_BUDGET_SECONDS
+        drain_end = deadline - FINAL_PROOF_RESERVE_SECONDS
         # Runner, QA/descendant cleanup and final proof are independent, even if a leg fails.
         def attempt(action):
             try:
                 action()
             except BaseException as error:
                 errors.append(repr(error))
-        attempt(self.collect_owned)
-        handled = set()
-        if self.child is not None and self.child.poll() is None:
-            # The unreaped Popen handle is the runner's identity proof, even if ps missed it.
-            self.owned.setdefault(self.child.pid, dict(kind='runner', source='popen-handle'))
-            handled.add(self.child.pid)
-            attempt(lambda: self.terminate_owned(self.child.pid, runner=True, deadline=deadline))
+        runner = self.child.pid if self.child is not None and self.child.poll() is None else None
+        # One bounded first scan adopts descendants while the runner's PPID links still exist.
+        self.bounded(min(began + FIRST_SCAN_SECONDS, drain_end), 'discovery', self.collect_owned)
+        if runner is not None:
+            # The unreaped Popen handle is the runner's identity proof, even if ps missed it. Its
+            # TERM/KILL legs are reserved inside drain_end, before any later discovery.
+            self.owned.setdefault(runner, dict(kind='runner', source='popen-handle'))
+            attempt(lambda: self.terminate_owned(runner, runner=True, deadline=drain_end))
         # Fixed-point drain: anything adopted while another PID was shutting down is terminated too.
+        # A target is complete only once proven dead/reused or fully escalated; a failed identity
+        # read is retried, bounded, and then reported, never signalled (Sol R2.4).
+        done, failures = set(), {}
         while True:
-            attempt(self.collect_owned)  # Include QA launched while the runner was shutting down.
-            pending = [pid for pid in self.owned if pid not in handled
+            if self.discovery_fits(drain_end):
+                self.bounded(drain_end, 'discovery', self.collect_owned)
+            pending = [pid for pid in self.owned if pid not in done and pid != runner
                        and (self.child is None or pid != self.child.pid)]
             if not pending:
                 break
-            if time.monotonic() > deadline:
+            if time.monotonic() >= drain_end:
                 errors.append('Cleanup deadline reached; owned termination NOT_PROVEN: %r' % pending)
                 break
+            retry = False
             for pid in pending:
-                handled.add(pid)
-                attempt(lambda pid=pid: self.terminate_owned(pid, deadline=deadline))
-        for pid in self.owned:
-            def prove(pid=pid):
-                if self.owned_alive(pid):
-                    raise RuntimeError('Owned termination NOT_PROVEN: ' + str(pid))
-            attempt(prove)
+                if time.monotonic() >= drain_end:
+                    break
+                previous, self.time_limit = self.time_limit, drain_end
+                try:
+                    self.terminate_owned(pid, deadline=drain_end)
+                    done.add(pid)
+                except StillLive as error:
+                    errors.append(repr(error))
+                    done.add(pid)
+                except BaseException as error:
+                    failures[pid] = failures.get(pid, 0) + 1
+                    if failures[pid] >= IDENTITY_READ_ATTEMPTS:
+                        done.add(pid)
+                        self.report_unproven('owned', {pid: dict(pid=pid, path=self.owned[pid].get('cmd'), reason=
+                                             'owned identity unreadable after %d attempts: %r' % (failures[pid], error))}, False)
+                    else:
+                        retry = True
+                finally:
+                    self.time_limit = previous
+            if retry:
+                self.bounded(drain_end + 1, 'wait', lambda: self.shutdown_wait(max(0, min(1, drain_end - time.monotonic()))))
+        if self.discovery_fits(deadline):
+            self.bounded(deadline, 'discovery', self.collect_owned)  # Final report of unproven candidates.
+        previous, self.time_limit = self.time_limit, deadline
+        try:
+            for pid in self.owned:
+                def prove(pid=pid):
+                    if self.owned_alive(pid):
+                        raise RuntimeError('Owned termination NOT_PROVEN: ' + str(pid))
+                    self.unproven.pop(('owned', pid), None)
+                attempt(prove)
+        finally:
+            self.time_limit = previous
         if self.child is not None and self.child.poll() is None:
             errors.append('Runner termination NOT_PROVEN')
         errors.extend(self.cleanup_notes)
+        # Unproven live targets were never signalled: a known survivor is FAIL with mute retained.
+        errors[:0] = ['UNPROVEN target never signalled: pid %d path %r (%s)' % (entry['pid'], entry['path'], entry['reason'])
+                      for entry in self.unproven_targets()]
         if self.runner_launch_attempted or self.child is not None:
             # The runner registers its own launches before exec, but processes those launch in turn
             # (xcodebuild's tools, launchd-started apps beyond the exact paths) are only discovered.
@@ -900,7 +1117,7 @@ class NativeHost:
             attempt(self.log.close)
         if (self.runner_launch_attempted or self.child is not None) and errors == [reason]:
             self.mute_retention_reason = reason
-        self.shutdown.append(dict(errors=errors, terminationProven=not errors))
+        self.shutdown.append(dict(errors=errors, terminationProven=not errors, unprovenTargets=self.unproven_targets()))
         return not errors
 
     def verify_shown_resident(self):
@@ -987,6 +1204,8 @@ class NativeHost:
         # Before/after identity of every owned PID (execs, reuse retirements) and skipped races.
         receipt['owned'] = {str(pid): owned for pid, owned in self.owned.items()}
         receipt['ownershipRaces'] = self.ownership_races
+        # Live targets whose identity could not be proven: PID, path, reason. Never signalled.
+        receipt['unprovenTargets'] = self.unproven_targets()
         (self.output / 'operator-state.json').write_text(json.dumps(receipt, indent=2) + '\n')
 
 

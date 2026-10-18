@@ -37,7 +37,9 @@ func gate2246Alert(_ app: XCUIApplication) -> XCUIElement {
 }
 
 func gate2246LaterButtons(_ app: XCUIApplication) -> XCUIElementQuery {
-    gate2246Alert(app).buttons.matching(NSPredicate(format: "label == %@", "Later"))
+    // NSAlert's NSButton exposes AXTitle, with an empty AXLabel on macOS.
+    // Keep the product-dialog scope: Touch Bar also exposes a Later button.
+    gate2246Alert(app).buttons.matching(NSPredicate(format: "title == %@", "Later"))
 }
 
 func gate2246ModalObservation(_ app: XCUIApplication) -> [String: Any] {
@@ -56,8 +58,7 @@ extension VoiceBarFlowTests {
         limitations = ["Focused muted native gate: real panels and NSAlert, synthetic wire/selection; no capture, daemon launch, physical hotkeys, permissions or installed-app acceptance."]
         ledger.requiredScope = ["gate:HIDE1.1", "gate:SEL1.x"]
         step("GATE2246 no-device guard installed before fixtures") {
-            XCTAssertEqual(try? String(contentsOf: root.appendingPathComponent("no-device-guard.log")),
-                           "voicebar-no-device-guard-v1:installed\n")
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches))
         }
         func command(_ key: String) { app.typeKey(key, modifierFlags: [.command, .option]) }
         func alertPresent() -> Bool { gate2246Alert(app).exists }
@@ -131,8 +132,7 @@ extension VoiceBarFlowTests {
         ledger.verifiedSurfaces.insert("gate:SEL1.x")
         command("9")
         step("GATE2246 no device-start or process tripwire invoked") {
-            XCTAssertEqual(try? String(contentsOf: root.appendingPathComponent("no-device-guard.log")),
-                           "voicebar-no-device-guard-v1:installed\n")
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches))
         }
         completed = true
     }
@@ -142,6 +142,9 @@ extension VoiceBarFlowTests {
         limitations = ["HIDE1-only muted native visual gate with injected events; no audio, live daemon, global hotkeys, permissions or installed-app acceptance.",
             "Panel is positioned below the menu bar for unobstructed evidence; this does not establish notch placement."]
         ledger.requiredScope = ["gate:HIDE1"]
+        step("HIDE1VIS no-device guard installed before fixtures") {
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches))
+        }
         for (index, event) in ["speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard"].enumerated() {
             app.typeKey("0", modifierFlags: [.command, .option])
             Thread.sleep(forTimeInterval: 1)
@@ -188,6 +191,9 @@ extension VoiceBarFlowTests {
         }
         app.typeKey("9", modifierFlags: [.command, .option])
         ledger.verifiedSurfaces.insert("gate:HIDE1")
+        step("HIDE1VIS no device-start or process tripwire invoked") {
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches))
+        }
         completed = true
     }
 

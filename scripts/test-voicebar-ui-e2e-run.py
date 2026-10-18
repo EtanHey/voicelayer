@@ -255,12 +255,29 @@ class RunnerTests(unittest.TestCase):
         result = runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder(),
                                   registry=(registry, 'fixture-token'))
         self.assertEqual(result, 0)
-        rows = [json.loads(line) for line in registry.read_text().splitlines()]
+        rows = [json.loads(line) for line in registry.read_text().splitlines() if line]  # Blank lines are framing.
         kinds = [row['kind'] for row in rows]
         for kind in ['visibility', 'recorder', 'test', 'ffprobe']:
             self.assertIn(kind, kinds)
         digest = runner.safety.token_digest('fixture-token')
         self.assertTrue(all(row['token'] == digest and row['pid'] > 1 and len(row['birth']) == 2 for row in rows))
+
+    def test_failed_or_short_registration_never_execs_the_child(self):
+        # SUP3.1 (Sol N6): the preexec acknowledgement is the full verified record or no launch.
+        marker = self.root / 'executed'
+        code = 'import pathlib; pathlib.Path(%r).touch()' % str(marker)
+        real_write = os.write
+        cases = [(self.root / 'missing-dir' / 'registry.jsonl', None),
+                 (self.output / 'short-registry.jsonl', lambda fd, data: real_write(fd, data[:12]))]
+        for registry, write in cases:
+            runner.REGISTRATION[:] = [(registry, 'fixture-token')]
+            try:
+                with unittest.mock.patch.object(runner.safety.os, 'write', side_effect=write or real_write):
+                    with self.assertRaises(subprocess.SubprocessError):
+                        subprocess.run([sys.executable, '-c', code], **runner.owned_launch('test'))
+            finally:
+                runner.REGISTRATION.clear()
+            self.assertFalse(marker.exists(), registry)
 
     def assert_cleanup_interrupt(self, phase, sig, whole_group=False):
         (self.root / ('delay-' + phase)).touch()

@@ -669,6 +669,8 @@ class SupervisorTests(unittest.TestCase):
                              settingsOpened=True, settingsWindowId=77, initialHidden=False)
         host.identity = lambda pid: 'resident-start'
         host.guard_mute = lambda: None  # Synthetic tests must never query/change host audio.
+        # The pre-signal kernel birth follows the synthetic process table, never a real PID.
+        host.current_birth = lambda pid: (lambda state: state and state['started'])(host.process_state(pid))
         # Permission helper contract (exit code, parsed JSON) is driven for real in its own test.
         host.permissions = lambda: (0, dict(axTrusted=True, prompts=[]))
         host.resident['initialSurface'] = [dict(bounds=dict(X=500, Y=0, Width=200, Height=32), layer=25)]
@@ -931,10 +933,11 @@ class SupervisorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             host = self.host(pathlib.Path(tmp))
             host.run = lambda args: (_ for _ in ()).throw(subprocess.CalledProcessError(1, args, output=''))
-            with patch('os.kill', return_value=None):
-                with self.assertRaisesRegex(RuntimeError, 'identity unreadable'): host.process_state(200)
-            with patch('os.kill', side_effect=ProcessLookupError):
-                self.assertIsNone(host.process_state(200))
+            host.kernel_birth = lambda pid: (7, 7)  # Same lifetime still present: no death proof.
+            with self.assertRaisesRegex(RuntimeError, 'identity unreadable'): host.process_state(200)
+            births = iter([(7, 7), None])  # Kernel ESRCH after the failed ps: proven gone.
+            host.kernel_birth = lambda pid: next(births)
+            self.assertIsNone(host.process_state(200))
 
     def module(self):
         path = ROOT / 'scripts/voicebar-ui-e2e-supervisor.py'
@@ -1908,5 +1911,225 @@ class SupervisorTests(unittest.TestCase):
             with patch('os.kill'), patch.object(module.time, 'monotonic', side_effect=lambda: clock[0]):
                 self.assertFalse(host.stop())
             self.assertIn('deadline', str(host.shutdown[-1]['errors']).lower())
+
+    # SUP3.1: Sol round-2 reproductions N1-N6 as negative tests (RULINGS: safety over completeness).
+    def n_host(self, tmp, live, runner=False):
+        host = self.r2_host(tmp, live, child_alive=(lambda: 200 in live) if runner else None)
+        host.current_birth = lambda pid: live[pid]['started'] if pid in live else None
+        return host
+
+    def test_n1_pid_reused_after_ps_before_birth_read_is_never_owned(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            host.launch_birth = (10, 0)
+            qa = str((host.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
+            world = dict(birth=(15, 1), cmd=qa)
+            host.kernel_birth = lambda pid: world['birth'] if pid == 300 else None
+            host.current_birth = lambda pid: module.birth_text(world['birth'])
+            def run(args):
+                cmd = world['cmd']
+                world.update(birth=(20, 2), cmd='/unrelated/replacement')  # Reused right after ps.
+                return 'Sun Oct 18 07:14:49 2026 S 1 ' + cmd
+            host.run = run
+            host.process_rows = lambda: {300: (1, qa)}
+            host.collect_owned()
+            self.assertNotIn(300, host.owned)  # Old metadata is never joined to the new birth.
+            with patch('os.kill') as kill:
+                host.stop()
+                kill.assert_not_called()
+
+    def test_n1_metadata_is_read_inside_the_birth_bracket(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            order = []
+            host.kernel_birth = lambda pid: order.append('birth') or (5, 5)
+            host.run = lambda args: order.append('ps') or 'Sun Oct 18 07:14:49 2026 S 1 /x'
+            self.assertEqual(host.process_state(300)['started'], '5.000005')
+            self.assertEqual(order, ['birth', 'ps', 'birth'])
+
+    def test_signal_requires_fresh_kernel_birth_equal_to_recorded(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {300: dict(started='10.000001', cmd='/fixture/qa', parent=1, state='S')}
+            host = self.n_host(tmp, live)
+            host.owned = {300: dict(live[300], kind='qa')}
+            host.current_birth = lambda pid: '20.000002'  # Replaced between the check and the signal.
+            with patch('os.kill') as kill:
+                host.terminate_owned(300)
+                kill.assert_not_called()
+            plain = module.NativeHost.__new__(module.NativeHost)
+            plain.kernel_birth = lambda pid: (20, 2)
+            self.assertEqual(plain.current_birth(300), '20.000002')
+            plain.kernel_birth = lambda pid: None
+            self.assertIsNone(plain.current_birth(300))
+
+    def test_n2_one_unreadable_registration_never_starves_other_owned_targets(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {200: dict(started='1.000000', cmd='runner', parent=99, state='S'),
+                    201: dict(started='1.000001', cmd='/usr/bin/xcodebuild', parent=1, state='S'),
+                    202: dict(started='1.000002', cmd='/usr/bin/recorder', parent=1, state='S')}
+            host = self.n_host(tmp, live, runner=True)
+            host.owned = {200: dict(live[200], kind='runner')}
+            host.token = 'fixture-token'
+            module.register_owned(host.registry, 'fixture-token', 'test', 201, (1, 1))
+            module.register_owned(host.registry, 'fixture-token', 'recorder', 202, (1, 2))
+            def state(pid):
+                if pid == 201: raise RuntimeError('identity unreadable: 201 (EPERM)')
+                return dict(live[pid]) if pid in live else None
+            host.process_state = state
+            signals = []
+            def kill(pid, sig): signals.append((pid, sig)); live.pop(pid, None)
+            with patch('os.kill', side_effect=kill):
+                self.assertFalse(host.stop())
+            self.assertIn((202, module.signal.SIGTERM), signals)
+            self.assertNotIn(201, [pid for pid, _ in signals])
+            report = host.unproven_targets()
+            self.assertEqual([r['pid'] for r in report], [201])
+            self.assertEqual(report[0]['path'], '/usr/bin/xcodebuild')
+            self.assertIn('EPERM', report[0]['reason'])
+
+    def test_n3_slow_failing_discovery_still_escalates_runner_within_budget(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {200: dict(started='1.000000', cmd='runner', parent=99, state='S')}
+            host = self.n_host(tmp, live, runner=True)
+            host.owned = {200: dict(live[200], kind='runner')}
+            clock = [0.0]
+            def slow_rows():
+                clock[0] += 15  # The native ps bound, then failure.
+                raise RuntimeError('ps timeout')
+            host.process_rows = slow_rows
+            def shutdown_wait(seconds): clock[0] += seconds
+            host.shutdown_wait = shutdown_wait
+            signals = []
+            def kill(pid, sig):
+                signals.append(sig)
+                if sig == module.signal.SIGKILL: live.pop(pid)
+            with patch('os.kill', side_effect=kill), \
+                    patch.object(module.time, 'monotonic', side_effect=lambda: clock[0]):
+                self.assertFalse(host.stop())
+            self.assertEqual(signals, [module.signal.SIGINT, module.signal.SIGTERM, module.signal.SIGKILL])
+            self.assertFalse(live)
+            self.assertLessEqual(clock[0], module.CLEANUP_BUDGET_SECONDS)
+            self.assertNotIn('Runner termination NOT_PROVEN', host.shutdown[-1]['errors'])
+
+    def test_n3_slow_mute_guard_still_escalates_runner_within_budget(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {200: dict(started='1.000000', cmd='runner', parent=99, state='S')}
+            host = self.n_host(tmp, live, runner=True)
+            host.owned = {200: dict(live[200], kind='runner')}
+            del host.shutdown_wait  # The real wait, whose mute checks hang.
+            clock = [0.0]
+            def slow_guard(): clock[0] += 15  # osascript at its native bound.
+            host.guard_mute = slow_guard
+            signals = []
+            def kill(pid, sig):
+                signals.append(sig)
+                if sig == module.signal.SIGKILL: live.pop(pid)
+            with patch('os.kill', side_effect=kill), patch.object(module.time, 'sleep'), \
+                    patch.object(module.time, 'monotonic', side_effect=lambda: clock[0]):
+                host.stop()
+            self.assertEqual(signals, [module.signal.SIGINT, module.signal.SIGTERM, module.signal.SIGKILL])
+            self.assertFalse(live)
+            self.assertLessEqual(clock[0], module.CLEANUP_BUDGET_SECONDS)
+
+    def test_n4_transient_identity_failure_is_retried_not_abandoned(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {201: dict(started='1.000001', cmd='/fixture/helper', parent=1, state='S')}
+            host = self.n_host(tmp, live)
+            host.owned = {201: dict(live[201], kind='registered-test')}
+            reads = []
+            def state(pid):
+                reads.append(pid)
+                if len(reads) == 1: raise RuntimeError('temporary identity-read timeout')
+                return dict(live[pid]) if pid in live else None
+            host.process_state = state
+            signals = []
+            def kill(pid, sig): signals.append((pid, sig)); live.pop(pid, None)
+            with patch('os.kill', side_effect=kill):
+                host.stop()
+            self.assertEqual(signals, [(201, module.signal.SIGTERM)])
+            self.assertFalse(live)
+            self.assertEqual(host.unproven_targets(), [])
+
+    def test_n4_persistently_unreadable_target_is_reported_never_signalled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {201: dict(started='1.000001', cmd='/fixture/helper', parent=1, state='S')}
+            host = self.n_host(tmp, live)
+            host.owned = {201: dict(live[201], kind='registered-test')}
+            def unreadable(pid): raise RuntimeError('identity unreadable: 201')
+            host.process_state = unreadable
+            with patch('os.kill') as kill:
+                self.assertFalse(host.stop())
+                kill.assert_not_called()
+            report = host.unproven_targets()
+            self.assertEqual([(r['pid'], r['path']) for r in report], [(201, '/fixture/helper')])
+            self.assertIn('unreadable', report[0]['reason'])
+
+    def test_n5_new_birth_at_tracked_pid_is_reported_not_adopted_and_fails(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {201: dict(started='10.000002', cmd='/fixture/recorder', parent=1, state='S')}
+            host = self.n_host(tmp, live)
+            host.owned = {201: dict(started='10.000001', cmd='/fixture/recorder', parent=1, state='S',
+                                    kind='registered-recorder')}
+            host.token = 'fixture-token'
+            module.register_owned(host.registry, 'fixture-token', 'recorder', 201, (10, 1))
+            module.register_owned(host.registry, 'fixture-token', 'recorder', 201, (10, 2))
+            host.runner_launch_attempted = True
+            with patch('os.kill') as kill:
+                self.assertFalse(host.stop())
+                kill.assert_not_called()
+            self.assertEqual(host.owned[201]['started'], '10.000001')  # Never adopted.
+            report = host.unproven_targets()
+            self.assertEqual([r['pid'] for r in report], [201])
+            self.assertIn('new birth', report[0]['reason'])
+            self.assertIsNone(host.mute_retention_reason)  # A known survivor is FAIL, never exit 3.
+
+    def test_unproven_targets_reach_operator_state_and_stderr(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {201: dict(started='1.000001', cmd='/fixture/helper', parent=1, state='S')}
+            host = self.n_host(tmp, live)
+            host.owned = {201: dict(live[201], kind='registered-test')}
+            def unreadable(pid): raise RuntimeError('identity unreadable: 201')
+            host.process_state = unreadable
+            stderr = io.StringIO()
+            with patch('os.kill') as kill, contextlib.redirect_stderr(stderr):
+                host.stop()
+                kill.assert_not_called()
+            host.save({})
+            state = json.loads((host.output / 'operator-state.json').read_text())
+            self.assertEqual(state['unprovenTargets'][0]['pid'], 201)
+            self.assertEqual(state['unprovenTargets'][0]['path'], '/fixture/helper')
+            self.assertIn('201', stderr.getvalue())
+            self.assertIn('/fixture/helper', stderr.getvalue())
+            self.assertIn('UNPROVEN', host.shutdown[-1]['errors'][0])
+
+    def test_n6_registration_requires_complete_verified_record(self):
+        module = self.module()
+        real_write = os.write
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = pathlib.Path(tmp) / 'owned-registrations.jsonl'
+            def short(fd, data): return real_write(fd, data[:12])
+            with patch.object(module.os, 'write', side_effect=short):
+                with self.assertRaisesRegex(RuntimeError, 'registration'):
+                    module.register_owned(registry, 'fixture-token', 'test', 201, (1, 2))
+            with patch.object(module.os, 'fsync', side_effect=OSError('EIO')):
+                with self.assertRaises(OSError):
+                    module.register_owned(registry, 'fixture-token', 'test', 202, (1, 3))
+            with patch.object(module.os, 'pread', return_value=b'x'):
+                with self.assertRaisesRegex(RuntimeError, 'registration'):
+                    module.register_owned(registry, 'fixture-token', 'test', 203, (1, 4))
+            # The torn prefix never corrupts the framing of a later valid registration.
+            module.register_owned(registry, 'fixture-token', 'recorder', 204, (1, 5))
+            host = self.host(pathlib.Path(tmp))
+            host.registry, host.token = registry, 'fixture-token'
+            self.assertIn((204, 'recorder', '1.000005'), host.registered())
+            self.assertNotIn(201, [pid for pid, _, _ in host.registered()])
 
 if __name__=='__main__': unittest.main()

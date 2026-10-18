@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Build/test the no-device interposer; bind launch authorization to exact build bytes."""
 import argparse
+import datetime
 import hashlib
 import json
 import os
 import pathlib
+import plistlib
 import subprocess
 
 PATHS = [
@@ -14,6 +16,8 @@ PATHS = [
     'AudioUnitInitialize', 'AudioObjectGetPropertyData', 'AudioObjectGetPropertyDataSize',
     'AudioObjectSetPropertyData', 'posix_spawn', 'posix_spawnp', 'execve', 'NSTask',
 ]
+# Every scenario whose fixture constructs the real AppDelegate (UIE2EGate2245).
+GUARDED_SCENARIOS = {'hide1', 'gate2246'}
 SOURCES = [
     'scripts/voicebar-ui-e2e-device-guard.m', 'scripts/voicebar-ui-e2e-device-probe.m',
     'scripts/voicebar-ui-e2e-guard-proof.py', 'scripts/voicebar-ui-e2e-run.py',
@@ -94,6 +98,28 @@ def verify(repo, output):
             or proof.get('identities') != identities(repo, output)):
         raise ValueError('Missing, stale or invalid no-device guard proof; native launch refused')
     return output / 'device-guard.dylib'
+
+
+def required(scenario, info_plist=None):
+    """A guarded scenario, or any build whose plist says it compiled GATE2245 (fail closed)."""
+    if scenario in GUARDED_SCENARIOS:
+        return True
+    if info_plist is not None and pathlib.Path(info_plist).exists():
+        return plistlib.loads(pathlib.Path(info_plist).read_bytes()).get('UIE2EGate2245') is True
+    return False
+
+
+def authorize(repo, output, scenario, info_plist=None):
+    """Refuse a guarded native launch unless the exact built guard passed its probes."""
+    if not required(scenario, info_plist):
+        return None
+    library = verify(repo, output)
+    if scenario == 'gate2246':
+        # The lead authorized ONE gate2246 retry after the seam. Claim it atomically, once.
+        with (output / 'native-retry-claimed.json').open('x') as receipt:
+            json.dump({'authorizedBy': 'GATE2246B-BRIEF and QA-only seam ruling',
+                       'claimedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}, receipt)
+    return library
 
 
 if __name__ == '__main__':

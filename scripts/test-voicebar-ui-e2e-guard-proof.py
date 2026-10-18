@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import pathlib
+import plistlib
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -37,6 +38,41 @@ class GuardProofTests(unittest.TestCase):
             with patch.object(guard, 'identities', return_value={'build': 'changed'}):
                 with self.assertRaises(ValueError):
                     guard.verify(output, output)
+
+    def test_every_scenario_that_compiles_gate2245_requires_the_guard(self):
+        self.assertEqual(guard.GUARDED_SCENARIOS, {'hide1', 'gate2246'})
+        for scenario in ['hide1', 'gate2246']:
+            self.assertTrue(guard.required(scenario))
+        for scenario in ['full', 'focused-338']:
+            self.assertFalse(guard.required(scenario))
+
+    def test_a_gate2245_build_requires_the_guard_whatever_the_scenario(self):
+        with tempfile.TemporaryDirectory() as root:
+            plist = pathlib.Path(root) / 'Info.plist'
+            plist.write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
+            self.assertTrue(guard.required('full', plist))
+            plist.write_bytes(plistlib.dumps({'UIE2EGate2245': False}))
+            self.assertFalse(guard.required('full', plist))
+            self.assertTrue(guard.required('hide1', plist))
+            plist.write_bytes(b'not a plist')
+            with self.assertRaises(Exception):
+                guard.required('full', plist)
+
+    def test_authorize_verifies_hide1_and_claims_the_retry_only_for_gate2246(self):
+        with tempfile.TemporaryDirectory() as root:
+            output = pathlib.Path(root)
+            with self.assertRaises(FileNotFoundError):
+                guard.authorize(output, output, 'hide1')
+            self.assertFalse((output / 'native-retry-claimed.json').exists())
+            with patch.object(guard, 'verify', return_value=output / 'device-guard.dylib') as verify:
+                self.assertEqual(guard.authorize(output, output, 'hide1'), output / 'device-guard.dylib')
+                self.assertFalse((output / 'native-retry-claimed.json').exists())
+                guard.authorize(output, output, 'gate2246')
+                self.assertTrue((output / 'native-retry-claimed.json').exists())
+                with self.assertRaises(FileExistsError):
+                    guard.authorize(output, output, 'gate2246')
+                self.assertIsNone(guard.authorize(output, output, 'full'))
+                self.assertEqual(verify.call_count, 3)
 
 
 if __name__ == '__main__':
