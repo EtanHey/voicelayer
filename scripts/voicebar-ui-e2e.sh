@@ -20,7 +20,7 @@ case "$scenario" in
   full) ;;
   focused-338) focused_338=1 ;;
   hide1|gate2246) export VOICEBAR_UIE2E_GATE2245=1 ;;
-  *) echo "FAIL unknown scenario: $scenario (expected full or focused-338)" >&2; exit 2 ;;
+  *) echo "FAIL unknown scenario: $scenario (expected full, focused-338, hide1 or gate2246)" >&2; exit 2 ;;
 esac
 repo=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$(dirname "$output")"

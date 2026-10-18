@@ -9,6 +9,67 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 class SupervisorTests(unittest.TestCase):
+    def test_ship2246_shown_resident_reaches_launch_and_export_without_settings(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            actions = []
+            surface = [dict(layer=25, bounds=dict(X=500, Y=0, Width=200, Height=32))]
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')}
+            host.preconditions = lambda: True
+            def io(args):
+                if len(args) == 1: return json.dumps(dict(axTrusted=True, prompts=[]))
+                actions.append(args[2])
+                return json.dumps(dict(nodes=[], screenWindows=surface))
+            host.run = io
+            mute = [False]
+            host.muted = lambda: mute[0]
+            host.set_mute = lambda value: mute.__setitem__(0, value)
+            host.check = lambda: None
+            host.remember = lambda *args: None
+            def stop():
+                if host.log: host.log.close()
+                return False  # Unknown descendants retain mute without suppressing verdicts.
+            host.stop = stop
+            host.export = lambda: actions.append('export') or 0
+            class Child:
+                pid = 200
+                def poll(self): return 0
+            with patch.object(module.subprocess, 'run'), patch.object(module.subprocess, 'Popen', return_value=Child()):
+                self.assertEqual(module.supervise(host), 1)  # Safety uncertainty remains explicit.
+            receipt = json.loads((host.output / 'operator-state.json').read_text())
+            self.assertEqual(receipt['suiteExit'], 0)
+            self.assertEqual(receipt['exportExit'], 0)
+            self.assertTrue(receipt['muteRetained'])
+            self.assertTrue(host.resident['shownUnchanged'])
+            self.assertEqual(set(actions), {'read', 'export'})
+
+    def test_ship2246_missing_shown_surface_stops_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')}
+            host.run = lambda args: json.dumps(dict(axTrusted=True, prompts=[])) if len(args) == 1 else json.dumps(dict(nodes=[], screenWindows=[]))
+            host.preconditions = lambda: True
+            with self.assertRaisesRegex(RuntimeError, 'shown resident'):
+                host.prepare_resident()
+            self.assertFalse(host.runner_launch_attempted)
+
+    def test_ship2246_shown_surface_and_identity_drift_never_clear_obligations(self):
+        for failure in ['surface', 'resident', 'daemon']:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                host = self.host(pathlib.Path(tmp))
+                host.resident.update(visibilityPolicy='leave-shown', settingsOpened=False,
+                                     restoreRequired=False, daemonPid=101, daemonStarted='daemon-start')
+                host.resident.pop('settingsWindowId')
+                host.identity = lambda pid: ('changed' if failure == 'resident' and pid == 100 else
+                    'changed' if failure == 'daemon' and pid == 101 else
+                    'daemon-start' if pid == 101 else 'resident-start')
+                actions = []
+                host.ax = lambda mode: actions.append(mode) or dict(screenWindows=[])
+                with self.assertRaises(RuntimeError): host.restore_resident()
+                self.assertFalse(host.resident['shownUnchanged'])
+                self.assertTrue(all(mode == 'read' for mode in actions))
+
     def test_hrest3_native_mutations_refuse_before_helper_dispatch(self):
         # A successful receipt, including a new ID, can describe a concurrent user open.
         for outcome in ['concurrent-open', 'same-id-reopen', 'rejected', 'lost-response']:
@@ -120,7 +181,7 @@ class SupervisorTests(unittest.TestCase):
                 return json.dumps(dict(pid=100, action=mode, nodes=[], screenWindows=[]))
             host.run = io
             with self.assertRaises(RuntimeError): host.prepare_resident()
-            self.assertEqual(actions, ['read', 'read'])
+            self.assertEqual(actions, ['read'])
             self.assertFalse(before_open)  # No possibly-applied action needs a new obligation.
             self.assertFalse(host.runner_launch_attempted)
             source = (ROOT / 'scripts/voicebar-ui-e2e-resident.swift').read_text()
