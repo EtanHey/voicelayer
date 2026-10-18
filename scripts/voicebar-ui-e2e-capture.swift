@@ -6,6 +6,22 @@ import ScreenCaptureKit
 // (bundle AND exact executable path) on the main SCDisplay: everything else (desktop, other apps,
 // system dialogs, a stale QA app from another run) is never composited. No full-display mode.
 // There is no AVCaptureDevice lookup, device-name selector, camera input or audio output.
+// BEGIN QA EXECUTABLE PATH
+// BEGIN CANONICAL PATH
+/// The one path form compared on both sides of every QA executable check: realpath(3), which keeps
+/// /private (Foundation's resolvingSymlinksInPath strips it). An unresolvable path stays exact.
+func canonicalPath(_ path: String) -> String {
+    guard let resolved = realpath(path, nil) else { return path }
+    defer { free(resolved) }
+    return String(cString: resolved)
+}
+// END CANONICAL PATH
+func qaExecutablePath(_ pid: pid_t) -> String? {
+    var buffer = [CChar](repeating: 0, count: 4096)
+    guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+    return canonicalPath(String(cString: buffer))
+}
+// END QA EXECUTABLE PATH
 final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let queue = DispatchQueue(label: "voicebar.uie2e.screen")
     private let destination: URL
@@ -21,7 +37,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var frames = 0
 
     init(destination: URL, bundle: String, executable: String) {
-        self.destination = destination; self.bundle = bundle; self.executable = executable
+        self.destination = destination; self.bundle = bundle; self.executable = canonicalPath(executable)
     }
 
     // BEGIN QA-ONLY FILTER
@@ -36,11 +52,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
     // END QA-ONLY FILTER
 
-    static func executablePath(_ pid: pid_t) -> String? {
-        var buffer = [CChar](repeating: 0, count: 4096)
-        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
-        return URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path
-    }
+    static func executablePath(_ pid: pid_t) -> String? { qaExecutablePath(pid) }
     func proven(_ applications: [SCRunningApplication]) -> [SCRunningApplication] {
         Self.provenApplications(applications, bundle: bundle, executable: executable, path: Self.executablePath)
     }

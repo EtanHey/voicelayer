@@ -8,6 +8,15 @@ func attr(_ e:AXUIElement,_ key:String)->CFTypeRef?{var v:CFTypeRef?;return AXUI
 func strings(_ e:AXUIElement,_ depth:Int=0)->[String]{guard depth<12 else{return []};let own=["AXTitle","AXDescription","AXValue"].compactMap{attr(e,$0) as? String};let children=attr(e,"AXChildren") as? [AXUIElement] ?? [];return own+children.flatMap{strings($0,depth+1)}}
 
 // BEGIN FOREIGN MODALS
+// BEGIN CANONICAL PATH
+/// The one path form compared on both sides of every QA executable check: realpath(3), which keeps
+/// /private (Foundation's resolvingSymlinksInPath strips it). An unresolvable path stays exact.
+func canonicalPath(_ path: String) -> String {
+    guard let resolved = realpath(path, nil) else { return path }
+    defer { free(resolved) }
+    return String(cString: resolved)
+}
+// END CANONICAL PATH
 /// A read that distinguishes "explicitly not there" from "could not be read". Only the latter
 /// is a failure: it makes the inventory NOT_PROVEN, never a clean empty result.
 enum AXRead<T> { case value(T), absent, failed(String) }
@@ -332,7 +341,7 @@ func qaIdentityRead(_ pid: Int32) -> QAIdentityRead {
     case .failed: return .failed
     case .live(let after): guard pathSize > 0, before == after else { return .failed }
     }
-    return .live(QAIdentity(pid: pid, path: URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path, birth: before))
+    return .live(QAIdentity(pid: pid, path: canonicalPath(String(cString: buffer)), birth: before))
 }
 func qaIdentity(_ pid: Int32) -> QAIdentity? {
     if case .live(let identity) = qaIdentityRead(pid) { return identity }
@@ -350,7 +359,7 @@ func runInventory(output: URL?, executable: String?, binding: inout QARunBinding
     return retryModalProof {
         guard let data = try? Data(contentsOf: output.appendingPathComponent("modal-run-proof.json")),
               let proof = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              proof["executable"] as? String == executable,
+              (proof["executable"] as? String).map(canonicalPath) == executable,
               let birth = proof["launchBirth"] as? [UInt64], birth.count == 2, birth[0] > 0, birth[1] < 1_000_000,
               let owned = proof["owned"] as? [[String: Any]] else {
             var failed = ModalInventory(); failed.errors = [["kind": "run-proof", "owner": "unknown"]]; return failed
@@ -423,7 +432,7 @@ final class Broker {
     var binding = QARunBinding()
     init(token: String, root: URL, executable: String, latchPath: URL) {
         self.token = token; boundary = root.appendingPathComponent("boundary")
-        self.executable = executable; self.latchPath = latchPath
+        self.executable = canonicalPath(executable); self.latchPath = latchPath
     }
     func start() {
         try! FileManager.default.createDirectory(at: boundary, withIntermediateDirectories: true)
@@ -477,7 +486,7 @@ func argument(_ flag: String) -> String? {
     guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else { return nil }
     return arguments[index + 1]
 }
-let executable = argument("--qa-executable")
+let executable = argument("--qa-executable").map(canonicalPath)
 let output = argument("--run-output").map { URL(fileURLWithPath: $0) }
 
 let owners=Set(["com.apple.UserNotificationCenter","com.apple.SecurityAgent","com.apple.CoreServicesUIAgent","com.apple.coreservices.uiagent","com.apple.coreautha","com.apple.LocalAuthentication.UIAgent","com.voicelayer.voicebar.uie2e"])
