@@ -256,10 +256,14 @@ final class SpeakSelectionCapture {
             } else if ax.frontmostApp() == app {
                 result.copyExemptApp = app
             }
-        } else if !recover, unreadable, let copyExemptApp, ax.frontmostApp() == copyExemptApp {
+        } else if !recover, let copyExemptApp {
             // The Copy recheck: the exemption belongs to the app that earned it, never to whatever is
-            // frontmost after a switch during the retries or the clipboard snapshot.
-            result.copyExemptApp = copyExemptApp
+            // frontmost after a switch during the retries or the clipboard snapshot, readable or not.
+            guard ax.frontmostApp() == copyExemptApp else {
+                result.blockReason = .captureFailed
+                return result
+            }
+            if unreadable { result.copyExemptApp = copyExemptApp }
         }
         // An unreadable focus cannot establish permission to synthesize Copy, except in an app that
         // accepted AXManualAccessibility while secure event input stays off.
