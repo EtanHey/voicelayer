@@ -13,13 +13,35 @@ import sys
 import time
 
 
-def safe_to_hide(capture_children, fresh_locks, ax_labels):
-    blocked = ['Recording', 'Starting microphone', 'Stop recording', 'Cancel recording']
-    if capture_children or fresh_locks or any(x.startswith(tuple(blocked)) for x in ax_labels):
-        return False
+# The notch resident (2.2.45+) exposes one AX group whose label is its visual state:
+# exactly 'VoiceBar' when idle, 'VoiceBar recording' while capturing
+# (VoiceBarNotchContract.accessibilityLabel(for:)).
+NOTCH_IDLE_LABEL = 'VoiceBar'
+
+
+def unsafe_reasons(capture_children, fresh_locks, ax_labels):
+    blocked = ['Recording', 'Starting microphone', 'Stop recording', 'Cancel recording', 'VoiceBar recording']
+    reasons = []
+    if capture_children:
+        reasons.append('capture process(es) under resident daemon: ' + repr(list(capture_children)))
+    if fresh_locks:
+        reasons.append('fresh session lock(s) (<300s): ' + repr(list(fresh_locks)))
+    recording = [x for x in ax_labels if x.startswith(tuple(blocked))]
+    if recording:
+        reasons.append('AX shows capture: ' + repr(recording))
     # Require positive AX evidence. A collapsed/empty tree is UNKNOWN, never idle.
-    return any(x == 'Start voice recording' or x.startswith(('Ready.', 'Hidden until ', 'Hidden for '))
-               or x in ['Ready', 'Transcribing', 'Agent speaking'] for x in ax_labels)
+    elif not any(x in ['Start voice recording', NOTCH_IDLE_LABEL, 'Ready', 'Transcribing', 'Agent speaking']
+                 or x.startswith(('Ready.', 'Hidden until ', 'Hidden for ')) for x in ax_labels):
+        reasons.append('no positive idle AX label; observed ' + repr(list(ax_labels)))
+    return reasons
+
+
+def safe_to_hide(capture_children, fresh_locks, ax_labels):
+    return not unsafe_reasons(capture_children, fresh_locks, ax_labels)
+
+
+def log_precondition(message):
+    print('[supervisor] precondition failed: ' + message, file=sys.stderr, flush=True)
 
 
 def wait_until_safe(host):
@@ -55,6 +77,7 @@ def supervise(host):
         receipt['suiteExit'] = host.poll()
     except BaseException as error:
         receipt['error'] = repr(error)
+        print('[supervisor] aborted: ' + repr(error), file=sys.stderr, flush=True)
     finally:
         # Unmute only after positive owned-process termination proof, including on abort.
         terminated = False
@@ -80,6 +103,8 @@ def supervise(host):
             except BaseException as error:
                 receipt['cleanupErrors'].append('mute: ' + repr(error))
         receipt['finished'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        for problem in receipt['cleanupErrors']:
+            print('[supervisor] cleanup error: ' + problem, file=sys.stderr, flush=True)
         host.save(receipt)
     if receipt['suiteExit'] is not None:
         try:
@@ -202,6 +227,8 @@ class NativeHost:
         daemons = [p for p, (parent, _) in rows.items() if parent == pid and
                    'mcp-server-daemon.ts' in self.run(['ps', '-p', str(p), '-o', 'args='])]
         if len(daemons) != 1:
+            log_precondition('expected exactly one mcp-server-daemon.ts child of resident %d; observed %r'
+                             % (pid, daemons))
             return False
         daemon = daemons[0]
         identity = self.identity(daemon)
@@ -224,7 +251,10 @@ class NativeHost:
                 pass
         nodes = self.ax('read')['nodes']
         labels = [x for node in nodes for key in ['title', 'description', 'value'] if (x := node.get(key))]
-        safe = safe_to_hide(capture, locks, labels)
+        reasons = unsafe_reasons(capture, locks, labels)
+        for reason in reasons:
+            log_precondition(reason)
+        safe = not reasons
         self.resident.setdefault('preconditions', []).append(dict(capturePids=capture, freshLocks=locks,
                                                                axLabels=labels, safe=safe))
         self.save_resident()

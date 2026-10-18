@@ -707,6 +707,72 @@ class SupervisorTests(unittest.TestCase):
         module.wait_until_safe(Host())
         self.assertEqual(events, ['read', 120, 'read'])
 
+    def test_notch_idle_label_is_positive_idle_and_notch_recording_blocks(self):
+        # run-03: resident 05bcc0a2 exposes only the notch group, labelled exactly 'VoiceBar'
+        # when idle (VoiceBarNotchContract.accessibilityLabel(for: .idle)).
+        module = self.module()
+        self.assertTrue(module.safe_to_hide([], [], ['VoiceBar']))
+        for labels in [['VoiceBar recording'], ['VoiceBar', 'VoiceBar recording'], ['VoiceBar launcher'],
+                       ['VoiceBar status'], ['VoiceBar teleprompter'], ['VoiceBar history'], ['VoiceBar QA']]:
+            self.assertFalse(module.safe_to_hide([], [], labels), labels)
+        self.assertFalse(module.safe_to_hide(['rec'], [], ['VoiceBar']))
+        self.assertFalse(module.safe_to_hide([], ['voicelayer-session-x.lock'], ['VoiceBar']))
+
+    def test_unsafe_reasons_name_every_failing_check_with_observed_values(self):
+        module = self.module()
+        self.assertEqual(module.unsafe_reasons([], [], ['VoiceBar']), [])
+        reasons = module.unsafe_reasons([4242], ['voicelayer-session-a.lock'], ['VoiceBar recording'])
+        text = '\n'.join(reasons)
+        for observed in ['4242', 'voicelayer-session-a.lock', 'VoiceBar recording']:
+            self.assertIn(observed, text)
+        self.assertEqual(len(reasons), 3)
+        self.assertIn("'Status unreadable'", '\n'.join(module.unsafe_reasons([], [], ['Status unreadable'])))
+        self.assertEqual(len(module.unsafe_reasons([], [], [])), 1)
+
+    def test_failing_preflight_logs_observed_values_to_stderr(self):
+        import contextlib
+        import io
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            host = module.NativeHost(output, 'gate2246')
+            host.resident = dict(pid=100, started='start')
+            host.identity = lambda pid: 'start'
+            host.run = lambda args: 'bun src/mcp-server-daemon.ts'
+            host.ax = lambda mode: dict(nodes=[dict(role='AXGroup', description='Status unreadable')])
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         101: (100, 'bun')}
+            err = io.StringIO()
+            with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
+                self.assertFalse(host.preconditions())
+            self.assertIn('Status unreadable', err.getvalue())
+            self.assertIn('precondition', err.getvalue())
+            # No daemon child: also logged, never a silent False.
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')}
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertFalse(host.preconditions())
+            self.assertIn('daemon', err.getvalue())
+            self.assertIn('[]', err.getvalue())
+
+    def test_supervise_failure_writes_error_to_stderr(self):
+        import contextlib
+        import io
+        module = self.module()
+        class Host:
+            def muted(self): return True
+            def set_mute(self, value): pass
+            def guard_mute(self): pass
+            def prepare_resident(self): raise RuntimeError('fixture precondition failure')
+            def stop(self): return True
+            def restore_resident(self): pass
+            def save(self, receipt): pass
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(module.supervise(Host()), 1)
+        self.assertIn('fixture precondition failure', err.getvalue())
+
     def test_real_preflight_reads_processes_locks_and_positive_ax_state(self):
         from unittest.mock import patch
         module = self.module()
