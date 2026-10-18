@@ -11,18 +11,23 @@ func gate2245HasOwnedScreenWindows(_ screenWindows: [[String: Any]], pid: Int) -
 func gate2246TeleprompterContains(_ pill: XCUIElement, text: String) -> Bool {
     let expected = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
     guard !expected.isEmpty else { return false }
-    let texts = pill.staticTexts
-    guard texts.firstMatch.waitForExistence(timeout: 3) else { return false }
-    let rendered = texts.allElementsBoundByIndex.flatMap { element -> [String] in
-        let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
-        let content = label.isEmpty ? (element.value as? String ?? "") : label
-        return content.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-    }
-    guard rendered.count >= expected.count else { return false }
-    // Require contiguous whole words, so "B" cannot pass for a stale "Bogus".
-    return (0...(rendered.count - expected.count)).contains { start in
-        Array(rendered[start..<(start + expected.count)]) == expected
-    }
+    let deadline = ProcessInfo.processInfo.systemUptime + 3
+    repeat {
+        let rendered = pill.staticTexts.allElementsBoundByIndex.flatMap { element -> [String] in
+            let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = label.isEmpty ? (element.value as? String ?? "") : label
+            return content.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        }
+        // Require contiguous whole words, so "B" cannot pass for a stale "Bogus".
+        if rendered.count >= expected.count,
+           (0...(rendered.count - expected.count)).contains(where: { start in
+               Array(rendered[start..<(start + expected.count)]) == expected
+           }) { return true }
+        let remaining = deadline - ProcessInfo.processInfo.systemUptime
+        guard remaining > 0 else { return false }
+        Thread.sleep(forTimeInterval: min(0.05, remaining))
+    } while ProcessInfo.processInfo.systemUptime < deadline
+    return false
 }
 // END GATE2246 RENDERED WORDS
 
