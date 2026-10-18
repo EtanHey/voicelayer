@@ -1,6 +1,12 @@
 import AppKit
 import XCTest
 
+// BEGIN GATE2245 WINDOW OWNERSHIP
+func gate2245HasOwnedScreenWindows(_ screenWindows: [[String: Any]], pid: Int) -> Bool {
+    screenWindows.contains { ($0["pid"] as? Int) == pid }
+}
+// END GATE2245 WINDOW OWNERSHIP
+
 // BEGIN GATE2246 MODAL QUERIES
 func gate2246Alert(_ app: XCUIApplication) -> XCUIElement {
     app.dialogs.containing(.staticText, identifier: "VoiceLayer microphone permission needs attention").firstMatch
@@ -29,7 +35,7 @@ extension VoiceBarFlowTests {
             XCTAssertEqual(try? String(contentsOf: root.appendingPathComponent("no-device-guard.log")),
                            "voicebar-no-device-guard-v1:installed\n")
         }
-        func command(_ key: String) { app.typeKey(key, modifierFlags: .command) }
+        func command(_ key: String) { app.typeKey(key, modifierFlags: [.command, .option]) }
         func alertPresent() -> Bool { gate2246Alert(app).exists }
         func waitForAlert(_ expected: Bool) {
             let appeared = gate2246Alert(app).waitForExistence(timeout: expected ? 3 : 1)
@@ -113,7 +119,7 @@ extension VoiceBarFlowTests {
             "Panel is positioned below the menu bar for unobstructed evidence; this does not establish notch placement."]
         ledger.requiredScope = ["gate:HIDE1"]
         for (index, event) in ["speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard"].enumerated() {
-            app.typeKey("0", modifierFlags: .command)
+            app.typeKey("0", modifierFlags: [.command, .option])
             Thread.sleep(forTimeInterval: 1)
             step("HIDE1VIS " + event + " before") {
                 let receipt = gateRead("gate-hide.json")
@@ -122,7 +128,7 @@ extension VoiceBarFlowTests {
                 XCTAssertEqual(receipt["settingsVisible"] as? Bool, false)
                 attachJSON("HIDE1VIS-" + event + "-before", receipt)
             }
-            app.typeKey(String(index + 1), modifierFlags: .command)
+            app.typeKey(String(index + 1), modifierFlags: [.command, .option])
             Thread.sleep(forTimeInterval: 1)
             step("HIDE1VIS " + event + " hidden") {
                 let receipt = gateRead("gate-hide.json")
@@ -134,11 +140,13 @@ extension VoiceBarFlowTests {
                 XCTAssertEqual(receipt["wizardVisible"] as? Bool, false)
                 XCTAssertEqual((receipt["ownedVisibleWindows"] as? [[String: Any]])?.count, 0)
                 let screenWindows = receipt["screenWindows"] as? [[String: Any]] ?? []
-                XCTAssertFalse(screenWindows.contains { ($0["owner"] as? String ?? "").lowercased().contains("voicebar") },
-                    "VoiceBar-owned surface from any process remains on screen")
+                let qaPID = try XCTUnwrap(receipt["pid"] as? Int, "QA process identity missing")
+                XCTAssertGreaterThan(qaPID, 0)
+                XCTAssertFalse(gate2245HasOwnedScreenWindows(screenWindows, pid: qaPID),
+                    "QA-owned surface remains on screen; installed resident is checked separately")
                 attachJSON("HIDE1VIS-" + event + "-hidden", receipt)
             }
-            app.typeKey("8", modifierFlags: .command)
+            app.typeKey("8", modifierFlags: [.command, .option])
             Thread.sleep(forTimeInterval: 1)
             step("HIDE1VIS " + event + " shown") {
                 let receipt = gateRead("gate-hide.json")
@@ -152,7 +160,7 @@ extension VoiceBarFlowTests {
                 attachJSON("HIDE1VIS-" + event + "-shown", receipt)
             }
         }
-        app.typeKey("9", modifierFlags: .command)
+        app.typeKey("9", modifierFlags: [.command, .option])
         ledger.verifiedSurfaces.insert("gate:HIDE1")
         completed = true
     }
