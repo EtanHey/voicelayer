@@ -30,9 +30,10 @@ Options:
                            A fresh build is newer than any proof, so a release build
                            always runs with this; the tap check runs after install.
 
-Uploading the zip is publication, so it is gated on the same T3 Option+F5 proof
-and lives in scripts/upload-voicebar-release.sh. This script always rebuilds,
-and a fresh build is newer than any proof, so it cannot upload.
+Delivery (asset upload, formula and cask commit and push) is gated on the
+installed-candidate T3 Option+F5 proof and lives only in
+scripts/promote-voicebar-release.sh. This script always rebuilds, and a fresh
+build is newer than any proof, so it cannot deliver.
 EOF
 }
 
@@ -88,7 +89,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --upload)
             echo "ERROR: --upload is retired. A fresh build can never carry a T3 Option+F5 proof." >&2
-            echo "Install the candidate, produce the proof, then: scripts/upload-voicebar-release.sh --t3-proof PROOF.json (docs/voicebar-release-runbook.md)" >&2
+            echo "Install the candidate, produce the proof, then: scripts/promote-voicebar-release.sh --t3-proof PROOF.json (docs/voicebar-release-runbook.md)" >&2
             exit 2
             ;;
         -h|--help)
@@ -161,21 +162,13 @@ SHA256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
 
 echo "[release-voicebar] Artifact: $ZIP_PATH"
 echo "[release-voicebar] sha256: $SHA256"
-echo "[release-voicebar] Upload (after installing this candidate and producing the T3 Option+F5 proof):"
-echo "  \"$PACKAGE_ROOT/scripts/upload-voicebar-release.sh\" --version \"$VERSION\" --app \"$APP_PATH\" --zip \"$ZIP_PATH\" --t3-proof PROOF.json"
-echo "[release-voicebar] Homebrew formula and cask bump:"
-echo "  repo: EtanHey/homebrew-layers"
-echo "  files: Formula/voicelayer.rb Casks/voicebar.rb"
-echo "  Formula/voicelayer.rb: update npm url to voicelayer-mcp-$VERSION.tgz and sha256 to the npm tarball checksum"
-echo "  Casks/voicebar.rb: version \"$VERSION\""
-echo "  Casks/voicebar.rb: sha256 \"$SHA256\""
+echo "[release-voicebar] Next: install this candidate, produce the T3 Option+F5 proof"
+echo "  (docs/voicebar-release-runbook.md), then deliver it. Never write the tap by hand."
+echo "[release-voicebar] Delivery (asset upload + EtanHey/homebrew-layers formula and cask commit/push):"
+echo "  \"$PACKAGE_ROOT/scripts/promote-voicebar-release.sh\" --version \"$VERSION\" --app \"$APP_PATH\" --zip \"$ZIP_PATH\" \\"
+echo "    --tap-root \"${TAP_ROOT:-TAP_ROOT}\" --formula-sha256 NPM_TGZ_SHA256 --t3-proof PROOF.json"
+echo "  It writes Formula/voicelayer.rb (voicelayer-mcp-$VERSION.tgz + the published npm tarball sha256)"
+echo "  and Casks/voicebar.rb (version \"$VERSION\", sha256 \"$SHA256\")."
 if [[ "$SKIP_TAP_CHECK" -eq 1 ]]; then
-    echo "  before committing the tap: install this candidate, produce the T3 Option+F5 proof"
-    echo "  (docs/voicebar-release-runbook.md), then rerun verification without --skip-tap-check:"
-    echo "    \"$PACKAGE_ROOT/scripts/verify-voicebar-release.sh\" --version \"$VERSION\" --app \"$APP_PATH\" --zip \"$ZIP_PATH\" --tap-root \"${TAP_ROOT:-TAP_ROOT}\" --t3-proof PROOF.json"
-fi
-if [[ -n "$TAP_ROOT" ]]; then
-    echo "  only after that verification passes, commit both formula and cask together:"
-    echo "    git -C \"$TAP_ROOT\" add Formula/voicelayer.rb Casks/voicebar.rb"
-    echo "    git -C \"$TAP_ROOT\" commit -m \"Update VoiceLayer formula and VoiceBar cask to $VERSION\""
+    echo "  Artifact-only run: the tap check with --t3-proof PROOF.json runs inside promote-voicebar-release.sh."
 fi

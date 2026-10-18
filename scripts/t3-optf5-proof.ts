@@ -36,7 +36,7 @@ import {
 import { homedir, tmpdir } from "os";
 import { join } from "path";
 
-export const PROOF_SCHEMA = "voicelayer.t3-optf5-proof.v1";
+export const PROOF_SCHEMA = "voicelayer.t3-optf5-proof.v2";
 const T3_BUNDLE_ID = "com.t3tools.t3code";
 const STATE_SCHEMA = "voicelayer.t3-optf5-proof-state.v1";
 // The operator selects, presses and finishes in one sitting; a longer window cannot be
@@ -52,6 +52,13 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
 export interface T3OptF5Proof {
   schema: string;
+  // "release" only when collected from the resident's real log and history paths; fixture
+  // collections under the test preload are "test", and the gate rejects them.
+  receipt: "release" | "test";
+  // bundleDigest() of the installed bundle that ran; the delivered app and ZIP must match it.
+  bundleSha256: string;
+  // sha256 of the exact evidence excerpts (redacted lines; the history entry as JSON).
+  evidence: { captureLineSha256: string; speakLineSha256: string; historyEntrySha256: string };
   gitCommit: string;
   buildTimeUTC: string;
   t3Build: string;
@@ -74,7 +81,7 @@ function fail(message: string): never {
 
 export function checkProof(
   raw: unknown,
-  candidate: { gitCommit: string; buildTimeUTC: string },
+  candidate: { gitCommit: string; buildTimeUTC: string; bundleSha256: string },
   now = Date.now(),
 ): T3OptF5Proof {
   if (!COMMIT_RE.test(candidate.gitCommit)) {
@@ -87,6 +94,18 @@ export function checkProof(
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("proof is not a JSON object");
   const p = raw as Record<string, unknown>;
   if (p.schema !== PROOF_SCHEMA) fail(`proof schema is '${String(p.schema)}', expected '${PROOF_SCHEMA}'`);
+  if (p.receipt !== "release") {
+    fail(`proof receipt is '${String(p.receipt)}', not a release receipt: only a collection from the resident's real log and history counts`);
+  }
+  if (typeof p.bundleSha256 !== "string" || !SHA_RE.test(p.bundleSha256)) fail("proof bundleSha256 is not a lowercase sha256");
+  if (p.bundleSha256 !== candidate.bundleSha256) {
+    fail(`proof bundleSha256 ${p.bundleSha256} does not match the candidate bundle ${candidate.bundleSha256}: a different build was exercised`);
+  }
+  const evidence = p.evidence as Record<string, unknown> | undefined;
+  for (const key of ["captureLineSha256", "speakLineSha256", "historyEntrySha256"]) {
+    const value = evidence?.[key];
+    if (typeof value !== "string" || !SHA_RE.test(value)) fail(`proof evidence.${key} is missing or not a sha256`);
+  }
   if (p.gitCommit !== candidate.gitCommit) {
     fail(`proof GitCommit '${String(p.gitCommit)}' does not equal candidate Info.plist GitCommit '${candidate.gitCommit}'`);
   }
@@ -238,6 +257,7 @@ function readFrom(path: string, offset: number): string {
   }
 }
 
+// Entries are the parsed objects themselves, so JSON.stringify(entry) is the evidence excerpt.
 function loadHistory(path: string): { text: string; timestamp: number }[] {
   if (!existsSync(path)) return [];
   const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -268,6 +288,8 @@ function expectedTextOf(path: string): string {
 
 interface ProofState {
   schema: string;
+  receipt: "release" | "test";
+  bundleSha256: string;
   startedAt: number;
   app: string;
   gitCommit: string;
@@ -283,11 +305,27 @@ interface ProofState {
   expectedUtf16Count: number;
 }
 
+const RESIDENT_APP = "/Applications/VoiceBar.app";
+const RESIDENT_LOG = `${homedir()}/Library/Logs/voicelayer/voicebar-err.log`;
+const RESIDENT_HISTORY = "/tmp/voicelayer-history.json";
+const PATH_OVERRIDES = ["--app", "--voicebar-log", "--history-file"];
+
+// The bun test preload sets VOICELAYER_TEST_RUN_ROOT. Only there may the resident paths be
+// replaced by fixtures, and anything collected there is a "test" receipt the gate rejects.
+function underTestPreload(): boolean {
+  return Boolean(process.env.VOICELAYER_TEST_RUN_ROOT);
+}
+
 function start(args: Map<string, string>) {
-  const app = args.get("--app") ?? "/Applications/VoiceBar.app";
+  const overrides = PATH_OVERRIDES.filter((flag) => args.has(flag));
+  const testMode = underTestPreload();
+  if (overrides.length > 0 && !testMode) {
+    fail(`path override ${overrides.join(", ")} is test-only; a release proof reads only the resident's own app, log and history`);
+  }
+  const app = args.get("--app") ?? RESIDENT_APP;
   const t3App = need(args, "--t3-app");
-  const voicebarLog = args.get("--voicebar-log") ?? `${homedir()}/Library/Logs/voicelayer/voicebar-err.log`;
-  const historyFile = args.get("--history-file") ?? "/tmp/voicelayer-history.json";
+  const voicebarLog = args.get("--voicebar-log") ?? RESIDENT_LOG;
+  const historyFile = args.get("--history-file") ?? RESIDENT_HISTORY;
   const statePath = need(args, "--state");
   const expected = expectedTextOf(need(args, "--expected-text-file"));
   if (!existsSync(voicebarLog)) fail(`VoiceBar log not found: ${voicebarLog}`);
@@ -295,6 +333,8 @@ function start(args: Map<string, string>) {
   const runtime = installedRuntime(app);
   const state: ProofState = {
     schema: STATE_SCHEMA,
+    receipt: testMode ? "test" : "release",
+    bundleSha256: bundleDigest(app),
     startedAt: Date.now(),
     app,
     gitCommit: identity.gitCommit,
@@ -377,8 +417,18 @@ function finish(args: Map<string, string>) {
     fail("the TTS history entry is not within 30 s after the capture");
   }
 
+  // The bundle must not change between start and finish.
+  const bundleNow = bundleDigest(state.app);
+  if (bundleNow !== state.bundleSha256) fail("the installed bundle's contents changed since start");
   const proof: T3OptF5Proof = {
     schema: PROOF_SCHEMA,
+    receipt: state.receipt === "release" && !underTestPreload() ? "release" : "test",
+    bundleSha256: state.bundleSha256,
+    evidence: {
+      captureLineSha256: sha256(capture.line),
+      speakLineSha256: sha256(lines[speaks[0].index]),
+      historyEntrySha256: sha256(JSON.stringify(entry)),
+    },
     gitCommit: state.gitCommit,
     buildTimeUTC: state.buildTimeUTC,
     t3Build: state.t3Build,
@@ -417,6 +467,14 @@ function treeManifest(root: string): Map<string, TreeEntry> {
   };
   walk("");
   return entries;
+}
+
+// One sha256 over a bundle's complete contents: every path with its kind, file sha256 and exec
+// bit, or symlink target. Two bundles with equal digests are the same build byte for byte.
+export function bundleDigest(app: string): string {
+  if (!existsSync(app)) fail(`bundle not found: ${app}`);
+  const lines = [...treeManifest(app)].map(([path, entry]) => `${path}\t${JSON.stringify(entry)}`);
+  return createHash("sha256").update(lines.join("\n")).digest("hex");
 }
 
 // The proof is about the app that ran; users receive the ZIP. Every entry of the extracted
@@ -464,9 +522,13 @@ function check(args: Map<string, string>) {
   } catch {
     fail(`proof file is not valid JSON: ${path}`);
   }
+  // The candidate's identity comes from the app being delivered, never from arguments.
+  const app = need(args, "--app");
+  const plist = `${app}/Contents/Info.plist`;
   const p = checkProof(raw, {
-    gitCommit: args.get("--candidate-commit") ?? "",
-    buildTimeUTC: args.get("--candidate-build-time") ?? "",
+    gitCommit: existsSync(plist) ? readPlistString(plist, "GitCommit") : "",
+    buildTimeUTC: existsSync(plist) ? readPlistString(plist, "BuildTimeUTC") : "",
+    bundleSha256: bundleDigest(app),
   });
   console.log(
     `[t3-optf5-proof] PASS: T3 Option+F5 proof matches candidate ${p.gitCommit} (${p.t3Build}, speak_text ${p.speakTextCommandId}, ${p.timestamp})`,
@@ -490,10 +552,11 @@ function parseArgs(argv: string[]): Map<string, string> {
 
 const USAGE = `Usage:
   bun scripts/t3-optf5-proof.ts start  --state FILE --t3-app "/Applications/T3 Code (Alpha).app" --expected-text-file FILE
-                                       [--app /Applications/VoiceBar.app] [--voicebar-log PATH] [--history-file PATH]
+                                       (--app/--voicebar-log/--history-file: test preload only)
   bun scripts/t3-optf5-proof.ts finish --state FILE --out PROOF.json
-  bun scripts/t3-optf5-proof.ts check  --proof PROOF.json --candidate-commit SHA --candidate-build-time ISO
-  bun scripts/t3-optf5-proof.ts zip-matches-app --app VoiceBar.app --zip VoiceBar.zip`;
+  bun scripts/t3-optf5-proof.ts check  --proof PROOF.json --app VoiceBar.app
+  bun scripts/t3-optf5-proof.ts zip-matches-app --app VoiceBar.app --zip VoiceBar.zip
+  bun scripts/t3-optf5-proof.ts bundle-digest --app VoiceBar.app`;
 
 if (import.meta.main) {
   const [command, ...rest] = process.argv.slice(2);
@@ -503,6 +566,7 @@ if (import.meta.main) {
     else if (command === "finish") finish(args);
     else if (command === "check") check(args);
     else if (command === "zip-matches-app") zipCommand(args);
+    else if (command === "bundle-digest") console.log(bundleDigest(need(args, "--app")));
     else {
       console.error(USAGE);
       process.exit(2);

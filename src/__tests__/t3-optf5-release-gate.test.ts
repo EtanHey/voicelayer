@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
+import { bundleDigest } from "../../scripts/t3-optf5-proof";
 
 // T3GATE1 (2026-10-18): the 2.2.45 T3 Option+F5 regression shipped because publication never
 // required the installed-candidate T3 proof. The tap-check (final, pre-cask-bump) mode of
@@ -15,7 +16,7 @@ const repoRoot = new URL("../..", import.meta.url).pathname;
 const verifyScript = join(repoRoot, "scripts", "verify-voicebar-release.sh");
 const proofScript = join(repoRoot, "scripts", "t3-optf5-proof.ts");
 const releaseScript = join(repoRoot, "scripts", "release-voicebar.sh");
-const uploadScript = join(repoRoot, "scripts", "upload-voicebar-release.sh");
+const promoteScript = join(repoRoot, "scripts", "promote-voicebar-release.sh");
 const version: string = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).version;
 
 const COMMIT = "05bcc0a235712245dfc0bd08f8e657dd9277e7cd";
@@ -70,10 +71,13 @@ function writeCask(sha: string) {
   writeFileSync(join(dir, "tap", "Casks", "voicebar.rb"), `cask "voicebar" do\n  version "${version}"\n  sha256 "${sha}"\nend\n`);
 }
 
-function makeReleaseFixture() {
+// executableSymlink: make the candidate's executable the same symlink the fake installed
+// VoiceBar uses, so its contents are identical to the installed bundle's.
+function makeReleaseFixture(opts: { executableSymlink?: string } = {}) {
   const app = makeApp(dir);
   mkdirSync(join(app, "Contents", "MacOS"), { recursive: true });
-  writeFileSync(join(app, "Contents", "MacOS", "VoiceBar"), "candidate-binary\n");
+  if (opts.executableSymlink) symlinkSync(opts.executableSymlink, join(app, "Contents", "MacOS", "VoiceBar"));
+  else writeFileSync(join(app, "Contents", "MacOS", "VoiceBar"), "candidate-binary\n");
   const zipSha = zipApp(dir);
   mkdirSync(join(dir, "tap", "Formula"), { recursive: true });
   mkdirSync(join(dir, "tap", "Casks"), { recursive: true });
@@ -100,9 +104,18 @@ esac
   return app;
 }
 
+// A release receipt for the fixture candidate. The bundle digest is the candidate's own, as
+// if the identical bundle had been installed and exercised.
 function proof(overrides: Record<string, unknown> = {}) {
   return {
-    schema: "voicelayer.t3-optf5-proof.v1",
+    schema: "voicelayer.t3-optf5-proof.v2",
+    receipt: "release",
+    bundleSha256: bundleDigest(join(dir, "VoiceBar.app")),
+    evidence: {
+      captureLineSha256: sha256("capture"),
+      speakLineSha256: sha256("speak"),
+      historyEntrySha256: sha256("history"),
+    },
     gitCommit: COMMIT,
     buildTimeUTC: BUILD_TIME,
     t3Build: "T3 Code (Alpha) 0.0.45 (0.0.45)",
@@ -278,6 +291,28 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
     expect(r.err).toContain("sha256");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
+  test("equal plist identity but different bundle contents refuses", () => {
+    makeReleaseFixture();
+    const r = runVerify(["--t3-proof", writeProof(proof({ bundleSha256: sha256("another bundle") }))]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("bundle");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a test (non-release) receipt refuses", () => {
+    makeReleaseFixture();
+    const r = runVerify(["--t3-proof", writeProof(proof({ receipt: "test" }))]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("release receipt");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("missing evidence-excerpt hashes refuse", () => {
+    makeReleaseFixture();
+    for (const evidence of [undefined, {}, { captureLineSha256: sha256("c"), speakLineSha256: "x", historyEntrySha256: sha256("h") }]) {
+      const r = runVerify(["--t3-proof", writeProof(proof({ evidence }))]);
+      expect(r.code).not.toBe(0);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   test("valid matching proof passes", () => {
     makeReleaseFixture();
     const r = runVerify(["--t3-proof", writeProof(proof())]);
@@ -307,7 +342,7 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
       stderr: "pipe",
     });
     expect(r.exitCode).not.toBe(0);
-    expect(r.stderr.toString()).toContain("upload-voicebar-release.sh");
+    expect(r.stderr.toString()).toContain("promote-voicebar-release.sh");
     expect(r.stdout.toString()).not.toContain("Building notarized");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
@@ -323,39 +358,138 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
   });
 });
 
-describe("the release asset upload requires the proof", () => {
-  function runUpload(args: string[]) {
-    const ghLog = join(dir, "gh.log");
-    writeFileSync(join(dir, "bin", "gh"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${ghLog}"\n`);
-    chmodSync(join(dir, "bin", "gh"), 0o755);
-    const r = Bun.spawnSync(
-      ["bash", uploadScript, "--version", version, "--app", join(dir, "VoiceBar.app"), "--zip", join(dir, "VoiceBar.zip"), ...args],
-      { stdout: "pipe", stderr: "pipe", env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}` } },
+describe("promote-voicebar-release.sh is the only delivery path and requires the proof", () => {
+  const FORMULA_SHA = "f".repeat(64);
+  const git = (cwd: string, ...args: string[]) =>
+    Bun.spawnSync(["git", ...args], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
+    });
+
+  // A tap clone with a bare "origin", at the previous release, and a gh stub whose uploads
+  // land in a local "release" store that `release download` serves back.
+  function promoteFixture() {
+    makeReleaseFixture();
+    const remote = join(dir, "tap-remote.git");
+    git(dir, "init", "-q", "--bare", "-b", "main", remote);
+    rmSync(join(dir, "tap"), { recursive: true, force: true });
+    git(dir, "clone", "-q", remote, join(dir, "tap"));
+    const tap = join(dir, "tap");
+    mkdirSync(join(tap, "Formula"), { recursive: true });
+    mkdirSync(join(tap, "Casks"), { recursive: true });
+    writeFileSync(
+      join(tap, "Formula", "voicelayer.rb"),
+      `class Voicelayer < Formula\n  url "https://registry.npmjs.org/voicelayer-mcp/-/voicelayer-mcp-0.0.1.tgz"\n  sha256 "${"a".repeat(64)}"\n  license "Apache-2.0"\nend\n`,
     );
-    return { code: r.exitCode, err: r.stderr.toString(), gh: existsSync(ghLog) ? readFileSync(ghLog, "utf8") : "" };
+    writeFileSync(join(tap, "Casks", "voicebar.rb"), `cask "voicebar" do\n  version "0.0.1"\n  sha256 "${"b".repeat(64)}"\nend\n`);
+    git(tap, "add", ".");
+    git(tap, "commit", "-q", "-m", "previous release");
+    git(tap, "push", "-q", "origin", "HEAD:main");
+    const store = join(dir, "release-store");
+    mkdirSync(store);
+    writeFileSync(
+      join(dir, "bin", "gh"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${join(dir, "gh.log")}"
+if [[ "$1 $2" == "release upload" ]]; then cp "$4" "${store}/VoiceBar.zip"; exit 0; fi
+if [[ "$1 $2" == "release download" ]]; then cat "${store}/VoiceBar.zip"; exit 0; fi
+exit 2
+`,
+    );
+    chmodSync(join(dir, "bin", "gh"), 0o755);
+    return { tap, remote };
   }
 
-  test("no proof: nothing is uploaded", () => {
-    makeReleaseFixture();
-    const r = runUpload([]);
+  function runPromote(args: string[]) {
+    const r = Bun.spawnSync(
+      [
+        "bash", promoteScript,
+        "--version", version,
+        "--app", join(dir, "VoiceBar.app"),
+        "--zip", join(dir, "VoiceBar.zip"),
+        "--tap-root", join(dir, "tap"),
+        "--formula-sha256", FORMULA_SHA,
+        ...args,
+      ],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          PATH: `${join(dir, "bin")}:${process.env.PATH}`,
+          GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t",
+        },
+      },
+    );
+    const ghLog = join(dir, "gh.log");
+    return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString(), gh: existsSync(ghLog) ? readFileSync(ghLog, "utf8") : "" };
+  }
+
+  const remoteLog = (remote: string) => git(remote, "log", "--format=%s", "main").stdout.toString();
+
+  test("no proof: nothing is uploaded and the tap is untouched", () => {
+    const { tap, remote } = promoteFixture();
+    const r = runPromote([]);
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("T3 Option+F5 proof");
     expect(r.gh).toBe("");
+    expect(git(tap, "status", "--porcelain").stdout.toString()).toBe("");
+    expect(remoteLog(remote).trim()).toBe("previous release");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("mismatched proof: nothing is uploaded", () => {
-    makeReleaseFixture();
-    const r = runUpload(["--t3-proof", writeProof(proof({ gitCommit: OTHER_COMMIT }))]);
+  test("mismatched proof: nothing is uploaded and the tap is untouched", () => {
+    const { tap, remote } = promoteFixture();
+    const r = runPromote(["--t3-proof", writeProof(proof({ gitCommit: OTHER_COMMIT }))]);
     expect(r.code).not.toBe(0);
+    expect(r.gh).toBe("");
+    expect(git(tap, "status", "--porcelain").stdout.toString()).toBe("");
+    expect(remoteLog(remote).trim()).toBe("previous release");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a dirty tap is refused before anything is published", () => {
+    const { tap } = promoteFixture();
+    writeFileSync(join(tap, "Casks", "voicebar.rb"), "hand edit\n");
+    const r = runPromote(["--t3-proof", writeProof(proof())]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("tap");
     expect(r.gh).toBe("");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("valid proof: uploads exactly the verified ZIP", () => {
-    makeReleaseFixture();
-    const r = runUpload(["--t3-proof", writeProof(proof())]);
+  test("valid proof: uploads the verified ZIP, then commits and pushes formula and cask together", () => {
+    const { tap, remote } = promoteFixture();
+    const zipSha = createHash("sha256").update(readFileSync(join(dir, "VoiceBar.zip"))).digest("hex");
+    const r = runPromote(["--t3-proof", writeProof(proof())]);
     expect(r.err).toBe("");
     expect(r.code).toBe(0);
     expect(r.gh).toContain(`release upload v${version} ${join(dir, "VoiceBar.zip")}`);
+    expect(r.gh).toContain(`release download v${version}`);
+    const cask = readFileSync(join(tap, "Casks", "voicebar.rb"), "utf8");
+    expect(cask).toContain(`version "${version}"`);
+    expect(cask).toContain(`sha256 "${zipSha}"`);
+    const formula = readFileSync(join(tap, "Formula", "voicelayer.rb"), "utf8");
+    expect(formula).toContain(`voicelayer-mcp-${version}.tgz`);
+    expect(formula).toContain(`sha256 "${FORMULA_SHA}"`);
+    expect(formula).toContain('license "Apache-2.0"');
+    expect(git(tap, "status", "--porcelain").stdout.toString()).toBe("");
+    expect(remoteLog(remote)).toContain(version);
+    const pushed = git(remote, "show", "--name-only", "--format=", "main").stdout.toString();
+    expect(pushed).toContain("Casks/voicebar.rb");
+    expect(pushed).toContain("Formula/voicelayer.rb");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a published asset that differs from the verified ZIP stops before the tap is touched", () => {
+    const { tap, remote } = promoteFixture();
+    writeFileSync(
+      join(dir, "bin", "gh"),
+      `#!/usr/bin/env bash\nif [[ "$1 $2" == "release download" ]]; then printf 'other bytes'; fi\nexit 0\n`,
+    );
+    const r = runPromote(["--t3-proof", writeProof(proof())]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("published");
+    expect(git(tap, "status", "--porcelain").stdout.toString()).toBe("");
+    expect(remoteLog(remote).trim()).toBe("previous release");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
@@ -495,7 +629,10 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     expect(r.code).toBe(0);
     const p = JSON.parse(readFileSync(f.out, "utf8"));
     expect(p).toMatchObject({
-      schema: "voicelayer.t3-optf5-proof.v1",
+      schema: "voicelayer.t3-optf5-proof.v2",
+      // Collected from fixture paths under the test preload: never a release receipt.
+      receipt: "test",
+      bundleSha256: bundleDigest(installedApp),
       gitCommit: COMMIT,
       buildTimeUTC: BUILD_TIME,
       expectedTextSha256: sha256(SYNTHETIC),
@@ -505,11 +642,53 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     });
     expect(p.t3Build).toContain("0.0.45");
     expect(JSON.stringify(p)).not.toContain(SYNTHETIC);
+    const log = readFileSync(f.log, "utf8").trimEnd().split("\n");
+    const history = JSON.parse(readFileSync(f.history, "utf8"));
+    expect(p.evidence).toEqual({
+      captureLineSha256: sha256(log[log.length - 2]),
+      speakLineSha256: sha256(log[log.length - 1]),
+      historyEntrySha256: sha256(JSON.stringify(history[history.length - 1])),
+    });
 
-    makeReleaseFixture();
-    const gate = runVerify(["--t3-proof", f.out]);
+    // The candidate is byte-identical to the installed bundle (same executable symlink).
+    makeReleaseFixture({ executableSymlink: "/bin/bash" });
+    expect(bundleDigest(join(dir, "VoiceBar.app"))).toBe(p.bundleSha256);
+    // A test receipt never passes the gate...
+    const refused = runVerify(["--t3-proof", f.out]);
+    expect(refused.code).not.toBe(0);
+    expect(refused.err).toContain("release receipt");
+    // ...and the same evidence as a release receipt binds to exactly this bundle.
+    const asRelease = writeProof({ ...p, receipt: "release" });
+    const gate = runVerify(["--t3-proof", asRelease]);
     expect(gate.err).toBe("");
     expect(gate.code).toBe(0);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("the producer's proof refuses a candidate with equal plist identity but different contents", () => {
+    const f = producerFixture();
+    expect(start(f).code).toBe(0);
+    simulateKeypress(f);
+    expect(finish(f).code).toBe(0);
+    const p = JSON.parse(readFileSync(f.out, "utf8"));
+    makeReleaseFixture(); // same GitCommit/BuildTimeUTC, executable is "candidate-binary"
+    const r = runVerify(["--t3-proof", writeProof({ ...p, receipt: "release" })]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("bundle");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("outside the test preload, path overrides are refused before anything is read", () => {
+    const env: Record<string, string | undefined> = { ...process.env, TZ: "Etc/UTC" };
+    delete env.VOICELAYER_TEST_RUN_ROOT;
+    for (const override of [["--voicebar-log", join(dir, "x.log")], ["--history-file", join(dir, "h.json")], ["--app", join(dir, "VoiceBar.app")]]) {
+      const r = Bun.spawnSync(
+        [process.execPath, proofScript, "start", "--state", join(dir, "s.json"), "--t3-app", join(dir, "T3.app"),
+          "--expected-text-file", join(dir, "e.txt"), ...override],
+        { stdout: "pipe", stderr: "pipe", env },
+      );
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr.toString()).toContain("override");
+      expect(existsSync(join(dir, "s.json"))).toBe(false);
+    }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a complete valid keypress logged before start is never counted", () => {
@@ -556,8 +735,8 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     const r = finish(f);
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("sha256");
-    makeReleaseFixture();
-    expect(runVerify(["--t3-proof", f.out]).code).not.toBe(0);
+    makeReleaseFixture({ executableSymlink: "/bin/bash" });
+    expect(runVerify(["--t3-proof", writeProof({ ...JSON.parse(readFileSync(f.out, "utf8")), receipt: "release" })]).code).not.toBe(0);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("two speak_text commands in one window are ambiguous and refuse", () => {

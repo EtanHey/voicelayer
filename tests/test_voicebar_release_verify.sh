@@ -110,15 +110,16 @@ make_release_fixture() {
     (cd "$temp_dir" && zip -qry VoiceBar.zip VoiceBar.app)
     write_tap "$temp_dir/tap" "$formula_version" "$cask_version"
     sed -i.bak "s/sha256 \"abc123\"/sha256 \"$(shasum -a 256 "$temp_dir/VoiceBar.zip" | awk '{print $1}')\"/" "$temp_dir/tap/Casks/voicebar.rb"
-    write_t3_proof "$temp_dir/t3-proof.json"
+    write_t3_proof "$temp_dir/t3-proof.json" "$temp_dir/VoiceBar.app"
 }
 
 # T3GATE1: the tap check gates the cask bump on an installed-candidate T3 Option+F5 proof.
 write_t3_proof() {
-    local hash
+    local hash bundle
     hash="$(printf 'synthetic' | shasum -a 256 | awk '{print $1}')"
+    bundle="$(bun "$ROOT_DIR/scripts/t3-optf5-proof.ts" bundle-digest --app "$2")"
     cat > "$1" <<EOF
-{"schema":"voicelayer.t3-optf5-proof.v1","gitCommit":"05bcc0a235712245dfc0bd08f8e657dd9277e7cd","buildTimeUTC":"2026-10-18T01:10:14Z","t3Build":"T3 Code (Alpha) 0.0.45 (0.0.45)","timestamp":"2026-10-18T01:30:00.000Z","expectedTextSha256":"$hash","historyTextSha256":"$hash","speakTextCommandId":"73C05ACC-9C3D-432A-BEE4-A6F6B662954F","readError":false}
+{"schema":"voicelayer.t3-optf5-proof.v2","receipt":"release","bundleSha256":"$bundle","evidence":{"captureLineSha256":"$hash","speakLineSha256":"$hash","historyEntrySha256":"$hash"},"gitCommit":"05bcc0a235712245dfc0bd08f8e657dd9277e7cd","buildTimeUTC":"2026-10-18T01:10:14Z","t3Build":"T3 Code (Alpha) 0.0.45 (0.0.45)","timestamp":"2026-10-18T01:30:00.000Z","expectedTextSha256":"$hash","historyTextSha256":"$hash","speakTextCommandId":"73C05ACC-9C3D-432A-BEE4-A6F6B662954F","readError":false}
 EOF
 }
 

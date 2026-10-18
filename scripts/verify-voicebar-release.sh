@@ -208,21 +208,16 @@ verify_zip_contains_app() {
 
 # T3GATE1: the 2.2.45 T3 Option+F5 regression shipped because publication never required
 # the installed-candidate T3 check. Delivery (the cask bump, and the release-asset upload via
-# upload-voicebar-release.sh) is gated on that proof. A proof given in artifact mode is checked too.
+# promote-voicebar-release.sh) is gated on that proof. A proof given in artifact mode is checked too.
 verify_t3_optf5_proof() {
-    local candidate_commit candidate_build_time
     if [ -z "$T3_PROOF" ]; then
         err "REFUSED: T3 Option+F5 proof is required before delivery (--t3-proof PROOF.json)."
         err "Install this candidate, run scripts/t3-optf5-proof.ts start/finish around a real Option+F5 in T3 Code, then pass the proof. There is no bypass."
         return 1
     fi
     verify_zip_contains_app
-    candidate_commit="$(read_plist_string "$APP_PATH/Contents/Info.plist" "GitCommit" 2>/dev/null || true)"
-    candidate_build_time="$(read_plist_string "$APP_PATH/Contents/Info.plist" "BuildTimeUTC" 2>/dev/null || true)"
-    bun "$PACKAGE_ROOT/scripts/t3-optf5-proof.ts" check \
-        --proof "$T3_PROOF" \
-        --candidate-commit "$candidate_commit" \
-        --candidate-build-time "$candidate_build_time"
+    # check reads GitCommit, BuildTimeUTC and the full-content digest from the app itself.
+    bun "$PACKAGE_ROOT/scripts/t3-optf5-proof.ts" check --proof "$T3_PROOF" --app "$APP_PATH"
 }
 
 while [[ $# -gt 0 ]]; do

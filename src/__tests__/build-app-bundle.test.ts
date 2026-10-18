@@ -333,7 +333,7 @@ describe("VoiceBar Homebrew release script contract", () => {
     expect(releaseScript).toContain("Casks/voicebar.rb");
     expect(releaseScript).toContain("sha256");
     // T3GATE1: uploading is publication and is gated on the T3 proof in its own script.
-    expect(releaseScript).toContain("upload-voicebar-release.sh");
+    expect(releaseScript).toContain("promote-voicebar-release.sh");
   });
 
   test("runs release verification before printing the zip sha256", () => {
