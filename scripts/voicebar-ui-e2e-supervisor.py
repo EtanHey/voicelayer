@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Guard the native gate lifecycle; refuse UI mutation without causal Settings ownership."""
 import argparse
+import contextlib
 import datetime
+import fcntl
 import hashlib
+import hmac
 import importlib.util
 import json
 import os
@@ -13,6 +16,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -38,9 +42,37 @@ AX_PUBLIC_LABELS = frozenset((NOTCH_IDLE_LABEL, 'VoiceBar launcher', 'VoiceBar h
                               'Ready', 'Start voice recording', 'Re-transcribing stored audio',
                               'Re-transcribing…') + BUSY_PREFIXES + BUSY_TEXT)
 
+# One key per supervisor process, kept only in memory. Receipts can correlate equal
+# text within a run without exposing a reusable dictionary of short spoken words.
+_REDACTION_KEY = secrets.token_bytes(32)
+
 
 def redacted(text):
-    return '<redacted len=%d sha256=%s>' % (len(text), hashlib.sha256(text.encode()).hexdigest()[:8])
+    tag = hmac.new(_REDACTION_KEY, text.encode(), hashlib.sha256).hexdigest()[:8]
+    return '<redacted len=%d hmac-sha256=%s>' % (len(text), tag)
+
+
+class SupervisorActiveError(RuntimeError):
+    pass
+
+
+@contextlib.contextmanager
+def supervisor_lock():
+    # A shared path, independent of the run output directory. Never unlink it:
+    # replacing the inode could admit a contender while another run holds its lock.
+    path = pathlib.Path(tempfile.gettempdir()) / ('voicebar-ui-e2e-supervisor-%d.lock' % os.getuid())
+    with path.open('a+') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SupervisorActiveError('Another supervisor run is active; lock ' + str(path)) from None
+        # PID is diagnostic only. The kernel releases the lock even on SIGKILL, so
+        # a stale dead owner's file is reclaimed without PID-reuse guessing.
+        lock.seek(0)
+        lock.truncate()
+        lock.write(str(os.getpid()) + '\n')
+        lock.flush()
+        yield
 
 
 def ax_text_receipt(text):
@@ -771,13 +803,24 @@ class NativeHost:
         (self.output / 'operator-state.json').write_text(json.dumps(receipt, indent=2) + '\n')
 
 
-if __name__ == '__main__':
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=pathlib.Path)
     parser.add_argument('--scenario', default='full', choices=['full', 'hide1', 'gate2246', 'focused-338'])
-    args = parser.parse_args()
-    host = NativeHost(args.output.resolve(), args.scenario)
-    # Latch signals through cleanup; restoration cannot be interrupted by a second signal.
-    for sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP]:
-        signal.signal(sig, lambda number, frame: host.cancelled.append(number))
-    sys.exit(supervise(host))
+    args = parser.parse_args(argv)
+    try:
+        # Acquire before host construction or reading/changing workstation mute;
+        # retain through cleanup, mute restoration and receipt export.
+        with supervisor_lock():
+            host = NativeHost(args.output.resolve(), args.scenario)
+            # Latch signals through cleanup; restoration cannot be interrupted by a second signal.
+            for sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP]:
+                signal.signal(sig, lambda number, frame: host.cancelled.append(number))
+            return supervise(host)
+    except SupervisorActiveError as error:
+        note('PREFLIGHT_REFUSED: ' + str(error), args.output.resolve() / 'supervisor-preflight.log')
+        return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main())
