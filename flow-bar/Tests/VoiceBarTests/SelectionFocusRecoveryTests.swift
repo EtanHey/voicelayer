@@ -12,7 +12,11 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         var focus = SelectionFocusAX.Focus(role: "AXTextArea", subrole: nil)
         var secureInput = false
         var trusted = true
-        var pid: pid_t? = 4242
+        static let appA = SelectionFocusAX.AppIdentity(pid: 4242, startTime: 1_000_001)
+        static let appB = SelectionFocusAX.AppIdentity(pid: 5353, startTime: 2_000_002)
+        var front: SelectionFocusAX.AppIdentity? = FakeAX.appA
+        /// Runs on each retry sleep, so a test can switch apps mid-wait.
+        var onSleep: (Int) -> Void = { _ in }
         var setResult: AXError = .success
         var queries = 0
         var sets: [pid_t] = []
@@ -29,9 +33,9 @@ final class SelectionFocusRecoveryTests: XCTestCase {
                     let status = self.statuses.count > 1 ? self.statuses.removeFirst() : self.statuses[0]
                     return (status, status == .success ? self.focus : nil)
                 },
-                frontmostPID: { self.pid },
-                setManualAccessibility: { self.sets.append($0); return self.setResult },
-                sleep: { self.sleeps.append($0) })
+                frontmostApp: { self.front },
+                setManualAccessibility: { self.sets.append($0.pid); return self.setResult },
+                sleep: { self.sleeps.append($0); self.onSleep(self.sleeps.count) })
         }
     }
 
@@ -39,11 +43,11 @@ final class SelectionFocusRecoveryTests: XCTestCase {
 
     func testReadableFocusNeverTouchesManualAccessibility() {
         let fake = FakeAX([.success])
-        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, allowUnreadableFocus: false)
+        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
         XCTAssertNil(result.blockReason)
         XCTAssertNil(result.axEnable)
         XCTAssertEqual(result.retries, 0)
-        XCTAssertFalse(result.unreadableFocusAllowsCopy)
+        XCTAssertNil(result.copyExemptApp)
         XCTAssertEqual(fake.sets, [])
         XCTAssertEqual(fake.queries, 1)
         XCTAssertEqual(fake.sleeps, [])
@@ -51,17 +55,17 @@ final class SelectionFocusRecoveryTests: XCTestCase {
 
     func testNoValueSetsManualAccessibilityOnFrontmostAppAndRetriesUntilFocusIsReadable() {
         let fake = FakeAX([.noValue, .noValue, .noValue, .success])
-        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, allowUnreadableFocus: false)
+        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
         XCTAssertNil(result.blockReason)
         XCTAssertEqual(result.axEnable, .set)
         XCTAssertEqual(result.retries, 3)
         XCTAssertEqual(fake.sets, [4242])
-        XCTAssertFalse(result.unreadableFocusAllowsCopy)
+        XCTAssertNil(result.copyExemptApp)
     }
 
     func testCannotCompleteAlsoRecovers() {
         let fake = FakeAX([.cannotComplete, .success])
-        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, allowUnreadableFocus: false)
+        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
         XCTAssertNil(result.blockReason)
         XCTAssertEqual(result.axEnable, .set)
         XCTAssertEqual(result.retries, 1)
@@ -69,9 +73,9 @@ final class SelectionFocusRecoveryTests: XCTestCase {
 
     func testRetryWaitIsBoundedAndPersistentNoValueAllowsCopyOnlyForAnAppThatAcceptedManualAccessibility() {
         let fake = FakeAX([.noValue])
-        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, allowUnreadableFocus: false)
+        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
         XCTAssertNil(result.blockReason, "a Chromium-family app that accepted the flag may use preserved-clipboard Copy")
-        XCTAssertTrue(result.unreadableFocusAllowsCopy)
+        XCTAssertEqual(result.copyExemptApp, FakeAX.appA)
         XCTAssertEqual(result.axEnable, .attempted)
         XCTAssertEqual(result.retries, SpeakSelectionCapture.focusRetryLimit)
         let waited = fake.sleeps.reduce(0, +)
@@ -83,25 +87,25 @@ final class SelectionFocusRecoveryTests: XCTestCase {
     func testAppRefusingManualAccessibilityKeepsTheOldCaptureFailure() {
         let fake = FakeAX([.noValue])
         fake.setResult = .attributeUnsupported
-        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, allowUnreadableFocus: false)
+        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
         XCTAssertEqual(result.blockReason?.outcome, .captureFailed)
         XCTAssertEqual(result.axEnable, .failed)
         XCTAssertEqual(result.retries, 0)
-        XCTAssertFalse(result.unreadableFocusAllowsCopy)
+        XCTAssertNil(result.copyExemptApp)
         XCTAssertEqual(fake.sleeps, [])
     }
 
     func testOtherFocusErrorsAndMissingFrontmostAppDoNotAttemptRecovery() {
         for status in [AXError.failure, .apiDisabled, .notImplemented] {
             let fake = FakeAX([status])
-            let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, allowUnreadableFocus: false)
+            let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
             XCTAssertEqual(result.blockReason?.outcome, .captureFailed)
             XCTAssertNil(result.axEnable)
             XCTAssertEqual(fake.sets, [])
         }
         let fake = FakeAX([.noValue])
-        fake.pid = nil
-        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, allowUnreadableFocus: false)
+        fake.front = nil
+        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
         XCTAssertEqual(result.blockReason?.outcome, .captureFailed)
         XCTAssertNil(result.axEnable)
     }
@@ -109,35 +113,58 @@ final class SelectionFocusRecoveryTests: XCTestCase {
     func testSecureInputAndTrustStillWinBeforeAnyAXCall() {
         let secure = FakeAX([.noValue])
         secure.secureInput = true
-        XCTAssertEqual(SpeakSelectionCapture.preflight(secure.ax, recover: true, allowUnreadableFocus: false)
+        XCTAssertEqual(SpeakSelectionCapture.preflight(secure.ax, recover: true, copyExemptApp: nil)
             .blockReason?.outcome, .secureField)
         XCTAssertEqual(secure.queries, 0)
         XCTAssertEqual(secure.sets, [])
         let untrusted = FakeAX([.noValue])
         untrusted.trusted = false
-        XCTAssertEqual(SpeakSelectionCapture.preflight(untrusted.ax, recover: true, allowUnreadableFocus: false)
+        XCTAssertEqual(SpeakSelectionCapture.preflight(untrusted.ax, recover: true, copyExemptApp: nil)
             .blockReason?.outcome, .captureFailed)
         XCTAssertEqual(untrusted.queries, 0)
+    }
+
+    func testAppSwitchDuringRetriesGrantsNoCopyExemption() {
+        let fake = FakeAX([.noValue])
+        fake.onSleep = { if $0 == 3 { fake.front = FakeAX.appB } }
+        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
+        XCTAssertEqual(result.blockReason?.outcome, .captureFailed)
+        XCTAssertNil(result.copyExemptApp)
+        XCTAssertEqual(result.axEnable, .attempted)
+    }
+
+    func testRecheckRefusesADifferentAppOrARelaunchedProcessWithTheSamePID() {
+        let fake = FakeAX([.noValue])
+        fake.front = FakeAX.appB
+        XCTAssertEqual(SpeakSelectionCapture.preflight(fake.ax, recover: false, copyExemptApp: FakeAX.appA)
+            .blockReason?.outcome, .captureFailed)
+        fake.front = SelectionFocusAX.AppIdentity(pid: FakeAX.appA.pid, startTime: 9_999_999)
+        XCTAssertEqual(SpeakSelectionCapture.preflight(fake.ax, recover: false, copyExemptApp: FakeAX.appA)
+            .blockReason?.outcome, .captureFailed)
+        fake.front = nil
+        XCTAssertEqual(SpeakSelectionCapture.preflight(fake.ax, recover: false, copyExemptApp: FakeAX.appA)
+            .blockReason?.outcome, .captureFailed)
+        XCTAssertEqual(fake.sets, [])
     }
 
     func testRecoveredSecureFocusIsStillASecureField() {
         let fake = FakeAX([.noValue, .success])
         fake.focus = SelectionFocusAX.Focus(role: "AXTextField", subrole: "AXSecureTextField")
-        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, allowUnreadableFocus: false)
+        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
         XCTAssertEqual(result.blockReason?.outcome, .secureField)
         XCTAssertEqual(result.axEnable, .set)
     }
 
     func testRecheckWithoutRecoveryHonoursTheEarlierCopyAllowanceButNotSecureInput() {
         let fake = FakeAX([.noValue])
-        let recheck = SpeakSelectionCapture.preflight(fake.ax, recover: false, allowUnreadableFocus: true)
+        let recheck = SpeakSelectionCapture.preflight(fake.ax, recover: false, copyExemptApp: FakeAX.appA)
         XCTAssertNil(recheck.blockReason)
         XCTAssertEqual(fake.sets, [], "the recheck must not set the flag again")
         XCTAssertEqual(fake.sleeps, [])
-        XCTAssertEqual(SpeakSelectionCapture.preflight(fake.ax, recover: false, allowUnreadableFocus: false)
+        XCTAssertEqual(SpeakSelectionCapture.preflight(fake.ax, recover: false, copyExemptApp: nil)
             .blockReason?.outcome, .captureFailed)
         fake.secureInput = true
-        XCTAssertEqual(SpeakSelectionCapture.preflight(fake.ax, recover: false, allowUnreadableFocus: true)
+        XCTAssertEqual(SpeakSelectionCapture.preflight(fake.ax, recover: false, copyExemptApp: FakeAX.appA)
             .blockReason?.outcome, .secureField)
     }
 
@@ -200,6 +227,40 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         XCTAssertEqual(board.string(forType: .string), "original")
     }
 
+    /// Sol's trace: A earns the exemption, the user switches to B while the clipboard is snapshotted,
+    /// and B's unreadable focus must never receive a synthesized Cmd+C.
+    func testSwitchToAnotherAppDuringClipboardSnapshotNeverCopiesIntoIt() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        board.setString("original", forType: .string)
+        let count = board.changeCount
+        let fake = FakeAX([.noValue])
+        let capture = makeCapture(fake, readAXSelection: { nil }, pasteboard: board, postCopy: {
+            XCTFail("Cmd+C must not reach app B"); return false
+        }, beforeSnapshot: { fake.front = FakeAX.appB })
+        let report = run(capture)
+        XCTAssertEqual(report.details["outcome"], "capture_failed")
+        XCTAssertEqual(report.details["preflight_ax_enable"], "attempted")
+        XCTAssertEqual(report.message, "Couldn't read the selection, try again")
+        XCTAssertEqual(report.spoken, [])
+        XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(fake.sets, [FakeAX.appA.pid])
+    }
+
+    func testSwitchToAnotherAppDuringRetriesShowsReadErrorWithoutCopy() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let fake = FakeAX([.noValue])
+        fake.onSleep = { if $0 == 2 { fake.front = FakeAX.appB } }
+        let capture = makeCapture(fake, readAXSelection: { XCTFail("blocked"); return nil }, pasteboard: board,
+                                  postCopy: { XCTFail("Cmd+C must not reach app B"); return false })
+        let report = run(capture)
+        XCTAssertEqual(report.details["outcome"], "capture_failed")
+        XCTAssertEqual(report.message, "Couldn't read the selection, try again")
+        XCTAssertEqual(report.spoken, [])
+    }
+
     func testNonElectronAppRefusingTheFlagShowsTheExistingReadError() {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
@@ -228,13 +289,15 @@ final class SelectionFocusRecoveryTests: XCTestCase {
     // MARK: helpers
 
     private func makeCapture(_ fake: FakeAX, readAXSelection: @escaping () -> String?, pasteboard: NSPasteboard,
-                             postCopy: @escaping () -> Bool = { false }) -> SpeakSelectionCapture {
+                             postCopy: @escaping () -> Bool = { false },
+                             beforeSnapshot: @escaping () -> Void = {}) -> SpeakSelectionCapture {
         let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".build/debug/VoiceBar")
         let pasteboardName = pasteboard.name.rawValue
         let ax = fake.ax
         return SpeakSelectionCapture(focusAX: ax, snapshotReader: {
-            SelectionPasteboardSnapshot.readInHelper(name: pasteboardName, executable: executable)
+            beforeSnapshot()
+            return SelectionPasteboardSnapshot.readInHelper(name: pasteboardName, executable: executable)
         }, readAXSelection: readAXSelection, pasteboard: pasteboard, postCopy: postCopy, schedule: {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + $0, execute: $1)
         })
