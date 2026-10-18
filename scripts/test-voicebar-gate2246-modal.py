@@ -99,6 +99,49 @@ print(gate2245HasOwnedScreenWindows([unnamed], pid: 200))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.splitlines(), ['false', 'true', 'true'])
 
+    def test_pid_validation_compiles_in_real_nonthrowing_step_contract(self):
+        source = SOURCE.read_text()
+        contract = (ROOT / 'flow-bar/UIE2E/VoiceBarUIE2ETests/VoiceBarFlowTests.swift').read_text()
+        signature = contract.split('    func step(', 1)[1].split('{', 1)[0]
+        body_type = re.search(r'_ body: (\(\) (?:throws )?-> Void)', signature)[1]
+        hidden = source.split('step("HIDE1VIS " + event + " hidden") {', 1)[1].split('attachJSON(', 1)[0]
+        validation = hidden[hidden.index('                let screenWindows ='):]
+        helper = source.split('// BEGIN GATE2245 WINDOW OWNERSHIP\n', 1)[1].split('// END GATE2245 WINDOW OWNERSHIP', 1)[0]
+        fixture = r'''
+var failures = 0
+func XCTFail(_ message: String) { failures += 1 }
+func XCTAssertFalse(_ value: Bool, _ message: String) { if value { failures += 1 } }
+func XCTAssertGreaterThan(_ value: Int, _ minimum: Int) { if value <= minimum { failures += 1 } }
+func XCTUnwrap<T>(_ value: T?, _ message: String) throws -> T {
+    guard let value else { throw NSError(domain: "missing", code: 1) }; return value
+}
+func validate(_ receipt: [String: Any]) {
+    step {
+''' + validation + r'''
+    }
+}
+let resident = [["owner": "VoiceBar", "pid": 100]] as [[String: Any]]
+for pid: Any? in [nil, 0, -1, "200", 200] {
+    failures = 0
+    var receipt: [String: Any] = ["screenWindows": resident]
+    if let pid { receipt["pid"] = pid }
+    validate(receipt)
+    precondition(failures == ((pid as? Int) == 200 ? 0 : 1), "PID must fail closed")
+}
+failures = 0
+validate(["pid": 200, "screenWindows": [["pid": 200]]])
+precondition(failures == 1, "QA-owned windows must still fail")
+print("PASS nonthrowing step, invalid PID refusal, resident exclusion, QA surface failure")
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp)
+            shim = 'import Foundation\n' + helper + 'func step(_ body: ' + body_type + ') { body() }\n'
+            (path / 'main.swift').write_text(shim + fixture)
+            build = subprocess.run(['xcrun', 'swiftc', str(path / 'main.swift'), '-o', str(path / 'probe')], capture_output=True, text=True)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            result = subprocess.run([str(path / 'probe')], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_real_queries_ignore_stale_receipt_and_touchbar_duplicate(self):
         source = SOURCE.read_text()
         self.assertIn('// BEGIN GATE2246 MODAL QUERIES', source,

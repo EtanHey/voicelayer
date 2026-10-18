@@ -140,8 +140,10 @@ extension VoiceBarFlowTests {
                 XCTAssertEqual(receipt["wizardVisible"] as? Bool, false)
                 XCTAssertEqual((receipt["ownedVisibleWindows"] as? [[String: Any]])?.count, 0)
                 let screenWindows = receipt["screenWindows"] as? [[String: Any]] ?? []
-                let qaPID = try XCTUnwrap(receipt["pid"] as? Int, "QA process identity missing")
-                XCTAssertGreaterThan(qaPID, 0)
+                guard let qaPID = receipt["pid"] as? Int, qaPID > 0 else {
+                    XCTFail("QA process identity missing or invalid")
+                    return
+                }
                 XCTAssertFalse(gate2245HasOwnedScreenWindows(screenWindows, pid: qaPID),
                     "QA-owned surface remains on screen; installed resident is checked separately")
                 attachJSON("HIDE1VIS-" + event + "-hidden", receipt)
