@@ -45,6 +45,7 @@ raise SystemExit(subprocess.call(sys.argv[2:]))
       'printf "guard\\n" >> "$HOOK_RECORD"\nexit "$GUARD_STATUS"\n');
     writeFileSync(join(root, "scripts/run_tests.sh"),
       'printf "suite\\n" >> "$HOOK_RECORD"\nexit "$SUITE_STATUS"\n');
+    // isolation-exempt: minimal shell fixture intentionally omits HOME and limits PATH; no VoiceLayer runtime or live helper runs
     const result = spawnSync(bash, [join(root, "hook")], {
       cwd: root,
       env: { ...(availability === "unset-home" ? {} : { HOME: home }),

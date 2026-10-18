@@ -22,7 +22,7 @@ with mock.patch.dict("os.environ", {"PATH": "/stale:/working"}), mock.patch("sub
     assert module.normalize_audio(Path("in.wav"), Path("out.wav"))
     assert calls[-1][0] == "/working/ffmpeg"
     assert ["/stale/ffmpeg", "-version"] in calls
-`], {stdout: "pipe", stderr: "pipe"});
+`], { env: process.env, stdout: "pipe", stderr: "pipe"});
   expect(result.stderr.toString()).toBe("");
   expect(result.exitCode).toBe(0);
 }, SUBPROCESS_TEST_TIMEOUT_MS);
@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory() as root:
     assert len(locations) == 1
     assert not locations[0].exists()
     assert ffmpeg.is_file() and ffprobe.is_file()
-`], {stdout:"pipe", stderr:"pipe"});
+`], { env: process.env, stdout:"pipe", stderr:"pipe"});
   expect(result.stderr.toString()).toBe("");
   expect(result.exitCode).toBe(0);
 }, SUBPROCESS_TEST_TIMEOUT_MS);

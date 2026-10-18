@@ -1,3 +1,4 @@
+import { requireIsolatedOverride } from "./test-isolation";
 /**
  * MCP tool handler functions for VoiceLayer.
  *
@@ -104,6 +105,7 @@ function textResult(text: string, isError = false): McpResult {
 
 // --- Config ---
 
+requireIsolatedOverride(process.env, "QA_VOICE_THINK_FILE");
 const THINK_FILE =
   process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
 

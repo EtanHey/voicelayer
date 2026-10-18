@@ -40,7 +40,7 @@ describe("edge-tts argparse exit-2 regression", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     // Prime the cache as "importable".
@@ -90,7 +90,7 @@ describe("edge-tts argparse exit-2 regression", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     const { synthesizeWithRetry, resetHealthCache } =
@@ -131,7 +131,7 @@ describe("edge-tts argparse exit-2 regression", () => {
           ),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     const { synthesizeWithRetry, resetHealthCache } =

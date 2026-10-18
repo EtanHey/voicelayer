@@ -1,3 +1,4 @@
+import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
 import { processingEnv } from "./processing-settings";
 import { existsSync } from "fs";
@@ -219,6 +220,7 @@ export function getSTTPolishMode(
 export function getSTTPolishSocketPath(
   env: STTPolishEnv = process.env,
 ): string {
+  requireIsolatedOverride(env, "QA_VOICE_STT_POLISH_SOCKET");
   return env.QA_VOICE_STT_POLISH_SOCKET?.trim() || DEFAULT_POLISH_SOCKET;
 }
 
@@ -276,6 +278,7 @@ export function getSTTPolishSocketTimeoutMs(
 }
 
 function getSTTPolishLogPath(env: STTPolishEnv = process.env): string {
+  requireIsolatedOverride(env, "QA_VOICE_STT_POLISH_LOG_PATH");
   return env.QA_VOICE_STT_POLISH_LOG_PATH?.trim() || DEFAULT_POLISH_LOG_PATH;
 }
 

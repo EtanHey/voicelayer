@@ -168,7 +168,7 @@ describe("playback queue — P0-1 sequential playback", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     // @ts-ignore — mock Bun.spawn: audio players are controllable
@@ -422,7 +422,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     // @ts-ignore — preserve the fixture and inspect only the duration probe.
     Bun.spawnSync = (cmd: string[], options?: unknown) => {
       if (cmd.includes("format=duration")) probeOptions = options;
-      return spawnSync(cmd);
+      return spawnSync(cmd, { env: process.env });
     };
     try {
       const owned = tts.playAudioNonBlocking(`${TEST_TMP}/watchdog-probe-budget.mp3`);
@@ -438,7 +438,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     // @ts-ignore — emulate the external recorder updating state while ffprobe runs.
     Bun.spawnSync = (cmd: string[]) => {
       if (cmd.includes("format=duration")) writeRecordingState("recording");
-      return spawnSync(cmd);
+      return spawnSync(cmd, { env: process.env });
     };
     try {
       const owned = tts.playAudioNonBlocking(`${TEST_TMP}/watchdog-probe-recording.mp3`);
@@ -616,11 +616,11 @@ describe("playback queue — P0-1 sequential playback", () => {
         attempts++;
         return { pid: 99700 + attempts, exited: synthesis.promise, kill() {} };
       }
-      return queueSpawn(cmd, opts);
+      return queueSpawn(cmd, { ...opts, env: { ...process.env, ...opts?.env } });
     }) as typeof Bun.spawn;
     Bun.spawnSync = ((cmd: string[], opts: any) => cmd.includes("import edge_tts; print('ok')")
       ? { exitCode: 0, stdout: Buffer.from("ok"), stderr: Buffer.alloc(0) }
-      : queueSpawnSync(cmd, opts)) as typeof Bun.spawnSync;
+      : queueSpawnSync(cmd, { ...opts, env: { ...process.env, ...opts?.env } })) as typeof Bun.spawnSync;
     const capture = spyOn(input, "waitForInput").mockResolvedValue("must not capture");
     const spies = [capture, spyOn(input, "clearInput").mockImplementation(() => {}),
       spyOn(booking, "clearStopSignal").mockImplementation(() => {}),
@@ -1670,7 +1670,7 @@ describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     // @ts-ignore

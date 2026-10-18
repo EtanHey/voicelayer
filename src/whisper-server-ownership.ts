@@ -1,3 +1,4 @@
+import { requireIsolatedOverride } from "./test-isolation";
 /**
  * Ownership records for the whisper-server sidecar.
  *
@@ -61,6 +62,7 @@ export interface WhisperServerOwnershipRecord {
 }
 
 function ownershipDir(): string {
+  requireIsolatedOverride(process.env, OWNERSHIP_DIR_ENV);
   const override = process.env[OWNERSHIP_DIR_ENV]?.trim();
   if (override) return override;
   return join(homedir(), ".local", "state", "voicelayer");

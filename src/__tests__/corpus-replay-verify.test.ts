@@ -772,7 +772,7 @@ describe("corpus replay verification", () => {
       [
         "#!/usr/bin/env bun",
         'import { writeFileSync } from "fs";',
-        'const child = Bun.spawn(["/bin/sh", "-c", \'trap "" TERM; exec /bin/sleep 300\'], {',
+        'const child = Bun.spawn(["/bin/sh", "-c", \'trap "" TERM; exec /bin/sleep 300\'], { env: process.env,',
         '  stdin: "ignore",',
         '  stdout: "ignore",',
         '  stderr: "ignore",',

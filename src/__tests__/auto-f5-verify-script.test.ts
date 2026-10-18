@@ -88,7 +88,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
       const binDir = join(workDir, "bin");
       const fakeSwift = join(binDir, "swift");
       const invocations = join(workDir, "swift-invocations.txt");
-      await Bun.$`mkdir -p ${binDir}`;
+      await Bun.$`mkdir -p ${binDir}`.env(process.env);
       writeFileSync(
         fakeSwift,
         [
@@ -177,7 +177,7 @@ describe("auto-f5-verify.sh pure helpers", () => {
       const mainRoot = join(workDir, "main");
       const buildLog = join(workDir, "build.log");
       const launchctlLog = join(workDir, "launchctl.log");
-      await Bun.$`mkdir -p ${binDir} ${mainRoot}/flow-bar`;
+      await Bun.$`mkdir -p ${binDir} ${mainRoot}/flow-bar`.env(process.env);
       writeFileSync(
         join(mainRoot, "flow-bar", "build-app.sh"),
         [

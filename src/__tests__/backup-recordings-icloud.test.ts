@@ -122,7 +122,7 @@ function installLayout(relative: string, viaOpt = false) {
   });
   expect(result.exitCode).toBe(0);
   const parsed = Bun.spawnSync(["python3", "-c", "import json, plistlib, sys; print(json.dumps(plistlib.load(open(sys.argv[1], 'rb'))))",
-    join(home, "Library/LaunchAgents/com.voicelayer.recordings-backup.plist")]);
+    join(home, "Library/LaunchAgents/com.voicelayer.recordings-backup.plist")], { env: process.env });
   expect(parsed.exitCode).toBe(0);
   expect(existsSync(join(home, "launchctl-called"))).toBe(false);
   expect(existsSync(dest)).toBe(false);
@@ -140,7 +140,7 @@ for (const viaOpt of [false, true]) {
     mkdirSync(join(next, "scripts"), { recursive: true });
     writeFileSync(join(next, "scripts/backup-recordings-icloud.sh"), "printf 'upgraded job ran\\n'\n");
     symlinkSync(join(home, "brew/Cellar/voicelayer/2.2.45"), opt);
-    const job = Bun.spawnSync(config.ProgramArguments);
+    const job = Bun.spawnSync(config.ProgramArguments, { env: process.env });
     expect(job.exitCode).toBe(0);
     expect(job.stdout.toString()).toBe("upgraded job ran\n");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
@@ -158,7 +158,7 @@ test("missing scheduled script fails nonzero and records Bash's error in the con
   // Emulate launchd's stderr redirection without loading a real LaunchAgent.
   const stderr = openSync(config.StandardErrorPath, "a");
   try {
-    expect(Bun.spawnSync(config.ProgramArguments, { stderr }).exitCode).not.toBe(0);
+    expect(Bun.spawnSync(config.ProgramArguments, { env: process.env, stderr }).exitCode).not.toBe(0);
   } finally {
     closeSync(stderr);
   }

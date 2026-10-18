@@ -1,3 +1,4 @@
+import { withChildFixtureEnv } from "./setup/child-env";
 import { testSocket, testTmp } from "./setup/test-tmp";
 import { afterEach, beforeEach, expect, it } from "bun:test";
 // AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
@@ -41,7 +42,12 @@ async function waitForFile(path: string, timeoutMs: number): Promise<boolean> {
 function spawnDaemon(extraEnv: Record<string, string | undefined> = {}) {
   mkdirSync(TEST_DIR, { recursive: true });
 
-  return Bun.spawn(["bun", "run", "src/mcp-server-daemon.ts"], {
+  const env = {
+    ...process.env,
+    VOICELAYER_MCP_SOCKET_PATH: TEST_MCP_SOCKET_PATH,
+    QA_VOICE_MCP_PID_PATH: TEST_MCP_PID_PATH,
+  };
+  return withChildFixtureEnv(env, () => Bun.spawn(["bun", "run", "src/mcp-server-daemon.ts"], {
     cwd: process.cwd(),
     stdin: "ignore",
     stdout: "pipe",
@@ -64,7 +70,7 @@ function spawnDaemon(extraEnv: Record<string, string | undefined> = {}) {
       VOICELAYER_ALLOW_ORPHAN_DAEMON: "1",
       ...extraEnv,
     },
-  });
+  }));
 }
 
 describe("DISABLE_VOICELAYER env", () => {

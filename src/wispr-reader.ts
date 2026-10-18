@@ -1,3 +1,4 @@
+import { requireIsolatedOverride } from "./test-isolation";
 /**
  * Wispr Flow SQLite reader — extracts transcriptions and audio for A/B
  * comparison with VoiceLayer's whisper.cpp pipeline.
@@ -18,6 +19,7 @@ export interface WisprDictionaryEntry {
 }
 
 export function getWisprDbPath(): string {
+  requireIsolatedOverride(process.env, "QA_VOICE_WISPR_DB_PATH");
   return process.env.QA_VOICE_WISPR_DB_PATH || DEFAULT_WISPR_DB_PATH;
 }
 

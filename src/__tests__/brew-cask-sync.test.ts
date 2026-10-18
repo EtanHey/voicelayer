@@ -149,6 +149,7 @@ function sandbox(options: {
 }
 
 function runInLib(box: Sandbox, body: string, env: Record<string, string> = {}) {
+  // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
   return Bun.spawnSync(["bash", "-c", `. "${syncLib}"\n${body}`], {
     cwd: repoRoot,
     stdout: "pipe",
@@ -416,6 +417,7 @@ describe("brew-cask-sync environment contract", () => {
 
   test("the tap is refreshed with an explicit remote and branch", () => {
     const box = sandbox({});
+    // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
     Bun.spawnSync(["git", "init", "-q", box.tapRepo], { stderr: "ignore", env: fixtureGitEnv() });
     const result = runInLib(box, "bcs_tap_update etanhey/layers main");
 
@@ -435,7 +437,7 @@ describe("brew-cask-sync environment contract", () => {
   // zsh is not installed on the ubuntu-latest CI runner. The point of this test
   // is the M1's non-interactive zsh, so skipping where there is no zsh keeps it
   // meaningful on a Mac instead of failing for the wrong reason in CI.
-  const hasZsh = Bun.spawnSync(["which", "zsh"], { stdout: "ignore", stderr: "ignore" })
+  const hasZsh = Bun.spawnSync(["which", "zsh"], { env: process.env, stdout: "ignore", stderr: "ignore" })
     .exitCode === 0;
 
   test.skipIf(!hasZsh)("the library works when sourced from zsh, not just bash", () => {
@@ -443,6 +445,7 @@ describe("brew-cask-sync environment contract", () => {
     // succeeds for an UNDEFINED function -- the bash idiom silently calls a
     // missing run_cmd. Caught on the real M1 on 2026-08-19.
     const box = sandbox({ appVersion: "2.2.6", registeredVersion: "2.2.6" });
+    // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
     const result = Bun.spawnSync(
       [
         "zsh",
@@ -475,6 +478,7 @@ describe("brew-cask-sync environment contract", () => {
   // installed. bcs_sync_cask already short-circuits at its entry; its callers
   // make follow-up brew calls of their own, and those have to survive too.
   function runWithoutBrew(body: string) {
+    // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
     return Bun.spawnSync(
       [
         "bash",

@@ -42,7 +42,7 @@ const VAD_FRAME_SECONDS = 512 / SAMPLE_RATE; // 0.032
 
 function whichOk(bin: string): boolean {
   try {
-    return Bun.spawnSync(["which", bin]).exitCode === 0;
+    return Bun.spawnSync(["which", bin], { env: process.env }).exitCode === 0;
   } catch {
     return false;
   }
@@ -615,7 +615,7 @@ function buildSynthFixture(): void {
   if (existsSync(SYNTH_WAV) && existsSync(SYNTH_WAV_REVERSED)) return;
   mkdirSync(FIXTURE_DIR, { recursive: true });
   const run = (cmd: string[]): void => {
-    const proc = Bun.spawnSync(cmd, { cwd: FIXTURE_DIR });
+    const proc = Bun.spawnSync(cmd, { env: process.env, cwd: FIXTURE_DIR });
     if (proc.exitCode !== 0) {
       throw new Error(
         `${cmd.join(" ")} failed: ${new TextDecoder().decode(proc.stderr)}`,

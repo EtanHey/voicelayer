@@ -55,7 +55,7 @@ const goldenTest = ready ? test : test.skip;
 function liveWhisperListenerPids(): string {
   const probe = Bun.spawnSync(
     ["lsof", "-nP", "-iTCP:8178", "-sTCP:LISTEN", "-t"],
-    { stdout: "pipe", stderr: "ignore" },
+    { env: process.env, stdout: "pipe", stderr: "ignore" },
   );
   return probe.stdout
     .toString()
