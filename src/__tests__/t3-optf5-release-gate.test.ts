@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 
@@ -15,6 +15,7 @@ const repoRoot = new URL("../..", import.meta.url).pathname;
 const verifyScript = join(repoRoot, "scripts", "verify-voicebar-release.sh");
 const proofScript = join(repoRoot, "scripts", "t3-optf5-proof.ts");
 const releaseScript = join(repoRoot, "scripts", "release-voicebar.sh");
+const uploadScript = join(repoRoot, "scripts", "upload-voicebar-release.sh");
 const version: string = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).version;
 
 const COMMIT = "05bcc0a235712245dfc0bd08f8e657dd9277e7cd";
@@ -58,16 +59,28 @@ function makeApp(root: string, commit = COMMIT, buildTime = BUILD_TIME) {
   return app;
 }
 
+function zipApp(root: string) {
+  const r = Bun.spawnSync(["zip", "-qry", "VoiceBar.zip", "VoiceBar.app"], { cwd: root, stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode !== 0) throw new Error(`zip failed: ${r.stderr}`);
+  return createHash("sha256").update(readFileSync(join(root, "VoiceBar.zip"))).digest("hex");
+}
+
+function writeCask(sha: string) {
+  writeFileSync(join(dir, "tap", "Casks", "voicebar.rb"), `cask "voicebar" do\n  version "${version}"\n  sha256 "${sha}"\nend\n`);
+}
+
 function makeReleaseFixture() {
   const app = makeApp(dir);
-  writeFileSync(join(dir, "VoiceBar.zip"), "zip-placeholder\n");
+  mkdirSync(join(app, "Contents", "MacOS"), { recursive: true });
+  writeFileSync(join(app, "Contents", "MacOS", "VoiceBar"), "candidate-binary\n");
+  const zipSha = zipApp(dir);
   mkdirSync(join(dir, "tap", "Formula"), { recursive: true });
   mkdirSync(join(dir, "tap", "Casks"), { recursive: true });
   writeFileSync(
     join(dir, "tap", "Formula", "voicelayer.rb"),
     `class Voicelayer < Formula\n  url "https://registry.npmjs.org/voicelayer-mcp/-/voicelayer-mcp-${version}.tgz"\nend\n`,
   );
-  writeFileSync(join(dir, "tap", "Casks", "voicebar.rb"), `cask "voicebar" do\n  version "${version}"\nend\n`);
+  writeCask(zipSha);
   const bin = join(dir, "bin");
   mkdirSync(bin);
   writeFileSync(
@@ -90,6 +103,7 @@ function proof(overrides: Record<string, unknown> = {}) {
   return {
     schema: "voicelayer.t3-optf5-proof.v1",
     gitCommit: COMMIT,
+    buildTimeUTC: BUILD_TIME,
     t3Build: "T3 Code (Alpha) 0.0.45 (0.0.45)",
     timestamp: AFTER_BUILD,
     expectedTextSha256: sha256(SYNTHETIC),
@@ -210,6 +224,35 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
     expect(r.code).not.toBe(0);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
+  test("proof whose buildTimeUTC differs from the candidate (same commit rebuilt) refuses", () => {
+    makeReleaseFixture();
+    const r = runVerify(["--t3-proof", writeProof(proof({ buildTimeUTC: "2026-10-18T01:09:00Z" }))]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("BuildTimeUTC");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a ZIP that does not contain the proven app refuses", () => {
+    makeReleaseFixture();
+    // Same version, different build inside the distributable.
+    const other = mkdtempSync(join(dir, "other-"));
+    makeApp(other, OTHER_COMMIT);
+    mkdirSync(join(other, "VoiceBar.app", "Contents", "MacOS"), { recursive: true });
+    writeFileSync(join(other, "VoiceBar.app", "Contents", "MacOS", "VoiceBar"), "other-binary\n");
+    writeCask(zipApp(other));
+    writeFileSync(join(dir, "VoiceBar.zip"), readFileSync(join(other, "VoiceBar.zip")));
+    const r = runVerify(["--t3-proof", writeProof(proof())]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("VoiceBar.zip");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a cask sha256 that is not the ZIP's refuses", () => {
+    makeReleaseFixture();
+    writeCask("0".repeat(64));
+    const r = runVerify(["--t3-proof", writeProof(proof())]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("sha256");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   test("valid matching proof passes", () => {
     makeReleaseFixture();
     const r = runVerify(["--t3-proof", writeProof(proof())]);
@@ -219,15 +262,32 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
     expect(r.out).toContain("PASS");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("artifact-only mode (--skip-tap-check) is not delivery and needs no proof", () => {
+  test("artifact-only mode (--skip-tap-check) without a proof is not delivery and passes", () => {
     makeReleaseFixture();
     const r = runVerify(["--skip-tap-check"]);
     expect(r.code).toBe(0);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
+  test("artifact-only mode still checks a proof when one is given", () => {
+    makeReleaseFixture();
+    const r = runVerify(["--skip-tap-check", "--t3-proof", writeProof(proof({ gitCommit: OTHER_COMMIT }))]);
+    expect(r.code).not.toBe(0);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("release-voicebar.sh refuses --upload: a fresh build can never carry a proof", () => {
+    // The bad --version makes any script that does not refuse --upload at parse time exit at the
+    // version check, before build-app.sh. Never run this script without a pre-build exit.
+    const r = Bun.spawnSync(["bash", releaseScript, "--upload", "--skip-tap-check", "--version", "0.0.0-never"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("upload-voicebar-release.sh");
+    expect(r.stdout.toString()).not.toContain("Building notarized");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   test("release-voicebar.sh forwards --t3-proof to the verifier", () => {
     const text = readFileSync(releaseScript, "utf8");
-    expect(text).toContain("--t3-proof");
     expect(text).toMatch(/VERIFY_ARGS\+=\(--t3-proof/);
   });
 
@@ -238,12 +298,46 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
   });
 });
 
+describe("the release asset upload requires the proof", () => {
+  function runUpload(args: string[]) {
+    const ghLog = join(dir, "gh.log");
+    writeFileSync(join(dir, "bin", "gh"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${ghLog}"\n`);
+    chmodSync(join(dir, "bin", "gh"), 0o755);
+    const r = Bun.spawnSync(
+      ["bash", uploadScript, "--version", version, "--app", join(dir, "VoiceBar.app"), "--zip", join(dir, "VoiceBar.zip"), ...args],
+      { stdout: "pipe", stderr: "pipe", env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}` } },
+    );
+    return { code: r.exitCode, err: r.stderr.toString(), gh: existsSync(ghLog) ? readFileSync(ghLog, "utf8") : "" };
+  }
+
+  test("no proof: nothing is uploaded", () => {
+    makeReleaseFixture();
+    const r = runUpload([]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("T3 Option+F5 proof");
+    expect(r.gh).toBe("");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("mismatched proof: nothing is uploaded", () => {
+    makeReleaseFixture();
+    const r = runUpload(["--t3-proof", writeProof(proof({ gitCommit: OTHER_COMMIT }))]);
+    expect(r.code).not.toBe(0);
+    expect(r.gh).toBe("");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("valid proof: uploads exactly the verified ZIP", () => {
+    makeReleaseFixture();
+    const r = runUpload(["--t3-proof", writeProof(proof())]);
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
+    expect(r.gh).toContain(`release upload v${version} ${join(dir, "VoiceBar.zip")}`);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+});
+
 // ---- proof producer ------------------------------------------------------------------------
 
-const CAPTURE_OK =
-  "2026-10-18 04:27:30.385 VoiceBar[77614:97212876] [VoiceBar][diag] selection_capture appActive=false appKeyWindowTitle=not_recorded ax_read=text frontmostApp=com.t3tools.t3code host_structure=not_observed line_breaks=0 outcome=completed path=ax utf16_count=50 voiceMode=idle";
-const CAPTURE_FAILED =
-  "2026-10-18 04:27:30.385 VoiceBar[77614:97212876] [VoiceBar][diag] selection_capture appActive=false appKeyWindowTitle=not_recorded ax_read=not_attempted frontmostApp=com.t3tools.t3code host_structure=not_observed outcome=capture_failed voiceMode=idle";
+const captureLine = (pid: number, ms: number, outcome = "completed", app = "com.t3tools.t3code", utf16 = SYNTHETIC.length) =>
+  `${localStamp(ms)} VoiceBar[${pid}:97212876] [VoiceBar][diag] selection_capture appActive=false appKeyWindowTitle=not_recorded ax_read=${outcome === "completed" ? "text" : "not_attempted"} frontmostApp=${app} host_structure=not_observed line_breaks=0 outcome=${outcome} path=ax utf16_count=${utf16} voiceMode=idle`;
 const speakLine = (id: string) =>
   `[socket-client] Command from VoiceBar: {"cmd":"speak_text","id":"${id}"} bytes=176`;
 
@@ -254,8 +348,40 @@ function localStamp(ms: number) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 }
 
-function producerFixture() {
-  const installed = makeApp(join(dir, "installed"));
+const sleepSync = (ms: number) => Bun.sleepSync(ms);
+
+// A real running "installed VoiceBar": a symlink to bash at <app>/Contents/MacOS/VoiceBar, so
+// `ps` shows the bundle executable path, with a child whose command names mcp-server-daemon.
+// Started more than a second after the bundle was written, like a relaunch after install.
+function launchFakeVoiceBar(app: string) {
+  mkdirSync(join(app, "Contents", "MacOS"), { recursive: true });
+  symlinkSync("/bin/bash", join(app, "Contents", "MacOS", "VoiceBar"));
+  const proc = Bun.spawn(
+    [join(app, "Contents", "MacOS", "VoiceBar"), "-c", '/bin/bash -c "sleep 120; : mcp-server-daemon" & wait'],
+    { stdout: "ignore", stderr: "ignore" },
+  );
+  sleepSync(300); // let the daemon-like child appear
+  return proc;
+}
+
+let runtimeRoot: string;
+let installedApp: string;
+let voiceBar: ReturnType<typeof Bun.spawn>;
+
+beforeAll(() => {
+  runtimeRoot = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "t3rt-"));
+  installedApp = makeApp(join(runtimeRoot, "installed"));
+  sleepSync(1_100); // process start must be a whole second after the install
+  voiceBar = launchFakeVoiceBar(installedApp);
+});
+afterAll(() => {
+  // Kill the daemon-like child first, then the fake VoiceBar.
+  Bun.spawnSync(["pkill", "-P", String(voiceBar.pid)]);
+  voiceBar.kill();
+  rmSync(runtimeRoot, { recursive: true, force: true });
+});
+
+function producerFixture(app = installedApp) {
   const t3 = join(dir, "T3 Code (Alpha).app");
   mkdirSync(join(t3, "Contents"), { recursive: true });
   writeInfoPlist(join(t3, "Contents", "Info.plist"), {
@@ -264,15 +390,17 @@ function producerFixture() {
     CFBundleShortVersionString: "0.0.45",
     CFBundleVersion: "0.0.45",
   });
+  // A complete, valid keypress from BEFORE start: it must never count.
+  const earlier = Date.now() - 60_000;
   const log = join(dir, "voicebar-err.log");
-  writeFileSync(log, `${speakLine("00000000-0000-0000-0000-000000000000")}\n${CAPTURE_OK}\n`);
+  writeFileSync(log, `${captureLine(voiceBar.pid, earlier)}\n${speakLine("00000000-0000-4000-8000-000000000000")}\n`);
   const history = join(dir, "voicelayer-history.json");
-  writeFileSync(history, JSON.stringify([{ id: 0, file: "x.mp3", text: SYNTHETIC, voice: "v", timestamp: 1 }]));
+  writeFileSync(history, JSON.stringify([{ id: 0, file: "x.mp3", text: SYNTHETIC, voice: "v", timestamp: earlier + 400 }]));
   const expected = join(dir, "expected.txt");
   writeFileSync(expected, SYNTHETIC);
   const state = join(dir, "state.json");
   const out = join(dir, "proof.json");
-  return { installed, t3, log, history, expected, state, out };
+  return { installed: app, t3, log, history, expected, state, out };
 }
 
 function runProducer(args: string[]) {
@@ -303,15 +431,16 @@ function finish(f: ReturnType<typeof producerFixture>) {
 
 function simulateKeypress(
   f: ReturnType<typeof producerFixture>,
-  opts: { capture?: string; ids?: string[]; text?: string; historyDelayMs?: number } = {},
+  opts: { outcome?: string; app?: string; pid?: number; ids?: string[]; text?: string; utf16?: number; speakBeforeCapture?: boolean } = {},
 ) {
   const now = Date.now();
-  const capture = (opts.capture ?? CAPTURE_OK).replace(/^\S+ \S+/, localStamp(now));
-  const lines = [capture, ...(opts.ids ?? [UUID]).map(speakLine)];
+  const capture = captureLine(opts.pid ?? voiceBar.pid, now, opts.outcome, opts.app, opts.utf16);
+  const speaks = (opts.ids ?? [UUID]).map(speakLine);
+  const lines = opts.speakBeforeCapture ? [...speaks, capture] : [capture, ...speaks];
   writeFileSync(f.log, readFileSync(f.log, "utf8") + lines.join("\n") + "\n");
   const history = JSON.parse(readFileSync(f.history, "utf8"));
   if (opts.text !== undefined || opts.ids?.length !== 0) {
-    history.push({ id: 1, file: "y.mp3", text: opts.text ?? SYNTHETIC, voice: "v", timestamp: now + (opts.historyDelayMs ?? 400) });
+    history.push({ id: 1, file: "y.mp3", text: opts.text ?? SYNTHETIC, voice: "v", timestamp: now + 400 });
   }
   writeFileSync(f.history, JSON.stringify(history));
 }
@@ -319,7 +448,9 @@ function simulateKeypress(
 describe("t3-optf5-proof producer reads the installed app's real artifacts", () => {
   test("start + operator keypress + finish yields a proof the release gate accepts", () => {
     const f = producerFixture();
-    expect(start(f).code).toBe(0);
+    const s = start(f);
+    expect(s.err).toBe("");
+    expect(s.code).toBe(0);
     simulateKeypress(f);
     const r = finish(f);
     expect(r.err).toBe("");
@@ -328,6 +459,7 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     expect(p).toMatchObject({
       schema: "voicelayer.t3-optf5-proof.v1",
       gitCommit: COMMIT,
+      buildTimeUTC: BUILD_TIME,
       expectedTextSha256: sha256(SYNTHETIC),
       historyTextSha256: sha256(SYNTHETIC),
       speakTextCommandId: UUID,
@@ -342,19 +474,38 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     expect(gate.code).toBe(0);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("pre-existing log lines and history entries are never counted", () => {
+  test("a complete valid keypress logged before start is never counted", () => {
     const f = producerFixture();
     expect(start(f).code).toBe(0);
     const r = finish(f);
     expect(r.code).not.toBe(0);
-    expect(r.err).toContain("speak_text");
+    expect(r.err).toContain("Option+F5 was not received");
     expect(existsSync(f.out)).toBe(false);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("a failed T3 read is recorded as readError=true and exits non-zero", () => {
+  test("a capture whose length is not the expected paragraph's is not this keypress", () => {
     const f = producerFixture();
     expect(start(f).code).toBe(0);
-    simulateKeypress(f, { capture: CAPTURE_FAILED, ids: [], text: undefined });
+    simulateKeypress(f, { utf16: SYNTHETIC.length + 7 });
+    const r = finish(f);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("utf16_count");
+    expect(existsSync(f.out)).toBe(false);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a speak_text from before the capture makes the window ambiguous", () => {
+    const f = producerFixture();
+    expect(start(f).code).toBe(0);
+    simulateKeypress(f, { ids: [UUID], speakBeforeCapture: true });
+    const r = finish(f);
+    expect(r.code).not.toBe(0);
+    expect(existsSync(f.out)).toBe(false);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a failed T3 read is a read error and exits non-zero", () => {
+    const f = producerFixture();
+    expect(start(f).code).toBe(0);
+    simulateKeypress(f, { outcome: "capture_failed", ids: [] });
     const r = finish(f);
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("read error");
@@ -383,10 +534,50 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
   test("a capture from another frontmost app is not T3 proof", () => {
     const f = producerFixture();
     expect(start(f).code).toBe(0);
-    simulateKeypress(f, { capture: CAPTURE_OK.replace("com.t3tools.t3code", "com.apple.Safari") });
+    simulateKeypress(f, { app: "com.apple.Safari" });
     const r = finish(f);
     expect(r.code).not.toBe(0);
     expect(existsSync(f.out)).toBe(false);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a capture logged by a different VoiceBar process is not proof for the installed app", () => {
+    const f = producerFixture();
+    expect(start(f).code).toBe(0);
+    simulateKeypress(f, { pid: voiceBar.pid + 100_000 });
+    const r = finish(f);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("VoiceBar");
+    expect(existsSync(f.out)).toBe(false);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("no running VoiceBar from the installed bundle refuses at start", () => {
+    const notRunning = makeApp(join(dir, "not-running"));
+    const f = producerFixture(notRunning);
+    const r = start(f);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("running");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a VoiceBar process older than the installed bundle (swapped, not relaunched) refuses", () => {
+    const swapped = makeApp(join(dir, "swapped"));
+    const old = launchFakeVoiceBar(swapped);
+    try {
+      sleepSync(1_100);
+      // Re-install the bundle under the running process.
+      writeInfoPlist(join(swapped, "Contents", "Info.plist"), {
+        CFBundleShortVersionString: version,
+        CFBundleVersion: version,
+        GitCommit: COMMIT,
+        BuildTimeUTC: BUILD_TIME,
+      });
+      const f = producerFixture(swapped);
+      const r = start(f);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("older than the installed bundle");
+    } finally {
+      Bun.spawnSync(["pkill", "-P", String(old.pid)]);
+      old.kill();
+    }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("a T3 app that is not com.t3tools.t3code is refused at start", () => {

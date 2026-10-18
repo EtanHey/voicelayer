@@ -6,9 +6,14 @@
 2.2.45 shipped with Option+F5 broken in T3 Code. Back then the T3 check was an acceptance
 rule, and nothing in the release path consumed it. Now the last local step before users
 can receive a build will **refuse** unless there is a matching installed-candidate T3
-Option+F5 PASS proof. That step is the tap-check run of `scripts/verify-voicebar-release.sh`,
-which must pass before the `EtanHey/homebrew-layers` cask bump is committed. There is no
-bypass flag or env var.
+Option+F5 PASS proof. That applies to both delivery steps:
+
+- the release-asset upload (`scripts/upload-voicebar-release.sh`);
+- the tap-check run of `scripts/verify-voicebar-release.sh`, which must pass before the
+  `EtanHey/homebrew-layers` cask bump is committed.
+
+There is no bypass flag or env var. `release-voicebar.sh --upload` is retired: that script
+always rebuilds, and a fresh build is newer than any proof.
 
 npm publication is separate. It is CI-only (`.github/workflows/publish.yml`, OIDC), and CI
 cannot produce native proof, so CI is not gated on it. Users get VoiceBar through the cask,
@@ -19,12 +24,20 @@ so the cask bump is where the gate lives.
 1. **Build the candidate.** `scripts/release-voicebar.sh --skip-tap-check`.
    A fresh build is always newer than any existing proof, so the build itself never needs
    one. It prints the zip sha256.
-2. **Install that candidate on the MBP** and confirm it is the one running
-   (`scripts/voicelayer-deploy-check.sh` → `DEPLOYED`; the installed `Info.plist` `GitCommit`
-   equals the candidate's).
+2. **Install exactly that build on the MBP** and relaunch VoiceBar. Install it from that
+   `VoiceBar.zip` or app, not through the cask: the cask is what reaches users, so it cannot
+   come first. Confirm with `scripts/voicelayer-deploy-check.sh` → `DEPLOYED`.
 3. **Produce the proof** (below), with output muted.
-4. **Bump the tap locally** (`Formula/voicelayer.rb`, `Casks/voicebar.rb`), but do not commit.
-5. **Run the gate:**
+4. **Upload the asset:**
+   ```bash
+   scripts/upload-voicebar-release.sh --version X.Y.Z \
+     --app dist/voicebar-release/X.Y.Z/VoiceBar.app \
+     --zip dist/voicebar-release/X.Y.Z/VoiceBar.zip \
+     --t3-proof docs.local/<release>/t3-optf5-proof.json
+   ```
+5. **Bump the tap locally** (`Formula/voicelayer.rb`, `Casks/voicebar.rb` with the zip's
+   sha256), but do not commit.
+6. **Run the gate:**
    ```bash
    scripts/verify-voicebar-release.sh --version X.Y.Z \
      --app dist/voicebar-release/X.Y.Z/VoiceBar.app \
@@ -32,13 +45,15 @@ so the cask bump is where the gate lives.
      --tap-root ~/Gits/homebrew-layers \
      --t3-proof docs.local/<release>/t3-optf5-proof.json
    ```
-6. **Only on `PASS`**, commit and push the formula and cask together.
+7. **Only on `PASS`**, commit and push the formula and cask together.
 
 The gate refuses, with a non-zero exit and a message naming the problem, when:
 
 - the proof is missing or is not valid JSON;
-- its `gitCommit` differs from the candidate `Info.plist` `GitCommit`;
+- its `gitCommit` or `buildTimeUTC` differs from the candidate `Info.plist`;
 - it is older than the candidate's `BuildTimeUTC` (stale);
+- `VoiceBar.zip`'s `Info.plist` or executable differs from the verified app's;
+- (tap check) the cask `sha256` is not `VoiceBar.zip`'s;
 - `expectedTextSha256` differs from `historyTextSha256`;
 - `speakTextCommandId` is not a UUID, `t3Build` is empty, or `readError` is not exactly `false`.
 
@@ -57,8 +72,11 @@ operator, or a harness that sends a real CGEvent, does the Option+F5.
      --t3-app "/Applications/T3 Code (Alpha).app" \
      --expected-text-file docs.local/<release>/synthetic.txt
    ```
-   This records the installed VoiceBar `GitCommit`, the T3 build, the current end of
-   `~/Library/Logs/voicelayer/voicebar-err.log`, and the time.
+   This records the installed VoiceBar `GitCommit` and `BuildTimeUTC`, the T3 build, the
+   current end of `~/Library/Logs/voicelayer/voicebar-err.log`, and the time. It refuses
+   unless exactly one VoiceBar runs from the installed bundle, with an `mcp-server-daemon`
+   child. Both processes must have started in a later second than the bundle was installed.
+   So a bundle swapped under an old running VoiceBar cannot certify itself.
 3. With output muted, select the paragraph in the rendered assistant message (not the
    composer) and press **Option+F5 once**. Let it finish.
 4. Collect:
@@ -68,9 +86,12 @@ operator, or a harness that sends a real CGEvent, does the Option+F5.
      --out docs.local/<release>/t3-optf5-proof.json
    ```
    The helper reads only what the resident wrote after `start`, and requires all of these:
-   - exactly one `selection_capture` with `frontmostApp=com.t3tools.t3code` and
-     `outcome=completed` (any other outcome is a read error);
-   - exactly one following `speak_text` command UUID;
+   - exactly one `selection_capture`, logged by that same VoiceBar process, with
+     `frontmostApp=com.t3tools.t3code` and `outcome=completed` (any other outcome is a read
+     error);
+   - a `utf16_count` equal to the expected paragraph's length (one trailing newline from a
+     triple-click is tolerated), which ties the capture to the paragraph without logging text;
+   - exactly one `speak_text` command UUID since `start`, and it comes after the capture;
    - exactly one new TTS history entry (`/tmp/voicelayer-history.json`), within 30 s of the
      capture.
 
@@ -82,3 +103,14 @@ Any failure means the release is NOT live. Fix forward; do not edit the proof.
 
 Defaults can be overridden with `--app`, `--voicebar-log` and `--history-file`. These only
 say where to read, so they are not bypasses.
+
+## Known limits
+
+- The gate protects against forgetting the check, not against forging it. `check` validates
+  the proof JSON and does not re-read the resident's logs, so a hand-written proof would
+  pass. Never write or edit one by hand.
+- The `speak_text` command UUID is not on the `selection_capture` line. It is tied to the
+  keypress by the time window, the single-command rule and the length match, not by an
+  id. Logging the id on the capture line needs a VoiceBar change.
+- Nothing in `EtanHey/homebrew-layers` itself checks the tap commit. The gate is the
+  required run before that commit.

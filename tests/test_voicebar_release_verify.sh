@@ -105,8 +105,11 @@ make_release_fixture() {
     mkdir -p "$temp_dir/VoiceBar.app/Contents/Resources"
     write_info_plist "$temp_dir/VoiceBar.app/Contents/Info.plist" "$plist_version"
     printf '{"version":"%s"}\n' "$package_version" > "$temp_dir/VoiceBar.app/Contents/Resources/package.json"
-    printf 'zip-placeholder\n' > "$temp_dir/VoiceBar.zip"
+    mkdir -p "$temp_dir/VoiceBar.app/Contents/MacOS"
+    printf 'binary-placeholder\n' > "$temp_dir/VoiceBar.app/Contents/MacOS/VoiceBar"
+    (cd "$temp_dir" && zip -qry VoiceBar.zip VoiceBar.app)
     write_tap "$temp_dir/tap" "$formula_version" "$cask_version"
+    sed -i.bak "s/sha256 \"abc123\"/sha256 \"$(shasum -a 256 "$temp_dir/VoiceBar.zip" | awk '{print $1}')\"/" "$temp_dir/tap/Casks/voicebar.rb"
     write_t3_proof "$temp_dir/t3-proof.json"
 }
 
@@ -115,7 +118,7 @@ write_t3_proof() {
     local hash
     hash="$(printf 'synthetic' | shasum -a 256 | awk '{print $1}')"
     cat > "$1" <<EOF
-{"schema":"voicelayer.t3-optf5-proof.v1","gitCommit":"05bcc0a235712245dfc0bd08f8e657dd9277e7cd","t3Build":"T3 Code (Alpha) 0.0.45 (0.0.45)","timestamp":"2026-10-18T01:30:00.000Z","expectedTextSha256":"$hash","historyTextSha256":"$hash","speakTextCommandId":"73C05ACC-9C3D-432A-BEE4-A6F6B662954F","readError":false}
+{"schema":"voicelayer.t3-optf5-proof.v1","gitCommit":"05bcc0a235712245dfc0bd08f8e657dd9277e7cd","buildTimeUTC":"2026-10-18T01:10:14Z","t3Build":"T3 Code (Alpha) 0.0.45 (0.0.45)","timestamp":"2026-10-18T01:30:00.000Z","expectedTextSha256":"$hash","historyTextSha256":"$hash","speakTextCommandId":"73C05ACC-9C3D-432A-BEE4-A6F6B662954F","readError":false}
 EOF
 }
 

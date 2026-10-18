@@ -141,9 +141,10 @@ paths in both test roots.
   burned a cycle "retrying publish" and reported a false 401 blocker to Etan because of this.
 - `npm view <pkg> version` is **not** evidence your publish worked — it shows whatever is on the
   registry regardless of who put it there. Use the command's exit status and `npm view <pkg> time`.
-- The cask bump is gated: `scripts/verify-voicebar-release.sh` with `--tap-root` refuses without an
-  installed-candidate T3 Option+F5 proof (`--t3-proof`, made by `scripts/t3-optf5-proof.ts`). No
-  bypass. Procedure: `docs/voicebar-release-runbook.md`.
+- VoiceBar delivery is gated: the asset upload (`scripts/upload-voicebar-release.sh`) and the cask
+  bump (`scripts/verify-voicebar-release.sh --tap-root`) refuse without an installed-candidate T3
+  Option+F5 proof (`--t3-proof`, made by `scripts/t3-optf5-proof.ts`). No bypass. Procedure:
+  `docs/voicebar-release-runbook.md`.
 - Formula/cask checksums must come from the **published** artifact, never a local `npm pack`:
   `npm publish` re-packs and gzip embeds a timestamp, so local bytes differ.
 

@@ -332,7 +332,8 @@ describe("VoiceBar Homebrew release script contract", () => {
     expect(releaseScript).toContain("EtanHey/homebrew-layers");
     expect(releaseScript).toContain("Casks/voicebar.rb");
     expect(releaseScript).toContain("sha256");
-    expect(releaseScript).toContain("gh release upload");
+    // T3GATE1: uploading is publication and is gated on the T3 proof in its own script.
+    expect(releaseScript).toContain("upload-voicebar-release.sh");
   });
 
   test("runs release verification before printing the zip sha256", () => {
@@ -354,8 +355,7 @@ describe("VoiceBar Homebrew release script contract", () => {
   test("can build a new release artifact before the tap is bumped", () => {
     expect(releaseScript).toContain("--skip-tap-check");
     expect(releaseScript).toContain("SKIP_TAP_CHECK=1");
-    expect(releaseScript).toContain(
-      '[[ "$SKIP_TAP_CHECK" -eq 1 && -n "$TAP_ROOT" ]]',
-    );
+    expect(releaseScript).toContain('if [[ "$SKIP_TAP_CHECK" -eq 1 ]]; then');
+    expect(releaseScript).toContain("--t3-proof PROOF.json");
   });
 });

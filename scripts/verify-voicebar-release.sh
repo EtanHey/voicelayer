@@ -190,15 +190,53 @@ verify_no_security_xattrs() {
     fi
 }
 
+extract_cask_sha256() {
+    awk '
+        /^[[:space:]]*sha256 "/ {
+            gsub(/"/, "", $2)
+            print $2
+            exit
+        }
+    ' "$1"
+}
+
+# The proof is about the app that was installed; users receive the ZIP. Both must be the same
+# build: the ZIP's Info.plist and executable must equal the verified --app's byte for byte.
+verify_zip_contains_app() {
+    local entry app_hash zip_hash
+    if ! command -v unzip >/dev/null 2>&1; then
+        err "unzip not found; cannot bind VoiceBar.zip to the proven app"
+        return 1
+    fi
+    for entry in "Contents/Info.plist" "Contents/MacOS/VoiceBar"; do
+        if [ ! -f "$APP_PATH/$entry" ]; then
+            err "VoiceBar.app/$entry not found; cannot bind VoiceBar.zip to the proven app"
+            return 1
+        fi
+        app_hash="$(shasum -a 256 < "$APP_PATH/$entry" | awk '{print $1}')"
+        # pipefail: a missing entry makes unzip, and so the whole pipeline, fail.
+        if ! zip_hash="$(unzip -p "$ZIP_PATH" "VoiceBar.app/$entry" 2>/dev/null | shasum -a 256 | awk '{print $1}')"; then
+            err "VoiceBar.zip does not contain VoiceBar.app/$entry"
+            return 1
+        fi
+        if [ "$app_hash" != "$zip_hash" ]; then
+            err "VoiceBar.zip VoiceBar.app/$entry differs from the verified app: the ZIP is not the proven build"
+            return 1
+        fi
+    done
+}
+
 # T3GATE1: the 2.2.45 T3 Option+F5 regression shipped because publication never required
-# the installed-candidate T3 check. The tap-check run gates the cask bump on that proof.
+# the installed-candidate T3 check. Delivery (the cask bump, and the release-asset upload via
+# upload-voicebar-release.sh) is gated on that proof. A proof given in artifact mode is checked too.
 verify_t3_optf5_proof() {
     local candidate_commit candidate_build_time
     if [ -z "$T3_PROOF" ]; then
-        err "REFUSED: T3 Option+F5 proof is required before the cask bump (--t3-proof PROOF.json)."
+        err "REFUSED: T3 Option+F5 proof is required before delivery (--t3-proof PROOF.json)."
         err "Install this candidate, run scripts/t3-optf5-proof.ts start/finish around a real Option+F5 in T3 Code, then pass the proof. There is no bypass."
         return 1
     fi
+    verify_zip_contains_app
     candidate_commit="$(read_plist_string "$APP_PATH/Contents/Info.plist" "GitCommit" 2>/dev/null || true)"
     candidate_build_time="$(read_plist_string "$APP_PATH/Contents/Info.plist" "BuildTimeUTC" 2>/dev/null || true)"
     bun "$PACKAGE_ROOT/scripts/t3-optf5-proof.ts" check \
@@ -304,6 +342,11 @@ if [ "$SKIP_TAP_CHECK" -ne 1 ]; then
     require_equal "Formula/voicelayer.rb version" "$formula_version" "$canonical_version"
     require_equal "Casks/voicebar.rb version" "$cask_version" "$canonical_version"
     require_equal "Homebrew formula/cask version alignment" "$formula_version" "$cask_version"
+    require_equal "Casks/voicebar.rb sha256 (must be VoiceBar.zip's)" \
+        "$(extract_cask_sha256 "$TAP_ROOT/Casks/voicebar.rb")" \
+        "$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
+    verify_t3_optf5_proof
+elif [ -n "$T3_PROOF" ]; then
     verify_t3_optf5_proof
 fi
 

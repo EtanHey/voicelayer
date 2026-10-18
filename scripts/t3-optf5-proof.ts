@@ -38,6 +38,7 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 export interface T3OptF5Proof {
   schema: string;
   gitCommit: string;
+  buildTimeUTC: string;
   t3Build: string;
   timestamp: string;
   expectedTextSha256: string;
@@ -73,6 +74,10 @@ export function checkProof(
   if (p.schema !== PROOF_SCHEMA) fail(`proof schema is '${String(p.schema)}', expected '${PROOF_SCHEMA}'`);
   if (p.gitCommit !== candidate.gitCommit) {
     fail(`proof GitCommit '${String(p.gitCommit)}' does not equal candidate Info.plist GitCommit '${candidate.gitCommit}'`);
+  }
+  // Same commit rebuilt is a different binary; the proof covers only the build it ran on.
+  if (p.buildTimeUTC !== candidate.buildTimeUTC) {
+    fail(`proof BuildTimeUTC '${String(p.buildTimeUTC)}' does not equal candidate Info.plist BuildTimeUTC '${candidate.buildTimeUTC}'`);
   }
   if (typeof p.t3Build !== "string" || p.t3Build.trim() === "") fail("proof has no T3 build");
   if (typeof p.timestamp !== "string" || !ISO_RE.test(p.timestamp) || !Number.isFinite(Date.parse(p.timestamp))) {
@@ -129,7 +134,60 @@ function installedIdentity(app: string) {
   const gitCommit = readPlistString(plist, "GitCommit");
   const buildTimeUTC = readPlistString(plist, "BuildTimeUTC");
   if (!COMMIT_RE.test(gitCommit)) fail(`installed ${app} has no GitCommit in Info.plist`);
+  if (!ISO_RE.test(buildTimeUTC)) fail(`installed ${app} has no BuildTimeUTC in Info.plist`);
   return { gitCommit, buildTimeUTC };
+}
+
+interface ProcessRow {
+  pid: number;
+  ppid: number;
+  command: string;
+}
+
+function processRows(): ProcessRow[] {
+  const out = Bun.spawnSync(["ps", "-axo", "pid=,ppid=,command="], { stdout: "pipe", stderr: "pipe" });
+  if (out.exitCode !== 0) fail("cannot list processes");
+  return out.stdout
+    .toString()
+    .split("\n")
+    .flatMap((line) => {
+      const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+      return m ? [{ pid: Number(m[1]), ppid: Number(m[2]), command: m[3] }] : [];
+    });
+}
+
+function processStartMs(pid: number): number {
+  const out = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { stdout: "pipe", stderr: "pipe" });
+  const parsed = out.exitCode === 0 ? Date.parse(out.stdout.toString().trim()) : NaN;
+  if (!Number.isFinite(parsed)) fail(`cannot read the start time of process ${pid}`);
+  return parsed;
+}
+
+// The proof must come from the installed bundle's own running processes. Info.plist on disk
+// is not enough: a bundle swapped under a running VoiceBar would stamp the new GitCommit on
+// events the old binary produced. Installing (copy, unzip, or brew's extract) rewrites the
+// bundle files, so their ctime is the install time; both VoiceBar and its daemon child must
+// have started in a later whole second (`ps lstart` has one-second resolution, so a
+// same-second start cannot be proven to follow the install and fails closed).
+function installedRuntime(app: string): { voiceBarPid: number; daemonPids: number[] } {
+  const binary = `${app}/Contents/MacOS/VoiceBar`;
+  const installedSecond = Math.floor(statSync(`${app}/Contents/Info.plist`).ctimeMs / 1000);
+  const rows = processRows();
+  const voiceBars = rows.filter((row) => row.command === binary || row.command.startsWith(`${binary} `));
+  if (voiceBars.length === 0) fail(`no running VoiceBar from ${binary}; launch the installed candidate first`);
+  if (voiceBars.length > 1) fail(`${voiceBars.length} VoiceBar processes run from ${binary}; one resident only`);
+  const voiceBarPid = voiceBars[0].pid;
+  const daemonPids = rows
+    .filter((row) => row.ppid === voiceBarPid && row.command.includes("mcp-server-daemon"))
+    .map((row) => row.pid);
+  if (daemonPids.length === 0) fail(`VoiceBar ${voiceBarPid} has no running mcp-server-daemon child`);
+  const processes: [string, number][] = [["VoiceBar", voiceBarPid], ...daemonPids.map((d): [string, number] => ["mcp-server-daemon", d])];
+  for (const [label, pid] of processes) {
+    if (Math.floor(processStartMs(pid) / 1000) <= installedSecond) {
+      fail(`${label} process ${pid} is older than the installed bundle; relaunch VoiceBar after installing`);
+    }
+  }
+  return { voiceBarPid, daemonPids };
 }
 
 function readFrom(path: string, offset: number): string {
@@ -179,12 +237,16 @@ interface ProofState {
   startedAt: number;
   app: string;
   gitCommit: string;
+  buildTimeUTC: string;
+  voiceBarPid: number;
   t3App: string;
   t3Build: string;
   voicebarLog: string;
   logOffset: number;
   historyFile: string;
   expectedTextSha256: string;
+  // A count, not text: VoiceBar's selection_capture line logs the selection's UTF-16 length.
+  expectedUtf16Count: number;
 }
 
 function start(args: Map<string, string>) {
@@ -195,17 +257,22 @@ function start(args: Map<string, string>) {
   const statePath = need(args, "--state");
   const expected = expectedTextOf(need(args, "--expected-text-file"));
   if (!existsSync(voicebarLog)) fail(`VoiceBar log not found: ${voicebarLog}`);
+  const identity = installedIdentity(app);
+  const runtime = installedRuntime(app);
   const state: ProofState = {
     schema: STATE_SCHEMA,
     startedAt: Date.now(),
     app,
-    gitCommit: installedIdentity(app).gitCommit,
+    gitCommit: identity.gitCommit,
+    buildTimeUTC: identity.buildTimeUTC,
+    voiceBarPid: runtime.voiceBarPid,
     t3App,
     t3Build: t3BuildOf(t3App),
     voicebarLog,
     logOffset: statSync(voicebarLog).size,
     historyFile,
     expectedTextSha256: sha256(expected),
+    expectedUtf16Count: expected.length,
   };
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   console.log(`[t3-optf5-proof] armed: VoiceBar ${state.gitCommit}, ${state.t3Build}`);
@@ -220,8 +287,12 @@ function finish(args: Map<string, string>) {
   if (state.schema !== STATE_SCHEMA) fail(`${statePath} is not a start state file`);
   const now = Date.now();
   if (now - state.startedAt > MAX_WINDOW_MS) fail("more than 10 minutes since start; rerun start and press again");
-  if (installedIdentity(state.app).gitCommit !== state.gitCommit) {
-    fail(`installed VoiceBar changed since start (was ${state.gitCommit})`);
+  const identity = installedIdentity(state.app);
+  if (identity.gitCommit !== state.gitCommit || identity.buildTimeUTC !== state.buildTimeUTC) {
+    fail(`installed VoiceBar changed since start (was ${state.gitCommit} built ${state.buildTimeUTC})`);
+  }
+  if (installedRuntime(state.app).voiceBarPid !== state.voiceBarPid) {
+    fail(`the running VoiceBar changed since start (was process ${state.voiceBarPid})`);
   }
 
   const lines = readFrom(state.voicebarLog, state.logOffset).split("\n");
@@ -235,20 +306,35 @@ function finish(args: Map<string, string>) {
   if (field("frontmostApp") !== T3_BUNDLE_ID) {
     fail(`selection_capture came from '${field("frontmostApp")}', not T3 Code (${T3_BUNDLE_ID})`);
   }
+  const capturePid = Number(capture.line.match(/ VoiceBar\[(\d+):/)?.[1]);
+  if (capturePid !== state.voiceBarPid) {
+    fail(`selection_capture was logged by VoiceBar process ${capturePid}, not the installed candidate's ${state.voiceBarPid}`);
+  }
   const captureMs = parseNSLogTime(capture.line);
   if (!Number.isFinite(captureMs) || captureMs < state.startedAt - 1000) {
     fail("selection_capture time is missing or before start");
   }
   const readError = field("outcome") !== "completed";
   if (readError) fail(`read error: selection_capture outcome=${field("outcome")} ax_read=${field("ax_read")}`);
-
-  const speakIds = lines
-    .slice(capture.index + 1)
-    .map((line) => line.match(/\[socket-client\] Command from VoiceBar: \{"cmd":"speak_text","id":"([^"]+)"\}/)?.[1])
-    .filter((id): id is string => id !== undefined);
-  if (speakIds.length !== 1) {
-    fail(`expected exactly one new speak_text command after the capture, found ${speakIds.length}`);
+  // Ties this capture to the synthetic paragraph without logging text. One trailing newline
+  // (a triple-click selection) is tolerated; anything else is a different selection.
+  const utf16 = Number(field("utf16_count"));
+  if (utf16 !== state.expectedUtf16Count && utf16 !== state.expectedUtf16Count + 1) {
+    fail(`selection_capture utf16_count=${field("utf16_count")} is not the expected paragraph's ${state.expectedUtf16Count}`);
   }
+
+  // Every speak_text since start counts, so another speech in the window is ambiguous rather
+  // than silently ignored; the one command must follow the capture.
+  const speaks = lines
+    .map((line, index) => ({
+      index,
+      id: line.match(/\[socket-client\] Command from VoiceBar: \{"cmd":"speak_text","id":"([^"]+)"\}/)?.[1],
+    }))
+    .filter((s): s is { index: number; id: string } => s.id !== undefined);
+  if (speaks.length !== 1 || speaks[0].index < capture.index) {
+    fail(`expected exactly one speak_text command since start, after the capture; found ${speaks.length}`);
+  }
+  const speakId = speaks[0].id;
 
   const entries = loadHistory(state.historyFile).filter((e) => e.timestamp >= state.startedAt);
   if (entries.length !== 1) fail(`expected exactly one new TTS history entry since start, found ${entries.length}`);
@@ -260,11 +346,12 @@ function finish(args: Map<string, string>) {
   const proof: T3OptF5Proof = {
     schema: PROOF_SCHEMA,
     gitCommit: state.gitCommit,
+    buildTimeUTC: state.buildTimeUTC,
     t3Build: state.t3Build,
     timestamp: new Date(entry.timestamp).toISOString(),
     expectedTextSha256: state.expectedTextSha256,
     historyTextSha256: sha256(entry.text),
-    speakTextCommandId: speakIds[0],
+    speakTextCommandId: speakId,
     readError,
   };
   writeFileSync(out, `${JSON.stringify(proof, null, 2)}\n`);
