@@ -2,11 +2,17 @@ import AVFoundation
 import CoreGraphics
 import ScreenCaptureKit
 
-// Standalone QA tool. The only capture source is an SCDisplay; there is no
-// AVCaptureDevice lookup, device-name selector, camera input or audio output.
+// Standalone QA tool. The only capture source is the windows of this run's proven QA process
+// (bundle AND exact executable path) on the main SCDisplay: everything else (desktop, other apps,
+// system dialogs, a stale QA app from another run) is never composited. No full-display mode.
+// There is no AVCaptureDevice lookup, device-name selector, camera input or audio output.
 final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let queue = DispatchQueue(label: "voicebar.uie2e.screen")
     private let destination: URL
+    private let bundle: String
+    private let executable: String
+    private var display: SCDisplay?
+    private var includedPids: [pid_t] = []
     private var stream: SCStream?
     private var writer: AVAssetWriter?
     private var video: AVAssetWriterInput?
@@ -14,7 +20,50 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var failure: String?
     private var frames = 0
 
-    init(destination: URL) { self.destination = destination }
+    init(destination: URL, bundle: String, executable: String) {
+        self.destination = destination; self.bundle = bundle; self.executable = executable
+    }
+
+    // BEGIN QA-ONLY FILTER
+    /// The run's proven QA process: bundle AND exact executable path (as proc_pidpath reports it).
+    static func provenApplications(_ applications: [SCRunningApplication], bundle: String, executable: String,
+                                   path: (pid_t) -> String?) -> [SCRunningApplication] {
+        applications.filter { $0.bundleIdentifier == bundle && path($0.processID) == executable }
+    }
+    /// Only those applications' windows; an empty list renders black frames, never the desktop.
+    static func qaFilter(display: SCDisplay, applications: [SCRunningApplication]) -> SCContentFilter {
+        SCContentFilter(display: display, including: applications, exceptingWindows: [])
+    }
+    // END QA-ONLY FILTER
+
+    static func executablePath(_ pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path
+    }
+    func proven(_ applications: [SCRunningApplication]) -> [SCRunningApplication] {
+        Self.provenApplications(applications, bundle: bundle, executable: executable, path: Self.executablePath)
+    }
+
+    /// The QA app launches after recording starts: follow its process set as it appears.
+    private func followApplication() {
+        SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: false) { content, _ in
+            self.queue.async {
+                guard !self.stopping, let display = self.display, let stream = self.stream, let content else { return }
+                let apps = self.proven(content.applications)
+                let pids = apps.map(\.processID).sorted()
+                if pids != self.includedPids {
+                    self.includedPids = pids
+                    stream.updateContentFilter(Self.qaFilter(display: display, applications: apps)) { error in
+                        if let error { self.stop(error: "Capture filter update failed: \(error)") }
+                    }
+                    print("source=application bundle=\(self.bundle) executable=\(self.executable) pids=\(pids.map(String.init).joined(separator: ","))")
+                    fflush(stdout)
+                }
+            }
+        }
+        queue.asyncAfter(deadline: .now() + 0.5) { if !self.stopping { self.followApplication() } }
+    }
 
     func start() {
         // Never request/grant permission or fall back to a camera.
@@ -49,12 +98,15 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                     writer.add(video)
                     self.writer = writer
                     self.video = video
-                    let filter = SCContentFilter(display: display, excludingWindows: [])
+                    let filter = Self.qaFilter(display: display, applications: self.proven(content?.applications ?? []))
+                    self.display = display
                     let stream = SCStream(filter: filter, configuration: config, delegate: self)
                     self.stream = stream
                     try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: self.queue)
+                    print("source=application bundle=\(self.bundle) executable=\(self.executable) pids=")
+                    fflush(stdout)
                     stream.startCapture { error in
-                        if let error { self.stop(error: "Screen capture failed: \(error)") }
+                        if let error { self.stop(error: "Screen capture failed: \(error)") } else { self.followApplication() }
                     }
                 } catch { self.stop(error: "Screen capture setup failed: \(error)") }
             }
@@ -125,14 +177,17 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 }
 
 if CommandLine.arguments == [CommandLine.arguments[0], "--version"] {
-    print("VoiceBar UIE2E ScreenCaptureKit recorder v1")
+    print("VoiceBar UIE2E ScreenCaptureKit recorder v3 (proven QA process windows only)")
     exit(0)
 }
-guard CommandLine.arguments.count == 2 else {
-    FileHandle.standardError.write(Data("usage: voicebar-ui-e2e-capture NEW_MOV_PATH\n".utf8))
+// There is deliberately no full-display mode: the QA bundle is mandatory.
+let args = CommandLine.arguments
+guard args.count == 6, args[1] == "--include-bundle", !args[2].isEmpty, args[3] == "--include-executable",
+      args[4].hasPrefix("/") else {
+    FileHandle.standardError.write(Data("usage: voicebar-ui-e2e-capture --include-bundle BUNDLE_ID --include-executable PATH NEW_MOV_PATH\n".utf8))
     exit(2)
 }
-let recorder = ScreenRecorder(destination: URL(fileURLWithPath: CommandLine.arguments[1]))
+let recorder = ScreenRecorder(destination: URL(fileURLWithPath: args[5]), bundle: args[2], executable: args[4])
 recorder.start()
 DispatchQueue.global().async {
     while let line = readLine() {

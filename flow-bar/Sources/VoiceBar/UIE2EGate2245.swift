@@ -7,12 +7,18 @@ import VoiceBarUI
 /// Its state, panels, wizard dependencies and commands belong only to the marked QA sandbox.
 @MainActor
 final class UIE2EGate2245 {
-    let app = AppDelegate()
+    // Checked before the real AppDelegate exists, whichever path constructs this fixture.
+    let app: AppDelegate = {
+        UIE2ENoDeviceGuard.requireInstalled()
+        return AppDelegate()
+    }()
     let panel: FloatingPillPanel
     unowned let host: UIE2EHost
     var beforeShow: [String: Any] = [:]
+#if VOICEBAR_UIE2E_GATE2246_CAPTURE
     var captureServer: SocketServer?
     var captureController: VoiceBarDaemonController?
+#endif
     var gateCommands: [[String: Any]] = []
     var placementObservers: [NSObjectProtocol] = []
     let noDeviceEngine = UIE2ENoDeviceLevelEngine()
@@ -66,7 +72,9 @@ final class UIE2EGate2245 {
     }
 
     func snapshot(_ action: String) {
-        host.sandbox.writeObject(["pid": ProcessInfo.processInfo.processIdentifier, "action": action, "noDeviceEngineStarts": noDeviceEngine.starts, "commands": gateCommands, "statusText": app.voiceState.statusText, "state": current(), "beforeShow": beforeShow,
+        let command = UIE2EFixtureCommandListener.delivered
+        host.sandbox.writeObject(["pid": ProcessInfo.processInfo.processIdentifier, "action": action,
+            "fixtureCommand": ["count": command.count, "name": command.name], "noDeviceEngineStarts": noDeviceEngine.starts, "commands": gateCommands, "statusText": app.voiceState.statusText, "state": current(), "beforeShow": beforeShow,
             "snoozed": app.isSnoozed, "hidden": app.voiceState.isHidden, "connected": app.voiceState.isConnected,
             "panelVisible": panel.isVisible, "windowNumber": panel.windowNumber,
             "visiblePanels": NSApp.windows.filter { $0 is NSPanel && $0.isVisible }.map(\.title),
@@ -113,28 +121,82 @@ final class UIE2EGate2245 {
     }
 }
 
+// BEGIN UIE2E FIXTURE COMMANDS
+/// Fixture commands arrive as distributed notifications named for this sandbox, never as
+/// keystrokes: a key equivalent can be consumed by a global macOS shortcut (run-03's ⌥⌘D was
+/// symbolic hotkey 52 and toggled the operator's Dock). The sandboxed XCTest runner can post a
+/// name-only notification but cannot write files; the QA app acknowledges with a file it owns.
+enum UIE2EFixtureCommand {
+    static let prefix = "com.voicelayer.voicebar.uie2e.command."
+    static let ackFile = "fixture-command-ack.json"
+    static func notificationName(token: String, command: String) -> String { prefix + token + "." + command }
+    /// The command a notification name carries for this sandbox token, or nil for any other name.
+    static func command(from name: String, token: String, allowed: [String]) -> String? {
+        let expected = prefix + token + "."
+        guard name.hasPrefix(expected) else { return nil }
+        let command = String(name.dropFirst(expected.count))
+        return allowed.contains(command) ? command : nil
+    }
+}
+// END UIE2E FIXTURE COMMANDS
+
+@MainActor
+final class UIE2EFixtureCommandListener {
+    static var active: UIE2EFixtureCommandListener?
+    static var delivered: (count: Int, name: String) = (0, "")
+    var observers: [NSObjectProtocol] = []
+
+    init(host: UIE2EHost, names: [String]) {
+        let token = host.sandbox.root.lastPathComponent
+        let center = DistributedNotificationCenter.default()
+        for name in names {
+            let full = UIE2EFixtureCommand.notificationName(token: token, command: name)
+            observers.append(center.addObserver(forName: Notification.Name(full), object: nil, queue: .main) { [weak host] note in
+                let raw = note.name.rawValue
+                MainActor.assumeIsolated {
+                    // Like a menu key equivalent, a command never runs under a modal (the product NSAlert);
+                    // it stays unacknowledged, so the runner reports "not delivered", never a fake verdict.
+                    guard let host, NSApp.modalWindow == nil,
+                          let command = UIE2EFixtureCommand.command(from: raw, token: token, allowed: names) else { return }
+                    UIE2EFixtureCommandListener.delivered = (UIE2EFixtureCommandListener.delivered.count + 1, command)
+                    // Acknowledge before running: a capture-failure command can enter the NSAlert modal loop.
+                    // Receipts the command writes carry the same count in "fixtureCommand".
+                    host.sandbox.writeObject(["count": UIE2EFixtureCommandListener.delivered.count, "name": command],
+                                             file: UIE2EFixtureCommand.ackFile)
+                    host.hide1VisualCommand(command)
+                }
+            })
+        }
+    }
+}
+
 extension UIE2EHost {
     func installHide1VisualMenu() {
         model.hidden = true
         pill.orderOut(nil)
         settings.orderOut(nil)
         statusItem?.isVisible = false
-        let item = NSMenuItem(); let menu = NSMenu(title: "HIDE1VIS")
-        item.title = "HIDE1VIS"; item.submenu = menu
         let names = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246"
             ? ["start", "user-f5", "user-ask", "unknown", "background", "recovered", "visible", "show", "selection", "end", "same-hash", "different", "pending", "fast-bc", "no-hash", "busy"]
             : ["start", "speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard", "show", "end"]
-        for (index, name) in names.enumerated() {
-            let command = NSMenuItem(title: "HIDE1VIS " + name, action: #selector(hide1VisualCommand(_:)), keyEquivalent: Array("0123456789abcdef").map(String.init)[index])
-            command.keyEquivalentModifierMask = [.command, .option]
+        UIE2EFixtureCommandListener.active = UIE2EFixtureCommandListener(host: self, names: names)
+        // The HIDE1VIS menu is the runner's readiness marker, installed after the listener. Its items
+        // carry NO key equivalents: commands are notification-only (see UIE2EFixtureCommand).
+        let item = NSMenuItem(); let menu = NSMenu(title: "HIDE1VIS")
+        item.title = "HIDE1VIS"; item.submenu = menu
+        for name in names {
+            let command = NSMenuItem(title: "HIDE1VIS " + name, action: #selector(hide1VisualMenuItem(_:)), keyEquivalent: "")
             command.target = self; command.representedObject = name
             menu.addItem(command)
         }
         NSApp.mainMenu?.addItem(item)
     }
 
-    @objc func hide1VisualCommand(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
+    @objc func hide1VisualMenuItem(_ sender: NSMenuItem) {
+        if let name = sender.representedObject as? String { hide1VisualCommand(name) }
+    }
+
+    func hide1VisualCommand(_ name: String) {
         if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
             gate2246Command(name); return
         }
@@ -215,12 +277,18 @@ extension UIE2EHost {
         guard let gate = gate2245 else { return }
         if ["start", "selection"].contains(name) { return }
         if ["user-f5", "user-ask", "unknown", "background", "recovered", "visible"].contains(name) {
+#if VOICEBAR_UIE2E_GATE2246_CAPTURE
             gate.captureFailure(name)
+#else
+            fatalError("gate2246 capture cases require a VOICEBAR_UIE2E_GATE2246_CAPTURE build")
+#endif
         } else { gate.selectionCase(name) }
     }
 }
 
 extension UIE2EGate2245 {
+#if VOICEBAR_UIE2E_GATE2246_CAPTURE
+    // Uses #410's capture-failure APIs; hide1 builds without this flag do not depend on #410.
     func captureFailure(_ name: String) {
         // Parser-only server; real observer uses the device-free injected level engine.
         let server = SocketServer(state: app.voiceState, socketPath: host.sandbox.root.appendingPathComponent("unused.sock").path)
@@ -248,6 +316,7 @@ extension UIE2EGate2245 {
         // NSAlert runs a modal loop. Its visible state is observed out of process by XCUI;
         // a delayed MainActor snapshot can remain queued behind the alert until dismissal.
     }
+#endif
 
     func selectionCase(_ name: String) {
         let state = app.voiceState

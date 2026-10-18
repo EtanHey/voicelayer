@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile the real XCUI query helper against a fake run-02 AX tree; no native app."""
+"""Compile the real XCUI query helper against a retained run-03 NSAlert AX structure; no native app."""
 import pathlib
 import re
 import subprocess
@@ -11,17 +11,24 @@ SOURCE = ROOT / 'flow-bar/UIE2E/VoiceBarUIE2ETests/Gate2245Tests.swift'
 
 SHIM = r'''
 import Foundation
-enum XCUIElementType { case staticText }
+enum XCUIElementType { case staticText, button, dialog, touchBar }
 final class XCUIElement {
     var identifier: String
+    var label: String
+    var title: String
+    var value: String
+    var elementType: XCUIElementType
     var exists: Bool
     var children: [XCUIElement]
-    init(_ identifier: String, exists: Bool = true, children: [XCUIElement] = []) {
-        self.identifier = identifier; self.exists = exists; self.children = children
+    init(_ identifier: String, type: XCUIElementType = .dialog,
+         label: String = "", title: String = "", value: String = "",
+         exists: Bool = true, children: [XCUIElement] = []) {
+        self.identifier = identifier; self.elementType = type
+        self.label = label; self.title = title; self.value = value
+        self.exists = exists; self.children = children
     }
-    var buttons: XCUIElementQuery { .init(children.filter { $0.identifier == "Later" }) }
-    var staticTexts: XCUIElementQuery { .init(children.filter { $0.identifier != "Later" }) }
-    var label: String { identifier }
+    var buttons: XCUIElementQuery { .init(children.filter { $0.elementType == .button }) }
+    var staticTexts: XCUIElementQuery { .init(children.filter { $0.elementType == .staticText }) }
 }
 struct XCUIElementQuery {
     var nodes: [XCUIElement]
@@ -30,39 +37,48 @@ struct XCUIElementQuery {
     var count: Int { nodes.count }
     var allElementsBoundByIndex: [XCUIElement] { nodes }
     func containing(_ type: XCUIElementType, identifier: String) -> Self {
-        .init(nodes.filter { $0.children.contains { $0.identifier == identifier } })
+        .init(nodes.filter { $0.children.contains {
+            $0.elementType == type && [$0.identifier, $0.label, $0.title, $0.value].contains(identifier)
+        } })
     }
     func matching(identifier: String) -> Self { .init(nodes.filter { $0.identifier == identifier }) }
     func matching(_ predicate: NSPredicate) -> Self {
-        .init(nodes.filter { predicate.evaluate(with: ["label": $0.label]) })
+        .init(nodes.filter { predicate.evaluate(with:
+            ["identifier": $0.identifier, "label": $0.label, "title": $0.title, "value": $0.value]) })
     }
     subscript(_ id: String) -> XCUIElement { matching(identifier: id).firstMatch }
 }
 final class XCUIApplication {
-    let alert = XCUIElement("alert", children: [XCUIElement("VoiceLayer microphone permission needs attention"), XCUIElement("Later")])
-    let touchBar = XCUIElement("TouchBar", children: [XCUIElement("Later")])
-    var dialogs: XCUIElementQuery { .init([alert]) }
-    var buttons: XCUIElementQuery { .init(alert.children + touchBar.children).matching(identifier: "Later") }
+    // Sanitized fields from run-03's retained Dialog and TouchBar. AppKit supplies
+    // AXTitle for NSButton and AXValue for NSTextField; neither has an AXLabel here.
+    let alert = XCUIElement("_NS:87", label: "alert", children: [
+        XCUIElement("_NS:74", type: .staticText, value: "VoiceLayer microphone permission needs attention"),
+        XCUIElement("_NS:58", type: .staticText, value: "Synthetic capture failure"),
+        XCUIElement("action-button-1", type: .button, title: "Open System Settings"),
+        XCUIElement("action-button-2", type: .button, title: "Later")])
+    let touchBar = XCUIElement("TouchBar", type: .touchBar, children: [
+        XCUIElement("", type: .button, title: "Later")])
+    let otherDialog = XCUIElement("other", children: [
+        XCUIElement("other-heading", type: .staticText, value: "Unrelated dialog"),
+        XCUIElement("action-button-2", type: .button, title: "Later")])
+    var dialogs: XCUIElementQuery { .init([otherDialog, alert]) }
+    var buttons: XCUIElementQuery {
+        .init((alert.exists ? alert.children : []) + touchBar.children + otherDialog.children)
+            .matching(NSPredicate(format: "title == %@", "Later"))
+    }
 }
 '''
 
 class ModalQueries(unittest.TestCase):
-    def test_visual_menu_shortcuts_avoid_edit_commands_and_match_injection(self):
+    def test_visual_commands_send_no_keystrokes_and_register_no_key_equivalents(self):
+        # GATECAP1: run-03's ⌥⌘D fixture key was macOS symbolic hotkey 52 and hid the operator's Dock.
         menu = (ROOT / 'flow-bar/Sources/VoiceBar/UIE2EGate2245.swift').read_text()
-        install = menu.split('func installHide1VisualMenu()', 1)[1].split('@objc func hide1VisualCommand', 1)[0]
-        registered = re.search(r'keyEquivalentModifierMask\s*=\s*([^\n]+)', install)
-        self.assertIsNotNone(registered, 'visual command modifiers must be explicit')
-        # Edit's Command-A/C/V/X/Z remain reserved.
-        mask = set(re.findall(r'\.(\w+)', registered[1]))
-        keys = re.search(r'Array\("([0-9a-f]+)"\)', install)[1]
-        self.assertFalse(mask == {'command'} and set(keys) & set('acvxz'),
-                         'visual commands collide with standard Edit shortcuts')
+        install = menu.split('func installHide1VisualMenu()', 1)[1].split('func hide1VisualCommand', 1)[0]
+        self.assertNotIn('keyEquivalentModifierMask', install)
+        self.assertEqual(re.findall(r'keyEquivalent:\s*("[^"]*")', install), ['""'])
         scenarios = SOURCE.read_text().split('extension VoiceBarFlowTests {', 1)[1]
-        calls = re.findall(r'modifierFlags:\s*(\[[^\]]+\]|\.\w+)', scenarios)
-        self.assertTrue(calls, 'visual scenario must send its shortcuts')
-        for call in calls:
-            self.assertEqual(set(re.findall(r'\.(\w+)', call)), mask,
-                             'menu registration and scenario injection must agree')
+        self.assertNotIn('typeKey(', scenarios, 'visual scenarios must use fixture notifications, never keystrokes')
+        self.assertIn('fixtureCommand(', scenarios)
 
     def test_unknown_scenario_lists_every_supported_choice_without_launch(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -150,18 +166,32 @@ print("PASS nonthrowing step, invalid PID refusal, resident exclusion, QA surfac
         fixture = r'''
 let app = XCUIApplication()
 let staleReceipt: [String: Any] = ["action": "start", "panelVisible": true, "hidden": false]
-precondition(app.buttons.count == 2, "Fixture must reproduce run-02's TouchBar duplicate")
+precondition(app.buttons.count == 3, "Fixture includes TouchBar and unrelated-dialog duplicates")
+precondition(app.alert.buttons.matching(NSPredicate(format: "label == %@", "Later")).count == 0,
+             "Retained run-03 title-only button must reproduce the label miss")
 let observation = gate2246ModalObservation(app)
 precondition(observation["alertVisible"] as? Bool == true)
 precondition(observation["panelVisible"] as? Bool == false,
              "Live AX must win over stale panelVisible=true receipt")
 precondition(gate2246LaterButtons(app).count == 1,
              "Later must select the alert's one button, not TouchBar")
-precondition(gate2246LaterButtons(app).firstMatch.identifier == "Later")
+precondition(gate2246LaterButtons(app).firstMatch.identifier == "action-button-2")
+let later = gate2246LaterButtons(app).firstMatch
+precondition(later.title == "Later" && later.label.isEmpty)
+later.title = "Later today"
+precondition(gate2246LaterButtons(app).count == 0, "Title must match exactly")
+later.title = "Later"
+let duplicate = XCUIElement("duplicate", type: .button, title: "Later")
+app.alert.children.append(duplicate)
+precondition(gate2246LaterButtons(app).count == 2, "Ambiguity must reach the gate's count guard")
+app.alert.children.removeLast()
+app.alert.children.removeAll { $0.elementType == .button }
+precondition(gate2246LaterButtons(app).count == 0, "Never fall back outside the product dialog")
 app.alert.exists = false
 precondition(gate2246ModalObservation(app)["alertVisible"] as? Bool == false,
              "Dismissed alert must not persist in the observation")
-print("PASS stale snapshot and duplicate Later reproduced and avoided")
+precondition(gate2246LaterButtons(app).count == 0, "Missing product dialog must not adopt other Later")
+print("PASS retained title-only NSAlert, exact title, duplicates and missing-dialog refusal")
 '''
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp)

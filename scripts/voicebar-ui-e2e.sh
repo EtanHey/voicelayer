@@ -19,7 +19,8 @@ done
 case "$scenario" in
   full) ;;
   focused-338) focused_338=1 ;;
-  hide1|gate2246) export VOICEBAR_UIE2E_GATE2245=1 ;;
+  hide1) export VOICEBAR_UIE2E_GATE2245=1 VOICEBAR_UIE2E_GATE2246_CAPTURE=0 ;;
+  gate2246) export VOICEBAR_UIE2E_GATE2245=1 VOICEBAR_UIE2E_GATE2246_CAPTURE=1 ;;
   *) echo "FAIL unknown scenario: $scenario (expected full, focused-338, hide1 or gate2246)" >&2; exit 2 ;;
 esac
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -80,7 +81,8 @@ for helper in resident permissions; do
     > "$output/$helper-build.log" 2>&1 || { echo "FAIL $helper helper build"; exit 1; }
 done
 echo 'PASS build-for-testing (UI execution NOT_PROVEN)'
-if [[ $scenario == gate2246 ]]; then
+# Every GATE2245 build constructs the real AppDelegate, so every one needs the tripwire.
+if [[ ${VOICEBAR_UIE2E_GATE2245:-0} == 1 ]]; then
   python3 "$repo/scripts/voicebar-ui-e2e-guard-proof.py" build "$output"
 fi
 [[ $build_only == 0 ]] || exit 0

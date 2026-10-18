@@ -68,11 +68,8 @@ def configure(output, app, sandbox, scenario=None):
     env = target.setdefault('EnvironmentVariables', {})
     env.update(VOICEBAR_UIE2E_APP=str(app), VOICEBAR_UIE2E_ROOT=str(sandbox),
                VOICEBAR_UIE2E_SCENARIO=scenario)
-    if scenario == 'gate2246':
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
-        guard = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(guard)
+    guard = load_guard()
+    if guard.required(scenario, app / 'Contents/Info.plist'):
         env['VOICEBAR_UIE2E_DEVICE_GUARD'] = str(guard.verify(pathlib.Path(__file__).resolve().parent.parent, output))
     # Moving the plist changes __TESTROOT__. Resolve it before writing the configured copy.
     def resolve(value):
@@ -87,6 +84,12 @@ def configure(output, app, sandbox, scenario=None):
     write_scenario(output, scenario)
 
 
+def absence_proven(proof):
+    """A successful CG on-screen inventory at the step with zero windows owned by the proven QA PID."""
+    return (isinstance(proof, dict) and proof.get('cgInventory') == 'ok' and proof.get('onScreenQAWindows') == 0
+            and ((isinstance(proof.get('qaPid'), int) and proof['qaPid'] > 0) or proof.get('qaProcess') == 'none'))
+
+
 def report(directory, steps, manifest, recording=None, issues=(), limitations=(), scenario='full'):
     if scenario not in SCENARIOS:
         raise ValueError('Invalid UIE2E report scenario')
@@ -99,7 +102,24 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
     figures = []
     all_passed = not issues
     for step in steps:
+        capture = step.get('capture')
         matches = [a for a in attachments if a['suggestedHumanReadableName'].startswith(step['attachment'])]
+        # Every published frame is a window-ID capture of the proven QA process; never a desktop crop.
+        if not isinstance(capture, dict) or capture.get('source') != 'qa-window-id' \
+                or capture.get('status') not in ('PROVEN', 'NOT_PROVEN') \
+                or (capture['status'] == 'PROVEN' and not (isinstance(capture.get('windows'), list) and capture['windows'])):
+            raise ValueError('Frame capture source is not the QA window/region: ' + str(step.get('attachment')))
+        if capture['status'] == 'NOT_PROVEN':
+            if matches:
+                raise ValueError('NOT_PROVEN frame carries an image: ' + step['attachment'])
+            # Lead ruling: only a step expecting hidden QA, with a positive expected-absent proof, may pass.
+            allowed = step.get('expectsHiddenQA') is True and absence_proven(capture.get('absenceProof'))
+            status = 'ABSENT (proven)' if allowed else 'FAIL VISUAL NOT_PROVEN'
+            caption = f"{step['number']:04d} {status} ({capture.get('reason', 'unproven')}) {step['name']}"
+            print(caption)
+            all_passed = all_passed and step['passed'] and allowed
+            figures.append(f'<figure><figcaption>{html.escape(caption)}</figcaption></figure>')
+            continue
         if len(matches) != 1:
             raise ValueError(f"Expected one screenshot for {step['attachment']}, found {len(matches)}")
         name = matches[0]['exportedFileName']
@@ -120,6 +140,10 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
         name = recording['path']
         if recording.get('valid') is not True or pathlib.Path(name).name != name:
             raise ValueError('Missing/invalid recording proof')
+        source = recording.get('captureSource') or {}
+        if (source.get('kind') != 'application' or source.get('bundle') != 'com.voicelayer.voicebar.uie2e'
+                or source.get('fullDisplay') is not False or not source.get('executable') or not source.get('observedPids')):
+            raise ValueError('Recording capture source is not the QA app window set')
         video = (f'<p><a href="../{html.escape(name, quote=True)}">Screen recording (.mov)</a> — '
                  f'{recording["durationSeconds"]} s · {recording["bytes"]} bytes · no audio</p>')
     warnings = ''.join('<p role="alert">' + html.escape(issue) + '</p>' for issue in issues)
@@ -195,6 +219,77 @@ def receipts(directory, manifest):
     return ordered, ledger, issues
 
 
+def load_guard():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    return guard
+
+
+GUARD_INSTALLED = 'voicebar-no-device-guard-v1:installed'
+
+
+def guard_launch_log(sandbox, launch):
+    """Launch 1 keeps the supervisor-watched path; every relaunch gets its own fresh log."""
+    return sandbox / ('no-device-guard.log' if launch == 1 else 'no-device-guard-launch-%d.log' % launch)
+
+
+def guard_launch_issues(sandbox, launches):
+    """Require the ledger's launch sequence, never infer it from surviving log files."""
+    issues = []
+    expected = {guard_launch_log(sandbox, n).name for n in range(1, launches + 1)}
+    present = {path.name for path in sandbox.glob('no-device-guard*.log')}
+    extra = sorted(present - expected)
+    if extra:
+        issues.append('FAIL unexpected no-device guard launch logs: ' + ', '.join(extra))
+    for launch in range(1, launches + 1):
+        path = guard_launch_log(sandbox, launch)
+        if not path.is_file():
+            issues.append('FAIL no-device guard receipt missing for launch %d' % launch)
+            continue
+        lines = path.read_text().splitlines()
+        trips = [line for line in lines if line != GUARD_INSTALLED]
+        if trips:
+            issues.append('FAIL device tripwire on launch %d: %s' % (launch, ', '.join(trips)))
+        elif lines != [GUARD_INSTALLED]:
+            issues.append('FAIL launch %d guard receipt is not exactly one install marker' % launch)
+    return issues
+
+
+def guard_receipt_steps(scenario, launches, gate_build=False):
+    """In-app tripwire receipts: per QA launch, and before/after the scenario's gate fixtures."""
+    required = {'GUARD launch %d %s' % (n, phase) for n in range(1, launches + 1)
+                for phase in ['installed', 'no tripwire']}
+    prefix = {'hide1': 'HIDE1VIS', 'gate2246': 'GATE2246'}.get(scenario, 'GATE2245' if gate_build else None)
+    if prefix is not None:
+        required |= {prefix + ' no-device guard installed before fixtures',
+                     prefix + ' no device-start or process tripwire invoked'}
+    return required
+
+
+def guard_export_issues(scenario, sandbox, step_names):
+    plist = sandbox / 'VoiceBarQA.app/Contents/Info.plist'
+    gate_build = plist.is_file() and plistlib.loads(plist.read_bytes()).get('UIE2EGate2245') is True
+    if not (gate_build or load_guard().required(scenario)):
+        return []
+    launch_steps = [name for name in step_names
+                    if name in {'launch isolated QA app', 'relaunch isolated QA app'}]
+    launches = len(launch_steps)
+    issues = guard_launch_issues(sandbox, launches)
+    if not launch_steps or launch_steps != ['launch isolated QA app'] + ['relaunch isolated QA app'] * (launches - 1):
+        issues.append('FAIL invalid or missing recorded QA launch sequence')
+    required = guard_receipt_steps(scenario, launches, gate_build)
+    missing = sorted(required - set(step_names))
+    if missing:
+        issues.append('FAIL no-device guard receipt steps missing: ' + ', '.join(missing))
+    invalid = sorted({name for name in step_names if name.startswith('GUARD launch ')
+                      and (name not in required or step_names.count(name) != 1)})
+    if invalid:
+        issues.append('FAIL unexpected or duplicate no-device guard receipt steps: ' + ', '.join(invalid))
+    return issues
+
+
 def export(output, sandbox, scenario=None):
     scenario = selected_scenario(output, scenario)
     directory = output / 'screenshots'
@@ -231,6 +326,7 @@ def export(output, sandbox, scenario=None):
             issues.append('FAIL hide1 missing required before/hidden/shown evidence')
         if any(step.get('skipped') or expected_packet(step) is not None for step in steps):
             issues.append('FAIL hide1 cannot skip or waive a case')
+    issues += guard_export_issues(scenario, sandbox, [step['name'] for step in steps])
     (output / 'steps.json').write_text(json.dumps(steps, indent=2))
     if ledger is not None:
         (output / 'ledger.json').write_text(json.dumps(ledger, indent=2))
@@ -261,7 +357,9 @@ def export(output, sandbox, scenario=None):
     write_scenario(output, scenario)
     qa = dict(version=1, scenario=scenario, scope=scenario, scenarioPassed=passed,
               verdict=('FOCUSED_SCENARIO_PASS' if scenario in {'focused-338', 'hide1', 'gate2246'} else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
-              fullReleasePass=False, fullReleaseCoverage='NOT_PROVEN', issues=issues)
+              fullReleasePass=False, fullReleaseCoverage='NOT_PROVEN', issues=issues,
+              # Steps with no proven QA window to capture: no frame was taken (never a desktop crop).
+              visualNotProven=[s['number'] for s in steps if (s.get('capture') or {}).get('status') == 'NOT_PROVEN'])
     (output / 'qa-report.json').write_text(json.dumps(qa, indent=2, sort_keys=True) + '\n')
     return passed
 

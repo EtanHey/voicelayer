@@ -11,15 +11,11 @@ spec.loader.exec_module(safety)
 
 
 def main(output):
-    return safety.supervise(safety.NativeHost(output, 'hide1'))
+    return safety.main([str(output), '--scenario', 'hide1'])
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=pathlib.Path)
     args = parser.parse_args()
-    import signal
-    host = safety.NativeHost(args.output.resolve(), 'hide1')
-    for sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP]:
-        signal.signal(sig, lambda number, frame: host.cancelled.append(number))
-    sys.exit(safety.supervise(host))
+    sys.exit(main(args.output))

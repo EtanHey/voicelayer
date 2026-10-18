@@ -7,6 +7,24 @@ func gate2245HasOwnedScreenWindows(_ screenWindows: [[String: Any]], pid: Int) -
 }
 // END GATE2245 WINDOW OWNERSHIP
 
+// BEGIN UIE2E FIXTURE COMMANDS
+// Mirrors UIE2EFixtureCommand in the QA app. A name-only distributed notification is the one
+// channel the sandboxed runner can send that no global macOS shortcut can intercept.
+let uie2eFixtureCommandPrefix = "com.voicelayer.voicebar.uie2e.command."
+func uie2eFixtureCommandName(token: String, command: String) -> String { uie2eFixtureCommandPrefix + token + "." + command }
+/// The QA app's acknowledgement (count, command), or nil when absent/unreadable.
+func uie2eFixtureAck(_ data: Data?) -> (count: Int, name: String)? {
+    guard let data, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let count = object["count"] as? Int, let name = object["name"] as? String else { return nil }
+    return (count, name)
+}
+/// True only when a receipt was written by exactly this delivered command.
+func uie2eReceiptIsFrom(_ receipt: [String: Any], count: Int, name: String) -> Bool {
+    let command = receipt["fixtureCommand"] as? [String: Any]
+    return command?["count"] as? Int == count && command?["name"] as? String == name
+}
+// END UIE2E FIXTURE COMMANDS
+
 // BEGIN GATE2246 RENDERED WORDS
 func gate2246TeleprompterContains(_ pill: XCUIElement, text: String) -> Bool {
     let expected = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
@@ -37,7 +55,9 @@ func gate2246Alert(_ app: XCUIApplication) -> XCUIElement {
 }
 
 func gate2246LaterButtons(_ app: XCUIApplication) -> XCUIElementQuery {
-    gate2246Alert(app).buttons.matching(NSPredicate(format: "label == %@", "Later"))
+    // NSAlert's NSButton exposes AXTitle, with an empty AXLabel on macOS.
+    // Keep the product-dialog scope: Touch Bar also exposes a Later button.
+    gate2246Alert(app).buttons.matching(NSPredicate(format: "title == %@", "Later"))
 }
 
 func gate2246ModalObservation(_ app: XCUIApplication) -> [String: Any] {
@@ -56,10 +76,9 @@ extension VoiceBarFlowTests {
         limitations = ["Focused muted native gate: real panels and NSAlert, synthetic wire/selection; no capture, daemon launch, physical hotkeys, permissions or installed-app acceptance."]
         ledger.requiredScope = ["gate:HIDE1.1", "gate:SEL1.x"]
         step("GATE2246 no-device guard installed before fixtures") {
-            XCTAssertEqual(try? String(contentsOf: root.appendingPathComponent("no-device-guard.log")),
-                           "voicebar-no-device-guard-v1:installed\n")
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches))
         }
-        func command(_ key: String) { app.typeKey(key, modifierFlags: [.command, .option]) }
+        func command(_ name: String) { _ = fixtureCommand(name) }
         func alertPresent() -> Bool { gate2246Alert(app).exists }
         func waitForAlert(_ expected: Bool) {
             let appeared = gate2246Alert(app).waitForExistence(timeout: expected ? 3 : 1)
@@ -71,13 +90,13 @@ extension VoiceBarFlowTests {
             buttons.firstMatch.click()
             XCTAssertTrue(gate2246Alert(app).waitForNonExistence(timeout: 3))
         }
-        for (key, name) in [("1", "user-f5"), ("2", "user-ask"), ("3", "unknown"), ("4", "background"), ("5", "recovered"), ("6", "visible")] {
-            command("0")
+        for name in ["user-f5", "user-ask", "unknown", "background", "recovered", "visible"] {
+            command("start")
             step("GATE2246 HIDE " + name + " before") {
                 XCTAssertTrue(app.dialogs["VoiceBar GATE2245 Product Pill"].waitForExistence(timeout: 3))
                 XCTAssertFalse(alertPresent())
             }
-            command(key)
+            command(name)
             let immediate = !["background", "recovered"].contains(name)
             step("GATE2246 HIDE " + name + " failure") {
                 waitForAlert(immediate)
@@ -88,7 +107,7 @@ extension VoiceBarFlowTests {
                 attachJSON("GATE2246-" + name + "-failure-AX", observation)
             }
             if immediate { step("GATE2246 HIDE " + name + " dismiss Later") { dismissAlert() } }
-            command("7")
+            command("show")
             step("GATE2246 HIDE " + name + " shown") {
                 waitForAlert(name == "background")
                 let observation = gate2246ModalObservation(app).merging(["case": name, "phase": "shown"]) { _, new in new }
@@ -99,16 +118,19 @@ extension VoiceBarFlowTests {
             if name == "background" { step("GATE2246 HIDE background dismiss Later") { dismissAlert() } }
         }
         ledger.verifiedSurfaces.insert("gate:HIDE1.1")
-        command("8")
-        for (key, name, expected, text) in [("a", "same-hash", ["stop"], ""),
-            ("b", "different", ["speak_text"], "Replacement selection B"),
-            ("c", "pending", ["speak_text"], "Own selection B"),
-            ("d", "fast-bc", ["speak_text", "speak_text"], "Own selection C"),
-            ("e", "no-hash", ["speak_text"], "Replacement selection B"),
-            ("f", "busy", [], "")] {
-            command(key)
+        command("selection")
+        for (name, expected, text) in [("same-hash", ["stop"], ""),
+            ("different", ["speak_text"], "Replacement selection B"),
+            ("pending", ["speak_text"], "Own selection B"),
+            ("fast-bc", ["speak_text", "speak_text"], "Own selection C"),
+            ("no-hash", ["speak_text"], "Replacement selection B"),
+            ("busy", [], "")] {
+            let sent = fixtureCommand(name)
             step("GATE2246 SEL " + name) {
+                // A swallowed command must fail as "not delivered", never as a stale product receipt.
+                waitUntil { uie2eReceiptIsFrom(self.gateRead("gate-hide.json"), count: sent, name: name) }
                 let receipt = gateRead("gate-hide.json")
+                XCTAssertTrue(uie2eReceiptIsFrom(receipt, count: sent, name: name), "Receipt is not from command " + name)
                 XCTAssertEqual(receipt["action"] as? String, "selection:" + name)
                 let messages = receipt["commands"] as? [[String: Any]] ?? []
                 XCTAssertEqual(messages.compactMap { $0["cmd"] as? String }, expected)
@@ -129,10 +151,9 @@ extension VoiceBarFlowTests {
             }
         }
         ledger.verifiedSurfaces.insert("gate:SEL1.x")
-        command("9")
+        command("end")
         step("GATE2246 no device-start or process tripwire invoked") {
-            XCTAssertEqual(try? String(contentsOf: root.appendingPathComponent("no-device-guard.log")),
-                           "voicebar-no-device-guard-v1:installed\n")
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches))
         }
         completed = true
     }
@@ -142,8 +163,11 @@ extension VoiceBarFlowTests {
         limitations = ["HIDE1-only muted native visual gate with injected events; no audio, live daemon, global hotkeys, permissions or installed-app acceptance.",
             "Panel is positioned below the menu bar for unobstructed evidence; this does not establish notch placement."]
         ledger.requiredScope = ["gate:HIDE1"]
-        for (index, event) in ["speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard"].enumerated() {
-            app.typeKey("0", modifierFlags: [.command, .option])
+        step("HIDE1VIS no-device guard installed before fixtures") {
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches))
+        }
+        for event in ["speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard"] {
+            fixtureCommand("start")
             Thread.sleep(forTimeInterval: 1)
             step("HIDE1VIS " + event + " before") {
                 let receipt = gateRead("gate-hide.json")
@@ -152,7 +176,7 @@ extension VoiceBarFlowTests {
                 XCTAssertEqual(receipt["settingsVisible"] as? Bool, false)
                 attachJSON("HIDE1VIS-" + event + "-before", receipt)
             }
-            app.typeKey(String(index + 1), modifierFlags: [.command, .option])
+            fixtureCommand(event)
             Thread.sleep(forTimeInterval: 1)
             step("HIDE1VIS " + event + " hidden") {
                 let receipt = gateRead("gate-hide.json")
@@ -172,7 +196,7 @@ extension VoiceBarFlowTests {
                     "QA-owned surface remains on screen; installed resident is checked separately")
                 attachJSON("HIDE1VIS-" + event + "-hidden", receipt)
             }
-            app.typeKey("8", modifierFlags: [.command, .option])
+            fixtureCommand("show")
             Thread.sleep(forTimeInterval: 1)
             step("HIDE1VIS " + event + " shown") {
                 let receipt = gateRead("gate-hide.json")
@@ -186,9 +210,34 @@ extension VoiceBarFlowTests {
                 attachJSON("HIDE1VIS-" + event + "-shown", receipt)
             }
         }
-        app.typeKey("9", modifierFlags: [.command, .option])
+        fixtureCommand("end")
         ledger.verifiedSurfaces.insert("gate:HIDE1")
+        step("HIDE1VIS no device-start or process tripwire invoked") {
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches))
+        }
         completed = true
+    }
+
+    /// Posts one fixture command and waits for the QA app's acknowledgement; returns its count.
+    @discardableResult
+    func fixtureCommand(_ name: String) -> Int {
+        let ack = root.appendingPathComponent("fixture-command-ack.json")
+        let before = uie2eFixtureAck(try? Data(contentsOf: ack))?.count ?? 0
+        // Fresh synchronous foreign-modal decision before delivery; a STOP never sends the command.
+        guard boundaryClear("command") else { XCTFail("Fixture command withheld under foreign modal STOP: " + name); return before + 1 }
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(uie2eFixtureCommandName(token: root.lastPathComponent, command: name)),
+            object: nil, userInfo: nil, deliverImmediately: true)
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if let observed = uie2eFixtureAck(try? Data(contentsOf: ack)), observed.count == before + 1 {
+                XCTAssertEqual(observed.name, name, "Fixture command acknowledged out of order")
+                return observed.count
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTFail("Fixture command not delivered: " + name)
+        return before + 1
     }
 
     func gateRead(_ file: String) -> [String: Any] {

@@ -999,6 +999,12 @@ configure_qa_swift_flags() {
         1) [[ "${VOICEBAR_QA_BUILD:-0}" == 1 ]] || { echo 'GATE2245 requires QA build' >&2; return 1; } ;;
         *) echo 'Invalid VOICEBAR_UIE2E_GATE2245' >&2; return 1 ;;
     esac
+    # gate2246's capture-failure cases use #410's APIs; hide1 builds without them (#416 C1).
+    case "${VOICEBAR_UIE2E_GATE2246_CAPTURE:-0}" in
+        0) ;;
+        1) [[ "${VOICEBAR_UIE2E_GATE2245:-0}" == 1 ]] || { echo 'GATE2246_CAPTURE requires GATE2245' >&2; return 1; } ;;
+        *) echo 'Invalid VOICEBAR_UIE2E_GATE2246_CAPTURE' >&2; return 1 ;;
+    esac
     case "${VOICEBAR_UIE2E_FOCUSED_338:-0}" in
         0|1) ;;
         *) echo '[build-app] ERROR: VOICEBAR_UIE2E_FOCUSED_338 must be 0 or 1.' >&2; return 1 ;;
@@ -1015,6 +1021,9 @@ configure_qa_swift_flags() {
     QA_SWIFT_FLAGS=(-Xswiftc -DVOICEBAR_QA)
     if [[ "${VOICEBAR_UIE2E_GATE2245:-0}" == 1 ]]; then
         QA_SWIFT_FLAGS+=(-Xswiftc -DVOICEBAR_UIE2E_GATE2245)
+    fi
+    if [[ "${VOICEBAR_UIE2E_GATE2246_CAPTURE:-0}" == 1 ]]; then
+        QA_SWIFT_FLAGS+=(-Xswiftc -DVOICEBAR_UIE2E_GATE2246_CAPTURE)
     fi
     if [[ "${VOICEBAR_UIE2E_FOCUSED_338:-0}" == 1 ]]; then
         # Check product declarations, never QA fixture references or comments. Main may lack #338.
