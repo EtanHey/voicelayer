@@ -40,8 +40,12 @@ def safe_to_hide(capture_children, fresh_locks, ax_labels):
     return not unsafe_reasons(capture_children, fresh_locks, ax_labels)
 
 
-def log_precondition(message):
-    print('[supervisor] precondition failed: ' + message, file=sys.stderr, flush=True)
+def note(message, log=None):
+    line = '[supervisor] ' + message
+    print(line, file=sys.stderr, flush=True)
+    if log is not None:
+        log.write(line + '\n')
+        log.flush()
 
 
 def wait_until_safe(host):
@@ -77,7 +81,6 @@ def supervise(host):
         receipt['suiteExit'] = host.poll()
     except BaseException as error:
         receipt['error'] = repr(error)
-        print('[supervisor] aborted: ' + repr(error), file=sys.stderr, flush=True)
     finally:
         # Unmute only after positive owned-process termination proof, including on abort.
         terminated = False
@@ -103,9 +106,11 @@ def supervise(host):
             except BaseException as error:
                 receipt['cleanupErrors'].append('mute: ' + repr(error))
         receipt['finished'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        for problem in receipt['cleanupErrors']:
-            print('[supervisor] cleanup error: ' + problem, file=sys.stderr, flush=True)
         host.save(receipt)
+        if receipt.get('error') or receipt['cleanupErrors']:
+            where = getattr(host, 'output', None)
+            getattr(host, 'note', note)('FAILED: ' + '; '.join(([receipt['error']] if receipt.get('error') else []) + receipt['cleanupErrors'])
+                 + ('; receipt ' + str(where / 'operator-state.json') if where else ''))
     if receipt['suiteExit'] is not None:
         try:
             receipt['exportExit'] = host.export()
@@ -123,6 +128,9 @@ class NativeHost:
         self.sandbox = pathlib.Path((output / 'sandbox-path.txt').read_text().strip())
         self.child = None
         self.resident = {}
+        self.preflight = {}
+        # Opened before any precondition so a pre-launch STOP can never leave an empty log.
+        self.preflight_log = (output / 'supervisor-preflight.log').open('a')
         self.checks = []
         self.cancelled = []
         self.deadline = None
@@ -133,6 +141,27 @@ class NativeHost:
 
     def run(self, args):
         return subprocess.check_output(args, text=True, timeout=15).strip()
+
+    def note(self, message):
+        note(message, self.preflight_log)
+
+    def permissions(self):
+        # The helper prints its JSON and exits 2 on a prompt/untrusted AX; parse it either way.
+        helper = str(self.output / 'voicebar-ui-e2e-permissions')
+        result = subprocess.run([helper], capture_output=True, text=True, timeout=15, check=False)
+        try:
+            parsed = json.loads(result.stdout)
+        except ValueError:
+            raise RuntimeError('Permission helper unreadable: exit %d stdout %r stderr %r'
+                               % (result.returncode, result.stdout[-500:], result.stderr[-500:])) from None
+        return result.returncode, parsed
+
+    def refuse_permissions(self, code, permissions):
+        if permissions.get('axTrusted') is not True or permissions.get('prompts') != [] or code != 0:
+            message = ('STOP: permission prompt or unreadable AX; never dismiss/grant (exit %d, axTrusted=%r, '
+                       'prompts=%s)' % (code, permissions.get('axTrusted'), json.dumps(permissions.get('prompts'))))
+            self.note(message)
+            raise RuntimeError(message)
 
     def muted(self):
         value = self.run(['osascript', '-e', 'output muted of (get volume settings)'])
@@ -219,21 +248,52 @@ class NativeHost:
     def identity(self, pid):
         return self.run(['ps', '-p', str(pid), '-o', 'lstart='])
 
+    def child_args(self, pid):
+        # Resident children can be short-lived; one that exited between the rows read and
+        # this read is not the daemon, so the precondition rechecks instead of aborting.
+        try:
+            return self.run(['ps', '-p', str(pid), '-o', 'args='])
+        except subprocess.CalledProcessError as error:
+            try:
+                os.kill(pid, 0)  # Existence probe only.
+            except ProcessLookupError:
+                self.note('resident child %d exited before its args were read; ignored' % pid)
+                return None
+            except PermissionError:
+                pass
+            raise RuntimeError('Resident child args unreadable; PID still exists: %d (ps exit %d, output %r)'
+                               % (pid, error.returncode, error.output)) from error
+
     def preconditions(self):
         rows = self.process_rows()
         pid = self.resident['pid']
-        if rows.get(pid, (None, None))[1] != '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar' or self.identity(pid) != self.resident['started']:
-            raise RuntimeError('Resident identity changed; no action permitted')
-        daemons = [p for p, (parent, _) in rows.items() if parent == pid and
-                   'mcp-server-daemon.ts' in self.run(['ps', '-p', str(p), '-o', 'args='])]
+        cmd = rows.get(pid, (None, None))[1]
+        observed = (cmd, self.identity(pid) if cmd == '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar' else None)
+        if observed != ('/Applications/VoiceBar.app/Contents/MacOS/VoiceBar', self.resident['started']):
+            message = ('Resident identity changed; no action permitted (pid %d expected started %r, observed %r)'
+                       % (pid, self.resident['started'], observed))
+            self.note(message)
+            raise RuntimeError(message)
+        children = {p: self.child_args(p) for p, (parent, _) in sorted(rows.items()) if parent == pid}
+        daemons = [p for p, args in children.items() if args is not None and 'mcp-server-daemon.ts' in args]
+        attempt = dict(daemonPids=daemons, daemonCount=len(daemons))
+        attempts = self.resident.setdefault('preconditions', [])
         if len(daemons) != 1:
-            log_precondition('expected exactly one mcp-server-daemon.ts child of resident %d; observed %r'
-                             % (pid, daemons))
+            attempts.append(dict(attempt, safe=False))
+            self.save_resident()
+            self.note('precondition failed: expected exactly one mcp-server-daemon.ts child of resident %d; '
+                      'observed %d %r; resident children %r' % (pid, len(daemons), daemons, children))
             return False
         daemon = daemons[0]
         identity = self.identity(daemon)
         if 'daemonPid' in self.resident and (daemon != self.resident['daemonPid'] or identity != self.resident['daemonStarted']):
-            raise RuntimeError('Resident daemon identity changed; no action permitted')
+            attempts.append(dict(attempt, daemonStarted=identity, safe=False))
+            self.save_resident()
+            message = ('Resident daemon identity changed; no action permitted (expected pid %r started %r, '
+                       'observed pid %d started %r)' % (self.resident['daemonPid'], self.resident['daemonStarted'],
+                                                         daemon, identity))
+            self.note(message)
+            raise RuntimeError(message)
         self.resident.update(daemonPid=daemon, daemonStarted=identity)
         descendants = {daemon}
         while True:
@@ -253,21 +313,24 @@ class NativeHost:
         labels = [x for node in nodes for key in ['title', 'description', 'value'] if (x := node.get(key))]
         reasons = unsafe_reasons(capture, locks, labels)
         for reason in reasons:
-            log_precondition(reason)
+            self.note('precondition failed: ' + reason)
         safe = not reasons
-        self.resident.setdefault('preconditions', []).append(dict(capturePids=capture, freshLocks=locks,
-                                                               axLabels=labels, safe=safe))
+        attempts.append(dict(attempt, capturePids=capture, freshLocks=locks, axLabels=labels, safe=safe))
         self.save_resident()
         return safe
 
     def prepare_resident(self):
-        permission = json.loads(self.run([str(self.output / 'voicebar-ui-e2e-permissions')]))
-        if permission.get('axTrusted') is not True or permission.get('prompts') != []:
-            raise RuntimeError('STOP: permission preflight; never dismiss/grant')
-        residents = [p for p, (_, cmd) in self.process_rows().items()
-                     if cmd == '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar']
+        code, permission = self.permissions()
+        self.checks.append(dict(phase='preflight', permissionsExit=code, permissions=permission))
+        self.refuse_permissions(code, permission)
+        residents = sorted(p for p, (_, cmd) in self.process_rows().items()
+                           if cmd == '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')
+        self.preflight.update(residentPids=residents, residentCount=len(residents))
         if len(residents) != 1:
-            raise RuntimeError('Exactly one installed resident required; never launch/replace one')
+            message = ('Exactly one installed resident required; never launch/replace one (observed %d %r)'
+                       % (len(residents), residents))
+            self.note(message)
+            raise RuntimeError(message)
         self.resident = dict(pid=residents[0], started=self.identity(residents[0]), restoreRequired=False,
                              settingsOpened=False)
         self.save_resident()
@@ -313,14 +376,13 @@ class NativeHost:
     def check(self):
         import shutil
         self.collect_owned()
-        permissions = json.loads(self.run([str(self.output / 'voicebar-ui-e2e-permissions')]))
+        code, permissions = self.permissions()
         free = shutil.disk_usage('/System/Volumes/Data').free
         muted = self.muted()
-        self.checks.append(dict(muted=muted, freeBytes=free, permissions=permissions))
+        self.checks.append(dict(muted=muted, freeBytes=free, permissionsExit=code, permissions=permissions))
         if not muted or free < (10 if self.child else 15) * 1024**3:
-            raise RuntimeError('Mute lost or disk threshold crossed')
-        if permissions.get('axTrusted') is not True or permissions.get('prompts') != []:
-            raise RuntimeError('STOP: permission prompt or unreadable AX; never dismiss/grant')
+            raise RuntimeError('Mute lost or disk threshold crossed (muted=%r, freeBytes=%d)' % (muted, free))
+        self.refuse_permissions(code, permissions)
         guard = self.sandbox / 'no-device-guard.log'
         if guard.exists() and guard.read_text() != 'voicebar-no-device-guard-v1:installed\n':
             raise RuntimeError('Device tripwire invoked')
@@ -348,7 +410,8 @@ class NativeHost:
                 except ProcessLookupError:
                     return None
                 raise RuntimeError('Process identity unreadable; PID still exists: ' + str(pid)) from error
-            raise
+            raise RuntimeError('Process identity unreadable: %d (ps exit %d, output %r)'
+                               % (pid, error.returncode, error.output)) from error
         fields = raw.split(None, 7)
         if len(fields) != 8:
             raise RuntimeError('Process identity unreadable: ' + str(pid))
@@ -359,9 +422,13 @@ class NativeHost:
             raise RuntimeError('Protected identity cannot be owned')
         state = self.process_state(pid)
         if state is not None and expected_cmd is not None and state['cmd'] != expected_cmd:
-            raise RuntimeError('Process changed during ownership capture; no signal: ' + str(pid))
-        if state is not None and parent is not None and (state['parent'] != parent or not self.owned_alive(parent)):
-            raise RuntimeError('Child ownership changed during capture; no signal: ' + str(pid))
+            raise RuntimeError('Process changed during ownership capture; no signal: %d (expected cmd %r, observed %r)'
+                               % (pid, expected_cmd, state['cmd']))
+        if state is not None and parent is not None:
+            parent_alive = self.owned_alive(parent) if state['parent'] == parent else None
+            if not parent_alive:
+                raise RuntimeError('Child ownership changed during capture; no signal: %d (expected parent %d, '
+                                   'observed parent %d, parentAlive=%r)' % (pid, parent, state['parent'], parent_alive))
         if state is not None and pid not in self.owned:
             self.owned[pid] = dict(state, kind=kind)
 
@@ -528,6 +595,7 @@ class NativeHost:
     def save(self, receipt):
         receipt['checks'] = self.checks
         receipt['shutdown'] = self.shutdown
+        receipt['preflight'] = self.preflight
         (self.output / 'operator-state.json').write_text(json.dumps(receipt, indent=2) + '\n')
 
 

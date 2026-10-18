@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -391,6 +392,8 @@ class SupervisorTests(unittest.TestCase):
                              settingsOpened=True, settingsWindowId=77, initialHidden=False)
         host.identity = lambda pid: 'resident-start'
         host.guard_mute = lambda: None  # Synthetic tests must never query/change host audio.
+        # Permission helper contract (exit code, parsed JSON) is driven for real in its own test.
+        host.permissions = lambda: (0, dict(axTrusted=True, prompts=[]))
         host.resident['initialSurface'] = [dict(bounds=dict(X=500, Y=0, Width=200, Height=32), layer=25)]
         return host
 
@@ -755,6 +758,167 @@ class SupervisorTests(unittest.TestCase):
                 self.assertFalse(host.preconditions())
             self.assertIn('daemon', err.getvalue())
             self.assertIn('[]', err.getvalue())
+
+    def stub_permissions(self, output, payload, code):
+        helper = output / 'voicebar-ui-e2e-permissions'
+        helper.write_text('#!/bin/sh\nprintf %s ' + repr(payload) + '\nexit ' + str(code) + '\n')
+        helper.chmod(0o755)
+
+    def test_permission_helper_exit_2_is_parsed_recorded_then_stops(self):
+        # The real helper prints its JSON and exits 2 on a prompt; the real run() must not lose it.
+        module = self.module()
+        prompt = json.dumps(dict(axTrusted=True, prompts=[dict(owner='com.apple.UserNotificationCenter',
+                                                              labels=['Allow'])]))
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            self.stub_permissions(output, prompt, 2)
+            host = module.NativeHost(output, 'gate2246')
+            with self.assertRaises(RuntimeError) as stop:
+                host.prepare_resident()
+            self.assertIn('STOP', str(stop.exception))
+            self.assertIn('UserNotificationCenter', str(stop.exception))
+            self.assertEqual(host.checks[-1]['permissionsExit'], 2)
+            self.assertEqual(host.checks[-1]['permissions']['prompts'][0]['labels'], ['Allow'])
+            host.collect_owned = lambda: None
+            host.muted = lambda: True
+            with self.assertRaises(RuntimeError) as stop:
+                host.check()
+            self.assertIn('STOP', str(stop.exception))
+            self.assertEqual(host.checks[-1]['permissions']['axTrusted'], True)
+            self.assertIn('UserNotificationCenter', (output / 'supervisor-preflight.log').read_text())
+            self.stub_permissions(output, 'not json', 2)
+            with self.assertRaises(RuntimeError) as unreadable:
+                host.prepare_resident()
+            self.assertIn('exit 2', str(unreadable.exception))
+            self.assertIn('not json', str(unreadable.exception))
+
+    def test_resident_count_failure_records_count_and_pids(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            self.stub_permissions(output, json.dumps(dict(axTrusted=True, prompts=[])), 0)
+            host = module.NativeHost(output, 'gate2246')
+            resident = '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'
+            host.process_rows = lambda: {200: (1, resident), 300: (1, resident)}
+            with self.assertRaises(RuntimeError) as error:
+                host.prepare_resident()
+            self.assertIn('[200, 300]', str(error.exception))
+            self.assertEqual(host.preflight['residentPids'], [200, 300])
+            self.assertEqual(host.preflight['residentCount'], 2)
+            receipt = {}
+            host.save(receipt)
+            self.assertEqual(json.loads((output / 'operator-state.json').read_text())['preflight']['residentCount'], 2)
+
+    def test_daemon_count_recorded_on_every_attempt_with_commands(self):
+        import contextlib
+        import io
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            host = module.NativeHost(output, 'gate2246')
+            host.resident = dict(pid=100, started='start')
+            host.identity = lambda pid: 'start'
+            host.run = lambda args: 'bun src/mcp-server-daemon.ts'
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         101: (100, 'bun'), 102: (100, 'bun')}
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertFalse(host.preconditions())
+            attempt = host.resident['preconditions'][-1]
+            self.assertEqual((attempt['daemonCount'], attempt['daemonPids'], attempt['safe']), (2, [101, 102], False))
+            self.assertIn('101', err.getvalue())
+            self.assertIn('mcp-server-daemon.ts', err.getvalue())
+            # A changed daemon identity is recorded before the raise.
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         103: (100, 'bun')}
+            host.resident.update(daemonPid=101, daemonStarted='start')
+            with self.assertRaises(RuntimeError):
+                host.preconditions()
+            self.assertEqual(host.resident['preconditions'][-1]['daemonPids'], [103])
+            saved = json.loads((output / 'resident-visibility.json').read_text())
+            self.assertEqual(saved['preconditions'][-1]['daemonCount'], 1)
+
+    def test_short_lived_resident_child_rechecks_instead_of_bare_error(self):
+        import contextlib
+        import io
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            host = module.NativeHost(output, 'gate2246')
+            gone = 99999
+            while True:
+                try:
+                    os.kill(gone, 0); gone += 1
+                except ProcessLookupError:
+                    break
+                except PermissionError:
+                    gone += 1
+            def run(args):
+                if args[:2] == ['ps', '-p'] and args[2] == str(gone):
+                    raise subprocess.CalledProcessError(1, args, output='')
+                return 'bun src/mcp-server-daemon.ts'
+            host.resident = dict(pid=100, started='start')
+            host.identity = lambda pid: 'start'
+            host.run = run
+            host.ax = lambda mode: dict(nodes=[dict(role='AXGroup', description='VoiceBar')])
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         101: (100, 'bun'), gone: (100, '/usr/bin/true')}
+            err = io.StringIO()
+            with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
+                self.assertTrue(host.preconditions())
+            self.assertIn(str(gone), err.getvalue())
+            # A still-live PID whose args are unreadable raises with context, not a bare repr.
+            live = os.getpid()
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         live: (100, 'python3')}
+            host.run = lambda args: (_ for _ in ()).throw(subprocess.CalledProcessError(1, args, output=''))
+            with self.assertRaises(RuntimeError) as error:
+                host.preconditions()
+            self.assertIn(str(live), str(error.exception))
+            self.assertIn('still exists', str(error.exception))
+
+    def test_remember_race_errors_name_pid_parent_and_observed_state(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            host = self.host(output)
+            host.owned = {500: dict(started='s', cmd='runner', state='S', parent=1, kind='runner')}
+            host.process_state = lambda pid: (None if pid == 500 else
+                                              dict(started='t', cmd='child', state='S', parent=500))
+            with self.assertRaises(RuntimeError) as error:
+                host.remember(600, 'child', 'child', 500)
+            for observed in ['600', '500', 'parentAlive']:
+                self.assertIn(observed, str(error.exception))
+            host.process_state = lambda pid: dict(started='t', cmd='other', state='S', parent=1)
+            with self.assertRaises(RuntimeError) as error:
+                host.remember(600, 'qa', 'expected-cmd')
+            self.assertIn('other', str(error.exception))
+            self.assertIn('expected-cmd', str(error.exception))
+
+    def test_supervise_failure_prints_summary_with_receipt_path(self):
+        import contextlib
+        import io
+        module = self.module()
+        class Host:
+            output = pathlib.Path('/fixture/out')
+            def muted(self): return True
+            def set_mute(self, value): pass
+            def guard_mute(self): pass
+            def prepare_resident(self): raise RuntimeError('fixture refusal')
+            def stop(self): return True
+            def restore_resident(self): pass
+            def save(self, receipt): pass
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            module.supervise(Host())
+        line = [x for x in err.getvalue().splitlines() if 'FAILED' in x]
+        self.assertEqual(len(line), 1)
+        self.assertIn('fixture refusal', line[0])
+        self.assertIn('/fixture/out/operator-state.json', line[0])
 
     def test_supervise_failure_writes_error_to_stderr(self):
         import contextlib
