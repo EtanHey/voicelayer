@@ -16,7 +16,6 @@ import shlex
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 
 
@@ -45,6 +44,7 @@ AX_PUBLIC_LABELS = frozenset((NOTCH_IDLE_LABEL, 'VoiceBar launcher', 'VoiceBar h
 # One key per supervisor process, kept only in memory. Receipts can correlate equal
 # text within a run without exposing a reusable dictionary of short spoken words.
 _REDACTION_KEY = secrets.token_bytes(32)
+SUPERVISOR_LOCK_PATH = pathlib.Path('/tmp/voicebar-ui-e2e-supervisor-%d.lock' % os.getuid())
 
 
 def redacted(text):
@@ -58,10 +58,14 @@ class SupervisorActiveError(RuntimeError):
 
 @contextlib.contextmanager
 def supervisor_lock():
-    # A shared path, independent of the run output directory. Never unlink it:
+    # One per-user host lock, independent of TMPDIR/output roots. Never unlink it:
     # replacing the inode could admit a contender while another run holds its lock.
-    path = pathlib.Path(tempfile.gettempdir()) / ('voicebar-ui-e2e-supervisor-%d.lock' % os.getuid())
-    with path.open('a+') as lock:
+    path = SUPERVISOR_LOCK_PATH
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError as error:
+        raise SupervisorActiveError('Cannot open supervisor lock: %s (%s)' % (path, error)) from None
+    with os.fdopen(fd, 'r+') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -818,7 +822,12 @@ def main(argv=None):
                 signal.signal(sig, lambda number, frame: host.cancelled.append(number))
             return supervise(host)
     except SupervisorActiveError as error:
-        note('PREFLIGHT_REFUSED: ' + str(error), args.output.resolve() / 'supervisor-preflight.log')
+        try:
+            note('PREFLIGHT_REFUSED: ' + str(error), args.output.resolve() / 'supervisor-preflight.log')
+        except OSError as log_error:
+            # note() already wrote the refusal to stderr. Missing/unwritable output
+            # must not turn a safe admission refusal into a traceback/exit 1.
+            note('Preflight log unavailable: ' + str(log_error))
         return 2
 
 

@@ -36,7 +36,7 @@ class SupervisorTests(unittest.TestCase):
             host = module.NativeHost.__new__(module.NativeHost)
             host.output, host.checks, host.shutdown, host.preflight = output, [], [], {}
             host.save(dict(error=module.redacted(text)))
-            with patch.object(module.tempfile, 'gettempdir', return_value=tmp):
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)):
                 with module.supervisor_lock():
                     for path in output.rglob('*'):
                         if path.is_file():
@@ -54,12 +54,20 @@ class SupervisorTests(unittest.TestCase):
         for tag in tags:
             self.assertRegex(tag, r'^<redacted len=5 hmac-sha256=[0-9a-f]{8}>$')
 
+    def lock_path(self, tmp):
+        return pathlib.Path(tmp) / ('voicebar-ui-e2e-supervisor-%d.lock' % os.getuid())
+
+    def supervisor_fixture_script(self, tmp):
+        # Inject only in this test process, never via a production env override.
+        return ('import runpy, sys, pathlib; m = runpy.run_path(%r); '
+                'm["main"].__globals__["SUPERVISOR_LOCK_PATH"] = pathlib.Path(%r); ' %
+                (str(ROOT / 'scripts/voicebar-ui-e2e-supervisor.py'), str(self.lock_path(tmp))))
+
     @contextlib.contextmanager
     def locked_supervisor(self, tmp):
-        script = ('import runpy, sys; m = runpy.run_path(%r); '
-                  'lock = m["supervisor_lock"](); lock.__enter__(); '
-                  'print("locked", flush=True); sys.stdin.read()' %
-                  str(ROOT / 'scripts/voicebar-ui-e2e-supervisor.py'))
+        script = self.supervisor_fixture_script(tmp) + (
+            'lock = m["supervisor_lock"](); lock.__enter__(); '
+            'print("locked", flush=True); sys.stdin.read()')
         process = subprocess.Popen([sys.executable, '-c', script],
                                    env=dict(os.environ, TMPDIR=tmp), stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -84,14 +92,14 @@ class SupervisorTests(unittest.TestCase):
             lock = next(pathlib.Path(tmp).glob('*.lock'))
             owner_record = lock.read_text()
             self.assertEqual(owner_record.strip(), str(owner.pid))
-            with patch.object(module.tempfile, 'gettempdir', return_value=tmp), \
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)), \
                     patch.object(module, 'NativeHost') as host, \
                     contextlib.redirect_stderr(io.StringIO()) as err:
                 self.assertEqual(module.main([str(first_output)]), 2)
                 host.assert_not_called()
             self.assertIn('Another supervisor run is active', err.getvalue())
-            result = subprocess.run([sys.executable, str(ROOT / 'scripts/voicebar-ui-e2e-supervisor.py'),
-                                     str(second_output)], env=dict(os.environ, TMPDIR=tmp),
+            script = self.supervisor_fixture_script(tmp) + 'sys.exit(m["main"]([%r]))' % str(second_output)
+            result = subprocess.run([sys.executable, '-c', script], env=dict(os.environ, TMPDIR=tmp),
                                     capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertIn('Another supervisor run is active', result.stderr)
@@ -108,7 +116,7 @@ class SupervisorTests(unittest.TestCase):
             self.assertIsNotNone(owner.returncode)
             self.assertEqual(lock.read_text().strip(), str(owner.pid))
             module = self.module()
-            with patch.object(module.tempfile, 'gettempdir', return_value=tmp):
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)):
                 for _ in range(2):
                     with module.supervisor_lock():
                         self.assertEqual(lock.read_text().strip(), str(os.getpid()))
@@ -130,7 +138,7 @@ class SupervisorTests(unittest.TestCase):
                     if fail:
                         raise RuntimeError('synthetic supervisor failure')
                     return 0
-                with patch.object(module.tempfile, 'gettempdir', return_value=tmp), \
+                with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)), \
                         patch.object(module, 'NativeHost', side_effect=assert_locked) as host, \
                         patch.object(module, 'supervise', side_effect=supervise) as run, \
                         patch.object(module.signal, 'signal'):
@@ -143,6 +151,52 @@ class SupervisorTests(unittest.TestCase):
                     run.assert_called_once()
                     with module.supervisor_lock():
                         pass
+
+    def test_supervisor_lock_is_shared_across_different_tmpdirs(self):
+        with tempfile.TemporaryDirectory() as tmp, self.locked_supervisor(tmp):
+            other_tmp = pathlib.Path(tmp) / 'different-tmpdir'
+            other_tmp.mkdir()
+            script = self.supervisor_fixture_script(tmp) + 'sys.exit(m["main"]([%r]))' % tmp
+            result = subprocess.run([sys.executable, '-c', script],
+                                    env=dict(os.environ, TMPDIR=str(other_tmp)),
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('Another supervisor run is active', result.stderr)
+            # Production path is fixed, with no test/environment override.
+            module = self.module()
+            self.assertEqual(module.SUPERVISOR_LOCK_PATH,
+                             pathlib.Path('/tmp/voicebar-ui-e2e-supervisor-%d.lock' % os.getuid()))
+
+    def test_lock_refusal_with_missing_output_directory_still_exits_two(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp, self.locked_supervisor(tmp):
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)), \
+                    patch.object(module, 'NativeHost') as native, \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(module.main([str(pathlib.Path(tmp) / 'missing' / 'output')]), 2)
+                native.assert_not_called()
+            self.assertIn('PREFLIGHT_REFUSED', err.getvalue())
+            self.assertIn('Another supervisor run is active', err.getvalue())
+            self.assertNotIn('Traceback', err.getvalue())
+
+    def test_symlink_lock_is_refused_without_modifying_its_target(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            target = output / 'preserved.txt'
+            target.write_text('preserve this fixture\n')
+            lock = self.lock_path(tmp)
+            lock.symlink_to(target)
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', lock), \
+                    patch.object(module, 'NativeHost') as native, \
+                    patch.object(module, 'supervise', return_value=0), \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(module.main([tmp]), 2)
+                native.assert_not_called()
+            self.assertEqual(target.read_text(), 'preserve this fixture\n')
+            self.assertTrue(lock.is_symlink())
+            self.assertIn('PREFLIGHT_REFUSED', err.getvalue())
+            self.assertIn('Cannot open supervisor lock', err.getvalue())
 
     def test_each_scenario_launch_uses_its_pinned_budget(self):
         module = self.module()
