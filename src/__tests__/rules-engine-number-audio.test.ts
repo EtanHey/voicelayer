@@ -53,7 +53,7 @@ corpusTest("local timestamped audio keeps independently spoken number values", a
         "whisper-cli", "-m", specimen.modelPath, "-f", wav,
         "-l", "auto", "-t", "4", "-bo", "5", "-bs", "5",
         "-oj", "-of", prefix,
-      ], { stdout: "pipe", stderr: "pipe" });
+      ], { env: process.env, stdout: "pipe", stderr: "pipe" });
       // Drain both streams without echoing personal transcript text on failure.
       await Promise.all([new Response(proc.stdout).arrayBuffer(), new Response(proc.stderr).arrayBuffer()]);
       expect(await proc.exited).toBe(0);

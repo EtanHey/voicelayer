@@ -45,7 +45,7 @@ import {
   writeSync,
   writeFileSync,
 } from "fs";
-import { homedir } from "os";
+import { getRecordingsArchiveRoot } from "./paths";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import {
   hasStopSignal,
@@ -873,10 +873,7 @@ interface VoiceAskRecordingMetadata {
 }
 
 function recordingsArchiveRoot(): string {
-  return (
-    process.env.QA_VOICE_RECORDINGS_DIR ||
-    join(homedir(), ".local", "share", "voicelayer", "recordings")
-  );
+  return getRecordingsArchiveRoot();
 }
 
 function resolvedRecordingsArchiveRoot(): string {

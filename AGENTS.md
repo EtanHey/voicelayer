@@ -109,6 +109,15 @@ under `.test-tmp/<pid>-<nonce>/` (short names: macOS caps `sun_path` at 104 byte
 Suites that bind their own sockets use `testSocket()` with short basenames under
 the same `.test-tmp/<pid>-<nonce>/` root, so concurrent processes never share fixtures or
 touch the live `/tmp/voicelayer.sock` or `/tmp/voicelayer-mcp.sock`.
+Every test child must pass `env: process.env` or an explicit isolated environment,
+including captured spawn functions and helper wrappers. Bun's default spawn env
+is its startup snapshot and omits preload mutations. The source guard in
+`spawn-env-isolation.test.ts` lists omissions; an exception needs an immediately
+preceding `// spawn-env-allow: <justification>` comment. The preload also forwards
+its current env for production helpers exercised by tests. With
+`VOICELAYER_TEST_ISOLATED=1`, user-state resolvers reject missing or blank required
+redirects before they can fall back to live HOME paths.
+
 Each run exclusively creates its PID plus a four-hex nonce directory; it never
 adopts an existing directory, even after PID reuse. Startup sweeps older dead-run
 directories (including legacy PID-only names), keeps the two newest dead runs as

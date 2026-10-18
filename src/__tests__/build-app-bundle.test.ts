@@ -59,7 +59,7 @@ describe("build-app.sh bundles runtime assets", () => {
     const app = join(root, "VoiceBar.app");
     const resources = join(app, "Contents/Resources");
     const checker = join(import.meta.dir, "../../scripts/check-voicebar-test-free.sh");
-    const runCheck = () => Bun.spawnSync(["bash", checker, app], { stdout: "pipe", stderr: "pipe" });
+    const runCheck = () => Bun.spawnSync(["bash", checker, app], { env: process.env, stdout: "pipe", stderr: "pipe" });
     try {
       for (const relative of ["src/__tests__/fixtures", "src/nested/__tests__", "src/nested"]) {
         mkdirSync(join(repo, relative), { recursive: true });
@@ -72,7 +72,7 @@ describe("build-app.sh bundles runtime assets", () => {
       }
       const copy = Bun.spawnSync(["bash", "-c",
         'VOICEBAR_BUILD_APP_SOURCE_ONLY=1 source "$1"; REPO_ROOT="$2"; APP_DIR="$3"; bundle_runtime_source',
-        "_", buildScriptPath, repo, app], { stdout: "pipe", stderr: "pipe" });
+        "_", buildScriptPath, repo, app], { env: process.env, stdout: "pipe", stderr: "pipe" });
       expect(copy.exitCode).toBe(0);
       expect(readFileSync(join(resources, "src/runtime.ts"), "utf8")).toBe("export {};\n");
       expect(existsSync(join(resources, "src/nested/worker.ts"))).toBe(true);
@@ -111,8 +111,8 @@ describe("build-app.sh bundles runtime assets", () => {
 
   test("bundle test check rejects missing input instead of passing an empty scan", () => {
     const checker = join(import.meta.dir, "../../scripts/check-voicebar-test-free.sh");
-    expect(Bun.spawnSync(["bash", checker], { stdout: "pipe", stderr: "pipe" }).exitCode).toBe(2);
-    expect(Bun.spawnSync(["bash", checker, "/nonexistent-priv2.app"], { stdout: "pipe", stderr: "pipe" }).exitCode).toBe(2);
+    expect(Bun.spawnSync(["bash", checker], { env: process.env, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(2);
+    expect(Bun.spawnSync(["bash", checker, "/nonexistent-priv2.app"], { env: process.env, stdout: "pipe", stderr: "pipe" }).exitCode).toBe(2);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("bundles the Silero VAD model (regression: #241)", () => {
@@ -161,7 +161,7 @@ describe("build-app.sh Developer ID release contract", () => {
         "_",
         buildScriptPath,
       ],
-      { stdout: "pipe", stderr: "pipe" },
+      { env: process.env, stdout: "pipe", stderr: "pipe" },
     );
     const noncanonical = Bun.spawnSync(
       [
@@ -171,7 +171,7 @@ describe("build-app.sh Developer ID release contract", () => {
         "_",
         buildScriptPath,
       ],
-      { stdout: "pipe", stderr: "pipe" },
+      { env: process.env, stdout: "pipe", stderr: "pipe" },
     );
     const canonicalOutput = new TextDecoder().decode(canonical.stdout);
     const noncanonicalOutput = new TextDecoder().decode(noncanonical.stdout);

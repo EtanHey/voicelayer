@@ -1,3 +1,4 @@
+import { requireIsolatedOverride } from "./test-isolation";
 import { Database } from "bun:sqlite";
 import { mkdirSync, realpathSync, statSync, writeFileSync } from "fs";
 import { homedir } from "os";
@@ -84,6 +85,7 @@ export function stopControlLayerHeartbeat(): void {
 }
 
 function orcBase(): string {
+  requireIsolatedOverride(process.env, "VOICELAYER_CONTROL_LAYER_BASE");
   const override = process.env.VOICELAYER_CONTROL_LAYER_BASE?.trim();
   if (override) return resolve(override);
 

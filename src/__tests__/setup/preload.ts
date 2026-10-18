@@ -115,8 +115,21 @@ for (const socket of [voiceBarSocket, mcpSocket]) {
   }
 }
 
-// Declares the isolation to the live-host guard.
-setIfUnset("VOICELAYER_TEST_ISOLATED", "1");
+// Declares the isolation to the live-host guard; an inherited 0 cannot disable it.
+process.env.VOICELAYER_TEST_ISOLATED = "1";
+
+// Bun defaults to its STARTUP environment, not process.env after this preload.
+// Runtime helpers exercised by tests also spawn children. Keep those children
+// isolated even when the production helper relies on Bun's default env.
+for (const api of ["spawn", "spawnSync"] as const) {
+  const original = Bun[api];
+  (Bun[api] as unknown) = ((command: unknown, options?: Record<string, unknown>) => {
+    if (Array.isArray(command)) {
+      return (original as Function)(command, { env: process.env, ...options });
+    }
+    return (original as Function)({ env: process.env, ...(command as object) });
+  }) as unknown;
+}
 
 // The two roots every path in src/paths.ts is built from.
 setIfUnset("VOICELAYER_TMP_ROOT", join(RUN_ROOT, "tmp"));

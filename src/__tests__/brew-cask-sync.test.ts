@@ -435,7 +435,7 @@ describe("brew-cask-sync environment contract", () => {
   // zsh is not installed on the ubuntu-latest CI runner. The point of this test
   // is the M1's non-interactive zsh, so skipping where there is no zsh keeps it
   // meaningful on a Mac instead of failing for the wrong reason in CI.
-  const hasZsh = Bun.spawnSync(["which", "zsh"], { stdout: "ignore", stderr: "ignore" })
+  const hasZsh = Bun.spawnSync(["which", "zsh"], { env: process.env, stdout: "ignore", stderr: "ignore" })
     .exitCode === 0;
 
   test.skipIf(!hasZsh)("the library works when sourced from zsh, not just bash", () => {
