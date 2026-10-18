@@ -2,6 +2,10 @@
 import XCTest
 
 final class SpeechSettingsTests: XCTestCase {
+    func testNormalCaptionUsesZeroTickRatherThanTrackMidpoint() {
+        XCTAssertEqual(SpeechSettingsView.normalRateFraction, 0.375, accuracy: 0.0001)
+    }
+
     static func controls(rateSource: String = "settings", rate: String = "+10%") -> [String: Any] {
         func field(_ value: Any, source: String = "default") -> [String: Any] {
             ["source": source, "raw": source == "default" ? NSNull() : value, "effective": value]

@@ -19,6 +19,8 @@ public struct SpeechSettingsView: View {
     }
 
     static let daemonCommand = "voicelayer daemon"
+    static let rateRange: ClosedRange<Double> = -30...50
+    static let normalRateFraction = (0 - rateRange.lowerBound) / (rateRange.upperBound - rateRange.lowerBound)
 
     struct DisplayProfile {
         let engine: String
@@ -92,21 +94,32 @@ public struct SpeechSettingsView: View {
                                 if controls.lockReason(for: "\(kind.rawValue).rate") != nil {
                                     Text(Self.rateLabel(rate.wrappedValue)).foregroundStyle(.primary)
                                 } else {
-                                    VStack(spacing: 2) {
-                                        HStack {
+                                    HStack(alignment: .top) {
+                                        VStack(spacing: 2) {
                                             Slider(value: Binding(get: { rateDraft[kind] ?? min(50, max(-30, Double(rate.wrappedValue.dropLast()) ?? 0)) },
                                                                   set: { rateDraft[kind] = $0 }),
-                                                   in: -30...50, step: 5, onEditingChanged: { editing in
+                                                   in: Self.rateRange, step: 5, onEditingChanged: { editing in
                                                        if !editing, let value = rateDraft.removeValue(forKey: kind) {
                                                            rate.wrappedValue = String(format: "%+d%%", Int(value))
                                                        }
                                                    }).accessibilityLabel("\(kind.title) rate")
-                                            Text(Self.rateLabel(rateDraft[kind].map { String(format: "%+d%%", Int($0)) } ?? rate.wrappedValue))
-                                                .monospacedDigit().frame(width: 110, alignment: .trailing)
-                                        }.frame(height: 22)
-                                        HStack {
-                                            Text("Slower"); Spacer(); Text("0% · Normal"); Spacer(); Text("Faster")
-                                        }.font(.caption2).foregroundStyle(.secondary)
+                                                .frame(height: 22)
+                                            GeometryReader { geometry in
+                                                HStack {
+                                                    Text("Slower")
+                                                    Spacer()
+                                                    Text("Faster")
+                                                }
+                                                Text("Normal")
+                                                    .fixedSize()
+                                                    .position(x: geometry.size.width * Self.normalRateFraction,
+                                                              y: geometry.size.height / 2)
+                                            }
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                            .frame(height: 14)
+                                        }
+                                        Text(Self.rateLabel(rateDraft[kind].map { String(format: "%+d%%", Int($0)) } ?? rate.wrappedValue))
+                                            .monospacedDigit().frame(width: 110, height: 22, alignment: .trailing)
                                     }
                                 }
                             }
