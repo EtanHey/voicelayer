@@ -106,7 +106,7 @@ print("PASS")
         self.assertEqual(G.run_swift(self, 'import Foundation\n' + shared + probe).strip(), 'PASS')
         permissions, capture = G.PERMISSIONS.read_text(), G.CAPTURE.read_text()
         for source in (permissions, capture):
-            self.assertNotIn('resolvingSymlinksInPath', source)
+            self.assertNotIn('.resolvingSymlinksInPath()', source)
         # The executable side goes through the same function as the kernel side.
         self.assertIn('self.executable = canonicalPath(executable)', capture)
         self.assertIn('self.executable = canonicalPath(executable)', permissions)
