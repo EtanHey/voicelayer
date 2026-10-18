@@ -37,7 +37,16 @@ struct VisibilityReceipt: Codable {
                 }
                 let owners = windowOwners()
                 let resident = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == "com.voicelayer.voicebar" }
-                guard !resident.contains(where: { owners.contains($0.processIdentifier) }) else {
+                var leaveResidentShown = false
+                if let path = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_RESIDENT_SNAPSHOT"],
+                   let snapshot = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path))) as? [String: Any],
+                   snapshot["visibilityPolicy"] as? String == "leave-shown",
+                   let pid = snapshot["pid"] as? Int32,
+                   let surface = snapshot["initialSurface"] as? [[String: Any]], !surface.isEmpty {
+                    leaveResidentShown = resident.count == 1 && resident[0].processIdentifier == pid &&
+                        resident[0].bundleURL?.path == "/Applications/VoiceBar.app" && owners.contains(pid)
+                }
+                guard leaveResidentShown || !resident.contains(where: { owners.contains($0.processIdentifier) }) else {
                     throw NSError(domain: "Resident VoiceBar surface visible: authorized AX Hide for 1 hour required; no application hide fallback", code: 6)
                 }
                 let apps = NSWorkspace.shared.runningApplications.filter {
