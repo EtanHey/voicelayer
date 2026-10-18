@@ -233,17 +233,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
     output = args.output.resolve()
     authority = safety.require_supervisor(output, os.environ)
-    # Refuse BEFORE visibility/capture/UI unless the exact built guard passed its probes.
-    if selected_scenario(output, args.scenario) == 'gate2246':
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
-        guard = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(guard)
-        guard.verify(pathlib.Path(__file__).resolve().parent.parent, output)
-        # The lead authorized ONE retry after the seam. Claim it atomically, once.
-        with (output / 'native-retry-claimed.json').open('x') as receipt:
-            json.dump({'authorizedBy': 'GATE2246B-BRIEF and QA-only seam ruling',
-                       'claimedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}, receipt)
+    # Refuse BEFORE visibility/capture/UI unless the exact built guard passed its probes,
+    # for every scenario or build that constructs the real AppDelegate fixture.
+    spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    sandbox = pathlib.Path((output / 'sandbox-path.txt').read_text().strip())
+    guard.authorize(pathlib.Path(__file__).resolve().parent.parent, output, selected_scenario(output, args.scenario),
+                    sandbox / 'VoiceBarQA.app/Contents/Info.plist')
     # Validate selection before changing visibility or starting the recorder.
     sys.exit(run_suite(output, test_arguments(output, args.scenario), supervisor=authority,
                        registry=(output / 'owned-registrations.jsonl', os.environ['VOICEBAR_UIE2E_SUPERVISOR_TOKEN'])))

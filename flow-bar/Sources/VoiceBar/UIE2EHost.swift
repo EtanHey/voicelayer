@@ -19,10 +19,23 @@ final class UIE2ENoDeviceLevelEngine: AudioLevelMonitoringEngine, AudioLevelMoni
 }
 
 enum UIE2ENoDeviceGuard {
+    /// Every scenario whose fixture constructs the real AppDelegate (UIE2EGate2245).
+    static let guardedScenarios: Set<String> = ["hide1", "gate2246"]
+#if VOICEBAR_UIE2E_GATE2245
+    static let gateBuild = true
+#else
+    static let gateBuild = false
+#endif
+
+    /// A GATE2245 build can construct the real AppDelegate under any scenario name: fail closed.
+    static func isRequired(scenario: String?, gateBuild: Bool = gateBuild) -> Bool {
+        gateBuild || guardedScenarios.contains(scenario ?? "")
+    }
+
     static func requireInstalled() {
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "voicebar_no_device_guard_version"),
               unsafeBitCast(symbol, to: (@convention(c) () -> Int32).self)() == 1
-        else { fatalError("GATE2246 refuses fixture startup without the device tripwire library") }
+        else { fatalError("GATE2245 fixtures refuse startup without the device tripwire library") }
     }
 }
 
@@ -59,7 +72,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 marker: Bundle.main.object(forInfoDictionaryKey: UIE2ELaunchPolicy.markerKey),
                 environment: environment, confirmMute: confirmedMute)
             guard mode == .fixture else { return false }
-            if environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
+            if UIE2ENoDeviceGuard.isRequired(scenario: environment["VOICEBAR_UIE2E_SCENARIO"]) {
                 UIE2ENoDeviceGuard.requireInstalled()
             }
             let sandbox = try UIE2ESandbox(environment: environment)
