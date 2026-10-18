@@ -37,7 +37,9 @@ func gate2246Alert(_ app: XCUIApplication) -> XCUIElement {
 }
 
 func gate2246LaterButtons(_ app: XCUIApplication) -> XCUIElementQuery {
-    gate2246Alert(app).buttons.matching(NSPredicate(format: "label == %@", "Later"))
+    // NSAlert's NSButton exposes AXTitle, with an empty AXLabel on macOS.
+    // Keep the product-dialog scope: Touch Bar also exposes a Later button.
+    gate2246Alert(app).buttons.matching(NSPredicate(format: "title == %@", "Later"))
 }
 
 func gate2246ModalObservation(_ app: XCUIApplication) -> [String: Any] {
