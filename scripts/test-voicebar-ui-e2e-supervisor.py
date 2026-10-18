@@ -37,6 +37,7 @@ class SupervisorTests(unittest.TestCase):
             host.output, host.checks, host.shutdown, host.preflight = output, [], [], {}
             host.owned = {}
             host.ownership_races = []
+            host.unproven = {}
             host.save(dict(error=module.redacted(text)))
             with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)):
                 with module.supervisor_lock():
