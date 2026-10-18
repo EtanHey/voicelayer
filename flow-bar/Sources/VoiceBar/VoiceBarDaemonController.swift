@@ -357,6 +357,9 @@ final class VoiceBarDaemonController {
     private let restartScheduler: RestartScheduler
     private let processExitWaiter: ProcessExitWaiter
     private let forceKillProcess: ForceKillProcess
+    var isMicrophonePromptHidden: () -> Bool = { false }
+    private let microphonePromptScheduler: (@escaping () -> Void) -> Void
+    private let microphonePromptDisabled: () -> Bool
     private let microphonePermissionPrompter: MicrophonePermissionPrompter
     private let livenessProbe: () -> Bool
     private let heartbeatReader: HeartbeatReader?
@@ -367,6 +370,8 @@ final class VoiceBarDaemonController {
     private(set) var ownsLaunchedProcess = false
     private var restartCount = 0
     private var isRestartScheduled = false
+    private var pendingMicrophonePrompt: (message: String, userInitiated: Bool)?
+    private var microphonePromptScheduled = false
     private var consecutiveBrokenMicFailures = 0
     private var lastBrokenMicFailureAt: Date?
     private var processLaunchedAt: Date?
@@ -413,7 +418,9 @@ final class VoiceBarDaemonController {
             _ = Darwin.kill(pid, SIGKILL)
         },
         microphonePermissionPrompter: @escaping MicrophonePermissionPrompter = VoiceBarDaemonController
-            .showMicrophonePermissionPrompt
+            .showMicrophonePermissionPrompt,
+        microphonePromptScheduler: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) },
+        microphonePromptDisabled: @escaping () -> Bool = VoiceLayerPaths.isVoicelayerDisabled
     ) {
         self.executableURLProvider = executableURLProvider
         self.configurationProvider = configurationProvider
@@ -422,6 +429,8 @@ final class VoiceBarDaemonController {
         self.restartScheduler = restartScheduler
         self.processExitWaiter = processExitWaiter
         self.forceKillProcess = forceKillProcess
+        self.microphonePromptDisabled = microphonePromptDisabled
+        self.microphonePromptScheduler = microphonePromptScheduler
         self.microphonePermissionPrompter = microphonePermissionPrompter
         self.livenessProbe = livenessProbe
         self.heartbeatReader = heartbeatReader
@@ -444,7 +453,7 @@ final class VoiceBarDaemonController {
         return launch()
     }
 
-    func handleCaptureFailure(type: String) {
+    func handleCaptureFailure(type: String, userInitiated: Bool = true) {
         guard type == "broken-mic" else { return }
         guard !VoiceLayerPaths.isVoicelayerDisabled() else {
             NSLog("[VoiceBar] Broken-mic capture failure while VoiceLayer disabled — not restarting daemon")
@@ -466,15 +475,41 @@ final class VoiceBarDaemonController {
         }
 
         if consecutiveBrokenMicFailures >= 2 {
-            microphonePermissionPrompter(
-                "VoiceLayer is still receiving silence from the microphone after restarting its daemon. Re-grant Microphone permission to VoiceBar in System Settings, then retry recording."
+            pendingMicrophonePrompt = (
+                "VoiceLayer is still receiving silence from the microphone after restarting its daemon. Re-grant Microphone permission to VoiceBar in System Settings, then retry recording.",
+                userInitiated || pendingMicrophonePrompt?.userInitiated == true
             )
+            presentDeferredMicrophonePermissionPrompt()
         }
 
         NSLog("[VoiceBar] Broken-mic capture failure — respawning child daemon to refresh microphone TCC")
         if terminateOwnedChildForRespawn(reason: "broken-mic") {
             scheduleRestart(exitKind: "broken-mic", code: 0, reason: .exit)
         }
+    }
+
+    /// Presentation only: recovery counters and daemon restart decisions are independent.
+    func presentDeferredMicrophonePermissionPrompt() {
+        guard let pendingMicrophonePrompt, !microphonePromptScheduled,
+              pendingMicrophonePrompt.userInitiated || !isMicrophonePromptHidden() else { return }
+        microphonePromptScheduled = true
+        microphonePromptScheduler { [weak self] in
+            guard let self else { return }
+            microphonePromptScheduled = false
+            // A successful capture, disable, or another snooze may arrive before this turn.
+            guard !microphonePromptDisabled() else {
+                clearDeferredMicrophonePermissionPrompt()
+                return
+            }
+            guard let prompt = self.pendingMicrophonePrompt,
+                  prompt.userInitiated || !isMicrophonePromptHidden() else { return }
+            self.pendingMicrophonePrompt = nil
+            microphonePermissionPrompter(prompt.message)
+        }
+    }
+
+    func clearDeferredMicrophonePermissionPrompt() {
+        pendingMicrophonePrompt = nil
     }
 
     private func launch() -> VoiceBarDaemonActivationResult {
@@ -753,17 +788,16 @@ final class VoiceBarDaemonController {
     }
 
     private static func showMicrophonePermissionPrompt(message: String) {
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.alertStyle = .critical
-            alert.messageText = "VoiceLayer microphone permission needs attention"
-            alert.informativeText = message
-            alert.addButton(withTitle: "Open System Settings")
-            alert.addButton(withTitle: "Later")
-            if alert.runModal() == .alertFirstButtonReturn,
-               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-                NSWorkspace.shared.open(url)
-            }
+        // The presentation scheduler already dispatched to the main queue and rechecked state.
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "VoiceLayer microphone permission needs attention"
+        alert.informativeText = message
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
         }
     }
 }
