@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.46] - 2026-10-18
+
+### Fixed
+- Keep rapid Option+F5 selection changes tied to the correct request, including delayed Preparing responses (#408, #409, #411).
+- Defer background microphone alerts while VoiceBar is hidden and recheck them when it returns; user-initiated and unknown-origin failures still appear immediately (#410).
+- Read selected text in T3 Code after a fresh launch, and retain diagnostics when selection capture fails (#447, #450).
+- Keep speech-rate labels consistent with the supported range (#424).
+
+Test-process cleanup, synthetic privacy fixtures, hidden-panel timing tests and the installed T3 release-proof gate also improved (#412–#415, #429, #431, #434, #445, #451).
+
+### Not in this release
+- SEEK2: seek after playback has ended.
+- Pause/play controls.
+- TESTISO1.
+
 ## [2.2.45] - 2026-10-17
 
 ### Changed
