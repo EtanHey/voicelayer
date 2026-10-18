@@ -73,6 +73,10 @@ The gate refuses, with a non-zero exit and a message naming the problem, when:
 The helper reads the resident's real artifacts only. It never presses keys: the operator, or
 a harness that sends a real CGEvent, does the Option+F5.
 
+0. **Quit and relaunch T3 Code first** (RULINGS 2026-10-18T14:40:22Z). T3 is Electron, and
+   Chromium keeps its accessibility tree off until an assistive client turns it on. A T3
+   process whose tree an earlier AX inspection already enabled would hide exactly the
+   Option+F5 failure this proof exists to catch (T3AX1).
 1. Write a fresh synthetic paragraph to a file, and post the same paragraph so it renders in
    a T3 assistant message. Keep it to one short plain sentence with no markdown, so the TTS
    history text is the selection verbatim. Use only public text.
