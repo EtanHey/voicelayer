@@ -179,8 +179,21 @@ extension UIE2EHost {
         let names = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246"
             ? ["start", "user-f5", "user-ask", "unknown", "background", "recovered", "visible", "show", "selection", "end", "same-hash", "different", "pending", "fast-bc", "no-hash", "busy"]
             : ["start", "speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard", "show", "end"]
-        // No menu key equivalents: commands are notification-only (see UIE2EFixtureCommand).
         UIE2EFixtureCommandListener.active = UIE2EFixtureCommandListener(host: self, names: names)
+        // The HIDE1VIS menu is the runner's readiness marker, installed after the listener. Its items
+        // carry NO key equivalents: commands are notification-only (see UIE2EFixtureCommand).
+        let item = NSMenuItem(); let menu = NSMenu(title: "HIDE1VIS")
+        item.title = "HIDE1VIS"; item.submenu = menu
+        for name in names {
+            let command = NSMenuItem(title: "HIDE1VIS " + name, action: #selector(hide1VisualMenuItem(_:)), keyEquivalent: "")
+            command.target = self; command.representedObject = name
+            menu.addItem(command)
+        }
+        NSApp.mainMenu?.addItem(item)
+    }
+
+    @objc func hide1VisualMenuItem(_ sender: NSMenuItem) {
+        if let name = sender.representedObject as? String { hide1VisualCommand(name) }
     }
 
     func hide1VisualCommand(_ name: String) {

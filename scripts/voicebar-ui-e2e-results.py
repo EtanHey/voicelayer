@@ -96,6 +96,10 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
     figures = []
     all_passed = not issues
     for step in steps:
+        capture = step.get('capture')
+        # Every frame must come from the QA app's own windows; a full-display frame is never published.
+        if not isinstance(capture, dict) or capture.get('source') != 'qa-windows' or capture.get('fullDisplayPersisted') is not False:
+            raise ValueError('Frame capture source is not the QA window/region: ' + str(step.get('attachment')))
         matches = [a for a in attachments if a['suggestedHumanReadableName'].startswith(step['attachment'])]
         if len(matches) != 1:
             raise ValueError(f"Expected one screenshot for {step['attachment']}, found {len(matches)}")
@@ -117,6 +121,9 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
         name = recording['path']
         if recording.get('valid') is not True or pathlib.Path(name).name != name:
             raise ValueError('Missing/invalid recording proof')
+        source = recording.get('captureSource') or {}
+        if source.get('kind') != 'application' or source.get('bundle') != 'com.voicelayer.voicebar.uie2e' or source.get('fullDisplay') is not False:
+            raise ValueError('Recording capture source is not the QA app window set')
         video = (f'<p><a href="../{html.escape(name, quote=True)}">Screen recording (.mov)</a> — '
                  f'{recording["durationSeconds"]} s · {recording["bytes"]} bytes · no audio</p>')
     warnings = ''.join('<p role="alert">' + html.escape(issue) + '</p>' for issue in issues)

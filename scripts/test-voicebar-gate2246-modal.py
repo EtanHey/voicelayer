@@ -70,22 +70,15 @@ final class XCUIApplication {
 '''
 
 class ModalQueries(unittest.TestCase):
-    def test_visual_menu_shortcuts_avoid_edit_commands_and_match_injection(self):
+    def test_visual_commands_send_no_keystrokes_and_register_no_key_equivalents(self):
+        # GATECAP1: run-03's ⌥⌘D fixture key was macOS symbolic hotkey 52 and hid the operator's Dock.
         menu = (ROOT / 'flow-bar/Sources/VoiceBar/UIE2EGate2245.swift').read_text()
-        install = menu.split('func installHide1VisualMenu()', 1)[1].split('@objc func hide1VisualCommand', 1)[0]
-        registered = re.search(r'keyEquivalentModifierMask\s*=\s*([^\n]+)', install)
-        self.assertIsNotNone(registered, 'visual command modifiers must be explicit')
-        # Edit's Command-A/C/V/X/Z remain reserved.
-        mask = set(re.findall(r'\.(\w+)', registered[1]))
-        keys = re.search(r'Array\("([0-9a-f]+)"\)', install)[1]
-        self.assertFalse(mask == {'command'} and set(keys) & set('acvxz'),
-                         'visual commands collide with standard Edit shortcuts')
+        install = menu.split('func installHide1VisualMenu()', 1)[1].split('func hide1VisualCommand', 1)[0]
+        self.assertNotIn('keyEquivalentModifierMask', install)
+        self.assertEqual(re.findall(r'keyEquivalent:\s*("[^"]*")', install), ['""'])
         scenarios = SOURCE.read_text().split('extension VoiceBarFlowTests {', 1)[1]
-        calls = re.findall(r'modifierFlags:\s*(\[[^\]]+\]|\.\w+)', scenarios)
-        self.assertTrue(calls, 'visual scenario must send its shortcuts')
-        for call in calls:
-            self.assertEqual(set(re.findall(r'\.(\w+)', call)), mask,
-                             'menu registration and scenario injection must agree')
+        self.assertNotIn('typeKey(', scenarios, 'visual scenarios must use fixture notifications, never keystrokes')
+        self.assertIn('fixtureCommand(', scenarios)
 
     def test_unknown_scenario_lists_every_supported_choice_without_launch(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -47,6 +47,8 @@ if '-i' in sys.argv and (root/'cameras.json').exists():
  if any(name.startswith(selector) for name in json.loads((root/'cameras.json').read_text())):
   (root/'camera-opened').touch()
 movie=pathlib.Path(sys.argv[-1]); movie.write_bytes(b'incremental-')
+bundle='com.apple.finder' if (root/'foreign-source').exists() else 'com.voicelayer.voicebar.uie2e'
+if not (root/'no-source').exists(): print('source=application bundle='+bundle+' pids=',flush=True)
 print('frame=1',flush=True)
 if (root/'early-end').exists():
  time.sleep(.2)
@@ -155,6 +157,27 @@ class RunnerTests(unittest.TestCase):
         args = runner.Recording(self.output).arguments()
         self.assertEqual(args[0], str(self.output / 'voicebar-ui-e2e-capture'))
         self.assertNotIn('avfoundation', args)
+
+    def test_gatecap1_movie_records_only_the_qa_app_windows(self):
+        args = runner.Recording(self.output).arguments()
+        self.assertEqual(args[1:3], ['--include-bundle', 'com.voicelayer.voicebar.uie2e'])
+        source = MODULE.with_name('voicebar-ui-e2e-capture.swift').read_text()
+        self.assertNotIn('excludingWindows', source, 'a display-wide filter composites the private desktop')
+        self.assertIn('including: applications.filter { $0.bundleIdentifier == bundle }', source)
+        self.assertEqual(runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder()), 0)
+        info = json.loads((self.output / 'recording.json').read_text())
+        self.assertEqual(info['captureSource'], dict(kind='application', bundle='com.voicelayer.voicebar.uie2e',
+                                                     observedPids=[], fullDisplay=False))
+        for marker in ['foreign-source', 'no-source']:
+            with self.subTest(marker=marker):
+                (self.root / marker).touch()
+                self.assertNotEqual(runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder()), 0)
+                info = json.loads((self.output / 'recording.json').read_text())
+                self.assertNotIn('captureSource', info)
+                self.assertIn('not the QA app', info['recordingError'])
+                (self.root / marker).unlink()
+        self.assertEqual(runner.capture_source('source=application bundle=com.voicelayer.voicebar.uie2e pids=\n'
+                                               'source=application bundle=com.voicelayer.voicebar.uie2e pids=41,7\n')['observedPids'], [7, 41])
 
     def test_runner_source_uses_supervised_recording_after_build_only_exit(self):
         source = MODULE.with_name('voicebar-ui-e2e.sh').read_text()

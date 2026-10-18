@@ -10,12 +10,15 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('results', pathlib.Path(__file__).with_name('voicebar-ui-e2e-results.py'))
 results = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(results)
+# GATECAP1: every frame and movie must declare a QA-only capture source.
+QA_CAPTURE = dict(source='qa-windows', fullDisplayPersisted=False)
+QA_SOURCE = dict(kind='application', bundle='com.voicelayer.voicebar.uie2e', fullDisplay=False)
 
 
 class ReportTests(unittest.TestCase):
     def test_expected_packet_failure_is_explicit_xfail_and_unmatched_cannot_pass(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='newline frame', attachment='UIE2E-0001', passed=True,
+        step = dict(capture=QA_CAPTURE, number=1, name='newline frame', attachment='UIE2E-0001', passed=True,
                     expectedFailure=dict(packet='P14b', surface='notch:list-newlines',
                                          descriptions=['[P14b] items remain on one line']))
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=True)
@@ -51,7 +54,7 @@ class ReportTests(unittest.TestCase):
 
     def test_unexpected_pass_or_unmatched_failure_cannot_use_an_expected_tag(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='unexpected result', attachment='UIE2E-0001', passed=False)
+        step = dict(capture=QA_CAPTURE, number=1, name='unexpected result', attachment='UIE2E-0001', passed=False)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
         self.assertFalse(results.report(self.root, [step], [dict(attachments=[attachment])]))
         step['expectedFailure'] = dict(packet='SEL1', surface='notch:supersede-preparing', descriptions=['[SEL1] replacement'])
@@ -66,7 +69,7 @@ class ReportTests(unittest.TestCase):
     def test_order_is_action_order_and_missing_image_fails_closed(self):
         (self.root / 'a.png').write_bytes(b'png')
         (self.root / 'b.png').write_bytes(b'png')
-        steps = [dict(number=i, name=f'<click {i}>', attachment=f'UIE2E-{i:04d}', passed=True) for i in (1, 2)]
+        steps = [dict(capture=QA_CAPTURE, number=i, name=f'<click {i}>', attachment=f'UIE2E-{i:04d}', passed=True) for i in (1, 2)]
         attachments = [dict(suggestedHumanReadableName=f'UIE2E-{i:04d}.png', exportedFileName=name, isAssociatedWithFailure=False)
                        for i, name in [(2, 'b.png'), (1, 'a.png')]]
         self.assertTrue(results.report(self.root, steps, [dict(attachments=attachments)]))
@@ -78,7 +81,7 @@ class ReportTests(unittest.TestCase):
 
     def test_unverified_surfaces_fail_even_with_passing_control_receipts(self):
         coverage = dict(observed=[], exercised=[], missing=[], missingSurfaces=['Speech', 'notch:seek-idle'])
-        ledger = dict(version=1, steps=[dict(number=1, name='click', attachment='UIE2E-0001', passed=True)],
+        ledger = dict(version=1, steps=[dict(capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)],
                       completed=True, failures=0, coverage=coverage, knownVisualGaps=[])
         (self.root / 'step.json').write_text(json.dumps(ledger['steps'][0]))
         (self.root / 'ledger.json').write_text(json.dumps(ledger))
@@ -90,20 +93,20 @@ class ReportTests(unittest.TestCase):
     def test_zero_steps_and_duplicate_screenshots_cannot_pass(self):
         with self.assertRaises(ValueError):
             results.report(self.root, [], [])
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        step = dict(capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
         with self.assertRaises(ValueError):
             results.report(self.root, [step], [dict(attachments=[attachment, attachment])])
 
     def test_failure_does_not_become_pass(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=False)
+        step = dict(capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=False)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
         self.assertFalse(results.report(self.root, [step], [dict(attachments=[attachment])]))
 
     def test_capability_skip_is_logged_without_becoming_a_failure(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='S3 not in this build', attachment='UIE2E-0001', passed=True,
+        step = dict(capture=QA_CAPTURE, number=1, name='S3 not in this build', attachment='UIE2E-0001', passed=True,
                     skipped='S3 not in this build')
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
         self.assertTrue(results.report(self.root, [step], [dict(attachments=[attachment])]))
@@ -203,7 +206,7 @@ class ReportTests(unittest.TestCase):
 
     def named_run(self, names, scenario):
         directory = self.root / 'screenshots'; directory.mkdir()
-        steps = [dict(number=n, name=name, attachment='UIE2E-%04d' % n, passed=True) for n, name in enumerate(names, 1)]
+        steps = [dict(capture=QA_CAPTURE, number=n, name=name, attachment='UIE2E-%04d' % n, passed=True) for n, name in enumerate(names, 1)]
         coverage = dict(observed=[], exercised=[], missing=[], scenario=scenario)
         ledger = dict(version=1, steps=steps, completed=True, failures=0, coverage=coverage, knownVisualGaps=[],
                       scenario=scenario, scope=scenario)
@@ -221,7 +224,7 @@ class ReportTests(unittest.TestCase):
                              isAssociatedWithFailure=False))
         (directory / 'manifest.json').write_text(json.dumps([dict(attachments=manifest)]))
         (self.root / 'run.mov').write_bytes(b'video')
-        (self.root / 'recording.json').write_text(json.dumps(dict(path='run.mov', valid=True, durationSeconds=1, bytes=5)))
+        (self.root / 'recording.json').write_text(json.dumps(dict(path='run.mov', valid=True, captureSource=QA_SOURCE, durationSeconds=1, bytes=5)))
         (self.root / 'scenario.json').write_text(json.dumps({'scenario': scenario}))
         sandbox = self.root / 'sandbox'; sandbox.mkdir()
         return sandbox
@@ -443,9 +446,9 @@ class ReportTests(unittest.TestCase):
     def test_contact_sheet_links_the_validated_recording_and_metadata(self):
         directory = self.root / 'screenshots'; directory.mkdir()
         (directory / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        step = dict(capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
-        recording = dict(path='run.mov', valid=True, durationSeconds=1.25, bytes=123)
+        recording = dict(path='run.mov', valid=True, captureSource=QA_SOURCE, durationSeconds=1.25, bytes=123)
         self.assertTrue(results.report(directory, [step], [dict(attachments=[attachment])], recording))
         page = (directory / 'index.html').read_text()
         self.assertIn('../run.mov', page)
@@ -456,16 +459,16 @@ class ReportTests(unittest.TestCase):
 
     def test_valid_video_from_a_cancelled_run_cannot_pass_the_contact_sheet(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        step = dict(capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
-        recording = dict(path='run.mov', valid=True, durationSeconds=1.25, bytes=123,
+        recording = dict(path='run.mov', valid=True, captureSource=QA_SOURCE, durationSeconds=1.25, bytes=123,
                          runPassed=False, cancelledSignals=[15], error='UI run interrupted by signal 15')
         self.assertFalse(results.report(self.root, [step], [dict(attachments=[attachment])], recording))
         self.assertIn('interrupted', (self.root / 'index.html').read_text())
 
     def attachment_run(self, *, complete=True, gaps=None, failures=0):
         directory = self.root / 'screenshots'; directory.mkdir()
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        step = dict(capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)
         coverage = dict(observed=['Ask/response/Paste'], exercised=['Ask/response/Paste'], missing=[])
         ledger = dict(version=1, steps=[step], completed=complete, failures=failures,
                       coverage=coverage, knownVisualGaps=gaps or [])
@@ -480,7 +483,7 @@ class ReportTests(unittest.TestCase):
                                  isAssociatedWithFailure=False))
         (directory / 'manifest.json').write_text(json.dumps([dict(attachments=manifest)]))
         (self.root / 'run.mov').write_bytes(b'video')
-        (self.root / 'recording.json').write_text(json.dumps(dict(path='run.mov', valid=True, durationSeconds=1, bytes=5)))
+        (self.root / 'recording.json').write_text(json.dumps(dict(path='run.mov', valid=True, captureSource=QA_SOURCE, durationSeconds=1, bytes=5)))
         return directory, ledger, manifest
 
     def export_attached_run(self):

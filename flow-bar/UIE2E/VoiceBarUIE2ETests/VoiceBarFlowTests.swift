@@ -1,6 +1,38 @@
 import AppKit
 import XCTest
 
+// BEGIN UIE2E QA-ONLY FRAME
+/// Composites only `regions` (top-left screen points) out of an in-memory display sample. The
+/// canvas is the regions' union; every pixel outside a region is black.
+func uie2eQAOnlyFrame(_ display: CGImage, screen: CGSize, regions: [CGRect]) -> CGImage? {
+    guard screen.width > 0 else { return nil }
+    let scale = CGFloat(display.width) / screen.width
+    let image = CGRect(x: 0, y: 0, width: display.width, height: display.height)
+    let pixels = regions.map { CGRect(x: $0.minX * scale, y: $0.minY * scale, width: $0.width * scale,
+                                      height: $0.height * scale).integral.intersection(image) }
+        .filter { !$0.isNull && !$0.isEmpty }
+    guard let canvas = pixels.dropFirst().reduce(pixels.first, { $0?.union($1) }),
+          let context = CGContext(data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+    context.fill(CGRect(origin: .zero, size: canvas.size))
+    for rect in pixels {
+        guard let crop = display.cropping(to: rect) else { continue }
+        // CGImage crops are top-left; the bitmap context is bottom-left.
+        context.draw(crop, in: CGRect(x: rect.minX - canvas.minX, y: canvas.maxY - rect.maxY,
+                                      width: rect.width, height: rect.height))
+    }
+    return context.makeImage()
+}
+
+func uie2eBlankFrame() -> NSImage {
+    let image = NSImage(size: NSSize(width: 8, height: 8))
+    image.lockFocus(); NSColor.black.setFill(); NSRect(x: 0, y: 0, width: 8, height: 8).fill(); image.unlockFocus()
+    return image
+}
+// END UIE2E QA-ONLY FRAME
+
 /// The one serial UI test runs only through voicebar-ui-e2e.sh on an unoccupied Mac.
 @MainActor
 final class VoiceBarFlowTests: XCTestCase {
@@ -161,6 +193,7 @@ final class VoiceBarFlowTests: XCTestCase {
         let attachment = String(format: "UIE2E-%04d", number)
         let before = testRun?.failureCount ?? 0
         var matched: [String] = []
+        var capture: [String: Any] = [:]
         XCTContext.runActivity(named: "\(attachment) \(name)") { activity in
             if let issue {
                 let options = XCTExpectedFailure.Options()
@@ -172,29 +205,18 @@ final class VoiceBarFlowTests: XCTestCase {
                 }
                 XCTExpectFailure("Known product packet " + issue.rawValue, options: options) { body() }
             } else { body() }
-            let sample = XCUIScreen.main.screenshot()
-            let screenshot = XCTAttachment(screenshot: sample)
+            // Only the QA app's own window regions are ever attached: the display sample stays in
+            // memory (run-03's full-display frames exposed the operator's desktop and an editor).
+            let frame = qaOnlyFrame()
+            capture = frame.receipt
+            let screenshot = XCTAttachment(image: frame.image)
             screenshot.name = attachment
             screenshot.lifetime = .keepAlways
             activity.add(screenshot)
-            if scenario == "hide1", name.hasPrefix("HIDE1VIS ") {
-                // Same lossless sample as the full-screen attachment; CGImage uses top-left pixels.
-                let full = sample.image
-                if let cg = full.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                    let screenSize = NSScreen.main?.frame.size ?? full.size
-                    let scale = CGFloat(cg.width) / screenSize.width
-                    let region = CGRect(x: max(0, screenSize.width / 2 - 500) * scale,
-                        y: 60 * scale, width: min(1000, screenSize.width) * scale, height: 540 * scale)
-                    if let crop = cg.cropping(to: region) {
-                        let attachment = XCTAttachment(image: NSImage(cgImage: crop, size: .zero))
-                        attachment.name = String(format: "HIDE1VIS-CROP-%04d", number)
-                        attachment.lifetime = .keepAlways; activity.add(attachment)
-                    } else { XCTFail("Cannot crop panel screen region") }
-                } else { XCTFail("Cannot read lossless screenshot") }
-            }
         }
         let passed = (testRun?.failureCount ?? 0) == before
-        var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed]
+        var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed,
+                                      "capture": capture]
         if let skipped { receipt["skipped"] = skipped }
         if let issue, !matched.isEmpty, passed {
             var expectedReceipt: [String: Any] = ["packet": issue.rawValue, "surface": surface ?? "", "descriptions": matched]
@@ -376,6 +398,25 @@ extension VoiceBarFlowTests {
         if let number = element.value as? NSNumber { return number.stringValue }
         return element.value as? String
     }
+    /// Frames of every QA-owned window, dialog, sheet, menu and popover, in top-left screen points.
+    func qaWindowRegions() -> [CGRect] {
+        guard app != nil, app.state != .notRunning else { return [] }
+        return [app.windows, app.dialogs, app.sheets, app.menus, app.popovers]
+            .flatMap { $0.allElementsBoundByIndex }.compactMap { $0.exists ? $0.frame : nil }
+    }
+
+    func qaOnlyFrame() -> (image: NSImage, receipt: [String: Any]) {
+        let regions = qaWindowRegions()
+        let screen = NSScreen.screens.first?.frame.size ?? .zero
+        let sample = XCUIScreen.main.screenshot().image
+        let composite = sample.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            .flatMap { uie2eQAOnlyFrame($0, screen: screen, regions: regions) }
+        // No QA window on screen (e.g. a hidden-state step): an all-black placeholder, never the desktop.
+        let image = composite.map { NSImage(cgImage: $0, size: .zero) } ?? uie2eBlankFrame()
+        return (image, ["source": "qa-windows", "fullDisplayPersisted": false, "qaWindowsOnScreen": composite != nil,
+                        "regions": regions.map { NSStringFromRect($0) }])
+    }
+
     func waitUntil(_ predicate: @escaping () -> Bool, timeout: TimeInterval = 3) {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in predicate() }, object: nil)], timeout: timeout), .completed)

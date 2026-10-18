@@ -2,11 +2,15 @@ import AVFoundation
 import CoreGraphics
 import ScreenCaptureKit
 
-// Standalone QA tool. The only capture source is an SCDisplay; there is no
-// AVCaptureDevice lookup, device-name selector, camera input or audio output.
+// Standalone QA tool. The only capture source is the windows of ONE application bundle on the
+// main SCDisplay: everything else (desktop, other apps, system dialogs) is never composited.
+// There is no AVCaptureDevice lookup, device-name selector, camera input or audio output.
 final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let queue = DispatchQueue(label: "voicebar.uie2e.screen")
     private let destination: URL
+    private let bundle: String
+    private var display: SCDisplay?
+    private var includedPids: [pid_t] = []
     private var stream: SCStream?
     private var writer: AVAssetWriter?
     private var video: AVAssetWriterInput?
@@ -14,7 +18,34 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var failure: String?
     private var frames = 0
 
-    init(destination: URL) { self.destination = destination }
+    init(destination: URL, bundle: String) { self.destination = destination; self.bundle = bundle }
+
+    // BEGIN QA-ONLY FILTER
+    /// Only the named bundle's windows; an empty list renders black frames, never the desktop.
+    static func qaFilter(display: SCDisplay, applications: [SCRunningApplication], bundle: String) -> SCContentFilter {
+        SCContentFilter(display: display, including: applications.filter { $0.bundleIdentifier == bundle },
+                        exceptingWindows: [])
+    }
+    // END QA-ONLY FILTER
+
+    /// The QA app launches after recording starts: follow its process set as it appears.
+    private func followApplication() {
+        SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: false) { content, _ in
+            self.queue.async {
+                guard !self.stopping, let display = self.display, let stream = self.stream, let content else { return }
+                let pids = content.applications.filter { $0.bundleIdentifier == self.bundle }.map(\.processID).sorted()
+                if pids != self.includedPids {
+                    self.includedPids = pids
+                    stream.updateContentFilter(Self.qaFilter(display: display, applications: content.applications, bundle: self.bundle)) { error in
+                        if let error { self.stop(error: "Capture filter update failed: \(error)") }
+                    }
+                    print("source=application bundle=\(self.bundle) pids=\(pids.map(String.init).joined(separator: ","))")
+                    fflush(stdout)
+                }
+            }
+        }
+        queue.asyncAfter(deadline: .now() + 0.5) { if !self.stopping { self.followApplication() } }
+    }
 
     func start() {
         // Never request/grant permission or fall back to a camera.
@@ -49,12 +80,15 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
                     writer.add(video)
                     self.writer = writer
                     self.video = video
-                    let filter = SCContentFilter(display: display, excludingWindows: [])
+                    let filter = Self.qaFilter(display: display, applications: content?.applications ?? [], bundle: self.bundle)
+                    self.display = display
                     let stream = SCStream(filter: filter, configuration: config, delegate: self)
                     self.stream = stream
                     try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: self.queue)
+                    print("source=application bundle=\(self.bundle) pids=")
+                    fflush(stdout)
                     stream.startCapture { error in
-                        if let error { self.stop(error: "Screen capture failed: \(error)") }
+                        if let error { self.stop(error: "Screen capture failed: \(error)") } else { self.followApplication() }
                     }
                 } catch { self.stop(error: "Screen capture setup failed: \(error)") }
             }
@@ -125,14 +159,16 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 }
 
 if CommandLine.arguments == [CommandLine.arguments[0], "--version"] {
-    print("VoiceBar UIE2E ScreenCaptureKit recorder v1")
+    print("VoiceBar UIE2E ScreenCaptureKit recorder v2 (QA app windows only)")
     exit(0)
 }
-guard CommandLine.arguments.count == 2 else {
-    FileHandle.standardError.write(Data("usage: voicebar-ui-e2e-capture NEW_MOV_PATH\n".utf8))
+// There is deliberately no full-display mode: the QA bundle is mandatory.
+guard CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--include-bundle",
+      !CommandLine.arguments[2].isEmpty else {
+    FileHandle.standardError.write(Data("usage: voicebar-ui-e2e-capture --include-bundle BUNDLE_ID NEW_MOV_PATH\n".utf8))
     exit(2)
 }
-let recorder = ScreenRecorder(destination: URL(fileURLWithPath: CommandLine.arguments[1]))
+let recorder = ScreenRecorder(destination: URL(fileURLWithPath: CommandLine.arguments[3]), bundle: CommandLine.arguments[2])
 recorder.start()
 DispatchQueue.global().async {
     while let line = readLine() {

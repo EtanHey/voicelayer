@@ -64,6 +64,18 @@ class Visibility:
             raise RuntimeError('Hide Others / restore visibility failed: ' + result.stderr.strip())
 
 
+QA_BUNDLE = 'com.voicelayer.voicebar.uie2e'
+
+
+def capture_source(progress):
+    """The recorder's declared sources; only the QA bundle's windows may ever be composited."""
+    sources = re.findall(r'^source=application bundle=(\S+) pids=([0-9,]*)$', progress, re.MULTILINE)
+    if not sources or any(bundle != QA_BUNDLE for bundle, _ in sources):
+        raise RuntimeError('Recorder capture source is not the QA app window set; movie rejected')
+    pids = sorted({int(pid) for _, group in sources for pid in group.split(',') if pid})
+    return dict(kind='application', bundle=QA_BUNDLE, observedPids=pids, fullDisplay=False)
+
+
 class Recording:
     def __init__(self, output, capture=None, ffprobe='ffprobe'):
         self.output, self.capture, self.ffprobe = output, capture or str(output / 'voicebar-ui-e2e-capture'), ffprobe
@@ -73,8 +85,8 @@ class Recording:
         self.files = []
 
     def arguments(self):
-        # Typed ScreenCaptureKit display input; no camera/device-name selection API.
-        return [self.capture, str(self.path)]
+        # ScreenCaptureKit, QA app windows only; no full-display mode, camera or device-name selection.
+        return [self.capture, '--include-bundle', QA_BUNDLE, str(self.path)]
 
     def start(self):
         for tool, option in [(self.capture, '--version'), (self.ffprobe, '-version')]:
@@ -130,7 +142,7 @@ class Recording:
         size = self.path.stat().st_size
         if not math.isfinite(duration) or duration <= 0 or size <= 0 or 'video' not in streams or 'audio' in streams:
             raise RuntimeError('ffprobe requires nonempty video, positive duration and zero audio streams')
-        return dict(durationSeconds=duration, bytes=size, valid=True)
+        return dict(durationSeconds=duration, bytes=size, valid=True, captureSource=capture_source(self.progress.read_text()))
 
 
 def stop_test(process):
