@@ -208,26 +208,26 @@ def guard_launch_log(sandbox, launch):
     return sandbox / ('no-device-guard.log' if launch == 1 else 'no-device-guard-launch-%d.log' % launch)
 
 
-def guard_launch_issues(sandbox):
-    """One install marker per QA launch is expected; any other line is an actual tripwire hit."""
-    launches = [1] if guard_launch_log(sandbox, 1).is_file() else []
-    for path in sandbox.glob('no-device-guard-launch-*.log') if sandbox.is_dir() else []:
-        match = re.fullmatch(r'no-device-guard-launch-([1-9][0-9]*)\.log', path.name)
-        launches.append(int(match[1]) if match and int(match[1]) > 1 else -1)
-    launches.sort()
-    if not launches:
-        return 0, ['FAIL no-device guard receipt missing for launch 1']
-    if launches != list(range(1, len(launches) + 1)):
-        return len(launches), ['FAIL no-device guard launch receipts are not contiguous: ' + str(launches)]
+def guard_launch_issues(sandbox, launches):
+    """Require the ledger's launch sequence, never infer it from surviving log files."""
     issues = []
-    for launch in launches:
-        lines = guard_launch_log(sandbox, launch).read_text().splitlines()
+    expected = {guard_launch_log(sandbox, n).name for n in range(1, launches + 1)}
+    present = {path.name for path in sandbox.glob('no-device-guard*.log')}
+    extra = sorted(present - expected)
+    if extra:
+        issues.append('FAIL unexpected no-device guard launch logs: ' + ', '.join(extra))
+    for launch in range(1, launches + 1):
+        path = guard_launch_log(sandbox, launch)
+        if not path.is_file():
+            issues.append('FAIL no-device guard receipt missing for launch %d' % launch)
+            continue
+        lines = path.read_text().splitlines()
         trips = [line for line in lines if line != GUARD_INSTALLED]
         if trips:
             issues.append('FAIL device tripwire on launch %d: %s' % (launch, ', '.join(trips)))
         elif lines != [GUARD_INSTALLED]:
             issues.append('FAIL launch %d guard receipt is not exactly one install marker' % launch)
-    return len(launches), issues
+    return issues
 
 
 def guard_receipt_steps(scenario, launches, gate_build=False):
@@ -246,10 +246,20 @@ def guard_export_issues(scenario, sandbox, step_names):
     gate_build = plist.is_file() and plistlib.loads(plist.read_bytes()).get('UIE2EGate2245') is True
     if not (gate_build or load_guard().required(scenario)):
         return []
-    launches, issues = guard_launch_issues(sandbox)
-    missing = sorted(guard_receipt_steps(scenario, max(launches, 1), gate_build) - set(step_names))
+    launch_steps = [name for name in step_names
+                    if name in {'launch isolated QA app', 'relaunch isolated QA app'}]
+    launches = len(launch_steps)
+    issues = guard_launch_issues(sandbox, launches)
+    if not launch_steps or launch_steps != ['launch isolated QA app'] + ['relaunch isolated QA app'] * (launches - 1):
+        issues.append('FAIL invalid or missing recorded QA launch sequence')
+    required = guard_receipt_steps(scenario, launches, gate_build)
+    missing = sorted(required - set(step_names))
     if missing:
         issues.append('FAIL no-device guard receipt steps missing: ' + ', '.join(missing))
+    invalid = sorted({name for name in step_names if name.startswith('GUARD launch ')
+                      and (name not in required or step_names.count(name) != 1)})
+    if invalid:
+        issues.append('FAIL unexpected or duplicate no-device guard receipt steps: ' + ', '.join(invalid))
     return issues
 
 
