@@ -710,20 +710,136 @@ class SupervisorTests(unittest.TestCase):
         module.wait_until_safe(Host())
         self.assertEqual(events, ['read', 120, 'read'])
 
-    def test_notch_idle_label_is_positive_idle_and_notch_recording_blocks(self):
-        # run-03: resident 05bcc0a2 exposes only the notch group, labelled exactly 'VoiceBar'
-        # when idle (VoiceBarNotchContract.accessibilityLabel(for: .idle)).
+    # The run-03 resident 05bcc0a2 AX read, verbatim in shape: the notch state group is the
+    # first labelled node (VoiceBarNotchContract.accessibilityLabel(for: .idle) == 'VoiceBar').
+    IDLE_TREE = [dict(role='AXWindow', title='', description='', value=''),
+                 dict(role='AXGroup', title='', description='', value=''),
+                 dict(role='AXGroup', title='', description='VoiceBar', value='')]
+
+    def tree(self, *extra, state='VoiceBar'):
+        group = dict(role='AXGroup', title='', description=state, value='')
+        return self.IDLE_TREE[:2] + [group] + [dict(role=r, title='', description=d, value='') for r, d in extra]
+
+    def test_notch_idle_state_group_is_positive_idle_structurally(self):
         module = self.module()
-        self.assertTrue(module.safe_to_hide([], [], ['VoiceBar']))
-        for labels in [['VoiceBar recording'], ['VoiceBar', 'VoiceBar recording'], ['VoiceBar launcher'],
-                       ['VoiceBar status'], ['VoiceBar teleprompter'], ['VoiceBar history'], ['VoiceBar QA']]:
-            self.assertFalse(module.safe_to_hide([], [], labels), labels)
-        self.assertFalse(module.safe_to_hide(['rec'], [], ['VoiceBar']))
-        self.assertFalse(module.safe_to_hide([], ['voicelayer-session-x.lock'], ['VoiceBar']))
+        self.assertTrue(module.safe_to_hide([], [], self.IDLE_TREE))
+        # Arbitrary text 'VoiceBar' (e.g. a teleprompter word) never qualifies.
+        self.assertFalse(module.safe_to_hide([], [], ['VoiceBar']))
+        word_first = self.IDLE_TREE[:2] + [dict(role='AXButton', title='', description='VoiceBar', value='')]
+        self.assertFalse(module.safe_to_hide([], [], word_first))
+        for state in ['VoiceBar recording', 'VoiceBar launcher', 'VoiceBar status', 'VoiceBar teleprompter',
+                      'VoiceBar history', 'VoiceBar QA']:
+            self.assertFalse(module.safe_to_hide([], [], self.tree(state=state)), state)
+        self.assertFalse(module.safe_to_hide(['rec'], [], self.IDLE_TREE))
+        self.assertFalse(module.safe_to_hide([], ['voicelayer-session-x.lock'], self.IDLE_TREE))
+
+    def test_busy_evidence_overrides_every_idle_looking_signal(self):
+        module = self.module()
+        speaking = self.tree(('AXButton', 'Stop speaking'), ('AXButton', 'VoiceBar'), state='VoiceBar teleprompter')
+        transcribing = self.tree(('AXButton', 'Cancel transcription'), ('AXStaticText', 'Transcribing'),
+                                 state='VoiceBar status')
+        self.assertFalse(module.safe_to_hide([], [], speaking))
+        self.assertFalse(module.safe_to_hide([], [], transcribing))
+        for busy in ['Transcribing', 'Agent speaking', 'Stop speaking', 'Cancel transcription',
+                     'VoiceBar teleprompter', 'VoiceBar status', 'VoiceBar recording']:
+            self.assertFalse(module.safe_to_hide([], [], [busy]), busy)
+            self.assertFalse(module.safe_to_hide([], [], ['Ready', busy]), busy)
+            self.assertFalse(module.safe_to_hide([], [], self.tree(('AXStaticText', busy))), busy)
+            self.assertTrue(any(busy in r for r in module.unsafe_reasons([], [], self.tree(('AXStaticText', busy))))
+                            , busy)
+        # Legacy idle text still counts when nothing busy is present.
+        self.assertTrue(module.safe_to_hide([], [], ['Ready']))
+        self.assertTrue(module.safe_to_hide([], [], ['Start voice recording']))
+
+    def busy_host(self, output, nodes, children):
+        module = self.module()
+        (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+        host = module.NativeHost(output, 'gate2246')
+        host.resident = dict(pid=100, started='start')
+        host.identity = lambda pid: 'start'
+        host.run = lambda args: 'bun src/mcp-server-daemon.ts' if args[-1] == 'args=' else ''
+        host.ax = lambda mode: dict(nodes=nodes)
+        rows = {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'), 101: (100, 'bun')}
+        rows.update({200 + i: (101, cmd) for i, cmd in enumerate(children)})
+        host.process_rows = lambda: dict(rows)
+        host.child_args = lambda pid: 'bun src/mcp-server-daemon.ts' if pid == 101 else None
+        return module, host
+
+    def lock(self, module, age):
+        class Lock:
+            name = 'voicelayer-session-fixture.lock'
+            def stat(self):
+                from types import SimpleNamespace
+                return SimpleNamespace(st_mtime=module.time.time() - age)
+        return Lock()
+
+    def test_real_preconditions_refuse_mixed_busy_trees_players_and_transcribers(self):
+        import contextlib
+        import io
+        speaking = self.tree(('AXButton', 'Stop speaking'), ('AXButton', 'VoiceBar'), state='VoiceBar teleprompter')
+        transcribing = self.tree(('AXButton', 'Cancel transcription'), ('AXStaticText', 'Transcribing'),
+                                 state='VoiceBar status')
+        cases = [(speaking, ['/usr/bin/afplay'], False), (speaking, [], False),
+                 (transcribing, ['/opt/homebrew/bin/whisper-cli'], False), (transcribing, [], False),
+                 (self.IDLE_TREE, ['/usr/bin/afplay'], False), (self.IDLE_TREE, ['/opt/homebrew/bin/whisper-cli'], False),
+                 (self.IDLE_TREE, ['/opt/homebrew/bin/rec'], False), (self.IDLE_TREE, ['/opt/homebrew/bin/sox'], False),
+                 (self.IDLE_TREE, [], True)]
+        for nodes, children, expected in cases:
+            with self.subTest(children=children, state=nodes[2]['description']), tempfile.TemporaryDirectory() as tmp:
+                module, host = self.busy_host(pathlib.Path(tmp), nodes, children)
+                err = io.StringIO()
+                with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
+                    self.assertEqual(host.preconditions(), expected)
+                attempt = host.resident['preconditions'][-1]
+                self.assertEqual(attempt['safe'], expected)
+                for cmd in children:
+                    self.assertIn(pathlib.Path(cmd).name, err.getvalue())
+        for age, expected in [(None, True), (400, True), (10, False)]:
+            with self.subTest(lock_age=age), tempfile.TemporaryDirectory() as tmp:
+                module, host = self.busy_host(pathlib.Path(tmp), self.IDLE_TREE, [])
+                locks = [] if age is None else [self.lock(module, age)]
+                with patch.object(pathlib.Path, 'glob', return_value=locks), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(host.preconditions(), expected)
+
+    def test_resident_inventory_recorded_every_attempt_and_singleton_rechecked(self):
+        import contextlib
+        import io
+        module = self.module()
+        resident = '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            self.stub_permissions(output, json.dumps(dict(axTrusted=True, prompts=[])), 0)
+            host = module.NativeHost(output, 'gate2246')
+            rows = {100: (1, resident), 101: (100, 'bun')}
+            host.process_rows = lambda: dict(rows)
+            host.identity = lambda pid: 'start'
+            host.child_args = lambda pid: 'bun src/mcp-server-daemon.ts' if pid == 101 else None
+            host.ax = lambda mode: dict(nodes=self.IDLE_TREE,
+                                        screenWindows=[dict(bounds=dict(X=768, Y=0, Width=192, Height=49), layer=25)])
+            with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(io.StringIO()):
+                host.prepare_resident()
+            attempt = host.resident['preconditions'][-1]
+            self.assertEqual((attempt['residentPids'], attempt['residentCount'], attempt['safe']), ([100], 1, True))
+            self.assertIn('100', attempt['processRows'])
+            # Inventory changes between prepare and start: a second installed resident appears.
+            rows[300] = (1, resident)
+            err = io.StringIO()
+            with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
+                with self.assertRaises(RuntimeError) as error:
+                    host.start()
+            self.assertIn('[100, 300]', str(error.exception))
+            attempt = host.resident['preconditions'][-1]
+            self.assertEqual((attempt['residentPids'], attempt['residentCount'], attempt['safe']), ([100, 300], 2, False))
+            self.assertEqual(host.preflight['residentPids'], [100, 300])
+            saved = json.loads((output / 'resident-visibility.json').read_text())
+            self.assertEqual(saved['preconditions'][-1]['residentCount'], 2)
+            self.assertIn('[100, 300]', err.getvalue())
 
     def test_unsafe_reasons_name_every_failing_check_with_observed_values(self):
         module = self.module()
-        self.assertEqual(module.unsafe_reasons([], [], ['VoiceBar']), [])
+        self.assertEqual(module.unsafe_reasons([], [], self.IDLE_TREE), [])
         reasons = module.unsafe_reasons([4242], ['voicelayer-session-a.lock'], ['VoiceBar recording'])
         text = '\n'.join(reasons)
         for observed in ['4242', 'voicelayer-session-a.lock', 'VoiceBar recording']:

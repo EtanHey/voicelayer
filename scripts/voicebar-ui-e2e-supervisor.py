@@ -13,39 +13,67 @@ import sys
 import time
 
 
-# The notch resident (2.2.45+) exposes one AX group whose label is its visual state:
-# exactly 'VoiceBar' when idle, 'VoiceBar recording' while capturing
-# (VoiceBarNotchContract.accessibilityLabel(for:)).
+# The notch resident (2.2.45+) exposes one AX state group whose description is its visual
+# state (VoiceBarNotchContract.accessibilityLabel(for:)): exactly 'VoiceBar' when idle,
+# 'VoiceBar recording' / 'VoiceBar status' / 'VoiceBar teleprompter' when busy. The
+# teleprompter renders spoken words as AX text, so only the structural state group (the
+# first labelled node, an AXGroup) is idle evidence; arbitrary text never is.
+RESIDENT_EXECUTABLE = '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'
 NOTCH_IDLE_LABEL = 'VoiceBar'
+BUSY_PREFIXES = ('Recording', 'Starting microphone', 'Stop recording', 'Cancel recording')
+BUSY_TEXT = ('VoiceBar recording', 'VoiceBar status', 'VoiceBar teleprompter', 'Stop speaking',
+             'Cancel transcription', 'Transcribing', 'Agent speaking')
+# Capture, playback and one-shot transcription children of the resident daemon.
+BUSY_CHILDREN = ('rec', 'sox', 'play', 'afplay', 'whisper-cli')
+LEGACY_IDLE_TEXT = ('Ready', 'Start voice recording')
+LEGACY_IDLE_PREFIXES = ('Ready.', 'Hidden until ')
 
 
-def unsafe_reasons(capture_children, fresh_locks, ax_labels):
-    blocked = ['Recording', 'Starting microphone', 'Stop recording', 'Cancel recording', 'VoiceBar recording']
+def ax_nodes(ax_tree):
+    # A bare string is unstructured text: it can match busy or legacy text, never the notch group.
+    return [dict(value=x) if isinstance(x, str) else x for x in ax_tree]
+
+
+def node_labels(node):
+    return [x for key in ['title', 'description', 'value'] if (x := node.get(key))]
+
+
+def notch_idle(nodes):
+    labelled = [n for n in nodes if node_labels(n)]
+    return bool(labelled) and labelled[0].get('role') == 'AXGroup' and node_labels(labelled[0]) == [NOTCH_IDLE_LABEL] \
+        and labelled[0].get('description') == NOTCH_IDLE_LABEL
+
+
+def unsafe_reasons(busy_children, fresh_locks, ax_tree):
+    nodes = ax_nodes(ax_tree)
+    labels = [x for n in nodes for x in node_labels(n)]
     reasons = []
-    if capture_children:
-        reasons.append('capture process(es) under resident daemon: ' + repr(list(capture_children)))
+    if busy_children:
+        reasons.append('capture/playback/transcription process(es) under resident daemon: '
+                       + repr(list(busy_children)))
     if fresh_locks:
         reasons.append('fresh session lock(s) (<300s): ' + repr(list(fresh_locks)))
-    recording = [x for x in ax_labels if x.startswith(tuple(blocked))]
-    if recording:
-        reasons.append('AX shows capture: ' + repr(recording))
+    busy = [x for x in labels if x.startswith(BUSY_PREFIXES) or any(t in x for t in BUSY_TEXT)]
+    if busy:
+        reasons.append('AX shows busy resident: ' + repr(busy))
     # Require positive AX evidence. A collapsed/empty tree is UNKNOWN, never idle.
-    elif not any(x in ['Start voice recording', NOTCH_IDLE_LABEL, 'Ready', 'Transcribing', 'Agent speaking']
-                 or x.startswith(('Ready.', 'Hidden until ', 'Hidden for ')) for x in ax_labels):
-        reasons.append('no positive idle AX label; observed ' + repr(list(ax_labels)))
+    elif not (notch_idle(nodes) or any(x in LEGACY_IDLE_TEXT or x.startswith(LEGACY_IDLE_PREFIXES)
+                                       for x in labels)):
+        reasons.append('no positive idle AX evidence; observed ' + repr(
+            [dict(role=n.get('role'), labels=node_labels(n)) for n in nodes if node_labels(n)]))
     return reasons
 
 
-def safe_to_hide(capture_children, fresh_locks, ax_labels):
-    return not unsafe_reasons(capture_children, fresh_locks, ax_labels)
+def safe_to_hide(busy_children, fresh_locks, ax_tree):
+    return not unsafe_reasons(busy_children, fresh_locks, ax_tree)
 
 
 def note(message, log=None):
     line = '[supervisor] ' + message
     print(line, file=sys.stderr, flush=True)
     if log is not None:
-        log.write(line + '\n')
-        log.flush()
+        with open(log, 'a') as file:
+            file.write(line + '\n')
 
 
 def wait_until_safe(host):
@@ -130,7 +158,8 @@ class NativeHost:
         self.resident = {}
         self.preflight = {}
         # Opened before any precondition so a pre-launch STOP can never leave an empty log.
-        self.preflight_log = (output / 'supervisor-preflight.log').open('a')
+        self.preflight_log = output / 'supervisor-preflight.log'
+        self.preflight_log.touch()
         self.checks = []
         self.cancelled = []
         self.deadline = None
@@ -267,17 +296,34 @@ class NativeHost:
     def preconditions(self):
         rows = self.process_rows()
         pid = self.resident['pid']
+        residents = sorted(p for p, (_, cmd) in rows.items() if cmd == RESIDENT_EXECUTABLE)
+        related = set(residents)
+        while True:
+            extended = related | {p for p, (parent, _) in rows.items() if parent in related}
+            if extended == related:
+                break
+            related = extended
+        inventory = dict(residentPids=residents, residentCount=len(residents),
+                         processRows={str(p): list(rows[p]) for p in sorted(related)})
+        self.preflight.update(residentPids=residents, residentCount=len(residents))
+        attempts = self.resident.setdefault('preconditions', [])
+        if residents != [pid]:
+            attempts.append(dict(inventory, safe=False))
+            self.save_resident()
+            message = ('Exactly one installed resident required on recheck; never launch/replace one '
+                       '(expected [%d], observed %d %r)' % (pid, len(residents), residents))
+            self.note(message)
+            raise RuntimeError(message)
         cmd = rows.get(pid, (None, None))[1]
-        observed = (cmd, self.identity(pid) if cmd == '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar' else None)
-        if observed != ('/Applications/VoiceBar.app/Contents/MacOS/VoiceBar', self.resident['started']):
+        observed = (cmd, self.identity(pid) if cmd == RESIDENT_EXECUTABLE else None)
+        if observed != (RESIDENT_EXECUTABLE, self.resident['started']):
             message = ('Resident identity changed; no action permitted (pid %d expected started %r, observed %r)'
                        % (pid, self.resident['started'], observed))
             self.note(message)
             raise RuntimeError(message)
         children = {p: self.child_args(p) for p, (parent, _) in sorted(rows.items()) if parent == pid}
         daemons = [p for p, args in children.items() if args is not None and 'mcp-server-daemon.ts' in args]
-        attempt = dict(daemonPids=daemons, daemonCount=len(daemons))
-        attempts = self.resident.setdefault('preconditions', [])
+        attempt = dict(inventory, daemonPids=daemons, daemonCount=len(daemons))
         if len(daemons) != 1:
             attempts.append(dict(attempt, safe=False))
             self.save_resident()
@@ -301,7 +347,7 @@ class NativeHost:
             if extended == descendants:
                 break
             descendants = extended
-        capture = [p for p in descendants if pathlib.Path(rows[p][1]).name in ['rec', 'sox']]
+        busy = [p for p in sorted(descendants) if pathlib.Path(rows[p][1]).name in BUSY_CHILDREN]
         locks = []
         for path in pathlib.Path('/tmp').glob('voicelayer-session-*.lock'):
             try:
@@ -310,12 +356,13 @@ class NativeHost:
             except FileNotFoundError:
                 pass
         nodes = self.ax('read')['nodes']
-        labels = [x for node in nodes for key in ['title', 'description', 'value'] if (x := node.get(key))]
-        reasons = unsafe_reasons(capture, locks, labels)
+        labels = [x for node in nodes for x in node_labels(node)]
+        reasons = unsafe_reasons(['%d %s' % (p, pathlib.Path(rows[p][1]).name) for p in busy], locks, nodes)
         for reason in reasons:
             self.note('precondition failed: ' + reason)
         safe = not reasons
-        attempts.append(dict(attempt, capturePids=capture, freshLocks=locks, axLabels=labels, safe=safe))
+        attempts.append(dict(attempt, capturePids=busy, freshLocks=locks, axLabels=labels,
+                             notchIdle=notch_idle(nodes), safe=safe))
         self.save_resident()
         return safe
 
@@ -323,8 +370,7 @@ class NativeHost:
         code, permission = self.permissions()
         self.checks.append(dict(phase='preflight', permissionsExit=code, permissions=permission))
         self.refuse_permissions(code, permission)
-        residents = sorted(p for p, (_, cmd) in self.process_rows().items()
-                           if cmd == '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')
+        residents = sorted(p for p, (_, cmd) in self.process_rows().items() if cmd == RESIDENT_EXECUTABLE)
         self.preflight.update(residentPids=residents, residentCount=len(residents))
         if len(residents) != 1:
             message = ('Exactly one installed resident required; never launch/replace one (observed %d %r)'
