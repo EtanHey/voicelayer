@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 import { bundleDigest } from "../../scripts/t3-optf5-proof";
@@ -64,7 +64,7 @@ function makeApp(root: string, commit = COMMIT, buildTime = BUILD_TIME) {
 
 function zipApp(root: string) {
   rmSync(join(root, "VoiceBar.zip"), { force: true });
-  const r = Bun.spawnSync(["zip", "-qry", "VoiceBar.zip", "VoiceBar.app"], { cwd: root, stdout: "pipe", stderr: "pipe" });
+  const r = Bun.spawnSync(["zip", "-qry", "VoiceBar.zip", "VoiceBar.app"], { cwd: root, stdout: "pipe", stderr: "pipe", env: process.env });
   if (r.exitCode !== 0) throw new Error(`zip failed: ${r.stderr}`);
   return createHash("sha256").update(readFileSync(join(root, "VoiceBar.zip"))).digest("hex");
 }
@@ -342,6 +342,7 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
     const r = Bun.spawnSync(["bash", releaseScript, "--upload", "--skip-tap-check", "--version", "0.0.0-never"], {
       stdout: "pipe",
       stderr: "pipe",
+      env: process.env,
     });
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toContain("promote-voicebar-release.sh");
@@ -589,29 +590,31 @@ const sleepSync = (ms: number) => Bun.sleepSync(ms);
 // A real running "installed VoiceBar": a symlink to bash at <app>/Contents/MacOS/VoiceBar, so
 // `ps` shows the bundle executable path, with a child whose command names mcp-server-daemon.
 // The child is a real Bun process running a timer-only synthetic script; no audio/devices.
-// Started more than a second after the bundle was written, like a relaunch after install.
 function launchFakeVoiceBar(app: string, interpreter = "/bin/bash", script = join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts")) {
   mkdirSync(join(app, "Contents", "MacOS"), { recursive: true });
-  symlinkSync(interpreter, join(app, "Contents", "MacOS", "VoiceBar"));
+  if (!existsSync(join(app, "Contents", "MacOS", "VoiceBar"))) symlinkSync(interpreter, join(app, "Contents", "MacOS", "VoiceBar"));
   const proc = Bun.spawn(
     [join(app, "Contents", "MacOS", "VoiceBar"), "-c", '"$1" run "$2" & wait', "fixture", process.execPath, script],
-    { stdout: "ignore", stderr: "ignore" },
+    { stdout: "ignore", stderr: "ignore", env: process.env },
   );
   sleepSync(300); // let the daemon-like child appear
   return proc;
 }
 
-async function stopFakeVoiceBar(proc: ReturnType<typeof Bun.spawn>) {
-  const children = Bun.spawnSync(["pgrep", "-P", String(proc.pid)], { stdout: "pipe" })
+const childPids = (pid: number) =>
+  Bun.spawnSync(["pgrep", "-P", String(pid)], { stdout: "pipe", env: process.env })
     .stdout.toString()
     .split("\n")
     .filter(Boolean)
     .map(Number);
+
+async function stopFakeVoiceBar(proc: ReturnType<typeof Bun.spawn>) {
+  const children = childPids(proc.pid);
   for (const child of children) process.kill(child, "SIGKILL");
   proc.kill("SIGKILL");
   await proc.exited;
   for (const child of children) {
-    while (Bun.spawnSync(["kill", "-0", String(child)]).exitCode === 0) sleepSync(20);
+    while (Bun.spawnSync(["kill", "-0", String(child)], { env: process.env }).exitCode === 0) sleepSync(20);
   }
 }
 
@@ -619,12 +622,42 @@ let runtimeRoot: string;
 let installedApp: string;
 let voiceBar: ReturnType<typeof Bun.spawn>;
 
-beforeAll(() => {
+// The start second the producer reads: `ps lstart` in C locale (processStartMs), with the TZ
+// runProducer pins. bun test parses dates in UTC, so ps must print UTC too.
+function psStartSecond(pid: number): number {
+  const out = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
+    stdout: "pipe",
+    env: { ...process.env, TZ: "Etc/UTC", LC_ALL: "C", LANG: "C" },
+  });
+  return Math.floor(Date.parse(out.stdout.toString().trim()) / 1000);
+}
+
+// The producer requires VoiceBar and its daemon child to start in a whole second strictly after
+// the bundle's ctime. A fixed sleep cannot guarantee that on Linux: procps derives lstart from a
+// whole-second boot time, so it reads 0.7-1.7 s earlier than the real spawn (the #445 and #448
+// Ubuntu failures). Relaunch until the producer's own start source shows a later second.
+async function launchAfterInstall(app: string) {
+  const ctimeSecond = (path: string) => Math.floor(statSync(path).ctimeMs / 1000);
+  const installed = Math.max(
+    ctimeSecond(join(app, "Contents", "Info.plist")),
+    ctimeSecond(join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts")),
+  );
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const proc = launchFakeVoiceBar(app);
+    const pids = [proc.pid, ...childPids(proc.pid)];
+    if (pids.length > 1 && pids.every((pid) => psStartSecond(pid) > installed)) return proc;
+    await stopFakeVoiceBar(proc);
+    if (Date.now() > deadline) throw new Error(`fake VoiceBar never started after install second ${installed}`);
+    sleepSync(250);
+  }
+}
+
+beforeAll(async () => {
   runtimeRoot = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "t3rt-"));
   installedApp = makeApp(join(runtimeRoot, "installed"));
-  sleepSync(1_100); // process start must be a whole second after the install
-  voiceBar = launchFakeVoiceBar(installedApp);
-});
+  voiceBar = await launchAfterInstall(installedApp);
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 afterAll(async () => {
   await stopFakeVoiceBar(voiceBar);
   rmSync(runtimeRoot, { recursive: true, force: true });
@@ -768,11 +801,12 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("outside the test preload, path overrides are refused before anything is read", () => {
-    const env: Record<string, string | undefined> = { ...process.env, TZ: "Etc/UTC" };
-    delete env.VOICELAYER_TEST_RUN_ROOT;
+    // The preload's spawn wrapper restores its isolation keys in every child env, so the key
+    // is removed by `env -u` inside the child, the way a run outside the preload sees it.
+    const env = { ...process.env, TZ: "Etc/UTC" };
     for (const override of [["--voicebar-log", join(dir, "x.log")], ["--history-file", join(dir, "h.json")], ["--app", join(dir, "VoiceBar.app")]]) {
       const r = Bun.spawnSync(
-        [process.execPath, proofScript, "start", "--state", join(dir, "s.json"), "--t3-app", join(dir, "T3.app"),
+        ["env", "-u", "VOICELAYER_TEST_RUN_ROOT", process.execPath, proofScript, "start", "--state", join(dir, "s.json"), "--t3-app", join(dir, "T3.app"),
           "--expected-text-file", join(dir, "e.txt"), ...override],
         { stdout: "pipe", stderr: "pipe", env },
       );
@@ -897,8 +931,8 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     sleepSync(1_100);
     const old = launchFakeVoiceBar(live);
     try {
-      Bun.spawnSync(["mv", live, join(root, "live-old.app")]);
-      Bun.spawnSync(["mv", staged, live]);
+      Bun.spawnSync(["mv", live, join(root, "live-old.app")], { env: process.env });
+      Bun.spawnSync(["mv", staged, live], { env: process.env });
       const f = producerFixture(live);
       const r = start(f);
       expect(r.code).not.toBe(0);

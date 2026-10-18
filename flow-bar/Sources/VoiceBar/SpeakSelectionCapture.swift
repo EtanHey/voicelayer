@@ -5,7 +5,17 @@ import VoiceBarUI
 
 /// The AX calls the selection preflight makes, injectable so the Electron recovery is testable.
 struct SelectionFocusAX {
-    struct Focus: Equatable { var role: String?; var subrole: String? }
+    enum Failure: String {
+        case focusAbsent = "focus_absent", focusWrongType = "focus_wrong_type"
+        case roleQueryFailed = "role_query_failed", roleAbsent = "role_absent", roleWrongType = "role_wrong_type"
+    }
+    struct Focus: Equatable {
+        var role: String?; var subrole: String?
+        var failure: Failure? = nil
+        var roleStatus: AXError = .success
+        // Malformed successful focus responses still return .failure to preserve capture policy.
+        var queryStatus: AXError? = nil
+    }
     /// A PID alone can be reused; the kernel start time pins one process lifetime.
     struct AppIdentity: Equatable { var pid: pid_t; var startTime: UInt64 }
     var secureInputEnabled: () -> Bool
@@ -29,15 +39,14 @@ struct SelectionFocusAX {
             var focused: CFTypeRef?
             let status = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused)
             guard status == .success else { return (status, nil) }
-            guard let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return (.failure, nil) }
-            let element = focused as! AXUIElement
-            AXUIElementSetMessagingTimeout(element, 0.2)
-            func attribute(_ key: String) -> String? {
-                var value: CFTypeRef?
-                guard AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success else { return nil }
-                return value as? String
+            if let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() {
+                AXUIElementSetMessagingTimeout(focused as! AXUIElement, 0.2)
             }
-            return (.success, Focus(role: attribute(kAXRoleAttribute), subrole: attribute(kAXSubroleAttribute)))
+            return decodeFocus(focused) { key in
+                var value: CFTypeRef?
+                let status = AXUIElementCopyAttributeValue(focused as! AXUIElement, key as CFString, &value)
+                return (status, value)
+            }
         },
         frontmostApp: {
             guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
@@ -66,6 +75,21 @@ struct SelectionFocusAX {
         },
         sleep: { Thread.sleep(forTimeInterval: $0) })
 
+    /// Decodes the existing query without additional AX calls or logging attribute values.
+    static func decodeFocus(_ value: CFTypeRef?, attribute: (String) -> (AXError, CFTypeRef?)) -> (AXError, Focus?) {
+        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return (.failure, Focus(role: nil, subrole: nil,
+                                    failure: value == nil ? .focusAbsent : .focusWrongType, queryStatus: .success))
+        }
+        let (status, roleValue) = attribute(kAXRoleAttribute)
+        let (subroleStatus, subroleValue) = attribute(kAXSubroleAttribute)
+        let failure: Failure? = status != .success ? .roleQueryFailed
+            : roleValue == nil ? .roleAbsent : roleValue is String ? nil : .roleWrongType
+        return (.success, Focus(role: status == .success ? roleValue as? String : nil,
+                                subrole: subroleStatus == .success ? subroleValue as? String : nil,
+                                failure: failure, roleStatus: status))
+    }
+
     static let chromiumFrameworks = [
         "Electron Framework.framework", "Chromium Embedded Framework.framework", "Chromium Framework.framework",
         "Google Chrome Framework.framework", "Microsoft Edge Framework.framework", "Brave Browser Framework.framework",
@@ -76,6 +100,7 @@ struct SelectionFocusPreflight {
     var blockReason: SelectionCaptureResult?
     var axEnable: SelectionCaptureResult.AXEnable?
     var retries = 0
+    var details: [String: String] = [:]
     /// The focus stayed unreadable in this app, which accepted AXManualAccessibility (Chromium family,
     /// whose password fields enable secure event input). Preserved-clipboard Copy may run only while
     /// this exact process is still frontmost.
@@ -128,7 +153,8 @@ final class SpeakSelectionCapture {
             // AX IPC can take multiple messaging timeouts. Never do it on the tap's run loop.
             let preflight = self.preflight(true, nil)
             let complete = { (result: SelectionCaptureResult) in
-                completion(result.withPreflight(axEnable: preflight.axEnable, retries: preflight.retries))
+                completion(result.withPreflight(axEnable: preflight.axEnable, retries: preflight.retries)
+                    .withPreflightDetails(preflight.details))
             }
             if let reason = preflight.blockReason {
                 Self.onMain { complete(reason) }
@@ -157,13 +183,16 @@ final class SpeakSelectionCapture {
         let changeCount = pasteboard.changeCount
         Self.captureQueue.async {
             let snapshot = self.snapshotReader()
-            let blockReason = self.preflight(false, copyExemptApp).blockReason
+            let recheck = self.preflight(false, copyExemptApp)
             Self.onMain {
-                guard let snapshot else { completion(.captureFailed); return }
-                guard self.pasteboard.changeCount == changeCount else { completion(.clipboardChanged); return }
-                if let blockReason { completion(blockReason); return }
+                let complete = { (result: SelectionCaptureResult) in
+                    completion(result.withPreflightDetails(recheck.details))
+                }
+                guard let snapshot else { complete(.captureFailed); return }
+                guard self.pasteboard.changeCount == changeCount else { complete(.clipboardChanged); return }
+                if let blockReason = recheck.blockReason { complete(blockReason); return }
                 self.copyAndPoll(snapshot: snapshot, changeCount: changeCount, copyExemptApp: copyExemptApp,
-                                 completion: completion)
+                                 completion: complete)
             }
         }
     }
@@ -171,15 +200,19 @@ final class SpeakSelectionCapture {
     private func copyAndPoll(snapshot: Snapshot, changeCount: Int, copyExemptApp: SelectionFocusAX.AppIdentity?,
                              completion: @escaping (SelectionCaptureResult) -> Void) {
         let deadline = now() + 0.4
+        var copyAttempted = false
         func finish(_ result: SelectionCaptureResult, expectedChangeCount: Int) {
+            let complete = { (resolved: SelectionCaptureResult) in
+                completion(copyAttempted ? resolved.withCopyAttempt(resolvedAs: resolved.outcome) : resolved)
+            }
             switch restore(snapshot, expectedChangeCount: expectedChangeCount) {
             case .restored:
-                completion(result)
+                complete(result)
             case .changed:
-                completion(.clipboardChanged)
+                complete(.clipboardChanged)
             case .failed:
                 NSLog("[VoiceBar] Selection capture could not restore the pasteboard")
-                completion(.clipboardRestoreFailed)
+                complete(.clipboardRestoreFailed)
             }
         }
         // An unreadable-focus Copy goes only to the exact process that earned it, checked right before Cmd+C.
@@ -187,6 +220,7 @@ final class SpeakSelectionCapture {
             finish(.captureFailed, expectedChangeCount: changeCount)
             return
         }
+        copyAttempted = true
         guard postCopy() else { finish(.copyFailed, expectedChangeCount: changeCount); return }
         func poll() {
             Self.onMain { [self] in
@@ -258,22 +292,39 @@ final class SpeakSelectionCapture {
     /// until AXManualAccessibility is set on it, so set it once and re-query for under a second.
     static func preflight(_ ax: SelectionFocusAX, recover: Bool,
                           copyExemptApp: SelectionFocusAX.AppIdentity?) -> SelectionFocusPreflight {
-        if ax.secureInputEnabled() { return SelectionFocusPreflight(blockReason: .secureField) }
-        guard ax.trusted() else { return SelectionFocusPreflight(blockReason: .captureFailed) }
-        var (status, focus) = ax.queryFocus()
         var result = SelectionFocusPreflight()
+        let prefix = recover ? "preflight_initial_" : "preflight_recheck_"
+        var fields = ["manual_ax_attempted": "false", "retry_statuses": ""]
+        func done(_ reason: String) -> SelectionFocusPreflight {
+            fields["reason"] = reason
+            result.details = Dictionary(uniqueKeysWithValues: fields.map { (prefix + $0.key, $0.value) })
+            result.blockReason = result.blockReason?.withPreflightDetails(result.details)
+            return result
+        }
+        if ax.secureInputEnabled() { result.blockReason = .secureField; return done("secure_input") }
+        guard ax.trusted() else { result.blockReason = .captureFailed; return done("ax_untrusted") }
+        var (status, focus) = ax.queryFocus()
+        fields["ax_status"] = String((focus?.queryStatus ?? status).rawValue)
+        fields["final_ax_status"] = fields["ax_status"]
+        var retryStatuses: [String] = []
         let unreadable = status == .noValue || status == .cannotComplete
         if recover, unreadable, let app = ax.frontmostApp() {
-            guard ax.setManualAccessibility(app) == .success else {
+            fields["manual_ax_attempted"] = "true"
+            let enableStatus = ax.setManualAccessibility(app)
+            fields["manual_ax_status"] = String(enableStatus.rawValue)
+            guard enableStatus == .success else {
                 result.axEnable = .failed
                 result.blockReason = .captureFailed
-                return result
+                return done("focus_query_failed")
             }
             result.axEnable = .attempted
             while status != .success, result.retries < focusRetryLimit {
                 ax.sleep(focusRetryStep)
                 result.retries += 1
                 (status, focus) = ax.queryFocus()
+                retryStatuses.append(String((focus?.queryStatus ?? status).rawValue))
+                fields["retry_statuses"] = retryStatuses.joined(separator: ",")
+                fields["final_ax_status"] = retryStatuses.last
             }
             if status == .success {
                 result.axEnable = .set
@@ -285,24 +336,28 @@ final class SpeakSelectionCapture {
             // frontmost after a switch during the retries or the clipboard snapshot, readable or not.
             guard ax.frontmostApp() == copyExemptApp else {
                 result.blockReason = .captureFailed
-                return result
+                return done("app_changed")
             }
             if unreadable { result.copyExemptApp = copyExemptApp }
         }
         // An unreadable focus cannot establish permission to synthesize Copy, except in the Chromium-family
         // app that accepted AXManualAccessibility, while it stays frontmost and secure event input stays off.
         guard status == .success, let focus else {
-            if result.unreadableFocusAllowsCopy, !ax.secureInputEnabled() { return result }
+            if result.unreadableFocusAllowsCopy, !ax.secureInputEnabled() { return done("focus_query_failed") }
             result.copyExemptApp = nil
             result.blockReason = .captureFailed
-            return result
+            return done(focus?.failure?.rawValue ?? (status == .success ? "focus_absent" : "focus_query_failed"))
         }
-        if isSecureFocus(role: focus.role, subrole: focus.subrole, secureInput: ax.secureInputEnabled()) {
+        fields["role_ax_status"] = String(focus.roleStatus.rawValue)
+        let secureInput = ax.secureInputEnabled()
+        if isSecureFocus(role: focus.role, subrole: focus.subrole, secureInput: secureInput) {
             result.blockReason = .secureField
+            return done(secureInput ? "secure_input" : "secure_role")
         } else if focus.role == nil {
             result.blockReason = .captureFailed
+            return done(focus.failure?.rawValue ?? "role_absent")
         }
-        return result
+        return done("allowed")
     }
 
     private static func readFocusedSelectedText() -> String? {
