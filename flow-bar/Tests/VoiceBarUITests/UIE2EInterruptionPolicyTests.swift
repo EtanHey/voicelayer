@@ -58,27 +58,43 @@ final class UIE2EInterruptionPolicyTests: XCTestCase {
         XCTAssertEqual(result, true)
     }
 
-    func testUIMonitorUsesClassificationAndStateGateBeforeForeignAXQuery() throws {
+    func testUIMonitorLatchesStopOnForeignInterruptionAndNeverRecovers() throws {
+        // GATECAP1 R4 (lead ruling): a foreign interruption latches a STOP; the runner never
+        // reactivates QA, queries the foreign hierarchy, presses anything, or continues.
         let flowTests = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("UIE2E/VoiceBarUIE2ETests/VoiceBarFlowTests.swift")
         let source = try String(contentsOf: flowTests)
         let monitorStart = try XCTUnwrap(source.range(of: "addUIInterruptionMonitor("))
         let monitorEnd = try XCTUnwrap(source[monitorStart.upperBound...].range(of: "step(\"launch isolated QA app\")"))
-        let monitor = source[monitorStart.lowerBound..<monitorEnd.lowerBound]
+        let monitor = String(source[monitorStart.lowerBound..<monitorEnd.lowerBound])
 
+        // Every classification is handled, and every path latches the STOP before returning.
         XCTAssertTrue(monitor.contains("UIE2EInterruptionPolicy.classify"))
-        XCTAssertTrue(monitor.contains("case .qaOwnedInterruption"))
-        XCTAssertTrue(monitor.contains("queryHierarchyIfRunning"))
-        let ownAppCase = try XCTUnwrap(monitor.range(of: "case .qaOwnedInterruption"))
-        let state = try XCTUnwrap(monitor.range(of: "let foreignState = foreign.state"))
-        let foreignQuery = try XCTUnwrap(monitor.range(of: "foreign.dialogs.allElementsBoundByIndex"))
-        let reactivateQA = try XCTUnwrap(monitor.range(of: "self.app.activate()"))
-        XCTAssertLessThan(ownAppCase.lowerBound, foreignQuery.lowerBound,
-            "QA-owned sheets must be handled before the benign-foreign branch")
-        XCTAssertLessThan(state.lowerBound, foreignQuery.lowerBound,
-            "The foreign application state must be read before any hierarchy query")
-        XCTAssertLessThan(foreignQuery.lowerBound, reactivateQA.lowerBound,
-            "Re-activate QA only after the running benign owner matched the interruption frame")
+        for kind in ["case .permissionPrompt", "case .qaOwnedInterruption", "case .knownBenignForeign", "case .unknown"] {
+            XCTAssertTrue(monitor.contains(kind), "Unhandled interruption classification: \(kind)")
+        }
+        let latch = try XCTUnwrap(monitor.range(of: "self.latchForeignStop("))
+        let handled = try XCTUnwrap(monitor.range(of: "return true"))
+        XCTAssertLessThan(latch.lowerBound, handled.lowerBound, "STOP must be latched before the interruption is reported handled")
+        XCTAssertFalse(monitor.contains("return false"), "An unhandled interruption lets an implicit handler dismiss it")
+        // Only a redacted description is ever logged.
+        XCTAssertTrue(monitor.contains("uie2eRedacted(alert.debugDescription)"))
+        XCTAssertFalse(monitor.contains("\\(alert.debugDescription)"), "Raw foreign descriptions must never be logged")
+        // No recover-and-continue: no QA reactivation, foreign AX query, or interaction.
+        for forbidden in ["activate()", "queryHierarchyIfRunning", "foreign.dialogs", ".click()", ".tap()", "isHittable"] {
+            XCTAssertFalse(monitor.contains(forbidden), "Interruption monitor must not recover or interact: \(forbidden)")
+        }
+
+        // The latch is permanent: once set it is never cleared, and every later boundary refuses.
+        let latchBody = try XCTUnwrap(source.range(of: "    func latchForeignStop(_ reason: String) {"))
+        let latchFunction = String(source[latchBody.lowerBound...].prefix(600))
+        XCTAssertTrue(latchFunction.contains("guard foreignModalStop == nil else { return }"))
+        XCTAssertTrue(latchFunction.contains("foreignModalStop = reason"))
+        XCTAssertTrue(latchFunction.contains("XCTFail("))
+        let boundary = try XCTUnwrap(source.range(of: "    func boundaryClear(_ kind: String) -> Bool {"))
+        XCTAssertTrue(String(source[boundary.lowerBound...].prefix(400)).contains("guard foreignModalStop == nil else { return false }"),
+                      "A latched STOP must refuse every later action, command and still")
+        XCTAssertFalse(source.contains("foreignModalStop = nil"), "The STOP latch must never be cleared")
     }
 }
