@@ -12,6 +12,24 @@ import signal
 import subprocess
 import sys
 import time
+import importlib.util
+
+
+_spec = importlib.util.spec_from_file_location('safety_supervisor', pathlib.Path(__file__).with_name('voicebar-ui-e2e-supervisor.py'))
+safety = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(safety)
+# (registry path, supervisor token) while run_suite registers its launches; None otherwise.
+REGISTRATION = []
+
+
+def owned_launch(kind):
+    """Popen kwargs that register the child (PID + kernel birth) with the supervisor before exec."""
+    if not REGISTRATION:
+        return {}
+    registry, token = REGISTRATION[0]
+    def register():  # Runs in the forked child; a failure aborts the launch (fail closed).
+        safety.register_owned(registry, token, kind, os.getpid(), safety.kernel_birth(os.getpid()))
+    return dict(preexec_fn=register)
 
 
 SCENARIOS = {'full': 'testFullUIOnlyFlow', 'focused-338': 'testFocused338StateGallery', 'hide1': 'testHide1VisualFlow', 'gate2246': 'testGate2246Flow'}
@@ -41,7 +59,7 @@ class Visibility:
 
     def call(self, mode):
         result = subprocess.run([str(self.helper), mode, str(self.receipt)], capture_output=True,
-                                text=True, timeout=10, start_new_session=True)
+                                text=True, timeout=10, start_new_session=True, **owned_launch('visibility'))
         if result.returncode:
             raise RuntimeError('Hide Others / restore visibility failed: ' + result.stderr.strip())
 
@@ -60,11 +78,13 @@ class Recording:
 
     def start(self):
         for tool, option in [(self.capture, '--version'), (self.ffprobe, '-version')]:
-            subprocess.run([tool, option], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5)
+            subprocess.run([tool, option], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5,
+                           **owned_launch('tool-check'))
         self.files = [self.progress.open('w'), (self.output / 'recording.log').open('w')]
         # A stop of xcodebuild's process group must not terminate the recorder mid-flush.
         self.process = subprocess.Popen(self.arguments(), stdin=subprocess.PIPE, text=True,
-                                        stdout=self.files[0], stderr=self.files[1], start_new_session=True)
+                                        stdout=self.files[0], stderr=self.files[1], start_new_session=True,
+                                        **owned_launch('recorder'))
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
@@ -100,7 +120,7 @@ class Recording:
             for file in self.files: file.close()
         result = subprocess.run([self.ffprobe, '-v', 'error', '-show_entries',
             'format=duration:stream=codec_type', '-of', 'json', str(self.path)],
-            capture_output=True, text=True, timeout=10, start_new_session=True)
+            capture_output=True, text=True, timeout=10, start_new_session=True, **owned_launch('ffprobe'))
         (self.output / 'recording-ffprobe.json').write_text(result.stdout)
         (self.output / 'recording-ffprobe.log').write_text(result.stderr)
         result.check_returncode()
@@ -122,20 +142,31 @@ def stop_test(process):
             os.killpg(process.pid, signal.SIGKILL); process.wait()
 
 
-def run_suite(output, arguments=None, recording=None):
+def run_suite(output, arguments=None, recording=None, supervisor=None, registry=None):
     recording = recording or Recording(output)
     visibility = Visibility(output)
     info = dict(path=recording.path.name, valid=False)
     (output / 'recording.json').write_text(json.dumps(info, indent=2) + '\n')
     test = None
     status = 1
-    previous = {sig: signal.getsignal(sig) for sig in [signal.SIGINT, signal.SIGTERM]}
+    # SIGHUP too: a torn-down operator session must not kill the runner before it stops its children.
+    previous = {sig: signal.getsignal(sig) for sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP]}
     cancelled = []
     def interrupted(sig, frame):
         # Latch throughout startup, execution AND cleanup. Never interrupt media flush.
         cancelled.append(int(sig))
     def check_cancelled():
         if cancelled: raise InterruptedError('UI run interrupted by signal ' + str(cancelled[0]))
+        # Parent-death handling against the authenticated supervisor identity (PID + kernel birth),
+        # never a re-sampled parent: launchd adopting us must not pass as the supervisor.
+        if supervisor is not None:
+            try:
+                alive = (os.getppid() == supervisor['pid'] and
+                         safety.kernel_birth(supervisor['pid']) == tuple(supervisor['birth']))
+            except RuntimeError:
+                alive = False
+            if not alive:
+                raise InterruptedError('Safety supervisor %d exited; UI run aborted' % supervisor['pid'])
     def publish():
         info['cancelledSignals'] = list(cancelled)
         if cancelled: info['error'] = 'UI run interrupted by signal ' + str(cancelled[0])
@@ -146,14 +177,16 @@ def run_suite(output, arguments=None, recording=None):
             '<h1>UIE2E recording receipt</h1><a href="' + html.escape(info['path'], quote=True) +
             '">Screen recording (.mov)</a><pre>' + caption + '</pre>')
     for sig in previous: signal.signal(sig, interrupted)
+    if registry is not None: REGISTRATION[:] = [registry]
     try:
+        check_cancelled()  # Revalidate the supervisor before any launch.
         visibility.call('hide')
         check_cancelled()
         recording.start()  # No test may launch until real frames reach the output file.
         check_cancelled()
         with (output / 'test.log').open('w') as log:
             test = subprocess.Popen(arguments or test_arguments(output), stdout=log,
-                                    stderr=subprocess.STDOUT, start_new_session=True)
+                                    stderr=subprocess.STDOUT, start_new_session=True, **owned_launch('test'))
             while test.poll() is None:
                 check_cancelled()
                 if recording.process.poll() is not None:
@@ -189,6 +222,7 @@ def run_suite(output, arguments=None, recording=None):
             # Also persist a first cancellation arriving during receipt publication.
             if cancelled and info.get('runPassed') is not False: publish()
             for sig, handler in previous.items(): signal.signal(sig, handler)
+            REGISTRATION.clear()
     return 128 + cancelled[0] if cancelled else status
 
 
@@ -198,11 +232,7 @@ if __name__ == '__main__':
     parser.add_argument('--scenario', choices=SCENARIOS)
     args = parser.parse_args()
     output = args.output.resolve()
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('safety_supervisor', pathlib.Path(__file__).with_name('voicebar-ui-e2e-supervisor.py'))
-    safety = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(safety)
-    safety.require_supervisor(output, os.environ)
+    authority = safety.require_supervisor(output, os.environ)
     # Refuse BEFORE visibility/capture/UI unless the exact built guard passed its probes.
     if selected_scenario(output, args.scenario) == 'gate2246':
         import importlib.util
@@ -215,4 +245,5 @@ if __name__ == '__main__':
             json.dump({'authorizedBy': 'GATE2246B-BRIEF and QA-only seam ruling',
                        'claimedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}, receipt)
     # Validate selection before changing visibility or starting the recorder.
-    sys.exit(run_suite(output, test_arguments(output, args.scenario)))
+    sys.exit(run_suite(output, test_arguments(output, args.scenario), supervisor=authority,
+                       registry=(output / 'owned-registrations.jsonl', os.environ['VOICEBAR_UIE2E_SUPERVISOR_TOKEN'])))
