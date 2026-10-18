@@ -11,8 +11,8 @@ spec = importlib.util.spec_from_file_location('results', pathlib.Path(__file__).
 results = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(results)
 # GATECAP1: every frame and movie must declare a QA-only capture source.
-QA_CAPTURE = dict(source='qa-windows', fullDisplayPersisted=False)
-QA_SOURCE = dict(kind='application', bundle='com.voicelayer.voicebar.uie2e', fullDisplay=False)
+QA_CAPTURE = dict(source='qa-window-id', status='PROVEN', windows=[4242])
+QA_SOURCE = dict(kind='application', bundle='com.voicelayer.voicebar.uie2e', executable='/private/tmp/vl-ui-x/VoiceBarQA.app/Contents/MacOS/VoiceBar', observedPids=[4242], fullDisplay=False)
 
 
 class ReportTests(unittest.TestCase):

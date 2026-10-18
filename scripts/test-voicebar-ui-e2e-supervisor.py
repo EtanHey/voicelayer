@@ -1133,8 +1133,8 @@ class SupervisorTests(unittest.TestCase):
             parsed = json.loads(payload)
         except ValueError:
             parsed = None
-        if isinstance(parsed, dict) and 'modals' not in parsed:
-            payload = json.dumps(dict(parsed, modals=[]))
+        if isinstance(parsed, dict):
+            payload = json.dumps(dict(dict(modals=[], inventoryErrors=[]), **parsed))
         helper = output / 'voicebar-ui-e2e-permissions'
         helper.write_text('#!/bin/sh\nprintf %s ' + repr(payload) + '\nexit ' + str(code) + '\n')
         helper.chmod(0o755)

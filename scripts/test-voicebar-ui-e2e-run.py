@@ -16,6 +16,23 @@ spec = importlib.util.spec_from_file_location('runner', MODULE)
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
+# GATECAP1: one-shot modal gate + boundary broker (voicebar-ui-e2e-permissions) for run_suite.
+HELPER = '''#!/usr/bin/env python3
+import json,pathlib,signal,sys,time
+root=pathlib.Path(__file__).parent.parent
+with (root/'calls').open('a') as log: log.write('permissions '+json.dumps(sys.argv[1:])+'\\n')
+if len(sys.argv)==6 and sys.argv[1]=='--broker':
+ boundary=pathlib.Path(sys.argv[3])/'boundary'; boundary.mkdir(exist_ok=True)
+ if not (root/'broker-never-ready').exists(): (boundary/'ready.json').write_text('{"ready":true}')
+ signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
+ if (root/'broker-latch').exists():
+  time.sleep(.3); pathlib.Path(sys.argv[5]).write_text(json.dumps({'status':'stop','modals':[{'owner':'com.apple.coreservices.uiagent','source':'system-owner','title':'<redacted len=4 sha256=00000000>'}]}))
+ while True: time.sleep(.05)
+modals=[{'owner':'com.apple.coreservices.uiagent','pid':611,'title':'BrainBar is an app downloaded','source':'system-owner'}] if (root/'modal-visible').exists() else []
+errors=[{'kind':'ax-windows','owner':'com.example.hung','pid':9,'reason':'cannot-complete'}] if (root/'inventory-error').exists() else []
+print(json.dumps({'axTrusted':True,'prompts':[],'modals':modals,'inventoryErrors':errors}) if not (root/'helper-garbage').exists() else 'garbage')
+'''
+
 STUB = '''#!/usr/bin/env python3
 import json,pathlib,sys,time
 root=pathlib.Path(__file__).parent
@@ -48,7 +65,11 @@ if '-i' in sys.argv and (root/'cameras.json').exists():
   (root/'camera-opened').touch()
 movie=pathlib.Path(sys.argv[-1]); movie.write_bytes(b'incremental-')
 bundle='com.apple.finder' if (root/'foreign-source').exists() else 'com.voicelayer.voicebar.uie2e'
-if not (root/'no-source').exists(): print('source=application bundle='+bundle+' pids=',flush=True)
+exe=sys.argv[sys.argv.index('--include-executable')+1] if '--include-executable' in sys.argv else ''
+if (root/'stale-executable').exists(): exe='/private/tmp/vl-ui-OTHER/VoiceBarQA.app/Contents/MacOS/VoiceBar'
+if not (root/'no-source').exists():
+ print('source=application bundle='+bundle+' executable='+exe+' pids=',flush=True)
+ if not (root/'no-pids').exists(): print('source=application bundle='+bundle+' executable='+exe+' pids=4242',flush=True)
 print('frame=1',flush=True)
 if (root/'early-end').exists():
  time.sleep(.2)
@@ -75,6 +96,9 @@ class RunnerTests(unittest.TestCase):
             path = self.root / name; path.write_text(STUB); path.chmod(0o755)
         visibility = self.output / 'voicebar-ui-e2e-visibility'
         visibility.write_text(STUB.replace("root=pathlib.Path(__file__).parent", "root=pathlib.Path(__file__).parent.parent")); visibility.chmod(0o755)
+        helper = self.output / 'voicebar-ui-e2e-permissions'; helper.write_text(HELPER); helper.chmod(0o755)
+        (self.root / 'sandbox').mkdir()
+        (self.output / 'sandbox-path.txt').write_text(str(self.root / 'sandbox') + '\n')
 
     def recorder(self):
         return runner.Recording(self.output, str(self.root / 'capture'), str(self.root / 'ffprobe'))
@@ -158,26 +182,56 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(args[0], str(self.output / 'voicebar-ui-e2e-capture'))
         self.assertNotIn('avfoundation', args)
 
-    def test_gatecap1_movie_records_only_the_qa_app_windows(self):
+    def test_gatecap1_movie_records_only_the_proven_qa_process_windows(self):
+        executable = str((self.root / 'sandbox/VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
         args = runner.Recording(self.output).arguments()
-        self.assertEqual(args[1:3], ['--include-bundle', 'com.voicelayer.voicebar.uie2e'])
+        self.assertEqual(args[1:5], ['--include-bundle', 'com.voicelayer.voicebar.uie2e', '--include-executable', executable])
         source = MODULE.with_name('voicebar-ui-e2e-capture.swift').read_text()
         self.assertNotIn('excludingWindows', source, 'a display-wide filter composites the private desktop')
-        self.assertIn('including: applications.filter { $0.bundleIdentifier == bundle }', source)
+        self.assertIn('$0.bundleIdentifier == bundle && path($0.processID) == executable', source)
         self.assertEqual(runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder()), 0)
         info = json.loads((self.output / 'recording.json').read_text())
         self.assertEqual(info['captureSource'], dict(kind='application', bundle='com.voicelayer.voicebar.uie2e',
-                                                     observedPids=[], fullDisplay=False))
-        for marker in ['foreign-source', 'no-source']:
+                                                     executable=executable, observedPids=[4242], fullDisplay=False))
+        for marker, reason in [('foreign-source', 'not the QA app'), ('no-source', 'not the QA app'),
+                               ('stale-executable', 'not the QA app'), ('no-pids', 'never observed')]:
             with self.subTest(marker=marker):
                 (self.root / marker).touch()
                 self.assertNotEqual(runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder()), 0)
                 info = json.loads((self.output / 'recording.json').read_text())
                 self.assertNotIn('captureSource', info)
-                self.assertIn('not the QA app', info['recordingError'])
+                self.assertIn(reason, info['recordingError'])
                 (self.root / marker).unlink()
-        self.assertEqual(runner.capture_source('source=application bundle=com.voicelayer.voicebar.uie2e pids=\n'
-                                               'source=application bundle=com.voicelayer.voicebar.uie2e pids=41,7\n')['observedPids'], [7, 41])
+
+    def test_gatecap1_modal_or_unproven_inventory_refuses_before_hide_others(self):
+        for marker in ['modal-visible', 'inventory-error', 'helper-garbage']:
+            with self.subTest(marker=marker):
+                (self.root / marker).touch()
+                (self.root / 'calls').unlink(missing_ok=True)
+                (self.output / 'foreign-modal-stop.json').unlink(missing_ok=True)
+                self.assertNotEqual(runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder()), 0)
+                calls = (self.root / 'calls').read_text()
+                self.assertNotIn('voicebar-ui-e2e-visibility ["hide"', calls, 'Hide Others ran over a foreign modal')
+                self.assertNotIn('capture [', calls)
+                latch = json.loads((self.output / 'foreign-modal-stop.json').read_text())
+                self.assertEqual(latch['phase'], 'before-hide-others')
+                self.assertNotIn('BrainBar', json.dumps(latch))
+                self.assertTrue(latch['modals'] or latch['errors'])
+                (self.root / marker).unlink()
+
+    def test_gatecap1_broker_must_be_ready_and_a_latched_stop_aborts_the_run(self):
+        (self.root / 'broker-never-ready').touch()
+        self.assertNotEqual(runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder()), 0)
+        self.assertIn('never became ready', json.loads((self.output / 'recording.json').read_text())['error'])
+        self.assertNotIn('test [', (self.root / 'calls').read_text())
+        (self.root / 'broker-never-ready').unlink()
+        (self.root / 'broker-latch').touch()
+        started = time.monotonic()
+        self.assertNotEqual(runner.run_suite(self.output, [sys.executable, '-c', 'import time; time.sleep(20)'], self.recorder()), 0)
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertIn('STOP latched', json.loads((self.output / 'recording.json').read_text())['error'])
+        broker = [l for l in (self.root / 'calls').read_text().splitlines() if '--broker' in l][-1]
+        self.assertIn(str(self.output / 'foreign-modal-stop.json'), broker)
 
     def test_runner_source_uses_supervised_recording_after_build_only_exit(self):
         source = MODULE.with_name('voicebar-ui-e2e.sh').read_text()
@@ -241,7 +295,7 @@ class RunnerTests(unittest.TestCase):
         # SUP3: parent-death handling, checked by the authenticated identity.
         marker = self.root / 'test-started'
         authority = dict(pid=4242, birth=(7, 7))
-        alive = [3]
+        alive = [4]  # Alive through entry, Hide Others and the boundary broker (GATECAP1); dies once recording runs.
         def birth(pid):
             alive[0] -= 1
             return (7, 7) if pid == 4242 and alive[0] > 0 else None

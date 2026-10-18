@@ -223,6 +223,8 @@ extension VoiceBarFlowTests {
     func fixtureCommand(_ name: String) -> Int {
         let ack = root.appendingPathComponent("fixture-command-ack.json")
         let before = uie2eFixtureAck(try? Data(contentsOf: ack))?.count ?? 0
+        // Fresh synchronous foreign-modal decision before delivery; a STOP never sends the command.
+        guard boundaryClear("command") else { XCTFail("Fixture command withheld under foreign modal STOP: " + name); return before + 1 }
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(uie2eFixtureCommandName(token: root.lastPathComponent, command: name)),
             object: nil, userInfo: nil, deliverImmediately: true)

@@ -1,37 +1,37 @@
 import AppKit
+import CryptoKit
 import XCTest
 
-// BEGIN UIE2E QA-ONLY FRAME
-/// Composites only `regions` (top-left screen points) out of an in-memory display sample. The
-/// canvas is the regions' union; every pixel outside a region is black.
-func uie2eQAOnlyFrame(_ display: CGImage, screen: CGSize, regions: [CGRect]) -> CGImage? {
-    guard screen.width > 0 else { return nil }
-    let scale = CGFloat(display.width) / screen.width
-    let image = CGRect(x: 0, y: 0, width: display.width, height: display.height)
-    let pixels = regions.map { CGRect(x: $0.minX * scale, y: $0.minY * scale, width: $0.width * scale,
-                                      height: $0.height * scale).integral.intersection(image) }
-        .filter { !$0.isNull && !$0.isEmpty }
-    guard let canvas = pixels.dropFirst().reduce(pixels.first, { $0?.union($1) }),
-          let context = CGContext(data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8,
-                                  bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-    context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-    context.fill(CGRect(origin: .zero, size: canvas.size))
-    for rect in pixels {
-        guard let crop = display.cropping(to: rect) else { continue }
-        // CGImage crops are top-left; the bitmap context is bottom-left.
-        context.draw(crop, in: CGRect(x: rect.minX - canvas.minX, y: canvas.maxY - rect.maxY,
-                                      width: rect.width, height: rect.height))
+// BEGIN UIE2E BOUNDARY
+// The sandboxed runner asks the owned boundary broker (voicebar-ui-e2e-permissions --broker) for a
+// fresh, synchronous foreign-modal decision before each fixture command, UI action and still.
+let uie2eBoundaryPrefix = "com.voicelayer.voicebar.uie2e.boundary."
+func uie2eBoundaryName(token: String, kind: String) -> String { uie2eBoundaryPrefix + token + "." + kind }
+func uie2eBoundaryAck(_ data: Data?) -> [String: Any]? {
+    guard let data, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          object["count"] is Int, object["kind"] is String, object["status"] is String else { return nil }
+    return object
+}
+/// Only a fresh "clear" answer to exactly this request lets the boundary proceed.
+func uie2eBoundaryClear(_ ack: [String: Any]?, count: Int, kind: String) -> Bool {
+    ack?["count"] as? Int == count && ack?["kind"] as? String == kind && ack?["status"] as? String == "clear"
+}
+/// The step's frame receipt: a PROVEN window-ID capture of the proven QA process, or NOT_PROVEN.
+func uie2eStillReceipt(_ ack: [String: Any]?, count: Int) -> [String: Any] {
+    guard ack?["count"] as? Int == count, ack?["kind"] as? String == "still",
+          let capture = ack?["capture"] as? [String: Any], let status = capture["status"] as? String else {
+        return ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "no-broker-answer"]
     }
-    return context.makeImage()
+    guard status == "PROVEN", capture["path"] is String, let windows = capture["windows"] as? [Int], !windows.isEmpty else {
+        return ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": capture["reason"] as? String ?? "unproven"]
+    }
+    return ["source": "qa-window-id", "status": "PROVEN", "windows": windows, "qaPid": capture["qaPid"] ?? 0]
 }
-
-func uie2eBlankFrame() -> NSImage {
-    let image = NSImage(size: NSSize(width: 8, height: 8))
-    image.lockFocus(); NSColor.black.setFill(); NSRect(x: 0, y: 0, width: 8, height: 8).fill(); image.unlockFocus()
-    return image
+func uie2eRedacted(_ text: String) -> String {
+    let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    return "<redacted len=\(text.count) sha256=\(digest.prefix(8))>"
 }
-// END UIE2E QA-ONLY FRAME
+// END UIE2E BOUNDARY
 
 /// The one serial UI test runs only through voicebar-ui-e2e.sh on an unoccupied Mac.
 @MainActor
@@ -48,6 +48,8 @@ final class VoiceBarFlowTests: XCTestCase {
     var gate2245Enabled = false
     var guardRequired = false
     var guardLaunches = 0
+    /// Latched on the first foreign modal / unanswered boundary: no later action, command or still runs.
+    var foreignModalStop: String?
     var observed: Set<String> { get { ledger.observed } set { ledger.observed = newValue } }
     var exercised: Set<String> { get { ledger.exercised } set { ledger.exercised = newValue } }
     var activePage = "General"
@@ -100,46 +102,19 @@ final class VoiceBarFlowTests: XCTestCase {
             app.launchEnvironment["DYLD_INSERT_LIBRARIES"] = library
             guardRequired = true // Each launch gets its own receipt path in launchQA().
         }
-        addUIInterruptionMonitor(withDescription: "Known benign foreign overlay; never grant permissions") { [unowned self] alert in
+        addUIInterruptionMonitor(withDescription: "Foreign interruption: latch STOP, never interact") { [unowned self] alert in
+            // GATECAP1 R4: never recover focus and continue around a foreign window. Latch STOP and
+            // log only a redacted description; returning true means "handled" with nothing pressed,
+            // so no implicit default handler can dismiss it.
+            let kind: String
             switch UIE2EInterruptionPolicy.classify(alertDescription: alert.debugDescription) {
-            case .permissionPrompt:
-                XCTFail("BLOCKED permission prompt: \(alert.debugDescription)")
-                return false
-            case .qaOwnedInterruption:
-                XCTFail("BLOCKED QA-owned modal interruption; resolve the scoped QA control instead of treating its sheet as foreign: \(alert.debugDescription)")
-                return false
-            case let .knownBenignForeign(owner):
-                let foreign = XCUIApplication(bundleIdentifier: owner)
-                let foreignState = foreign.state
-                let processState: UIE2EInterruptionProcessState
-                switch foreignState {
-                case .runningForeground, .runningBackground: processState = .running
-                case .notRunning: processState = .notRunning
-                default: processState = .unknown
-                }
-                // The AX hierarchy is only queried inside this state-gated closure.
-                // A stale XCUIApplication handle for an exited owner can fatally fail XCTest.
-                guard let hasMatchingDialog = UIE2EInterruptionPolicy.queryHierarchyIfRunning(state: processState, {
-                    foreign.dialogs.allElementsBoundByIndex.contains { $0.frame == alert.frame }
-                }) else {
-                    XCTFail("BLOCKED known overlay owner is not queryable (state: \(foreignState)): \(owner)")
-                    return false
-                }
-                guard hasMatchingDialog else {
-                    XCTFail("BLOCKED known overlay did not match the interruption frame: \(owner), \(alert.debugDescription)")
-                    return false
-                }
-                self.app.activate() // Recover focus only; no foreign buttons, dismissal or permission action.
-                let surfaceReady = ["hide1", "gate2246"].contains(self.scenario)
-                    ? self.app.menuBars.menuBarItems["HIDE1VIS"].isHittable
-                    : self.app.windows["VoiceBar QA Settings"].isHittable
-                let clear = self.app.state == .runningForeground && surfaceReady
-                if !clear { XCTFail("BLOCKED benign foreign overlay persists after QA activation: \(owner)") }
-                return clear
-            case let .unknown(owner):
-                XCTFail("BLOCKED unknown interruption owner \(owner ?? "(unavailable)"): \(alert.debugDescription)")
-                return false
+            case .permissionPrompt: kind = "permission-prompt"
+            case .qaOwnedInterruption: kind = "qa-owned"
+            case .knownBenignForeign: kind = "known-foreign"
+            case .unknown: kind = "unknown"
             }
+            self.latchForeignStop("interruption " + kind + " " + uie2eRedacted(alert.debugDescription))
+            return true
         }
         step("launch isolated QA app") {
             launchQA()
@@ -195,7 +170,10 @@ final class VoiceBarFlowTests: XCTestCase {
         var matched: [String] = []
         var capture: [String: Any] = [:]
         XCTContext.runActivity(named: "\(attachment) \(name)") { activity in
-            if let issue {
+            // Fresh synchronous modal decision before the UI action; a STOP skips the action entirely.
+            if !boundaryClear("action") {
+                capture = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "foreign-modal-stop"]
+            } else if let issue {
                 let options = XCTExpectedFailure.Options()
                 options.isStrict = true
                 options.issueMatcher = { recorded in
@@ -205,14 +183,22 @@ final class VoiceBarFlowTests: XCTestCase {
                 }
                 XCTExpectFailure("Known product packet " + issue.rawValue, options: options) { body() }
             } else { body() }
-            // Only the QA app's own window regions are ever attached: the display sample stays in
-            // memory (run-03's full-display frames exposed the operator's desktop and an editor).
-            let frame = qaOnlyFrame()
-            capture = frame.receipt
-            let screenshot = XCTAttachment(image: frame.image)
-            screenshot.name = attachment
-            screenshot.lifetime = .keepAlways
-            activity.add(screenshot)
+            if foreignModalStop == nil {
+                // Window-ID capture of the proven QA process only, taken by the broker after its own
+                // fresh modal check. No proven QA window: no capture, the frame is NOT_PROVEN.
+                let request = boundary("still")
+                if request.ack?["status"] as? String != "clear" { latchForeignStop("before still: " + (request.ack?["status"] as? String ?? "no-answer")) }
+                capture = uie2eStillReceipt(request.ack, count: request.count)
+                let path = (request.ack?["capture"] as? [String: Any])?["path"] as? String
+                if capture["status"] as? String == "PROVEN" {
+                    if let path, let png = try? Data(contentsOf: URL(fileURLWithPath: path)), !png.isEmpty {
+                        let screenshot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                        screenshot.name = attachment
+                        screenshot.lifetime = .keepAlways
+                        activity.add(screenshot)
+                    } else { capture = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "still-unreadable"] }
+                }
+            }
         }
         let passed = (testRun?.failureCount ?? 0) == before
         var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed,
@@ -398,23 +384,37 @@ extension VoiceBarFlowTests {
         if let number = element.value as? NSNumber { return number.stringValue }
         return element.value as? String
     }
-    /// Frames of every QA-owned window, dialog, sheet, menu and popover, in top-left screen points.
-    func qaWindowRegions() -> [CGRect] {
-        guard app != nil, app.state != .notRunning else { return [] }
-        return [app.windows, app.dialogs, app.sheets, app.menus, app.popovers]
-            .flatMap { $0.allElementsBoundByIndex }.compactMap { $0.exists ? $0.frame : nil }
+    /// Posts one boundary request and waits for the broker's answer to exactly it.
+    func boundary(_ kind: String) -> (count: Int, ack: [String: Any]?) {
+        let ackURL = root.appendingPathComponent("boundary/ack.json")
+        let count = (uie2eBoundaryAck(try? Data(contentsOf: ackURL))?["count"] as? Int ?? 0) + 1
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(uie2eBoundaryName(token: root.lastPathComponent, kind: kind)),
+            object: nil, userInfo: nil, deliverImmediately: true)
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if let ack = uie2eBoundaryAck(try? Data(contentsOf: ackURL)), ack["count"] as? Int == count {
+                return (count, ack["kind"] as? String == kind ? ack : nil)
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        return (count, nil)
     }
 
-    func qaOnlyFrame() -> (image: NSImage, receipt: [String: Any]) {
-        let regions = qaWindowRegions()
-        let screen = NSScreen.screens.first?.frame.size ?? .zero
-        let sample = XCUIScreen.main.screenshot().image
-        let composite = sample.cgImage(forProposedRect: nil, context: nil, hints: nil)
-            .flatMap { uie2eQAOnlyFrame($0, screen: screen, regions: regions) }
-        // No QA window on screen (e.g. a hidden-state step): an all-black placeholder, never the desktop.
-        let image = composite.map { NSImage(cgImage: $0, size: .zero) } ?? uie2eBlankFrame()
-        return (image, ["source": "qa-windows", "fullDisplayPersisted": false, "qaWindowsOnScreen": composite != nil,
-                        "regions": regions.map { NSStringFromRect($0) }])
+    /// True only on a fresh clear decision; anything else latches STOP for the rest of the run.
+    func boundaryClear(_ kind: String) -> Bool {
+        guard foreignModalStop == nil else { return false }
+        let request = boundary(kind)
+        if uie2eBoundaryClear(request.ack, count: request.count, kind: kind) { return true }
+        latchForeignStop("before " + kind + ": " + (request.ack?["status"] as? String ?? "no-broker-answer"))
+        return false
+    }
+
+    func latchForeignStop(_ reason: String) {
+        guard foreignModalStop == nil else { return }
+        foreignModalStop = reason
+        XCTFail("Foreign modal STOP latched (" + reason + "); no further action, command or capture")
+        _ = boundary("action")  // Lets the broker take its own fresh decision and latch the supervisor STOP.
     }
 
     func waitUntil(_ predicate: @escaping () -> Bool, timeout: TimeInterval = 3) {
