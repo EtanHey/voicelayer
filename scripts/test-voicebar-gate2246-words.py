@@ -15,11 +15,15 @@ final class XCUIElement {
     let value: Any?
     let exists: Bool
     let children: [XCUIElement]
+    let renderedChildren: (() -> [XCUIElement])?
     init(_ label: String = "", value: Any? = nil, exists: Bool = true,
-         children: [XCUIElement] = []) {
+         children: [XCUIElement] = [], renderedChildren: (() -> [XCUIElement])? = nil) {
         self.label = label; self.value = value; self.exists = exists; self.children = children
+        self.renderedChildren = renderedChildren
     }
-    var staticTexts: XCUIElementQuery { .init(nodes: children.filter { $0.exists }) }
+    var staticTexts: XCUIElementQuery {
+        .init(nodes: (renderedChildren?() ?? children).filter { $0.exists })
+    }
     func waitForExistence(timeout: TimeInterval) -> Bool { exists }
 }
 struct XCUIElementQuery {
@@ -59,6 +63,29 @@ for (name, nodes, text, expected) in cases {
     let actual = ASSERTION
     print("\(name):\(actual == expected ? "PASS" : "FAIL")")
 }
+let readinessCases: [(String, [XCUIElement], String, TimeInterval, Bool)] = [
+    ("chrome before phrase", [.init("Agent"), .init("Stop")], phrase, 0.15, true),
+    ("wrong phrase before current", [.init("Wrong selection")], phrase, 0.15, true),
+    ("stale B before delayed C", [.init("Own selection B")], "Own selection C", 2.8, true),
+    ("permanently wrong", [.init("Wrong selection")], phrase, .infinity, false),
+    ("permanently absent", [], phrase, .infinity, false),
+    ("permanently stale", [.init("Own selection B")], "Own selection C", .infinity, false),
+    ("phrase after deadline", [.init("Agent")], phrase, 3.2, false)
+]
+for (name, initial, text, delay, expected) in readinessCases {
+    let started = ProcessInfo.processInfo.systemUptime
+    var snapshots = 0
+    let pill = XCUIElement(renderedChildren: {
+        snapshots += 1
+        if ProcessInfo.processInfo.systemUptime - started < delay { return initial }
+        return text.split(separator: " ").map { XCUIElement(String($0)) }
+    })
+    let actual = ASSERTION
+    let elapsed = ProcessInfo.processInfo.systemUptime - started
+    let waited = elapsed >= (expected ? delay : 2.9) && elapsed < 4.5
+    let passed = actual == expected && waited && snapshots > 1
+    print("\(name) elapsed=\(elapsed) snapshots=\(snapshots):\(passed ? "PASS" : "FAIL")")
+}
 '''
 
 
@@ -79,10 +106,10 @@ class RenderedWords(unittest.TestCase):
             build = subprocess.run(['xcrun', 'swiftc', str(path / 'main.swift'), '-o', str(path / 'probe')],
                                    capture_output=True, text=True, timeout=60)
             self.assertEqual(build.returncode, 0, build.stderr)
-            result = subprocess.run([str(path / 'probe')], capture_output=True, text=True, timeout=5)
+            result = subprocess.run([str(path / 'probe')], capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = result.stdout.splitlines()
-            self.assertEqual(len(lines), 16, result.stdout)
+            self.assertEqual(len(lines), 23, result.stdout)
             print(result.stdout, end="")
             for line in lines:
                 with self.subTest(case=line.split(':')[0]):
