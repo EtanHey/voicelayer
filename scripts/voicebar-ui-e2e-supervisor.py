@@ -75,6 +75,7 @@ PRINTABLE_KEYCODES = frozenset(range(0, 51)) - {36, 48}
 # input-source switching) plus the hotkey table itself. Read before and after; reported, never restored.
 WATCHED_HOST_SETTINGS = (('com.apple.dock', 'autohide'), ('-g', 'AppleKeyboardUIMode'),
                          ('com.apple.HIToolbox', 'AppleSelectedInputSources'))
+REPORT_ONLY_HOST_SETTINGS = frozenset(('com.apple.HIToolbox AppleSelectedInputSources',))
 SYSTEM_MODAL_SOURCES = frozenset(('system-owner', 'modal-level', 'modal', 'sheet', 'not-proven'))
 FOREIGN_MODAL_LATCH = 'foreign-modal-stop.json'
 
@@ -437,8 +438,10 @@ def supervise(host):
                 changes = host_setting_changes(settings_before, after)
                 if changes:
                     receipt['hostSettingsChanged'] = changes
+                failures = {key: value for key, value in changes.items() if key not in REPORT_ONLY_HOST_SETTINGS}
+                if failures:
                     receipt['cleanupErrors'].append('Host setting changed during run; NOT restored, operator must review: '
-                                                    + json.dumps(changes, sort_keys=True))
+                                                    + json.dumps(failures, sort_keys=True))
             except BaseException as error:
                 receipt['cleanupErrors'].append('host settings: ' + repr(error))
         if not terminated:
@@ -551,8 +554,17 @@ class NativeHost:
         # The helper prints its JSON and exits 2 on a prompt/untrusted AX; parse it either way.
         helper = [str(self.output / 'voicebar-ui-e2e-permissions')]
         executable = self.qa_executable()
-        if executable:  # Exclude only this run's proven QA process; any other QA-bundle app is foreign.
-            helper += ['--qa-executable', executable]
+        # Atomic snapshot, no tokens. Swift freshly revalidates every modal owner's kernel birth.
+        # QA can launch between scans: the helper also binds its exact sandbox path + µs birth.
+        owned = [dict(pid=pid, birth=list(parse_birth(row['started'])), path=row['cmd'])
+                 for pid, row in sorted(self.owned.items())
+                 if row['kind'] in ('qa', 'runner', 'xctest-runner', 'registered-xcodebuild') and not row.get('retired')]
+        proof = self.output / 'modal-run-proof.json'
+        temporary = proof.with_suffix('.tmp')
+        temporary.write_text(json.dumps(dict(executable=executable, launchBirth=list(self.launch_birth), owned=owned)))
+        temporary.replace(proof)
+        if executable:
+            helper += ['--qa-executable', executable, '--run-output', str(self.output)]
         try:
             result = subprocess.run(helper, capture_output=True, text=True, timeout=15, check=False)
         except subprocess.TimeoutExpired:

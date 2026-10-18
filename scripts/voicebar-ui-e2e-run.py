@@ -102,7 +102,8 @@ def modal_gate(output):
     """Fresh synchronous modal decision before Hide Others mutates any app's visibility (R2)."""
     helper = output / 'voicebar-ui-e2e-permissions'
     try:
-        result = subprocess.run([str(helper)], capture_output=True, text=True, timeout=15, start_new_session=True,
+        result = subprocess.run([str(helper), '--qa-executable', qa_executable(output), '--run-output', str(output)],
+                                capture_output=True, text=True, timeout=15, start_new_session=True,
                                 **owned_launch('modal-gate'))
         parsed = json.loads(result.stdout)
         entries = safety.modal_receipt(parsed)
