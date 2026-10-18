@@ -694,7 +694,21 @@ function simulateKeypress(
   writeFileSync(f.history, JSON.stringify(history));
 }
 
+// These four tests exercise macOS-only process facts (/bin/zsh, macOS `ps lstart` and ctime
+// semantics). The producer itself runs only on the Mac with the resident, so the Ubuntu CI job
+// cannot evaluate them; the macOS pre-push hook runs them (lead ruling, 2026-10-18). Nothing
+// else in this file is platform-gated.
+const MACOS_PROCESS_SEMANTICS = "macOS process semantics; covered by the macOS hook";
+const SKIP_MACOS_PROCESS_TESTS = process.platform !== "darwin";
+const macosProcessTest = test.skipIf(SKIP_MACOS_PROCESS_TESTS);
+if (SKIP_MACOS_PROCESS_TESTS) console.warn(`[t3-optf5-release-gate] skipping 4 producer tests: ${MACOS_PROCESS_SEMANTICS}`);
+
 describe("t3-optf5-proof producer reads the installed app's real artifacts", () => {
+  test("on macOS the macOS-process producer tests are not skipped, so the hook must run them", () => {
+    expect(SKIP_MACOS_PROCESS_TESTS).toBe(process.platform !== "darwin");
+    if (process.platform === "darwin") expect(SKIP_MACOS_PROCESS_TESTS).toBe(false);
+  });
+
   test("start + operator keypress + finish yields a proof the release gate accepts", () => {
     const f = producerFixture();
     const s = start(f);
@@ -873,7 +887,7 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("an old VoiceBar still running after a staged bundle was moved into place refuses", async () => {
+  macosProcessTest("an old VoiceBar still running after a staged bundle was moved into place refuses", async () => {
     // Stage B first (its files' ctime predates the launch), launch A, then rename B over A.
     const root = mkdtempSync(join(dir, "swap-"));
     const staged = makeApp(join(root, "staged"));
@@ -909,7 +923,7 @@ exec /bin/ps "$@"
     expect(r.code).toBe(0);
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("a stale daemon after its script is replaced refuses even with an unchanged plist and executable", async () => {
+  macosProcessTest("a stale daemon after its script is replaced refuses even with an unchanged plist and executable", async () => {
     const app = makeApp(join(dir, "daemon-swap"));
     sleepSync(1_100);
     const old = launchFakeVoiceBar(app);
@@ -925,7 +939,7 @@ exec /bin/ps "$@"
     }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("a daemon child using a script outside the installed Resources refuses", async () => {
+  macosProcessTest("a daemon child using a script outside the installed Resources refuses", async () => {
     const app = makeApp(join(dir, "outside-daemon"));
     sleepSync(1_100);
     const outside = join(dir, "mcp-server-daemon.ts");
@@ -940,7 +954,7 @@ exec /bin/ps "$@"
     }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("a daemon script symlink escaping Resources refuses", async () => {
+  macosProcessTest("a daemon script symlink escaping Resources refuses", async () => {
     const app = makeApp(join(dir, "linked-daemon"));
     const script = join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts");
     const outside = join(dir, "mcp-server-daemon.ts");
