@@ -10,7 +10,7 @@ const cc = Bun.which("cc");
 if (!cc) console.warn("SKIP native sender compilation checks: cc toolchain missing");
 
 test.skipIf(!cc)("native sender compiles through the Linux branch", () => {
-  const result = spawnSync(cc!, ["-fsyntax-only", "-U__APPLE__", source], { encoding: "utf8" });
+  const result = spawnSync(cc!, ["-fsyntax-only", "-U__APPLE__", source], { env: process.env, encoding: "utf8" });
   expect({ status: result.status, error: result.stderr }).toEqual({ status: 0, error: "" });
 });
 
@@ -49,8 +49,8 @@ test.skipIf(!cc)("interpreter parser never records combined-flag or IFS command 
     const rows = cases.map(([args, expected]) => `{const char *args[] = {${args.map(x => JSON.stringify(x)).join(",")}}; char out[256] = "unknown"; script_entrypoint(args, ${args.length}, out, sizeof(out)); if(strcmp(out, ${JSON.stringify(expected)})) return ${cases.findIndex(x => x[0] === args) + 1};}`).join("\n");
     const harness = join(dir, "parser.c");
     writeFileSync(harness, `#include ${JSON.stringify(source)}\nint main(void) {\n${rows}\nreturn 0;\n}\n`);
-    const build = spawnSync(cc!, ["-Wall", "-Wextra", "-Werror", harness, "-o", join(dir, "parser")], { encoding: "utf8" });
+    const build = spawnSync(cc!, ["-Wall", "-Wextra", "-Werror", harness, "-o", join(dir, "parser")], { env: process.env, encoding: "utf8" });
     expect({ status: build.status, error: build.stderr }).toEqual({ status: 0, error: "" });
-    expect(spawnSync(join(dir, "parser")).status).toBe(0);
+    expect(spawnSync(join(dir, "parser"), [], { env: process.env }).status).toBe(0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

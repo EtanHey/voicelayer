@@ -231,7 +231,7 @@ function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, befo
         success: true,
       };
     }
-    return originalSpawnSync(cmd);
+    return originalSpawnSync(cmd, { env: process.env });
   }) as typeof Bun.spawnSync;
 
   Bun.spawn = (() => {

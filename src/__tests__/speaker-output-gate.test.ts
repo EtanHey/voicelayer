@@ -100,7 +100,7 @@ describe("speaker output recording gate", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
   });
 

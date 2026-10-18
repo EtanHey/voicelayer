@@ -13,6 +13,7 @@ const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
 
 // Run production probes with the same isolated environment as fixture Git.
 function probe(name: string, packageRoot: string, override: string | undefined) {
+  // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
   const result = Bun.spawnSync([process.execPath, "-e",
     `import { ${name} } from ${JSON.stringify(join(import.meta.dir, "../deploy-check-cli.ts"))};
 console.log(JSON.stringify(${name}(${JSON.stringify(packageRoot)}, ${JSON.stringify(override)})));`,
@@ -49,10 +50,13 @@ const FRESH: DeployProbe = {
 
 function initRepo(root: string, packageName: string, message: string): string {
   mkdirSync(root, { recursive: true });
+  // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
   expect(Bun.spawnSync(["git", "init", root], { env: fixtureGitEnv() }).exitCode).toBe(0);
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: packageName, version: "0.0.0" }));
+  // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
   expect(Bun.spawnSync(["git", "-C", root, "add", "package.json"], { env: fixtureGitEnv() }).exitCode).toBe(0);
   expect(
+    // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
     Bun.spawnSync([
       "git", "-C", root,
       "-c", "user.name=VoiceLayer Test",
@@ -60,6 +64,7 @@ function initRepo(root: string, packageName: string, message: string): string {
       "commit", "-m", message,
     ], { env: fixtureGitEnv() }).exitCode,
   ).toBe(0);
+  // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
   return Bun.spawnSync(["git", "-C", root, "rev-parse", "HEAD"], { env: fixtureGitEnv() })
     .stdout.toString().trim();
 }
@@ -81,6 +86,7 @@ describe("readRepoGitCommit", () => {
   it("returns HEAD when the package root is the VoiceLayer checkout", () => {
     const checkoutRoot = join(process.env.VOICELAYER_STATE_DIR!, "probe-checkout");
     initRepo(checkoutRoot, "voicelayer-mcp", "probe checkout");
+    // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
     const expected = Bun.spawnSync([
       "git",
       "-C",
@@ -106,6 +112,7 @@ describe("readRepoGitCommit", () => {
       "voicelayer-mcp",
       "fallback checkout",
     );
+    // isolation-exempt: fixtureGitEnv retains current isolation keys while removing every inherited Git repository selector
     const expected = Bun.spawnSync([
       "git",
       "-C",

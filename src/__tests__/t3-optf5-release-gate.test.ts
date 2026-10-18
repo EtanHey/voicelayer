@@ -47,6 +47,14 @@ function writeInfoPlist(path: string, fields: Record<string, string>) {
   );
 }
 
+// The synthetic daemon only keeps a timer alive. It exits once the bun test process that wrote
+// it is gone (or after 10 minutes), so an interrupted hook cannot leak it or its fixture parent
+// (the parent shell's `wait` returns when this child exits).
+const SYNTHETIC_DAEMON = `const owner = ${process.pid};
+setInterval(() => { try { process.kill(owner, 0); } catch { process.exit(0); } }, 250);
+setTimeout(() => process.exit(0), 600_000); // synthetic daemon
+`;
+
 function makeApp(root: string, commit = COMMIT, buildTime = BUILD_TIME) {
   const app = join(root, "VoiceBar.app");
   mkdirSync(join(app, "Contents", "Resources"), { recursive: true });
@@ -58,7 +66,7 @@ function makeApp(root: string, commit = COMMIT, buildTime = BUILD_TIME) {
   });
   writeFileSync(join(app, "Contents", "Resources", "package.json"), JSON.stringify({ version }));
   mkdirSync(join(app, "Contents", "Resources", "src"));
-  writeFileSync(join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts"), "setInterval(() => {}, 1000); // synthetic daemon\n");
+  writeFileSync(join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts"), SYNTHETIC_DAEMON);
   return app;
 }
 
@@ -590,13 +598,28 @@ const sleepSync = (ms: number) => Bun.sleepSync(ms);
 // A real running "installed VoiceBar": a symlink to bash at <app>/Contents/MacOS/VoiceBar, so
 // `ps` shows the bundle executable path, with a child whose command names mcp-server-daemon.
 // The child is a real Bun process running a timer-only synthetic script; no audio/devices.
+// The producer accepts only `<dir>/bun run <script>`, as the real VoiceBar launches it. The
+// runner's execPath need not be named bun (vite-plus's shim runs `bun.native`), so the daemon
+// runs through a `bun` symlink to it.
+let fixtureBunDir: string | undefined;
+function fixtureBun(): string {
+  fixtureBunDir ??= mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "t3bun-"));
+  const bun = join(fixtureBunDir, "bun");
+  if (!existsSync(bun)) symlinkSync(process.execPath, bun);
+  return bun;
+}
+
+// Every fake VoiceBar still running; afterAll reaps any a failed or timed-out test left behind.
+const liveFakeVoiceBars = new Set<ReturnType<typeof Bun.spawn>>();
+
 function launchFakeVoiceBar(app: string, interpreter = "/bin/bash", script = join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts")) {
   mkdirSync(join(app, "Contents", "MacOS"), { recursive: true });
   if (!existsSync(join(app, "Contents", "MacOS", "VoiceBar"))) symlinkSync(interpreter, join(app, "Contents", "MacOS", "VoiceBar"));
   const proc = Bun.spawn(
-    [join(app, "Contents", "MacOS", "VoiceBar"), "-c", '"$1" run "$2" & wait', "fixture", process.execPath, script],
+    [join(app, "Contents", "MacOS", "VoiceBar"), "-c", '"$1" run "$2" & wait', "fixture", fixtureBun(), script],
     { stdout: "ignore", stderr: "ignore", env: process.env },
   );
+  liveFakeVoiceBars.add(proc);
   sleepSync(300); // let the daemon-like child appear
   return proc;
 }
@@ -616,6 +639,7 @@ async function stopFakeVoiceBar(proc: ReturnType<typeof Bun.spawn>) {
   for (const child of children) {
     while (Bun.spawnSync(["kill", "-0", String(child)], { env: process.env }).exitCode === 0) sleepSync(20);
   }
+  liveFakeVoiceBars.delete(proc);
 }
 
 let runtimeRoot: string;
@@ -659,8 +683,9 @@ beforeAll(async () => {
   voiceBar = await launchAfterInstall(installedApp);
 }, SUBPROCESS_TEST_TIMEOUT_MS);
 afterAll(async () => {
-  await stopFakeVoiceBar(voiceBar);
+  for (const proc of [...liveFakeVoiceBars]) await stopFakeVoiceBar(proc);
   rmSync(runtimeRoot, { recursive: true, force: true });
+  if (fixtureBunDir) rmSync(fixtureBunDir, { recursive: true, force: true });
 });
 
 function producerFixture(app = installedApp) {
@@ -740,6 +765,17 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
   test("on macOS the macOS-process producer tests are not skipped, so the hook must run them", () => {
     expect(SKIP_MACOS_PROCESS_TESTS).toBe(process.platform !== "darwin");
     if (process.platform === "darwin") expect(SKIP_MACOS_PROCESS_TESTS).toBe(false);
+  });
+
+  // T3GATE1.3: the producer requires `<dir>/bun run <script>`. Under a shim whose execPath is
+  // `bun.native` (vite-plus), spawning process.execPath named the daemon `bun.native run`, and
+  // every producer test failed in the pre-push hook while passing under a plain `bun`.
+  test("the fixture daemon runs as `bun run <script>` whatever the runner's executable is named", () => {
+    const script = join(installedApp, "Contents", "Resources", "src", "mcp-server-daemon.ts");
+    const [daemon] = childPids(voiceBar.pid);
+    const command = Bun.spawnSync(["ps", "-o", "command=", "-p", String(daemon)], { stdout: "pipe", env: process.env })
+      .stdout.toString().trim();
+    expect(command.match(/^(?:\S*\/)?bun run (.+)$/)?.[1]).toBe(script);
   });
 
   test("start + operator keypress + finish yields a proof the release gate accepts", () => {
@@ -977,7 +1013,7 @@ exec /bin/ps "$@"
     const app = makeApp(join(dir, "outside-daemon"));
     sleepSync(1_100);
     const outside = join(dir, "mcp-server-daemon.ts");
-    writeFileSync(outside, "setInterval(() => {}, 1000);\n");
+    writeFileSync(outside, SYNTHETIC_DAEMON);
     const child = launchFakeVoiceBar(app, "/bin/bash", outside);
     try {
       const r = start(producerFixture(app));
@@ -992,7 +1028,7 @@ exec /bin/ps "$@"
     const app = makeApp(join(dir, "linked-daemon"));
     const script = join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts");
     const outside = join(dir, "mcp-server-daemon.ts");
-    writeFileSync(outside, "setInterval(() => {}, 1000); // outside bundle\n");
+    writeFileSync(outside, `${SYNTHETIC_DAEMON}// outside bundle\n`);
     rmSync(script);
     symlinkSync(outside, script);
     sleepSync(1_100);

@@ -16,6 +16,7 @@ describe("preload drops inherited GIT_* variables", () => {
         "console.log(JSON.stringify(Object.keys(process.env).filter((k) => k.startsWith('GIT_')).sort()))"],
       {
         env: {
+          ...process.env,
           PATH: process.env.PATH ?? "",
           HOME: process.env.HOME ?? "",
           GIT_COMMON_DIR: "/nonexistent/.git",

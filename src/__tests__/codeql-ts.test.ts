@@ -98,7 +98,7 @@ describe("CodeQL TypeScript regressions", () => {
       const output = normalizePathTokens(input);
       console.log(JSON.stringify({ elapsed: performance.now() - start, intact: output === 'retain Path/' + '--'.repeat(25000) + '!' }));
     `;
-    const child = Bun.spawn([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([process.execPath, "--eval", script], { env: process.env, stdout: "pipe", stderr: "pipe" });
     // A subprocess deadline makes the RED exponential case safe for the test runner.
     const timer = setTimeout(() => child.kill(), 2000);
     try {

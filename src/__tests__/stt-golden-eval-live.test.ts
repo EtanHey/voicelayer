@@ -32,7 +32,7 @@ const SAMPLE_RATE = 16000;
 
 function whichOk(bin: string): boolean {
   try {
-    return Bun.spawnSync(["which", bin]).exitCode === 0;
+    return Bun.spawnSync(["which", bin], { env: process.env }).exitCode === 0;
   } catch {
     return false;
   }
@@ -203,7 +203,7 @@ function buildGoldenWav(script: string): string {
   const txtPath = join(CACHE_DIR, `golden-${key}.txt`);
   const aiffPath = join(CACHE_DIR, `golden-${key}.aiff`);
   writeFileSync(txtPath, script);
-  const say = Bun.spawnSync(["say", "-f", txtPath, "-o", aiffPath]);
+  const say = Bun.spawnSync(["say", "-f", txtPath, "-o", aiffPath], { env: process.env });
   if (say.exitCode !== 0) {
     throw new Error(`say failed: ${say.stderr?.toString() ?? ""}`);
   }
@@ -217,7 +217,7 @@ function buildGoldenWav(script: string): string {
     "-b",
     "16",
     wavPath,
-  ]);
+  ], { env: process.env });
   if (sox.exitCode !== 0) {
     throw new Error(`sox failed: ${sox.stderr?.toString() ?? ""}`);
   }

@@ -348,7 +348,7 @@ describe("voicelayer-update.sh", () => {
     mkdirSync(binDir, { recursive: true });
     installUpdateScript(scriptsDir);
     writeFileSync(join(binDir, "bun"), "#!/usr/bin/env bash\nexit 0\n");
-    Bun.spawnSync(["chmod", "755", join(binDir, "bun")]);
+    Bun.spawnSync(["chmod", "755", join(binDir, "bun")], { env: process.env });
 
     const result = run(["bash", join(scriptsDir, "voicelayer-update.sh")], {
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
@@ -370,8 +370,9 @@ describe("voicelayer-update.sh", () => {
     mkdirSync(binDir, { recursive: true });
     installUpdateScript(scriptsDir);
     writeFileSync(join(binDir, "bun"), "#!/usr/bin/env bash\nexit 0\n");
-    Bun.spawnSync(["chmod", "755", join(binDir, "bun")]);
+    Bun.spawnSync(["chmod", "755", join(binDir, "bun")], { env: process.env });
     Bun.spawnSync(["git", "init", outerRepo], {
+        env: process.env,
       stdout: "ignore",
       stderr: "ignore",
     });

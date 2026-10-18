@@ -115,8 +115,34 @@ for (const socket of [voiceBarSocket, mcpSocket]) {
   }
 }
 
-// Declares the isolation to the live-host guard.
-setIfUnset("VOICELAYER_TEST_ISOLATED", "1");
+// Declares the isolation to the live-host guard; an inherited 0 cannot disable it.
+process.env.VOICELAYER_TEST_ISOLATED = "1";
+
+// Bun defaults to its STARTUP environment, not process.env after this preload.
+// Explicit subset envs must retain the test paths too; caller values cannot
+// disable the preload contract. Read current values when each child is spawned.
+const isolationKeys = [
+  "VOICELAYER_TEST_ISOLATED", "VOICELAYER_TEST_RUN_ROOT", "QA_VOICE_MCP_PID_PATH",
+  "VOICELAYER_TMP_ROOT", "VOICELAYER_STATE_DIR", "VOICELAYER_CONTROL_LAYER_BASE",
+  "VOICELAYER_SOCKET_PATH", "VOICELAYER_MCP_SOCKET_PATH", "QA_VOICE_RECORDINGS_DIR",
+  "QA_VOICE_THINK_FILE", "QA_VOICE_STT_VOCABULARY_PATH", "QA_VOICE_STT_COMMANDS_DIR",
+  "VOICELAYER_WHISPER_OWNERSHIP_DIR", "QA_VOICE_STT_POLISH_LOG_PATH",
+  "QA_VOICE_STT_POLISH_SOCKET", "QA_VOICE_WISPR_DB_PATH", "VOICELAYER_TEST_FAKE_REC",
+  "VOICELAYER_TEST_FAKE_REC_BIN", "VOICELAYER_TEST_REAL_MIC", "VOICELAYER_TEST_REAL_ARCHIVE",
+] as const;
+for (const api of ["spawn", "spawnSync"] as const) {
+  const original = Bun[api];
+  (Bun[api] as unknown) = ((command: unknown, options?: Record<string, unknown>) => {
+    const arrayForm = Array.isArray(command);
+    const requested = (arrayForm ? options : command) as { env?: NodeJS.ProcessEnv } | undefined;
+    const env = { ...(requested?.env ?? process.env) };
+    if (process.env.VOICELAYER_TEST_ISOLATED === "1") {
+      for (const key of isolationKeys) env[key] = process.env[key];
+    }
+    const isolatedOptions = { ...requested, env };
+    return arrayForm ? (original as Function)(command, isolatedOptions) : (original as Function)(isolatedOptions);
+  }) as unknown;
+}
 
 // The two roots every path in src/paths.ts is built from.
 setIfUnset("VOICELAYER_TMP_ROOT", join(RUN_ROOT, "tmp"));

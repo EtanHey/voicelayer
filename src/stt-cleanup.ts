@@ -1,3 +1,4 @@
+import { requireIsolatedOverride } from "./test-isolation";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -293,6 +294,7 @@ function getSlashCommandRoots(env: STTCleanupEnv): string[] {
       .map((part) => part.trim())
       .filter(Boolean);
   }
+  requireIsolatedOverride(env, "QA_VOICE_STT_COMMANDS_DIR");
   return [join(homedir(), ".claude", "commands")];
 }
 

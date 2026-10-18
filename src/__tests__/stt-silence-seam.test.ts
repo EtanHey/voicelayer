@@ -51,7 +51,7 @@ const DISTINCT_CHUNK_TEXTS = [
 
 function whichOk(bin: string): boolean {
   try {
-    return Bun.spawnSync(["which", bin]).exitCode === 0;
+    return Bun.spawnSync(["which", bin], { env: process.env }).exitCode === 0;
   } catch {
     return false;
   }
@@ -144,7 +144,7 @@ test("a skipped guarded final chunk terminates instead of re-entering its overla
 });
 
 function run(cmd: string[]): void {
-  const proc = Bun.spawnSync(cmd, { cwd: FIXTURE_DIR });
+  const proc = Bun.spawnSync(cmd, { env: process.env, cwd: FIXTURE_DIR });
   if (proc.exitCode !== 0) {
     throw new Error(
       `${cmd.join(" ")} failed: ${new TextDecoder().decode(proc.stderr)}`,

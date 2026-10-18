@@ -11,7 +11,7 @@ import { test, expect, describe } from "bun:test";
 import { existsSync } from "fs";
 
 // Pre-check for conditional skips
-const npxAvailable = Bun.spawnSync(["which", "npx"]).exitCode === 0;
+const npxAvailable = Bun.spawnSync(["which", "npx"], { env: process.env }).exitCode === 0;
 const runningInCI = process.env.CI === "true";
 const mcpJsonExists = existsSync(".mcp.json");
 const mcpConfig =
@@ -27,7 +27,7 @@ describe("Playwright MCP setup", () => {
         "npx",
         "@playwright/mcp@latest",
         "--version",
-      ]);
+      ], { env: process.env });
       if (result.exitCode !== 0) return; // Offline — graceful skip
       const stdout = result.stdout.toString().trim();
       expect(stdout).toMatch(/\d+\.\d+/);

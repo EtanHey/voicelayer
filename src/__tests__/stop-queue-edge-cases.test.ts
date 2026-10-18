@@ -48,7 +48,7 @@ describe("stopPlayback queue clearing", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     // @ts-ignore — mock Bun.spawn: audio players are controllable
@@ -204,7 +204,7 @@ describe("playback error handling", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
   });
 

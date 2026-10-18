@@ -55,7 +55,7 @@ describe("socket stop/cancel → stopPlayback()", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
   });
 

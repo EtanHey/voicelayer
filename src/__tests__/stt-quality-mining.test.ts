@@ -606,6 +606,7 @@ describe("stt-quality-mining", () => {
         "--output-dir",
         outputDir,
       ], {
+        env: process.env,
         cwd: process.cwd(),
         // Bun.spawn's default env predates the preload; pass the isolated one.
         env: process.env,
@@ -646,6 +647,7 @@ describe("stt-quality-mining", () => {
         "--output-dir",
         join(root, "reports"),
       ], {
+        env: process.env,
         cwd: process.cwd(),
         // Bun.spawn's default env predates the preload; pass the isolated one.
         env: process.env,

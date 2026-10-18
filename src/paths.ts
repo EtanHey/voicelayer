@@ -1,3 +1,4 @@
+import { requireIsolatedOverride } from "./test-isolation";
 /**
  * Centralized path constants for VoiceLayer temp files.
  *
@@ -57,13 +58,21 @@ export function defaultStateDir(): string {
 }
 
 export function getTmpRoot(env: NodeJS.ProcessEnv = process.env): string {
+  requireIsolatedOverride(env, TMP_ROOT_OVERRIDE_ENV);
   const value = env[TMP_ROOT_OVERRIDE_ENV]?.trim();
   return value ? value : DEFAULT_TMP_ROOT;
 }
 
 export function getStateDir(env: NodeJS.ProcessEnv = process.env): string {
+  requireIsolatedOverride(env, STATE_DIR_OVERRIDE_ENV);
   const value = env[STATE_DIR_OVERRIDE_ENV]?.trim();
   return value ? value : defaultStateDir();
+}
+
+/** Persistent recording archive; test runs must supply their own archive root. */
+export function getRecordingsArchiveRoot(env: NodeJS.ProcessEnv = process.env): string {
+  requireIsolatedOverride(env, "QA_VOICE_RECORDINGS_DIR");
+  return env.QA_VOICE_RECORDINGS_DIR || join(homedir(), ".local", "share", "voicelayer", "recordings");
 }
 
 /** True when nothing has redirected the ephemeral root away from /tmp. */

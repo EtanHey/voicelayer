@@ -88,7 +88,7 @@ describe("tts module", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     // Clean up history file before each test
@@ -218,7 +218,7 @@ describe("tts module", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     const { speak } = await import("../tts");

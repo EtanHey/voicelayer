@@ -698,11 +698,11 @@ describe("stt-cleanup", () => {
     const commandTargetDir = mkdtempSync(
       join(tmpdir(), "voicelayer-stt-command-target-"),
     );
-    await Bun.$`mkdir -p ${commandsDir}/frontend`;
-    await Bun.$`mkdir -p ${commandsDir}/.git/hooks`;
-    await Bun.$`mkdir -p ${commandsDir}/design/references`;
-    await Bun.$`mkdir -p ${commandsDir}/large-plan`;
-    await Bun.$`mkdir -p ${commandTargetDir}`;
+    await Bun.$`mkdir -p ${commandsDir}/frontend`.env(process.env);
+    await Bun.$`mkdir -p ${commandsDir}/.git/hooks`.env(process.env);
+    await Bun.$`mkdir -p ${commandsDir}/design/references`.env(process.env);
+    await Bun.$`mkdir -p ${commandsDir}/large-plan`.env(process.env);
+    await Bun.$`mkdir -p ${commandTargetDir}`.env(process.env);
     await Bun.write(join(commandsDir, "whats-new.md"), "# /whats-new");
     await Bun.write(join(commandsDir, "README.md"), "# support doc");
     await Bun.write(
