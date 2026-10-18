@@ -42,6 +42,7 @@ import type {
   PlaybackOutcomeReason,
   PlaybackOutcomeStatus,
   PlaybackPriority,
+  PlaybackStateEvent,
   QueueItemSnapshot,
   WordBoundary,
   StateEvent,
@@ -97,6 +98,8 @@ function broadcastPlaybackIdleIfSpeakerClear(nextState?: "recording", intent: "c
   if (isCaptureAdmissionReserved()) return;
   // Explicit global Stop acknowledges logical cancellation; it is not reap proof.
   if (getPlaybackQueueDepth() > 0 && intent !== "stop") return;
+  // A parked item is not idle; only Stop/replacement settles it first.
+  if (playbackQueueManager.isPaused()) return;
   if (activeLongRead && !activeLongRead.controller.signal.aborted && !nextState) return;
   broadcast({
     type: "state",
@@ -796,7 +799,20 @@ interface PlaybackJob {
   resolveExited: (outcome: PlaybackOutcomeEvent) => void;
   completed: boolean;
   exited: Promise<PlaybackOutcomeEvent>;
+  /** Announce `resumed` when the next player for this job actually starts. */
+  resuming?: boolean;
 }
+
+/** One parked utterance: no player, no lease, no TTL; its cursor is frozen until Resume or Stop. */
+interface ParkedPlayback {
+  job: PlaybackJob;
+  offsetMs: number;
+  controller: AbortController;
+  ready: boolean;
+  failed: boolean;
+  resumeRequested: boolean;
+}
+type ControlScope = { id?: string; generation?: number };
 
 interface ActivePlayback {
   job: PlaybackJob;
@@ -931,6 +947,7 @@ class PlaybackQueueManager {
   private conversions = new Set<Promise<void>>();
   private alignments = new Set<Promise<void>>();
   private seekPreparation?: { job: PlaybackJob; controller: AbortController };
+  private parked?: ParkedPlayback;
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
   hasCaptureAdmission(): boolean { return this.captureAdmission !== undefined; }
@@ -993,6 +1010,7 @@ class PlaybackQueueManager {
     try { metadata?.onQueued?.(handle); }
     catch (error) { console.error(`[voicelayer] Playback queue observer failed: ${String(error)}`); }
     if (job.completed) return handle;
+    this.replaceParked();
 
     if (priority === "critical" && (!this.captureAdmission || this.captureAdmission.has(job.id))) {
       this.bargeIn(job);
@@ -1011,6 +1029,8 @@ class PlaybackQueueManager {
     const job = this.jobs.get(scope.id);
     if (!job || job.completed || !job.lifecycle.matches(scope)) return false;
     if (this.seekPreparation?.job === job) this.cancelSeekPreparation();
+    const parked = this.parked?.job === job ? this.parked : undefined;
+    if (parked) { this.parked = undefined; parked.controller.abort(); }
     const active = this.current?.job === job ? this.current
       : [...this.terminating.values()].find(candidate => candidate.job === job);
     if (this.current?.job === job) { this.current = null; this.stopProgressTimer(); this.terminate(active!); }
@@ -1020,7 +1040,7 @@ class PlaybackQueueManager {
     if (this.restartAfterTermination === job) this.restartAfterTermination = null;
     if (this.replayPreparingJob === job) this.replayPreparingJob = null;
     this.pending = this.pending.filter(candidate => candidate !== job);
-    completeJob(job, buildPlaybackOutcome(job, active ? "interrupted" : "skipped", reason,
+    completeJob(job, buildPlaybackOutcome(job, active || parked ? "interrupted" : "skipped", reason, parked?.offsetMs ??
       this.normalizedPlaybackElapsed(elapsedMs) ?? (active ? Date.now() - active.startedAt : 0)));
     this.emitQueueSnapshot(); this.resolveIfIdle(); this.processNext();
     return true;
@@ -1058,7 +1078,11 @@ class PlaybackQueueManager {
     }
     const preparing = this.preparing;
     const restarting = this.restartAfterTermination;
+    const parked = this.parked;
+    this.parked = undefined;
+    parked?.controller.abort();
     const hadActivity =
+      parked !== undefined ||
       this.pending.length > 0 ||
       preparing !== null ||
       active !== null ||
@@ -1069,6 +1093,7 @@ class PlaybackQueueManager {
     this.replayPreparingJob = null;
     preparing?.cancel();
 
+    if (parked) completeJob(parked.job, buildPlaybackOutcome(parked.job, "interrupted", "stopped", parked.offsetMs));
     for (const job of this.pending.splice(0)) {
       completeJob(job, buildPlaybackOutcome(job, "skipped", "stopped"));
     }
@@ -1116,6 +1141,127 @@ class PlaybackQueueManager {
     }
 
     return hadActivity;
+  }
+
+  isPaused(utteranceId?: string): boolean {
+    return this.parked !== undefined && (utteranceId === undefined || this.parked.job.metadata?.longRead?.id === utteranceId);
+  }
+
+  replaceParked(): void {
+    if (this.parked) this.cancel({ id: this.parked.job.id }, undefined, "replaced");
+  }
+
+  private isStale(job: PlaybackJob, scope: ControlScope): boolean {
+    return (scope.id !== undefined && scope.id !== job.id) ||
+      (scope.generation !== undefined && scope.generation !== job.lifecycle.generation);
+  }
+
+  /** Quiesce the owned player (never SIGSTOP) and keep the job, cursor and audio for Resume. */
+  pause(scope: ControlScope, elapsedMs?: number): SeekResult {
+    const globalOffset = (job: PlaybackJob) => (job.metadata?.longRead?.chunk_start_ms ?? 0) + (job.metadata?.localOffsetMs ?? 0);
+    if (this.parked) {
+      return this.isStale(this.parked.job, scope) ? { outcome: "reject", reason: "stale" }
+        : { outcome: "noop", reason: "already paused", offset_ms: globalOffset(this.parked.job) };
+    }
+    const active = this.current;
+    const job = active?.job ?? this.restartAfterTermination ?? this.preparing?.job;
+    if (!job || job.completed) return { outcome: "noop", reason: "nothing playing" };
+    if (this.isStale(job, scope)) return { outcome: "reject", reason: "stale" };
+    // Ask owns its prompt→answer handoff; it is never parked.
+    if (!job.metadata || job.priority === "critical" || this.captureAdmission) return { outcome: "reject", reason: "unsupported" };
+    const chunkStart = job.metadata.longRead?.chunk_start_ms ?? 0;
+    const elapsed = !active ? job.metadata.localOffsetMs ?? 0
+      : elapsedMs !== undefined ? elapsedMs - chunkStart : Date.now() - active.startedAt;
+    const offset = Math.min(Math.max(0, Math.round(elapsed)), job.metadata.durationMs ?? Infinity);
+    this.cancelSeekPreparation();
+    if (active) { this.current = null; this.terminate(active); }
+    if (this.preparing?.job === job) { const preparing = this.preparing; this.preparing = null; preparing.cancel(); }
+    if (this.restartAfterTermination === job) this.restartAfterTermination = null;
+    if (this.replayPreparingJob === job) this.replayPreparingJob = null;
+    this.stopProgressTimer();
+    job.lifecycle.generation++;
+    disposeSeekSlice(job.sliceFile);
+    job.sliceFile = undefined;
+    job.skipAmplitudeDecode = true;
+    job.metadata.localOffsetMs = offset;
+    job.metadata.playbackOffsetMs = chunkStart + offset;
+    const parked: ParkedPlayback = { job, offsetMs: offset, controller: new AbortController(),
+      ready: offset === 0, failed: false, resumeRequested: false };
+    this.parked = parked;
+    if (!parked.ready) this.prepareParked(parked);
+    this.broadcastPlaybackState(job, "paused");
+    this.emitQueueSnapshot();
+    return { outcome: "accept", offset_ms: chunkStart + offset };
+  }
+
+  resume(scope: ControlScope): SeekResult {
+    const parked = this.parked;
+    if (!parked) return { outcome: "noop", reason: "not paused" };
+    if (this.isStale(parked.job, scope)) return { outcome: "reject", reason: "stale" };
+    const offset_ms = (parked.job.metadata?.longRead?.chunk_start_ms ?? 0) + parked.offsetMs;
+    if (parked.resumeRequested) return { outcome: "noop", reason: "resuming", offset_ms };
+    parked.resumeRequested = true;
+    if (parked.ready) this.releaseParked(parked);
+    else if (parked.failed) { parked.failed = false; this.prepareParked(parked); }
+    return { outcome: "accept", offset_ms };
+  }
+
+  /** Cut the resume slice while paused so Resume is a plain player start. */
+  private prepareParked(parked: ParkedPlayback): void {
+    const { job } = parked;
+    const conversion = (async () => {
+      try {
+        const slice = await prepareSeekSlice(job.audioFile, parked.offsetMs, parked.controller.signal);
+        if (this.parked !== parked || job.completed) { disposeSeekSlice(slice); return; }
+        job.sliceFile = slice;
+        parked.ready = true;
+        if (parked.resumeRequested) this.releaseParked(parked);
+      } catch (error) {
+        if (this.parked !== parked) return;
+        parked.failed = true;
+        broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true });
+        if (parked.resumeRequested) { parked.resumeRequested = false; this.broadcastPlaybackState(job, "paused"); }
+      }
+    })();
+    job.lifecycle.track(conversion);
+    this.conversions.add(conversion);
+    void conversion.then(() => {
+      this.conversions.delete(conversion); this.emitQueueSnapshot(); this.resolveIfIdle(); this.processNext();
+    });
+  }
+
+  private releaseParked(parked: ParkedPlayback): void {
+    if (this.parked !== parked) return;
+    try {
+      // A capture that began while the slice was cut keeps the item parked.
+      assertSpeakerClear();
+      if (getEffectiveRecordingState() !== "idle" || this.captureAdmission) throw new Error("Resume refused: voice is busy");
+    } catch (error) {
+      parked.resumeRequested = false;
+      broadcast({ type: "error", message: error instanceof Error ? error.message : String(error), recoverable: true });
+      this.broadcastPlaybackState(parked.job, "paused");
+      return;
+    }
+    this.parked = undefined;
+    const { job } = parked;
+    job.lifecycle.generation++;
+    job.resuming = true;
+    job.enqueuedAt = Date.now();
+    job.expiresAt = Date.now() + ttlForPriority(job.priority);
+    this.pending.unshift(job);
+    this.emitQueueSnapshot();
+    this.processNext();
+  }
+
+  private broadcastPlaybackState(job: PlaybackJob, state: PlaybackStateEvent["state"]): void {
+    const local = job.metadata?.localOffsetMs ?? 0;
+    const { word_index, word_count } = buildPlaybackOutcome(job, "interrupted", undefined, local);
+    const duration = job.metadata?.getUtteranceDurationMs?.() ?? job.metadata?.utteranceDurationMs ?? job.metadata?.durationMs;
+    broadcast({ type: "playback_state", state, playback_id: job.id, generation: job.lifecycle.generation,
+      offset_ms: (job.metadata?.longRead?.chunk_start_ms ?? 0) + local, chunk_offset_ms: local,
+      ...(duration !== undefined ? { duration_ms: duration } : {}),
+      ...(word_index !== undefined ? { word_index } : {}), ...(word_count !== undefined ? { word_count } : {}),
+      ...(job.metadata?.longRead ? { long_read: job.metadata.longRead } : {}) });
   }
 
   restart(): boolean {
@@ -1236,6 +1382,11 @@ class PlaybackQueueManager {
 
   private processNext() {
     if (this.current || this.preparing || this.terminating.size > 0 || this.orphanedWorkCount() > 0) return;
+    // Paused freezes promotion for the whole queue; held items keep their ordinary TTL.
+    if (this.parked) {
+      if (this.depth() === 0) { this.emitQueueSnapshot(); this.resolveIfIdle(); }
+      return;
+    }
 
     while (this.pending.length > 0) {
       const index = this.captureAdmission ? this.pending.findIndex(job => this.captureAdmission!.has(job.id)) : 0;
@@ -1373,6 +1524,7 @@ class PlaybackQueueManager {
         broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
       }
     }
+    if (next.resuming) { next.resuming = false; this.broadcastPlaybackState(next, "resumed"); }
     next.metadata?.onStarted?.(Date.now());
     const active = this.current;
     if (active?.job === next && next.metadata?.cloneProjection && durationMs) {
@@ -1470,8 +1622,15 @@ class PlaybackQueueManager {
 
   private emitQueueSnapshot() {
     const items: QueueItemSnapshot[] = [];
+    const parked = this.parked;
+    if (parked) {
+      const duration = parked.job.metadata?.durationMs ?? 0;
+      items.push({ text: parked.job.metadata?.text ?? "", voice: parked.job.metadata?.voice ?? "", priority: parked.job.priority,
+        is_current: true, progress: duration > 0 ? Math.min(1, parked.offsetMs / duration) : 0 });
+    }
 
     for (const active of this.terminating.values()) {
+      if (active.job === parked?.job) continue;
       items.push({
         text: active.job.metadata?.text ?? "",
         voice: active.job.metadata?.voice ?? "",
@@ -1511,7 +1670,7 @@ class PlaybackQueueManager {
       });
     }
 
-    broadcast({ type: "queue", depth: this.depth(), items });
+    broadcast({ type: "queue", depth: this.depth() + (parked ? 1 : 0), items });
   }
 
   private evictExpired() {
@@ -1714,14 +1873,33 @@ export async function awaitCurrentPlayback(): Promise<void> {
 }
 
 export function getPlaybackQueueDepth(): number {
+  // A parked chunk holds no player or lease, so its read does not count as playing.
   return (playbackQueueManager.getDepthForHealth() + cancelledLongReadTeardowns.size) ||
-    (activeLongRead && !activeLongRead.controller.signal.aborted ? 1 : 0);
+    (activeLongRead && !activeLongRead.controller.signal.aborted && !playbackQueueManager.isPaused(activeLongRead.id) ? 1 : 0);
+}
+
+export function isPlaybackPaused(): boolean {
+  return playbackQueueManager.isPaused();
+}
+
+/** Idempotent; the scope, when given, must name the current item. `elapsedMs` is the global client clock. */
+export function pausePlayback(scope: { id?: string; generation?: number } = {}, playbackElapsedMs?: number): SeekResult {
+  return playbackQueueManager.pause(scope, playbackElapsedMs);
+}
+
+/** Idempotent; never resumes a stopped/replaced item and never while a capture owns the voice. */
+export function resumePlayback(scope: { id?: string; generation?: number } = {}): SeekResult {
+  if (!playbackQueueManager.isPaused()) return { outcome: "noop", reason: "not paused" };
+  if (getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved()) return { outcome: "reject", reason: "busy" };
+  return playbackQueueManager.resume(scope);
 }
 
 /** Seek only the currently owned utterance; never enqueue a stopped generation. */
 export function seekPlayback(offsetMs: number): SeekResult {
   if (!Number.isFinite(offsetMs) || offsetMs < 0) return { outcome: "reject", reason: "invalid offset" };
   if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
+  // Paused seek (silent cursor move) belongs to P12; never restart a parked item here.
+  if (playbackQueueManager.isPaused()) return { outcome: "reject", reason: "paused" };
   if (activeLongRead) {
     if (activeLongRead.controller.signal.aborted) return { outcome: "noop", reason: "nothing playing" };
     if (!activeLongRead.seek) return { outcome: "noop", reason: "not ready" };
@@ -1768,6 +1946,8 @@ let longReadCounter = 0;
 
 /** Preempt only a long read; ordinary short speech retains its existing queue policy. */
 export function preemptLongRead(): boolean {
+  // New accepted speech (and Ask) replaces a parked item so held speech cannot strand a waiter.
+  playbackQueueManager.replaceParked();
   if (!cancelLongRead()) return false;
   if (playbackQueueManager.getDepthForHealth() === 0) broadcastPlaybackIdleIfSpeakerClear();
   return true;
@@ -1982,6 +2162,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
 
 /** Restart the active audio job without resolving its blocking playback handle. */
 export function restartPlayback(): boolean {
+  if (playbackQueueManager.isPaused()) return false;
   if (activeLongRead) {
     // Keep the utterance, synthesis, played ranges and physical exit fences owned by
     // the long-read runner. Restarting only its queued chunk loses global zero.

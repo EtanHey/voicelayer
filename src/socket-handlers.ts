@@ -28,6 +28,9 @@ import {
   hasPendingSpeechPreparation,
   speakText,
   seekPlayback,
+  pausePlayback,
+  resumePlayback,
+  isPlaybackPaused,
 } from "./tts";
 import {
   waitForInput,
@@ -112,6 +115,17 @@ export function handleSocketCommand(
       return { ...buildAck(command, result.outcome, result.reason),
         ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms, clamped: result.clamped } : {}) };
     }
+    case "pause":
+    case "resume": {
+      const scope = { ...(command.playback_id ? { id: command.playback_id } : {}),
+        ...(command.generation !== undefined ? { generation: command.generation } : {}) };
+      const result = command.cmd === "pause"
+        ? pausePlayback(scope, command.playback_elapsed_ms)
+        : recordingState !== "idle" && isPlaybackPaused() ? { outcome: "reject" as const, reason: "busy" }
+        : resumePlayback(scope);
+      return { ...buildAck(command, result.outcome, result.reason),
+        ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms } : {}) };
+    }
     case "speak_text": {
       if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) {
         return buildAck(command, "reject", "busy");
@@ -126,7 +140,7 @@ export function handleSocketCommand(
       }
     }
     case "stop":
-      if (recordingState === "idle" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation()) {
+      if (recordingState === "idle" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
         return buildAck(command, "noop", "already idle");
       }
       if (recordingState === "transcribing") {
@@ -146,7 +160,7 @@ export function handleSocketCommand(
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
       );
     case "cancel":
-      if (recordingState === "idle" && playbackQueueDepth === 0) {
+      if (recordingState === "idle" && playbackQueueDepth === 0 && !isPlaybackPaused()) {
         return buildAck(command, "noop", "already idle");
       }
       // AIDEV-NOTE: Cancel differs from stop — it sets the cancel signal
@@ -167,6 +181,7 @@ export function handleSocketCommand(
       if (recordingState === "recording" || recordingState === "transcribing") {
         return buildAck(command, "reject", "busy");
       }
+      if (isPlaybackPaused()) return buildAck(command, "reject", "paused");
       if (isSpeaking) {
         if (restartPlayback()) {
           return buildAck(command, "accept");

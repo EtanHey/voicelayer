@@ -413,6 +413,32 @@ describe("socket-protocol", () => {
       ).toEqual({ cmd: "cancel" });
     });
 
+    it("parses scoped pause/resume and rejects malformed identity or clocks", () => {
+      expect(parseCommand('{"cmd":"pause","id":"p1"}')).toEqual({ cmd: "pause", id: "p1" });
+      expect(
+        parseCommand('{"cmd":"pause","playback_id":"playback-1","generation":4,"playback_elapsed_ms":4200.4}'),
+      ).toEqual({ cmd: "pause", playback_id: "playback-1", generation: 4, playback_elapsed_ms: 4200 });
+      expect(parseCommand('{"cmd":"resume","id":"r1","playback_id":"playback-1","generation":5}'))
+        .toEqual({ cmd: "resume", id: "r1", playback_id: "playback-1", generation: 5 });
+      for (const bad of [
+        { playback_id: 7 }, { playback_id: "" }, { generation: 0 }, { generation: 1.5 }, { generation: "4" },
+        { playback_elapsed_ms: -1 }, { playback_elapsed_ms: "1" },
+      ]) {
+        expect(parseCommand(JSON.stringify({ cmd: "pause", ...bad }))).toBeNull();
+        expect(parseCommand(JSON.stringify({ cmd: "resume", ...bad }))).toBeNull();
+      }
+      expect(parseCommand('{"cmd":"pause","playback_elapsed_ms":1e999}')).toBeNull();
+    });
+
+    it("serializes the paused playback position for the teleprompter", () => {
+      const event = {
+        type: "playback_state", state: "paused", playback_id: "playback-1", generation: 2,
+        offset_ms: 9100, chunk_offset_ms: 1100, duration_ms: 15000, word_index: 12, word_count: 40,
+        long_read: { id: "long-read-1", chunk_index: 1, chunk_count: 3, chunk_start_ms: 8000 },
+      } as const;
+      expect(JSON.parse(serializeEvent(event))).toEqual(event);
+    });
+
     it("parses replay command", () => {
       const result = parseCommand('{"cmd":"replay"}');
       expect(result).toEqual({ cmd: "replay" });
