@@ -96,6 +96,19 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
 
+  it("SEL11 preserves request identity and original-text hash in Preparing and player receipts", async () => {
+    const identity = { request_id: "selection-B", text_hash: createHash("sha256").update("**hello** world").digest("hex") };
+    const h = speakLongRead("hello world", { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), identity);
+    handles.push(h);
+    await playerBarrier.at(0);
+    await fixtureCheckpoint();
+    const receipts = events.filter(e => e.type === "state" && e.state === "speaking");
+    expect(receipts.length).toBeGreaterThanOrEqual(2);
+    for (const receipt of receipts) expect(receipt).toMatchObject(identity);
+    players[0].exit.resolve(0);
+    await h.done;
+  });
+
   function cloneFixture() {
     spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
     spies.push(spyOn(qwen, "loadProfile").mockReturnValue({ engine: "qwen3-tts", reference_clips: [], reference_clip: "", fallback: "jenny" } as any));

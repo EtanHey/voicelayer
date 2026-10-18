@@ -5,6 +5,7 @@
  * broadcast() to communicate state back to Voice Bar clients.
  */
 
+import { normalizedSpeechHash } from "./speech-identity";
 import { setTTSSetting, setTTSProfile } from "./tts-settings";
 import { setTTSPreviewActive, readTTSControlsStatus } from "./tts-controls-status";
 import { PROCESSING_ENV_VARS, setProcessingSetting } from "./processing-settings";
@@ -118,7 +119,7 @@ export function handleSocketCommand(
       }
       const text = command.format === "markdown" ? markdownToSpeech(command.text) : command.text;
       try {
-        const read = speakText(text, command.profile ?? "auto");
+        const read = speakText(text, command.profile ?? "auto", { request_id: command.id, text_hash: normalizedSpeechHash(command.text) });
         onSpeak?.(read);
         return buildAck(command, "accept");
       } catch (error) {
