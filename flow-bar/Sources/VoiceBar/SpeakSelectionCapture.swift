@@ -52,7 +52,7 @@ struct SelectionFocusAX {
         isChromiumFamily: { app in
             guard let bundle = NSRunningApplication(processIdentifier: app.pid)?.bundleURL else { return false }
             let frameworks = bundle.appendingPathComponent("Contents/Frameworks")
-            return chromiumFrameworks.contains {
+            return SelectionFocusAX.chromiumFrameworks.contains {
                 FileManager.default.fileExists(atPath: frameworks.appendingPathComponent($0).path)
             }
         },
