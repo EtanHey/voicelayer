@@ -68,11 +68,8 @@ def configure(output, app, sandbox, scenario=None):
     env = target.setdefault('EnvironmentVariables', {})
     env.update(VOICEBAR_UIE2E_APP=str(app), VOICEBAR_UIE2E_ROOT=str(sandbox),
                VOICEBAR_UIE2E_SCENARIO=scenario)
-    if scenario == 'gate2246':
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
-        guard = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(guard)
+    guard = load_guard()
+    if guard.required(scenario, app / 'Contents/Info.plist'):
         env['VOICEBAR_UIE2E_DEVICE_GUARD'] = str(guard.verify(pathlib.Path(__file__).resolve().parent.parent, output))
     # Moving the plist changes __TESTROOT__. Resolve it before writing the configured copy.
     def resolve(value):
@@ -195,6 +192,23 @@ def receipts(directory, manifest):
     return ordered, ledger, issues
 
 
+def load_guard():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    return guard
+
+
+def guard_receipt_steps(scenario):
+    """In-app tripwire receipts every guarded scenario must attach, before and after its cases."""
+    prefix = {'hide1': 'HIDE1VIS', 'gate2246': 'GATE2246'}.get(scenario)
+    if prefix is None:
+        return set()
+    return {prefix + ' no-device guard installed before fixtures',
+            prefix + ' no device-start or process tripwire invoked'}
+
+
 def export(output, sandbox, scenario=None):
     scenario = selected_scenario(output, scenario)
     directory = output / 'screenshots'
@@ -219,6 +233,7 @@ def export(output, sandbox, scenario=None):
                     for name in ['user-f5', 'user-ask', 'unknown', 'background', 'recovered', 'visible']
                     for phase in ['before', 'failure', 'shown']}
         required |= {'GATE2246 SEL ' + name for name in ['same-hash', 'different', 'pending', 'fast-bc', 'no-hash', 'busy']}
+        required |= guard_receipt_steps(scenario)
         if not required.issubset({step['name'] for step in steps}):
             issues.append('FAIL gate2246 missing required evidence')
         if any(step.get('skipped') or expected_packet(step) is not None for step in steps):
@@ -227,6 +242,7 @@ def export(output, sandbox, scenario=None):
         required = {'HIDE1VIS ' + event + ' ' + phase
                     for event in ['speaking', 'preparing', 'readback', 'error', 'reconnect', 'notes', 'wizard']
                     for phase in ['before', 'hidden', 'shown']}
+        required |= guard_receipt_steps(scenario)
         if not required.issubset({step['name'] for step in steps}):
             issues.append('FAIL hide1 missing required before/hidden/shown evidence')
         if any(step.get('skipped') or expected_packet(step) is not None for step in steps):

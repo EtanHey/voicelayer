@@ -142,6 +142,10 @@ extension VoiceBarFlowTests {
         limitations = ["HIDE1-only muted native visual gate with injected events; no audio, live daemon, global hotkeys, permissions or installed-app acceptance.",
             "Panel is positioned below the menu bar for unobstructed evidence; this does not establish notch placement."]
         ledger.requiredScope = ["gate:HIDE1"]
+        step("HIDE1VIS no-device guard installed before fixtures") {
+            XCTAssertEqual(try? String(contentsOf: root.appendingPathComponent("no-device-guard.log")),
+                           "voicebar-no-device-guard-v1:installed\n")
+        }
         for (index, event) in ["speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard"].enumerated() {
             app.typeKey("0", modifierFlags: [.command, .option])
             Thread.sleep(forTimeInterval: 1)
@@ -188,6 +192,10 @@ extension VoiceBarFlowTests {
         }
         app.typeKey("9", modifierFlags: [.command, .option])
         ledger.verifiedSurfaces.insert("gate:HIDE1")
+        step("HIDE1VIS no device-start or process tripwire invoked") {
+            XCTAssertEqual(try? String(contentsOf: root.appendingPathComponent("no-device-guard.log")),
+                           "voicebar-no-device-guard-v1:installed\n")
+        }
         completed = true
     }
 

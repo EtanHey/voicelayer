@@ -330,6 +330,28 @@ also refuses fixture startup unless the library is active. The runner atomically
 claims the single authorized retry in its fresh output directory. Do not create a
 second run without a new lead ruling. Stop on any OS permission prompt; never grant it.
 
+### The no-device guard covers every GATE2245 build
+
+hide1, gate2246 and any build with `VOICEBAR_UIE2E_GATE2245=1` (including the batched
+full candidate) construct the real AppDelegate, so all of them get the same stack:
+`voicebar-ui-e2e.sh` builds and self-tests the tripwire, `run.py` and `results.py`
+verify its proof before launch, XCUI inserts it with its receipt, the QA host refuses
+startup without it (and `UIE2EGate2245` checks again before constructing AppDelegate),
+and the exported report requires the before/after guard receipts. A missing guard
+fails the run closed. The single-retry claim stays gate2246-only.
+
+### Merge order and the QA compile check
+
+`UIE2EGate2245.swift`'s gate2246 capture-failure cases call #410's APIs
+(`VoiceBarDaemonController(restartScheduler:microphonePromptDisabled:)`,
+`configureCaptureFailurePresentation(_:controller:)`,
+`handleCaptureFailure(type:userInitiated:)`). **#410 must merge before #416.**
+Those cases compile only under `VOICEBAR_UIE2E_GATE2246_CAPTURE=1`, which
+`--scenario gate2246` sets and `--scenario hide1` does not, so hide1 builds on main
+without #410. CI runs `scripts/check-voicebar-qa-compile.sh`, which compiles both
+configurations with the flags `build-app.sh` itself derives. Until #410 is on main,
+the gate2246 configuration fails there by design.
+
 ## Committed native safety supervisor
 
 All native runner entry points use `voicebar-ui-e2e-supervisor.py`; direct native

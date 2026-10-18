@@ -140,6 +140,33 @@ class ReportTests(unittest.TestCase):
                     self.assertEqual(configured['EnvironmentVariables']['VOICEBAR_UIE2E_SCENARIO'], scenario)
                     self.assertEqual(json.loads((self.root / 'scenario.json').read_text())['scenario'], scenario)
 
+    def test_configure_refuses_every_guarded_scenario_without_the_exact_guard_proof(self):
+        products = self.root / 'DerivedData/Build/Products'
+        products.mkdir(parents=True)
+        for scenario in ['hide1', 'gate2246']:
+            with self.subTest(scenario=scenario):
+                (self.root / 'scenario.json').unlink(missing_ok=True)
+                (self.root / 'UIE2E.xctestrun').unlink(missing_ok=True)
+                (products / 'test.xctestrun').write_bytes(plistlib.dumps({'VoiceBarUIE2ETests': {'EnvironmentVariables': {}}}))
+                with self.assertRaises(FileNotFoundError):
+                    results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox', scenario)
+                self.assertFalse((self.root / 'UIE2E.xctestrun').exists())
+                with patch.object(results, 'load_guard') as load:
+                    load.return_value.required.return_value = True
+                    load.return_value.verify.return_value = self.root / 'device-guard.dylib'
+                    results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox', scenario)
+                env = plistlib.loads((self.root / 'UIE2E.xctestrun').read_bytes())['VoiceBarUIE2ETests']['EnvironmentVariables']
+                self.assertEqual(env['VOICEBAR_UIE2E_DEVICE_GUARD'], str(self.root / 'device-guard.dylib'))
+
+    def test_guarded_exports_require_the_in_app_guard_receipts(self):
+        for scenario, prefix in [('hide1', 'HIDE1VIS'), ('gate2246', 'GATE2246')]:
+            with self.subTest(scenario=scenario):
+                required = results.guard_receipt_steps(scenario)
+                self.assertEqual(required, {prefix + ' no-device guard installed before fixtures',
+                                            prefix + ' no device-start or process tripwire invoked'})
+        self.assertEqual(results.guard_receipt_steps('full'), set())
+        self.assertEqual(results.guard_receipt_steps('focused-338'), set())
+
     def focused_run(self):
         directory, ledger, manifest = self.attachment_run()
         ledger.update(scenario='focused-338', scope='focused-338')

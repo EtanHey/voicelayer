@@ -59,7 +59,8 @@ final class VoiceBarFlowTests: XCTestCase {
             app.launchEnvironment["QA_VOICEBAR_CAPTURE_TOP_RIGHT"] = "1"
             app.launchEnvironment["VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE"] = "1"
         }
-        if scenario == "gate2246" {
+        // Every GATE2245 build or scenario constructs the real AppDelegate: insert the tripwire.
+        if gate2245Enabled || ["hide1", "gate2246"].contains(scenario) {
             let library = try XCTUnwrap(env["VOICEBAR_UIE2E_DEVICE_GUARD"])
             XCTAssertTrue(FileManager.default.fileExists(atPath: library))
             app.launchEnvironment["DYLD_INSERT_LIBRARIES"] = library
