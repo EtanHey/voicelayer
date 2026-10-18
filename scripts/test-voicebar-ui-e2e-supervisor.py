@@ -2,6 +2,7 @@ import importlib.util
 import contextlib
 import io
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -481,6 +482,8 @@ class SupervisorTests(unittest.TestCase):
                              settingsOpened=True, settingsWindowId=77, initialHidden=False)
         host.identity = lambda pid: 'resident-start'
         host.guard_mute = lambda: None  # Synthetic tests must never query/change host audio.
+        # Permission helper contract (exit code, parsed JSON) is driven for real in its own test.
+        host.permissions = lambda: (0, dict(axTrusted=True, prompts=[]))
         host.resident['initialSurface'] = [dict(bounds=dict(X=500, Y=0, Width=200, Height=32), layer=25)]
         return host
 
@@ -796,6 +799,349 @@ class SupervisorTests(unittest.TestCase):
             def wait(self, seconds): events.append(seconds)
         module.wait_until_safe(Host())
         self.assertEqual(events, ['read', 120, 'read'])
+
+    # The run-03 resident 05bcc0a2 AX read, verbatim in shape: the notch state group is the
+    # first labelled node (VoiceBarNotchContract.accessibilityLabel(for: .idle) == 'VoiceBar').
+    IDLE_TREE = [dict(role='AXWindow', title='', description='', value=''),
+                 dict(role='AXGroup', title='', description='', value=''),
+                 dict(role='AXGroup', title='', description='VoiceBar', value='')]
+
+    def tree(self, *extra, state='VoiceBar'):
+        group = dict(role='AXGroup', title='', description=state, value='')
+        return self.IDLE_TREE[:2] + [group] + [dict(role=r, title='', description=d, value='') for r, d in extra]
+
+    def test_notch_idle_state_group_is_positive_idle_structurally(self):
+        module = self.module()
+        self.assertTrue(module.safe_to_hide([], [], self.IDLE_TREE))
+        # Arbitrary text 'VoiceBar' (e.g. a teleprompter word) never qualifies.
+        self.assertFalse(module.safe_to_hide([], [], ['VoiceBar']))
+        word_first = self.IDLE_TREE[:2] + [dict(role='AXButton', title='', description='VoiceBar', value='')]
+        self.assertFalse(module.safe_to_hide([], [], word_first))
+        for state in ['VoiceBar recording', 'VoiceBar launcher', 'VoiceBar status', 'VoiceBar teleprompter',
+                      'VoiceBar history', 'VoiceBar QA']:
+            self.assertFalse(module.safe_to_hide([], [], self.tree(state=state)), state)
+        self.assertFalse(module.safe_to_hide(['rec'], [], self.IDLE_TREE))
+        self.assertFalse(module.safe_to_hide([], ['voicelayer-session-x.lock'], self.IDLE_TREE))
+
+    def test_busy_evidence_overrides_every_idle_looking_signal(self):
+        module = self.module()
+        speaking = self.tree(('AXButton', 'Stop speaking'), ('AXButton', 'VoiceBar'), state='VoiceBar teleprompter')
+        transcribing = self.tree(('AXButton', 'Cancel transcription'), ('AXStaticText', 'Transcribing'),
+                                 state='VoiceBar status')
+        self.assertFalse(module.safe_to_hide([], [], speaking))
+        self.assertFalse(module.safe_to_hide([], [], transcribing))
+        for busy in ['Transcribing', 'Agent speaking', 'Stop speaking', 'Cancel transcription',
+                     'VoiceBar teleprompter', 'VoiceBar status', 'VoiceBar recording']:
+            self.assertFalse(module.safe_to_hide([], [], [busy]), busy)
+            self.assertFalse(module.safe_to_hide([], [], ['Ready', busy]), busy)
+            self.assertFalse(module.safe_to_hide([], [], self.tree(('AXStaticText', busy))), busy)
+            self.assertTrue(any(busy in r for r in module.unsafe_reasons([], [], self.tree(('AXStaticText', busy))))
+                            , busy)
+        # Legacy idle text still counts when nothing busy is present.
+        self.assertTrue(module.safe_to_hide([], [], ['Ready']))
+        self.assertTrue(module.safe_to_hide([], [], ['Start voice recording']))
+
+    def busy_host(self, output, nodes, children):
+        module = self.module()
+        (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+        host = module.NativeHost(output, 'gate2246')
+        host.resident = dict(pid=100, started='start')
+        host.identity = lambda pid: 'start'
+        host.run = lambda args: 'bun src/mcp-server-daemon.ts' if args[-1] == 'args=' else ''
+        host.ax = lambda mode: dict(nodes=nodes)
+        rows = {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'), 101: (100, 'bun')}
+        rows.update({200 + i: (101, cmd) for i, cmd in enumerate(children)})
+        host.process_rows = lambda: dict(rows)
+        host.child_args = lambda pid: 'bun src/mcp-server-daemon.ts' if pid == 101 else None
+        return module, host
+
+    def lock(self, module, age):
+        class Lock:
+            name = 'voicelayer-session-fixture.lock'
+            def stat(self):
+                from types import SimpleNamespace
+                return SimpleNamespace(st_mtime=module.time.time() - age)
+        return Lock()
+
+    def test_real_preconditions_refuse_mixed_busy_trees_players_and_transcribers(self):
+        import contextlib
+        import io
+        speaking = self.tree(('AXButton', 'Stop speaking'), ('AXButton', 'VoiceBar'), state='VoiceBar teleprompter')
+        transcribing = self.tree(('AXButton', 'Cancel transcription'), ('AXStaticText', 'Transcribing'),
+                                 state='VoiceBar status')
+        cases = [(speaking, ['/usr/bin/afplay'], False), (speaking, [], False),
+                 (transcribing, ['/opt/homebrew/bin/whisper-cli'], False), (transcribing, [], False),
+                 (self.IDLE_TREE, ['/usr/bin/afplay'], False), (self.IDLE_TREE, ['/opt/homebrew/bin/whisper-cli'], False),
+                 (self.IDLE_TREE, ['/opt/homebrew/bin/rec'], False), (self.IDLE_TREE, ['/opt/homebrew/bin/sox'], False),
+                 (self.IDLE_TREE, [], True)]
+        for nodes, children, expected in cases:
+            with self.subTest(children=children, state=nodes[2]['description']), tempfile.TemporaryDirectory() as tmp:
+                module, host = self.busy_host(pathlib.Path(tmp), nodes, children)
+                err = io.StringIO()
+                with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
+                    self.assertEqual(host.preconditions(), expected)
+                attempt = host.resident['preconditions'][-1]
+                self.assertEqual(attempt['safe'], expected)
+                for cmd in children:
+                    self.assertIn(pathlib.Path(cmd).name, err.getvalue())
+        for age, expected in [(None, True), (400, True), (10, False)]:
+            with self.subTest(lock_age=age), tempfile.TemporaryDirectory() as tmp:
+                module, host = self.busy_host(pathlib.Path(tmp), self.IDLE_TREE, [])
+                locks = [] if age is None else [self.lock(module, age)]
+                with patch.object(pathlib.Path, 'glob', return_value=locks), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(host.preconditions(), expected)
+
+    def test_resident_inventory_recorded_every_attempt_and_singleton_rechecked(self):
+        import contextlib
+        import io
+        module = self.module()
+        resident = '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            self.stub_permissions(output, json.dumps(dict(axTrusted=True, prompts=[])), 0)
+            host = module.NativeHost(output, 'gate2246')
+            rows = {100: (1, resident), 101: (100, 'bun')}
+            host.process_rows = lambda: dict(rows)
+            host.identity = lambda pid: 'start'
+            host.child_args = lambda pid: 'bun src/mcp-server-daemon.ts' if pid == 101 else None
+            host.ax = lambda mode: dict(nodes=self.IDLE_TREE,
+                                        screenWindows=[dict(bounds=dict(X=768, Y=0, Width=192, Height=49), layer=25)])
+            with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(io.StringIO()):
+                host.prepare_resident()
+            attempt = host.resident['preconditions'][-1]
+            self.assertEqual((attempt['residentPids'], attempt['residentCount'], attempt['safe']), ([100], 1, True))
+            self.assertIn('100', attempt['processRows'])
+            # Inventory changes between prepare and start: a second installed resident appears.
+            rows[300] = (1, resident)
+            err = io.StringIO()
+            with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
+                with self.assertRaises(RuntimeError) as error:
+                    host.start()
+            self.assertIn('[100, 300]', str(error.exception))
+            attempt = host.resident['preconditions'][-1]
+            self.assertEqual((attempt['residentPids'], attempt['residentCount'], attempt['safe']), ([100, 300], 2, False))
+            self.assertEqual(host.preflight['residentPids'], [100, 300])
+            saved = json.loads((output / 'resident-visibility.json').read_text())
+            self.assertEqual(saved['preconditions'][-1]['residentCount'], 2)
+            self.assertIn('[100, 300]', err.getvalue())
+
+    def test_unsafe_reasons_name_every_failing_check_with_observed_values(self):
+        module = self.module()
+        self.assertEqual(module.unsafe_reasons([], [], self.IDLE_TREE), [])
+        reasons = module.unsafe_reasons([4242], ['voicelayer-session-a.lock'], ['VoiceBar recording'])
+        text = '\n'.join(reasons)
+        for observed in ['4242', 'voicelayer-session-a.lock', 'VoiceBar recording']:
+            self.assertIn(observed, text)
+        self.assertEqual(len(reasons), 3)
+        self.assertIn("'Status unreadable'", '\n'.join(module.unsafe_reasons([], [], ['Status unreadable'])))
+        self.assertEqual(len(module.unsafe_reasons([], [], [])), 1)
+
+    def test_failing_preflight_logs_observed_values_to_stderr(self):
+        import contextlib
+        import io
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            host = module.NativeHost(output, 'gate2246')
+            host.resident = dict(pid=100, started='start')
+            host.identity = lambda pid: 'start'
+            host.run = lambda args: 'bun src/mcp-server-daemon.ts'
+            host.ax = lambda mode: dict(nodes=[dict(role='AXGroup', description='Status unreadable')])
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         101: (100, 'bun')}
+            err = io.StringIO()
+            with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
+                self.assertFalse(host.preconditions())
+            self.assertIn('Status unreadable', err.getvalue())
+            self.assertIn('precondition', err.getvalue())
+            # No daemon child: also logged, never a silent False.
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')}
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertFalse(host.preconditions())
+            self.assertIn('daemon', err.getvalue())
+            self.assertIn('[]', err.getvalue())
+
+    def stub_permissions(self, output, payload, code):
+        helper = output / 'voicebar-ui-e2e-permissions'
+        helper.write_text('#!/bin/sh\nprintf %s ' + repr(payload) + '\nexit ' + str(code) + '\n')
+        helper.chmod(0o755)
+
+    def test_permission_helper_exit_2_is_parsed_recorded_then_stops(self):
+        # The real helper prints its JSON and exits 2 on a prompt; the real run() must not lose it.
+        module = self.module()
+        prompt = json.dumps(dict(axTrusted=True, prompts=[dict(owner='com.apple.UserNotificationCenter',
+                                                              labels=['Allow'])]))
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            self.stub_permissions(output, prompt, 2)
+            host = module.NativeHost(output, 'gate2246')
+            with self.assertRaises(RuntimeError) as stop:
+                host.prepare_resident()
+            self.assertIn('STOP', str(stop.exception))
+            self.assertIn('UserNotificationCenter', str(stop.exception))
+            self.assertEqual(host.checks[-1]['permissionsExit'], 2)
+            self.assertEqual(host.checks[-1]['permissions']['prompts'][0]['labels'], ['Allow'])
+            host.collect_owned = lambda: None
+            host.muted = lambda: True
+            with self.assertRaises(RuntimeError) as stop:
+                host.check()
+            self.assertIn('STOP', str(stop.exception))
+            self.assertEqual(host.checks[-1]['permissions']['axTrusted'], True)
+            self.assertIn('UserNotificationCenter', (output / 'supervisor-preflight.log').read_text())
+            self.stub_permissions(output, 'not json', 2)
+            with self.assertRaises(RuntimeError) as unreadable:
+                host.prepare_resident()
+            self.assertIn('exit 2', str(unreadable.exception))
+            self.assertIn('not json', str(unreadable.exception))
+
+    def test_resident_count_failure_records_count_and_pids(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            self.stub_permissions(output, json.dumps(dict(axTrusted=True, prompts=[])), 0)
+            host = module.NativeHost(output, 'gate2246')
+            resident = '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'
+            host.process_rows = lambda: {200: (1, resident), 300: (1, resident)}
+            with self.assertRaises(RuntimeError) as error:
+                host.prepare_resident()
+            self.assertIn('[200, 300]', str(error.exception))
+            self.assertEqual(host.preflight['residentPids'], [200, 300])
+            self.assertEqual(host.preflight['residentCount'], 2)
+            receipt = {}
+            host.save(receipt)
+            self.assertEqual(json.loads((output / 'operator-state.json').read_text())['preflight']['residentCount'], 2)
+
+    def test_daemon_count_recorded_on_every_attempt_with_commands(self):
+        import contextlib
+        import io
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            host = module.NativeHost(output, 'gate2246')
+            host.resident = dict(pid=100, started='start')
+            host.identity = lambda pid: 'start'
+            host.run = lambda args: 'bun src/mcp-server-daemon.ts'
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         101: (100, 'bun'), 102: (100, 'bun')}
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertFalse(host.preconditions())
+            attempt = host.resident['preconditions'][-1]
+            self.assertEqual((attempt['daemonCount'], attempt['daemonPids'], attempt['safe']), (2, [101, 102], False))
+            self.assertIn('101', err.getvalue())
+            self.assertIn('mcp-server-daemon.ts', err.getvalue())
+            # A changed daemon identity is recorded before the raise.
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         103: (100, 'bun')}
+            host.resident.update(daemonPid=101, daemonStarted='start')
+            with self.assertRaises(RuntimeError):
+                host.preconditions()
+            self.assertEqual(host.resident['preconditions'][-1]['daemonPids'], [103])
+            saved = json.loads((output / 'resident-visibility.json').read_text())
+            self.assertEqual(saved['preconditions'][-1]['daemonCount'], 1)
+
+    def test_short_lived_resident_child_rechecks_instead_of_bare_error(self):
+        import contextlib
+        import io
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
+            host = module.NativeHost(output, 'gate2246')
+            gone = 99999
+            while True:
+                try:
+                    os.kill(gone, 0); gone += 1
+                except ProcessLookupError:
+                    break
+                except PermissionError:
+                    gone += 1
+            def run(args):
+                if args[:2] == ['ps', '-p'] and args[2] == str(gone):
+                    raise subprocess.CalledProcessError(1, args, output='')
+                return 'bun src/mcp-server-daemon.ts'
+            host.resident = dict(pid=100, started='start')
+            host.identity = lambda pid: 'start'
+            host.run = run
+            host.ax = lambda mode: dict(nodes=[dict(role='AXGroup', description='VoiceBar')])
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         101: (100, 'bun'), gone: (100, '/usr/bin/true')}
+            err = io.StringIO()
+            with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
+                self.assertTrue(host.preconditions())
+            self.assertIn(str(gone), err.getvalue())
+            # A still-live PID whose args are unreadable raises with context, not a bare repr.
+            live = os.getpid()
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'),
+                                         live: (100, 'python3')}
+            host.run = lambda args: (_ for _ in ()).throw(subprocess.CalledProcessError(1, args, output=''))
+            with self.assertRaises(RuntimeError) as error:
+                host.preconditions()
+            self.assertIn(str(live), str(error.exception))
+            self.assertIn('still exists', str(error.exception))
+
+    def test_remember_race_errors_name_pid_parent_and_observed_state(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            host = self.host(output)
+            host.owned = {500: dict(started='s', cmd='runner', state='S', parent=1, kind='runner')}
+            host.process_state = lambda pid: (None if pid == 500 else
+                                              dict(started='t', cmd='child', state='S', parent=500))
+            with self.assertRaises(RuntimeError) as error:
+                host.remember(600, 'child', 'child', 500)
+            for observed in ['600', '500', 'parentAlive']:
+                self.assertIn(observed, str(error.exception))
+            host.process_state = lambda pid: dict(started='t', cmd='other', state='S', parent=1)
+            with self.assertRaises(RuntimeError) as error:
+                host.remember(600, 'qa', 'expected-cmd')
+            self.assertIn('other', str(error.exception))
+            self.assertIn('expected-cmd', str(error.exception))
+
+    def test_supervise_failure_prints_summary_with_receipt_path(self):
+        import contextlib
+        import io
+        module = self.module()
+        class Host:
+            output = pathlib.Path('/fixture/out')
+            def muted(self): return True
+            def set_mute(self, value): pass
+            def guard_mute(self): pass
+            def prepare_resident(self): raise RuntimeError('fixture refusal')
+            def stop(self): return True
+            def restore_resident(self): pass
+            def save(self, receipt): pass
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            module.supervise(Host())
+        line = [x for x in err.getvalue().splitlines() if 'FAILED' in x]
+        self.assertEqual(len(line), 1)
+        self.assertIn('fixture refusal', line[0])
+        self.assertIn('/fixture/out/operator-state.json', line[0])
+
+    def test_supervise_failure_writes_error_to_stderr(self):
+        import contextlib
+        import io
+        module = self.module()
+        class Host:
+            def muted(self): return True
+            def set_mute(self, value): pass
+            def guard_mute(self): pass
+            def prepare_resident(self): raise RuntimeError('fixture precondition failure')
+            def stop(self): return True
+            def restore_resident(self): pass
+            def save(self, receipt): pass
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(module.supervise(Host()), 2)  # HARN-SUP: pre-launch refusal is PREFLIGHT_REFUSED.
+        self.assertIn('fixture precondition failure', err.getvalue())
 
     def test_real_preflight_reads_processes_locks_and_positive_ax_state(self):
         from unittest.mock import patch
