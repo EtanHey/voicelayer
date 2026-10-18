@@ -95,29 +95,32 @@ public struct SpeechSettingsView: View {
                                     Text(Self.rateLabel(rate.wrappedValue)).foregroundStyle(.primary)
                                 } else {
                                     HStack(alignment: .top) {
-                                        VStack(spacing: 2) {
-                                            Slider(value: Binding(get: { rateDraft[kind] ?? min(50, max(-30, Double(rate.wrappedValue.dropLast()) ?? 0)) },
-                                                                  set: { rateDraft[kind] = $0 }),
-                                                   in: Self.rateRange, step: 5, onEditingChanged: { editing in
-                                                       if !editing, let value = rateDraft.removeValue(forKey: kind) {
-                                                           rate.wrappedValue = String(format: "%+d%%", Int(value))
-                                                       }
-                                                   }).accessibilityLabel("\(kind.title) rate")
-                                                .frame(height: 22)
-                                            GeometryReader { geometry in
-                                                HStack {
-                                                    Text("Slower")
-                                                    Spacer()
-                                                    Text("Faster")
+                                        Slider(value: Binding(get: { rateDraft[kind] ?? min(50, max(-30, Double(rate.wrappedValue.dropLast()) ?? 0)) },
+                                                              set: { rateDraft[kind] = $0 }),
+                                               in: Self.rateRange, step: 5, onEditingChanged: { editing in
+                                                   if !editing, let value = rateDraft.removeValue(forKey: kind) {
+                                                       rate.wrappedValue = String(format: "%+d%%", Int(value))
+                                                   }
+                                               }).accessibilityLabel("\(kind.title) rate")
+                                            // Overlay the control itself: Form can keep the native slider narrower than its row.
+                                            .overlay(alignment: .top) {
+                                                GeometryReader { geometry in
+                                                    HStack {
+                                                        Text("Slower")
+                                                        Spacer()
+                                                        Text("Faster")
+                                                    }
+                                                    Text("Normal")
+                                                        .fixedSize()
+                                                        .position(x: geometry.size.width * Self.normalRateFraction,
+                                                                  y: geometry.size.height / 2)
                                                 }
-                                                Text("Normal")
-                                                    .fixedSize()
-                                                    .position(x: geometry.size.width * Self.normalRateFraction,
-                                                              y: geometry.size.height / 2)
+                                                .font(.caption2).foregroundStyle(.secondary)
+                                                .frame(height: 14)
+                                                .offset(y: 24)
                                             }
-                                            .font(.caption2).foregroundStyle(.secondary)
-                                            .frame(height: 14)
-                                        }
+                                            .frame(height: 22)
+                                            .padding(.bottom, 16)
                                         Text(Self.rateLabel(rateDraft[kind].map { String(format: "%+d%%", Int($0)) } ?? rate.wrappedValue))
                                             .monospacedDigit().frame(width: 110, height: 22, alignment: .trailing)
                                     }
