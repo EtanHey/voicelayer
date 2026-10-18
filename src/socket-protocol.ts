@@ -31,6 +31,9 @@ export interface StateEvent {
   state: VoiceLayerState;
   /** Present when state is "speaking" — the text being spoken. */
   text?: string;
+  /** Original request identity, stable across preparation, chunks and seeks. */
+  request_id?: string;
+  text_hash?: string;
   /** Present when state is "speaking" — the voice being used. */
   voice?: string;
   /** Global utterance position at player start (including normal chunk handoffs). */
@@ -327,6 +330,8 @@ export const SPEAK_TEXT_MAX_CHARS = 200_000;
 export interface SpeakTextCommand extends SocketCommandBase {
   cmd: "speak_text";
   text: string;
+  /** SHA-256 of whitespace-normalized original input, before markdown projection. */
+  text_hash?: string;
   profile?: "auto" | "short" | "long";
   format?: "plain" | "markdown";
   source?: string;
@@ -644,8 +649,10 @@ export function parseCommand(line: string): SocketCommand | null {
         if (parsed.profile !== undefined && !["auto", "short", "long"].includes(parsed.profile)) return null;
         if (parsed.format !== undefined && !["plain", "markdown"].includes(parsed.format)) return null;
         if (parsed.source !== undefined && (typeof parsed.source !== "string" || parsed.source.length > 256)) return null;
+        if (parsed.text_hash !== undefined && (typeof parsed.text_hash !== "string" || !/^[a-f0-9]{64}$/.test(parsed.text_hash))) return null;
         return withCommandId<SpeakTextCommand>({
           cmd: "speak_text", text: parsed.text,
+          ...(parsed.text_hash !== undefined ? { text_hash: parsed.text_hash } : {}),
           ...(parsed.profile !== undefined ? { profile: parsed.profile } : {}),
           ...(parsed.format !== undefined ? { format: parsed.format } : {}),
           ...(parsed.source !== undefined ? { source: parsed.source } : {}),
