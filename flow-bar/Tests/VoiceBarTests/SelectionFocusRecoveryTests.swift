@@ -195,7 +195,7 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         let report = run(capture)
         XCTAssertEqual(report.details["outcome"], "copy_failed")
         XCTAssertEqual(report.details["preflight_ax_enable"], "attempted")
-        XCTAssertEqual(report.message, SelectionErrorFeedback.copyFailed)
+        XCTAssertEqual(report.message, "Can't copy\nCheck A11y")
         XCTAssertEqual(report.spoken, [])
         XCTAssertEqual(board.string(forType: .string), "original")
     }
