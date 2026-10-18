@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import contextlib
+import html
 import importlib.util
 import io
 import json
@@ -316,6 +317,126 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(info['runPassed'])
         self.assertNotIn('failReason', info)
         self.assertIn('PASS recording:', printed.getvalue())
+
+    def publish_with(self, on_write, kernel=None, supervisor=dict(pid=4242, birth=(7, 7))):
+        """Run a passing suite; on_write(path, nth) fires after each receipt write (nth per receipt name)."""
+        lost = []
+        counts = {}
+        real_write = pathlib.Path.write_text
+        def write_text(path, *args, **kwargs):
+            result = real_write(path, *args, **kwargs)
+            for name in ['recording.json', 'recording.html']:
+                if name in path.name and path.parent == self.output:
+                    counts[name] = counts.get(name, 0) + 1
+                    on_write(name, counts[name], lost)
+            return result
+        def birth(pid): return (7, 7) if pid == 4242 and not lost else None
+        printed = io.StringIO()
+        with unittest.mock.patch.object(runner.os, 'getppid', return_value=4242), \
+                unittest.mock.patch.object(runner.safety, 'kernel_birth', side_effect=kernel or birth), \
+                unittest.mock.patch.object(pathlib.Path, 'write_text', autospec=True, side_effect=write_text), \
+                contextlib.redirect_stdout(printed):
+            result = runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder(), supervisor=supervisor)
+        info = json.loads((self.output / 'recording.json').read_text())
+        return result, info, printed.getvalue()
+
+    def assert_supervisor_lost_receipt(self, result, info, printed, reason='supervisor-lost'):
+        self.assertNotEqual(result, 0)
+        self.assertFalse(info['runPassed'])
+        self.assertEqual(info['failReason'], reason)
+        self.assertTrue(info['valid'])  # Media finalized regardless.
+        self.assertNotIn('PASS', printed)
+        page = html.unescape((self.output / 'recording.html').read_text())
+        self.assertIn(reason, page)
+        self.assertIn('"runPassed": false', page)
+        self.assertEqual([p.name for p in self.output.glob('.recording*')], [])  # No staged PASS left behind.
+
+    def test_supervisor_death_during_html_receipt_write_never_passes(self):
+        # Sol R1 reproduction: alive through cleanup and the first check, dead while recording.html is written.
+        def die(name, nth, lost):
+            if name == 'recording.html': lost.append(True)
+        self.assert_supervisor_lost_receipt(*self.publish_with(die))
+
+    def test_supervisor_death_during_json_receipt_write_never_passes(self):
+        def die(name, nth, lost):
+            if name == 'recording.json' and nth == 2: lost.append(True)  # nth 1 is run_suite's opening receipt.
+        self.assert_supervisor_lost_receipt(*self.publish_with(die))
+
+    def test_supervisor_death_after_promotion_demotes_before_console_and_exit(self):
+        # Lost during the post-rename HTML render: finalization revalidates, so no PASS line and exit 1.
+        writes = []
+        def die(name, nth, lost):
+            writes.append(name)
+            if name == 'recording.html' and nth == 2: lost.append(True)
+        result, info, printed = self.publish_with(die)
+        self.assertIn('recording.html', writes)
+        self.assert_supervisor_lost_receipt(result, info, printed)
+
+    def test_publication_failure_after_promotion_demotes_the_passing_receipt(self):
+        def fail(name, nth, lost):
+            if name == 'recording.html' and nth == 2: raise OSError('disk full')
+        result, info, printed = self.publish_with(fail)
+        self.assertNotEqual(result, 0)
+        self.assertFalse(info['runPassed'])
+        self.assertEqual(info['failReason'], 'publication-failed')
+        self.assertIn('disk full', info['publicationError'])
+        self.assertNotIn('PASS', printed)
+
+    def test_broken_console_pass_line_demotes_the_receipt(self):
+        with unittest.mock.patch('builtins.print', side_effect=BrokenPipeError('stdout closed')):
+            result, info, printed = self.publish_with(lambda *a: None)
+        self.assertEqual(result, 1)
+        self.assertFalse(info['runPassed'])
+        self.assertEqual(info['failReason'], 'publication-failed')
+
+    def test_signal_during_receipt_publication_never_leaves_pass(self):
+        def interrupt(name, nth, lost):
+            if name == 'recording.html' and nth == 2: signal.raise_signal(signal.SIGTERM)
+        result, info, printed = self.publish_with(interrupt)
+        self.assertEqual(result, 128 + signal.SIGTERM)
+        self.assertFalse(info['runPassed'])
+        self.assertIn(int(signal.SIGTERM), info['cancelledSignals'])
+        self.assertNotIn('PASS', printed)
+
+    def test_no_io_between_final_supervisor_check_and_pass_promotion(self):
+        trace = []
+        real_replace, real_write = os.replace, pathlib.Path.write_text
+        def replace(src, dst):
+            trace.append(('replace', pathlib.Path(dst).name)); return real_replace(src, dst)
+        def write_text(path, *args, **kwargs):
+            trace.append(('write', path.name)); return real_write(path, *args, **kwargs)
+        def birth(pid):
+            trace.append(('check', pid)); return (7, 7)
+        with unittest.mock.patch.object(runner.os, 'getppid', return_value=4242), \
+                unittest.mock.patch.object(runner.safety, 'kernel_birth', side_effect=birth), \
+                unittest.mock.patch.object(runner.os, 'replace', side_effect=replace), \
+                unittest.mock.patch.object(pathlib.Path, 'write_text', autospec=True, side_effect=write_text), \
+                contextlib.redirect_stdout(io.StringIO()):
+            result = runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder(),
+                                      supervisor=dict(pid=4242, birth=(7, 7)))
+        self.assertEqual(result, 0)
+        promotion = trace.index(('replace', 'recording.json'), trace.index(('write', '.recording.json.pass-staged')))
+        self.assertEqual(trace[promotion - 1], ('check', 4242))  # The check is the last act before the rename.
+        before = trace[:promotion]
+        self.assertIn(('write', '.recording.html.tmp'), before)  # FAIL/pending receipts already on disk.
+        self.assertTrue(json.loads((self.output / 'recording.json').read_text())['runPassed'])
+
+    def test_receipts_are_pending_fail_before_the_final_check(self):
+        seen = {}
+        def snapshot(pid):
+            if pid == 4242 and (self.output / '.recording.json.pass-staged').exists():
+                seen['json'] = json.loads((self.output / 'recording.json').read_text())
+                seen['html'] = html.unescape((self.output / 'recording.html').read_text())
+            return (7, 7)
+        result, info, printed = self.publish_with(lambda *a: None, kernel=snapshot)
+        self.assertEqual(result, 0)
+        self.assertFalse(seen['json']['runPassed'])
+        self.assertEqual(seen['json']['failReason'], 'pending-final-supervisor-check')
+        self.assertNotIn('"runPassed": true', seen['html'])
+        self.assertTrue(info['runPassed'])
+        self.assertNotIn('failReason', info)
+        self.assertIn('PASS recording:', printed)
+        self.assertIn('"runPassed": true', html.unescape((self.output / 'recording.html').read_text()))
 
     def test_supervisor_death_before_suite_entry_never_launches(self):
         # Sol R5: validated supervisor 4242 died; launchd (1) is now the parent. Never adopt it.

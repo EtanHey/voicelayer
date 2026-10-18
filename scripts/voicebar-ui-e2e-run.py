@@ -142,11 +142,23 @@ def stop_test(process):
             os.killpg(process.pid, signal.SIGKILL); process.wait()
 
 
+def atomic_write(path, text):
+    staged = path.with_name('.' + path.name + '.tmp')
+    staged.write_text(text)
+    os.replace(staged, path)
+
+
+def receipt_html(info):
+    return ('<!doctype html><meta charset="utf-8"><title>UIE2E recording</title>'
+            '<h1>UIE2E recording receipt</h1><a href="' + html.escape(info['path'], quote=True) +
+            '">Screen recording (.mov)</a><pre>' + html.escape(json.dumps(info, indent=2)) + '</pre>')
+
+
 def run_suite(output, arguments=None, recording=None, supervisor=None, registry=None):
     recording = recording or Recording(output)
     visibility = Visibility(output)
     info = dict(path=recording.path.name, valid=False)
-    (output / 'recording.json').write_text(json.dumps(info, indent=2) + '\n')
+    atomic_write(output / 'recording.json', json.dumps(info, indent=2) + '\n')
     test = None
     status = 1
     # SIGHUP too: a torn-down operator session must not kill the runner before it stops its children.
@@ -167,22 +179,52 @@ def run_suite(output, arguments=None, recording=None, supervisor=None, registry=
         if cancelled: raise InterruptedError('UI run interrupted by signal ' + str(cancelled[0]))
         if supervisor is not None and not supervisor_alive():
             raise InterruptedError('Safety supervisor %d exited; UI run aborted' % supervisor['pid'])
-    def publish():
+    staged_pass = output / '.recording.json.pass-staged'
+    def write_fail(reason=None, detail=None):
+        # Every receipt is FAIL/pending on disk before any PASS can exist.
         nonlocal status
+        if status == 0: status = 1
         info['cancelledSignals'] = list(cancelled)
-        if cancelled: info['error'] = 'UI run interrupted by signal ' + str(cancelled[0])
-        # A PASS needs a live authenticated supervisor at publish time: it can die without a caught
-        # signal after the last loop check, while cleanup flushes and probes.
-        if status == 0 and not cancelled and supervisor is not None and not supervisor_alive():
-            status = 1
-            info['failReason'] = 'supervisor-lost'
-            info.setdefault('error', 'Safety supervisor %d lost before publish (supervisor-lost)' % supervisor['pid'])
-        info['runPassed'] = status == 0 and not cancelled
-        (output / 'recording.json').write_text(json.dumps(info, indent=2) + '\n')
-        caption = html.escape(json.dumps(info, indent=2))
-        (output / 'recording.html').write_text('<!doctype html><meta charset="utf-8"><title>UIE2E recording</title>'
-            '<h1>UIE2E recording receipt</h1><a href="' + html.escape(info['path'], quote=True) +
-            '">Screen recording (.mov)</a><pre>' + caption + '</pre>')
+        if cancelled:
+            info['error'] = 'UI run interrupted by signal ' + str(cancelled[0])
+            reason = reason if reason in ('supervisor-lost', 'publication-failed') else 'interrupted'
+        if reason: info['failReason'] = reason
+        if detail: info.setdefault('error', detail)
+        info['runPassed'] = False
+        atomic_write(output / 'recording.json', json.dumps(info, indent=2) + '\n')
+        atomic_write(output / 'recording.html', receipt_html(info))
+    def lost():
+        return supervisor is not None and not supervisor_alive()
+    def lost_detail():
+        return 'Safety supervisor %d lost before PASS publication (supervisor-lost)' % supervisor['pid']
+    def publish():
+        """FAIL/pending receipts first, then ONE rename promotes a pre-written PASS. Returns promoted."""
+        nonlocal status
+        candidate = status == 0 and not cancelled
+        info['cancelledSignals'] = list(cancelled)
+        if not candidate:
+            write_fail()
+            return False
+        info['runPassed'] = False
+        info['failReason'] = 'pending-final-supervisor-check'
+        atomic_write(output / 'recording.json', json.dumps(info, indent=2) + '\n')
+        atomic_write(output / 'recording.html', receipt_html(info))
+        passing = {key: value for key, value in info.items() if key != 'failReason'}
+        passing['runPassed'] = True
+        staged_pass.write_text(json.dumps(passing, indent=2) + '\n')
+        # FINAL BOUNDARY: the authenticated-supervisor check is the last act; the rename follows with
+        # no other I/O. The cleanup's finalization step re-samples once more before the PASS line and
+        # exit code (demote-only). RESIDUAL, documented: the supervisor can still die in the few
+        # instructions after that last sample (before rename(2) here, or before print/return there);
+        # macOS gives no pidfd/process handle, so a death past the final sample is undetectable.
+        if cancelled or lost():
+            staged_pass.unlink(missing_ok=True)
+            if cancelled: write_fail()
+            else: write_fail('supervisor-lost', lost_detail())
+            return False
+        os.replace(staged_pass, output / 'recording.json')
+        info.clear(); info.update(passing)
+        return True
     for sig in previous: signal.signal(sig, interrupted)
     if registry is not None: REGISTRATION[:] = [registry]
     try:
@@ -222,15 +264,38 @@ def run_suite(output, arguments=None, recording=None, supervisor=None, registry=
                 info['visibilityError'] = str(error)
                 status = 1
             info['testExit'] = test.returncode if test is not None else None
-            publish()
-            print(f"{'PASS' if info['valid'] and info['runPassed'] else 'FAIL'} recording: {output / info['path']} "
-                  f"duration={info.get('durationSeconds', 'N/A')}s bytes={info.get('bytes', 0)}", flush=True)
+            promoted = publish()
+            if promoted:
+                try:
+                    atomic_write(output / 'recording.html', receipt_html(info))  # The human view follows the JSON.
+                except Exception as error:
+                    info['publicationError'] = str(error)
+                    write_fail('publication-failed', 'Receipt publication failed after promotion')
+                    promoted = False
         finally:
-            # Also persist a first cancellation arriving during receipt publication.
-            if cancelled and info.get('runPassed') is not False: publish()
-            for sig, handler in previous.items(): signal.signal(sig, handler)
-            REGISTRATION.clear()
-    return 128 + cancelled[0] if cancelled else status
+            try:
+                # Finalization re-samples: a cancellation or supervisor loss after promotion demotes,
+                # so the PASS line and exit code never reuse the pre-rename liveness decision.
+                if info.get('runPassed') is True and (cancelled or lost()):
+                    if cancelled: write_fail()
+                    else: write_fail('supervisor-lost', lost_detail())
+                elif cancelled and info.get('runPassed') is not False:
+                    write_fail()
+            finally:
+                for sig, handler in previous.items(): signal.signal(sig, handler)
+                REGISTRATION.clear()
+    # Console line and exit code come from the receipt that is actually on disk, after promotion.
+    passed = info.get('runPassed') is True and info['valid'] and not cancelled
+    try:
+        print(f"{'PASS' if passed else 'FAIL'} recording: {output / info['path']} "
+              f"duration={info.get('durationSeconds', 'N/A')}s bytes={info.get('bytes', 0)}", flush=True)
+    except Exception as error:
+        if not passed: raise
+        info['publicationError'] = str(error)
+        write_fail('publication-failed', 'Console PASS line could not be written')
+        passed = False
+    if cancelled: return 128 + cancelled[0]
+    return 0 if passed else (status or 1)
 
 
 if __name__ == '__main__':
