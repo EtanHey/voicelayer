@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Guard the native gate lifecycle; refuse UI mutation without causal Settings ownership."""
 import argparse
+import ctypes
 import datetime
+import errno
+import hashlib
 import importlib.util
 import json
 import os
 import pathlib
+import re
 import secrets
+import shlex
 import signal
 import subprocess
 import sys
@@ -16,6 +21,8 @@ import time
 # Full PASS recorded 1488.545 s (earlier run 1504 s); keep 40 min for both broad suites.
 # gate2246 run-01 reached 250 s of recording, before xcodebuild/recorder overhead.
 SCENARIO_BUDGET_SECONDS = {'full': 2400, 'focused-338': 2400, 'gate2246': 600, 'hide1': 300}
+# Whole owned-process cleanup (runner SIGINT 45 s + TERM/KILL legs + late children), bounded.
+CLEANUP_BUDGET_SECONDS = 180
 
 # The notch resident (2.2.45+) exposes one AX state group whose description is its visual
 # state (VoiceBarNotchContract.accessibilityLabel(for:)): exactly 'VoiceBar' when idle,
@@ -26,15 +33,121 @@ RESIDENT_EXECUTABLE = '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'
 NOTCH_IDLE_LABEL = 'VoiceBar'
 BUSY_PREFIXES = ('Recording', 'Starting microphone', 'Stop recording', 'Cancel recording')
 BUSY_TEXT = ('VoiceBar recording', 'VoiceBar status', 'VoiceBar teleprompter', 'Stop speaking',
-             'Cancel transcription', 'Transcribing', 'Agent speaking')
-# Capture, playback and one-shot transcription children of the resident daemon.
-BUSY_CHILDREN = ('rec', 'sox', 'play', 'afplay', 'whisper-cli')
-LEGACY_IDLE_TEXT = ('Ready', 'Start voice recording')
-LEGACY_IDLE_PREFIXES = ('Ready.', 'Hidden until ')
+             'VoiceBar launcher', 'VoiceBar history', 'Cancel transcription', 'Transcribing',
+             'Agent speaking', 'Re-transcribing')
+# Only mlx_lm.server and whisper-server server modes are allowlisted below.
+# Exact labels only. Prefix/substring matching can detect busy state in memory but
+# must never authorize retention of a spoken word or a dynamic status suffix.
+AX_PUBLIC_LABELS = frozenset((NOTCH_IDLE_LABEL, 'VoiceBar launcher', 'VoiceBar history',
+                              'Ready', 'Start voice recording', 'Re-transcribing stored audio',
+                              'Re-transcribing…') + BUSY_PREFIXES + BUSY_TEXT)
+
+
+class OwnershipRace(RuntimeError):
+    """A candidate's ownership could not be proven during a scan; it is skipped, never signalled."""
+
+
+class _BsdInfo(ctypes.Structure):
+    # struct proc_bsdinfo (sys/proc_info.h): 136 bytes, pbi_start_tvsec at 120, pbi_start_tvusec at 128.
+    _fields_ = [('head', ctypes.c_uint8 * 120), ('start_tvsec', ctypes.c_uint64), ('start_tvusec', ctypes.c_uint64)]
+
+
+_LIBSYSTEM = []
+
+
+def _proc_pidinfo(pid):
+    if not _LIBSYSTEM:
+        library = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)
+        library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        library.proc_pidinfo.restype = ctypes.c_int
+        _LIBSYSTEM.append(library)
+    info = _BsdInfo()
+    size = _LIBSYSTEM[0].proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))  # PROC_PIDTBSDINFO
+    if size != ctypes.sizeof(info):
+        return 0, ctypes.get_errno()
+    return (int(info.start_tvsec), int(info.start_tvusec)), 0
+
+
+def kernel_birth(pid):
+    """Kernel start time (seconds, microseconds) of a live PID; None only on ESRCH; else fail closed."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        raise RuntimeError('Process identity unreadable: invalid pid %r' % (pid,))
+    birth, error = _proc_pidinfo(pid)
+    if birth:
+        return birth
+    if error == errno.ESRCH:
+        return None
+    raise RuntimeError('Process identity unreadable: %d (errno %d)' % (pid, error))
+
+
+def birth_text(birth):
+    return '%d.%06d' % tuple(birth)
+
+
+def parse_birth(started):
+    try:
+        seconds, micros = str(started).split('.')
+        return int(seconds), int(micros)
+    except ValueError:
+        return None
+
+
+def token_digest(token):
+    return hashlib.sha256(token.encode()).hexdigest()[:32]
+
+
+def register_owned(registry, token, kind, pid, birth):
+    """Append one acknowledged launch: the runner calls this in the child before exec."""
+    line = json.dumps(dict(token=token_digest(token), kind=kind, pid=pid, birth=list(birth))) + '\n'
+    fd = os.open(str(registry), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, line.encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def redacted(text):
+    return '<redacted len=%d sha256=%s>' % (len(text), hashlib.sha256(text.encode()).hexdigest()[:8])
+
+
+def ax_text_receipt(text):
+    return text if text in AX_PUBLIC_LABELS or text == '' else redacted(text)
+
+
+def ax_receipt(nodes):
+    return [dict({k: n[k] for k in ['role', 'identifier', 'frame'] if k in n},
+                 **{k: ax_text_receipt(n[k]) for k in ['title', 'description', 'value'] if k in n})
+            for n in nodes]
+
+
+def permission_receipt(permission):
+    prompts = permission.get('prompts')
+    if prompts is not None:
+        if not isinstance(prompts, list):
+            raise RuntimeError('Permission prompt inventory malformed')
+        retained = []
+        for prompt in prompts:
+            labels = prompt.get('labels')
+            if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
+                raise RuntimeError('Permission prompt labels unreadable')
+            text = ' '.join(labels).casefold()
+            kind = next((kind for kind, terms in [
+                ('microphone', ('microphone',)), ('accessibility', ('accessibility',)),
+                ('input-monitoring', ('input monitoring', 'input-monitoring', 'monitor input')),
+                ('screen-recording', ('screen recording', 'screen-recording', 'record your screen', 'screen and system audio'))
+            ] if any(term in text for term in terms)), 'unknown')
+            owner = prompt.get('owner') or prompt.get('processName') or 'unknown'
+            if not isinstance(owner, str) or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', owner):
+                owner = redacted(str(owner))
+            retained.append(dict(owner=owner,
+                                 kind=kind, labels=[redacted(x) for x in labels]))
+        prompts = retained
+    return dict(axTrusted=permission.get('axTrusted') is True, prompts=prompts)
 
 
 def ax_nodes(ax_tree):
-    # A bare string is unstructured text: it can match busy or legacy text, never the notch group.
+    # A bare string is unstructured text: it can match busy text, never the notch group.
     return [dict(value=x) if isinstance(x, str) else x for x in ax_tree]
 
 
@@ -53,18 +166,16 @@ def unsafe_reasons(busy_children, fresh_locks, ax_tree):
     labels = [x for n in nodes for x in node_labels(n)]
     reasons = []
     if busy_children:
-        reasons.append('capture/playback/transcription process(es) under resident daemon: '
+        reasons.append('unallowlisted child process(es) under resident daemon: '
                        + repr(list(busy_children)))
     if fresh_locks:
         reasons.append('fresh session lock(s) (<300s): ' + repr(list(fresh_locks)))
     busy = [x for x in labels if x.startswith(BUSY_PREFIXES) or any(t in x for t in BUSY_TEXT)]
     if busy:
-        reasons.append('AX shows busy resident: ' + repr(busy))
+        reasons.append('AX shows busy resident: ' + repr([ax_text_receipt(x) for x in busy]))
     # Require positive AX evidence. A collapsed/empty tree is UNKNOWN, never idle.
-    elif not (notch_idle(nodes) or any(x in LEGACY_IDLE_TEXT or x.startswith(LEGACY_IDLE_PREFIXES)
-                                       for x in labels)):
-        reasons.append('no positive idle AX evidence; observed ' + repr(
-            [dict(role=n.get('role'), labels=node_labels(n)) for n in nodes if node_labels(n)]))
+    elif not notch_idle(nodes):
+        reasons.append('no positive idle AX evidence; observed ' + repr(ax_receipt(nodes)))
     return reasons
 
 
@@ -91,9 +202,14 @@ def wait_until_safe(host):
 
 def require_supervisor(output, environment):
     proof = json.loads((output / 'supervisor-authority.json').read_text())
+    birth = proof.get('birth')
     if (proof.get('pid') != os.getppid() or not proof.get('token')
-            or proof['token'] != environment.get('VOICEBAR_UIE2E_SUPERVISOR_TOKEN')):
+            or proof['token'] != environment.get('VOICEBAR_UIE2E_SUPERVISOR_TOKEN')
+            or not isinstance(birth, list) or len(birth) != 2
+            or kernel_birth(proof['pid']) != tuple(birth)):
         raise ValueError('Native launch requires its live parent safety supervisor')
+    # The authenticated identity, carried into run_suite; never re-derived from a later getppid().
+    return dict(pid=proof['pid'], birth=tuple(birth))
 
 
 def supervise(host):
@@ -193,6 +309,13 @@ class NativeHost:
         self.deadline = None
         self.log = None
         self.owned = {}
+        self.ownership_races = []
+        self.cleanup_notes = []
+        self.token = None
+        self.registry = output / 'owned-registrations.jsonl'
+        # Launchd-launched apps count only if born after this supervisor began (exact path AND birth).
+        now = time.time()
+        self.launch_birth = (int(now), int(now % 1 * 10**6))
         self.shutdown = []
         self.runner_launch_attempted = False
         self.mute_retention_reason = None
@@ -210,9 +333,10 @@ class NativeHost:
         try:
             parsed = json.loads(result.stdout)
         except ValueError:
-            raise RuntimeError('Permission helper unreadable: exit %d stdout %r stderr %r'
-                               % (result.returncode, result.stdout[-500:], result.stderr[-500:])) from None
-        return result.returncode, parsed
+            raise RuntimeError('Permission helper unreadable: exit %d stdout %s stderr %s'
+                               % (result.returncode, redacted(result.stdout), redacted(result.stderr))) from None
+        # Sanitize at ingestion, before either checks[] or refuse_permissions/note sees it.
+        return result.returncode, permission_receipt(parsed)
 
     def refuse_permissions(self, code, permissions):
         if permissions.get('axTrusted') is not True or permissions.get('prompts') != [] or code != 0:
@@ -242,6 +366,15 @@ class NativeHost:
         result = json.loads(self.run(args))
         return result
 
+    def read_resident_ax(self):
+        try:
+            return self.ax('read')
+        except Exception as error:
+            # Helper failures may embed stdout/AX text. Never propagate that payload
+            # into supervise()'s operator receipt or its FAILED log line.
+            raise RuntimeError('Resident AX read failed: %s %s' %
+                               (type(error).__name__, ax_text_receipt(str(error)))) from None
+
     def guard_mute(self):
         if not self.muted():
             self.set_mute(True)
@@ -267,7 +400,7 @@ class NativeHost:
     def settings_state(self):
         # Retire before reading: even an unreadable/absent snapshot cannot renew a lease.
         self.retire_settings_claim()
-        result = self.ax('read')
+        result = self.read_resident_ax()
         opened = any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings'
                      for n in result['nodes'])
         if opened:
@@ -294,7 +427,8 @@ class NativeHost:
         return [dict(bounds=w['bounds'], layer=w['layer']) for w in windows]
 
     def save_resident(self):
-        (self.output / 'resident-visibility.json').write_text(json.dumps(self.resident, indent=2) + '\n')
+        (self.output / 'resident-visibility.json').write_text(
+            json.dumps(dict(self.resident, preflight=self.preflight), indent=2) + '\n')
 
     def process_rows(self):
         rows = {}
@@ -322,102 +456,141 @@ class NativeHost:
             raise RuntimeError('Resident child args unreadable; PID still exists: %d (ps exit %d, output %r)'
                                % (pid, error.returncode, error.output)) from error
 
-    def preconditions(self):
+    def idle_daemon_child(self, pid, executable):
+        # Only direct daemon children qualify. These servers persist while idle.
+        # HTTP whisper-server transcription creates
+        # no child process: AX transcribing state and fresh session locks cover it.
+        name = pathlib.Path(executable).name
+        python = r'(?:Python|python(?:3(?:\.\d+)?)?)'
+        if name != 'whisper-server' and not re.fullmatch(python, name):
+            return False
+        try:
+            argv = shlex.split(self.child_args(pid) or '')
+        except ValueError:
+            return False
+        if not argv:
+            return False
+        if name == 'whisper-server':
+            return pathlib.Path(argv[0]).name == name and any(
+                flag == '--port' and value.isdecimal() and 0 < int(value) < 65536
+                for flag, value in zip(argv[1:], argv[2:]))
+        return bool(re.fullmatch(python, pathlib.Path(argv[0]).name)) and (
+            argv[1:3] == ['-m', 'mlx_lm.server'] or
+            len(argv) > 1 and pathlib.Path(argv[1]).name == 'mlx_lm.server')
+
+    def resident_inventory(self, attempt):
         rows = self.process_rows()
-        pid = self.resident['pid']
         residents = sorted(p for p, (_, cmd) in rows.items() if cmd == RESIDENT_EXECUTABLE)
-        related = set(residents)
+        related = set(residents) | ({self.resident['pid']} if self.resident.get('pid') in rows else set())
         while True:
             extended = related | {p for p, (parent, _) in rows.items() if parent in related}
             if extended == related:
                 break
             related = extended
-        inventory = dict(residentPids=residents, residentCount=len(residents),
-                         processRows={str(p): list(rows[p]) for p in sorted(related)})
+        attempt.update(residentPids=residents, residentCount=len(residents),
+                       processRows={str(p): list(rows[p]) for p in sorted(related)})
         self.preflight.update(residentPids=residents, residentCount=len(residents))
-        attempts = self.resident.setdefault('preconditions', [])
-        if residents != [pid]:
-            attempts.append(dict(inventory, safe=False))
+        return rows
+
+    def preconditions(self):
+        attempt = dict(safe=False, residentPids=None, residentCount=None, daemonPids=None,
+                       daemonCount=None, processRows={})
+        self.resident.setdefault('preconditions', []).append(attempt)
+        try:
+            rows = self.resident_inventory(attempt)
+            # Save an unsafe observation before any identity/args/AX reads can fail.
             self.save_resident()
-            message = ('Exactly one installed resident required on recheck; never launch/replace one '
-                       '(expected [%d], observed %d %r)' % (pid, len(residents), residents))
-            self.note(message)
-            raise RuntimeError(message)
-        cmd = rows.get(pid, (None, None))[1]
-        observed = (cmd, self.identity(pid) if cmd == RESIDENT_EXECUTABLE else None)
-        if observed != (RESIDENT_EXECUTABLE, self.resident['started']):
-            message = ('Resident identity changed; no action permitted (pid %d expected started %r, observed %r)'
-                       % (pid, self.resident['started'], observed))
-            self.note(message)
-            raise RuntimeError(message)
-        children = {p: self.child_args(p) for p, (parent, _) in sorted(rows.items()) if parent == pid}
-        daemons = [p for p, args in children.items() if args is not None and 'mcp-server-daemon.ts' in args]
-        attempt = dict(inventory, daemonPids=daemons, daemonCount=len(daemons))
-        if len(daemons) != 1:
-            attempts.append(dict(attempt, safe=False))
+            pid = self.resident['pid']
+            residents = attempt['residentPids']
+            if residents != [pid]:
+                raise RuntimeError('Exactly one installed resident required on recheck; never launch/replace one '
+                                   '(expected [%d], observed %d %r)' % (pid, len(residents), residents))
+            observed = self.identity(pid)
+            attempt['residentStarted'] = observed
+            if observed != self.resident['started']:
+                raise RuntimeError('Resident identity changed; no action permitted (pid %d expected started %r, observed %r)'
+                                   % (pid, self.resident['started'], observed))
+            children = attempt['residentChildren'] = {}
+            for p, (parent, _) in sorted(rows.items()):
+                if parent == pid:
+                    children[p] = self.child_args(p)
+            daemons = [p for p, args in children.items() if args is not None and 'mcp-server-daemon.ts' in args]
+            attempt.update(daemonPids=daemons, daemonCount=len(daemons))
+            if len(daemons) != 1:
+                self.note('precondition failed: expected exactly one mcp-server-daemon.ts child of resident %d; '
+                          'observed %d %r; resident children %r' % (pid, len(daemons), daemons, children))
+                return False
+            daemon = daemons[0]
+            identity = self.identity(daemon)
+            attempt['daemonStarted'] = identity
+            if 'daemonPid' in self.resident and (daemon != self.resident['daemonPid'] or identity != self.resident['daemonStarted']):
+                raise RuntimeError('Resident daemon identity changed; no action permitted (expected pid %r started %r, '
+                                   'observed pid %d started %r)' % (self.resident['daemonPid'], self.resident['daemonStarted'],
+                                                                    daemon, identity))
+            self.resident.update(daemonPid=daemon, daemonStarted=identity)
+            descendants = {daemon}
+            while True:
+                extended = descendants | {p for p, (parent, _) in rows.items() if parent in descendants}
+                if extended == descendants:
+                    break
+                descendants = extended
+            busy = [p for p in sorted(descendants - {daemon})
+                    if rows[p][0] != daemon or not self.idle_daemon_child(p, rows[p][1])]
+            locks = []
+            attempt.update(capturePids=busy, freshLocks=locks)
+            for path in pathlib.Path('/tmp').glob('voicelayer-session-*.lock'):
+                try:
+                    if time.time() - path.stat().st_mtime < 300:
+                        locks.append(path.name)
+                except FileNotFoundError:
+                    pass
+            nodes = self.read_resident_ax()['nodes']
+            attempt.update(axNodes=ax_receipt(nodes), axLabels=[ax_text_receipt(x) for n in nodes for x in node_labels(n)],
+                           notchIdle=notch_idle(nodes))
+            reasons = unsafe_reasons(['%d %s' % (p, pathlib.Path(rows[p][1]).name) for p in busy], locks, nodes)
+            for reason in reasons:
+                self.note('precondition failed: ' + reason)
+            attempt['safe'] = not reasons
+            return attempt['safe']
+        except BaseException as error:
+            attempt.update(safe=False, error=repr(error))
+            self.note('precondition failed: ' + repr(error))
+            raise
+        finally:
             self.save_resident()
-            self.note('precondition failed: expected exactly one mcp-server-daemon.ts child of resident %d; '
-                      'observed %d %r; resident children %r' % (pid, len(daemons), daemons, children))
-            return False
-        daemon = daemons[0]
-        identity = self.identity(daemon)
-        if 'daemonPid' in self.resident and (daemon != self.resident['daemonPid'] or identity != self.resident['daemonStarted']):
-            attempts.append(dict(attempt, daemonStarted=identity, safe=False))
-            self.save_resident()
-            message = ('Resident daemon identity changed; no action permitted (expected pid %r started %r, '
-                       'observed pid %d started %r)' % (self.resident['daemonPid'], self.resident['daemonStarted'],
-                                                         daemon, identity))
-            self.note(message)
-            raise RuntimeError(message)
-        self.resident.update(daemonPid=daemon, daemonStarted=identity)
-        descendants = {daemon}
-        while True:
-            extended = descendants | {p for p, (parent, _) in rows.items() if parent in descendants}
-            if extended == descendants:
-                break
-            descendants = extended
-        busy = [p for p in sorted(descendants) if pathlib.Path(rows[p][1]).name in BUSY_CHILDREN]
-        locks = []
-        for path in pathlib.Path('/tmp').glob('voicelayer-session-*.lock'):
-            try:
-                if time.time() - path.stat().st_mtime < 300:
-                    locks.append(path.name)
-            except FileNotFoundError:
-                pass
-        nodes = self.ax('read')['nodes']
-        labels = [x for node in nodes for x in node_labels(node)]
-        reasons = unsafe_reasons(['%d %s' % (p, pathlib.Path(rows[p][1]).name) for p in busy], locks, nodes)
-        for reason in reasons:
-            self.note('precondition failed: ' + reason)
-        safe = not reasons
-        attempts.append(dict(attempt, capturePids=busy, freshLocks=locks, axLabels=labels,
-                             notchIdle=notch_idle(nodes), safe=safe))
-        self.save_resident()
-        return safe
 
     def prepare_resident(self):
-        code, permission = self.permissions()
-        self.checks.append(dict(phase='preflight', permissionsExit=code, permissions=permission))
-        self.refuse_permissions(code, permission)
-        residents = sorted(p for p, (_, cmd) in self.process_rows().items() if cmd == RESIDENT_EXECUTABLE)
-        self.preflight.update(residentPids=residents, residentCount=len(residents))
-        if len(residents) != 1:
-            message = ('Exactly one installed resident required; never launch/replace one (observed %d %r)'
-                       % (len(residents), residents))
-            self.note(message)
-            raise RuntimeError(message)
-        self.resident = dict(pid=residents[0], started=self.identity(residents[0]), restoreRequired=False,
-                             settingsOpened=False)
-        self.save_resident()
-        snapshot = self.ax('read')
-        self.resident['initialSurface'] = self.surface(snapshot)
-        if not self.resident['initialSurface']:
-            raise RuntimeError('A shown resident surface is required; no native visibility mutation permitted')
-        # SHIP2246 ruling: leave the installed resident shown. Settings ownership
-        # is unavailable, so do not open, close, Hide or Show any resident window.
-        self.resident.update(visibilityPolicy='leave-shown', initialHidden=False)
-        self.save_resident()
-        wait_until_safe(self)
+        attempt = dict(safe=False, processRows={})
+        self.preflight['prepareInventory'] = attempt
+        try:
+            code, permission = self.permissions()
+            self.checks.append(dict(phase='preflight', permissionsExit=code, permissions=permission))
+            self.refuse_permissions(code, permission)
+            self.resident_inventory(attempt)
+            self.save_resident()
+            residents = attempt['residentPids']
+            if len(residents) != 1:
+                raise RuntimeError('Exactly one installed resident required; never launch/replace one (observed %d %r)'
+                                   % (len(residents), residents))
+            self.resident = dict(pid=residents[0], started=self.identity(residents[0]), restoreRequired=False,
+                                 settingsOpened=False)
+            self.save_resident()
+            snapshot = self.read_resident_ax()
+            attempt['axNodes'] = ax_receipt(snapshot['nodes'])
+            self.resident['initialSurface'] = self.surface(snapshot)
+            if not self.resident['initialSurface']:
+                raise RuntimeError('A shown resident surface is required; no native visibility mutation permitted')
+            # Leave the installed resident shown: no open/close/Hide/Show action.
+            self.resident.update(visibilityPolicy='leave-shown', initialHidden=False)
+            self.save_resident()
+            wait_until_safe(self)
+            attempt['safe'] = True
+        except BaseException as error:
+            attempt.update(safe=False, error=repr(error))
+            self.note('prepare failed: ' + repr(error))
+            raise
+        finally:
+            self.save_resident()
 
     def start(self):
         wait_until_safe(self)
@@ -425,15 +598,15 @@ class NativeHost:
             self.verify_shown_resident()
         else:
             self.settings(False)
-            if self.ax('read')['screenWindows']:
+            if self.read_resident_ax()['screenWindows']:
                 raise RuntimeError('Resident window remains on screen after own Hide')
         self.check()
         subprocess.run([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-results.py'), 'configure',
                         str(self.output), str(self.sandbox / 'VoiceBarQA.app'), str(self.sandbox),
                         '--scenario', self.scenario], check=True, timeout=120)
-        token = secrets.token_hex(24)
+        token = self.token = secrets.token_hex(24)
         with (self.output / 'supervisor-authority.json').open('x') as file:
-            json.dump(dict(pid=os.getpid(), token=token), file)
+            json.dump(dict(pid=os.getpid(), birth=list(kernel_birth(os.getpid())), token=token), file)
         env = dict(os.environ, VOICEBAR_UIE2E_SUPERVISOR_TOKEN=token,
                    VOICEBAR_UIE2E_RESIDENT_SNAPSHOT=str(self.output / 'resident-visibility.json'))
         self.log = (self.output / 'supervisor.log').open('w')
@@ -477,7 +650,8 @@ class NativeHost:
 
     def process_state(self, pid):
         try:
-            raw = self.run(['ps', '-p', str(pid), '-o', 'lstart=,stat=,ppid=,comm='])
+            # lstart is local time: pin locale and zone so a DST change cannot fake a reuse.
+            raw = self.run(['env', 'LC_ALL=C', 'TZ=UTC0', 'ps', '-p', str(pid), '-o', 'lstart=,stat=,ppid=,comm='])
         except subprocess.CalledProcessError as error:
             if error.returncode == 1 and not (error.output or '').strip():
                 try:
@@ -490,65 +664,152 @@ class NativeHost:
         fields = raw.split(None, 7)
         if len(fields) != 8:
             raise RuntimeError('Process identity unreadable: ' + str(pid))
-        return dict(started=' '.join(fields[:5]), state=fields[5], parent=int(fields[6]), cmd=fields[7])
+        # Birth identity is the kernel's microsecond start time (lstart is only whole seconds),
+        # read after ps and again; a change across the reads is never one identity.
+        before = self.kernel_birth(pid)
+        if before is None:
+            return None
+        after = self.kernel_birth(pid)
+        if after != before:
+            raise OwnershipRace('Process identity changed during read; no signal: %d (%r then %r)' % (pid, before, after))
+        return dict(started=birth_text(before), lstart=' '.join(fields[:5]), state=fields[5],
+                    parent=int(fields[6]), cmd=fields[7])
 
-    def remember(self, pid, kind, expected_cmd=None, parent=None):
+    def kernel_birth(self, pid):
+        return kernel_birth(pid)
+
+    def remember(self, pid, kind, expected_cmd=None, parent=None, expected_started=None, born_after=None):
         if pid in [os.getpid(), self.resident.get('pid'), self.resident.get('daemonPid')]:
             raise RuntimeError('Protected identity cannot be owned')
         state = self.process_state(pid)
+        if state is not None and expected_started is not None and state['started'] != expected_started:
+            raise OwnershipRace('Registered PID is a different process; no signal: %d (registered birth %s, observed %s)'
+                                % (pid, expected_started, state['started']))
+        if state is not None and born_after is not None and (parse_birth(state['started']) or (0, 0)) < born_after:
+            raise OwnershipRace('Exact-path process predates this gate; not owned: %d (born %s)' % (pid, state['started']))
         if state is not None and expected_cmd is not None and state['cmd'] != expected_cmd:
-            raise RuntimeError('Process changed during ownership capture; no signal: %d (expected cmd %r, observed %r)'
+            raise OwnershipRace('Process changed during ownership capture; no signal: %d (expected cmd %r, observed %r)'
                                % (pid, expected_cmd, state['cmd']))
         if state is not None and parent is not None:
             parent_alive = self.owned_alive(parent) if state['parent'] == parent else None
             if not parent_alive:
-                raise RuntimeError('Child ownership changed during capture; no signal: %d (expected parent %d, '
+                raise OwnershipRace('Child ownership changed during capture; no signal: %d (expected parent %d, '
                                    'observed parent %d, parentAlive=%r)' % (pid, parent, state['parent'], parent_alive))
         if state is not None and pid not in self.owned:
             self.owned[pid] = dict(state, kind=kind)
 
+    def adopt(self, pid, kind, expected_cmd=None, parent=None, **identity):
+        # A process that exits, is reparented or reused mid-scan is unprovable, not fatal:
+        # skip it (never signal it) and keep scanning. Launch completeness stays NOT_PROVEN.
+        try:
+            self.remember(pid, kind, expected_cmd, parent, **identity)
+        except OwnershipRace as error:
+            if len(self.ownership_races) < 50:
+                self.ownership_races.append(dict(pid=pid, kind=kind, error=str(error)))
+
+    def registered(self):
+        # Acknowledged launches: the runner appends PID + kernel birth in each child before exec,
+        # so a child reparented (or in its own session) before any scan is still ours.
+        if not self.token or not self.registry.exists():
+            return []
+        digest, rows = token_digest(self.token), []
+        for line in self.registry.read_text().splitlines():
+            try:
+                row = json.loads(line)
+                pid, birth = row['pid'], row['birth']
+                if row['token'] != digest or not isinstance(pid, int) or pid <= 1:
+                    continue
+                rows.append((pid, str(row['kind']), birth_text(birth)))
+            except (ValueError, KeyError, TypeError):
+                continue  # A torn final line from a killed writer proves nothing.
+        return rows
+
     def collect_owned(self):
+        for pid, kind, started in self.registered():
+            if pid not in self.owned:
+                self.adopt(pid, 'registered-' + kind, expected_started=started)
         rows = self.process_rows()
-        expected = str((self.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
+        # Unique run-local executables, never a name match. XCTest launches its runner app
+        # through launchd, so no PPID chain from our runner reaches it (run-03 PID 47300).
+        unique = {str((self.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve()): 'qa',
+                  str((self.output / 'DerivedData/Build/Products/Debug/VoiceBarUIE2ETests-Runner.app/Contents'
+                       '/MacOS/VoiceBarUIE2ETests-Runner').resolve()): 'xctest-runner'}
         for pid, (_, cmd) in rows.items():
-            if cmd == expected:
-                self.remember(pid, 'qa', expected)  # Unique sandbox executable, never a name match.
+            if cmd in unique and pid not in self.owned:
+                self.adopt(pid, unique[cmd], cmd, born_after=self.launch_birth)
         while True:
             added = False
             for pid, (parent, cmd) in rows.items():
                 if pid not in self.owned and parent in self.owned:
-                    self.remember(pid, 'child', cmd, parent)
+                    self.adopt(pid, 'child', cmd, parent)
                     added = added or pid in self.owned
             if not added:
                 break
 
     def owned_alive(self, pid):
+        owned = self.owned[pid]
+        if self.child is not None and pid == self.child.pid:
+            # Our own unreaped child: its PID cannot be reused, whatever it exec'd into.
+            # Once poll() reaps it, it is never signalled again (run-03 PID 46884).
+            alive = self.child.poll() is None
+            if alive:
+                try:  # Receipt only: record the runner's exec transitions.
+                    current = self.process_state(pid)
+                    if current and owned.get('cmd') and current['cmd'] != owned['cmd'] \
+                            and current['cmd'] not in owned.setdefault('execs', []):
+                        owned['execs'].append(current['cmd'])
+                except Exception:
+                    pass
+            return alive
+        if owned.get('retired'):
+            return False
         current = self.process_state(pid)
         if current is None or current['state'].startswith('Z'):
             return False
-        owned = self.owned[pid]
-        if any(current[k] != owned[k] for k in ['started', 'cmd']):
-            raise RuntimeError('Owned PID identity changed; no signal: ' + str(pid))
+        # Identity is PID + start time. exec keeps both (framework Python's bin/python3 stub,
+        # xcrun's xcodebuild shim); a reused PID always has a new start time.
+        if current['started'] != owned['started']:
+            owned['retired'] = dict(reason='pid-reused', observed=current)
+            self.note('owned PID %d exited and was reused (owned %r, observed %r); never signalled'
+                      % (pid, {k: owned.get(k) for k in ['started', 'cmd', 'parent']}, current))
+            return False
+        if current['cmd'] != owned['cmd'] and current['cmd'] not in owned.setdefault('execs', []):
+            owned['execs'].append(current['cmd'])
         return True
+
+    def cleanup_note(self, message):
+        if message not in self.cleanup_notes:
+            self.cleanup_notes.append(message)
+
+    def cleanup_step(self, label, action):
+        # Mute, discovery and wait failures are recorded (termination then stays NOT_PROVEN and
+        # mute retained) but never stop signalling an already provable target.
+        try:
+            action()
+        except BaseException as error:
+            self.cleanup_note(label + ': ' + repr(error))
 
     def shutdown_wait(self, seconds):
         # Ignore latched cancellation/deadline here: they must not interrupt cleanup or mute checks.
         end = time.monotonic() + seconds
         while time.monotonic() < end:
-            self.guard_mute()
+            self.cleanup_step('mute guard', self.guard_mute)
             time.sleep(min(.2, max(0, end - time.monotonic())))
 
-    def terminate_owned(self, pid, runner=False):
+    def terminate_owned(self, pid, runner=False, deadline=None):
         for sig, seconds in ([(signal.SIGINT, 45)] if runner else []) + [(signal.SIGTERM, 5), (signal.SIGKILL, 5)]:
-            self.guard_mute()
-            # Re-read PID/start/command immediately before EVERY individual signal, never killpg.
+            self.cleanup_step('mute guard', self.guard_mute)
+            # Re-read PID/birth immediately before EVERY individual signal, never killpg. A residual
+            # exit-and-recycle between this read and kill() remains possible for non-child PIDs.
             if not self.owned_alive(pid):
                 return
             os.kill(pid, sig)
             self.shutdown.append(dict(pid=pid, signal=int(sig), identity=self.owned[pid]))
             for _ in range(seconds):
-                self.collect_owned()
-                self.shutdown_wait(1)
+                if deadline is not None and time.monotonic() > deadline:
+                    raise RuntimeError('Cleanup deadline reached; owned termination NOT_PROVEN: ' + str(pid))
+                self.cleanup_step('discovery', self.collect_owned)
+                self.cleanup_step('wait', lambda: self.shutdown_wait(1))
                 if self.child is not None:
                     self.child.poll()  # Reap the direct child without a blocking wait.
                 if not self.owned_alive(pid):
@@ -558,6 +819,8 @@ class NativeHost:
     def stop(self):
         errors = []
         self.mute_retention_reason = None
+        self.cleanup_notes = []
+        deadline = time.monotonic() + CLEANUP_BUDGET_SECONDS
         # Runner, QA/descendant cleanup and final proof are independent, even if a leg fails.
         def attempt(action):
             try:
@@ -565,16 +828,25 @@ class NativeHost:
             except BaseException as error:
                 errors.append(repr(error))
         attempt(self.collect_owned)
+        handled = set()
         if self.child is not None and self.child.poll() is None:
-            if self.child.pid not in self.owned:
-                errors.append('Runner identity was not captured at launch; no signal permitted')
-            else:
-                attempt(lambda: self.terminate_owned(self.child.pid, runner=True))
-        attempt(self.collect_owned)  # Include QA launched while the runner was shutting down.
-        for pid in list(self.owned):
-            if self.child is None or pid != self.child.pid:
-                attempt(lambda pid=pid: self.terminate_owned(pid))
-        attempt(self.collect_owned)
+            # The unreaped Popen handle is the runner's identity proof, even if ps missed it.
+            self.owned.setdefault(self.child.pid, dict(kind='runner', source='popen-handle'))
+            handled.add(self.child.pid)
+            attempt(lambda: self.terminate_owned(self.child.pid, runner=True, deadline=deadline))
+        # Fixed-point drain: anything adopted while another PID was shutting down is terminated too.
+        while True:
+            attempt(self.collect_owned)  # Include QA launched while the runner was shutting down.
+            pending = [pid for pid in self.owned if pid not in handled
+                       and (self.child is None or pid != self.child.pid)]
+            if not pending:
+                break
+            if time.monotonic() > deadline:
+                errors.append('Cleanup deadline reached; owned termination NOT_PROVEN: %r' % pending)
+                break
+            for pid in pending:
+                handled.add(pid)
+                attempt(lambda pid=pid: self.terminate_owned(pid, deadline=deadline))
         for pid in self.owned:
             def prove(pid=pid):
                 if self.owned_alive(pid):
@@ -582,9 +854,10 @@ class NativeHost:
             attempt(prove)
         if self.child is not None and self.child.poll() is None:
             errors.append('Runner termination NOT_PROVEN')
+        errors.extend(self.cleanup_notes)
         if self.runner_launch_attempted or self.child is not None:
-            # No acknowledged pre-exec registration exists in this runner. Even exit 0 and
-            # an empty descendant scan cannot exclude reparented capture/xcodebuild children.
+            # The runner registers its own launches before exec, but processes those launch in turn
+            # (xcodebuild's tools, launchd-started apps beyond the exact paths) are only discovered.
             reason = 'Launch completeness NOT_PROVEN; discovered subset is not all-owned proof'
             errors.append(reason)
         if self.log:
@@ -600,7 +873,7 @@ class NativeHost:
         if ('daemonPid' in self.resident and
                 self.identity(self.resident['daemonPid']) != self.resident['daemonStarted']):
             raise RuntimeError('Resident daemon identity changed during shown gate')
-        current = self.surface(self.ax('read'))
+        current = self.surface(self.read_resident_ax())
         initial = self.resident.get('initialSurface')
         if not initial or not all(window in current for window in initial):
             raise RuntimeError('Original shown resident surface NOT_PROVEN; no Settings mutation permitted')
@@ -631,17 +904,17 @@ class NativeHost:
             raise RuntimeError('Settings restoration NOT_PROVEN; pending action/retired claim requires recovery')
         if self.resident.get('restoreRequired'):
             self.settings(True)
-            result = self.ax('read')
+            result = self.read_resident_ax()
             if any('Show VoiceBar' in [n.get('title'), n.get('description')] for n in result['nodes']):
                 try:
                     self.ax('show')
                 except Exception as error:
                     self.resident.setdefault('reconciledActionErrors', []).append(repr(error))
-                result = self.ax('read')  # Never retry a possibly applied Show.
+                result = self.read_resident_ax()  # Never retry a possibly applied Show.
             if not any('Hide VoiceBar for 1 hour' in [n.get('title'), n.get('description')] for n in result['nodes']):
                 raise RuntimeError('Own Show unconfirmed')
             self.settings(False)
-            snapshot = self.ax('read')
+            snapshot = self.read_resident_ax()
             if any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings' for n in snapshot['nodes']):
                 raise RuntimeError('Settings reopened; restoration NOT_PROVEN, no user-owned close permitted')
             restored = self.surface(snapshot)
@@ -652,7 +925,7 @@ class NativeHost:
                 raise RuntimeError('Original resident surface restoration NOT_PROVEN')
         if self.resident.get('settingsOpened'):
             self.settings(False)
-        if self.resident.get('initialHidden') and self.surface(self.ax('read')):
+        if self.resident.get('initialHidden') and self.surface(self.read_resident_ax()):
             raise RuntimeError('Initially hidden resident is now visible; restoration NOT_PROVEN')
         self.resident['identitiesUnchanged'] = False
         self.save_resident()
@@ -675,6 +948,9 @@ class NativeHost:
         receipt['checks'] = self.checks
         receipt['shutdown'] = self.shutdown
         receipt['preflight'] = self.preflight
+        # Before/after identity of every owned PID (execs, reuse retirements) and skipped races.
+        receipt['owned'] = {str(pid): owned for pid, owned in self.owned.items()}
+        receipt['ownershipRaces'] = self.ownership_races
         (self.output / 'operator-state.json').write_text(json.dumps(receipt, indent=2) + '\n')
 
 
