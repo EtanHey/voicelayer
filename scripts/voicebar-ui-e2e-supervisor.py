@@ -262,7 +262,7 @@ class NativeHost:
         self.check()
         subprocess.run([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-results.py'), 'configure',
                         str(self.output), str(self.sandbox / 'VoiceBarQA.app'), str(self.sandbox),
-                        '--scenario', self.scenario], check=True)
+                        '--scenario', self.scenario], check=True, timeout=120)
         token = secrets.token_hex(24)
         with (self.output / 'supervisor-authority.json').open('x') as file:
             json.dump(dict(pid=os.getpid(), token=token), file)
@@ -492,7 +492,8 @@ class NativeHost:
 
     def export(self):
         return subprocess.call([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-results.py'),
-                                'export', str(self.output), str(self.sandbox), '--scenario', self.scenario])
+                                'export', str(self.output), str(self.sandbox), '--scenario', self.scenario],
+                               timeout=300)
 
     def save(self, receipt):
         receipt['checks'] = self.checks

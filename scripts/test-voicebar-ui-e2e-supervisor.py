@@ -9,6 +9,80 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 class SupervisorTests(unittest.TestCase):
+    def timeout_host(self, output):
+        host = self.host(output)
+        host.resident.update(visibilityPolicy='leave-shown', restoreRequired=False,
+                             settingsOpened=False)
+        host.resident.pop('settingsWindowId')
+        host.preconditions = lambda: True
+        host.prepare_resident = lambda: None
+        host.check = lambda: None
+        host.process_rows = lambda: {}  # No native process inspection/signals.
+        host.ax = lambda mode: dict(screenWindows=host.resident['initialSurface'])
+        mute = [False]
+        host.muted = lambda: mute[0]
+        host.set_mute = lambda value: mute.__setitem__(0, value)
+        # Run the actual subprocess APIs against a private, deliberately stuck helper.
+        host.repo = output / 'fixture-repo'
+        helper = host.repo / 'scripts/voicebar-ui-e2e-results.py'
+        helper.parent.mkdir(parents=True)
+        helper.write_text('import time; time.sleep(30)\n')
+        return host
+
+    def test_configure_timeout_records_failure_before_runner_launch(self):
+        module = self.module()
+        real_run = subprocess.run
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.timeout_host(pathlib.Path(tmp))
+            def bounded_run(args, **kwargs):
+                limit = kwargs.get('timeout')
+                self.assertIsInstance(limit, (int, float), 'configure has no finite deadline')
+                self.assertTrue(0 < limit <= 120)
+                return real_run(args, **dict(kwargs, timeout=.05))
+            with patch.object(module.subprocess, 'run', side_effect=bounded_run), \
+                    patch.object(module.subprocess, 'Popen', wraps=subprocess.Popen) as launch:
+                self.assertEqual(module.supervise(host), 1)
+                # Only the configure helper ran; no runner or export was dispatched.
+                launch_count = launch.call_count
+            receipt = json.loads((host.output / 'operator-state.json').read_text())
+            self.assertIn('TimeoutExpired', receipt['error'])
+            self.assertEqual(launch_count, 1)
+            self.assertIsNone(receipt['suiteExit'])
+            self.assertIsNone(receipt['exportExit'])
+            self.assertFalse(host.runner_launch_attempted)
+            self.assertTrue(receipt['ownedTerminationProven'])
+            self.assertTrue(receipt['muteRestored'])
+            self.assertTrue(host.resident['shownUnchanged'])
+            self.assertFalse((host.output / 'supervisor-authority.json').exists())
+
+    def test_export_timeout_preserves_completed_verdict_and_retained_mute(self):
+        module = self.module()
+        real_call = subprocess.call
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.timeout_host(pathlib.Path(tmp))
+            # Completed QA run, but launch completeness remains unknown.
+            host.start = lambda: setattr(host, 'runner_launch_attempted', True)
+            host.poll = lambda: 0
+            def bounded_call(args, **kwargs):
+                before = json.loads((host.output / 'operator-state.json').read_text())
+                self.assertEqual(before['suiteExit'], 0)
+                self.assertTrue(before['muteRetained'])
+                self.assertTrue(host.resident['shownUnchanged'])
+                limit = kwargs.get('timeout')
+                self.assertIsInstance(limit, (int, float), 'export has no finite deadline')
+                self.assertTrue(0 < limit <= 300)
+                return real_call(args, **dict(kwargs, timeout=.05))
+            with patch.object(module.subprocess, 'call', side_effect=bounded_call) as export:
+                self.assertEqual(module.supervise(host), 1)
+                self.assertEqual(export.call_count, 1)
+            receipt = json.loads((host.output / 'operator-state.json').read_text())
+            self.assertIn('TimeoutExpired', receipt['error'])
+            self.assertEqual(receipt['suiteExit'], 0)
+            self.assertIsNone(receipt['exportExit'])
+            self.assertFalse(receipt['ownedTerminationProven'])
+            self.assertTrue(receipt['muteRetained'])
+            self.assertTrue(any('NOT_PROVEN' in e for e in receipt['cleanupErrors']))
+
     def test_ship2246_shown_resident_reaches_launch_and_export_without_settings(self):
         module = self.module()
         with tempfile.TemporaryDirectory() as tmp:
