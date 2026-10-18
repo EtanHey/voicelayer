@@ -7,7 +7,9 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import secrets
+import shlex
 import signal
 import subprocess
 import sys
@@ -29,10 +31,7 @@ BUSY_PREFIXES = ('Recording', 'Starting microphone', 'Stop recording', 'Cancel r
 BUSY_TEXT = ('VoiceBar recording', 'VoiceBar status', 'VoiceBar teleprompter', 'Stop speaking',
              'VoiceBar launcher', 'VoiceBar history', 'Cancel transcription', 'Transcribing',
              'Agent speaking', 'Re-transcribing')
-# Deliberately empty: no daemon descendant has a proven, permanently idle contract.
-# This includes recognizers, recorders, players, Python TTS and unknown/new workers.
-# Adding an exception requires documenting its idle contract here, never a busy-name list.
-IDLE_DAEMON_CHILDREN = frozenset()
+# Only mlx_lm.server and whisper-server server modes are allowlisted below.
 # Exact labels only. Prefix/substring matching can detect busy state in memory but
 # must never authorize retention of a spoken word or a dynamic status suffix.
 AX_PUBLIC_LABELS = frozenset((NOTCH_IDLE_LABEL, 'VoiceBar launcher', 'VoiceBar history',
@@ -70,7 +69,10 @@ def permission_receipt(permission):
                 ('input-monitoring', ('input monitoring', 'input-monitoring', 'monitor input')),
                 ('screen-recording', ('screen recording', 'screen-recording', 'record your screen', 'screen and system audio'))
             ] if any(term in text for term in terms)), 'unknown')
-            retained.append(dict(owner=prompt.get('owner') or prompt.get('processName') or 'unknown',
+            owner = prompt.get('owner') or prompt.get('processName') or 'unknown'
+            if not isinstance(owner, str) or not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', owner):
+                owner = redacted(str(owner))
+            retained.append(dict(owner=owner,
                                  kind=kind, labels=[redacted(x) for x in labels]))
         prompts = retained
     return dict(axTrusted=permission.get('axTrusted') is True, prompts=prompts)
@@ -374,6 +376,28 @@ class NativeHost:
             raise RuntimeError('Resident child args unreadable; PID still exists: %d (ps exit %d, output %r)'
                                % (pid, error.returncode, error.output)) from error
 
+    def idle_daemon_child(self, pid, executable):
+        # Only direct daemon children qualify. These servers persist while idle.
+        # HTTP whisper-server transcription creates
+        # no child process: AX transcribing state and fresh session locks cover it.
+        name = pathlib.Path(executable).name
+        python = r'(?:Python|python(?:3(?:\.\d+)?)?)'
+        if name != 'whisper-server' and not re.fullmatch(python, name):
+            return False
+        try:
+            argv = shlex.split(self.child_args(pid) or '')
+        except ValueError:
+            return False
+        if not argv:
+            return False
+        if name == 'whisper-server':
+            return pathlib.Path(argv[0]).name == name and any(
+                flag == '--port' and value.isdecimal() and 0 < int(value) < 65536
+                for flag, value in zip(argv[1:], argv[2:]))
+        return bool(re.fullmatch(python, pathlib.Path(argv[0]).name)) and (
+            argv[1:3] == ['-m', 'mlx_lm.server'] or
+            len(argv) > 1 and pathlib.Path(argv[1]).name == 'mlx_lm.server')
+
     def resident_inventory(self, attempt):
         rows = self.process_rows()
         residents = sorted(p for p, (_, cmd) in rows.items() if cmd == RESIDENT_EXECUTABLE)
@@ -430,7 +454,8 @@ class NativeHost:
                 if extended == descendants:
                     break
                 descendants = extended
-            busy = [p for p in sorted(descendants - {daemon}) if rows[p][1] not in IDLE_DAEMON_CHILDREN]
+            busy = [p for p in sorted(descendants - {daemon})
+                    if rows[p][0] != daemon or not self.idle_daemon_child(p, rows[p][1])]
             locks = []
             attempt.update(capturePids=busy, freshLocks=locks)
             for path in pathlib.Path('/tmp').glob('voicelayer-session-*.lock'):

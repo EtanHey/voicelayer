@@ -918,6 +918,35 @@ class SupervisorTests(unittest.TestCase):
                 else:
                     self.assertEqual(attempt['processRows'], {})
 
+    def test_real_preconditions_allow_only_the_two_long_lived_server_modes(self):
+        whisper = '/opt/homebrew/bin/whisper-server -m fixture --port 8178'
+        polish = '/fixture/Python /fixture/mlx_lm.server --model fixture --port 8179'
+        cases = [(None, whisper, polish, 'Python', False, False, True),
+                 ('afplay', whisper, polish, 'Python', False, False, False),
+                 ('whisper-cpp', whisper, polish, 'Python', False, False, False),
+                 ('nested-whisper-server', whisper, polish, 'Python', False, False, False),
+                 (None, 'whisper-server -m fixture', polish, 'Python', False, False, False),
+                 (None, 'whisper-server --port --help', polish, 'Python', False, False, False),
+                 (None, whisper, 'Python other.py --tag mlx_lm.server', 'Python', False, False, False),
+                 (None, whisper, polish, 'unrelated', False, False, False),
+                 (None, whisper, 'python3 -m mlx_lm.server', 'python3', False, False, True),
+                 (None, whisper, polish, 'Python', True, False, False),
+                 (None, whisper, polish, 'Python', False, True, False)]
+        for extra, stt_args, llm_args, executable, transcribing, locked, expected in cases:
+            with self.subTest(extra=extra, stt=stt_args, llm=llm_args, transcribing=transcribing, locked=locked), tempfile.TemporaryDirectory() as tmp:
+                nodes = self.tree(('AXStaticText', 'Transcribing'), state='VoiceBar status') if transcribing else self.IDLE_TREE
+                module, host = self.busy_host(pathlib.Path(tmp), nodes, ['/fixture/' + executable, '/opt/homebrew/bin/whisper-server'])
+                rows = host.process_rows()
+                if extra:
+                    rows[202] = ((200, '/fixture/whisper-server') if extra == 'nested-whisper-server'
+                                 else (101, '/fixture/' + extra))
+                host.process_rows = lambda: dict(rows)
+                host.child_args = lambda pid: {101: 'bun src/mcp-server-daemon.ts', 200: llm_args,
+                                               201: stt_args, 202: whisper}.get(pid)
+                with patch.object(pathlib.Path, 'glob', return_value=[self.lock(module, 10)] if locked else []), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(host.preconditions(), expected)
+
     def test_ax_receipts_and_logs_redact_teleprompter_words_and_unknown_labels(self):
         import hashlib
         word = 'synthetic-private-מילה'
@@ -1154,6 +1183,24 @@ class SupervisorTests(unittest.TestCase):
             self.assertIn('exit 2', str(unreadable.exception))
             self.assertNotIn('not json', str(unreadable.exception))
             self.assertIn('<redacted len=8 sha256=', str(unreadable.exception))
+
+    def test_permission_owner_or_process_name_rejects_free_text(self):
+        for field in ['owner', 'processName']:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                output = pathlib.Path(tmp)
+                module, host = self.busy_host(output, self.IDLE_TREE, [])
+                private = 'synthetic private owner words'
+                prompt = dict(labels=['Allow'], **{field: private})
+                self.stub_permissions(output, json.dumps(dict(axTrusted=True, prompts=[prompt])), 2)
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaisesRegex(RuntimeError, 'STOP'):
+                    host.prepare_resident()
+                host.save({})
+                persisted = err.getvalue() + '\n'.join(p.read_text() for p in output.iterdir()
+                                                       if p.suffix in ['.json', '.log'])
+                self.assertNotIn(private, persisted)
+                self.assertRegex(host.checks[-1]['permissions']['prompts'][0]['owner'],
+                                 r'^<redacted len=29 sha256=[0-9a-f]{8}>$')
 
     def test_resident_count_failure_records_count_and_pids(self):
         module = self.module()
