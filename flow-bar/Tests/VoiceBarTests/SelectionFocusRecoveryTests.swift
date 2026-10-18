@@ -15,6 +15,11 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         static let appA = SelectionFocusAX.AppIdentity(pid: 4242, startTime: 1_000_001)
         static let appB = SelectionFocusAX.AppIdentity(pid: 5353, startTime: 2_000_002)
         var front: SelectionFocusAX.AppIdentity? = FakeAX.appA
+        /// Apps whose bundle is Chromium/Electron. Only these can earn the unreadable-focus Copy exemption.
+        var chromium: Set<pid_t> = [FakeAX.appA.pid]
+        var frontQueries = 0
+        /// Runs before each frontmost query (1-based), so a test can switch apps at an exact point.
+        var onFrontmostQuery: (Int) -> Void = { _ in }
         /// Runs on each retry sleep, so a test can switch apps mid-wait.
         var onSleep: (Int) -> Void = { _ in }
         var setResult: AXError = .success
@@ -33,7 +38,12 @@ final class SelectionFocusRecoveryTests: XCTestCase {
                     let status = self.statuses.count > 1 ? self.statuses.removeFirst() : self.statuses[0]
                     return (status, status == .success ? self.focus : nil)
                 },
-                frontmostApp: { self.front },
+                frontmostApp: {
+                    self.frontQueries += 1
+                    self.onFrontmostQuery(self.frontQueries)
+                    return self.front
+                },
+                isChromiumFamily: { self.chromium.contains($0.pid) },
                 setManualAccessibility: { self.sets.append($0.pid); return self.setResult },
                 sleep: { self.sleeps.append($0); self.onSleep(self.sleeps.count) })
         }
@@ -155,6 +165,15 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         XCTAssertNil(recheck.copyExemptApp)
     }
 
+    func testSetterSuccessAloneNeverGrantsTheCopyExemptionOutsideChromium() {
+        let fake = FakeAX([.noValue])
+        fake.chromium = []
+        let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
+        XCTAssertEqual(result.blockReason?.outcome, .captureFailed)
+        XCTAssertEqual(result.axEnable, .attempted)
+        XCTAssertNil(result.copyExemptApp)
+    }
+
     func testRecoveredSecureFocusIsStillASecureField() {
         let fake = FakeAX([.noValue, .success])
         fake.focus = SelectionFocusAX.Focus(role: "AXTextField", subrole: "AXSecureTextField")
@@ -244,7 +263,9 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         board.setString("original", forType: .string)
         let count = board.changeCount
         let fake = FakeAX([.noValue])
-        let capture = makeCapture(fake, readAXSelection: { nil }, pasteboard: board, postCopy: {
+        fake.chromium = [FakeAX.appA.pid] // B is not Chromium and would refuse the flag
+        let capture = makeCapture(fake, readAXSelection: { XCTFail("no selection read"); return nil },
+                                  pasteboard: board, postCopy: {
             XCTFail("Cmd+C must not reach app B"); return false
         }, beforeSnapshot: { fake.front = FakeAX.appB })
         let report = run(capture)
@@ -253,7 +274,43 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         XCTAssertEqual(report.message, "Couldn't read the selection, try again")
         XCTAssertEqual(report.spoken, [])
         XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(fake.sets, [FakeAX.appA.pid], "the recheck never sets the flag")
+        XCTAssertEqual(fake.sleeps.count, SpeakSelectionCapture.focusRetryLimit, "the recheck never waits again")
+        XCTAssertFalse(fake.secureInput)
+    }
+
+    /// The last identity check runs on main immediately before the synthesized Cmd+C.
+    func testSwitchAfterTheRecheckButBeforeCopyNeverCopiesIntoTheNewApp() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        board.setString("original", forType: .string)
+        let fake = FakeAX([.noValue])
+        // Frontmost queries: 1 recovery target, 2 after retries, 3 Copy recheck, 4 immediately before Copy.
+        fake.onFrontmostQuery = { if $0 == 4 { fake.front = FakeAX.appB } }
+        let capture = makeCapture(fake, readAXSelection: { XCTFail("no selection read"); return nil },
+                                  pasteboard: board, postCopy: { XCTFail("Cmd+C must not reach app B"); return false })
+        let report = run(capture)
+        XCTAssertEqual(fake.frontQueries, 4)
+        XCTAssertEqual(report.details["outcome"], "capture_failed")
+        XCTAssertEqual(report.message, "Couldn't read the selection, try again")
+        XCTAssertEqual(report.spoken, [])
+        XCTAssertEqual(board.string(forType: .string), "original")
         XCTAssertEqual(fake.sets, [FakeAX.appA.pid])
+    }
+
+    func testNonChromiumAppAcceptingTheFlagShowsReadErrorWithoutCopy() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let fake = FakeAX([.noValue])
+        fake.chromium = []
+        let capture = makeCapture(fake, readAXSelection: { XCTFail("no selection read"); return nil },
+                                  pasteboard: board, postCopy: { XCTFail("setter success is not a Copy grant"); return false })
+        let report = run(capture)
+        XCTAssertEqual(report.details["outcome"], "capture_failed")
+        XCTAssertEqual(report.details["preflight_ax_enable"], "attempted")
+        XCTAssertEqual(report.message, "Couldn't read the selection, try again")
+        XCTAssertEqual(report.spoken, [])
     }
 
     func testSwitchToAnotherAppDuringRetriesShowsReadErrorWithoutCopy() {
