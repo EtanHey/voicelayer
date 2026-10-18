@@ -102,7 +102,8 @@ public struct SpeechSettingsView: View {
                                                        rate.wrappedValue = String(format: "%+d%%", Int(value))
                                                    }
                                                }).accessibilityLabel("\(kind.title) rate")
-                                            // Overlay the control itself: Form can keep the native slider narrower than its row.
+                                            // The row supplies "Rate"; omit Form's empty built-in label column.
+                                            .labelsHidden()
                                             .overlay(alignment: .top) {
                                                 GeometryReader { geometry in
                                                     HStack {
