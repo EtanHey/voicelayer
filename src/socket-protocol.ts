@@ -33,6 +33,8 @@ export interface StateEvent {
   text?: string;
   /** Present when state is "speaking" — the voice being used. */
   voice?: string;
+  /** Identity of the exact retained audio, echoed only by readback seeks. */
+  readback_id?: string;
   /** Global utterance position at player start (including normal chunk handoffs). */
   playback_offset_ms?: number;
   /** Synthesized duration available for seeking; grows during long reads. */
@@ -454,7 +456,8 @@ export interface SetRecordingHoldCommand extends SocketCommandBase {
 export interface SeekCommand extends SocketCommandBase {
   cmd: "seek";
   offset_ms: number;
-  scope?: "current";
+  scope?: "current" | "readback";
+  readback_id?: string;
 }
 
 export type SocketCommand =
@@ -636,9 +639,11 @@ export function parseCommand(line: string): SocketCommand | null {
     switch (parsed.cmd) {
       case "seek":
         if (typeof parsed.offset_ms !== "number" || !Number.isFinite(parsed.offset_ms) || parsed.offset_ms < 0 ||
-            (parsed.scope !== undefined && parsed.scope !== "current")) return null;
+            (parsed.scope !== undefined && parsed.scope !== "current" && parsed.scope !== "readback")) return null;
+        if (parsed.scope === "readback" && (typeof parsed.readback_id !== "string" || !parsed.readback_id || parsed.readback_id.length > 256)) return null;
         return withCommandId<SeekCommand>({ cmd: "seek", offset_ms: parsed.offset_ms,
-          ...(parsed.scope === "current" ? { scope: "current" as const } : {}) }, id);
+          ...(parsed.scope !== undefined ? { scope: parsed.scope as SeekCommand["scope"] } : {}),
+          ...(parsed.scope === "readback" ? { readback_id: parsed.readback_id as string } : {}) }, id);
       case "speak_text": {
         if (typeof parsed.text !== "string" || !parsed.text.trim() || parsed.text.length > SPEAK_TEXT_MAX_CHARS) return null;
         if (parsed.profile !== undefined && !["auto", "short", "long"].includes(parsed.profile)) return null;

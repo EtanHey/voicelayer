@@ -100,7 +100,7 @@ final class NullableSubtitleTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         let retained = TeleprompterContentModel.words(text: state.teleprompterText ?? "", wordBoundaries: state.teleprompterWordBoundaries)
         XCTAssertEqual(retained.map(\.offsetMs), [nil, 500])
-        XCTAssertTrue(retained.allSatisfy { TeleprompterSeekPolicy.offset(for: $0, isReadback: true) == nil })
+        XCTAssertEqual(retained.map { TeleprompterSeekPolicy.offset(for: $0, isReadback: true) }, [nil, 500])
         state.handleEvent(["type": "state", "state": "speaking", "text": "Next reply", "duration_ms": 5000])
         XCTAssertTrue(state.wordBoundaries.isEmpty)
     }

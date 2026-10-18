@@ -491,7 +491,7 @@ final class SocketServer {
                   let playbackFD = activePlaybackClientFD,
                   clients[playbackFD] != nil {
             [playbackFD]
-        } else if commandName == "replay",
+        } else if commandName == "replay" || (commandName == "seek" && command["scope"] as? String == "readback"),
                   let playbackFD = lastPlaybackClientFD,
                   clients[playbackFD] != nil {
             [playbackFD]

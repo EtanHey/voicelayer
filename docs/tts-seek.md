@@ -2,9 +2,20 @@
 
 VoiceBar sends `{"cmd":"seek","offset_ms":2500}` through its existing command-owner socket.
 The socket server targets the active playback owner, including passive legacy MCP clients.
-After playback idle it falls back to the command daemon for a no-op acknowledgement.
-The optional scope is `"current"`; offsets are finite, nonnegative milliseconds from the start
+After playback idle it falls back to the command daemon.
+The optional scope defaults to `"current"`; offsets are finite, nonnegative milliseconds from the start
 of the current utterance, including chunk zero of a long read. A request ID is echoed in its ack.
+Retained readback word clicks use `"scope":"readback"` and echo the speaking event's
+`readback_id`; they are accepted only while idle with that exact retained identity.
+These requests route to the last playback client, falling back to the daemon if it disconnected;
+the identity check refuses stale audio after a reconnect or daemon restart.
+They replay the same displayed utterance from the measured word offset. The daemon keeps
+one utterance's original chunks independently of ring-slot rotation and played-range history;
+replay reuses the serial long-read runner and never synthesizes. Missing chunks/audio return
+`reject` with `Replay prefix audio unavailable`. Missing word timing displays
+`Word timing unavailable`; estimated timings never become seek targets. Current-scope seeks
+after Stop remain no-ops. Readback replay is cancelled and reaped through the same Stop and
+capture fences as ordinary speech. Retained audio is replaced when the next utterance starts.
 There is no pause state: a playing utterance continues playing from the accepted position.
 
 The ack reports `accept`, `noop` (nothing playing, not ready, or duration unavailable), or

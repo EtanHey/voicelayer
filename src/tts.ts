@@ -58,12 +58,14 @@ import { projectSpeakableText } from "./speakable-text";
 import type { ProjectionRange } from "./tts/structured-speech";
 import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
+import { RetainedReadback } from "./tts/retained-readback";
 import { prepareSeekSlice, disposeSeekSlice } from "./tts/seek-audio";
 import { PlaybackLifecycle, type PlaybackScope, type QueuedPlaybackHandle } from "./tts/playback-lifecycle";
 export type { PlaybackScope, QueuedPlaybackHandle } from "./tts/playback-lifecycle";
 import { runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
+import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { getEffectiveRecordingState } from "./recording-state";
 import { startCloneTiming } from "./tts/clone-timing";
 import {
@@ -764,6 +766,8 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   localOffsetMs?: number;
   seekSliceFile?: string;
   isSeek?: boolean;
+  retainedReplay?: boolean;
+  readbackID?: string;
   wordBoundaries?: WordBoundary[];
   cloneProjection?: ReturnType<typeof projectSpeakableText>;
   priority?: PlaybackPriority;
@@ -917,6 +921,8 @@ function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
   }
   job.resolveExited(outcome);
 }
+
+const retainedReadback = new RetainedReadback();
 
 class PlaybackQueueManager {
   private captureAdmission?: Set<string>;
@@ -1357,6 +1363,8 @@ class PlaybackQueueManager {
     next.lifecycle.track(proc.exited);
     this.current = { job: next, proc, startedAt: Date.now() - (next.metadata?.localOffsetMs ?? 0) };
     this.armPlayerWatchdog(this.current, durationMs);
+    const readbackID = next.metadata?.retainedReplay ? next.metadata.readbackID
+      : next.metadata ? retainedReadback.remember(next.audioFile, next.metadata, next.id) : undefined;
     if (next.metadata) {
       const durationMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ?? next.metadata.durationMs;
       broadcast({
@@ -1364,6 +1372,7 @@ class PlaybackQueueManager {
         state: "speaking",
         text: next.metadata.text,
         voice: next.metadata.voice,
+        readback_id: readbackID,
         ...(next.metadata.longRead ? { long_read: next.metadata.longRead } : {}),
         ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
         ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
@@ -1718,16 +1727,74 @@ export function getPlaybackQueueDepth(): number {
     (activeLongRead && !activeLongRead.controller.signal.aborted ? 1 : 0);
 }
 
-/** Seek only the currently owned utterance; never enqueue a stopped generation. */
-export function seekPlayback(offsetMs: number): SeekResult {
+/** Current seeks never resurrect a stopped generation; readback is explicit and idle-only. */
+export function seekPlayback(offsetMs: number, scope: "current" | "readback" = "current", readbackID?: string): SeekResult {
   if (!Number.isFinite(offsetMs) || offsetMs < 0) return { outcome: "reject", reason: "invalid offset" };
   if (getEffectiveRecordingState() !== "idle") return { outcome: "reject", reason: "busy" };
+  if (scope === "readback") {
+    if (getPlaybackQueueDepth() > 0 || activeLongRead || hasPendingSpeechPreparation() || hasActiveVoiceOperation()) return { outcome: "reject", reason: "busy" };
+    return replayReadback(offsetMs, readbackID);
+  }
   if (activeLongRead) {
     if (activeLongRead.controller.signal.aborted) return { outcome: "noop", reason: "nothing playing" };
     if (!activeLongRead.seek) return { outcome: "noop", reason: "not ready" };
     return activeLongRead.seek.seek(offsetMs);
   }
   return playbackQueueManager.seek(offsetMs);
+}
+
+/** Resume the exact displayed utterance, without synthesis or a recency-index guess. */
+function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
+  const retained = retainedReadback.acquire(readbackID);
+  if (!retained) return { outcome: "reject", reason: "Replay prefix audio unavailable" };
+  const chunks = retained.chunks;
+  const duration = chunks.reduce((sum, c) => sum + c.metadata.durationMs!, 0);
+  if (offsetMs >= duration) { retained.release(); return { outcome: "reject", reason: "Replay position unavailable" }; }
+  const controller = new AbortController(), id = `readback-${process.pid}-${++longReadCounter}`;
+  let generation = 1;
+  const handle: OwnedLongRead = { id, get generation() { return generation; }, controller,
+    done: Promise.resolve(), playerExited: Promise.resolve(), started: Promise.resolve({}), completion: Promise.resolve({}) };
+  activeLongRead = handle; longReads.set(id, handle);
+  const exits: Promise<void>[] = [];
+  handle.done = runLongRead(chunks.map(c => c.metadata.text), id, controller.signal, {
+    initialOffsetMs: offsetMs,
+    registerSeek: control => {
+      const advance = (result: SeekResult) => { if (result.outcome === "accept") generation++; return result; };
+      handle.seek = { seek: offset => advance(control.seek(offset)), restart: () => advance(control.restart()) };
+    },
+    synthesize: async (_text, index) => ({ audioFile: chunks[index].file,
+      durationMs: chunks[index].metadata.durationMs!, wordBoundaries: chunks[index].metadata.wordBoundaries ?? [] }),
+    canReplay: chunk => existsSync(chunk.audioFile),
+    prepareSeek: (chunk, offset, signal) => prepareSeekSlice(chunk.audioFile, offset, signal),
+    disposeSeek: disposeSeekSlice,
+    seekFailed: error => broadcast({ type: "error", source: "seek", message: String(error), recoverable: true }),
+    play: (chunk, _text, info, position) => {
+      let resolveStarted!: (value: boolean) => void;
+      const started = new Promise<boolean>(resolve => { resolveStarted = resolve; });
+      const metadata = chunks[info.chunk_index].metadata;
+      const playback = playAudioNonBlocking(chunk.audioFile, { ...metadata, retainedReplay: true, readbackID,
+        // Ordinary short speech remains short; long speech keeps its global cursor.
+        longRead: metadata.longRead ? info : undefined,
+        utteranceDurationMs: duration, getUtteranceDurationMs: () => duration,
+        playbackOffsetMs: info.chunk_start_ms + position.offsetMs, localOffsetMs: position.offsetMs,
+        isSeek: true, seekSliceFile: position.sliceFile,
+        onStarted: () => resolveStarted(true), onCompleted: () => resolveStarted(false) });
+      exits.push(playback.playerExited);
+      const audioExited = playbackQueueManager.audioExited(playback.id);
+      return { started, exited: playback.exited.then(async outcome => { await audioExited; return outcome; }),
+        interrupt: () => playbackQueueManager.interrupt(playback.id) };
+    },
+    saveHistory: async () => {}, // Replay does not rewrite original/played-range history.
+    dispose: () => {},
+  }).catch(error => {
+    if (!controller.signal.aborted) broadcast({ type: "error", source: "seek", message: String(error), recoverable: true });
+  }).finally(async () => {
+    await Promise.all(exits);
+    retained.release(); longReads.delete(id);
+    if (activeLongRead === handle) { activeLongRead = undefined; broadcastPlaybackIdleIfSpeakerClear(); }
+  });
+  handle.playerExited = handle.done;
+  return { outcome: "accept", offset_ms: offsetMs, clamped: false };
 }
 
 /** Stop current playback if any. */
