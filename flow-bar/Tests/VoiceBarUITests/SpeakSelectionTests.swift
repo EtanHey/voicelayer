@@ -164,6 +164,44 @@ final class SpeakSelectionTests: XCTestCase {
         }
     }
 
+    func testSameSelectionStopDoesNotRestartAfterPlaybackIdleDuringCapture() throws {
+        // SHA-256 of normalized "hello world", shared with the external receipt test.
+        let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        for own in [false, true] {
+            for explicitStop in [false, true] {
+                let state = VoiceState()
+                state.isConnected = true
+                var commands: [[String: Any]] = []
+                state.sendCommand = { commands.append($0) }
+                var id = "external-A"
+                if own {
+                    state.selectionTextCaptureHandler = { $0(.completed("hello world")) }
+                    state.speakSelection()
+                    id = try XCTUnwrap(commands.last?["id"] as? String)
+                }
+                for preparing in [true, false] {
+                    var event: [String: Any] = ["type": "state", "state": "speaking", "request_id": id,
+                        "text": preparing ? "Preparing speech…" : "projected display",
+                        "long_read": ["id": "read-A", "preparing": preparing]]
+                    if !own { event["text_hash"] = hash }
+                    state.handleEvent(event)
+                }
+                commands.removeAll()
+                var completion: ((SelectionCaptureResult) -> Void)?
+                state.selectionTextCaptureHandler = { completion = $0 }
+                state.speakSelection()
+                if explicitStop { state.stop() }
+                state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+                try XCTUnwrap(completion)(.completed(" hello\nworld "))
+                XCTAssertFalse(commands.contains { $0["cmd"] as? String == "speak_text" },
+                    "own=\(own), explicitStop=\(explicitStop)")
+                XCTAssertEqual(state.mode, .idle)
+                state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+                XCTAssertFalse(commands.contains { $0["cmd"] as? String == "speak_text" })
+            }
+        }
+    }
+
     func testSpeechReceiptsDoNotAdvanceUserStopEpoch() throws {
         for rejected in [false, true] {
             let state = VoiceState()

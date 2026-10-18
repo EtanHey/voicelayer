@@ -1005,6 +1005,9 @@ public final class VoiceState {
             return
         }
         let replacing = mode == .speaking || selectionSubmittedText != nil
+        let pressText = selectionSubmittedText ?? selectionReadText
+            ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+        let pressHash = selectionSubmittedText == nil ? selectionReadHash : nil
         let speechEpoch = selectionSpeechEpoch
         let captureID = UUID()
         selectionCaptureID = captureID
@@ -1027,11 +1030,17 @@ public final class VoiceState {
             // speaking text at completion; a same-read receipt may have arrived during capture.
             let currentText = selectionSubmittedText ?? selectionReadText
                 ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
+            // Natural completion may clear the read while capture is awaiting its result.
+            // Keep that press's Stop comparison, while newer live receipts still take priority.
+            let readEnded = mode == .idle && selectionSubmittedText == nil
+                && selectionReadID == nil && selectionReadRequestID == nil
+            let comparisonText = currentText ?? (readEnded ? pressText : nil)
+            let comparisonHash = selectionReadHash ?? (readEnded ? pressHash : nil)
             let sameSelection: Bool
-            if selectionSubmittedText == nil, let hash = selectionReadHash {
+            if selectionSubmittedText == nil, let hash = comparisonHash {
                 sameSelection = Self.selectionHash(result.text ?? "") == hash
             } else {
-                sameSelection = currentText.map { normalized == Self.normalizedSelection($0) } ?? false
+                sameSelection = comparisonText.map { normalized == Self.normalizedSelection($0) } ?? false
             }
             if replacing, normalized.isEmpty || sameSelection {
                 stopSelectionRead()
