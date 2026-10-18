@@ -112,6 +112,118 @@ final class SpeakSelectionTests: XCTestCase {
         return state
     }
 
+    func testPlaybackCompletionDoesNotDropInFlightSelectionCapture() throws {
+        let state = speakingState()
+        var completion: ((SelectionCaptureResult) -> Void)?
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.selectionTextCaptureHandler = { completion = $0 }
+        state.speakSelection()
+        let epoch = try XCTUnwrap(identityField("selectionSpeechEpoch", in: state) as? Int)
+
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertEqual(identityField("selectionSpeechEpoch", in: state) as? Int, epoch)
+        try XCTUnwrap(completion)(.completed("new"))
+
+        XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["speak_text"])
+        XCTAssertEqual(commands.first?["text"] as? String, "new")
+    }
+
+    func testPreparingReplacementSurvivesInterleavedPlaybackIdle() throws {
+        for ownA in [false, true] {
+            let state = VoiceState()
+            state.isConnected = true
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            var a = "external-A"
+            if ownA {
+                state.selectionTextCaptureHandler = { $0(.completed("A")) }
+                state.speakSelection()
+                a = try XCTUnwrap(commands.last?["id"] as? String)
+            }
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": a,
+                "text": "Preparing speech…", "long_read": ["id": "read-A", "preparing": true]])
+            state.selectionTextCaptureHandler = { $0(.completed("B")) }
+            state.speakSelection()
+            let b = try XCTUnwrap(commands.last?["id"] as? String)
+
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            XCTAssertTrue(try submissionIDs(state).contains(b))
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": b,
+                "text": "Preparing speech…", "long_read": ["id": "read-B", "preparing": true]])
+            XCTAssertEqual(state.mode, .speaking, "ownA=\(ownA)")
+            XCTAssertEqual(identityField("selectionReadRequestID", in: state) as? String, b)
+            XCTAssertEqual(identityField("selectionReadText", in: state) as? String, "B")
+            let retired = try XCTUnwrap(identityField("selectionRetiredRequestIDs", in: state) as? [String])
+            XCTAssertFalse(retired.contains(b))
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": b,
+                "text": "B", "long_read": ["id": "read-B", "preparing": false]])
+            XCTAssertEqual(state.mode, .speaking)
+            XCTAssertEqual(state.statusText, "B")
+        }
+    }
+
+    func testSameSelectionStopDoesNotRestartAfterPlaybackIdleDuringCapture() throws {
+        // SHA-256 of normalized "hello world", shared with the external receipt test.
+        let hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        for own in [false, true] {
+            for explicitStop in [false, true] {
+                let state = VoiceState()
+                state.isConnected = true
+                var commands: [[String: Any]] = []
+                state.sendCommand = { commands.append($0) }
+                var id = "external-A"
+                if own {
+                    state.selectionTextCaptureHandler = { $0(.completed("hello world")) }
+                    state.speakSelection()
+                    id = try XCTUnwrap(commands.last?["id"] as? String)
+                }
+                for preparing in [true, false] {
+                    var event: [String: Any] = ["type": "state", "state": "speaking", "request_id": id,
+                        "text": preparing ? "Preparing speech…" : "projected display",
+                        "long_read": ["id": "read-A", "preparing": preparing]]
+                    if !own { event["text_hash"] = hash }
+                    state.handleEvent(event)
+                }
+                commands.removeAll()
+                var completion: ((SelectionCaptureResult) -> Void)?
+                state.selectionTextCaptureHandler = { completion = $0 }
+                state.speakSelection()
+                if explicitStop { state.stop() }
+                state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+                try XCTUnwrap(completion)(.completed(" hello\nworld "))
+                XCTAssertFalse(commands.contains { $0["cmd"] as? String == "speak_text" },
+                    "own=\(own), explicitStop=\(explicitStop)")
+                XCTAssertEqual(state.mode, .idle)
+                state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+                XCTAssertFalse(commands.contains { $0["cmd"] as? String == "speak_text" })
+            }
+        }
+    }
+
+    func testSpeechReceiptsDoNotAdvanceUserStopEpoch() throws {
+        for rejected in [false, true] {
+            let state = VoiceState()
+            var request: [String: Any] = [:]
+            state.sendCommand = { request = $0 }
+            state.selectionTextCaptureHandler = { $0(.completed("B")) }
+            state.speakSelection()
+            let b = try XCTUnwrap(request["id"] as? String)
+            state.handleEvent(["type": "state", "state": "speaking", "request_id": b,
+                "text": "B", "long_read": ["id": "read-B", "preparing": false]])
+            let epoch = try XCTUnwrap(identityField("selectionSpeechEpoch", in: state) as? Int)
+            if rejected {
+                state.handleEvent(["type": "ack", "command": "speak_text", "id": b,
+                    "outcome": "reject", "reason": "busy"])
+            } else {
+                state.handleEvent(["type": "state", "state": "speaking", "request_id": "external",
+                    "text": "X", "long_read": ["id": "read-X", "preparing": false]])
+            }
+            XCTAssertEqual(identityField("selectionSpeechEpoch", in: state) as? Int, epoch)
+        }
+    }
+
     func testIdentifiedReceiptsBindBAndCInEitherOrderAndThirdPressStopsC() throws {
         for order in [[0, 1], [1, 0]] {
             let state = speakingState("A")
