@@ -793,6 +793,8 @@ interface PlaybackJob {
   skipAmplitudeDecode?: boolean;
   metadata?: PlaybackMetadata;
   playbackAmplitude?: PlaybackAmplitudeEnvelope;
+  /** The full-file envelope from the first decode; Resume re-sends it from the resume offset. */
+  decodedAmplitude?: PlaybackAmplitudeEnvelope;
   priority: PlaybackPriority;
   enqueuedAt: number;
   expiresAt: number;
@@ -916,6 +918,14 @@ function buildPlaybackOutcome(
     ...(wordIndex !== undefined ? { word_index: wordIndex } : {}),
     ...(words.length > 0 ? { word_count: words.length } : {}),
   };
+}
+
+/** VoiceBar indexes an envelope from the speaking edge; drop the samples already heard, never add any. */
+function envelopeFromOffset(envelope: PlaybackAmplitudeEnvelope | undefined, offsetMs: number): PlaybackAmplitudeEnvelope | undefined {
+  if (envelope?.source !== "decoded-rms") return envelope;
+  const samples = envelope.samples.slice(Math.round(offsetMs / envelope.sample_interval_ms));
+  return samples.length > 0 ? { ...envelope, samples }
+    : { source: "unavailable", sample_interval_ms: envelope.sample_interval_ms, samples: [] };
 }
 
 function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
@@ -1182,7 +1192,8 @@ class PlaybackQueueManager {
     job.lifecycle.generation++;
     disposeSeekSlice(job.sliceFile);
     job.sliceFile = undefined;
-    job.skipAmplitudeDecode = true;
+    // Paused before any decode (during preparation): Resume decodes afresh instead of starting flat.
+    job.skipAmplitudeDecode = offset > 0 || job.decodedAmplitude !== undefined;
     job.metadata.localOffsetMs = offset;
     job.metadata.playbackOffsetMs = chunkStart + offset;
     const parked: ParkedPlayback = { job, offsetMs: offset, controller: new AbortController(),
@@ -1484,7 +1495,9 @@ class PlaybackQueueManager {
       this.processNext();
       return;
     }
-    next.playbackAmplitude = playbackAmplitude;
+    if (playbackAmplitude) next.decodedAmplitude = playbackAmplitude;
+    next.playbackAmplitude = playbackAmplitude ?? (next.resuming
+      ? envelopeFromOffset(next.decodedAmplitude, next.metadata?.localOffsetMs ?? 0) : undefined);
     let proc: ReturnType<typeof Bun.spawn>;
     try {
       proc = Bun.spawn(buildPlaybackArgv(getAudioPlayer(), next.sliceFile ?? next.audioFile), {
