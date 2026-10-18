@@ -66,7 +66,7 @@ final class UIE2EGate2245 {
     }
 
     func snapshot(_ action: String) {
-        host.sandbox.writeObject(["action": action, "noDeviceEngineStarts": noDeviceEngine.starts, "commands": gateCommands, "statusText": app.voiceState.statusText, "state": current(), "beforeShow": beforeShow,
+        host.sandbox.writeObject(["pid": ProcessInfo.processInfo.processIdentifier, "action": action, "noDeviceEngineStarts": noDeviceEngine.starts, "commands": gateCommands, "statusText": app.voiceState.statusText, "state": current(), "beforeShow": beforeShow,
             "snoozed": app.isSnoozed, "hidden": app.voiceState.isHidden, "connected": app.voiceState.isConnected,
             "panelVisible": panel.isVisible, "windowNumber": panel.windowNumber,
             "visiblePanels": NSApp.windows.filter { $0 is NSPanel && $0.isVisible }.map(\.title),
@@ -126,6 +126,7 @@ extension UIE2EHost {
             : ["start", "speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard", "show", "end"]
         for (index, name) in names.enumerated() {
             let command = NSMenuItem(title: "HIDE1VIS " + name, action: #selector(hide1VisualCommand(_:)), keyEquivalent: Array("0123456789abcdef").map(String.init)[index])
+            command.keyEquivalentModifierMask = [.command, .option]
             command.target = self; command.representedObject = name
             menu.addItem(command)
         }
@@ -244,10 +245,8 @@ extension UIE2EGate2245 {
             server.parseLine(#"{"type":"transcription","text":"Synthetic recovery","recording_is_latest":false}"#)
             server.parseLine(#"{"type":"state","state":"idle","source":"recording"}"#)
         }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(350))
-            self?.fitVisualPanel(); self?.snapshot("failure:" + name)
-        }
+        // NSAlert runs a modal loop. Its visible state is observed out of process by XCUI;
+        // a delayed MainActor snapshot can remain queued behind the alert until dismissal.
     }
 
     func selectionCase(_ name: String) {

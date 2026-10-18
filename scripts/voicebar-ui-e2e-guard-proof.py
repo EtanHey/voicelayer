@@ -18,6 +18,8 @@ SOURCES = [
     'scripts/voicebar-ui-e2e-device-guard.m', 'scripts/voicebar-ui-e2e-device-probe.m',
     'scripts/voicebar-ui-e2e-guard-proof.py', 'scripts/voicebar-ui-e2e-run.py',
     'scripts/voicebar-ui-e2e-results.py', 'scripts/voicebar-ui-e2e.sh',
+    'scripts/voicebar-ui-e2e-supervisor.py', 'scripts/voicebar-ui-e2e-resident.swift',
+    'scripts/voicebar-ui-e2e-permissions.swift',
     'flow-bar/Sources/VoiceBar/VoiceBarApp.swift',
     'flow-bar/Sources/VoiceBar/UIE2EHost.swift', 'flow-bar/Sources/VoiceBar/UIE2EGate2245.swift',
     'flow-bar/Sources/VoiceBarUI/AudioLevelMonitor.swift', 'flow-bar/Sources/VoiceBarUI/AudioStreamable.swift',
@@ -37,7 +39,8 @@ def identities(repo, output):
     files += sorted((repo / 'flow-bar/Sources/VoiceBarUI').glob('*.swift'))
     binary = sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar'
     files += [binary, output / 'device-guard.dylib',
-              output / 'device-guard-probe', sandbox / 'VoiceBarQA.app/Contents/Info.plist']
+              output / 'device-guard-probe', output / 'voicebar-ui-e2e-resident',
+              output / 'voicebar-ui-e2e-permissions', sandbox / 'VoiceBarQA.app/Contents/Info.plist']
     if b'voicebar_no_device_guard_version' not in binary.read_bytes():
         raise ValueError('QA binary lacks the mandatory runtime guard check')
     # Include the actual UI test executable, not just its source.

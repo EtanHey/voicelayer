@@ -20,7 +20,7 @@ case "$scenario" in
   full) ;;
   focused-338) focused_338=1 ;;
   hide1|gate2246) export VOICEBAR_UIE2E_GATE2245=1 ;;
-  *) echo "FAIL unknown scenario: $scenario (expected full or focused-338)" >&2; exit 2 ;;
+  *) echo "FAIL unknown scenario: $scenario (expected full, focused-338, hide1 or gate2246)" >&2; exit 2 ;;
 esac
 repo=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$(dirname "$output")"
@@ -35,10 +35,6 @@ mkdir "$sandbox/home"
 printf '%s\n' "$sandbox" > "$output/sandbox-path.txt"
 # Keep the sandbox, QA app, settings and receipts for failure analysis. No broad cleanup/kill.
 app="$sandbox/VoiceBarQA.app"
-if [[ $build_only == 0 ]]; then
-  /usr/bin/osascript -e 'set volume output muted true'
-  [[ $(/usr/bin/osascript -e 'output muted of (get volume settings)') == true ]] || { echo 'FAIL output mute unconfirmed'; exit 1; }
-fi
 # This never stops, swaps or launches the installed app, and never installs the F5 relay.
 VOICEBAR_QA_BUILD=1 VOICEBAR_UIE2E_FOCUSED_338=$focused_338 VOICEBAR_UIE2E_ADHOC=1 VOICEBAR_CODESIGN_IDENTITY=- \
   bash "$repo/flow-bar/build-app.sh" --install-path "$app" --no-stop --no-relaunch > "$output/app-build.log" 2>&1 || {
@@ -79,18 +75,14 @@ xcodebuild build-for-testing -project "$repo/flow-bar/UIE2E/VoiceBarUIE2E.xcodep
   -destination 'platform=macOS' -derivedDataPath "$output/DerivedData" > "$output/build-for-testing.log" 2>&1 || {
     echo "FAIL build-for-testing (see $output/build-for-testing.log)"; exit 1;
   }
+for helper in resident permissions; do
+  xcrun swiftc "$repo/scripts/voicebar-ui-e2e-$helper.swift" -o "$output/voicebar-ui-e2e-$helper" \
+    > "$output/$helper-build.log" 2>&1 || { echo "FAIL $helper helper build"; exit 1; }
+done
 echo 'PASS build-for-testing (UI execution NOT_PROVEN)'
 if [[ $scenario == gate2246 ]]; then
   python3 "$repo/scripts/voicebar-ui-e2e-guard-proof.py" build "$output"
 fi
 [[ $build_only == 0 ]] || exit 0
-python3 "$repo/scripts/voicebar-ui-e2e-results.py" configure "$output" "$app" "$sandbox" --scenario "$scenario"
-# Reconfirm immediately before XCUITest takes the screen. Leave output muted after the run.
-[[ $(/usr/bin/osascript -e 'output muted of (get volume settings)') == true ]] || { echo 'FAIL output mute changed'; exit 1; }
-status=0
-# Default recording is part of the run, not an optional adapter. Build-only exits above.
-python3 "$repo/scripts/voicebar-ui-e2e-run.py" "$output" --scenario "$scenario" || status=$?
-export_status=0
-python3 "$repo/scripts/voicebar-ui-e2e-results.py" export "$output" "$sandbox" --scenario "$scenario" || export_status=$?
-[[ $status == 0 && $export_status == 0 ]] || { echo "FAIL UIE2E: xcodebuild=$status export=$export_status"; exit 1; }
-echo "PASS UIE2E scenario=$scenario: $output/screenshots/index.html"
+# The committed supervisor owns mute, resident preconditions, own Hide/Show and cleanup.
+python3 "$repo/scripts/voicebar-ui-e2e-supervisor.py" "$output" --scenario "$scenario"

@@ -95,7 +95,10 @@ final class VoiceBarFlowTests: XCTestCase {
                     return false
                 }
                 self.app.activate() // Recover focus only; no foreign buttons, dismissal or permission action.
-                let clear = self.app.state == .runningForeground && self.app.windows["VoiceBar QA Settings"].isHittable
+                let surfaceReady = ["hide1", "gate2246"].contains(self.scenario)
+                    ? self.app.menuBars.menuBarItems["HIDE1VIS"].isHittable
+                    : self.app.windows["VoiceBar QA Settings"].isHittable
+                let clear = self.app.state == .runningForeground && surfaceReady
                 if !clear { XCTFail("BLOCKED benign foreign overlay persists after QA activation: \(owner)") }
                 return clear
             case let .unknown(owner):
