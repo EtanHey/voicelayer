@@ -66,7 +66,9 @@ final class UIE2EGate2245 {
     }
 
     func snapshot(_ action: String) {
-        host.sandbox.writeObject(["pid": ProcessInfo.processInfo.processIdentifier, "action": action, "noDeviceEngineStarts": noDeviceEngine.starts, "commands": gateCommands, "statusText": app.voiceState.statusText, "state": current(), "beforeShow": beforeShow,
+        let command = UIE2EFixtureCommandListener.delivered
+        host.sandbox.writeObject(["pid": ProcessInfo.processInfo.processIdentifier, "action": action,
+            "fixtureCommand": ["count": command.count, "name": command.name], "noDeviceEngineStarts": noDeviceEngine.starts, "commands": gateCommands, "statusText": app.voiceState.statusText, "state": current(), "beforeShow": beforeShow,
             "snoozed": app.isSnoozed, "hidden": app.voiceState.isHidden, "connected": app.voiceState.isConnected,
             "panelVisible": panel.isVisible, "windowNumber": panel.windowNumber,
             "visiblePanels": NSApp.windows.filter { $0 is NSPanel && $0.isVisible }.map(\.title),
@@ -113,28 +115,69 @@ final class UIE2EGate2245 {
     }
 }
 
+// BEGIN UIE2E FIXTURE COMMANDS
+/// Fixture commands arrive as distributed notifications named for this sandbox, never as
+/// keystrokes: a key equivalent can be consumed by a global macOS shortcut (run-03's ⌥⌘D was
+/// symbolic hotkey 52 and toggled the operator's Dock). The sandboxed XCTest runner can post a
+/// name-only notification but cannot write files; the QA app acknowledges with a file it owns.
+enum UIE2EFixtureCommand {
+    static let prefix = "com.voicelayer.voicebar.uie2e.command."
+    static let ackFile = "fixture-command-ack.json"
+    static func notificationName(token: String, command: String) -> String { prefix + token + "." + command }
+    /// The command a notification name carries for this sandbox token, or nil for any other name.
+    static func command(from name: String, token: String, allowed: [String]) -> String? {
+        let expected = prefix + token + "."
+        guard name.hasPrefix(expected) else { return nil }
+        let command = String(name.dropFirst(expected.count))
+        return allowed.contains(command) ? command : nil
+    }
+}
+// END UIE2E FIXTURE COMMANDS
+
+@MainActor
+final class UIE2EFixtureCommandListener {
+    static var active: UIE2EFixtureCommandListener?
+    static var delivered: (count: Int, name: String) = (0, "")
+    var observers: [NSObjectProtocol] = []
+
+    init(host: UIE2EHost, names: [String]) {
+        let token = host.sandbox.root.lastPathComponent
+        let center = DistributedNotificationCenter.default()
+        for name in names {
+            let full = UIE2EFixtureCommand.notificationName(token: token, command: name)
+            observers.append(center.addObserver(forName: Notification.Name(full), object: nil, queue: .main) { [weak host] note in
+                let raw = note.name.rawValue
+                MainActor.assumeIsolated {
+                    // Like a menu key equivalent, a command never runs under a modal (the product NSAlert);
+                    // it stays unacknowledged, so the runner reports "not delivered", never a fake verdict.
+                    guard let host, NSApp.modalWindow == nil,
+                          let command = UIE2EFixtureCommand.command(from: raw, token: token, allowed: names) else { return }
+                    UIE2EFixtureCommandListener.delivered = (UIE2EFixtureCommandListener.delivered.count + 1, command)
+                    // Acknowledge before running: a capture-failure command can enter the NSAlert modal loop.
+                    // Receipts the command writes carry the same count in "fixtureCommand".
+                    host.sandbox.writeObject(["count": UIE2EFixtureCommandListener.delivered.count, "name": command],
+                                             file: UIE2EFixtureCommand.ackFile)
+                    host.hide1VisualCommand(command)
+                }
+            })
+        }
+    }
+}
+
 extension UIE2EHost {
     func installHide1VisualMenu() {
         model.hidden = true
         pill.orderOut(nil)
         settings.orderOut(nil)
         statusItem?.isVisible = false
-        let item = NSMenuItem(); let menu = NSMenu(title: "HIDE1VIS")
-        item.title = "HIDE1VIS"; item.submenu = menu
         let names = ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246"
             ? ["start", "user-f5", "user-ask", "unknown", "background", "recovered", "visible", "show", "selection", "end", "same-hash", "different", "pending", "fast-bc", "no-hash", "busy"]
             : ["start", "speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard", "show", "end"]
-        for (index, name) in names.enumerated() {
-            let command = NSMenuItem(title: "HIDE1VIS " + name, action: #selector(hide1VisualCommand(_:)), keyEquivalent: Array("0123456789abcdef").map(String.init)[index])
-            command.keyEquivalentModifierMask = [.command, .option]
-            command.target = self; command.representedObject = name
-            menu.addItem(command)
-        }
-        NSApp.mainMenu?.addItem(item)
+        // No menu key equivalents: commands are notification-only (see UIE2EFixtureCommand).
+        UIE2EFixtureCommandListener.active = UIE2EFixtureCommandListener(host: self, names: names)
     }
 
-    @objc func hide1VisualCommand(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
+    func hide1VisualCommand(_ name: String) {
         if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
             gate2246Command(name); return
         }

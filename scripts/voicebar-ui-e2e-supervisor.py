@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import plistlib
 import re
 import secrets
 import shlex
@@ -47,6 +48,29 @@ BUSY_TEXT = ('VoiceBar recording', 'VoiceBar status', 'VoiceBar teleprompter', '
 AX_PUBLIC_LABELS = frozenset((NOTCH_IDLE_LABEL, 'VoiceBar launcher', 'VoiceBar history',
                               'Ready', 'Start voice recording', 'Re-transcribing stored audio',
                               'Re-transcribing…') + BUSY_PREFIXES + BUSY_TEXT)
+
+
+# Modifier keystrokes each scenario still injects. Fixture commands travel as distributed
+# notifications (never keystrokes): run-03's ⌥⌘D was symbolic hotkey 52 and hid Etan's Dock.
+SCENARIO_KEYSTROKES = {'full': (('a', ('command',)),), 'focused-338': (), 'hide1': (), 'gate2246': ()}
+# NSEvent/CGEvent modifier bits as stored in com.apple.symbolichotkeys parameters[2].
+HOTKEY_MODIFIERS = {'shift': 1 << 17, 'control': 1 << 18, 'option': 1 << 19, 'command': 1 << 20}
+# Persistent host settings a stray keystroke can flip (⌥⌘D Dock hiding, ⌃F7 keyboard access,
+# input-source switching) plus the hotkey table itself. Read before and after; reported, never restored.
+WATCHED_HOST_SETTINGS = (('com.apple.dock', 'autohide'), ('-g', 'AppleKeyboardUIMode'),
+                         ('com.apple.HIToolbox', 'AppleSelectedInputSources'))
+SYSTEM_MODAL_SOURCES = frozenset(('system-owner', 'modal', 'sheet'))
+
+
+class ForeignModal(RuntimeError):
+    """A foreign OS/app modal is on screen; the run refuses or stops, never interacting with it."""
+    def __init__(self, message, modals):
+        super().__init__(message)
+        self.modals = modals
+
+
+class HotkeyCollision(RuntimeError):
+    """A keystroke the scenario injects is bound to an enabled global macOS shortcut."""
 
 
 class OwnershipRace(RuntimeError):
@@ -169,7 +193,53 @@ def permission_receipt(permission):
             retained.append(dict(owner=owner,
                                  kind=kind, labels=[redacted(x) for x in labels]))
         prompts = retained
-    return dict(axTrusted=permission.get('axTrusted') is True, prompts=prompts)
+    return dict(axTrusted=permission.get('axTrusted') is True, prompts=prompts, modals=modal_receipt(permission))
+
+
+def safe_owner(owner):
+    return owner if isinstance(owner, str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}', owner) else redacted(str(owner))
+
+
+def modal_receipt(permission):
+    """Foreign modal inventory, sanitized at ingestion: owner id or redacted, title redacted."""
+    modals = permission.get('modals')
+    if not isinstance(modals, list):
+        raise RuntimeError('Foreign modal inventory unreadable; refusing without it')
+    retained = []
+    for modal in modals:
+        if not isinstance(modal, dict) or not isinstance(modal.get('title', ''), str):
+            raise RuntimeError('Foreign modal entry unreadable')
+        source = modal.get('source')
+        pid = modal.get('pid')
+        retained.append(dict(owner=safe_owner(modal.get('owner') or 'unknown'),
+                             pid=pid if isinstance(pid, int) else None,
+                             source=source if source in SYSTEM_MODAL_SOURCES else 'unknown',
+                             title=redacted(modal.get('title', ''))))
+    return retained
+
+
+def symbolic_hotkey_collisions(exported, keystrokes):
+    """Enabled com.apple.symbolichotkeys entries bound to any (character, modifiers) keystroke."""
+    try:
+        table = plistlib.loads(exported)['AppleSymbolicHotKeys']
+    except Exception:
+        raise HotkeyCollision('Global shortcut table unreadable; keystroke safety NOT_PROVEN') from None
+    mask = sum(HOTKEY_MODIFIERS.values())
+    wanted = {(ord(key.lower()), sum(HOTKEY_MODIFIERS[m] for m in modifiers)) for key, modifiers in keystrokes}
+    hits = []
+    for number, entry in table.items():
+        try:
+            parameters = entry['value']['parameters'] if entry.get('enabled') else None
+            if parameters and (int(parameters[0]), int(parameters[2]) & mask) in wanted:
+                hits.append(int(number))
+        except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+            continue
+    return sorted(hits)
+
+
+def host_setting_changes(before, after):
+    return {key: dict(before=before.get(key), after=after.get(key))
+            for key in sorted(set(before) | set(after)) if before.get(key) != after.get(key)}
 
 
 def ax_nodes(ax_tree):
@@ -243,7 +313,13 @@ def supervise(host):
                'exportExit': None, 'cleanupErrors': []}
     initial = None
     run_started = False
+    settings_before = None
     try:
+        # Before any mute or launch: refuse colliding keystrokes, then snapshot host settings.
+        if hasattr(host, 'refuse_hotkey_collisions'):
+            host.refuse_hotkey_collisions()
+        if hasattr(host, 'host_settings'):
+            settings_before = receipt['hostSettingsBefore'] = host.host_settings()
         initial = host.muted()
         receipt['initialMuted'] = initial
         host.set_mute(True)
@@ -257,6 +333,8 @@ def supervise(host):
         receipt['suiteExit'] = host.poll()
     except BaseException as error:
         receipt['error'] = repr(error)
+        if isinstance(error, ForeignModal):
+            receipt['foreignModal'] = error.modals
     finally:
         # Unmute only after positive owned-process termination proof, including on abort.
         terminated = False
@@ -272,6 +350,17 @@ def supervise(host):
             except BaseException as error:
                 receipt['cleanupErrors'].append(name + ': ' + repr(error))
         receipt['ownedTerminationProven'] = terminated
+        if settings_before is not None:
+            # Report any drift (e.g. Dock autohide); restore nothing the run did not provably change.
+            try:
+                after = receipt['hostSettingsAfter'] = host.host_settings()
+                changes = host_setting_changes(settings_before, after)
+                if changes:
+                    receipt['hostSettingsChanged'] = changes
+                    receipt['cleanupErrors'].append('Host setting changed during run; NOT restored, operator must review: '
+                                                    + json.dumps(changes, sort_keys=True))
+            except BaseException as error:
+                receipt['cleanupErrors'].append('host settings: ' + repr(error))
         if not terminated:
             reason = getattr(host, 'mute_retention_reason', None)
             if reason:
@@ -300,7 +389,7 @@ def supervise(host):
     launched = run_started or getattr(host, 'runner_launch_attempted', False) or getattr(host, 'child', None) is not None
     if receipt['cleanupErrors']:
         code = 1
-    elif receipt.get('error') and not launched:
+    elif receipt.get('foreignModal') or (receipt.get('error') and not launched):
         code = 2
     elif receipt.get('error') or receipt['suiteExit'] != 0 or receipt['exportExit'] != 0:
         code = 1
@@ -310,7 +399,10 @@ def supervise(host):
         code = 0
     else:
         code = 1
-    receipt.update(exitCode=code, verdict={0: 'PASS', 3: 'PASS', 1: 'FAIL', 2: 'PREFLIGHT_REFUSED'}[code])
+    verdict = {0: 'PASS', 3: 'PASS', 1: 'FAIL', 2: 'PREFLIGHT_REFUSED'}[code]
+    if code == 2 and launched:
+        verdict = 'FOREIGN_MODAL_STOP'
+    receipt.update(exitCode=code, verdict=verdict)
     host.save(receipt)
     mute = ('retained-by-design' if code == 3 else 'retained' if receipt.get('muteRetained')
             else 'restored' if receipt.get('muteRestored') else 'unknown')
@@ -384,6 +476,45 @@ class NativeHost:
                        'prompts=%s)' % (code, permissions.get('axTrusted'), json.dumps(permissions.get('prompts'))))
             self.note(message)
             raise RuntimeError(message)
+
+    def refuse_modals(self, permissions):
+        modals = permissions.get('modals') or []
+        if modals:
+            message = ('STOP: foreign modal on screen; never interacted with (%s)' % '; '.join(
+                'owner=%s source=%s title=%s' % (m['owner'], m['source'], m['title']) for m in modals))
+            self.note(message)
+            raise ForeignModal(message, modals)
+
+    def symbolic_hotkeys(self):
+        return subprocess.run(['defaults', 'export', 'com.apple.symbolichotkeys', '-'], capture_output=True,
+                              timeout=self.command_timeout(), check=False)
+
+    def refuse_hotkey_collisions(self):
+        keystrokes = SCENARIO_KEYSTROKES[self.scenario]
+        self.preflight['injectedKeystrokes'] = [[key, list(modifiers)] for key, modifiers in keystrokes]
+        if not keystrokes:
+            self.preflight['symbolicHotkeyCollisions'] = []
+            return
+        result = self.symbolic_hotkeys()
+        hits = symbolic_hotkey_collisions(result.stdout if result.returncode == 0 else b'', keystrokes)
+        self.preflight['symbolicHotkeyCollisions'] = hits
+        if hits:
+            message = ('REFUSE: injected keystroke(s) %r bound to enabled global macOS shortcut(s) %r; nothing sent'
+                       % (self.preflight['injectedKeystrokes'], hits))
+            self.note(message)
+            raise HotkeyCollision(message)
+
+    def host_settings(self):
+        values = {}
+        for domain, key in WATCHED_HOST_SETTINGS:
+            result = subprocess.run(['defaults', 'read', domain, key], capture_output=True, text=True,
+                                    timeout=self.command_timeout(), check=False)
+            value = result.stdout.strip() if result.returncode == 0 else None
+            values[domain + ' ' + key] = value if value is None or re.fullmatch(r'-?\d+', value) else redacted(value)
+        table = self.symbolic_hotkeys()
+        values['com.apple.symbolichotkeys'] = (redacted(table.stdout.decode(errors='replace'))
+                                               if table.returncode == 0 else None)
+        return values
 
     def muted(self):
         value = self.run(['osascript', '-e', 'output muted of (get volume settings)'])
@@ -607,6 +738,7 @@ class NativeHost:
             code, permission = self.permissions()
             self.checks.append(dict(phase='preflight', permissionsExit=code, permissions=permission))
             self.refuse_permissions(code, permission)
+            self.refuse_modals(permission)
             self.resident_inventory(attempt)
             self.save_resident()
             residents = attempt['residentPids']
@@ -672,6 +804,7 @@ class NativeHost:
         if not muted or free < (10 if self.child else 15) * 1024**3:
             raise RuntimeError('Mute lost or disk threshold crossed (muted=%r, freeBytes=%d)' % (muted, free))
         self.refuse_permissions(code, permissions)
+        self.refuse_modals(permissions)
         guard = self.sandbox / 'no-device-guard.log'
         if guard.exists() and guard.read_text() != 'voicebar-no-device-guard-v1:installed\n':
             raise RuntimeError('Device tripwire invoked')
