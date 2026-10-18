@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
 import {
   analyzeTranscriptCandidate,
   buildCleanupPairsFromRecordings,
@@ -491,6 +491,83 @@ describe("stt-quality-mining", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  describe("entity boundary vocabulary", () => {
+    // The preload points the store at its isolated run root; never the real one.
+    function withUserVocabulary<T>(
+      entries: Array<{ canonical: string; variants: string[] }>,
+      run: () => T,
+    ): T {
+      const isolatedPath = process.env.QA_VOICE_STT_VOCABULARY_PATH;
+      if (!isolatedPath) throw new Error("preload vocabulary path missing");
+      const root = mkdtempSync(join(dirname(isolatedPath), "dedupe-"));
+      try {
+        const vocabularyPath = join(root, "vocabulary.json");
+        writeFileSync(vocabularyPath, JSON.stringify({ entries }));
+        process.env.QA_VOICE_STT_VOCABULARY_PATH = vocabularyPath;
+        return run();
+      } finally {
+        process.env.QA_VOICE_STT_VOCABULARY_PATH = isolatedPath;
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    function entityFindings(observedText: string, expectedText: string) {
+      const report = buildSTTQualityMiningReport({
+        createdAt: "2026-05-21T12:00:00.000Z",
+        recordings: [],
+        freshDecodes: [],
+        cleanupPairs: [],
+        polishPairs: [],
+        correctionPairs: [{ id: "entity", observedText, expectedText }],
+      });
+      return report.passes
+        .flatMap((pass) => pass.findings)
+        .filter((finding) => finding.category === "entity_boundary_errors");
+    }
+
+    it("counts a built-in entity once when the user dictionary repeats it", () => {
+      const findings = withUserVocabulary(
+        [{ canonical: "VoiceLayer", variants: ["voicelayer", "Voice-Layer"] }],
+        () =>
+          entityFindings(
+            "Send this to code? VoiceLayer, then continue.",
+            "Send this to VoiceLayer? then continue.",
+          ),
+      );
+
+      expect(findings.map((finding) => finding.pattern)).toEqual([
+        "entity-boundary:VoiceLayer",
+      ]);
+    });
+
+    it("keeps distinct built-in and user entities", () => {
+      const findings = withUserVocabulary(
+        [{ canonical: "Gemini", variants: [] }],
+        () =>
+          entityFindings(
+            "Send this to code? VoiceLayer, then ask Claude Gemini.",
+            "Send this to VoiceLayer? then ask Gemini.",
+          ),
+      );
+
+      expect(findings.map((finding) => finding.pattern).sort()).toEqual([
+        "entity-boundary:Gemini",
+        "entity-boundary:VoiceLayer",
+      ]);
+    });
+
+    it("keeps a user-only entity", () => {
+      const findings = withUserVocabulary(
+        [{ canonical: "Gemini", variants: [] }],
+        () => entityFindings("Ask Claude Gemini.", "Ask Gemini."),
+      );
+
+      expect(findings.map((finding) => finding.pattern)).toEqual([
+        "entity-boundary:Gemini",
+      ]);
+    });
   });
 
   it("runs the CLI with a corrections JSONL and writes a report", async () => {

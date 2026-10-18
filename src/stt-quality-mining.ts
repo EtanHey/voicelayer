@@ -551,13 +551,35 @@ function normalizedBoundaryText(text: string): string {
     .toLowerCase();
 }
 
+/**
+ * One candidate per matcher key. A user dictionary may repeat a built-in name
+ * (VoiceLayer); counting both would double every finding. The user's first
+ * spelling of a key labels it, so its own variants never relabel its canonical.
+ */
+function entityBoundaryCandidates(): Map<string, string> {
+  const candidates = new Map<string, string>();
+  const userKeys = new Set<string>();
+  for (const entity of ENTITY_BOUNDARY_PHRASES) {
+    const key = normalizedBoundaryText(entity);
+    if (key && !candidates.has(key)) candidates.set(key, entity);
+  }
+  for (const entry of listVocabulary().entries) {
+    for (const entity of [entry.canonical, ...entry.variants]) {
+      const key = normalizedBoundaryText(entity);
+      if (!key || userKeys.has(key)) continue;
+      userKeys.add(key);
+      candidates.set(key, entity);
+    }
+  }
+  return candidates;
+}
+
 function entityBoundaryFindings(pair: STTCorrectionPair): STTQualityFinding[] {
   const observed = normalizedBoundaryText(pair.observedText);
   const expected = normalizedBoundaryText(pair.expectedText);
   const findings: STTQualityFinding[] = [];
 
-  for (const entity of [...ENTITY_BOUNDARY_PHRASES, ...listVocabulary().entries.flatMap((entry) => [entry.canonical, ...entry.variants])]) {
-    const normalizedEntity = normalizedBoundaryText(entity);
+  for (const [normalizedEntity, entity] of entityBoundaryCandidates()) {
     const escapedEntity = escapeRegExp(normalizedEntity).replace(/\s+/g, "\\s+");
     const expectedRoutingPattern = new RegExp(
       `\\b(?:to|ask|tell|message|send\\s+this\\s+to|send\\s+to)\\s+${escapedEntity}\\b`,
