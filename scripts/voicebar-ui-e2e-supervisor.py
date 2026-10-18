@@ -13,6 +13,11 @@ import sys
 import time
 
 
+# Full PASS recorded 1488.545 s (earlier run 1504 s); keep 40 min for both broad suites.
+# gate2246 run-01 reached 250 s of recording, before xcodebuild/recorder overhead.
+SCENARIO_BUDGET_SECONDS = {'full': 2400, 'focused-338': 2400, 'gate2246': 600, 'hide1': 300}
+
+
 def safe_to_hide(capture_children, fresh_locks, ax_labels):
     blocked = ['Recording', 'Starting microphone', 'Stop recording', 'Cancel recording']
     if capture_children or fresh_locks or any(x.startswith(tuple(blocked)) for x in ax_labels):
@@ -42,12 +47,14 @@ def supervise(host):
     receipt = {'started': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'suiteExit': None,
                'exportExit': None, 'cleanupErrors': []}
     initial = None
+    run_started = False
     try:
         initial = host.muted()
         receipt['initialMuted'] = initial
         host.set_mute(True)
         host.prepare_resident()
         host.start()
+        run_started = True
         while host.poll() is None:
             host.check()  # Continuous mute, disk, permission and tripwire checks.
             host.wait(1)
@@ -71,7 +78,11 @@ def supervise(host):
                 receipt['cleanupErrors'].append(name + ': ' + repr(error))
         receipt['ownedTerminationProven'] = terminated
         if not terminated:
-            receipt['cleanupErrors'].append('Owned termination NOT_PROVEN; output mute retained')
+            reason = getattr(host, 'mute_retention_reason', None)
+            if reason:
+                receipt['muteRetentionReason'] = reason
+            else:
+                receipt['cleanupErrors'].append('Owned termination NOT_PROVEN; output mute retained')
         if initial is not None:
             try:
                 host.set_mute(initial if terminated else True)
@@ -87,8 +98,26 @@ def supervise(host):
         except BaseException as error:
             receipt['error'] = repr(error)
         host.save(receipt)
-    return int(bool(receipt.get('error') or receipt['cleanupErrors'] or
-                    receipt['suiteExit'] != 0 or receipt['exportExit'] != 0))
+    launched = run_started or getattr(host, 'runner_launch_attempted', False) or getattr(host, 'child', None) is not None
+    if receipt['cleanupErrors']:
+        code = 1
+    elif receipt.get('error') and not launched:
+        code = 2
+    elif receipt.get('error') or receipt['suiteExit'] != 0 or receipt['exportExit'] != 0:
+        code = 1
+    elif receipt.get('muteRetentionReason') and receipt.get('muteRetained'):
+        code = 3
+    elif receipt['ownedTerminationProven'] and receipt.get('muteRestored'):
+        code = 0
+    else:
+        code = 1
+    receipt.update(exitCode=code, verdict={0: 'PASS', 3: 'PASS', 1: 'FAIL', 2: 'PREFLIGHT_REFUSED'}[code])
+    host.save(receipt)
+    mute = ('retained-by-design' if code == 3 else 'retained' if receipt.get('muteRetained')
+            else 'restored' if receipt.get('muteRestored') else 'unknown')
+    print(f"verdict={receipt['verdict']} exit={code} mute={mute} "
+          f"receipt={pathlib.Path(getattr(host, 'output', '.')) / 'operator-state.json'}", flush=True)
+    return code
 
 
 class NativeHost:
@@ -105,6 +134,7 @@ class NativeHost:
         self.owned = {}
         self.shutdown = []
         self.runner_launch_attempted = False
+        self.mute_retention_reason = None
 
     def run(self, args):
         return subprocess.check_output(args, text=True, timeout=15).strip()
@@ -269,7 +299,7 @@ class NativeHost:
         env = dict(os.environ, VOICEBAR_UIE2E_SUPERVISOR_TOKEN=token,
                    VOICEBAR_UIE2E_RESIDENT_SNAPSHOT=str(self.output / 'resident-visibility.json'))
         self.log = (self.output / 'supervisor.log').open('w')
-        self.deadline = time.monotonic() + 300
+        self.deadline = time.monotonic() + SCENARIO_BUDGET_SECONDS[self.scenario]
         # Popen may launch then fail before returning a handle. Polling cannot close this gap.
         self.runner_launch_attempted = True
         self.child = subprocess.Popen([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-run.py'),
@@ -385,6 +415,7 @@ class NativeHost:
 
     def stop(self):
         errors = []
+        self.mute_retention_reason = None
         # Runner, QA/descendant cleanup and final proof are independent, even if a leg fails.
         def attempt(action):
             try:
@@ -412,9 +443,12 @@ class NativeHost:
         if self.runner_launch_attempted or self.child is not None:
             # No acknowledged pre-exec registration exists in this runner. Even exit 0 and
             # an empty descendant scan cannot exclude reparented capture/xcodebuild children.
-            errors.append('Launch completeness NOT_PROVEN; discovered subset is not all-owned proof')
+            reason = 'Launch completeness NOT_PROVEN; discovered subset is not all-owned proof'
+            errors.append(reason)
         if self.log:
             attempt(self.log.close)
+        if (self.runner_launch_attempted or self.child is not None) and errors == [reason]:
+            self.mute_retention_reason = reason
         self.shutdown.append(dict(errors=errors, terminationProven=not errors))
         return not errors
 
