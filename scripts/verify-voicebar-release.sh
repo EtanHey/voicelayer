@@ -9,12 +9,13 @@ APP_PATH=""
 ZIP_PATH=""
 SKIP_TAP_CHECK=0
 TAP_ROOT="${VOICEBAR_HOMEBREW_TAP_ROOT:-}"
+T3_PROOF=""
 PLIST_BUDDY="${VOICEBAR_PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
 REQUIRED_TEAM_ID="${VOICEBAR_REQUIRED_TEAM_ID:-PPN23G925Y}"
 
 usage() {
     cat <<'EOF'
-Usage: scripts/verify-voicebar-release.sh --version VERSION --app PATH --zip PATH [--tap-root PATH] [--skip-tap-check]
+Usage: scripts/verify-voicebar-release.sh --version VERSION --app PATH --zip PATH [--tap-root PATH --t3-proof PROOF.json] [--skip-tap-check]
 
 Fails if the VoiceBar release artifact, bundled package metadata, MCP version
 source, signing identity, notarization ticket, or Homebrew tap versions drift
@@ -22,6 +23,11 @@ from the canonical package.json release version.
 
 Use --skip-tap-check only while producing a new artifact checksum before the
 matching Homebrew tap bump exists. Run again without it after the tap is updated.
+
+The tap-check run is the last step before users can receive the build, so it
+also requires --t3-proof: the installed-candidate T3 Option+F5 PASS proof from
+scripts/t3-optf5-proof.ts. Its GitCommit must equal this app's Info.plist
+GitCommit and it must be newer than the app's BuildTimeUTC. There is no bypass.
 EOF
 }
 
@@ -184,6 +190,23 @@ verify_no_security_xattrs() {
     fi
 }
 
+# T3GATE1: the 2.2.45 T3 Option+F5 regression shipped because publication never required
+# the installed-candidate T3 check. The tap-check run gates the cask bump on that proof.
+verify_t3_optf5_proof() {
+    local candidate_commit candidate_build_time
+    if [ -z "$T3_PROOF" ]; then
+        err "REFUSED: T3 Option+F5 proof is required before the cask bump (--t3-proof PROOF.json)."
+        err "Install this candidate, run scripts/t3-optf5-proof.ts start/finish around a real Option+F5 in T3 Code, then pass the proof. There is no bypass."
+        return 1
+    fi
+    candidate_commit="$(read_plist_string "$APP_PATH/Contents/Info.plist" "GitCommit" 2>/dev/null || true)"
+    candidate_build_time="$(read_plist_string "$APP_PATH/Contents/Info.plist" "BuildTimeUTC" 2>/dev/null || true)"
+    bun "$PACKAGE_ROOT/scripts/t3-optf5-proof.ts" check \
+        --proof "$T3_PROOF" \
+        --candidate-commit "$candidate_commit" \
+        --candidate-build-time "$candidate_build_time"
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --version)
@@ -216,6 +239,14 @@ while [[ $# -gt 0 ]]; do
                 exit 2
             fi
             TAP_ROOT="$2"
+            shift 2
+            ;;
+        --t3-proof)
+            if [[ $# -lt 2 ]]; then
+                err "--t3-proof requires a value"
+                exit 2
+            fi
+            T3_PROOF="$2"
             shift 2
             ;;
         --skip-tap-check)
@@ -273,6 +304,7 @@ if [ "$SKIP_TAP_CHECK" -ne 1 ]; then
     require_equal "Formula/voicelayer.rb version" "$formula_version" "$canonical_version"
     require_equal "Casks/voicebar.rb version" "$cask_version" "$canonical_version"
     require_equal "Homebrew formula/cask version alignment" "$formula_version" "$cask_version"
+    verify_t3_optf5_proof
 fi
 
 printf '[verify-voicebar-release] PASS: VoiceBar %s release artifact matches canonical package version and Developer ID/notary guards\n' "$canonical_version"

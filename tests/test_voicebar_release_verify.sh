@@ -22,6 +22,10 @@ write_info_plist() {
   <string>$version</string>
   <key>CFBundleVersion</key>
   <string>$version</string>
+  <key>GitCommit</key>
+  <string>05bcc0a235712245dfc0bd08f8e657dd9277e7cd</string>
+  <key>BuildTimeUTC</key>
+  <string>2026-10-18T01:10:14Z</string>
 </dict>
 </plist>
 EOF
@@ -103,6 +107,16 @@ make_release_fixture() {
     printf '{"version":"%s"}\n' "$package_version" > "$temp_dir/VoiceBar.app/Contents/Resources/package.json"
     printf 'zip-placeholder\n' > "$temp_dir/VoiceBar.zip"
     write_tap "$temp_dir/tap" "$formula_version" "$cask_version"
+    write_t3_proof "$temp_dir/t3-proof.json"
+}
+
+# T3GATE1: the tap check gates the cask bump on an installed-candidate T3 Option+F5 proof.
+write_t3_proof() {
+    local hash
+    hash="$(printf 'synthetic' | shasum -a 256 | awk '{print $1}')"
+    cat > "$1" <<EOF
+{"schema":"voicelayer.t3-optf5-proof.v1","gitCommit":"05bcc0a235712245dfc0bd08f8e657dd9277e7cd","t3Build":"T3 Code (Alpha) 0.0.45 (0.0.45)","timestamp":"2026-10-18T01:30:00.000Z","expectedTextSha256":"$hash","historyTextSha256":"$hash","speakTextCommandId":"73C05ACC-9C3D-432A-BEE4-A6F6B662954F","readError":false}
+EOF
 }
 
 run_verify() {
@@ -112,7 +126,8 @@ run_verify() {
         --version "$version" \
         --app "$temp_dir/VoiceBar.app" \
         --zip "$temp_dir/VoiceBar.zip" \
-        --tap-root "$temp_dir/tap"
+        --tap-root "$temp_dir/tap" \
+        --t3-proof "$temp_dir/t3-proof.json"
 }
 
 if [[ ! -x "$VERIFY_SCRIPT" ]]; then
