@@ -60,6 +60,7 @@ function makeApp(root: string, commit = COMMIT, buildTime = BUILD_TIME) {
 }
 
 function zipApp(root: string) {
+  rmSync(join(root, "VoiceBar.zip"), { force: true });
   const r = Bun.spawnSync(["zip", "-qry", "VoiceBar.zip", "VoiceBar.app"], { cwd: root, stdout: "pipe", stderr: "pipe" });
   if (r.exitCode !== 0) throw new Error(`zip failed: ${r.stderr}`);
   return createHash("sha256").update(readFileSync(join(root, "VoiceBar.zip"))).digest("hex");
@@ -245,6 +246,30 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
     expect(r.err).toContain("VoiceBar.zip");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
+  test("a ZIP whose bundled daemon source differs from the proven app refuses", () => {
+    makeReleaseFixture();
+    const src = join(dir, "VoiceBar.app", "Contents", "Resources", "src");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, "mcp-server-daemon.ts"), "export const proven = true;\n");
+    zipApp(dir);
+    writeFileSync(join(src, "mcp-server-daemon.ts"), "export const proven = false;\n");
+    writeCask(createHash("sha256").update(readFileSync(join(dir, "VoiceBar.zip"))).digest("hex"));
+    const r = runVerify(["--t3-proof", writeProof(proof())]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("mcp-server-daemon.ts");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a ZIP with an extra file the proven app lacks refuses", () => {
+    makeReleaseFixture();
+    writeFileSync(join(dir, "VoiceBar.app", "Contents", "Resources", "extra.js"), "1\n");
+    zipApp(dir);
+    rmSync(join(dir, "VoiceBar.app", "Contents", "Resources", "extra.js"));
+    writeCask(createHash("sha256").update(readFileSync(join(dir, "VoiceBar.zip"))).digest("hex"));
+    const r = runVerify(["--t3-proof", writeProof(proof())]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("extra.js");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   test("a cask sha256 that is not the ZIP's refuses", () => {
     makeReleaseFixture();
     writeCask("0".repeat(64));
@@ -352,16 +377,31 @@ const sleepSync = (ms: number) => Bun.sleepSync(ms);
 
 // A real running "installed VoiceBar": a symlink to bash at <app>/Contents/MacOS/VoiceBar, so
 // `ps` shows the bundle executable path, with a child whose command names mcp-server-daemon.
+// The child is `exec -a`'d sleep, so the fixture tree is exactly two processes, no grandchild.
 // Started more than a second after the bundle was written, like a relaunch after install.
-function launchFakeVoiceBar(app: string) {
+function launchFakeVoiceBar(app: string, interpreter = "/bin/bash") {
   mkdirSync(join(app, "Contents", "MacOS"), { recursive: true });
-  symlinkSync("/bin/bash", join(app, "Contents", "MacOS", "VoiceBar"));
+  symlinkSync(interpreter, join(app, "Contents", "MacOS", "VoiceBar"));
   const proc = Bun.spawn(
-    [join(app, "Contents", "MacOS", "VoiceBar"), "-c", '/bin/bash -c "sleep 120; : mcp-server-daemon" & wait'],
+    [join(app, "Contents", "MacOS", "VoiceBar"), "-c", "(exec -a mcp-server-daemon /bin/sleep 120) & wait"],
     { stdout: "ignore", stderr: "ignore" },
   );
   sleepSync(300); // let the daemon-like child appear
   return proc;
+}
+
+async function stopFakeVoiceBar(proc: ReturnType<typeof Bun.spawn>) {
+  const children = Bun.spawnSync(["pgrep", "-P", String(proc.pid)], { stdout: "pipe" })
+    .stdout.toString()
+    .split("\n")
+    .filter(Boolean)
+    .map(Number);
+  for (const child of children) process.kill(child, "SIGKILL");
+  proc.kill("SIGKILL");
+  await proc.exited;
+  for (const child of children) {
+    while (Bun.spawnSync(["kill", "-0", String(child)]).exitCode === 0) sleepSync(20);
+  }
 }
 
 let runtimeRoot: string;
@@ -374,10 +414,8 @@ beforeAll(() => {
   sleepSync(1_100); // process start must be a whole second after the install
   voiceBar = launchFakeVoiceBar(installedApp);
 });
-afterAll(() => {
-  // Kill the daemon-like child first, then the fake VoiceBar.
-  Bun.spawnSync(["pkill", "-P", String(voiceBar.pid)]);
-  voiceBar.kill();
+afterAll(async () => {
+  await stopFakeVoiceBar(voiceBar);
   rmSync(runtimeRoot, { recursive: true, force: true });
 });
 
@@ -558,7 +596,7 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
     expect(r.err).toContain("running");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("a VoiceBar process older than the installed bundle (swapped, not relaunched) refuses", () => {
+  test("a VoiceBar process older than the installed bundle (swapped, not relaunched) refuses", async () => {
     const swapped = makeApp(join(dir, "swapped"));
     const old = launchFakeVoiceBar(swapped);
     try {
@@ -575,8 +613,28 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
       expect(r.code).not.toBe(0);
       expect(r.err).toContain("older than the installed bundle");
     } finally {
-      Bun.spawnSync(["pkill", "-P", String(old.pid)]);
-      old.kill();
+      await stopFakeVoiceBar(old);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("an old VoiceBar still running after a staged bundle was moved into place refuses", async () => {
+    // Stage B first (its files' ctime predates the launch), launch A, then rename B over A.
+    const root = mkdtempSync(join(dir, "swap-"));
+    const staged = makeApp(join(root, "staged"));
+    mkdirSync(join(staged, "Contents", "MacOS"), { recursive: true });
+    symlinkSync("/bin/zsh", join(staged, "Contents", "MacOS", "VoiceBar"));
+    const live = makeApp(join(root, "live"));
+    sleepSync(1_100);
+    const old = launchFakeVoiceBar(live);
+    try {
+      Bun.spawnSync(["mv", live, join(root, "live-old.app")]);
+      Bun.spawnSync(["mv", staged, live]);
+      const f = producerFixture(live);
+      const r = start(f);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("not the executable installed at");
+    } finally {
+      await stopFakeVoiceBar(old);
     }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 

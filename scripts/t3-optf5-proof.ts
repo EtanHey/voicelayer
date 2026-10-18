@@ -18,8 +18,23 @@
 // hashes only, never the paragraph text.
 
 import { createHash } from "crypto";
-import { existsSync, openSync, readFileSync, readSync, closeSync, statSync, writeFileSync } from "fs";
-import { homedir } from "os";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
+import { homedir, tmpdir } from "os";
+import { join } from "path";
 
 export const PROOF_SCHEMA = "voicelayer.t3-optf5-proof.v1";
 const T3_BUNDLE_ID = "com.t3tools.t3code";
@@ -138,6 +153,24 @@ function installedIdentity(app: string) {
   return { gitCommit, buildTimeUTC };
 }
 
+// A bundle moved into place keeps its files' old ctimes, so start-time checks alone cannot
+// tell a relaunched VoiceBar from an old one still running after the swap. The kernel can:
+// the process's mapped executable must be the very file now installed at the bundle path.
+function requireRunningExecutable(pid: number, binary: string) {
+  const installed = statSync(binary);
+  const installedPath = realpathSync(binary);
+  const out = Bun.spawnSync(["lsof", "-a", "-p", String(pid), "-d", "txt", "-F", "in"], { stdout: "pipe", stderr: "pipe" });
+  const mapped: { inode: number; name: string }[] = [];
+  let inode = -1;
+  for (const line of out.stdout.toString().split("\n")) {
+    if (line.startsWith("i")) inode = Number(line.slice(1));
+    else if (line.startsWith("n")) mapped.push({ inode, name: line.slice(1) });
+  }
+  if (!mapped.some((m) => m.inode === installed.ino && m.name === installedPath)) {
+    fail(`VoiceBar process ${pid} is not the executable installed at ${binary}; relaunch VoiceBar after installing`);
+  }
+}
+
 interface ProcessRow {
   pid: number;
   ppid: number;
@@ -177,6 +210,7 @@ function installedRuntime(app: string): { voiceBarPid: number; daemonPids: numbe
   if (voiceBars.length === 0) fail(`no running VoiceBar from ${binary}; launch the installed candidate first`);
   if (voiceBars.length > 1) fail(`${voiceBars.length} VoiceBar processes run from ${binary}; one resident only`);
   const voiceBarPid = voiceBars[0].pid;
+  requireRunningExecutable(voiceBarPid, binary);
   const daemonPids = rows
     .filter((row) => row.ppid === voiceBarPid && row.command.includes("mcp-server-daemon"))
     .map((row) => row.pid);
@@ -361,6 +395,66 @@ function finish(args: Map<string, string>) {
   console.log(`[t3-optf5-proof] PASS: ${out} (speak_text ${proof.speakTextCommandId}, VoiceBar ${proof.gitCommit})`);
 }
 
+// ---- distributable binding -------------------------------------------------------------
+
+type TreeEntry = { kind: "dir" } | { kind: "symlink"; target: string } | { kind: "file"; sha: string; exec: boolean };
+
+function treeManifest(root: string): Map<string, TreeEntry> {
+  const entries = new Map<string, TreeEntry>();
+  const walk = (rel: string) => {
+    for (const name of readdirSync(join(root, rel)).sort()) {
+      const path = rel ? `${rel}/${name}` : name;
+      const st = lstatSync(join(root, path));
+      if (st.isSymbolicLink()) entries.set(path, { kind: "symlink", target: readlinkSync(join(root, path)) });
+      else if (st.isDirectory()) {
+        entries.set(path, { kind: "dir" });
+        walk(path);
+      } else {
+        const sha = createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
+        entries.set(path, { kind: "file", sha, exec: (st.mode & 0o111) !== 0 });
+      }
+    }
+  };
+  walk("");
+  return entries;
+}
+
+// The proof is about the app that ran; users receive the ZIP. Every entry of the extracted
+// VoiceBar.app (Swift binary, bundled daemon sources, resources, signature) must equal the
+// verified app's, and neither side may have an entry the other lacks.
+export function zipMatchesApp(app: string, zip: string): void {
+  if (!existsSync(zip)) fail(`VoiceBar.zip not found: ${zip}`);
+  const scratch = mkdtempSync(join(tmpdir(), "t3gate-zip-"));
+  try {
+    const extract =
+      process.platform === "darwin"
+        ? Bun.spawnSync(["ditto", "-x", "-k", zip, scratch], { stdout: "pipe", stderr: "pipe" })
+        : Bun.spawnSync(["unzip", "-q", zip, "-d", scratch], { stdout: "pipe", stderr: "pipe" });
+    if (extract.exitCode !== 0) fail(`cannot extract VoiceBar.zip: ${extract.stderr.toString().trim()}`);
+    const extracted = join(scratch, "VoiceBar.app");
+    if (!existsSync(extracted)) fail("VoiceBar.zip does not contain VoiceBar.app at its root");
+    const want = treeManifest(app);
+    const got = treeManifest(extracted);
+    for (const [path, entry] of want) {
+      const other = got.get(path);
+      if (!other) fail(`VoiceBar.zip is missing VoiceBar.app/${path}: the ZIP is not the proven build`);
+      if (JSON.stringify(other) !== JSON.stringify(entry)) {
+        fail(`VoiceBar.zip VoiceBar.app/${path} differs from the verified app: the ZIP is not the proven build`);
+      }
+    }
+    for (const path of got.keys()) {
+      if (!want.has(path)) fail(`VoiceBar.zip has VoiceBar.app/${path}, which the verified app lacks: the ZIP is not the proven build`);
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+function zipCommand(args: Map<string, string>) {
+  zipMatchesApp(need(args, "--app"), need(args, "--zip"));
+  console.log("[t3-optf5-proof] PASS: VoiceBar.zip is byte-identical to the verified VoiceBar.app");
+}
+
 function check(args: Map<string, string>) {
   const path = need(args, "--proof");
   if (!existsSync(path)) fail(`proof file not found: ${path}`);
@@ -398,7 +492,8 @@ const USAGE = `Usage:
   bun scripts/t3-optf5-proof.ts start  --state FILE --t3-app "/Applications/T3 Code (Alpha).app" --expected-text-file FILE
                                        [--app /Applications/VoiceBar.app] [--voicebar-log PATH] [--history-file PATH]
   bun scripts/t3-optf5-proof.ts finish --state FILE --out PROOF.json
-  bun scripts/t3-optf5-proof.ts check  --proof PROOF.json --candidate-commit SHA --candidate-build-time ISO`;
+  bun scripts/t3-optf5-proof.ts check  --proof PROOF.json --candidate-commit SHA --candidate-build-time ISO
+  bun scripts/t3-optf5-proof.ts zip-matches-app --app VoiceBar.app --zip VoiceBar.zip`;
 
 if (import.meta.main) {
   const [command, ...rest] = process.argv.slice(2);
@@ -407,13 +502,14 @@ if (import.meta.main) {
     if (command === "start") start(args);
     else if (command === "finish") finish(args);
     else if (command === "check") check(args);
+    else if (command === "zip-matches-app") zipCommand(args);
     else {
       console.error(USAGE);
       process.exit(2);
     }
   } catch (error) {
     if (!(error instanceof GateError)) throw error;
-    const prefix = command === "check" ? "REFUSED: T3 Option+F5 proof" : "FAIL";
+    const prefix = command === "check" || command === "zip-matches-app" ? "REFUSED: T3 Option+F5 proof" : "FAIL";
     console.error(`[t3-optf5-proof] ${prefix}: ${error.message}`);
     process.exit(1);
   }

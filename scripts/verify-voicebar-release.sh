@@ -200,30 +200,10 @@ extract_cask_sha256() {
     ' "$1"
 }
 
-# The proof is about the app that was installed; users receive the ZIP. Both must be the same
-# build: the ZIP's Info.plist and executable must equal the verified --app's byte for byte.
+# The proof is about the app that was installed; users receive the ZIP. Every entry of the
+# ZIP's VoiceBar.app must equal the verified --app's, including the bundled daemon sources.
 verify_zip_contains_app() {
-    local entry app_hash zip_hash
-    if ! command -v unzip >/dev/null 2>&1; then
-        err "unzip not found; cannot bind VoiceBar.zip to the proven app"
-        return 1
-    fi
-    for entry in "Contents/Info.plist" "Contents/MacOS/VoiceBar"; do
-        if [ ! -f "$APP_PATH/$entry" ]; then
-            err "VoiceBar.app/$entry not found; cannot bind VoiceBar.zip to the proven app"
-            return 1
-        fi
-        app_hash="$(shasum -a 256 < "$APP_PATH/$entry" | awk '{print $1}')"
-        # pipefail: a missing entry makes unzip, and so the whole pipeline, fail.
-        if ! zip_hash="$(unzip -p "$ZIP_PATH" "VoiceBar.app/$entry" 2>/dev/null | shasum -a 256 | awk '{print $1}')"; then
-            err "VoiceBar.zip does not contain VoiceBar.app/$entry"
-            return 1
-        fi
-        if [ "$app_hash" != "$zip_hash" ]; then
-            err "VoiceBar.zip VoiceBar.app/$entry differs from the verified app: the ZIP is not the proven build"
-            return 1
-        fi
-    done
+    bun "$PACKAGE_ROOT/scripts/t3-optf5-proof.ts" zip-matches-app --app "$APP_PATH" --zip "$ZIP_PATH"
 }
 
 # T3GATE1: the 2.2.45 T3 Option+F5 regression shipped because publication never required

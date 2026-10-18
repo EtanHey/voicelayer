@@ -52,7 +52,8 @@ The gate refuses, with a non-zero exit and a message naming the problem, when:
 - the proof is missing or is not valid JSON;
 - its `gitCommit` or `buildTimeUTC` differs from the candidate `Info.plist`;
 - it is older than the candidate's `BuildTimeUTC` (stale);
-- `VoiceBar.zip`'s `Info.plist` or executable differs from the verified app's;
+- any entry of `VoiceBar.zip`'s `VoiceBar.app` differs from the verified app's, including
+  the bundled daemon sources, or either side has an entry the other lacks;
 - (tap check) the cask `sha256` is not `VoiceBar.zip`'s;
 - `expectedTextSha256` differs from `historyTextSha256`;
 - `speakTextCommandId` is not a UUID, `t3Build` is empty, or `readError` is not exactly `false`.
@@ -75,8 +76,10 @@ operator, or a harness that sends a real CGEvent, does the Option+F5.
    This records the installed VoiceBar `GitCommit` and `BuildTimeUTC`, the T3 build, the
    current end of `~/Library/Logs/voicelayer/voicebar-err.log`, and the time. It refuses
    unless exactly one VoiceBar runs from the installed bundle, with an `mcp-server-daemon`
-   child. Both processes must have started in a later second than the bundle was installed.
-   So a bundle swapped under an old running VoiceBar cannot certify itself.
+   child. Both processes must have started in a later second than the bundle was installed,
+   and the VoiceBar process's mapped executable (per `lsof`) must be the very file installed
+   at the bundle path. So a bundle swapped under an old running VoiceBar, including a
+   staged directory moved into place, cannot certify itself.
 3. With output muted, select the paragraph in the rendered assistant message (not the
    composer) and press **Option+F5 once**. Let it finish.
 4. Collect:
