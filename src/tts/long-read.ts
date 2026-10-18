@@ -134,6 +134,7 @@ export async function runLongRead(
       if (target) {
         deps.disposeSeek?.(seekFile);
         currentIndex = target.index; localOffsetMs = target.local; seekFile = target.sliceFile; isSeek = true; target = undefined;
+        initialSeek = false;
         changed = new Promise<void>((resolve) => { wake = resolve; });
       }
       pump();

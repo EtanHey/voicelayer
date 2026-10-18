@@ -64,7 +64,11 @@ final class TeleprompterScrubTests: XCTestCase {
                                    unavailable: state.reportWordTimingUnavailable)
         XCTAssertTrue(seeks.isEmpty)
         XCTAssertEqual(state.confirmationText, "Word timing unavailable")
-        state.handleEvent(["type": "ack", "command": "seek", "outcome": "reject", "reason": "Replay prefix audio unavailable"])
+        var readbackSeek: [String: Any]?
+        state.sendCommand = { readbackSeek = $0 }
+        state.seek(offsetMs: 300)
+        state.handleEvent(["type": "ack", "command": "seek", "id": readbackSeek?["id"] as Any,
+                           "outcome": "reject", "reason": "Replay prefix audio unavailable"])
         XCTAssertEqual(state.confirmationText, "Replay prefix audio unavailable")
         state.handleEvent(["type": "error", "source": "seek", "message": "Conversion failed"])
         XCTAssertEqual(state.confirmationText, "Conversion failed")
@@ -75,6 +79,20 @@ final class TeleprompterScrubTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "recording"])
         state.seek(offsetMs: 300)
         XCTAssertTrue(commands.isEmpty)
+    }
+
+    func testLateCurrentSeekAckCannotToastDuringReadback() {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Readback", "readback_id": "retained"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        state.handleEvent(["type": "ack", "command": "seek", "id": "old-current-seek", "outcome": "noop", "reason": "nothing playing"])
+        XCTAssertNil(state.confirmationText)
+        var command: [String: Any]?
+        state.sendCommand = { command = $0 }
+        state.seek(offsetMs: 100)
+        state.handleEvent(["type": "ack", "command": "seek", "id": command?["id"] as Any,
+                           "outcome": "reject", "reason": "Replay prefix audio unavailable"])
+        XCTAssertEqual(state.confirmationText, "Replay prefix audio unavailable")
     }
 
     func testUntimedAndEstimatedWordsNeverGuessASeek() {
@@ -169,6 +187,7 @@ final class TeleprompterScrubTests: XCTestCase {
         XCTAssertFalse(state.isTeleprompterPlaybackReady)
         let epoch = state.playbackEpoch
         state.handleEvent(["type": "ack", "command": "seek", "outcome": "reject", "reason": "not ready"])
+        XCTAssertNil(state.confirmationText, "Current-scope preparation acks stay silent")
         XCTAssertEqual(state.playbackEpoch, epoch)
         XCTAssertEqual(state.playbackElapsedMilliseconds(), 0)
         XCTAssertEqual(state.mode, .speaking)

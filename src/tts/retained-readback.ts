@@ -21,7 +21,7 @@ export class RetainedReadback {
     }
     const index = metadata.longRead?.chunk_index ?? 0;
     if (this.chunks.has(index)) return this.identity;
-    const retained = ttsFilePath(process.pid, ++this.counter).replace(".mp3", ".readback.mp3");
+    const retained = ttsFilePath(process.pid, ++this.counter).replace(".mp3", `.${this.identity}.readback.mp3`);
     try {
       copyFileSync(file, retained);
       const { onStarted, onCompleted, onQueued, nextState, seekSliceFile, localOffsetMs, isSeek, getUtteranceDurationMs, ...facts } = metadata;
@@ -34,13 +34,20 @@ export class RetainedReadback {
   acquire(owner?: string): { chunks: RetainedChunk[]; release(): void } | undefined {
     if (!owner || owner !== this.identity) return;
     const chunks = [...this.chunks.entries()].sort(([a], [b]) => a - b);
-    const count = chunks[0]?.[1].metadata.longRead?.chunk_count ?? 1;
-    if (chunks.length !== count || chunks.some(([i, c], n) => i !== n || !existsSync(c.file) || !Number.isFinite(c.metadata.durationMs) || !(c.metadata.durationMs! > 0))) return;
+    if (!chunks.length || chunks.some(([i, c], n) => i !== n || !existsSync(c.file) || !Number.isFinite(c.metadata.durationMs) || !(c.metadata.durationMs! > 0))) return;
     this.readers++;
     let released = false;
     return { chunks: chunks.map(([, c]) => c), release: () => {
       if (released) return; released = true; this.readers--; this.clean();
     } };
+  }
+
+  /** Called only at process exit; no playback can resume in this process. */
+  dispose(): void {
+    for (const file of [...this.retired, ...[...this.chunks.values()].map(c => c.file)]) {
+      try { unlinkSync(file); } catch {}
+    }
+    this.retired = []; this.chunks.clear();
   }
 
   private clean(): void {

@@ -923,6 +923,7 @@ function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
 }
 
 const retainedReadback = new RetainedReadback();
+process.once("exit", () => retainedReadback.dispose());
 
 class PlaybackQueueManager {
   private captureAdmission?: Set<string>;

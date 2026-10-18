@@ -435,6 +435,7 @@ public final class VoiceState {
     public var wordBoundaries: [TeleprompterBoundary] = []
     private var playbackReadbackID: String?
     private var retainedReadbackID: String?
+    private var pendingReadbackSeekIDs: Set<String> = []
     private var retainedTeleprompterText: String?
     private var retainedTeleprompterWordBoundaries: [TeleprompterBoundary] = []
     public private(set) var isTeleprompterDismissed = false
@@ -1517,6 +1518,9 @@ public final class VoiceState {
             guard let retainedReadbackID else { showConfirmation("Replay prefix audio unavailable"); return }
             command["scope"] = "readback"
             command["readback_id"] = retainedReadbackID
+            let id = UUID().uuidString
+            command["id"] = id
+            pendingReadbackSeekIDs.insert(id)
         }
         sendCommand?(command)
     }
@@ -2752,6 +2756,7 @@ public final class VoiceState {
     private func clearRetainedTeleprompter() {
         let hadRetainedTeleprompter = retainedTeleprompterText != nil
         retainedReadbackID = nil
+        pendingReadbackSeekIDs.removeAll()
         retainedTeleprompterText = nil
         retainedTeleprompterWordBoundaries = []
         isTeleprompterDismissed = false
@@ -3697,7 +3702,8 @@ public final class VoiceState {
 
     private func handleAckEvent(_ event: [String: Any]) {
         if event["command"] as? String == "seek" {
-            if event["outcome"] as? String != "accept", mode == .speaking || isTeleprompterReadback {
+            guard let id = event["id"] as? String, pendingReadbackSeekIDs.remove(id) != nil else { return }
+            if event["outcome"] as? String != "accept", isTeleprompterReadback {
                 showConfirmation(event["reason"] as? String ?? "Seek failed")
             }
             return

@@ -477,7 +477,7 @@ public enum TeleprompterPlaybackPolicy {
 }
 
 public enum TeleprompterSeekPolicy {
-    public static func offset(for word: TeleprompterWord, isReadback: Bool) -> Int? {
+    public static func offset(for word: TeleprompterWord, isReadback _: Bool) -> Int? {
         guard !word.hasEstimatedTiming, let offset = word.offsetMs, offset >= 0 else { return nil }
         return offset
     }

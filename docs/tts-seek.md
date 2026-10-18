@@ -11,7 +11,9 @@ These requests route to the last playback client, falling back to the daemon if 
 the identity check refuses stale audio after a reconnect or daemon restart.
 They replay the same displayed utterance from the measured word offset. The daemon keeps
 one utterance's original chunks independently of ring-slot rotation and played-range history;
-replay reuses the serial long-read runner and never synthesizes. Missing chunks/audio return
+replay reuses the serial long-read runner and never synthesizes. A stopped long read can replay
+its contiguous retained prefix, ending at the end of that available audio; offsets beyond the
+prefix fail with `Replay position unavailable`. Gaps or missing audio return
 `reject` with `Replay prefix audio unavailable`. Missing word timing displays
 `Word timing unavailable`; estimated timings never become seek targets. Current-scope seeks
 after Stop remain no-ops. Readback replay is cancelled and reaped through the same Stop and
