@@ -120,6 +120,45 @@ func provenQAWindows(_ rows: [CGRow], qaPid: Int32?) -> [CGRow] {
 struct QAIdentity: Equatable { let pid: Int32; let path: String; let birth: [UInt64] }
 enum BirthRead { case live([UInt64]), absent, failed }
 enum QAIdentityRead { case live(QAIdentity), gone, failed }
+/// Never trust a bundle/name or a bare PID. Re-read the lifetime before excluding each modal.
+/// CG owners participate in QA discovery: NSWorkspace can lag behind a just-launched alert.
+func runModalInventory<S: ModalSource>(_ source: S, binding: inout QARunBinding, executable: String,
+    launchBirth: [UInt64], registered: [QAIdentity], candidates: [Int32], requireQA: Bool,
+    read: (Int32) -> QAIdentityRead) -> ModalInventory {
+    let identity = binding.prove(executable: executable, candidates: candidates, rows: source.windows(), read: read)
+    let qa = identity.flatMap { $0.birth.lexicographicallyPrecedes(launchBirth) ? nil : $0 }
+    var result = modalInventory(source, qaPids: [])
+    var unresolved: [[String: Any]] = []
+    func retain(_ modal: [String: Any]) -> Bool {
+        guard let pid = modal["pid"] as? Int, let value = Int32(exactly: pid) else { return true }
+        func unproven() -> Bool {
+            unresolved.append(["kind": "own-identity", "owner": modal["owner"] ?? "unknown", "pid": pid])
+            return false
+        }
+        guard case .live(let current) = read(value), current.pid == value else { return unproven() }
+        if let registered = registered.first(where: { $0.pid == value }) {
+            return current.birth == registered.birth ? false : unproven()
+        }
+        if current.path == executable { return current == qa ? false : unproven() }
+        return true
+    }
+    result.modals = result.modals.filter(retain)
+    result.errors = result.errors.filter(retain) + unresolved
+    if requireQA && qa == nil { result.errors.append(["kind": "qa-binding", "owner": qaBundle]) }
+    return result
+}
+/// Resolve transient launch/read races BEFORE latching. A real foreign modal stops immediately.
+func retryModalProof(seconds: Double = 2, now: () -> Double = { ProcessInfo.processInfo.systemUptime },
+    pause: (Double) -> Void = { Thread.sleep(forTimeInterval: $0) }, attempt: () -> ModalInventory) -> ModalInventory {
+    let deadline = now() + seconds
+    while true {
+        let result = attempt()
+        guard result.modals.isEmpty, !result.errors.isEmpty,
+              result.errors.allSatisfy({ ["own-identity", "qa-binding"].contains($0["kind"] as? String ?? "") }),
+              now() < deadline else { return result }
+        pause(min(0.05, max(0, deadline - now())))
+    }
+}
 /// Bind a QA launch once. A failed read is retained as failure, never dropped from candidates.
 struct QARunBinding {
     private(set) var identity: QAIdentity?
@@ -304,10 +343,31 @@ func qaCandidates() -> [(pid: Int32, read: QAIdentityRead)] {
     qaCandidatePids().map { ($0, qaIdentityRead($0)) }
 }
 func qaCandidatePids() -> [Int32] { NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == qaBundle }.map(\.processIdentifier) }
-func excludedQAPids(executable: String?) -> Set<Int32> {
-    guard let executable else { return Set(qaCandidates().map(\.pid)) }   // one-shot without a run binding
-    return provenQAPid(executable: executable, candidates: qaCandidates()).map { [$0] } ?? []
+/// Supervisor publishes only lifetime-proven run identities. Missing/malformed context fails closed.
+// BEGIN RUN MODAL PROOF
+func runInventory(output: URL?, executable: String?, binding: inout QARunBinding, requireQA: Bool = false) -> ModalInventory {
+    guard let output, let executable else { return modalInventory(LiveModalSource(), qaPids: []) }
+    return retryModalProof {
+        guard let data = try? Data(contentsOf: output.appendingPathComponent("modal-run-proof.json")),
+              let proof = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              proof["executable"] as? String == executable,
+              let birth = proof["launchBirth"] as? [UInt64], birth.count == 2, birth[0] > 0, birth[1] < 1_000_000,
+              let owned = proof["owned"] as? [[String: Any]] else {
+            var failed = ModalInventory(); failed.errors = [["kind": "run-proof", "owner": "unknown"]]; return failed
+        }
+        var registered: [QAIdentity] = []
+        for row in owned {
+            guard let pid = row["pid"] as? Int32, pid > 0, let b = row["birth"] as? [UInt64],
+                  b.count == 2, b[0] > 0, b[1] < 1_000_000, let path = row["path"] as? String else {
+                var failed = ModalInventory(); failed.errors = [["kind": "run-proof", "owner": "unknown"]]; return failed
+            }
+            registered.append(QAIdentity(pid: pid, path: path, birth: b))
+        }
+        return runModalInventory(LiveModalSource(), binding: &binding, executable: executable, launchBirth: birth,
+            registered: registered, candidates: qaCandidatePids(), requireQA: requireQA, read: qaIdentityRead)
+    }
 }
+// END RUN MODAL PROOF
 func json(_ object: Any) -> Data { try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) }
 
 /// Window-ID capture of the proven QA process only (ScreenCaptureKit desktop-independent window,
@@ -375,9 +435,9 @@ final class Broker {
     }
     func answer(_ kind: String) {
         count += 1
-        let candidates = qaCandidates()
-        let qaPid = provenQAPid(executable: executable, candidates: candidates)
-        let inventory = modalInventory(LiveModalSource(), qaPids: qaPid.map { [$0] } ?? [])
+        // Establish the QA lifetime before the first fixture command, even without an alert.
+        let inventory = runInventory(output: latchPath.deletingLastPathComponent(), executable: executable,
+                                     binding: &binding, requireQA: kind == "command")
         let status = latch.decide(inventory)
         var ack: [String: Any] = ["count": count, "kind": kind, "status": status]
         if let stopped = latch.stopped {
@@ -413,7 +473,12 @@ if arguments.count == 6, arguments[1] == "--broker" {
     broker.start()
     RunLoop.main.run()
 }
-let executable = arguments.count == 3 && arguments[1] == "--qa-executable" ? arguments[2] : nil
+func argument(_ flag: String) -> String? {
+    guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else { return nil }
+    return arguments[index + 1]
+}
+let executable = argument("--qa-executable")
+let output = argument("--run-output").map { URL(fileURLWithPath: $0) }
 
 let owners=Set(["com.apple.UserNotificationCenter","com.apple.SecurityAgent","com.apple.CoreServicesUIAgent","com.apple.coreservices.uiagent","com.apple.coreautha","com.apple.LocalAuthentication.UIAgent","com.voicelayer.voicebar.uie2e"])
 var prompts:[[String:Any]]=[]
@@ -426,7 +491,8 @@ for app in NSWorkspace.shared.runningApplications where owners.contains(app.bund
   }
  }
 }
-let inventory = modalInventory(LiveModalSource(), qaPids: excludedQAPids(executable: executable))
+var modalBinding = QARunBinding()
+let inventory = runInventory(output: output, executable: executable, binding: &modalBinding)
 // Raw on stdout only: the supervisor redacts at ingestion before anything is persisted.
 print(String(decoding:json(["axTrusted":AXIsProcessTrusted(),"prompts":prompts,"modals":inventory.modals,
     "inventoryErrors":inventory.errors]),as:UTF8.self))
