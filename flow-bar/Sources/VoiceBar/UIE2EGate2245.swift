@@ -7,12 +7,18 @@ import VoiceBarUI
 /// Its state, panels, wizard dependencies and commands belong only to the marked QA sandbox.
 @MainActor
 final class UIE2EGate2245 {
-    let app = AppDelegate()
+    // Checked before the real AppDelegate exists, whichever path constructs this fixture.
+    let app: AppDelegate = {
+        UIE2ENoDeviceGuard.requireInstalled()
+        return AppDelegate()
+    }()
     let panel: FloatingPillPanel
     unowned let host: UIE2EHost
     var beforeShow: [String: Any] = [:]
+#if VOICEBAR_UIE2E_GATE2246_CAPTURE
     var captureServer: SocketServer?
     var captureController: VoiceBarDaemonController?
+#endif
     var gateCommands: [[String: Any]] = []
     var placementObservers: [NSObjectProtocol] = []
     let noDeviceEngine = UIE2ENoDeviceLevelEngine()
@@ -215,12 +221,18 @@ extension UIE2EHost {
         guard let gate = gate2245 else { return }
         if ["start", "selection"].contains(name) { return }
         if ["user-f5", "user-ask", "unknown", "background", "recovered", "visible"].contains(name) {
+#if VOICEBAR_UIE2E_GATE2246_CAPTURE
             gate.captureFailure(name)
+#else
+            fatalError("gate2246 capture cases require a VOICEBAR_UIE2E_GATE2246_CAPTURE build")
+#endif
         } else { gate.selectionCase(name) }
     }
 }
 
 extension UIE2EGate2245 {
+#if VOICEBAR_UIE2E_GATE2246_CAPTURE
+    // Uses #410's capture-failure APIs; hide1 builds without this flag do not depend on #410.
     func captureFailure(_ name: String) {
         // Parser-only server; real observer uses the device-free injected level engine.
         let server = SocketServer(state: app.voiceState, socketPath: host.sandbox.root.appendingPathComponent("unused.sock").path)
@@ -248,6 +260,7 @@ extension UIE2EGate2245 {
         // NSAlert runs a modal loop. Its visible state is observed out of process by XCUI;
         // a delayed MainActor snapshot can remain queued behind the alert until dismissal.
     }
+#endif
 
     func selectionCase(_ name: String) {
         let state = app.voiceState

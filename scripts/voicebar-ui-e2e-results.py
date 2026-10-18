@@ -68,11 +68,8 @@ def configure(output, app, sandbox, scenario=None):
     env = target.setdefault('EnvironmentVariables', {})
     env.update(VOICEBAR_UIE2E_APP=str(app), VOICEBAR_UIE2E_ROOT=str(sandbox),
                VOICEBAR_UIE2E_SCENARIO=scenario)
-    if scenario == 'gate2246':
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
-        guard = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(guard)
+    guard = load_guard()
+    if guard.required(scenario, app / 'Contents/Info.plist'):
         env['VOICEBAR_UIE2E_DEVICE_GUARD'] = str(guard.verify(pathlib.Path(__file__).resolve().parent.parent, output))
     # Moving the plist changes __TESTROOT__. Resolve it before writing the configured copy.
     def resolve(value):
@@ -195,6 +192,67 @@ def receipts(directory, manifest):
     return ordered, ledger, issues
 
 
+def load_guard():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    return guard
+
+
+GUARD_INSTALLED = 'voicebar-no-device-guard-v1:installed'
+
+
+def guard_launch_log(sandbox, launch):
+    """Launch 1 keeps the supervisor-watched path; every relaunch gets its own fresh log."""
+    return sandbox / ('no-device-guard.log' if launch == 1 else 'no-device-guard-launch-%d.log' % launch)
+
+
+def guard_launch_issues(sandbox):
+    """One install marker per QA launch is expected; any other line is an actual tripwire hit."""
+    launches = [1] if guard_launch_log(sandbox, 1).is_file() else []
+    for path in sandbox.glob('no-device-guard-launch-*.log') if sandbox.is_dir() else []:
+        match = re.fullmatch(r'no-device-guard-launch-([1-9][0-9]*)\.log', path.name)
+        launches.append(int(match[1]) if match and int(match[1]) > 1 else -1)
+    launches.sort()
+    if not launches:
+        return 0, ['FAIL no-device guard receipt missing for launch 1']
+    if launches != list(range(1, len(launches) + 1)):
+        return len(launches), ['FAIL no-device guard launch receipts are not contiguous: ' + str(launches)]
+    issues = []
+    for launch in launches:
+        lines = guard_launch_log(sandbox, launch).read_text().splitlines()
+        trips = [line for line in lines if line != GUARD_INSTALLED]
+        if trips:
+            issues.append('FAIL device tripwire on launch %d: %s' % (launch, ', '.join(trips)))
+        elif lines != [GUARD_INSTALLED]:
+            issues.append('FAIL launch %d guard receipt is not exactly one install marker' % launch)
+    return len(launches), issues
+
+
+def guard_receipt_steps(scenario, launches, gate_build=False):
+    """In-app tripwire receipts: per QA launch, and before/after the scenario's gate fixtures."""
+    required = {'GUARD launch %d %s' % (n, phase) for n in range(1, launches + 1)
+                for phase in ['installed', 'no tripwire']}
+    prefix = {'hide1': 'HIDE1VIS', 'gate2246': 'GATE2246'}.get(scenario, 'GATE2245' if gate_build else None)
+    if prefix is not None:
+        required |= {prefix + ' no-device guard installed before fixtures',
+                     prefix + ' no device-start or process tripwire invoked'}
+    return required
+
+
+def guard_export_issues(scenario, sandbox, step_names):
+    plist = sandbox / 'VoiceBarQA.app/Contents/Info.plist'
+    gate_build = plist.is_file() and plistlib.loads(plist.read_bytes()).get('UIE2EGate2245') is True
+    if not (gate_build or load_guard().required(scenario)):
+        return []
+    launches, issues = guard_launch_issues(sandbox)
+    missing = sorted(guard_receipt_steps(scenario, max(launches, 1), gate_build) - set(step_names))
+    if missing:
+        issues.append('FAIL no-device guard receipt steps missing: ' + ', '.join(missing))
+    return issues
+
+
 def export(output, sandbox, scenario=None):
     scenario = selected_scenario(output, scenario)
     directory = output / 'screenshots'
@@ -231,6 +289,7 @@ def export(output, sandbox, scenario=None):
             issues.append('FAIL hide1 missing required before/hidden/shown evidence')
         if any(step.get('skipped') or expected_packet(step) is not None for step in steps):
             issues.append('FAIL hide1 cannot skip or waive a case')
+    issues += guard_export_issues(scenario, sandbox, [step['name'] for step in steps])
     (output / 'steps.json').write_text(json.dumps(steps, indent=2))
     if ledger is not None:
         (output / 'ledger.json').write_text(json.dumps(ledger, indent=2))

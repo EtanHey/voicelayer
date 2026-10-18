@@ -16,6 +16,18 @@ final class UIE2ESafetyTests: XCTestCase {
         XCTAssertEqual(engine.starts, 2)
         monitor.shutdown()
     }
+    /// Every scenario that constructs the real-AppDelegate GATE2245 fixture needs the tripwire,
+    /// and a GATE2245 build needs it whatever scenario is named (fail closed, #416 C2).
+    func testNoDeviceGuardIsRequiredForEveryGate2245ScenarioAndBuild() {
+        XCTAssertEqual(UIE2ENoDeviceGuard.guardedScenarios, ["hide1", "gate2246"])
+        for scenario in ["hide1", "gate2246"] {
+            XCTAssertTrue(UIE2ENoDeviceGuard.isRequired(scenario: scenario, gateBuild: false), scenario)
+        }
+        for scenario in ["full", "focused-338", nil] {
+            XCTAssertFalse(UIE2ENoDeviceGuard.isRequired(scenario: scenario, gateBuild: false), scenario ?? "nil")
+            XCTAssertTrue(UIE2ENoDeviceGuard.isRequired(scenario: scenario, gateBuild: true), scenario ?? "nil")
+        }
+    }
     func testRejectsMissingOrUnmarkedSandbox() throws {
         XCTAssertThrowsError(try UIE2ESandbox(environment: [:]))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)

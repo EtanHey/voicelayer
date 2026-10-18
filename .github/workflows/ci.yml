@@ -69,5 +69,11 @@ jobs:
           swift build -c release --package-path flow-bar --product VoiceBar
           bash scripts/check-voicebar-qa-free.sh "$(swift build -c release --package-path flow-bar --show-bin-path)/VoiceBar"
 
+      # #416 C1: nothing compiled the QA-only UIE2E sources, so they could stop building
+      # unnoticed. Same flags as `VOICEBAR_QA_BUILD=1 VOICEBAR_UIE2E_GATE2245=1 build-app.sh`.
+      # Runs after the QA-free check above, so the release binary it checked is not this one.
+      - name: QA-only UIE2E sources compile (hide1, gate2246)
+        run: bash scripts/check-voicebar-qa-compile.sh
+
       - name: Swift tests
         run: swift test --package-path flow-bar
