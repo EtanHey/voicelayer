@@ -1,3 +1,4 @@
+import { withChildFixtureEnv } from "./setup/child-env";
 import { describe, test, expect } from "bun:test";
 import { parseSpeakArgs, runSpeakCli, requestSpeech } from "../cli/speak";
 import { createMcpDaemon } from "../mcp-daemon";
@@ -67,7 +68,7 @@ describe("speak CLI", () => {
     }) });
     const file = join(STATE_DIR, "read.md"); writeFileSync(file, "# File read");
     const run = async (args: string[], stdin = "") => {
-      const child = Bun.spawn(["bash", "src/cli/voicelayer.sh", "speak", ...args], { env: { ...process.env, VOICELAYER_MCP_SOCKET_PATH: socketPath, VOICELAYER_DAEMON_SECRET_PATH: secretPath }, stdin: new Blob([stdin]), stdout: "pipe", stderr: "pipe" });
+      const child = withChildFixtureEnv({ VOICELAYER_MCP_SOCKET_PATH: socketPath }, () => Bun.spawn(["bash", "src/cli/voicelayer.sh", "speak", ...args], { env: { ...process.env, VOICELAYER_MCP_SOCKET_PATH: socketPath, VOICELAYER_DAEMON_SECRET_PATH: secretPath }, stdin: new Blob([stdin]), stdout: "pipe", stderr: "pipe" }));
       const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
       return { code, stderr };
     };
@@ -90,9 +91,9 @@ describe("speak CLI", () => {
     for (const [name, source] of Object.entries(scripts)) writeFileSync(join(dir, name), source, { mode: 0o700 });
     for (const name of ["mpv", "ffplay", "mpg123"]) writeFileSync(join(dir, name), scripts.afplay, { mode: 0o700 });
     try {
-      const child = Bun.spawn([process.execPath, "src/cli/speak.ts", "hello", "--wait"], {
+      const child = withChildFixtureEnv({ VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock") }, () => Bun.spawn([process.execPath, "src/cli/speak.ts", "hello", "--wait"], {
         env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock"), QA_VOICE_TTS_VOICE: "en-US-JennyNeural" }, stdout: "pipe", stderr: "pipe",
-      });
+      }));
       const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
       expect(stderr).toContain("daemon unavailable; speaking locally");
       expect(code).toBe(0);
@@ -239,7 +240,7 @@ setInterval(() => {}, 1000);
     writeFileSync(join(dir, "ffmpeg"), '#!/bin/bash\nif [[ "${1:-}" == "-version" ]]; then exit 0; fi\nlast="${@: -1}"\nif [[ "$last" == "pipe:1" ]]; then printf "00000000"; else printf audio > "$last"; fi\n', { mode: 0o700 });
     const platformPreload = join(dir, "platform.ts");
     writeFileSync(platformPreload, 'import { mock } from "bun:test"; import * as os from "node:os"; const original = {...os}; mock.module("os", () => ({...original, platform: () => "linux"})); mock.module("node:os", () => ({...original, platform: () => "linux"}));');
-    const child = Bun.spawn([process.execPath, ...(host === "linux" ? ["--preload", platformPreload] : []), "src/cli/speak.ts", "hello"], { env: { ...process.env, R1_DIR: dir, R1_PHASE: phase, PATH: `${dir}:${process.env.PATH}`, VOICELAYER_TMP_ROOT: dir, VOICELAYER_STATE_DIR: join(dir, "state"), VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock"), QA_VOICE_TTS_VOICE: "en-US-JennyNeural" }, stdout: "ignore", stderr: Bun.file(join(dir, "stderr")) });
+    const child = withChildFixtureEnv({ VOICELAYER_TMP_ROOT: dir, VOICELAYER_STATE_DIR: join(dir, "state"), VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock") }, () => Bun.spawn([process.execPath, ...(host === "linux" ? ["--preload", platformPreload] : []), "src/cli/speak.ts", "hello"], { env: { ...process.env, R1_DIR: dir, R1_PHASE: phase, PATH: `${dir}:${process.env.PATH}`, VOICELAYER_TMP_ROOT: dir, VOICELAYER_STATE_DIR: join(dir, "state"), VOICELAYER_MCP_SOCKET_PATH: join(dir, "missing.sock"), QA_VOICE_TTS_VOICE: "en-US-JennyNeural" }, stdout: "ignore", stderr: Bun.file(join(dir, "stderr")) }));
     const pids: number[] = [];
     try {
       await until(() => existsSync(join(dir, `${phase}.ready`)));

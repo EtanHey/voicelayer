@@ -1,3 +1,4 @@
+import { withChildFixtureEnv } from "../src/__tests__/setup/child-env";
 import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +7,8 @@ import { spawnSync } from "node:child_process";
 
 const hook = readFileSync(new URL("../.githooks/pre-push", import.meta.url), "utf8");
 const guard = readFileSync(new URL("../scripts/guard-no-docslocal.sh", import.meta.url), "utf8");
-const cleanEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+const cleanEnv = { ...process.env };
+for (const key of Object.keys(cleanEnv)) if (key.startsWith("GIT_")) delete cleanEnv[key];
 
 for (const fallback of [false, true]) {
   test(`pre-push isolates fixture Git operations (${fallback ? "fallback" : "discovered variables"})`, () => {
@@ -77,10 +79,10 @@ for (const suite of ["brew-cask-sync", "deploy-check"]) {
         config: readFileSync(join(root, ".git/config"), "utf8"),
         index: readFileSync(join(root, ".git/index")).toString("hex") });
       const before = snapshot();
-      const result = spawnSync(process.execPath, ["test", `src/__tests__/${suite}.test.ts`], {
+      const result = withChildFixtureEnv({ VOICELAYER_STATE_DIR: join(root, "state") }, () => spawnSync(process.execPath, ["test", `src/__tests__/${suite}.test.ts`], {
         cwd: join(import.meta.dir, ".."), encoding: "utf8", timeout: 30000,
         env: { ...cleanEnv, VOICELAYER_STATE_DIR: join(root, "state"), GIT_DIR: join(root, ".git"), GIT_INDEX_FILE: join(root, ".git/index") },
-      });
+      }));
       expect(result.error).toBeUndefined();
       expect({ status: result.status, failures: result.stderr.match(/\(fail\).*/g) }).toEqual({ status: 0, failures: null });
       expect(snapshot()).toEqual(before);

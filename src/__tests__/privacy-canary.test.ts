@@ -1,3 +1,4 @@
+import { withChildFixtureEnv } from "./setup/child-env";
 import { describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { randomUUID } from "crypto";
@@ -28,8 +29,8 @@ const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
       mkdirSync(privateRoot); mkdirSync(home);
       const tokens = [`CANARY-TXT-${nonce}`, `CANARY-HOME-${nonce}`];
       const env = canaryChildEnv(root, nonce);
-      const child = Bun.spawn([process.execPath, "test", ...files, "--test-name-pattern", pattern],
-        { env, stdout: "pipe", stderr: "pipe" });
+      const child = withChildFixtureEnv(env, () => Bun.spawn([process.execPath, "test", ...files, "--test-name-pattern", pattern],
+        { env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" }));
       try {
         const [stdout, stderr, code] = await Promise.all([
           new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
@@ -59,7 +60,7 @@ const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
         await Bun.write(TMP_ROOT + '/tmp-probe.log', process.env.PRIV11_TEXT);
         await Bun.write(STATE_DIR + '/state-probe.log', process.env.PRIV11_TEXT);
         await Bun.write(process.env.QA_VOICE_THINK_FILE, process.env.PRIV11_TEXT);`;
-      const child = Bun.spawnSync([process.execPath, "--preload", "./src/__tests__/setup/preload.ts", "-e", code], { env });
+      const child = withChildFixtureEnv(env, () => Bun.spawnSync([process.execPath, "--preload", "./src/__tests__/setup/preload.ts", "-e", code], { env: { ...process.env, ...env } }));
       expect(child.exitCode).toBe(0);
       expect(diagnosticLeaks(root, [env.PRIV11_TEXT!]).sort()).toEqual(["state-probe.log", "thinking.md", "tmp-probe.log"]);
       expect(() => assertNoCanaryDiagnostics(root, [env.PRIV11_TEXT!])).toThrow("Privacy canary escaped");

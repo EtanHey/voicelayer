@@ -105,7 +105,7 @@ function run(env: Record<string, string | undefined>) {
     cwd: repoRoot,
     stdout: "pipe",
     stderr: "pipe",
-    env,
+    env: { ...process.env, ...env },
   });
 }
 

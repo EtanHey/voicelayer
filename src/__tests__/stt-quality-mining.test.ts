@@ -529,6 +529,7 @@ describe("stt-quality-mining", () => {
         "--output-dir",
         outputDir,
       ], {
+        env: process.env,
         cwd: process.cwd(),
         stdout: "pipe",
         stderr: "pipe",
@@ -567,6 +568,7 @@ describe("stt-quality-mining", () => {
         "--output-dir",
         join(root, "reports"),
       ], {
+        env: process.env,
         cwd: process.cwd(),
         stdout: "pipe",
         stderr: "pipe",

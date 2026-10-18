@@ -18,7 +18,7 @@ function runChecker(contents: string) {
   try {
     const binary = join(dir, "VoiceBar");
     writeFileSync(binary, contents);
-    return Bun.spawnSync(["bash", checker, binary], { stdout: "pipe", stderr: "pipe" });
+    return Bun.spawnSync(["bash", checker, binary], { env: process.env, stdout: "pipe", stderr: "pipe" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -48,6 +48,7 @@ describe("VoiceBar QA probes are dev/CI-only", () => {
 
   test("the checker refuses a missing binary instead of passing it", () => {
     const result = Bun.spawnSync(["bash", checker, "/nonexistent/VoiceBar"], {
+        env: process.env,
       stdout: "pipe",
       stderr: "pipe",
     });

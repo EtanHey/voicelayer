@@ -1,6 +1,6 @@
 import { readFileSync, renameSync, rmSync } from "fs";
 import { join } from "path";
-import { STATE_DIR, safeWriteFileSync } from "./paths";
+import { STATE_DIR, getStateDir, safeWriteFileSync } from "./paths";
 
 /**
  * Settings → Models → Processing toggles, persisted for the daemon (P1).
@@ -40,12 +40,13 @@ export type ProcessingSettings = Partial<Record<ProcessingKey, boolean>>;
 
 export function processingSettingsPath(env: Env = process.env): string {
   return env.VOICELAYER_PROCESSING_SETTINGS_PATH?.trim() ||
-    join(STATE_DIR, "processing-settings.json");
+    join(env.VOICELAYER_TEST_ISOLATED === "1" ? getStateDir(env) : STATE_DIR, "processing-settings.json");
 }
 
 function readFile(env: Env): Record<string, unknown> {
+  const path = processingSettingsPath(env); // Resolve outside catch: isolation failures are fatal.
   try {
-    const parsed: unknown = JSON.parse(readFileSync(processingSettingsPath(env), "utf8"));
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};

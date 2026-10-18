@@ -30,7 +30,7 @@ function deadPids(count: number): number[] {
   const pids: number[] = [];
   // Real reaped children provide known-dead PIDs without assuming the OS PID limit.
   for (let i = 0; i < count; i++) {
-    const proc = Bun.spawnSync([process.execPath, "-e", "void 0;"], { stdout: "ignore", stderr: "ignore" });
+    const proc = Bun.spawnSync([process.execPath, "-e", "void 0;"], { env: process.env, stdout: "ignore", stderr: "ignore" });
     expect(proc.exitCode).toBe(0);
     expect(() => process.kill(proc.pid, 0)).toThrow();
     pids.push(proc.pid);
@@ -132,6 +132,7 @@ test("PID reuse between the final liveness check and deletion cannot erase the n
         // Pause A after its final liveness check. B starts with the recycled
         // PID and writes evidence before A resumes the pending deletion.
         replacementProcess = Bun.spawn([process.execPath, "-e", ${JSON.stringify(replacement)}], {
+        env: process.env,
           cwd: process.cwd(), env: process.env, stdout: "ignore", stderr: "ignore",
         });
         const marker = process.cwd() + "/replacement.json";

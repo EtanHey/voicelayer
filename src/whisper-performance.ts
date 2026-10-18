@@ -1,6 +1,6 @@
 import { readFileSync, rmSync } from "fs";
 import { join } from "path";
-import { STATE_DIR, safeWriteFileSync } from "./paths";
+import { STATE_DIR, getStateDir, safeWriteFileSync } from "./paths";
 
 export type WhisperPerformanceEffort = "fast" | "balanced" | "accurate";
 
@@ -13,7 +13,7 @@ export function whisperPerformanceConfigPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const override = env[CONFIG_OVERRIDE_ENV]?.trim();
-  return override || join(STATE_DIR, "whisper-performance.json");
+  return override || join(env.VOICELAYER_TEST_ISOLATED === "1" ? getStateDir(env) : STATE_DIR, "whisper-performance.json");
 }
 
 export function parseWhisperPerformanceEffort(

@@ -1,3 +1,4 @@
+import { withChildFixtureEnv } from "./setup/child-env";
 import { describe, expect, it } from "bun:test";
 import { homedir } from "os";
 import { join } from "path";
@@ -10,7 +11,7 @@ const journal = join(import.meta.dir, "..", "control-layer-journal.ts");
 
 function probe(override?: string) {
   const env = { ...process.env };
-  delete env.VOICELAYER_CONTROL_LAYER_BASE;
+  env.VOICELAYER_CONTROL_LAYER_BASE = undefined;
   delete env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
   delete env.VOICELAYER_TEST_KEEP_TMP;
   if (override !== undefined) env.VOICELAYER_CONTROL_LAYER_BASE = override;
@@ -32,9 +33,9 @@ function probe(override?: string) {
     '}',
     'console.log(JSON.stringify({ pid: process.pid, root: process.env.VOICELAYER_TEST_RUN_ROOT, base: base ?? null, expected, rows, marker }));',
   ].join("\n");
-  const result = Bun.spawnSync([process.execPath, "--preload", preload, "-e", script], {
+  const result = withChildFixtureEnv(env, () => Bun.spawnSync([process.execPath, "--preload", preload, "-e", script], {
     env, cwd: process.cwd(), stdout: "pipe", stderr: "pipe",
-  });
+  }));
   expect(result.exitCode).toBe(0);
   return JSON.parse(new TextDecoder().decode(result.stdout).trim().split("\n").at(-1)!);
 }
