@@ -99,9 +99,17 @@ struct BoundaryLatch {
     }
 }
 /// Exactly one live process running this run's QA executable, else none (NOT_PROVEN).
-func provenQAPid(executable: String, candidates: [(pid: Int32, path: String?)]) -> Int32? {
-    guard candidates.allSatisfy({ $0.path != nil }) else { return nil }
-    let matches = candidates.filter { $0.path == executable }
+func provenQAPid(executable: String, candidates: [(pid: Int32, read: QAIdentityRead)]) -> Int32? {
+    var matches: [QAIdentity] = []
+    for candidate in candidates {
+        switch candidate.read {
+        case .gone: continue
+        case .failed: return nil
+        case .live(let identity):
+            guard identity.pid == candidate.pid else { return nil }
+            if identity.path == executable { matches.append(identity) }
+        }
+    }
     return matches.count == 1 ? matches[0].pid : nil
 }
 /// The proven QA process's visible windows, front to back; anything else is never captured.
@@ -111,6 +119,7 @@ func provenQAWindows(_ rows: [CGRow], qaPid: Int32?) -> [CGRow] {
 }
 struct QAIdentity: Equatable { let pid: Int32; let path: String; let birth: [UInt64] }
 enum BirthRead { case live([UInt64]), absent, failed }
+enum QAIdentityRead { case live(QAIdentity), gone, failed }
 /// Bind a QA launch once. A failed read is retained as failure, never dropped from candidates.
 struct QARunBinding {
     private(set) var identity: QAIdentity?
@@ -120,12 +129,19 @@ struct QARunBinding {
         if proof != nil { ended = true }
         return proof
     }
-    mutating func prove(executable: String, candidates: [Int32], rows: [CGRow]?, read: (Int32) -> QAIdentity?) -> QAIdentity? {
+    mutating func prove(executable: String, candidates: [Int32], rows: [CGRow]?, read: (Int32) -> QAIdentityRead) -> QAIdentity? {
         guard let rows else { return nil }
+        let owners = Set(rows.map(\.pid))
         var found: [QAIdentity] = []
-        for pid in Set(candidates + rows.map(\.pid)) {
-            guard pid > 0, let value = read(pid), value.pid == pid else { return nil }
-            if value.path == executable { found.append(value) }
+        for pid in Set(candidates).union(owners) {
+            guard pid > 0 else { return nil }
+            switch read(pid) {
+            case .gone where !owners.contains(pid): continue // stale NSWorkspace candidate only
+            case .gone, .failed: return nil                  // a CG row still needs a readable owner
+            case .live(let value):
+                guard value.pid == pid else { return nil }
+                if value.path == executable { found.append(value) }
+            }
         }
         guard found.count == 1, let current = found.first else { return nil }
         if let identity, identity != current, !ended { return nil }
@@ -249,24 +265,43 @@ struct LiveModalSource: ModalSource {
 }
 // BEGIN QA IDENTITY READ
 func qaBirth(_ pid: Int32) -> BirthRead {
-    var info = proc_bsdinfo()
-    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    guard pid > 0 else { return .failed }
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.size
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
     errno = 0
-    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else {
+    guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else {
         return errno == ESRCH ? .absent : .failed
     }
-    return info.pbi_start_tvsec > 0 ? .live([info.pbi_start_tvsec, info.pbi_start_tvusec]) : .failed
+    if size == 0 { return .absent }
+    let start = info.kp_proc.p_un.__p_starttime // p_starttime macro in sys/proc.h
+    guard size == MemoryLayout<kinfo_proc>.size, start.tv_sec > 0,
+          (0..<1_000_000).contains(start.tv_usec) else { return .failed }
+    return .live([UInt64(start.tv_sec), UInt64(start.tv_usec)])
+}
+func qaIdentityRead(_ pid: Int32) -> QAIdentityRead {
+    let before: [UInt64]
+    switch qaBirth(pid) {
+    case .absent: return .gone
+    case .failed: return .failed
+    case .live(let birth): before = birth
+    }
+    var buffer = [CChar](repeating: 0, count: 4096)
+    let pathSize = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+    switch qaBirth(pid) {
+    case .absent: return .gone
+    case .failed: return .failed
+    case .live(let after): guard pathSize > 0, before == after else { return .failed }
+    }
+    return .live(QAIdentity(pid: pid, path: URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path, birth: before))
 }
 func qaIdentity(_ pid: Int32) -> QAIdentity? {
-    guard case .live(let before) = qaBirth(pid) else { return nil }
-    var buffer = [CChar](repeating: 0, count: 4096)
-    guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0,
-          case .live(let after) = qaBirth(pid), before == after else { return nil }
-    return QAIdentity(pid: pid, path: URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path, birth: before)
+    if case .live(let identity) = qaIdentityRead(pid) { return identity }
+    return nil
 }
 // END QA IDENTITY READ
-func qaCandidates() -> [(pid: Int32, path: String?)] {
-    qaCandidatePids().map { ($0, qaIdentity($0)?.path) }
+func qaCandidates() -> [(pid: Int32, read: QAIdentityRead)] {
+    qaCandidatePids().map { ($0, qaIdentityRead($0)) }
 }
 func qaCandidatePids() -> [Int32] { NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == qaBundle }.map(\.processIdentifier) }
 func excludedQAPids(executable: String?) -> Set<Int32> {
@@ -279,9 +314,9 @@ func json(_ object: Any) -> Data { try! JSONSerialization.data(withJSONObject: o
 /// the equivalent of `screencapture -l<id> -o`), composited on black. nil reason = captured.
 func captureStill(binding: inout QARunBinding, executable: String, to path: URL) -> (windows: [UInt32], reason: String?, proof: [String: Any]?) {
     let candidates = qaCandidatePids()
-    let before = binding.prove(executable: executable, candidates: candidates, rows: [], read: qaIdentity)
+    let before = binding.prove(executable: executable, candidates: candidates, rows: [], read: qaIdentityRead)
     let rows = LiveModalSource().windows()   // one fresh CG read at this step, for capture and proof
-    let identity = before == nil ? nil : binding.prove(executable: executable, candidates: candidates, rows: rows, read: qaIdentity)
+    let identity = before == nil ? nil : binding.prove(executable: executable, candidates: candidates, rows: rows, read: qaIdentityRead)
     let proof = expectedAbsentProof(rows, identity: identity)
     guard let identity else {
         let birth = binding.identity.map { qaBirth($0.pid) } ?? .failed

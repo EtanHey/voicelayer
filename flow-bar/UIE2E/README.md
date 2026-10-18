@@ -79,6 +79,9 @@ of video. Explicit user attachments remain `keepAlways`. Before exporting any pa
 exporter inspects all test-summary attachment metadata, including failed runs, and rejects
 unexpected system images/videos with `FAIL unexpected-system-capture`. Only `UIE2E-*`
 attachments are exported; the separate QA-only movie remains unchanged.
+Other QA JSON evidence (`GATE2246-*`, `HIDE1VIS-*`, `GATE2245-*`, `GEO0-*`) stays inside
+the xcresult for inspection. A rejected report names that bundle in `resultBundle`; it is
+retained for the owner's quarantine/deletion decision, with no media exported.
 
 Every step receipt declares `visible`, `hidden-alive`, or `terminated`. Hidden-alive proof
 requires the live QA PID and its kernel microsecond birth, a successful CG inventory with zero

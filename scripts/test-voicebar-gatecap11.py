@@ -71,6 +71,7 @@ class CapturePolicy(unittest.TestCase):
                     qa = json.loads((self.root / 'qa-report.json').read_text())
                     self.assertEqual(qa['verdict'], 'FAIL')
                     self.assertFalse(qa['scenarioPassed'])
+                    self.assertEqual(qa['resultBundle'], str((self.root / 'VoiceBar.xcresult').resolve()))
 
     def test_metadata_failure_never_falls_back_to_unfiltered_export(self):
         with patch.object(self.results.subprocess, 'check_output', return_value='not JSON'), \
@@ -116,6 +117,54 @@ class CapturePolicy(unittest.TestCase):
 
 
 class LifetimeProof(unittest.TestCase):
+    def test_live_adapter_resolves_every_current_onscreen_owner_readonly(self):
+        old = load('test-voicebar-gatecap1')
+        probe = r'''
+guard let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+    preconditionFailure("CG inventory unreadable")
+}
+var pids = Set<Int32>()
+for row in rows {
+    guard let pid = row[kCGWindowOwnerPID as String] as? Int32, pid > 0 else { preconditionFailure("CG owner missing") }
+    pids.insert(pid)
+}
+precondition(!pids.isEmpty, "no current on-screen owners to verify")
+var windowServer = false
+for pid in pids {
+    guard let identity = qaIdentity(pid) else { preconditionFailure("real identity read failed for on-screen owner PID \(pid)") }
+    windowServer = windowServer || URL(fileURLWithPath: identity.path).lastPathComponent == "WindowServer"
+}
+precondition(windowServer, "cross-user Window Server row was not exercised")
+print("PASS read-only live owners=\(pids.count); WindowServer resolved; no capture or UI action")
+'''
+        source = old.MODALS_PRELUDE + 'import Darwin\n' + old.block(old.PERMISSIONS, 'FOREIGN MODALS')
+        source += old.block(old.PERMISSIONS, 'QA IDENTITY READ') + probe
+        output = old.run_swift(self, source)
+        self.assertIn('PASS read-only live owners=', output)
+        print(output.strip())
+
+    def test_dead_and_live_candidate_preserves_qa_modal_exclusion(self):
+        old = load('test-voicebar-gatecap1')
+        probe = old.FAKE_SOURCE + r'''
+let exe = "/qa/VoiceBar"
+let qa = QAIdentity(pid: 42, path: exe, birth: [100, 20])
+// Kernel-proven gone is distinct from a failed read; only a stale candidate may be dropped.
+let read: (Int32) -> QAIdentityRead = { $0 == 41 ? .gone : .live(qa) }
+let pid = provenQAPid(executable: exe, candidates: [(42, read(42)), (41, read(41))])
+precondition(pid == 42, "dead candidate erased live QA proof")
+let source = Fake(); source.rows = [row(1, 42, qaBundle, layer: modalPanelLayer)]
+source.windowsByPid[42] = .value(["own-alert"]); source.modal["own-alert"] = .value(true)
+precondition(modalInventory(source, qaPids: pid.map { [$0] } ?? []).modals.isEmpty, "own alert counted as foreign")
+var binding = QARunBinding()
+precondition(binding.prove(executable: exe, candidates: [41, 42], rows: source.rows, read: read) == qa)
+precondition(binding.prove(executable: exe, candidates: [41, 42], rows: [], read: read) == qa, "live-hidden proof survives gone candidate")
+precondition(provenQAPid(executable: exe, candidates: [(42, .live(qa)), (41, .failed)]) == nil)
+precondition(binding.prove(executable: exe, candidates: [41, 42], rows: [], read: { $0 == 41 ? .failed : .live(qa) }) == nil)
+precondition(binding.prove(executable: exe, candidates: [41, 42], rows: [row(2, 41, "stale-owner")], read: read) == nil, "CG owner disappearance is unproven")
+print("PASS")
+'''
+        self.assertEqual(old.run_swift(self, old.MODALS_PRELUDE + old.block(old.PERMISSIONS, 'FOREIGN MODALS') + probe).strip(), 'PASS')
+
     def test_runner_requires_declared_matching_contracts(self):
         old = load('test-voicebar-gatecap1')
         probe = r'''
@@ -160,12 +209,16 @@ print("PASS")
     def test_kernel_lifetime_brackets_the_actual_path_adapter(self):
         old = load('test-voicebar-gatecap1')
         fake = r'''
-struct proc_bsdinfo { var pbi_start_tvsec: UInt64 = 0; var pbi_start_tvusec: UInt64 = 0 }
-let PROC_PIDTBSDINFO: Int32 = 3
 var births: [[UInt64]] = [], pathOK = true, failedErrno: Int32 = 0
-func fake_pidinfo(_ pid: Int32, _ flavor: Int32, _ arg: UInt64, _ info: inout proc_bsdinfo, _ size: Int32) -> Int32 {
-    let next = births.removeFirst(); if next.isEmpty { errno = failedErrno; return 0 }
-    info.pbi_start_tvsec = next[0]; info.pbi_start_tvusec = next[1]; return size
+var forcedSize: Int?
+func fake_sysctl(_ mib: inout [Int32], _ count: UInt32, _ info: inout kinfo_proc, _ size: inout Int,
+                 _ newValue: UnsafeMutableRawPointer?, _ newSize: Int) -> Int32 {
+    precondition(mib == [CTL_KERN, KERN_PROC, KERN_PROC_PID, 42] && count == 4)
+    let next = births.removeFirst()
+    if next.isEmpty { size = 0; errno = failedErrno; return failedErrno == 0 ? 0 : -1 }
+    info.kp_proc.p_un.__p_starttime.tv_sec = Int(next[0])
+    info.kp_proc.p_un.__p_starttime.tv_usec = Int32(next[1]); size = forcedSize ?? size
+    return 0
 }
 func fake_pidpath(_ pid: Int32, _ buffer: inout [CChar], _ size: UInt32) -> Int32 {
     if !pathOK { return 0 }
@@ -180,12 +233,21 @@ births = [[]]; failedErrno = ESRCH
 if case .absent = qaBirth(42) {} else { preconditionFailure("ESRCH proves absence") }
 births = [[]]; failedErrno = EACCES
 if case .failed = qaBirth(42) {} else { preconditionFailure("permission error is NOT_PROVEN") }
-births = [[100, 1]]; pathOK = false; precondition(qaIdentity(42) == nil, "proc_pidpath failed")
+births = [[]]; failedErrno = EPERM
+if case .failed = qaBirth(42) {} else { preconditionFailure("EPERM is NOT_PROVEN even with zero output length") }
+births = [[]]; failedErrno = 0
+if case .gone = qaIdentityRead(42) {} else { preconditionFailure("successful zero-length result is gone") }
+births = [[100, 1], []]
+if case .gone = qaIdentityRead(42) {} else { preconditionFailure("gone during path bracket") }
+births = [[100, 1]]; forcedSize = 1
+if case .failed = qaBirth(42) {} else { preconditionFailure("short sysctl record is NOT_PROVEN") }
+forcedSize = nil
+births = [[100, 1], [100, 1]]; pathOK = false; precondition(qaIdentity(42) == nil, "proc_pidpath failed")
 print("PASS")
 '''
         source = old.MODALS_PRELUDE + old.block(old.PERMISSIONS, 'FOREIGN MODALS') + fake
         adapter = old.block(old.PERMISSIONS, 'QA IDENTITY READ')
-        source += adapter.replace('proc_pidinfo(', 'fake_pidinfo(').replace('proc_pidpath(', 'fake_pidpath(') + probe
+        source += adapter.replace('sysctl(', 'fake_sysctl(').replace('proc_pidpath(', 'fake_pidpath(') + probe
         self.assertEqual(old.run_swift(self, source).strip(), 'PASS')
 
     def test_visible_pid_path_failure_cannot_disappear_from_candidates(self):
@@ -197,20 +259,20 @@ let exe = "/private/tmp/vl-ui-run/VoiceBarQA.app/Contents/MacOS/VoiceBar"
 let qa = QAIdentity(pid: 42, path: exe, birth: [100, 20])
 var binding = QARunBinding()
 let visible = [row(1, 42, qaBundle)]
-let read: (Int32) -> QAIdentity? = { $0 == 42 ? qa : QAIdentity(pid: $0, path: "/foreign", birth: [90, 1]) }
+let read: (Int32) -> QAIdentityRead = { .live($0 == 42 ? qa : QAIdentity(pid: $0, path: "/foreign", birth: [90, 1])) }
 precondition(binding.prove(executable: exe, candidates: [42], rows: visible, read: read) == qa)
-precondition(binding.prove(executable: exe, candidates: [42], rows: visible, read: { _ in nil }) == nil, "visible QA path read failed")
+precondition(binding.prove(executable: exe, candidates: [42], rows: visible, read: { _ in .failed }) == nil, "visible QA path read failed")
 precondition(binding.prove(executable: exe, candidates: [42], rows: [], read: read) == qa, "live hidden process")
 precondition(expectedAbsentProof([], identity: qa)?["qaPid"] as? Int == 42)
 precondition(expectedAbsentProof(visible, identity: nil) == nil)
 precondition(expectedAbsentProof([], identity: nil) == nil, "termination is not a hidden proof")
-precondition(binding.prove(executable: exe, candidates: [42], rows: [row(2, 7, "foreign")], read: { $0 == 42 ? qa : nil }) == nil, "ANY CG identity read failure")
-precondition(binding.prove(executable: exe, candidates: [42, 43], rows: [], read: { QAIdentity(pid: $0, path: exe, birth: [100, 20]) }) == nil, "ambiguity")
-precondition(binding.prove(executable: exe, candidates: [42], rows: [], read: { QAIdentity(pid: $0, path: exe, birth: [101, 20]) }) == nil, "PID reused")
-precondition(binding.prove(executable: exe, candidates: [43], rows: [], read: { QAIdentity(pid: $0, path: exe, birth: [102, 20]) }) == nil, "never rebind to another lifetime")
+precondition(binding.prove(executable: exe, candidates: [42], rows: [row(2, 7, "foreign")], read: { $0 == 42 ? .live(qa) : .failed }) == nil, "ANY CG identity read failure")
+precondition(binding.prove(executable: exe, candidates: [42, 43], rows: [], read: { .live(QAIdentity(pid: $0, path: exe, birth: [100, 20])) }) == nil, "ambiguity")
+precondition(binding.prove(executable: exe, candidates: [42], rows: [], read: { .live(QAIdentity(pid: $0, path: exe, birth: [101, 20])) }) == nil, "PID reused")
+precondition(binding.prove(executable: exe, candidates: [43], rows: [], read: { .live(QAIdentity(pid: $0, path: exe, birth: [102, 20])) }) == nil, "never rebind to another lifetime")
 precondition(binding.proveTermination([], birth: .failed, readPath: { _ in nil }) == nil)
 precondition(binding.proveTermination([], birth: .absent, readPath: { _ in nil }) != nil)
-precondition(binding.prove(executable: exe, candidates: [43], rows: [], read: { QAIdentity(pid: $0, path: exe, birth: [102, 20]) })?.pid == 43, "new launch only after positive termination proof")
+precondition(binding.prove(executable: exe, candidates: [43], rows: [], read: { .live(QAIdentity(pid: $0, path: exe, birth: [102, 20])) })?.pid == 43, "new launch only after positive termination proof")
 print("PASS")
 '''
         self.assertEqual(old.run_swift(self, old.MODALS_PRELUDE + source + probe).strip(), 'PASS')

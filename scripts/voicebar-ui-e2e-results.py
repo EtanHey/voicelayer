@@ -365,7 +365,8 @@ def verify_no_system_capture(output, scenario):
         reason = 'unexpected-system-capture' if str(error) == 'unexpected-system-capture' else 'attachment-inventory-not-proven'
         # Do not persist attachment names or other potentially private system metadata.
         (output / 'qa-report.json').write_text(json.dumps(dict(scenario=scenario, scope=scenario,
-            scenarioPassed=False, verdict='FAIL', fullReleasePass=False, issues=['FAIL ' + reason])) + '\n')
+            scenarioPassed=False, verdict='FAIL', fullReleasePass=False, issues=['FAIL ' + reason],
+            resultBundle=str((output / 'VoiceBar.xcresult').resolve()))) + '\n')
         raise ValueError(reason) from None
 
 

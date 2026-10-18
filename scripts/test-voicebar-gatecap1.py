@@ -301,8 +301,11 @@ let rows = [row(1, 77, "com.apple.TextEdit", qa),                       // forei
 precondition(provenQAWindows(rows, qaPid: 42).map(\.id) == [2], "only visible windows of the proven process")
 precondition(provenQAWindows(rows, qaPid: nil).isEmpty, "no proven process: nothing is captured")
 let exe = "/private/tmp/vl-ui-AbC/VoiceBarQA.app/Contents/MacOS/VoiceBar"
-precondition(provenQAPid(executable: exe, candidates: [(42, exe), (43, "/private/tmp/vl-ui-OLD/VoiceBarQA.app/Contents/MacOS/VoiceBar")]) == 42)
-precondition(provenQAPid(executable: exe, candidates: [(42, exe), (44, exe)]) == nil, "ambiguous: NOT_PROVEN")
+func candidate(_ pid: Int32, _ path: String) -> (pid: Int32, read: QAIdentityRead) {
+    (pid, .live(QAIdentity(pid: pid, path: path, birth: [100, 20])))
+}
+precondition(provenQAPid(executable: exe, candidates: [candidate(42, exe), candidate(43, "/private/tmp/vl-ui-OLD/VoiceBarQA.app/Contents/MacOS/VoiceBar")]) == 42)
+precondition(provenQAPid(executable: exe, candidates: [candidate(42, exe), candidate(44, exe)]) == nil, "ambiguous: NOT_PROVEN")
 precondition(provenQAPid(executable: exe, candidates: []) == nil)
 print("PASS")
 '''
