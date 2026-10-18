@@ -62,6 +62,21 @@ def configure(output, app, sandbox, scenario=None):
     if len(targets) != 1:
         raise ValueError('Expected exactly one test target')
     target = targets[0]
+    # XCTest's Automatic Screen Capture = Off is keepNever (both screenshots and video).
+    # Override inherited settings at configuration AND target levels; keep explicit user stills.
+    def disable_capture(value):
+        if isinstance(value, dict):
+            for key in ('SystemAttachmentLifetime', 'PreferredScreenCaptureFormat'):
+                if key in value:
+                    value[key] = 'keepNever' if key == 'SystemAttachmentLifetime' else 'screenshots'
+            for child in value.values():
+                disable_capture(child)
+        elif isinstance(value, list):
+            for child in value:
+                disable_capture(child)
+    disable_capture(data)
+    target.update(SystemAttachmentLifetime='keepNever', PreferredScreenCaptureFormat='screenshots',
+                  UserAttachmentLifetime='keepAlways')
     # Replace generated/inherited selections: never run full and focused together.
     target['OnlyTestIdentifiers'] = ['VoiceBarFlowTests/' + SCENARIOS[scenario]]
     target.pop('SkipTestIdentifiers', None)
@@ -84,10 +99,23 @@ def configure(output, app, sandbox, scenario=None):
     write_scenario(output, scenario)
 
 
-def absence_proven(proof):
+def inventory_proven(proof):
     """A successful CG on-screen inventory at the step with zero windows owned by the proven QA PID."""
-    return (isinstance(proof, dict) and proof.get('cgInventory') == 'ok' and proof.get('onScreenQAWindows') == 0
-            and ((isinstance(proof.get('qaPid'), int) and proof['qaPid'] > 0) or proof.get('qaProcess') == 'none'))
+    return (isinstance(proof, dict) and proof.get('cgInventory') == 'ok'
+            and type(proof.get('onScreenQAWindows')) is int and proof['onScreenQAWindows'] == 0
+            and type(proof.get('qaPid')) is int and proof['qaPid'] > 0
+            and isinstance(proof.get('qaBirth'), list) and len(proof['qaBirth']) == 2
+            and all(type(n) is int for n in proof['qaBirth'])
+            and proof['qaBirth'][0] > 0 and 0 <= proof['qaBirth'][1] < 1000000)
+
+
+def absence_proven(proof):
+    return inventory_proven(proof) and proof.get('pidLifetime') == 'alive'
+
+
+def termination_proven(proof):
+    return (inventory_proven(proof) and proof.get('pidLifetime') == 'ended'
+            and proof.get('visibleOwnerPaths') == 'non-qa')
 
 
 def report(directory, steps, manifest, recording=None, issues=(), limitations=(), scenario='full'):
@@ -103,6 +131,8 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
     all_passed = not issues
     for step in steps:
         capture = step.get('capture')
+        contract = step.get('evidenceContract')
+        declared = contract in {'visible', 'hidden-alive', 'terminated'}
         matches = [a for a in attachments if a['suggestedHumanReadableName'].startswith(step['attachment'])]
         # Every published frame is a window-ID capture of the proven QA process; never a desktop crop.
         if not isinstance(capture, dict) or capture.get('source') != 'qa-window-id' \
@@ -113,7 +143,8 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
             if matches:
                 raise ValueError('NOT_PROVEN frame carries an image: ' + step['attachment'])
             # Lead ruling: only a step expecting hidden QA, with a positive expected-absent proof, may pass.
-            allowed = step.get('expectsHiddenQA') is True and absence_proven(capture.get('absenceProof'))
+            allowed = ((contract == 'hidden-alive' and absence_proven(capture.get('absenceProof')))
+                       or (contract == 'terminated' and termination_proven(capture.get('terminationProof'))))
             status = 'ABSENT (proven)' if allowed else 'FAIL VISUAL NOT_PROVEN'
             caption = f"{step['number']:04d} {status} ({capture.get('reason', 'unproven')}) {step['name']}"
             print(caption)
@@ -128,7 +159,7 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
             raise ValueError('Missing/unsafe screenshot file: ' + name)
         packet = expected_packet(step)
         rejected_waiver = scenario == 'focused-338' and packet is not None
-        passed = (step['passed'] and (not matches[0]['isAssociatedWithFailure'] or packet is not None)
+        passed = (declared and contract != 'terminated' and step['passed'] and (not matches[0]['isAssociatedWithFailure'] or packet is not None)
                   and not rejected_waiver)
         all_passed = all_passed and passed
         status = ('XFAIL [' + packet + ']') if packet and passed else 'SKIP' if step.get('skipped') and passed else 'PASS' if passed else 'FAIL'
@@ -290,11 +321,61 @@ def guard_export_issues(scenario, sandbox, step_names):
     return issues
 
 
+def verify_no_system_capture(output, scenario):
+    """Inspect metadata, including failed/aborted test summaries, BEFORE materializing any payload.
+
+    Never traverse payloadRef/diagnosticsRef. Unknown attachment types are unproven media;
+    only the known non-media XCTest types and our explicit PNG/JSON names are permitted.
+    """
+    def read(ident=None):
+        command = ['xcrun', 'xcresulttool', 'get', 'object', '--legacy', '--format', 'json',
+                   '--path', str(output / 'VoiceBar.xcresult')]
+        return json.loads(subprocess.check_output(command + (['--id', ident] if ident else []),
+                                                 text=True, stderr=subprocess.PIPE))
+    try:
+        pending, seen = [read()], set()
+        def walk(value):
+            if isinstance(value, list):
+                for child in value:
+                    walk(child)
+            elif isinstance(value, dict):
+                if value.get('_type', {}).get('_name') == 'ActionTestAttachment':
+                    uti = value.get('uniformTypeIdentifier', {}).get('_value')
+                    name = value.get('name', {}).get('_value', '')
+                    own_png = uti == 'public.png' and re.fullmatch(r'UIE2E-\d{4,}', name)
+                    non_media = uti in {'public.json', 'public.plain-text', 'com.apple.dt.xctest.element-snapshot',
+                                        'com.apple.dt.xctest.synthesized-event-record'}
+                    if not (own_png or non_media):
+                        raise ValueError('unexpected-system-capture')
+                for key, child in value.items():
+                    if key in {'testsRef', 'summaryRef'}:
+                        ident = child['id']['_value']
+                        if not isinstance(ident, str) or not ident:
+                            raise ValueError('attachment-inventory-not-proven')
+                        if ident not in seen:
+                            seen.add(ident)
+                            pending.append(read(ident))
+                    elif key not in {'payloadRef', 'diagnosticsRef'}:
+                        walk(child)
+        while pending:
+            walk(pending.pop())
+        if not seen:
+            raise ValueError('attachment-inventory-not-proven')
+    except Exception as error:
+        reason = 'unexpected-system-capture' if str(error) == 'unexpected-system-capture' else 'attachment-inventory-not-proven'
+        # Do not persist attachment names or other potentially private system metadata.
+        (output / 'qa-report.json').write_text(json.dumps(dict(scenario=scenario, scope=scenario,
+            scenarioPassed=False, verdict='FAIL', fullReleasePass=False, issues=['FAIL ' + reason],
+            resultBundle=str((output / 'VoiceBar.xcresult').resolve()))) + '\n')
+        raise ValueError(reason) from None
+
+
 def export(output, sandbox, scenario=None):
     scenario = selected_scenario(output, scenario)
+    verify_no_system_capture(output, scenario)
     directory = output / 'screenshots'
     subprocess.run(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', str(output / 'VoiceBar.xcresult'),
-                    '--output-path', str(directory)], check=True)
+                    '--output-path', str(directory), '--filter', 'UIE2E-*'], check=True)
     manifest = json.loads((directory / 'manifest.json').read_text())
     steps, ledger, issues = receipts(directory, manifest)
     if ledger is not None:

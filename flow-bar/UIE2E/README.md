@@ -73,6 +73,24 @@ window capture (the equivalent of `screencapture -l<id> -o`) of each visible win
 one process running this run's QA executable, composited on black; with no proven QA window
 the step's frame is `NOT_PROVEN` and no image exists (`qa-report.json` `visualNotProven`).
 
+XCTest's own automatic capture is disabled in the scheme and emitted run configuration:
+`SystemAttachmentLifetime=keepNever`, with `PreferredScreenCaptureFormat=screenshots` instead
+of video. Explicit user attachments remain `keepAlways`. Before exporting any payload, the
+exporter inspects all test-summary attachment metadata, including failed runs, and rejects
+unexpected system images/videos with `FAIL unexpected-system-capture`. Only `UIE2E-*`
+attachments are exported; the separate QA-only movie remains unchanged.
+Other QA JSON evidence (`GATE2246-*`, `HIDE1VIS-*`, `GATE2245-*`, `GEO0-*`) stays inside
+the xcresult for inspection. A rejected report names that bundle in `resultBundle`; it is
+retained for the owner's quarantine/deletion decision, with no media exported.
+
+Every step receipt declares `visible`, `hidden-alive`, or `terminated`. Hidden-alive proof
+requires the live QA PID and its kernel microsecond birth, a successful CG inventory with zero
+QA windows, and successful process identity reads for every CG row. Post-exit steps instead
+require the recorded lifetime to have ended (kernel ESRCH or a different birth), no CG window
+owned by that PID, and every visible row's path to resolve to a non-QA executable. Any failed
+read or missing declaration fails the step. A later QA launch can bind a new lifetime only
+after the prior lifetime has a positive termination proof.
+
 Foreign modals (GATECAP1): any visible system-agent window (CoreServicesUIAgent, SecurityAgent,
 UserNotificationCenter, coreautha), any window at the modal-panel level, or any app's AX modal
 window or sheet, on any display, refuses the run before Hide Others and STOPs it at every

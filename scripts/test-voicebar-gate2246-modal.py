@@ -120,7 +120,7 @@ print(gate2245HasOwnedScreenWindows([unnamed], pid: 200))
         contract = (ROOT / 'flow-bar/UIE2E/VoiceBarUIE2ETests/VoiceBarFlowTests.swift').read_text()
         signature = contract.split('    func step(', 1)[1].split('{', 1)[0]
         body_type = re.search(r'_ body: (\(\) (?:throws )?-> Void)', signature)[1]
-        hidden = source.split('step("HIDE1VIS " + event + " hidden") {', 1)[1].split('attachJSON(', 1)[0]
+        hidden = source.split('step("HIDE1VIS " + event + " hidden", evidenceContract: "hidden-alive") {', 1)[1].split('attachJSON(', 1)[0]
         validation = hidden[hidden.index('                let screenWindows ='):]
         helper = source.split('// BEGIN GATE2245 WINDOW OWNERSHIP\n', 1)[1].split('// END GATE2245 WINDOW OWNERSHIP', 1)[0]
         fixture = r'''
@@ -203,7 +203,7 @@ print("PASS retained title-only NSAlert, exact title, duplicates and missing-dia
 
     def test_modal_steps_never_read_delayed_fixture_receipts(self):
         source = SOURCE.read_text().split('    func testHide1VisualFlow()', 1)[0]
-        failure = source.split('step("GATE2246 HIDE " + name + " failure")', 1)[1].split('if immediate { step(', 1)[0]
+        failure = source.split('step("GATE2246 HIDE " + name + " failure"', 1)[1].split('if immediate { step(', 1)[0]
         shown = source.split('step("GATE2246 HIDE " + name + " shown")', 1)[1].split('if name == "background"', 1)[0]
         for block in [failure, shown]:
             self.assertNotIn('gateRead(', block, 'Modal assertion reads stale run-02 fixture receipt')

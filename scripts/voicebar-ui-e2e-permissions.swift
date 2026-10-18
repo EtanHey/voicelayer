@@ -99,8 +99,17 @@ struct BoundaryLatch {
     }
 }
 /// Exactly one live process running this run's QA executable, else none (NOT_PROVEN).
-func provenQAPid(executable: String, candidates: [(pid: Int32, path: String)]) -> Int32? {
-    let matches = candidates.filter { $0.path == executable }
+func provenQAPid(executable: String, candidates: [(pid: Int32, read: QAIdentityRead)]) -> Int32? {
+    var matches: [QAIdentity] = []
+    for candidate in candidates {
+        switch candidate.read {
+        case .gone: continue
+        case .failed: return nil
+        case .live(let identity):
+            guard identity.pid == candidate.pid else { return nil }
+            if identity.path == executable { matches.append(identity) }
+        }
+    }
     return matches.count == 1 ? matches[0].pid : nil
 }
 /// The proven QA process's visible windows, front to back; anything else is never captured.
@@ -108,18 +117,63 @@ func provenQAWindows(_ rows: [CGRow], qaPid: Int32?) -> [CGRow] {
     guard let qaPid else { return [] }
     return rows.filter { $0.pid == qaPid && $0.alpha > 0 && !($0.bounds?.isEmpty ?? true) }
 }
-/// Positive expected-absent proof for a hidden-state step: a SUCCESSFUL CG on-screen inventory with
-/// zero visible windows owned by the proven QA PID (or, after QA exited, no process running this
-/// run's QA executable at all). A failed read, an unreadable QA window geometry, or an ambiguous
-/// QA process gives no proof, so the step fails.
-func expectedAbsentProof(_ rows: [CGRow]?, qaPid: Int32?, qaProcessCount: Int) -> [String: Any]? {
-    guard let rows else { return nil }
-    if let qaPid {
-        let owned = rows.filter { $0.pid == qaPid && $0.alpha > 0 }
-        guard owned.allSatisfy({ $0.bounds.map { $0.isEmpty } ?? false }) else { return nil }
-        return ["cgInventory": "ok", "qaPid": Int(qaPid), "onScreenQAWindows": 0]
+struct QAIdentity: Equatable { let pid: Int32; let path: String; let birth: [UInt64] }
+enum BirthRead { case live([UInt64]), absent, failed }
+enum QAIdentityRead { case live(QAIdentity), gone, failed }
+/// Bind a QA launch once. A failed read is retained as failure, never dropped from candidates.
+struct QARunBinding {
+    private(set) var identity: QAIdentity?
+    private var ended = false
+    mutating func proveTermination(_ rows: [CGRow]?, birth: BirthRead, readPath: (Int32) -> String?) -> [String: Any]? {
+        let proof = terminationProof(rows, identity: identity, birth: birth, readPath: readPath)
+        if proof != nil { ended = true }
+        return proof
     }
-    return qaProcessCount == 0 ? ["cgInventory": "ok", "qaProcess": "none", "onScreenQAWindows": 0] : nil
+    mutating func prove(executable: String, candidates: [Int32], rows: [CGRow]?, read: (Int32) -> QAIdentityRead) -> QAIdentity? {
+        guard let rows else { return nil }
+        let owners = Set(rows.map(\.pid))
+        var found: [QAIdentity] = []
+        for pid in Set(candidates).union(owners) {
+            guard pid > 0 else { return nil }
+            switch read(pid) {
+            case .gone where !owners.contains(pid): continue // stale NSWorkspace candidate only
+            case .gone, .failed: return nil                  // a CG row still needs a readable owner
+            case .live(let value):
+                guard value.pid == pid else { return nil }
+                if value.path == executable { found.append(value) }
+            }
+        }
+        guard found.count == 1, let current = found.first else { return nil }
+        if let identity, identity != current, !ended { return nil }
+        identity = current; ended = false
+        return current
+    }
+}
+func inventoryProof(_ identity: QAIdentity) -> [String: Any] {
+    ["cgInventory": "ok", "qaPid": Int(identity.pid), "qaBirth": identity.birth.map(Int.init), "onScreenQAWindows": 0]
+}
+/// Caller must freshly prove the bound identity is alive, including every CG row's identity read.
+func expectedAbsentProof(_ rows: [CGRow]?, identity: QAIdentity?) -> [String: Any]? {
+    guard let rows, let identity else { return nil }
+    let owned = rows.filter { $0.pid == identity.pid && $0.alpha > 0 }
+    guard owned.allSatisfy({ $0.bounds.map { $0.isEmpty } ?? false }) else { return nil }
+    return inventoryProof(identity).merging(["pidLifetime": "alive"]) { _, new in new }
+}
+/// Distinct termination contract: kernel-ended lifetime, no bound-PID window, every visible path non-QA.
+func terminationProof(_ rows: [CGRow]?, identity: QAIdentity?, birth: BirthRead,
+                      readPath: (Int32) -> String?) -> [String: Any]? {
+    guard let rows, let identity, !rows.contains(where: { $0.pid == identity.pid }) else { return nil }
+    switch birth {
+    case .absent: break
+    case .live(let current): if current == identity.birth { return nil }
+    case .failed: return nil
+    }
+    for row in rows where row.alpha > 0 {
+        guard let bounds = row.bounds else { return nil }
+        if bounds.isEmpty { continue }
+        guard let path = readPath(row.pid), path != identity.path else { return nil }
+    }
+    return inventoryProof(identity).merging(["pidLifetime": "ended", "visibleOwnerPaths": "non-qa"]) { _, new in new }
 }
 /// Window-isolated captures (front to back) composited at their screen positions on black:
 /// transparent QA pixels become black; no other window or desktop pixel is ever an input.
@@ -209,13 +263,47 @@ struct LiveModalSource: ModalSource {
     }
     func title(_ element: AXUIElement) -> String { attr(element, "AXTitle") as? String ?? "" }
 }
-func qaCandidates() -> [(pid: Int32, path: String)] {
-    NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == qaBundle }.compactMap { app in
-        var buffer = [CChar](repeating: 0, count: 4096)
-        guard proc_pidpath(app.processIdentifier, &buffer, UInt32(buffer.count)) > 0 else { return nil }
-        return (app.processIdentifier, URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path)
+// BEGIN QA IDENTITY READ
+func qaBirth(_ pid: Int32) -> BirthRead {
+    guard pid > 0 else { return .failed }
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.size
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    errno = 0
+    guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else {
+        return errno == ESRCH ? .absent : .failed
     }
+    if size == 0 { return .absent }
+    let start = info.kp_proc.p_un.__p_starttime // p_starttime macro in sys/proc.h
+    guard size == MemoryLayout<kinfo_proc>.size, start.tv_sec > 0,
+          (0..<1_000_000).contains(start.tv_usec) else { return .failed }
+    return .live([UInt64(start.tv_sec), UInt64(start.tv_usec)])
 }
+func qaIdentityRead(_ pid: Int32) -> QAIdentityRead {
+    let before: [UInt64]
+    switch qaBirth(pid) {
+    case .absent: return .gone
+    case .failed: return .failed
+    case .live(let birth): before = birth
+    }
+    var buffer = [CChar](repeating: 0, count: 4096)
+    let pathSize = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+    switch qaBirth(pid) {
+    case .absent: return .gone
+    case .failed: return .failed
+    case .live(let after): guard pathSize > 0, before == after else { return .failed }
+    }
+    return .live(QAIdentity(pid: pid, path: URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path, birth: before))
+}
+func qaIdentity(_ pid: Int32) -> QAIdentity? {
+    if case .live(let identity) = qaIdentityRead(pid) { return identity }
+    return nil
+}
+// END QA IDENTITY READ
+func qaCandidates() -> [(pid: Int32, read: QAIdentityRead)] {
+    qaCandidatePids().map { ($0, qaIdentityRead($0)) }
+}
+func qaCandidatePids() -> [Int32] { NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == qaBundle }.map(\.processIdentifier) }
 func excludedQAPids(executable: String?) -> Set<Int32> {
     guard let executable else { return Set(qaCandidates().map(\.pid)) }   // one-shot without a run binding
     return provenQAPid(executable: executable, candidates: qaCandidates()).map { [$0] } ?? []
@@ -224,10 +312,18 @@ func json(_ object: Any) -> Data { try! JSONSerialization.data(withJSONObject: o
 
 /// Window-ID capture of the proven QA process only (ScreenCaptureKit desktop-independent window,
 /// the equivalent of `screencapture -l<id> -o`), composited on black. nil reason = captured.
-func captureStill(qaPid: Int32?, qaProcessCount: Int, to path: URL) -> (windows: [UInt32], reason: String?, proof: [String: Any]?) {
+func captureStill(binding: inout QARunBinding, executable: String, to path: URL) -> (windows: [UInt32], reason: String?, proof: [String: Any]?) {
+    let candidates = qaCandidatePids()
+    let before = binding.prove(executable: executable, candidates: candidates, rows: [], read: qaIdentityRead)
     let rows = LiveModalSource().windows()   // one fresh CG read at this step, for capture and proof
-    let proof = expectedAbsentProof(rows, qaPid: qaPid, qaProcessCount: qaProcessCount)
-    guard let qaPid else { return ([], "no-proven-qa-process", proof) }
+    let identity = before == nil ? nil : binding.prove(executable: executable, candidates: candidates, rows: rows, read: qaIdentityRead)
+    let proof = expectedAbsentProof(rows, identity: identity)
+    guard let identity else {
+        let birth = binding.identity.map { qaBirth($0.pid) } ?? .failed
+        let ended = binding.proveTermination(rows, birth: birth, readPath: { qaIdentity($0)?.path })
+        return ([], "no-proven-qa-process", ended)
+    }
+    let qaPid = identity.pid
     guard let rows else { return ([], "cg-enumeration", nil) }
     let targets = provenQAWindows(rows, qaPid: qaPid)
     guard !targets.isEmpty else { return ([], "no-proven-qa-window", proof) }
@@ -264,6 +360,7 @@ func captureStill(qaPid: Int32?, qaProcessCount: Int, to path: URL) -> (windows:
 final class Broker {
     let token: String, boundary: URL, executable: String, latchPath: URL
     var latch = BoundaryLatch(), count = 0
+    var binding = QARunBinding()
     init(token: String, root: URL, executable: String, latchPath: URL) {
         self.token = token; boundary = root.appendingPathComponent("boundary")
         self.executable = executable; self.latchPath = latchPath
@@ -280,7 +377,6 @@ final class Broker {
         count += 1
         let candidates = qaCandidates()
         let qaPid = provenQAPid(executable: executable, candidates: candidates)
-        let qaProcessCount = candidates.filter { $0.path == executable }.count
         let inventory = modalInventory(LiveModalSource(), qaPids: qaPid.map { [$0] } ?? [])
         let status = latch.decide(inventory)
         var ack: [String: Any] = ["count": count, "kind": kind, "status": status]
@@ -294,12 +390,14 @@ final class Broker {
         if kind == "still" {
             if status == "clear" {
                 let path = boundary.appendingPathComponent("still-\(count).png")
-                let still = captureStill(qaPid: qaPid, qaProcessCount: qaProcessCount, to: path)
+                let still = captureStill(binding: &binding, executable: executable, to: path)
                 if still.reason == nil {
-                    ack["capture"] = ["status": "PROVEN", "path": path.path, "windows": still.windows.map(Int.init), "qaPid": Int(qaPid ?? 0)]
+                    ack["capture"] = ["status": "PROVEN", "path": path.path, "windows": still.windows.map(Int.init), "qaPid": Int(binding.identity?.pid ?? 0)]
                 } else {
                     var capture: [String: Any] = ["status": "NOT_PROVEN", "reason": still.reason!]
-                    if let proof = still.proof { capture["absenceProof"] = proof }
+                    if let proof = still.proof {
+                        capture[proof["pidLifetime"] as? String == "ended" ? "terminationProof" : "absenceProof"] = proof
+                    }
                     ack["capture"] = capture
                 }
             } else { ack["capture"] = ["status": "NOT_PROVEN", "reason": "foreign-modal-stop"] }

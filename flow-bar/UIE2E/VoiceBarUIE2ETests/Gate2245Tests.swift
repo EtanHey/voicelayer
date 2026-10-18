@@ -75,7 +75,7 @@ extension VoiceBarFlowTests {
         guard scenario == "gate2246", gate2245Enabled else { throw NSError(domain: "GATE2246 requires gate build", code: 1) }
         limitations = ["Focused muted native gate: real panels and NSAlert, synthetic wire/selection; no capture, daemon launch, physical hotkeys, permissions or installed-app acceptance."]
         ledger.requiredScope = ["gate:HIDE1.1", "gate:SEL1.x"]
-        step("GATE2246 no-device guard installed before fixtures") {
+        step("GATE2246 no-device guard installed before fixtures", evidenceContract: "hidden-alive") {
             XCTAssertTrue(guardReceiptIsClean(guardLaunches))
         }
         func command(_ name: String) { _ = fixtureCommand(name) }
@@ -98,7 +98,7 @@ extension VoiceBarFlowTests {
             }
             command(name)
             let immediate = !["background", "recovered"].contains(name)
-            step("GATE2246 HIDE " + name + " failure") {
+            step("GATE2246 HIDE " + name + " failure", evidenceContract: immediate ? "visible" : "hidden-alive") {
                 waitForAlert(immediate)
                 let observation = gate2246ModalObservation(app).merging(["case": name, "phase": "failure"]) { _, new in new }
                 XCTAssertEqual(observation["alertVisible"] as? Bool, immediate)
@@ -106,7 +106,7 @@ extension VoiceBarFlowTests {
                 if immediate { XCTAssertEqual(observation["laterButtonCount"] as? Int, 1) }
                 attachJSON("GATE2246-" + name + "-failure-AX", observation)
             }
-            if immediate { step("GATE2246 HIDE " + name + " dismiss Later") { dismissAlert() } }
+            if immediate { step("GATE2246 HIDE " + name + " dismiss Later", evidenceContract: name == "visible" ? "visible" : "hidden-alive") { dismissAlert() } }
             command("show")
             step("GATE2246 HIDE " + name + " shown") {
                 waitForAlert(name == "background")
@@ -152,7 +152,7 @@ extension VoiceBarFlowTests {
         }
         ledger.verifiedSurfaces.insert("gate:SEL1.x")
         command("end")
-        step("GATE2246 no device-start or process tripwire invoked") {
+        step("GATE2246 no device-start or process tripwire invoked", evidenceContract: "hidden-alive") {
             XCTAssertTrue(guardReceiptIsClean(guardLaunches))
         }
         completed = true
@@ -163,7 +163,7 @@ extension VoiceBarFlowTests {
         limitations = ["HIDE1-only muted native visual gate with injected events; no audio, live daemon, global hotkeys, permissions or installed-app acceptance.",
             "Panel is positioned below the menu bar for unobstructed evidence; this does not establish notch placement."]
         ledger.requiredScope = ["gate:HIDE1"]
-        step("HIDE1VIS no-device guard installed before fixtures") {
+        step("HIDE1VIS no-device guard installed before fixtures", evidenceContract: "hidden-alive") {
             XCTAssertTrue(guardReceiptIsClean(guardLaunches))
         }
         for event in ["speaking", "preparing", "readback", "error", "reconnect", "notes", "wizard"] {
@@ -178,7 +178,7 @@ extension VoiceBarFlowTests {
             }
             fixtureCommand(event)
             Thread.sleep(forTimeInterval: 1)
-            step("HIDE1VIS " + event + " hidden") {
+            step("HIDE1VIS " + event + " hidden", evidenceContract: "hidden-alive") {
                 let receipt = gateRead("gate-hide.json")
                 XCTAssertEqual(receipt["action"] as? String, "hidden:" + event)
                 XCTAssertEqual(receipt["snoozed"] as? Bool, true)
@@ -212,7 +212,7 @@ extension VoiceBarFlowTests {
         }
         fixtureCommand("end")
         ledger.verifiedSurfaces.insert("gate:HIDE1")
-        step("HIDE1VIS no device-start or process tripwire invoked") {
+        step("HIDE1VIS no device-start or process tripwire invoked", evidenceContract: "hidden-alive") {
             XCTAssertTrue(guardReceiptIsClean(guardLaunches))
         }
         completed = true
