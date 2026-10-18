@@ -27,8 +27,8 @@ describe("UIE2E no-device guard covers every GATE2245 scenario (C2)", () => {
     expect(flow).not.toContain('if scenario == "gate2246" {');
     const gate = read("flow-bar", "UIE2E", "VoiceBarUIE2ETests", "Gate2245Tests.swift");
     for (const prefix of ["HIDE1VIS", "GATE2246"]) {
-      expect(gate).toContain(`step("${prefix} no-device guard installed before fixtures")`);
-      expect(gate).toContain(`step("${prefix} no device-start or process tripwire invoked")`);
+      expect(gate).toContain(`step("${prefix} no-device guard installed before fixtures", evidenceContract: "hidden-alive")`);
+      expect(gate).toContain(`step("${prefix} no device-start or process tripwire invoked", evidenceContract: "hidden-alive")`);
     }
   });
 
@@ -37,8 +37,9 @@ describe("UIE2E no-device guard covers every GATE2245 scenario (C2)", () => {
     // Launch 1 keeps the supervisor-watched path; each relaunch gets a fresh, never-reused log.
     expect(flow).toContain('launch == 1 ? "no-device-guard.log" : "no-device-guard-launch-\\(launch).log"');
     expect(flow).toContain('app.launchEnvironment["VOICEBAR_UIE2E_GUARD_RECEIPT"] = receipt.path');
-    expect(flow).toContain('step("GUARD launch \\(guardLaunches) installed")');
-    expect(flow).toContain('step("GUARD launch \\(guardLaunches) no tripwire")');
+    expect(flow).toContain('var launchEvidenceContract: String { ["hide1", "gate2246"].contains(scenario) ? "hidden-alive" : "visible" }');
+    expect(flow).toContain('step("GUARD launch \\(guardLaunches) installed", evidenceContract: launchEvidenceContract)');
+    expect(flow).toContain('step("GUARD launch \\(guardLaunches) no tripwire", evidenceContract: "terminated")');
     // Both the first launch and every relaunch go through the one guarded launcher.
     expect(flow.match(/app\.launch\(\)/g)?.length).toBe(1);
     // Full GATE2245 runs assert the guard at the fixture boundaries too.
