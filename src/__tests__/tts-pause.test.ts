@@ -168,6 +168,18 @@ describe("P10 queue pause/resume", () => {
     at(4200); tts.pausePlayback();
     expect(tts.seekPlayback(1000)).toMatchObject({ outcome: "reject", reason: "paused" });
   });
+
+  it("SEEK2 integration: a readback seek cannot replace a parked read, and resume keeps its readback identity", async () => {
+    await pauseAt4200();
+    const readbackID = events.filter(e => e.state === "speaking")[0].readback_id;
+    expect(readbackID).toBeString();
+    expect(tts.seekPlayback(1000, "readback", readbackID)).toMatchObject({ outcome: "reject", reason: "paused" });
+    expect(tts.isPlaybackPaused()).toBe(true);
+    expect(players.values).toHaveLength(1);
+    tts.resumePlayback();
+    await players.at(1); await fixtureCheckpoint();
+    expect(events.filter(e => e.state === "speaking").at(-1).readback_id).toBe(readbackID);
+  });
 });
 
 describe("P10 envelope and preparation", () => {

@@ -263,6 +263,10 @@ final class SocketServerTests: XCTestCase {
         fixture.server.sendCommandToOwner(command: ["cmd": "seek", "offset_ms": 250])
         XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"seek""#))
         XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.1))
+        fixture.server.sendCommandToOwner(command: ["cmd": "seek", "scope": "readback", "readback_id": "legacy", "offset_ms": 250])
+        let readback = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
+        XCTAssertTrue(readback.contains(#""scope":"readback""#))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.1))
     }
 
     func testStopInterruptReachesLegacyPlaybackClientAndCommandOwner() throws {

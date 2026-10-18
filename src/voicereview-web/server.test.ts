@@ -1394,7 +1394,7 @@ describe("VoiceReview web server helpers", () => {
           members: cantaloupeCluster.members,
           perMember: 1,
         }),
-        { stdout: "pipe", stderr: "pipe" },
+        { env: process.env, stdout: "pipe", stderr: "pipe" },
       );
       const [stdout, stderr, exitCode] = await Promise.all([
         new Response(proc.stdout).text(),
@@ -2066,7 +2066,7 @@ describe("VoiceReview web server helpers", () => {
       const command = runShellCommand({
         args: [process.execPath, childPath],
         cwd: root,
-        env: { PATH: process.env.PATH || "" },
+        env: { ...process.env, PATH: process.env.PATH || "" },
         signal: abort.signal,
       });
       const readyDeadline = Date.now() + 2_000;

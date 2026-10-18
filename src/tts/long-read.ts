@@ -20,6 +20,7 @@ export interface SeekResult {
 export interface LongReadSeek { seek(offsetMs: number): SeekResult; restart(): SeekResult }
 
 export interface LongReadDependencies {
+  initialOffsetMs?: number;
   registerSeek?(control: LongReadSeek): void;
   canReplay?(chunk: LongReadChunk): boolean;
   prepareSeek?(chunk: LongReadChunk, offsetMs: number, signal: AbortSignal): Promise<string | undefined>;
@@ -49,7 +50,8 @@ export async function runLongRead(
   let nextIndex = 0;
   let closing = false;
   let synthesisFailed = false;
-  let localOffsetMs = 0;
+  let localOffsetMs = deps.initialOffsetMs ?? 0;
+  let initialSeek = localOffsetMs > 0;
   let target: { index: number; local: number; sliceFile?: string } | undefined;
   let playback: ReturnType<LongReadDependencies["play"]> | undefined;
   let seeking: AbortController | undefined;
@@ -132,6 +134,7 @@ export async function runLongRead(
       if (target) {
         deps.disposeSeek?.(seekFile);
         currentIndex = target.index; localOffsetMs = target.local; seekFile = target.sliceFile; isSeek = true; target = undefined;
+        initialSeek = false;
         changed = new Promise<void>((resolve) => { wake = resolve; });
       }
       pump();
@@ -142,7 +145,13 @@ export async function runLongRead(
       if ("error" in result) throw result.error;
       if (localOffsetMs >= result.chunk.durationMs) {
         deps.disposeSeek?.(seekFile); seekFile = undefined; isSeek = false;
-        currentIndex = index + 1; localOffsetMs = 0; continue;
+        currentIndex = index + 1; localOffsetMs -= result.chunk.durationMs; continue;
+      }
+      if (initialSeek) {
+        seekFile = await deps.prepareSeek?.(result.chunk, localOffsetMs, signal);
+        if (signal.aborted) break;
+        isSeek = true; initialSeek = false;
+        if (target) { deps.disposeSeek?.(seekFile); seekFile = undefined; continue; }
       }
       const offsetMs = chunkStart(index);
       playback = deps.play(result.chunk, texts[index], {

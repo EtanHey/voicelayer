@@ -109,7 +109,7 @@ struct UIE2EControlContext {
 
 /// Lead-assigned product packets, not generic waivers for missing controls.
 enum UIE2EKnownIssue: String {
-    case listNewlines = "P14b", seekIdle = "SEEK2", supersedePreparing = "SEL1", pasteFeedback = "P1e", selectionFeedback = "P1f"
+    case listNewlines = "P14b", supersedePreparing = "SEL1", pasteFeedback = "P1e", selectionFeedback = "P1f"
     var marker: String { "[" + rawValue + "]" }
     func matches(_ description: String) -> Bool { description.contains(marker) }
 }

@@ -1078,7 +1078,7 @@ extension VoiceBarFlowTests {
             XCTAssertGreaterThan(second.frame.minY, first.frame.maxY, "[P14b] A list newline must create a new visual line")
         }
         click(app.buttons["qa-fixture-readback"])
-        verify("seek-idle", expected: .seekIdle) {
+        verify("seek-idle") {
             let pill = app.dialogs["VoiceBar QA Pill"]
             let content = pill.descendants(matching: .any).matching(UIE2EAXText.predicate("Second",
                 staticTextRole: XCUIElement.ElementType.staticText.rawValue)).firstMatch
@@ -1091,6 +1091,8 @@ extension VoiceBarFlowTests {
             let received = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 self.fixtureEvents().dropFirst(before).contains("command:seek") }, object: nil)], timeout: 3)
             XCTAssertEqual(received, .completed, "[SEEK2] Readback word did not dispatch seek")
+            let object = try? JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("commands.json"))) as? [String: Any]
+            XCTAssertEqual((object?["messages"] as? [[String: Any]])?.last?["offset_ms"] as? Int, 3000)
         }
         click(app.buttons["qa-fixture-preparing"])
         step("assert real Preparing state and visible playback shell before selection probe") {

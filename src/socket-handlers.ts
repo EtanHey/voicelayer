@@ -112,7 +112,7 @@ export function handleSocketCommand(
   switch (command.cmd) {
     case "seek": {
       if (recordingState !== "idle" || getEffectiveRecordingState() !== "idle") return buildAck(command, "reject", "busy");
-      const result = seekPlayback(command.offset_ms);
+      const result = seekPlayback(command.offset_ms, command.scope, command.readback_id);
       return { ...buildAck(command, result.outcome, result.reason),
         ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms, clamped: result.clamped } : {}) };
     }

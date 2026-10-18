@@ -30,7 +30,7 @@ describe("edge-tts health and retry", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     const { checkEdgeTTSHealth, resetHealthCache } =
@@ -52,7 +52,7 @@ describe("edge-tts health and retry", () => {
           ),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     // Re-import to get fresh module
@@ -79,7 +79,7 @@ describe("edge-tts health and retry", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSync(cmd);
+      return originalSpawnSync(cmd, { env: process.env });
     };
 
     checkEdgeTTSHealth();
@@ -112,7 +112,7 @@ describe("edge-tts health and retry", () => {
           stderr: new Uint8Array(0),
         };
       }
-      return originalSpawnSyncLocal(cmd);
+      return originalSpawnSyncLocal(cmd, { env: process.env });
     };
 
     const { resolvePython3Path } = await import("../tts-health");

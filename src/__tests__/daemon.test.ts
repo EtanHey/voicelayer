@@ -463,6 +463,7 @@ describe("CLI integration", () => {
         "/usr/bin/plutil",
         ["-convert", "json", "-o", "-", "-"],
         {
+        env: process.env,
           input: "(null)\n",
           encoding: "utf8",
         },
@@ -645,7 +646,7 @@ describe("CLI integration", () => {
     const venvBin = join(fakeHome, ".voicelayer", "venv", "bin");
     mkdirSync(venvBin, { recursive: true });
     writeFileSync(join(venvBin, "python"), "#!/usr/bin/env bash\nexit 0\n");
-    spawnSync("chmod", ["755", join(venvBin, "python")]);
+    spawnSync("chmod", ["755", join(venvBin, "python")], { env: process.env });
 
     try {
       const result = spawnSync("bash", ["src/cli/voicelayer.sh", "daemon"], {
@@ -694,7 +695,7 @@ describe("CLI integration", () => {
     mkdirSync(fakeHome, { recursive: true });
     mkdirSync(customBin, { recursive: true });
     writeFileSync(customPython, "#!/usr/bin/env bash\nexit 0\n");
-    spawnSync("chmod", ["755", customPython]);
+    spawnSync("chmod", ["755", customPython], { env: process.env });
 
     try {
       const result = spawnSync("bash", ["src/cli/voicelayer.sh", "daemon"], {

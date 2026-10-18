@@ -1,3 +1,4 @@
+import { requireIsolatedOverride } from "./test-isolation";
 import {
   existsSync,
   mkdirSync,
@@ -177,6 +178,8 @@ const ENTITY_BOUNDARY_PHRASES = [
 ];
 
 function defaultRecordingsRoot(): string {
+  requireIsolatedOverride(process.env, "QA_VOICE_RECORDINGS_DIR");
+  if (process.env.VOICELAYER_TEST_ISOLATED === "1") return process.env.QA_VOICE_RECORDINGS_DIR!;
   return join(homedir(), ".local", "share", "voicelayer", "recordings");
 }
 
@@ -1059,5 +1062,7 @@ export function writeSTTQualityMiningReport(
 }
 
 export function defaultPolishLogPath(): string {
+  requireIsolatedOverride(process.env, "QA_VOICE_STT_POLISH_LOG_PATH");
+  if (process.env.VOICELAYER_TEST_ISOLATED === "1") return process.env.QA_VOICE_STT_POLISH_LOG_PATH!;
   return join(homedir(), ".voicelayer", "eval", "polish-shadow.jsonl");
 }

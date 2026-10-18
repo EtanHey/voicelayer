@@ -161,7 +161,7 @@ describe("long-read synthesis adapters", () => {
   it("audio conversion cancellation reaps an owned real process", async () => {
     const controller = new AbortController(); let childPid = 0;
     Bun.spawn = ((argv: string[], options: any) => {
-      const child = originalSpawn(argv, options); childPid = child.pid; return child;
+      const child = originalSpawn(argv, { ...options, env: { ...process.env, ...options?.env } }); childPid = child.pid; return child;
     }) as any;
     const pending = runAudioCommand([process.execPath, "-e", "setInterval(() => {}, 1000)"], controller.signal);
     controller.abort(); await expect(pending).rejects.toHaveProperty("name", "AbortError");
@@ -181,7 +181,7 @@ describe("long-read replay audio with real ffmpeg, no speaker", () => {
         { chunk, text: "tone tail", startMs: 500, playedMs: 200 },
         { chunk, text: "silent prefix", playedMs: 200 },
       ], output);
-      const pcm = Bun.spawnSync(["ffmpeg", "-v", "error", "-i", output, "-f", "f32le", "-ac", "1", "-ar", "16000", "pipe:1"]);
+      const pcm = Bun.spawnSync(["ffmpeg", "-v", "error", "-i", output, "-f", "f32le", "-ac", "1", "-ar", "16000", "pipe:1"], { env: process.env });
       expect(pcm.exitCode).toBe(0);
       const samples = new Float32Array(pcm.stdout.buffer, pcm.stdout.byteOffset, pcm.stdout.byteLength / 4);
       const rms = (from: number, to: number) => Math.sqrt(samples.slice(from, to).reduce((sum, x) => sum + x*x, 0) / (to-from));
@@ -201,7 +201,7 @@ describe("long-read replay audio with real ffmpeg, no speaker", () => {
         { chunk: { audioFile: first, durationMs: 1000, wordBoundaries: [] }, text: "one", playedMs: 1000 },
         { chunk: { audioFile: second, durationMs: 1000, wordBoundaries: [] }, text: "two", playedMs: 250 },
       ], output);
-      const probe = Bun.spawnSync(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output]);
+      const probe = Bun.spawnSync(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", output], { env: process.env });
       expect(probe.exitCode).toBe(0);
       const duration = Number(probe.stdout.toString().trim());
       expect(duration).toBeGreaterThanOrEqual(1.25); expect(duration).toBeLessThan(1.35);

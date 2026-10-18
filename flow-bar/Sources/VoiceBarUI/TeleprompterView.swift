@@ -477,13 +477,16 @@ public enum TeleprompterPlaybackPolicy {
 }
 
 public enum TeleprompterSeekPolicy {
-    public static func offset(for word: TeleprompterWord, isReadback: Bool) -> Int? {
-        guard !isReadback, !word.hasEstimatedTiming, let offset = word.offsetMs, offset >= 0 else { return nil }
+    public static func offset(for word: TeleprompterWord, isReadback _: Bool) -> Int? {
+        guard !word.hasEstimatedTiming, let offset = word.offsetMs, offset >= 0 else { return nil }
         return offset
     }
 
-    public static func seek(_ word: TeleprompterWord, isReadback: Bool, seek: (Int) -> Void) {
-        guard let offset = offset(for: word, isReadback: isReadback) else { return }
+    public static func seek(_ word: TeleprompterWord, isReadback: Bool, seek: (Int) -> Void, unavailable: () -> Void = {}) {
+        guard let offset = offset(for: word, isReadback: isReadback) else {
+            if isReadback { unavailable() }
+            return
+        }
         seek(offset)
     }
 }
@@ -513,6 +516,7 @@ public struct TeleprompterView: View {
     public var isReadback = false
     public let playbackElapsedMilliseconds: () -> Int
     public var onSeek: ((Int) -> Void)?
+    public var onSeekUnavailable: (() -> Void)?
     public var estimatedPlaybackStartMilliseconds = 0
     public var wrapWidth = Theme.teleprompterWrapWidth
     public var viewportHeight = Theme.teleprompterViewportHeight
@@ -525,6 +529,7 @@ public struct TeleprompterView: View {
         playbackEpoch: Int = 0,
         playbackElapsedMilliseconds: @escaping () -> Int,
         onSeek: ((Int) -> Void)? = nil,
+        onSeekUnavailable: (() -> Void)? = nil,
         estimatedPlaybackStartMilliseconds: Int = 0,
         wrapWidth: CGFloat = Theme.teleprompterWrapWidth,
         viewportHeight: CGFloat = Theme.teleprompterViewportHeight,
@@ -536,6 +541,7 @@ public struct TeleprompterView: View {
         self.playbackEpoch = playbackEpoch
         self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
         self.onSeek = onSeek
+        self.onSeekUnavailable = onSeekUnavailable
         self.estimatedPlaybackStartMilliseconds = estimatedPlaybackStartMilliseconds
         self.wrapWidth = wrapWidth
         self.viewportHeight = viewportHeight
@@ -639,9 +645,10 @@ public struct TeleprompterView: View {
         let highlightedIndex = currentIndex
         return ForEach(teleprompterWords) { word in
             Group {
-                if let onSeek, TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {
+                if let onSeek, isReadback || TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {
                     Button {
-                        TeleprompterSeekPolicy.seek(word, isReadback: isReadback, seek: onSeek)
+                        TeleprompterSeekPolicy.seek(word, isReadback: isReadback, seek: onSeek,
+                                                    unavailable: { onSeekUnavailable?() })
                     } label: {
                         wordLabel(word, highlightedIndex: highlightedIndex)
                             .underline(hoveredWordID == word.id)

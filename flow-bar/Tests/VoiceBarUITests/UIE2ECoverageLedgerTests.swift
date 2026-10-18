@@ -179,6 +179,7 @@ final class UIE2ECoverageLedgerTests: XCTestCase {
     }
 
     func testKnownFailureRequiresTheMatchingObservedPacketIssue() {
+        XCTAssertNil(UIE2EKnownIssue(rawValue: "SEEK2"), "Readback seek requires a normal pass")
         var ledger = UIE2ECoverageLedger()
         XCTAssertFalse(ledger.recordExpected(surface: "notch:list-newlines", issue: .listNewlines, descriptions: []))
         XCTAssertFalse(ledger.recordExpected(surface: "notch:list-newlines", issue: .listNewlines,

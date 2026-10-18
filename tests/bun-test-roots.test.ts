@@ -17,7 +17,7 @@ test("package and hook roots cover every tracked Bun test", () => {
   const tracked = spawnSync("git", ["ls-files", "-z", "*.test.ts", "*.test.tsx",
     "*.test.js", "*.test.jsx", "*_test.ts", "*_test.tsx", "*_test.js", "*_test.jsx",
     "*.spec.ts", "*.spec.tsx", "*.spec.js", "*.spec.jsx",
-    "*_spec.ts", "*_spec.tsx", "*_spec.js", "*_spec.jsx"], { cwd: repo, encoding: "utf8" });
+    "*_spec.ts", "*_spec.tsx", "*_spec.js", "*_spec.jsx"], { env: process.env, cwd: repo, encoding: "utf8" });
   expect(tracked.status).toBe(0);
   const files = tracked.stdout.split("\0").filter(Boolean);
   expect(files.length).toBeGreaterThan(0);

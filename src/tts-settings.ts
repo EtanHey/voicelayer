@@ -2,7 +2,7 @@ import { existsSync, readFileSync, renameSync, rmSync, mkdtempSync, writeFileSyn
 import { homedir } from "os";
 import { join } from "path";
 import { hasClonedProfile, readReadyClonedProfile } from "./tts/qwen3";
-import { STATE_DIR } from "./paths";
+import { STATE_DIR, getStateDir } from "./paths";
 
 export type TTSEnv = Record<string, string | undefined>;
 export type SpeakProfileKind = "short" | "long";
@@ -13,7 +13,7 @@ export const TTS_DEFAULTS: TTSProfile = { engine: "edge", voice: "en-US-JennyNeu
 export const TTS_SETTING_KEYS: readonly TTSSettingKey[] = ["short.engine", "short.voice", "short.rate", "long.engine", "long.voice", "long.rate", "short_limit_chars"];
 
 export function ttsSettingsPath(env: TTSEnv = process.env): string {
-  return env.VOICELAYER_TTS_SETTINGS_PATH?.trim() || join(STATE_DIR, "tts-settings.json");
+  return env.VOICELAYER_TTS_SETTINGS_PATH?.trim() || join(env.VOICELAYER_TEST_ISOLATED === "1" ? getStateDir(env) : STATE_DIR, "tts-settings.json");
 }
 export function ttsSettingEnvVar(key: TTSSettingKey): string | undefined {
   if (key.endsWith(".voice") || key.endsWith(".engine")) return "QA_VOICE_TTS_VOICE";

@@ -1,3 +1,4 @@
+import { withChildFixtureEnv } from "./setup/child-env";
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -53,13 +54,13 @@ describe("TEST3 PID lock isolation", () => {
       const env = { ...process.env };
       for (const key of ["QA_VOICE_STT_VOCABULARY_PATH", "QA_VOICE_STT_COMMANDS_DIR", "VOICELAYER_WHISPER_OWNERSHIP_DIR",
         "QA_VOICE_STT_POLISH_LOG_PATH", "QA_VOICE_STT_POLISH_SOCKET", "QA_VOICE_WISPR_DB_PATH"]) {
-        delete env[key];
+        env[key] = undefined;
       }
       // Even a hostile/inherited override must not escape the child's run.
       env.QA_VOICE_MCP_PID_PATH = sandbox;
-      const result = Bun.spawnSync([
+      const result = withChildFixtureEnv(env, () => Bun.spawnSync([
         process.execPath, "--preload", join(import.meta.dir, "setup", "preload.ts"), "-e", script,
-      ], { env, stdout: "pipe", stderr: "pipe", timeout: PID_PROBE_TIMEOUT_MS });
+      ], { env, stdout: "pipe", stderr: "pipe", timeout: PID_PROBE_TIMEOUT_MS }));
       expect(result.exitCode).toBe(0);
       const report = JSON.parse(new TextDecoder().decode(result.stdout).trim());
       expect(report.configured).toBe(report.expected);

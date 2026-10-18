@@ -81,7 +81,7 @@ const SAMPLE_RATE = 16000;
 
 function whichOk(bin: string): boolean {
   try {
-    return Bun.spawnSync(["which", bin]).exitCode === 0;
+    return Bun.spawnSync(["which", bin], { env: process.env }).exitCode === 0;
   } catch {
     return false;
   }
@@ -892,7 +892,7 @@ function buildSayFixture(): Uint8Array {
     "-o",
     aiff,
     "Merge the pull requests and notify the engineering team on Slack",
-  ]);
+  ], { env: process.env });
   if (spoken.exitCode !== 0) throw new Error("say failed");
   // 16 kHz mono, then 2 s of silence appended — the shape of a recording the
   // VAD stopped after the last word.
@@ -910,7 +910,7 @@ function buildSayFixture(): Uint8Array {
     "-c:a",
     "pcm_s16le",
     SAY_WAV,
-  ]);
+  ], { env: process.env });
   if (padded.exitCode !== 0) throw new Error("ffmpeg failed");
   return readWav(SAY_WAV);
 }

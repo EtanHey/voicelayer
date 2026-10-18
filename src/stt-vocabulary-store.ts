@@ -1,3 +1,4 @@
+import { requireIsolatedOverride } from "./test-isolation";
 import {
   closeSync,
   constants,
@@ -123,6 +124,7 @@ export function getSTTVocabularyPath(
 ): string {
   if (options.path) return options.path;
   const env = options.env ?? process.env;
+  requireIsolatedOverride(env, VOCABULARY_PATH_ENV);
   const override = env[VOCABULARY_PATH_ENV]?.trim();
   return (
     override ||

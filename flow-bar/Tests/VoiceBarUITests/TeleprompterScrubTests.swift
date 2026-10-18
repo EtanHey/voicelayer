@@ -12,7 +12,7 @@ final class TeleprompterScrubTests: XCTestCase {
             var commands: [[String: Any]] = []
             state.sendCommand = { commands.append($0) }
             var event: [String: Any] = ["type": "state", "state": "speaking", "text": "Hello world",
-                                       "playback_offset_ms": chunkStart, "duration_ms": chunkStart + 4000]
+                                       "playback_offset_ms": chunkStart, "duration_ms": chunkStart + 4000, "readback_id": "fixture"]
             if chunkStart > 0 { event["long_read"] = ["chunk_start_ms": chunkStart] }
             state.handleEvent(event)
             state.handleEvent(["type": "subtitle", "words": [
@@ -28,7 +28,74 @@ final class TeleprompterScrubTests: XCTestCase {
         }
     }
 
-    func testUntimedEstimatedAndReadbackWordsNeverSeek() {
+    func testEndedReadbackWordSeeksAtExactGlobalOffset() throws {
+        for chunkStart in [0, 12000] {
+            let state = VoiceState()
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            var event: [String: Any] = ["type": "state", "state": "speaking", "text": "Hello world",
+                                       "duration_ms": chunkStart + 4000, "readback_id": "fixture"]
+            if chunkStart > 0 { event["long_read"] = ["chunk_start_ms": chunkStart] }
+            state.handleEvent(event)
+            state.handleEvent(["type": "subtitle", "words": [
+                ["text": "Hello", "offset_ms": 100, "duration_ms": 200],
+                ["text": "world", "offset_ms": 650, "duration_ms": 200],
+            ]])
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            let retained = TeleprompterContentModel.words(text: state.teleprompterText ?? "",
+                                                        wordBoundaries: state.teleprompterWordBoundaries)
+            XCTAssertTrue(state.isTeleprompterReadback)
+            XCTAssertEqual(TeleprompterSeekPolicy.offset(for: retained[1], isReadback: true), chunkStart + 650)
+            TeleprompterSeekPolicy.seek(retained[1], isReadback: true, seek: state.seek)
+            XCTAssertEqual(commands.last?["offset_ms"] as? Int, chunkStart + 650)
+            XCTAssertEqual(commands.last?["scope"] as? String, "readback")
+            XCTAssertEqual(commands.last?["readback_id"] as? String, "fixture")
+            XCTAssertEqual(state.mode, .idle, "Only the daemon's playback receipt starts the clock")
+        }
+    }
+
+    func testReadbackTimingAndAudioFailuresAreVisibleWithoutChangingTheReadback() {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Clone speech", "readback_id": "clone"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        var seeks: [Int] = []
+        let untimed = TeleprompterContentModel.words(text: "Clone speech", wordBoundaries: [])
+        TeleprompterSeekPolicy.seek(untimed[0], isReadback: true, seek: { seeks.append($0) },
+                                   unavailable: state.reportWordTimingUnavailable)
+        XCTAssertTrue(seeks.isEmpty)
+        XCTAssertEqual(state.confirmationText, "Word timing unavailable")
+        var readbackSeek: [String: Any]?
+        state.sendCommand = { readbackSeek = $0 }
+        state.seek(offsetMs: 300)
+        state.handleEvent(["type": "ack", "command": "seek", "id": readbackSeek?["id"] as Any,
+                           "outcome": "reject", "reason": "Replay prefix audio unavailable"])
+        XCTAssertEqual(state.confirmationText, "Replay prefix audio unavailable")
+        state.handleEvent(["type": "error", "source": "seek", "message": "Conversion failed"])
+        XCTAssertEqual(state.confirmationText, "Conversion failed")
+        XCTAssertEqual(state.teleprompterText, "Clone speech")
+        XCTAssertEqual(state.mode, .idle)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.seek(offsetMs: 300)
+        XCTAssertTrue(commands.isEmpty)
+    }
+
+    func testLateCurrentSeekAckCannotToastDuringReadback() {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Readback", "readback_id": "retained"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        state.handleEvent(["type": "ack", "command": "seek", "id": "old-current-seek", "outcome": "noop", "reason": "nothing playing"])
+        XCTAssertNil(state.confirmationText)
+        var command: [String: Any]?
+        state.sendCommand = { command = $0 }
+        state.seek(offsetMs: 100)
+        state.handleEvent(["type": "ack", "command": "seek", "id": command?["id"] as Any,
+                           "outcome": "reject", "reason": "Replay prefix audio unavailable"])
+        XCTAssertEqual(state.confirmationText, "Replay prefix audio unavailable")
+    }
+
+    func testUntimedAndEstimatedWordsNeverGuessASeek() {
         let untimed = TeleprompterContentModel.words(text: "Clone speech", wordBoundaries: [])
         let estimated = TeleprompterContentModel.words(text: "Hello world", wordBoundaries: [
             TeleprompterBoundary(offsetMs: 100, durationMs: 900, text: "Hello world"),
@@ -41,8 +108,9 @@ final class TeleprompterScrubTests: XCTestCase {
         let timed = TeleprompterContentModel.words(text: "Hello", wordBoundaries: [
             TeleprompterBoundary(offsetMs: 100, durationMs: 200, text: "Hello"),
         ])
-        TeleprompterSeekPolicy.seek(timed[0], isReadback: true, seek: { seeks.append($0) })
         XCTAssertTrue(seeks.isEmpty)
+        TeleprompterSeekPolicy.seek(timed[0], isReadback: true, seek: { seeks.append($0) })
+        XCTAssertEqual(seeks, [100])
     }
 
     func testSharedDragPreviewsAndCommitsOnlyOnceIncludingTrackClick() {
@@ -79,13 +147,13 @@ final class TeleprompterScrubTests: XCTestCase {
 
     func testSeekReceiptImmediatelySelectsWordAtClockAndIdleStopsTimeline() {
         let state = VoiceState(playbackAmplitudeClock: { 100 })
-        state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world", "duration_ms": 4000])
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world", "duration_ms": 4000, "readback_id": "fixture"])
         state.handleEvent(["type": "subtitle", "words": [
             ["text": "Hello", "offset_ms": 0, "duration_ms": 300],
             ["text": "world", "offset_ms": 650, "duration_ms": 300],
         ]])
         state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world",
-                           "playback_offset_ms": 650, "duration_ms": 4000])
+                           "playback_offset_ms": 650, "duration_ms": 4000, "readback_id": "fixture"])
         XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: words(for: state),
                        elapsedMilliseconds: state.playbackElapsedMilliseconds()), 1)
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
@@ -93,7 +161,7 @@ final class TeleprompterScrubTests: XCTestCase {
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.seek(offsetMs: 650)
-        XCTAssertTrue(commands.isEmpty)
+        XCTAssertEqual(commands.last?["offset_ms"] as? Int, 650)
     }
 
     func testViewWiresAccessibleTimedButtonsAndMountsScrubberOnlyWhileSpeaking() throws {
@@ -119,6 +187,7 @@ final class TeleprompterScrubTests: XCTestCase {
         XCTAssertFalse(state.isTeleprompterPlaybackReady)
         let epoch = state.playbackEpoch
         state.handleEvent(["type": "ack", "command": "seek", "outcome": "reject", "reason": "not ready"])
+        XCTAssertNil(state.confirmationText, "Current-scope preparation acks stay silent")
         XCTAssertEqual(state.playbackEpoch, epoch)
         XCTAssertEqual(state.playbackElapsedMilliseconds(), 0)
         XCTAssertEqual(state.mode, .speaking)
