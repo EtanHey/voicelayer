@@ -992,6 +992,13 @@ clear_app_bundle_for_rebuild() {
     fi
 }
 
+bundle_runtime_source() {
+    mkdir -p "$APP_DIR/Contents/Resources/src"
+    # Test fixtures can contain private incident data. Never ship test sources.
+    rsync -a --exclude='__tests__' --exclude='*.test.ts' \
+        "$REPO_ROOT/src/" "$APP_DIR/Contents/Resources/src/"
+}
+
 configure_qa_swift_flags() {
     QA_SWIFT_FLAGS=()
     case "${VOICEBAR_UIE2E_FOCUSED_338:-0}" in
@@ -1106,7 +1113,7 @@ require_bundle_file() {
 
 cp "$BUNDLE_DIR/Info.plist" "$APP_DIR/Contents/"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/VoiceBar"
-cp -R "$REPO_ROOT/src" "$APP_DIR/Contents/Resources/"
+bundle_runtime_source
 require_bundle_file "package.json"
 require_bundle_file "bun.lock"
 cp "$REPO_ROOT/package.json" "$APP_DIR/Contents/Resources/package.json"
@@ -1163,6 +1170,9 @@ if [ -f "$BUNDLE_DIR/VoiceBar.icns" ]; then
     cp "$BUNDLE_DIR/VoiceBar.icns" "$APP_DIR/Contents/Resources/"
     echo "[build-app] Icon installed."
 fi
+
+# Check our copied source; vendored dependencies are outside this privacy gate.
+bash "$REPO_ROOT/scripts/check-voicebar-test-free.sh" "$APP_DIR"
 
 COMMIT_SHA="$(git_commit)"
 DESCRIBE_REF="$(git_describe)"
