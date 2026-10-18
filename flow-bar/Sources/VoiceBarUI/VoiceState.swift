@@ -49,6 +49,9 @@ public struct SelectionCaptureResult: Equatable {
     public private(set) var path: Path = .unknown
     public private(set) var preflightAXEnable: AXEnable?
     public private(set) var preflightRetries = 0
+    private var preflightDetails: [String: String] = [:]
+    private var copyAttempted = false
+    private var copyResolution: Outcome?
 
     private init(_ outcome: Outcome, text: String? = nil) {
         self.outcome = outcome
@@ -78,6 +81,19 @@ public struct SelectionCaptureResult: Equatable {
         return result
     }
 
+    public func withPreflightDetails(_ fields: [String: String]) -> Self {
+        var result = self
+        result.preflightDetails.merge(fields) { _, new in new }
+        return result
+    }
+
+    public func withCopyAttempt(resolvedAs outcome: Outcome) -> Self {
+        var result = self
+        result.copyAttempted = true
+        result.copyResolution = outcome
+        return result
+    }
+
     /// Counts describe the observed String, never host blocks, list items or table nodes.
     /// Do not serialize this result or its text into diagnostics.
     public var diagnosticDetails: [String: String] {
@@ -85,6 +101,9 @@ public struct SelectionCaptureResult: Equatable {
                       "path": path.rawValue, "host_structure": "not_observed",
                       // The app's generic logger merges in a window title; never include it here.
                       "appKeyWindowTitle": "not_recorded"]
+        fields.merge(preflightDetails) { _, new in new }
+        fields["copy_attempted"] = String(copyAttempted)
+        fields["copy_resolution"] = copyResolution?.rawValue ?? "not_attempted"
         if let preflightAXEnable {
             fields["preflight_ax_enable"] = preflightAXEnable.rawValue
             fields["preflight_retries"] = String(preflightRetries)
