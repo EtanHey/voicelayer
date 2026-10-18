@@ -34,9 +34,8 @@ function run(command: string[], options: { env?: Record<string, string>; cwd?: s
   // `git config` honours GIT_COMMON_DIR and GIT_CONFIG, and a caller exporting
   // either (a git hook, a rebase --exec) sent this suite's "Test User" identity
   // into the real repo's .git/config (2026-09-24).
-  const inherited = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
-  );
+  const inherited = { ...process.env };
+  for (const key of Object.keys(inherited)) if (key.startsWith("GIT_")) delete inherited[key];
   const env = {
     ...inherited,
     GIT_CONFIG_GLOBAL: "/dev/null",

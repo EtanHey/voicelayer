@@ -150,6 +150,7 @@ function runInstaller(workspace: Workspace, args: string[] = []) {
   return spawnSync(join(workspace.stubDir, "bash"), [installScript, ...args], {
     encoding: "utf8",
     env: {
+      ...process.env,
       HOME: workspace.home,
       PATH: workspace.stubDir,
       STUB_LOG: workspace.log,
@@ -402,6 +403,7 @@ describe("install-voicebar-autostart.sh log paths", () => {
       {
         encoding: "utf8",
         env: {
+          ...process.env,
           HOME: hostileHome,
           PATH: workspace.stubDir,
           STUB_LOG: workspace.log,

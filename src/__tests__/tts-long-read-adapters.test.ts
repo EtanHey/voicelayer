@@ -161,7 +161,7 @@ describe("long-read synthesis adapters", () => {
   it("audio conversion cancellation reaps an owned real process", async () => {
     const controller = new AbortController(); let childPid = 0;
     Bun.spawn = ((argv: string[], options: any) => {
-      const child = originalSpawn(argv, { ...options, env: options?.env ?? process.env }); childPid = child.pid; return child;
+      const child = originalSpawn(argv, { ...options, env: { ...process.env, ...options?.env } }); childPid = child.pid; return child;
     }) as any;
     const pending = runAudioCommand([process.execPath, "-e", "setInterval(() => {}, 1000)"], controller.signal);
     controller.abort(); await expect(pending).rejects.toHaveProperty("name", "AbortError");

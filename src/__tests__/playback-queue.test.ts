@@ -616,11 +616,11 @@ describe("playback queue — P0-1 sequential playback", () => {
         attempts++;
         return { pid: 99700 + attempts, exited: synthesis.promise, kill() {} };
       }
-      return queueSpawn(cmd, { ...opts, env: opts?.env ?? process.env });
+      return queueSpawn(cmd, { ...opts, env: { ...process.env, ...opts?.env } });
     }) as typeof Bun.spawn;
     Bun.spawnSync = ((cmd: string[], opts: any) => cmd.includes("import edge_tts; print('ok')")
       ? { exitCode: 0, stdout: Buffer.from("ok"), stderr: Buffer.alloc(0) }
-      : queueSpawnSync(cmd, { ...opts, env: opts?.env ?? process.env })) as typeof Bun.spawnSync;
+      : queueSpawnSync(cmd, { ...opts, env: { ...process.env, ...opts?.env } })) as typeof Bun.spawnSync;
     const capture = spyOn(input, "waitForInput").mockResolvedValue("must not capture");
     const spies = [capture, spyOn(input, "clearInput").mockImplementation(() => {}),
       spyOn(booking, "clearStopSignal").mockImplementation(() => {}),
