@@ -1,3 +1,4 @@
+import { listVocabulary } from "./stt-vocabulary-store";
 import {
   existsSync,
   mkdirSync,
@@ -166,10 +167,6 @@ const FILLER_PATTERN =
   /\b(?:um+|uh+|erm|er|ah+|like like|you know you know)\b|(?:\bכאילו\b\s*){2,}/giu;
 
 const ENTITY_BOUNDARY_PHRASES = [
-  "Coach Claude",
-  "YashClaude",
-  "SkillCreatorClaude",
-  "orcClaude",
   "Codex",
   "VoiceLayer",
   "VoiceBar",
@@ -559,7 +556,7 @@ function entityBoundaryFindings(pair: STTCorrectionPair): STTQualityFinding[] {
   const expected = normalizedBoundaryText(pair.expectedText);
   const findings: STTQualityFinding[] = [];
 
-  for (const entity of ENTITY_BOUNDARY_PHRASES) {
+  for (const entity of [...ENTITY_BOUNDARY_PHRASES, ...listVocabulary().entries.flatMap((entry) => [entry.canonical, ...entry.variants])]) {
     const normalizedEntity = normalizedBoundaryText(entity);
     const escapedEntity = escapeRegExp(normalizedEntity).replace(/\s+/g, "\\s+");
     const expectedRoutingPattern = new RegExp(

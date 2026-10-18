@@ -105,16 +105,16 @@ describe("pronunciation", () => {
     writeFileSync(
       join(TEST_DIR, ".voicelayer", "pronunciation.yaml"),
       `hebrew:
-  Etan: "Eh tahn"
-  Zikaron: "Zee kah rone"
+  Nora: "Nor ah"
+  SampleWord: "Sam pull word"
 `,
     );
 
     delete require.cache[require.resolve("../pronunciation")];
     const mod = await import("../pronunciation");
 
-    expect(mod.applyPronunciation("Etan built Zikaron")).toBe(
-      "Eh tahn built Zee kah rone",
+    expect(mod.applyPronunciation("Nora built SampleWord")).toBe(
+      "Nor ah built Sam pull word",
     );
   });
 });

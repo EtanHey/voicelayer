@@ -1,5 +1,6 @@
 import {
   cleanupTranscriptionText,
+  matchesPersonalSTTVocabulary,
   type STTCleanupEnv,
 } from "./stt-cleanup";
 
@@ -41,7 +42,7 @@ const METALINGUISTIC_RULE_PHRASES =
   /\b(?:said|say|saying|dictated|dictate|word|phrase|literal(?:ly)?)\s+(?:a\s+)?(?:question mark|period|comma|plus|percent|space)\b/i;
 
 const HIGH_CONFIDENCE_DICTIONARY_PATTERNS: RegExp[] = [
-  /\b(?:brain|voice|skill creator|orc|yash)\s+(?:layer|bar|claude|clawed|claud|codex)\b/i,
+  /\bvoice\s+(?:layer|bar)\b/i,
   /\bwhisperflow\b/i,
   /\bwisper\s+flow\b/i,
   /\b(?:c|cee|see)\s*mux\b/i,
@@ -62,13 +63,13 @@ function isLikelyNonSpeechCue(text: string): boolean {
   return NON_SPEECH_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
-export function classifyCorrectionContext(text: string): CorrectionContext {
+export function classifyCorrectionContext(text: string, env: STTCleanupEnv = process.env): CorrectionContext {
   const trimmed = text.trim();
   if (!trimmed) return "no-op";
   if (MIXED_SCRIPT_PATTERN.test(trimmed)) return "mixed";
   if (METALINGUISTIC_RULE_PHRASES.test(trimmed)) return "content-edit";
   if (
-    HIGH_CONFIDENCE_DICTIONARY_PATTERNS.some((pattern) => pattern.test(trimmed))
+    HIGH_CONFIDENCE_DICTIONARY_PATTERNS.some((pattern) => pattern.test(trimmed)) || matchesPersonalSTTVocabulary(trimmed, env)
   ) {
     return "dictionary-heavy";
   }
@@ -81,7 +82,7 @@ export function correctTranscriptionText(
 ): STTCorrectorResult {
   const mode = options.mode ?? getSTTCorrectorMode(options.env);
   const start = performance.now();
-  const context = classifyCorrectionContext(text);
+  const context = classifyCorrectionContext(text, options.env);
   const shouldApplyRules =
     mode === "rules" &&
     (context === "dictionary-heavy" || isLikelyNonSpeechCue(text));

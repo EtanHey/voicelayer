@@ -15,11 +15,11 @@ describe("stt-corrector", () => {
   });
 
   it("returns unchanged text for identity mode", () => {
-    const result = correctTranscriptionText("brain layer", { mode: "identity" });
+    const result = correctTranscriptionText("voice layer", { mode: "identity" });
 
     expect(result).toMatchObject({
-      inputText: "brain layer",
-      text: "brain layer",
+      inputText: "voice layer",
+      text: "voice layer",
       mode: "identity",
       changed: false,
     });
@@ -27,7 +27,7 @@ describe("stt-corrector", () => {
   });
 
   it("classifies high-confidence dictionary triggers separately from prose", () => {
-    expect(classifyCorrectionContext("ask yash clawed about brain layer")).toBe(
+    expect(classifyCorrectionContext("ask carabiner about voice layer")).toBe(
       "dictionary-heavy",
     );
     expect(classifyCorrectionContext("I am a hundred percent sure.")).toBe(
@@ -40,19 +40,19 @@ describe("stt-corrector", () => {
   });
 
   it("applies deterministic rules only for high-confidence dictionary-heavy text", () => {
-    correctTranscriptionText("warm up brain layer", { mode: "rules" });
-    const result = correctTranscriptionText("ask yash clawed about brain layer", {
+    correctTranscriptionText("warm up voice layer", { mode: "rules" });
+    const result = correctTranscriptionText("ask carabiner about voice layer", {
       mode: "rules",
     });
 
-    expect(result.text).toBe("Ask YashClaude about BrainLayer");
+    expect(result.text).toBe("Ask Karabiner about VoiceLayer");
     expect(result.context).toBe("dictionary-heavy");
     expect(result.changed).toBe(true);
     expect(result.latencyMs).toBeLessThan(10);
   });
 
   it("threads aggressive filler configuration through rules-mode cleanup", () => {
-    const input = "basically use brain layer";
+    const input = "basically use voice layer";
 
     expect(
       correctTranscriptionText(input, {
@@ -62,7 +62,7 @@ describe("stt-corrector", () => {
           VOICELAYER_STT_AGGRESSIVE_FILLERS: "0",
         },
       }).text,
-    ).toBe("Basically use BrainLayer");
+    ).toBe("Basically use VoiceLayer");
     expect(
       correctTranscriptionText(input, {
         mode: "rules",
@@ -71,7 +71,7 @@ describe("stt-corrector", () => {
           VOICELAYER_STT_AGGRESSIVE_FILLERS: "1",
         },
       }).text,
-    ).toBe("Use BrainLayer");
+    ).toBe("Use VoiceLayer");
   });
 
   it("passes no-op prose through without mutating capitalization or fillers", () => {
@@ -126,9 +126,9 @@ describe("stt-corrector", () => {
   // load it failed with no code change. Timing evidence is opt-in, like VoiceBar's
   // Settings benchmark (VOICELAYER_SETTINGS_PERF_BENCHMARK).
   it.skipIf(process.env.VOICELAYER_PERF_BENCHMARK !== "1")("keeps warm p95 latency under the 5ms budget", () => {
-    correctTranscriptionText("ask yash clawed about brain layer", { mode: "rules" });
+    correctTranscriptionText("ask carabiner about voice layer", { mode: "rules" });
     const latencies = Array.from({ length: 50 }, () =>
-      correctTranscriptionText("ask yash clawed about brain layer", { mode: "rules" })
+      correctTranscriptionText("ask carabiner about voice layer", { mode: "rules" })
         .latencyMs,
     ).sort((a, b) => a - b);
     const p95 = latencies[Math.floor(latencies.length * 0.95)];

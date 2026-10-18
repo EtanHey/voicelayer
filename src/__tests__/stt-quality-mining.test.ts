@@ -438,7 +438,7 @@ describe("stt-quality-mining", () => {
         directory: "/tmp/changed",
         audioPath: "/tmp/changed/audio.wav",
         transcriptPath: "/tmp/changed/voicelayer-transcript.txt",
-        transcript: "um brain layer",
+        transcript: "um voice layer",
         durationMs: 1000,
         backend: "whisper-server",
         languageMode: "auto",
@@ -449,8 +449,8 @@ describe("stt-quality-mining", () => {
     expect(pairs).toEqual([
       {
         id: "changed",
-        rawText: "um brain layer",
-        cleanedText: "BrainLayer",
+        rawText: "um voice layer",
+        cleanedText: "VoiceLayer",
       },
     ]);
   });
@@ -464,9 +464,9 @@ describe("stt-quality-mining", () => {
         `${JSON.stringify({
           id: "latest",
           observed_text:
-            "or should I not change it, or just relay everything that we're about to do to code? Coach Claude, or I'll just remember that we're doing something and I'll just still present what I have in the lecture.",
+            "or should I not change it, or just relay everything that we're about to do to code? VoiceLayer, or I'll just remember that we're doing something and I'll just still present what I have in the lecture.",
           expected_text:
-            "or should I not change it, or just relay everything that we're about to do to Coach Claude? or I'll just remember that we're doing something and I'll just still present what I have in the lecture?",
+            "or should I not change it, or just relay everything that we're about to do to VoiceLayer? or I'll just remember that we're doing something and I'll just still present what I have in the lecture?",
         })}\n`,
       );
 
@@ -509,8 +509,8 @@ describe("stt-quality-mining", () => {
         correctionsPath,
         `${JSON.stringify({
           id: "cli-correction",
-          observed: "Send this to code? Coach Claude, then continue.",
-          expected: "Send this to Coach Claude? then continue.",
+          observed: "Send this to code? VoiceLayer, then continue.",
+          expected: "Send this to VoiceLayer? then continue.",
         })}\n`,
       );
 

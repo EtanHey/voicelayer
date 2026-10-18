@@ -7,6 +7,7 @@ import {
   canonicalTermsFromEntries,
   getSTTVocabularyPath,
   isUnsafeDynamicAliasSource,
+  tryMigrateVocabularySeed,
   promptPolicyFields,
   vocabularyAliasesFromEntries,
   type STTDictionaryEntry,
@@ -55,24 +56,19 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   // Keep this block longest-first so the intended phrase wins even before the
   // runtime sort below. `tailscale` is omitted because it already exists.
   "if they eyes bg large": "Ivrit AI's BG Large",
-  "narration layer": "NarrationLayer",
   "clawed desktop": "Claude Desktop",
-  "bearing layer": "BrainLayer",
   "notebook l m": "NotebookLM",
   "claw desktop": "Claude Desktop",
   "notebook lm": "NotebookLM",
   "notebook-lm": "NotebookLM",
   "gwen engine": "Qwen engine",
   "claw dot md": "CLAUDE.md",
-  "brain lair": "BrainLayer",
-  "brain lear": "BrainLayer",
   "quen 3 tts": "Qwen3 TTS",
   "qwen 3 tts": "Qwen3 TTS",
   "chroma db": "ChromaDB",
   "comfy ui": "ComfyUI",
   carpathy: "Karpathy",
   esculite: "SQLite",
-  orkclaud: "orcClaude",
   "sq lite": "SQLite",
   "claw.md": "CLAUDE.md",
   "quen 3": "Qwen3",
@@ -82,15 +78,8 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   cmuxs: "cmux",
   fts5: "FTS5",
   rrf: "RRF",
-  "narration layer codex": "narrationlayerCodex",
-  "brain layer codex": "brainlayerCodex",
-  "voice layer codex": "voicelayerCodex",
-  "cmux layer codex": "cmuxlayerCodex",
-  "c mux layer codex": "cmuxlayerCodex",
-  "cee mux layer codex": "cmuxlayerCodex",
   "sessions of codecs": "sessions of Codex",
   "session of codecs": "session of Codex",
-  "skill creator claude": "SkillCreatorClaude",
   "פול ריקווסט": "Pull Request",
   לבראנץ: "ל-branch",
   "לבראנץ'": "ל-branch",
@@ -102,70 +91,21 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "ברנץ'": "branch",
   קומיט: "commit",
   פוש: "push",
-  "yash claude": "YashClaude",
-  "yash claud": "YashClaude",
-  "yash clawed": "YashClaude",
-  yashclaude: "YashClaude",
-  yashclaud: "YashClaude",
-  yashclawed: "YashClaude",
   whisperflow: "Wispr Flow",
   "whisper flow": "Wispr Flow",
   "wisper flow": "Wispr Flow",
-  "repo golems": "repoGolem",
-  "brain layer": "BrainLayer",
-  "brain layer claude": "brainlayerClaude",
-  "brain layer clawed": "brainlayerClaude",
-  "brain layer claud": "brainlayerClaude",
-  "brain bar": "BrainBar",
   "voice bar": "VoiceBar",
   "voice layer": "VoiceLayer",
-  "orc claude": "orcClaude",
-  "orc claud": "orcClaude",
-  "orc clawed": "orcClaude",
-  orcclaud: "orcClaude",
-  orcclawed: "orcClaude",
-  "ask or claude": "ask orcClaude",
-  "tell or claude": "tell orcClaude",
-  "message or claude": "message orcClaude",
   "pending cue is working": "pending queue is working",
   "pending cues are working": "pending queues are working",
-  "work claude": "orcClaude",
-  "skill creator": "skillCreator",
-  "skill creator clawed": "SkillCreatorClaude",
-  "repo golem": "repoGolem",
   "c mux": "cmux",
   "cee mux": "cmux",
   "c max": "cmux",
   "see mux": "cmux",
   seamux: "cmux",
-  golems: "Golems",
   "t 3 code": "T3 Code",
   "t three code": "T3 Code",
   "tee three code": "T3 Code",
-  "q e l o s": "Qelos",
-  qelos: "Qelos",
-  "key loss": "Qelos",
-  keylos: "Qelos",
-  "kilos project": "Qelos project",
-  "kilos programming project": "Qelos programming project",
-  // Context-aware: "kilos <repo-noun>" is the Qelos repo, not the weight unit.
-  // Bare "kilos" is intentionally NOT aliased so the measurement survives.
-  "kilos repo": "Qelos repo",
-  "kilos repository": "Qelos repository",
-  "kilos adapter": "Qelos adapter",
-  "kilos dashboard": "Qelos dashboard",
-  "kilos codebase": "Qelos codebase",
-  "kilos branch": "Qelos branch",
-  "kilos app": "Qelos app",
-  "kilos code": "Qelos code",
-  // Bare phonetic mishears (non-words) → Qelos, safe to map unconditionally.
-  kelos: "Qelos",
-  kaylos: "Qelos",
-  qaylos: "Qelos",
-  "nano claw": "nanoClaw",
-  "nano clawed": "nanoClaw",
-  nanoclaw: "nanoClaw",
-  nanoclawed: "nanoClaw",
   "apple container": "Apple Container",
   tailscale: "Tailscale",
   "tail scale": "Tailscale",
@@ -180,17 +120,6 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "claude dot md": "CLAUDE.md",
   "gpt 5.5": "GPT-5.5",
   "gpt 5 5": "GPT-5.5",
-  zigon: "zikaron",
-  zikaron: "zikaron",
-  "golems brain": "golems-brain",
-  "golems-brain": "golems-brain",
-  "~/.golems-brain/zikaron": "~/.golems-brain/zikaron",
-  "osek patur": "עוסק פטור",
-  osekpatur: "עוסק פטור",
-  "reshut hamisim": "רשות המסים",
-  reshutamisin: "רשות המסים",
-  bereshutamisin: "ברשות המסים",
-  rechovot: "רחובות",
   "still accept voicelayer to keep": "still expect VoiceLayer to keep",
   "still accept voice layer to keep": "still expect VoiceLayer to keep",
   "real tale of the sentence": "real tail of the sentence",
@@ -215,7 +144,6 @@ const CLEANUP_ONLY_ALIAS_VALUES = new Set([
   // canonical values out of the seed tier prevents them from evicting existing
   // prompt terms such as Docker while the aliases still apply at cleanup time.
   "Ivrit AI's BG Large",
-  "NarrationLayer",
   "Claude Desktop",
   "NotebookLM",
   "Qwen engine",
@@ -331,6 +259,8 @@ function parseDictionaryEntries(values: unknown[]): STTDictionaryEntry[] {
     if (typeof canonical !== "string" || canonical.trim() === "") continue;
     entries.push({
       canonical: canonical.trim(),
+      ...(typeof (value as STTDictionaryEntry).cleanup_spelling === "string"
+        ? { cleanup_spelling: (value as STTDictionaryEntry).cleanup_spelling!.trim() } : {}),
       ...promptPolicyFields(value),
       variants: Array.isArray(variants)
         ? variants
@@ -552,9 +482,8 @@ function loadVocabularySnapshot(
   const path = getVocabularySnapshotPath(env);
   if (!path) return null;
 
-  if (!existsSync(path)) {
-    return null;
-  }
+  tryMigrateVocabularySeed({ path });
+  if (!existsSync(path)) return null;
 
   try {
     const { mtimeMs } = statSync(path);
@@ -582,37 +511,14 @@ const STT_VOCABULARY_PROMPT_CHARS_PER_TOKEN = 4;
 // canonical set so the scarce decode-bias budget is spent where it matters:
 // agent names, product names, and Hebrew-script terms whisper cannot guess.
 const STT_VOCABULARY_PRIORITY_TERMS: string[] = [
-  // Agent names (lowercase-prefix camelCase, never internally spaced)
-  "orcClaude",
-  "voicelayerCodex",
-  "brainlayerClaude",
-  "brainlayerCodex",
-  "cmuxlayerCodex",
-  "nanoClaw",
-  "YashClaude",
-  "skillCreator",
-  "SkillCreatorClaude",
-  // Product / tool names
-  "BrainLayer",
   "VoiceLayer",
   "VoiceBar",
-  "BrainBar",
   "Tailscale",
   "tailnet",
-  "repoGolem",
-  "Golems",
-  "Qelos",
   "cmux",
   "Wispr Flow",
   "Karabiner",
-  "CLAUDE.md",
-  // Hebrew-script preserved terms whisper cannot guess
-  "zikaron",
-  "golems-brain",
-  "~/.golems-brain/zikaron",
-  "עוסק פטור",
-  "רשות המסים",
-  "רחובות",
+  "CLAUDE.md"
 ];
 
 // Budget (chars) reserved for the load-bearing high-value proper nouns so a
@@ -663,8 +569,14 @@ function priorityTermsWithPolicy(entries: STTDictionaryEntry[], excluded: Set<st
   const replaced = new Set(reserved.map((entry) => entry.canonical.toLowerCase()));
   const terms: string[] = [];
   const inserted = new Set<STTDictionaryEntry>();
-  for (const term of STT_VOCABULARY_PRIORITY_TERMS) {
-    if (!excluded.has(term.toLowerCase()) && !replaced.has(term.toLowerCase())) terms.push(term);
+  // Unanchored reserve entries supply a user-owned ordered priority tier.
+  const priority = [
+    ...reserved.filter((entry) => !entry.prompt_after).map((entry) => entry.cleanup_spelling ?? entry.canonical),
+    ...STT_VOCABULARY_PRIORITY_TERMS.filter((term) => !replaced.has(term.toLowerCase())),
+  ];
+  for (const term of priority) {
+    if (!excluded.has(term.toLowerCase())) terms.push(term);
+    for (const entry of reserved) if (entry.canonical.toLowerCase() === term.toLowerCase()) inserted.add(entry);
     for (const entry of reserved) {
       if (entry.prompt_after?.toLowerCase() === term.toLowerCase()) {
         terms.push(entry.canonical);
@@ -721,6 +633,13 @@ export function getSTTVocabularyPrompt(
   return state.kept.join(", ");
 }
 
+export function matchesPersonalSTTVocabulary(text: string, env: STTCleanupEnv = process.env): boolean {
+  const snapshot = loadVocabularySnapshot(env);
+  const surfaces = [...Object.keys(snapshot?.aliases ?? {}), ...(snapshot?.promptTerms ?? [])];
+  const patterns = buildCanonicalTermPatterns(Object.fromEntries(surfaces.map((surface) => [surface, surface])));
+  return patterns.some(([, pattern]) => pattern.test(text));
+}
+
 export function cleanupTranscriptionText(
   text: string,
   env: STTCleanupEnv = process.env,
@@ -741,7 +660,10 @@ export function cleanupTranscriptionText(
   const deduplicated = collapseDuplicatedFunctionWords(oneNormalized);
   const normalized = normalizeCanonicalTerms(
     deduplicated,
-    buildCanonicalTermPatterns(aliases),
+    buildCanonicalTermPatterns({
+      ...aliases,
+      ...Object.fromEntries((snapshot?.entries ?? []).filter((entry) => entry.cleanup_spelling).map((entry) => [entry.canonical, entry.cleanup_spelling!])),
+    }),
   );
   const pathNormalized = normalizePathTokens(normalized);
   const sentenceCased = normalizeSentenceStarts(pathNormalized);
@@ -764,9 +686,8 @@ function isAggressiveFillerRemovalEnabled(env: STTCleanupEnv): boolean {
 
 // Whisper renders dictated repoGolem spawn flags ("-s -c") as an upper-cased,
 // space-collapsed suffix glued to the camelCase agent identifier
-// (e.g. "voicelayerCodex-S-C", "orcClaude - S - C"). Recovered verbatim from
-// ~/.local/share/voicelayer/recordings/2026-06-15 (ab7eaf75, e6aba757). The
-// isolated, already-spaced form "voicelayerCodex -s -c" passes through cleanly,
+// (e.g. "sampleAgent-S-C"). The already-spaced form "sampleAgent -s -c"
+// passes through cleanly,
 // so this is gated to the glued/loosely-spaced cluster that immediately follows
 // a camelCase agent-spawn token — ordinary prose flags ("the -s flag") and
 // stand-alone letters ("plan A or plan C") are never touched.
@@ -797,8 +718,7 @@ function collapseDuplicatedFunctionWords(text: string): string {
 function normalizeConversationalOne(text: string): string {
   return text
     .replace(/\b1(?=\s+more\b)/giu, "one")
-    .replace(/\b(other)\s+1\b/giu, "$1 one")
-    .replace(/\bbrain\s*layer\s+(?:clawed|claud)\b/giu, "brainlayerClaude");
+    .replace(/\b(other)\s+1\b/giu, "$1 one");
 }
 
 export function normalizePathTokens(text: string): string {
@@ -943,9 +863,9 @@ function normalizeCanonicalTerms(
 function normalizeSentenceStarts(text: string): string {
   if (!text) return text;
   let result = text.replace(
-    /(^|[.!?]\s+)(ask|tell|message) orcClaude\b/giu,
-    (_match, prefix: string, verb: string) => {
-      return `${prefix}${verb[0].toUpperCase()}${verb.slice(1).toLowerCase()} orcClaude`;
+    /(^|[.!?]\s+)(ask|tell|message) ([a-z][a-z0-9]*[A-Z][A-Za-z0-9]*)\b/gu,
+    (_match, prefix: string, verb: string, agent: string) => {
+      return `${prefix}${verb[0].toUpperCase()}${verb.slice(1).toLowerCase()} ${agent}`;
     },
   );
   result = result.replace(
@@ -964,4 +884,12 @@ function normalizeSentenceStarts(text: string): string {
   );
   result = result.replace(/(^|[.!?]\s+)one more\b/giu, "$1One more");
   return result;
+}
+
+// Importing cleanup is part of installed app/CLI startup. Consume a privately
+// provisioned seed before the first transcription, with retries on later reads.
+try {
+  loadVocabularySnapshot();
+} catch {
+  console.error("[voicelayer] vocabulary startup failed; retrying on next read");
 }
