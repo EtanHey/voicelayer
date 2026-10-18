@@ -66,7 +66,7 @@ final class UIE2EInterruptionPolicyTests: XCTestCase {
             .appendingPathComponent("UIE2E/VoiceBarUIE2ETests/VoiceBarFlowTests.swift")
         let source = try String(contentsOf: flowTests)
         let monitorStart = try XCTUnwrap(source.range(of: "addUIInterruptionMonitor("))
-        let monitorEnd = try XCTUnwrap(source[monitorStart.upperBound...].range(of: "step(\"launch isolated QA app\")"))
+        let monitorEnd = try XCTUnwrap(source[monitorStart.upperBound...].range(of: "step(\"launch isolated QA app\""))
         let monitor = String(source[monitorStart.lowerBound..<monitorEnd.lowerBound])
 
         // Every classification is handled, and every path latches the STOP before returning.

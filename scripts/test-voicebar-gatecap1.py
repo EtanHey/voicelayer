@@ -312,26 +312,27 @@ print("PASS")
         probe = FAKE_SOURCE + r'''
 let qa = CGRect(x: 600, y: 140, width: 400, height: 120)
 let empty = CGRect(x: 0, y: 0, width: 0, height: 0)
-precondition(expectedAbsentProof(nil, qaPid: 42, qaProcessCount: 1) == nil, "failed CG read: no proof")
-precondition(expectedAbsentProof([row(1, 42, qaBundle, qa)], qaPid: 42, qaProcessCount: 1) == nil, "visible QA window")
-precondition(expectedAbsentProof([row(1, 42, qaBundle, nil)], qaPid: 42, qaProcessCount: 1) == nil, "unreadable QA geometry")
+let identity = QAIdentity(pid: 42, path: "/qa", birth: [100, 20])
+precondition(expectedAbsentProof(nil, identity: identity) == nil, "failed CG read: no proof")
+precondition(expectedAbsentProof([row(1, 42, qaBundle, qa)], identity: identity) == nil, "visible QA window")
+precondition(expectedAbsentProof([row(1, 42, qaBundle, nil)], identity: identity) == nil, "unreadable QA geometry")
 let hidden = expectedAbsentProof([row(1, 42, qaBundle, qa, alpha: 0), row(2, 42, qaBundle, empty), row(3, 7, "com.apple.TextEdit", qa)],
-                                 qaPid: 42, qaProcessCount: 1)!
+                                 identity: identity)!
 precondition(hidden["cgInventory"] as? String == "ok" && hidden["qaPid"] as? Int == 42 && hidden["onScreenQAWindows"] as? Int == 0)
-precondition(expectedAbsentProof([], qaPid: nil, qaProcessCount: 0)?["qaProcess"] as? String == "none", "QA exited")
-precondition(expectedAbsentProof([], qaPid: nil, qaProcessCount: 2) == nil, "ambiguous QA process: no proof")
+precondition(expectedAbsentProof([], identity: nil) == nil, "termination is not hidden proof")
+precondition(expectedAbsentProof([], identity: nil) == nil, "ambiguous QA process: no proof")
 print("PASS")
 '''
         self.assertEqual(run_swift(self, MODALS_PRELUDE + block(PERMISSIONS, 'FOREIGN MODALS') + probe).strip(), 'PASS')
 
     def test_hidden_expectation_is_declared_only_on_hidden_state_steps(self):
         step = FLOW_TESTS.read_text().split('    func step(', 1)[1].split('    @discardableResult', 1)[0]
-        self.assertIn('uie2eFrameFailure(capture, expectsHiddenQA: expectsHiddenQA)', step)
-        self.assertIn('"expectsHiddenQA": expectsHiddenQA', step)
+        self.assertIn('uie2eFrameFailure(capture, contract: evidenceContract)', step)
+        self.assertIn('"evidenceContract": evidenceContract', step)
         probe = r'''
 let hidden = [("HIDE1VIS speaking hidden", "hide1"), ("GATE2246 HIDE background failure", "gate2246"),
               ("GATE2246 HIDE recovered failure", "gate2246"), ("GATE2246 HIDE user-f5 dismiss Later", "gate2246"),
-              ("terminate QA app", "full"), ("GUARD launch 2 no tripwire", "full"), ("launch isolated QA app", "gate2246"),
+              ("launch isolated QA app", "gate2246"),
               ("GUARD launch 1 installed", "hide1"), ("HIDE1VIS no-device guard installed before fixtures", "hide1"),
               ("GATE2246 no device-start or process tripwire invoked", "gate2246")]
 let visible = [("HIDE1VIS speaking before", "hide1"), ("HIDE1VIS speaking shown", "hide1"),
@@ -348,8 +349,8 @@ print("PASS")
         self.assertEqual(run_swift(self, source).strip(), 'PASS')
         # Every hidden name the classifier knows is a step the suite actually records.
         gate = GATE_TESTS.read_text()
-        for call in ['step("HIDE1VIS " + event + " hidden")', 'step("GATE2246 HIDE " + name + " failure")',
-                     'step("GATE2246 HIDE " + name + " dismiss Later")']:
+        for call in ['step("HIDE1VIS " + event + " hidden", evidenceContract: "hidden-alive")', 'step("GATE2246 HIDE " + name + " failure", evidenceContract: immediate ? "visible" : "hidden-alive")',
+                     'step("GATE2246 HIDE " + name + " dismiss Later", evidenceContract: name == "visible" ? "visible" : "hidden-alive")']:
             self.assertIn(call, gate)
 
     def test_composite_turns_transparency_black_and_keeps_window_positions(self):
@@ -400,17 +401,17 @@ precondition(!uie2eBoundaryClear(["count": 3, "kind": "command", "status": "stop
 precondition(!uie2eBoundaryClear(nil, count: 3, kind: "command"))
 precondition(uie2eRedacted("BrainBar dialog").hasPrefix("<redacted len=15 sha256="))
 // Lead ruling on NOT_PROVEN frames.
-let proof: [String: Any] = ["cgInventory": "ok", "qaPid": 42, "onScreenQAWindows": 0]
+let proof: [String: Any] = ["cgInventory": "ok", "qaPid": 42, "qaBirth": [100, 20], "pidLifetime": "alive", "onScreenQAWindows": 0]
 var absent = good; absent["capture"] = ["status": "NOT_PROVEN", "reason": "no-proven-qa-window", "absenceProof": proof]
 let absentReceipt = uie2eStillReceipt(absent, count: 9)
-precondition(uie2eFrameFailure(absentReceipt, expectsHiddenQA: true) == nil, "hidden + proof passes")
-precondition(uie2eFrameFailure(absentReceipt, expectsHiddenQA: false) != nil, "visible expectation fails on NOT_PROVEN")
-precondition(uie2eFrameFailure(uie2eStillReceipt(noWindow, count: 9), expectsHiddenQA: true) != nil, "no proof fails")
+precondition(uie2eFrameFailure(absentReceipt, contract: "hidden-alive") == nil, "hidden + proof passes")
+precondition(uie2eFrameFailure(absentReceipt, contract: "visible") != nil, "visible expectation fails on NOT_PROVEN")
+precondition(uie2eFrameFailure(uie2eStillReceipt(noWindow, count: 9), contract: "hidden-alive") != nil, "no proof fails")
 var failedRead = good; failedRead["capture"] = ["status": "NOT_PROVEN", "reason": "cg-enumeration",
     "absenceProof": ["cgInventory": "failed", "qaPid": 42, "onScreenQAWindows": 0]]
 precondition(uie2eStillReceipt(failedRead, count: 9)["absenceProof"] == nil, "a failed read is never a proof")
-precondition(uie2eFrameFailure(uie2eStillReceipt(failedRead, count: 9), expectsHiddenQA: true) != nil)
-precondition(uie2eFrameFailure(uie2eStillReceipt(good, count: 9), expectsHiddenQA: true) == nil, "PROVEN frames always pass")
+precondition(uie2eFrameFailure(uie2eStillReceipt(failedRead, count: 9), contract: "hidden-alive") != nil)
+precondition(uie2eFrameFailure(uie2eStillReceipt(good, count: 9), contract: "hidden-alive") == nil, "PROVEN frames always pass")
 print("PASS")
 '''
         source = 'import Foundation\nimport CryptoKit\n' + block(FLOW_TESTS, 'UIE2E BOUNDARY') + probe
@@ -428,16 +429,16 @@ print("PASS")
             image = [dict(attachments=[dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png',
                                             isAssociatedWithFailure=False)])]
             none = [dict(attachments=[])]
-            step = dict(number=1, name='frame', attachment='UIE2E-0001', passed=True)
+            step = dict(number=1, name='frame', attachment='UIE2E-0001', passed=True, evidenceContract='visible')
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertTrue(results.report(directory, [dict(step, capture=proven)], image, movie))
                 unproven = dict(source='qa-window-id', status='NOT_PROVEN', reason='no-proven-qa-window')
-                proof = dict(cgInventory='ok', qaPid=42, onScreenQAWindows=0)
-                hidden = dict(step, expectsHiddenQA=True)
+                proof = dict(cgInventory='ok', qaPid=42, qaBirth=[100, 20], pidLifetime='alive', onScreenQAWindows=0)
+                hidden = dict(step, evidenceContract='hidden-alive')
                 # Lead ruling: hidden-state step + positive expected-absent proof is the ONLY passing NOT_PROVEN.
                 self.assertTrue(results.report(directory, [dict(hidden, capture=dict(unproven, absenceProof=proof))], none, movie))
-                self.assertTrue(results.report(directory, [dict(hidden, capture=dict(unproven, absenceProof=dict(
-                    cgInventory='ok', qaProcess='none', onScreenQAWindows=0)))], none, movie), 'QA terminated: no process at all')
+                self.assertFalse(results.report(directory, [dict(hidden, capture=dict(unproven, absenceProof=dict(
+                    cgInventory='ok', qaProcess='none', onScreenQAWindows=0)))], none, movie), 'termination is not hidden proof')
                 for case, frame in [('visible-expected', dict(step, capture=dict(unproven, absenceProof=proof))),
                                     ('hidden-no-proof', dict(hidden, capture=unproven)),
                                     ('failed-inventory', dict(hidden, capture=dict(unproven, absenceProof=dict(proof, cgInventory='failed')))),
@@ -518,7 +519,7 @@ print("PASS")
         self.assertLess(step.index('boundaryClear("action")'), step.index('body()'), 'decision precedes the UI action')
         command = GATE_TESTS.read_text().split('    func fixtureCommand(', 1)[1].split('    func gateRead(', 1)[0]
         self.assertLess(command.index('boundaryClear("command")'), command.index('postNotificationName('))
-        monitor = flow.split('addUIInterruptionMonitor(', 1)[1].split('step("launch isolated QA app")', 1)[0]
+        monitor = flow.split('addUIInterruptionMonitor(', 1)[1].split('step("launch isolated QA app"', 1)[0]
         self.assertNotIn('activate()', monitor, 'never recover focus and continue around a foreign window')
         self.assertIn('latchForeignStop(', monitor)
         self.assertIn('return true', monitor)

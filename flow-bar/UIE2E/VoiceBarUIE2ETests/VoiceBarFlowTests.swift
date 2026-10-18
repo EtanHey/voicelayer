@@ -25,15 +25,13 @@ func uie2eStillReceipt(_ ack: [String: Any]?, count: Int) -> [String: Any] {
     guard status == "PROVEN", capture["path"] is String, let windows = capture["windows"] as? [Int], !windows.isEmpty else {
         var receipt: [String: Any] = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": capture["reason"] as? String ?? "unproven"]
         if let proof = capture["absenceProof"] as? [String: Any], uie2eAbsenceProven(proof) { receipt["absenceProof"] = proof }
+        if let proof = capture["terminationProof"] as? [String: Any], uie2eTerminationProven(proof) { receipt["terminationProof"] = proof }
         return receipt
     }
     return ["source": "qa-window-id", "status": "PROVEN", "windows": windows, "qaPid": capture["qaPid"] ?? 0]
 }
-/// Steps whose EXPECTED state has no QA window on screen (hidden or terminated). Only these may
-/// pass with a NOT_PROVEN frame, and only with an expected-absent proof; every other step expects
-/// a visible QA window and fails on NOT_PROVEN.
+/// Expected hidden-alive cases, also checked against the explicit declarations at their call sites.
 func uie2eExpectsHiddenQA(step name: String, scenario: String) -> Bool {
-    if name == "terminate QA app" || (name.hasPrefix("GUARD launch ") && name.hasSuffix(" no tripwire")) { return true }
     guard ["hide1", "gate2246"].contains(scenario) else { return false }
     // The visual scenarios install their menu with every QA window ordered out.
     if ["launch isolated QA app", "relaunch isolated QA app"].contains(name)
@@ -49,18 +47,27 @@ func uie2eExpectsHiddenQA(step name: String, scenario: String) -> Bool {
     return false
 }
 /// A positive expected-absent proof: a successful CG inventory with zero on-screen QA windows.
-func uie2eAbsenceProven(_ proof: [String: Any]?) -> Bool {
-    proof?["cgInventory"] as? String == "ok" && proof?["onScreenQAWindows"] as? Int == 0
-        && (proof?["qaPid"] as? Int ?? 0 > 0 || proof?["qaProcess"] as? String == "none")
+func uie2eInventoryProven(_ proof: [String: Any]?) -> Bool {
+    guard let birth = proof?["qaBirth"] as? [Int], birth.count == 2, birth[0] > 0,
+          (0..<1_000_000).contains(birth[1]) else { return false }
+    return proof?["cgInventory"] as? String == "ok" && proof?["onScreenQAWindows"] as? Int == 0
+        && proof?["qaPid"] as? Int ?? 0 > 0
 }
-/// Lead ruling: a NOT_PROVEN frame passes only for a step whose expected state is hidden AND that
-/// carries an expected-absent proof. Any step expecting a visible QA window fails on NOT_PROVEN.
-func uie2eFrameFailure(_ capture: [String: Any], expectsHiddenQA: Bool) -> String? {
-    guard capture["status"] as? String != "PROVEN" else { return nil }
+func uie2eAbsenceProven(_ proof: [String: Any]?) -> Bool {
+    uie2eInventoryProven(proof) && proof?["pidLifetime"] as? String == "alive"
+}
+func uie2eTerminationProven(_ proof: [String: Any]?) -> Bool {
+    uie2eInventoryProven(proof) && proof?["pidLifetime"] as? String == "ended"
+        && proof?["visibleOwnerPaths"] as? String == "non-qa"
+}
+/// Hidden-alive and terminated proofs are distinct; no declaration or failed read can pass.
+func uie2eFrameFailure(_ capture: [String: Any], contract: String?) -> String? {
+    guard let contract, ["visible", "hidden-alive", "terminated"].contains(contract) else { return "undeclared evidence contract" }
+    if capture["status"] as? String == "PROVEN" { return contract == "terminated" ? "termination contract carries a window" : nil }
     let reason = capture["reason"] as? String ?? "unproven"
-    if !expectsHiddenQA { return "visual NOT_PROVEN on a step expecting a visible QA window (" + reason + ")" }
-    return uie2eAbsenceProven(capture["absenceProof"] as? [String: Any]) ? nil
-        : "hidden-state frame lacks an expected-absent proof (" + reason + ")"
+    let proven = contract == "hidden-alive" ? uie2eAbsenceProven(capture["absenceProof"] as? [String: Any])
+        : contract == "terminated" && uie2eTerminationProven(capture["terminationProof"] as? [String: Any])
+    return proven ? nil : "visual NOT_PROVEN for " + contract + " (" + reason + ")"
 }
 func uie2eRedacted(_ text: String) -> String {
     let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -151,7 +158,7 @@ final class VoiceBarFlowTests: XCTestCase {
             self.latchForeignStop("interruption " + kind + " " + uie2eRedacted(alert.debugDescription))
             return true
         }
-        step("launch isolated QA app") {
+        step("launch isolated QA app", evidenceContract: launchEvidenceContract) {
             launchQA()
             app.activate()
             if ["hide1", "gate2246"].contains(scenario) {
@@ -173,7 +180,7 @@ final class VoiceBarFlowTests: XCTestCase {
                     "expectedSurfaces": ledger.expectedSurfaces],
                 "knownVisualGaps": knownVisualGaps, "limitations": limitations])
         }
-        if app != nil, app.state != .notRunning { step("terminate QA app") { app.terminate() } }
+        if app != nil, app.state != .notRunning { step("terminate QA app", evidenceContract: "terminated") { app.terminate() } }
         finishGuardedLaunch()
         guard pasteboardSaved else { return }
         NSPasteboard.general.clearContents()
@@ -197,9 +204,8 @@ final class VoiceBarFlowTests: XCTestCase {
 
     /// All input operations go through this wrapper, including scrolling, typing and menu dismissal.
     /// A failed assertion/action still produces a keepAlways attachment and a FAIL receipt.
-    func step(_ name: String, skipped: String? = nil, expected issue: UIE2EKnownIssue? = nil,
+    func step(_ name: String, evidenceContract: String = "visible", skipped: String? = nil, expected issue: UIE2EKnownIssue? = nil,
               surface: String? = nil, surfaces: [String] = [], _ body: () -> Void) {
-        let expectsHiddenQA = uie2eExpectsHiddenQA(step: name, scenario: scenario)
         let number = steps.count + 1
         let attachment = String(format: "UIE2E-%04d", number)
         let before = testRun?.failureCount ?? 0
@@ -234,12 +240,12 @@ final class VoiceBarFlowTests: XCTestCase {
                         activity.add(screenshot)
                     } else { capture = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "still-unreadable"] }
                 }
-                if let failure = uie2eFrameFailure(capture, expectsHiddenQA: expectsHiddenQA) { XCTFail(failure) }
+                if let failure = uie2eFrameFailure(capture, contract: evidenceContract) { XCTFail(failure) }
             }
         }
         let passed = (testRun?.failureCount ?? 0) == before
         var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed,
-                                      "capture": capture, "expectsHiddenQA": expectsHiddenQA]
+                                      "capture": capture, "evidenceContract": evidenceContract]
         if let skipped { receipt["skipped"] = skipped }
         if let issue, !matched.isEmpty, passed {
             var expectedReceipt: [String: Any] = ["packet": issue.rawValue, "surface": surface ?? "", "descriptions": matched]
@@ -258,7 +264,7 @@ final class VoiceBarFlowTests: XCTestCase {
 
     @discardableResult
     func click(_ resolve: @autoclosure () -> XCUIElement, _ name: String? = nil,
-               revealPolicy: UIE2EClickRevealPolicy = .automatic) -> Bool {
+               revealPolicy: UIE2EClickRevealPolicy = .automatic, evidenceContract: String = "visible") -> Bool {
         var clicked = false
         var found = false
         var needsReveal = false
@@ -279,7 +285,7 @@ final class VoiceBarFlowTests: XCTestCase {
         }
         guard found else { return false }
         if needsReveal { reveal(resolve()) }
-        step(name ?? "click \(label)") {
+        step(name ?? "click \(label)", evidenceContract: evidenceContract) {
             // Re-resolve after scrolling/row changes; never click the inspection snapshot.
             let element = resolve()
             guard element.exists || element.waitForExistence(timeout: 4), element.isEnabled, element.isHittable else {
@@ -315,6 +321,7 @@ final class VoiceBarFlowTests: XCTestCase {
                     .withOffset(CGVector(dx: 27, dy: element.frame.height / 2)).click()
                 waitUntil { self.controlValue(element) != beforeValue }
             } else { element.click() }
+            if evidenceContract == "terminated" { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
             guard (testRun?.failureCount ?? 0) == failures else { return }
             exercised.insert(key); clicked = true
             didActivate(label: label, type: type)
@@ -401,7 +408,7 @@ final class VoiceBarFlowTests: XCTestCase {
             ("General", generalFlow), ("Transcription", transcriptionFlow), ("Speech", speechFlow)] {
             let before = testRun?.failureCount ?? 0
             run()
-            step("verify completed surface \(name)") {
+            step("verify completed surface \(name)", evidenceContract: name == "Context menu" ? "terminated" : "visible") {
                 XCTAssertEqual(testRun?.failureCount ?? 0, before, "Surface did not complete successfully")
                 if (testRun?.failureCount ?? 0) == before { ledger.verifiedSurfaces.insert(name) }
             }
@@ -649,8 +656,8 @@ extension VoiceBarFlowTests {
         step("assert full scroll reached edge") { XCTFail("Scroll did not stabilize within 16 actions") }
     }
 
-    func receipt(_ expected: String) {
-        step("assert intent \(expected)") {
+    func receipt(_ expected: String, evidenceContract: String = "visible") {
+        step("assert intent \(expected)", evidenceContract: evidenceContract) {
             do {
                 let events = try JSONDecoder().decode([String].self, from: Data(contentsOf: root.appendingPathComponent("events.json")))
                 XCTAssertTrue(events.dropFirst(lastActionEventIndex).contains(expected), "Missing fresh fixture intent: \(expected)")
@@ -1439,9 +1446,10 @@ extension VoiceBarFlowTests {
     }
 
     /// Recorded after (never inside) the launch step, so step numbering stays sequential.
+    var launchEvidenceContract: String { ["hide1", "gate2246"].contains(scenario) ? "hidden-alive" : "visible" }
     func recordGuardedLaunch() {
         guard guardRequired, guardLaunches > 0 else { return }
-        step("GUARD launch \(guardLaunches) installed") {
+        step("GUARD launch \(guardLaunches) installed", evidenceContract: launchEvidenceContract) {
             XCTAssertTrue(guardReceiptIsClean(guardLaunches), "Launch \(guardLaunches) lacks exactly one install marker")
         }
     }
@@ -1452,14 +1460,14 @@ extension VoiceBarFlowTests {
             if guardRequired, guardLaunches > 0 { XCTFail("QA app still running; guard launch \(guardLaunches) not finalized") }
             return
         }
-        step("GUARD launch \(guardLaunches) no tripwire") {
+        step("GUARD launch \(guardLaunches) no tripwire", evidenceContract: "terminated") {
             XCTAssertTrue(guardReceiptIsClean(guardLaunches), "Device tripwire or extra install on launch \(guardLaunches)")
         }
     }
 
     func relaunchQA() {
         finishGuardedLaunch()
-        step("relaunch isolated QA app") {
+        step("relaunch isolated QA app", evidenceContract: launchEvidenceContract) {
             launchQA()
             if ["hide1", "gate2246"].contains(scenario) {
                 XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
@@ -1488,9 +1496,9 @@ extension VoiceBarFlowTests {
             "popover Run setup") else { return }
         receipt("popover-setup")
         wizardFlow()
-        guard openQAPopover(), click(app.buttons["popover-quit"]) else { return }
-        step("assert QA popover Quit") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
-        receipt("popover-quit")
+        guard openQAPopover(), click(app.buttons["popover-quit"], evidenceContract: "terminated") else { return }
+        step("assert QA popover Quit", evidenceContract: "terminated") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
+        receipt("popover-quit", evidenceContract: "terminated")
         if app.state == .notRunning { relaunchQA() }
     }
 
@@ -1541,9 +1549,9 @@ extension VoiceBarFlowTests {
         click(app.menuItems["uie2e-microphone-change"], "context Change default microphone in Settings")
         receipt("menu-microphone")
         guard openContextMenu() else { return }
-        click(app.menuItems["Quit VoiceBar"], "context Quit VoiceBar")
-        step("assert QA quit, no resident process targeted") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
-        receipt("menu-quit")
+        click(app.menuItems["Quit VoiceBar"], "context Quit VoiceBar", evidenceContract: "terminated")
+        step("assert QA quit, no resident process targeted", evidenceContract: "terminated") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
+        receipt("menu-quit", evidenceContract: "terminated")
         attachJSON("UIE2E-MENU-LIFECYCLE", fixtureEvents())
     }
 
