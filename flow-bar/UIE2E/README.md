@@ -343,3 +343,33 @@ restore intent before Hide, supervises mute/disk/permissions continuously, and
 restores own visibility and the initial mute state independently on all ordinary
 exits, errors and catchable signals. A user-opened Settings window aborts preparation.
 Failed restoration is retained as a failed gate, never silently accepted.
+
+### Scenario deadlines and exit status
+
+The supervised runner has a per-scenario budget, starting immediately before
+runner launch (including recorder startup and xcodebuild boot):
+
+| Scenario | Budget | Basis |
+| --- | --- | --- |
+| `full` | 2400 s (40 min) | Last full PASS recorded 1488.545 s; an earlier run took 1504 s. |
+| `focused-338` | 2400 s (40 min) | Conservatively shares the measured full-suite allowance. |
+| `gate2246` | 600 s (10 min) | Run-01 reached 250 s of recording; allows another 350 s for startup and margin. |
+| `hide1` | 300 s (5 min) | Keeps the narrow visibility gate bounded. |
+
+Configure and export retain their separate 120 s and 300 s timeouts. The
+supervisor prints a final `verdict=... exit=... mute=... receipt=...` line to
+stdout and saves `verdict` and `exitCode` in `operator-state.json`:
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | PASS; cleanup proven and initial mute state restored, nothing retained. |
+| `3` | PASS; output mute retained by design because launch completeness is NOT_PROVEN. |
+| `1` | Failure, including suite/export errors or any actual cleanup/restoration error. |
+| `2` | Preflight refused before runner launch, with successful cleanup. |
+
+The shell runner and the hide1 compatibility entry propagate these statuses.
+Callers must handle `0` and `3` as distinct passing outcomes; a shell using
+`set -e` must capture status explicitly to handle `3`. Exit `3` never grants
+permission to unmute: `ownedTerminationProven` remains false, `muteRestored`
+remains false, and `muteRetentionReason` plus the shutdown record retain the
+launch-completeness warning. Any additional cleanup error still produces `1`.

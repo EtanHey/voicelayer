@@ -1,4 +1,6 @@
 import importlib.util
+import contextlib
+import io
 import json
 import os
 import pathlib
@@ -6,10 +8,101 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 class SupervisorTests(unittest.TestCase):
+    def test_each_scenario_launch_uses_its_pinned_budget(self):
+        module = self.module()
+        for scenario, seconds in [('full', 2400), ('focused-338', 2400),
+                                  ('gate2246', 600), ('hide1', 300)]:
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
+                host = self.timeout_host(pathlib.Path(tmp))
+                host.scenario = scenario
+                host.remember = lambda *args: None
+                with patch.object(module.time, 'monotonic', return_value=100), \
+                        patch.object(module.subprocess, 'run'), \
+                        patch.object(module.subprocess, 'Popen'):
+                    try:
+                        host.start()
+                        self.assertEqual(host.deadline, 100 + seconds)
+                    finally:
+                        if host.log: host.log.close()
+
+    def test_full_survives_300_seconds_and_stops_at_its_own_deadline(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.timeout_host(pathlib.Path(tmp))
+            host.scenario = 'full'
+            host.remember = host.collect_owned = lambda *args: None
+            with patch.object(module.time, 'monotonic', return_value=100), \
+                    patch.object(module.subprocess, 'run'), \
+                    patch.object(module.subprocess, 'Popen'):
+                try:
+                    host.start()
+                finally:
+                    if host.log: host.log.close()
+            host.child = None  # No real child, permissions, disk or audio I/O.
+            host.set_mute(True)
+            host.run = lambda args: json.dumps(dict(axTrusted=True, prompts=[]))
+            host.check = module.NativeHost.check.__get__(host)
+            with patch('shutil.disk_usage', return_value=SimpleNamespace(free=20 * 1024**3)):
+                with patch.object(module.time, 'monotonic', return_value=401):
+                    host.check()
+                with patch.object(module.time, 'monotonic', return_value=2501):
+                    with self.assertRaisesRegex(InterruptedError, 'deadline'):
+                        host.check()
+
+    def test_exit_codes_and_stdout_verdict_cover_retention_and_real_failures(self):
+        module = self.module()
+        cases = [('clean-pass', 0, 'PASS'), ('retained-pass', 3, 'PASS'),
+                 ('suite', 1, 'FAIL'), ('export', 1, 'FAIL'),
+                 ('preflight', 2, 'PREFLIGHT_REFUSED'), ('configure', 2, 'PREFLIGHT_REFUSED'),
+                 ('launch', 1, 'FAIL'), ('check', 1, 'FAIL'),
+                 ('stop', 1, 'FAIL'), ('restore', 1, 'FAIL'), ('mute', 1, 'FAIL'),
+                 ('preflight-cleanup', 1, 'FAIL')]
+        for failure, expected, verdict in cases:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                host = self.timeout_host(pathlib.Path(tmp))
+                def fail(): raise RuntimeError('synthetic ' + failure)
+                def start():
+                    if failure == 'configure': fail()
+                    host.runner_launch_attempted = failure != 'clean-pass'
+                    if failure == 'launch': fail()
+                host.start = start
+                host.poll = lambda: 1 if failure == 'suite' else 0
+                host.export = lambda: 1 if failure == 'export' else 0
+                if failure in ['preflight', 'preflight-cleanup']: host.prepare_resident = fail
+                if failure in ['stop', 'preflight-cleanup']: host.collect_owned = fail
+                if failure == 'restore': host.restore_resident = fail
+                if failure == 'check': host.check = fail
+                if failure == 'mute':
+                    original = host.set_mute
+                    def set_mute(value):
+                        if host.shutdown: fail()
+                        original(value)
+                    host.set_mute = set_mute
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    result = module.supervise(host)
+                receipt = json.loads((host.output / 'operator-state.json').read_text())
+                self.assertEqual(result, expected)
+                self.assertEqual(receipt['exitCode'], expected)
+                self.assertEqual(receipt['verdict'], verdict)
+                self.assertIn('verdict=' + verdict, stdout.getvalue())
+                self.assertIn('exit=' + str(expected), stdout.getvalue())
+                self.assertIn(str(host.output / 'operator-state.json'), stdout.getvalue())
+                if failure == 'retained-pass':
+                    self.assertFalse(receipt['ownedTerminationProven'])
+                    self.assertTrue(receipt['muteRetained'])
+                    self.assertFalse(receipt['muteRestored'])
+                    self.assertEqual(receipt['cleanupErrors'], [])
+                    self.assertIn('Launch completeness NOT_PROVEN', receipt['muteRetentionReason'])
+                    self.assertIn('Launch completeness NOT_PROVEN', str(receipt['shutdown']))
+                if failure in ['stop', 'preflight-cleanup']:
+                    self.assertTrue(receipt['cleanupErrors'])
+
     def timeout_host(self, output):
         host = self.host(output)
         host.resident.update(visibilityPolicy='leave-shown', restoreRequired=False,
@@ -42,7 +135,7 @@ class SupervisorTests(unittest.TestCase):
                 return real_run(args, **dict(kwargs, timeout=.05))
             with patch.object(module.subprocess, 'run', side_effect=bounded_run), \
                     patch.object(module.subprocess, 'Popen', wraps=subprocess.Popen) as launch:
-                self.assertEqual(module.supervise(host), 1)
+                self.assertEqual(module.supervise(host), 2)
                 # Only the configure helper ran; no runner or export was dispatched.
                 launch_count = launch.call_count
             receipt = json.loads((host.output / 'operator-state.json').read_text())
@@ -82,7 +175,8 @@ class SupervisorTests(unittest.TestCase):
             self.assertIsNone(receipt['exportExit'])
             self.assertFalse(receipt['ownedTerminationProven'])
             self.assertTrue(receipt['muteRetained'])
-            self.assertTrue(any('NOT_PROVEN' in e for e in receipt['cleanupErrors']))
+            self.assertIn('NOT_PROVEN', receipt['muteRetentionReason'])
+            self.assertEqual(receipt['cleanupErrors'], [])
 
     def test_ship2246_shown_resident_reaches_launch_and_export_without_settings(self):
         module = self.module()
@@ -102,16 +196,12 @@ class SupervisorTests(unittest.TestCase):
             host.set_mute = lambda value: mute.__setitem__(0, value)
             host.check = lambda: None
             host.remember = lambda *args: None
-            def stop():
-                if host.log: host.log.close()
-                return False  # Unknown descendants retain mute without suppressing verdicts.
-            host.stop = stop
             host.export = lambda: actions.append('export') or 0
             class Child:
                 pid = 200
                 def poll(self): return 0
             with patch.object(module.subprocess, 'run'), patch.object(module.subprocess, 'Popen', return_value=Child()):
-                self.assertEqual(module.supervise(host), 1)  # Safety uncertainty remains explicit.
+                self.assertEqual(module.supervise(host), 3)  # Expected retention, with proof still unknown.
             receipt = json.loads((host.output / 'operator-state.json').read_text())
             self.assertEqual(receipt['suiteExit'], 0)
             self.assertEqual(receipt['exportExit'], 0)
@@ -1050,7 +1140,7 @@ class SupervisorTests(unittest.TestCase):
             def save(self, receipt): pass
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.assertEqual(module.supervise(Host()), 1)
+            self.assertEqual(module.supervise(Host()), 2)  # HARN-SUP: pre-launch refusal is PREFLIGHT_REFUSED.
         self.assertIn('fixture precondition failure', err.getvalue())
 
     def test_real_preflight_reads_processes_locks_and_positive_ax_state(self):
