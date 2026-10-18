@@ -14,6 +14,8 @@ final class VoiceBarFlowTests: XCTestCase {
     var ledger = UIE2ECoverageLedger()
     var terminalFullTextProven = false
     var gate2245Enabled = false
+    var guardRequired = false
+    var guardLaunches = 0
     var observed: Set<String> { get { ledger.observed } set { ledger.observed = newValue } }
     var exercised: Set<String> { get { ledger.exercised } set { ledger.exercised = newValue } }
     var activePage = "General"
@@ -64,7 +66,7 @@ final class VoiceBarFlowTests: XCTestCase {
             let library = try XCTUnwrap(env["VOICEBAR_UIE2E_DEVICE_GUARD"])
             XCTAssertTrue(FileManager.default.fileExists(atPath: library))
             app.launchEnvironment["DYLD_INSERT_LIBRARIES"] = library
-            app.launchEnvironment["VOICEBAR_UIE2E_GUARD_RECEIPT"] = root.appendingPathComponent("no-device-guard.log").path
+            guardRequired = true // Each launch gets its own receipt path in launchQA().
         }
         addUIInterruptionMonitor(withDescription: "Known benign foreign overlay; never grant permissions") { [unowned self] alert in
             switch UIE2EInterruptionPolicy.classify(alertDescription: alert.debugDescription) {
@@ -108,13 +110,14 @@ final class VoiceBarFlowTests: XCTestCase {
             }
         }
         step("launch isolated QA app") {
-            app.launch()
+            launchQA()
             app.activate()
             if ["hide1", "gate2246"].contains(scenario) {
                 XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
             } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             XCTAssertEqual(app.state, .runningForeground)
         }
+        recordGuardedLaunch()
     }
 
     override func tearDownWithError() throws {
@@ -129,6 +132,7 @@ final class VoiceBarFlowTests: XCTestCase {
                 "knownVisualGaps": knownVisualGaps, "limitations": limitations])
         }
         if app != nil, app.state != .notRunning { step("terminate QA app") { app.terminate() } }
+        finishGuardedLaunch()
         guard pasteboardSaved else { return }
         NSPasteboard.general.clearContents()
         let restored = pasteboardItems.map { types -> NSPasteboardItem in
@@ -336,7 +340,13 @@ final class VoiceBarFlowTests: XCTestCase {
     func testFullUIOnlyFlow() throws {
         guard scenario == "full" else { throw NSError(domain: "UIE2E full test selected in focused run", code: 1) }
         if gate2245Enabled {
+            step("GATE2245 no-device guard installed before fixtures") {
+                XCTAssertTrue(guardReceiptIsClean(guardLaunches))
+            }
             gate2245Flow()
+            step("GATE2245 no device-start or process tripwire invoked") {
+                XCTAssertTrue(guardReceiptIsClean(guardLaunches))
+            }
             guard (testRun?.failureCount ?? 1) == 0 else { return }
         }
         // Dictionary's animated top-level edit sheet and inline delete confirmation
@@ -1329,14 +1339,56 @@ extension VoiceBarFlowTests {
         return opened
     }
 
+    /// The tripwire appends one install marker per process start, so each launch gets a fresh
+    /// receipt. Launch 1 keeps the path the supervisor watches; relaunches never reuse a log.
+    func guardReceipt(_ launch: Int) -> URL {
+        root.appendingPathComponent(launch == 1 ? "no-device-guard.log" : "no-device-guard-launch-\(launch).log")
+    }
+
+    func guardReceiptIsClean(_ launch: Int) -> Bool {
+        (try? String(contentsOf: guardReceipt(launch))) == "voicebar-no-device-guard-v1:installed\n"
+    }
+
+    /// The one QA launcher: the first launch and every relaunch go through here.
+    func launchQA() {
+        if guardRequired {
+            guardLaunches += 1
+            let receipt = guardReceipt(guardLaunches)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: receipt.path), "Guard receipt reused: \(receipt.lastPathComponent)")
+            app.launchEnvironment["VOICEBAR_UIE2E_GUARD_RECEIPT"] = receipt.path
+        }
+        app.launch()
+    }
+
+    /// Recorded after (never inside) the launch step, so step numbering stays sequential.
+    func recordGuardedLaunch() {
+        guard guardRequired, guardLaunches > 0 else { return }
+        step("GUARD launch \(guardLaunches) installed") {
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches), "Launch \(guardLaunches) lacks exactly one install marker")
+        }
+    }
+
+    /// Called once the current QA process is stopped (before a relaunch, and in teardown).
+    func finishGuardedLaunch() {
+        guard guardRequired, guardLaunches > 0, app.state == .notRunning || app.wait(for: .notRunning, timeout: 5) else {
+            if guardRequired, guardLaunches > 0 { XCTFail("QA app still running; guard launch \(guardLaunches) not finalized") }
+            return
+        }
+        step("GUARD launch \(guardLaunches) no tripwire") {
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches), "Device tripwire or extra install on launch \(guardLaunches)")
+        }
+    }
+
     func relaunchQA() {
+        finishGuardedLaunch()
         step("relaunch isolated QA app") {
-            app.launch()
+            launchQA()
             if ["hide1", "gate2246"].contains(scenario) {
                 XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
             } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             activePage = "General"; activeHistoryScope = "Dictations"; selectedHistoryRow = "qa-recording"
         }
+        recordGuardedLaunch()
     }
 
     func menuBarFlow() {

@@ -337,8 +337,20 @@ full candidate) construct the real AppDelegate, so all of them get the same stac
 `voicebar-ui-e2e.sh` builds and self-tests the tripwire, `run.py` and `results.py`
 verify its proof before launch, XCUI inserts it with its receipt, the QA host refuses
 startup without it (and `UIE2EGate2245` checks again before constructing AppDelegate),
-and the exported report requires the before/after guard receipts. A missing guard
-fails the run closed. The single-retry claim stays gate2246-only.
+and the exported report requires the guard receipts. A missing guard fails the run
+closed. The single-retry claim stays gate2246-only.
+
+The tripwire appends one install marker per process start, and the full flow quits and
+relaunches the QA app (Popover, Context menu). So every launch gets its own receipt:
+launch 1 writes `no-device-guard.log` (the path the supervisor watches), and relaunch
+`n` writes a fresh `no-device-guard-launch-<n>.log`. XCUI records `GUARD launch <n>
+installed` after each launch and `GUARD launch <n> no tripwire` once that process has
+stopped. Each scenario also records before/after steps around its gate fixtures (prefix
+`HIDE1VIS`, `GATE2246`, or `GATE2245` for a full GATE2245 run). The export requires all
+of them for every guarded run, including a full GATE2245 run. It also requires each
+launch log to be exactly one install marker, with contiguous launch numbers. Any other
+line is reported as a tripwire hit on that launch. The supervisor's live check still
+covers launch 1 only; relaunch logs are checked by XCUI and by the export.
 
 ### Merge order and the QA compile check
 

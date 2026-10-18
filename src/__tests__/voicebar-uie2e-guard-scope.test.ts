@@ -32,6 +32,24 @@ describe("UIE2E no-device guard covers every GATE2245 scenario (C2)", () => {
     }
   });
 
+  test("every QA launch gets its own guard receipt and per-launch steps (round 2: R1, R2)", () => {
+    const flow = read("flow-bar", "UIE2E", "VoiceBarUIE2ETests", "VoiceBarFlowTests.swift");
+    // Launch 1 keeps the supervisor-watched path; each relaunch gets a fresh, never-reused log.
+    expect(flow).toContain('launch == 1 ? "no-device-guard.log" : "no-device-guard-launch-\\(launch).log"');
+    expect(flow).toContain('app.launchEnvironment["VOICEBAR_UIE2E_GUARD_RECEIPT"] = receipt.path');
+    expect(flow).toContain('step("GUARD launch \\(guardLaunches) installed")');
+    expect(flow).toContain('step("GUARD launch \\(guardLaunches) no tripwire")');
+    // Both the first launch and every relaunch go through the one guarded launcher.
+    expect(flow.match(/app\.launch\(\)/g)?.length).toBe(1);
+    // Full GATE2245 runs assert the guard at the fixture boundaries too.
+    expect(flow).toContain('step("GATE2245 no-device guard installed before fixtures")');
+    expect(flow).toContain('step("GATE2245 no device-start or process tripwire invoked")');
+    const gate = read("flow-bar", "UIE2E", "VoiceBarUIE2ETests", "Gate2245Tests.swift");
+    expect(gate).not.toContain('root.appendingPathComponent("no-device-guard.log")');
+    const readme = read("flow-bar", "UIE2E", "README.md");
+    expect(readme).toContain("no-device-guard-launch-<n>.log");
+  });
+
   test("the runner builds, verifies and passes the guard for every GATE2245 build", () => {
     const shell = read("scripts", "voicebar-ui-e2e.sh");
     expect(shell).toContain('if [[ ${VOICEBAR_UIE2E_GATE2245:-0} == 1 ]]; then\n  python3 "$repo/scripts/voicebar-ui-e2e-guard-proof.py" build "$output"');
