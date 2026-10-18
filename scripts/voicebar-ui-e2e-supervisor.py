@@ -40,16 +40,40 @@ AX_PUBLIC_LABELS = frozenset((NOTCH_IDLE_LABEL, 'VoiceBar launcher', 'VoiceBar h
                               'Re-transcribing…') + BUSY_PREFIXES + BUSY_TEXT)
 
 
-def ax_text_receipt(text):
-    if text in AX_PUBLIC_LABELS or text == '':
-        return text
+def redacted(text):
     return '<redacted len=%d sha256=%s>' % (len(text), hashlib.sha256(text.encode()).hexdigest()[:8])
+
+
+def ax_text_receipt(text):
+    return text if text in AX_PUBLIC_LABELS or text == '' else redacted(text)
 
 
 def ax_receipt(nodes):
     return [dict({k: n[k] for k in ['role', 'identifier', 'frame'] if k in n},
                  **{k: ax_text_receipt(n[k]) for k in ['title', 'description', 'value'] if k in n})
             for n in nodes]
+
+
+def permission_receipt(permission):
+    prompts = permission.get('prompts')
+    if prompts is not None:
+        if not isinstance(prompts, list):
+            raise RuntimeError('Permission prompt inventory malformed')
+        retained = []
+        for prompt in prompts:
+            labels = prompt.get('labels')
+            if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
+                raise RuntimeError('Permission prompt labels unreadable')
+            text = ' '.join(labels).casefold()
+            kind = next((kind for kind, terms in [
+                ('microphone', ('microphone',)), ('accessibility', ('accessibility',)),
+                ('input-monitoring', ('input monitoring', 'input-monitoring', 'monitor input')),
+                ('screen-recording', ('screen recording', 'screen-recording', 'record your screen', 'screen and system audio'))
+            ] if any(term in text for term in terms)), 'unknown')
+            retained.append(dict(owner=prompt.get('owner') or prompt.get('processName') or 'unknown',
+                                 kind=kind, labels=[redacted(x) for x in labels]))
+        prompts = retained
+    return dict(axTrusted=permission.get('axTrusted') is True, prompts=prompts)
 
 
 def ax_nodes(ax_tree):
@@ -227,9 +251,10 @@ class NativeHost:
         try:
             parsed = json.loads(result.stdout)
         except ValueError:
-            raise RuntimeError('Permission helper unreadable: exit %d stdout %r stderr %r'
-                               % (result.returncode, result.stdout[-500:], result.stderr[-500:])) from None
-        return result.returncode, parsed
+            raise RuntimeError('Permission helper unreadable: exit %d stdout %s stderr %s'
+                               % (result.returncode, redacted(result.stdout), redacted(result.stderr))) from None
+        # Sanitize at ingestion, before either checks[] or refuse_permissions/note sees it.
+        return result.returncode, permission_receipt(parsed)
 
     def refuse_permissions(self, code, permissions):
         if permissions.get('axTrusted') is not True or permissions.get('prompts') != [] or code != 0:

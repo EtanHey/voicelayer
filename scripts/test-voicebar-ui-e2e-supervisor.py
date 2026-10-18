@@ -1092,6 +1092,38 @@ class SupervisorTests(unittest.TestCase):
         helper.write_text('#!/bin/sh\nprintf %s ' + repr(payload) + '\nexit ' + str(code) + '\n')
         helper.chmod(0o755)
 
+    def test_permission_prompt_text_is_redacted_before_stop_logs_and_receipts(self):
+        for kind, label in [('microphone', 'access your microphone'), ('accessibility', 'Accessibility access'),
+                            ('input-monitoring', 'Input Monitoring'), ('screen-recording', 'record your screen'),
+                            ('unknown', 'permission needed')]:
+            for phase in ['preflight', 'check']:
+                with self.subTest(kind=kind, phase=phase), tempfile.TemporaryDirectory() as tmp:
+                    output = pathlib.Path(tmp)
+                    module, host = self.busy_host(output, self.IDLE_TREE, [])
+                    word = 'syntheticPrivatePromptWords'
+                    payload = dict(axTrusted=True, prompts=[dict(owner='com.apple.SecurityAgent',
+                                                                 labels=[label + ' ' + word, 'Allow'], extra=word)])
+                    self.stub_permissions(output, json.dumps(payload), 2)
+                    host.collect_owned = lambda: None
+                    host.muted = lambda: True
+                    host.set_mute = lambda value: None
+                    host.stop = lambda: True
+                    host.restore_resident = lambda: None
+                    if phase == 'check': host.prepare_resident = host.check
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(module.supervise(host), 2)
+                    files = [p for p in output.iterdir() if p.suffix in ['.json', '.log']]
+                    persisted = '\n'.join(p.read_text() for p in files) + err.getvalue()
+                    self.assertNotIn(word, persisted)
+                    self.assertNotIn(label, persisted)
+                    self.assertIn('STOP', persisted)
+                    prompt = json.loads((output / 'operator-state.json').read_text())['checks'][-1]['permissions']['prompts'][0]
+                    self.assertEqual(prompt['owner'], 'com.apple.SecurityAgent')
+                    self.assertEqual(prompt['kind'], kind)
+                    self.assertTrue(all(x.startswith('<redacted len=') for x in prompt['labels']))
+                    self.assertNotIn('extra', prompt)
+
     def test_permission_helper_exit_2_is_parsed_recorded_then_stops(self):
         # The real helper prints its JSON and exits 2 on a prompt; the real run() must not lose it.
         module = self.module()
@@ -1107,7 +1139,8 @@ class SupervisorTests(unittest.TestCase):
             self.assertIn('STOP', str(stop.exception))
             self.assertIn('UserNotificationCenter', str(stop.exception))
             self.assertEqual(host.checks[-1]['permissionsExit'], 2)
-            self.assertEqual(host.checks[-1]['permissions']['prompts'][0]['labels'], ['Allow'])
+            self.assertRegex(host.checks[-1]['permissions']['prompts'][0]['labels'][0],
+                             r'^<redacted len=5 sha256=[0-9a-f]{8}>$')
             host.collect_owned = lambda: None
             host.muted = lambda: True
             with self.assertRaises(RuntimeError) as stop:
@@ -1119,7 +1152,8 @@ class SupervisorTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as unreadable:
                 host.prepare_resident()
             self.assertIn('exit 2', str(unreadable.exception))
-            self.assertIn('not json', str(unreadable.exception))
+            self.assertNotIn('not json', str(unreadable.exception))
+            self.assertIn('<redacted len=8 sha256=', str(unreadable.exception))
 
     def test_resident_count_failure_records_count_and_pids(self):
         module = self.module()
