@@ -215,15 +215,19 @@ class RunnerTests(unittest.TestCase):
         self.assert_interrupt(signal.SIGHUP, False)
 
     def test_supervisor_death_aborts_and_stops_owned_children(self):
-        # SUP3: parent-death handling. A runner reparented away from its supervisor stops its test.
+        # SUP3: parent-death handling, checked by the authenticated identity.
         marker = self.root / 'test-started'
-        parents = iter([4242] * 3)
-        def getppid(): return next(parents, 1)
+        authority = dict(pid=4242, birth=(7, 7))
+        alive = [3]
+        def birth(pid):
+            alive[0] -= 1
+            return (7, 7) if pid == 4242 and alive[0] > 0 else None
         started = time.monotonic()
-        with unittest.mock.patch.object(runner.os, 'getppid', side_effect=getppid):
+        with unittest.mock.patch.object(runner.os, 'getppid', return_value=4242), \
+                unittest.mock.patch.object(runner.safety, 'kernel_birth', side_effect=birth):
             result = runner.run_suite(self.output, [sys.executable, '-c',
                 f'import pathlib,time;pathlib.Path({str(marker)!r}).touch();time.sleep(60)'],
-                self.recorder(), supervisor=4242)
+                self.recorder(), supervisor=authority)
         self.assertNotEqual(result, 0)
         self.assertLess(time.monotonic() - started, 30)
         info = json.loads((self.output / 'recording.json').read_text())
@@ -231,6 +235,32 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(info['valid'])  # The recorder is still flushed, never abandoned.
         self.assertFalse(info['runPassed'])
         self.assertTrue(json.loads((self.output / 'visibility.json').read_text())['restored'])
+
+    def test_supervisor_death_before_suite_entry_never_launches(self):
+        # Sol R5: validated supervisor 4242 died; launchd (1) is now the parent. Never adopt it.
+        marker = self.root / 'test-started'
+        with unittest.mock.patch.object(runner.os, 'getppid', return_value=1), \
+                unittest.mock.patch.object(runner.safety, 'kernel_birth', return_value=None):
+            result = runner.run_suite(self.output, [sys.executable, '-c',
+                f'import pathlib;pathlib.Path({str(marker)!r}).touch()'],
+                self.recorder(), supervisor=dict(pid=4242, birth=(7, 7)))
+        self.assertNotEqual(result, 0)
+        self.assertFalse(marker.exists())
+        self.assertFalse((self.root / 'calls').exists() and 'capture [' in (self.root / 'calls').read_text())
+        info = json.loads((self.output / 'recording.json').read_text())
+        self.assertIn('supervisor', info['error'].lower())
+
+    def test_every_owned_launch_is_registered_before_exec(self):
+        registry = self.output / 'owned-registrations.jsonl'
+        result = runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder(),
+                                  registry=(registry, 'fixture-token'))
+        self.assertEqual(result, 0)
+        rows = [json.loads(line) for line in registry.read_text().splitlines()]
+        kinds = [row['kind'] for row in rows]
+        for kind in ['visibility', 'recorder', 'test', 'ffprobe']:
+            self.assertIn(kind, kinds)
+        digest = runner.safety.token_digest('fixture-token')
+        self.assertTrue(all(row['token'] == digest and row['pid'] > 1 and len(row['birth']) == 2 for row in rows))
 
     def assert_cleanup_interrupt(self, phase, sig, whole_group=False):
         (self.root / ('delay-' + phase)).touch()

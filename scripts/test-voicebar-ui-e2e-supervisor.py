@@ -446,7 +446,7 @@ class SupervisorTests(unittest.TestCase):
                 live.pop(pid)
                 if pid == 200:  # Late known QA remains independently cleaned.
                     expected = str((host.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
-                    live[202] = dict(started='qa-start', cmd=expected, parent=1, state='S')
+                    live[202] = dict(started='9999999999.000000', cmd=expected, parent=1, state='S')
             with patch('os.kill', side_effect=kill): self.assertFalse(host.stop())
             self.assertEqual(signals[0], (200, self.module().signal.SIGINT))
             self.assertEqual({pid for pid, _ in signals}, {200, 202})
@@ -647,7 +647,7 @@ class SupervisorTests(unittest.TestCase):
             host.child = Child()
             expected = str((host.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
             live = {200: dict(started='runner-start', cmd='python-runner', parent=1, state='S'),
-                    201: dict(started='qa-start', cmd=expected, parent=200, state='S')}
+                    201: dict(started='9999999999.000000', cmd=expected, parent=200, state='S')}
             host.owned = {200: dict(live[200], kind='runner')}
             host.process_state = lambda pid: live.get(pid)
             host.process_rows = lambda: {pid: (row['parent'], row['cmd']) for pid, row in live.items()}
@@ -1380,8 +1380,15 @@ class SupervisorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output=pathlib.Path(tmp)
             proof=output/'supervisor-authority.json'
-            proof.write_text(json.dumps(dict(pid=os.getppid(), token='fixture-token')))
-            module.require_supervisor(output, {'VOICEBAR_UIE2E_SUPERVISOR_TOKEN':'fixture-token'})
+            birth = list(module.kernel_birth(os.getppid()))
+            proof.write_text(json.dumps(dict(pid=os.getppid(), birth=birth, token='fixture-token')))
+            self.assertEqual(module.require_supervisor(output, {'VOICEBAR_UIE2E_SUPERVISOR_TOKEN':'fixture-token'}),
+                             dict(pid=os.getppid(), birth=tuple(birth)))
+            for stale in [None, [birth[0], birth[1] + 1]]:  # Same PID, different/missing birth.
+                proof.write_text(json.dumps(dict(pid=os.getppid(), birth=stale, token='fixture-token')))
+                with self.assertRaises(ValueError):
+                    module.require_supervisor(output, {'VOICEBAR_UIE2E_SUPERVISOR_TOKEN':'fixture-token'})
+            proof.write_text(json.dumps(dict(pid=os.getppid(), birth=birth, token='fixture-token')))
             with self.assertRaises(ValueError):
                 module.require_supervisor(output, {'VOICEBAR_UIE2E_SUPERVISOR_TOKEN':'wrong'})
             proof.write_text(json.dumps(dict(pid=0, token='fixture-token')))
@@ -1426,7 +1433,7 @@ class SupervisorTests(unittest.TestCase):
         live[200]['cmd'] = self.APP  # The stub's execv lands after Popen returned.
         qa = str((host.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
         live[201] = dict(started='xcodebuild-start', cmd='/usr/bin/xcodebuild', parent=200, state='S')
-        live[202] = dict(started='qa-start', cmd=qa, parent=1, state='S')
+        live[202] = dict(started='9999999999.000000', cmd=qa, parent=1, state='S')
         return live
 
     def test_sup3_runner_reexec_is_not_an_identity_change_and_run_continues(self):
@@ -1559,7 +1566,161 @@ class SupervisorTests(unittest.TestCase):
                 calls.append(args)
                 return 'Sun Oct 18 07:14:49 2026 S 46291 /usr/bin/python3'
             host.run = run
-            self.assertEqual(host.process_state(46884)['started'], 'Sun Oct 18 07:14:49 2026')
+            host.kernel_birth = lambda pid: (1792308889, 42)
+            state = host.process_state(46884)
+            self.assertEqual(state['started'], '1792308889.000042')  # Kernel µs birth is the identity.
+            self.assertEqual(state['lstart'], 'Sun Oct 18 07:14:49 2026')  # Receipt only.
             self.assertEqual(calls[0][:3], ['env', 'LC_ALL=C', 'TZ=UTC0'])
+
+    # SUP3 round 2 (Sol R1-R5).
+    def r2_host(self, tmp, live, child_alive=None):
+        host = self.host(pathlib.Path(tmp))
+        if child_alive is not None:
+            class Child:
+                pid = 200
+                def poll(self): return None if child_alive() else 0
+            host.child = Child()
+        host.process_state = lambda pid: dict(live[pid]) if pid in live else None
+        host.process_rows = lambda: {pid: (s['parent'], s['cmd']) for pid, s in live.items()}
+        host.guard_mute = lambda: None
+        host.shutdown_wait = lambda seconds: None
+        return host
+
+    def test_r1_same_second_replacement_is_never_signalled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            births = {300: (1792308789, 100000)}
+            host.kernel_birth = lambda pid: births.get(pid)
+            host.run = lambda args: 'Sun Oct 18 07:14:49 2026 S 1 /owned/worker'
+            host.remember(300, 'qa')
+            births[300] = (1792308789, 900000)  # Same printed lstart second, different process.
+            host.run = lambda args: 'Sun Oct 18 07:14:49 2026 S 1 /unrelated/replacement'
+            host.guard_mute = lambda: None
+            with patch('os.kill') as kill:
+                host.terminate_owned(300)
+                kill.assert_not_called()
+            self.assertEqual(host.owned[300]['retired']['reason'], 'pid-reused')
+
+    def test_r1_birth_is_kernel_microseconds_and_fails_closed(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            seconds, micros = module.kernel_birth(os.getpid())
+            self.assertLessEqual(seconds, __import__('time').time())
+            self.assertTrue(0 <= micros < 10**6)
+            self.assertEqual(module.kernel_birth(os.getpid()), (seconds, micros))
+            self.assertIsNone(module.kernel_birth(2**30))  # ESRCH: no such process.
+            with patch.object(module, '_proc_pidinfo', return_value=(0, 1)):  # EPERM
+                with self.assertRaisesRegex(RuntimeError, 'identity unreadable'):
+                    module.kernel_birth(os.getpid())
+            # A birth that changes across the ps read is never one identity.
+            births = iter([(1, 1), (1, 2)])
+            host.kernel_birth = lambda pid: next(births)
+            host.run = lambda args: 'Sun Oct 18 07:14:49 2026 S 1 /x'
+            with self.assertRaisesRegex(RuntimeError, 'changed during read'): host.process_state(300)
+
+    def test_r2_registered_child_reparented_before_first_scan_is_terminated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {200: dict(started='runner', cmd=self.APP, parent=99, state='S'),
+                    201: dict(started='1.000002', cmd='/usr/bin/xcodebuild', parent=1, state='S')}
+            host = self.r2_host(tmp, live, child_alive=lambda: 200 in live)
+            host.owned = {200: dict(live[200], kind='runner')}
+            module = self.module()
+            module.register_owned(host.registry, 'fixture-token', 'xcodebuild', 201, (1, 2))
+            host.token = 'fixture-token'
+            # A forged/stale row (wrong token or birth) is never adopted.
+            module.register_owned(host.registry, 'other-token', 'xcodebuild', 202, (1, 3))
+            live[202] = dict(started='1.000003', cmd='/bin/unrelated', parent=1, state='S')
+            module.register_owned(host.registry, 'fixture-token', 'capture', 203, (1, 9))
+            live[203] = dict(started='1.000004', cmd='/bin/reused', parent=1, state='S')
+            signals = []
+            def kill(pid, sig):
+                signals.append((pid, sig)); live.pop(pid, None)
+            with patch('os.kill', side_effect=kill): host.stop()
+            self.assertEqual({p for p, _ in signals}, {200, 201})
+            self.assertEqual(set(live), {202, 203})
+
+    def test_r2_launchd_apps_need_exact_path_and_birth_after_launch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            qa = str((host.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
+            xr = str((host.output / 'DerivedData/Build/Products/Debug/VoiceBarUIE2ETests-Runner.app/Contents'
+                      '/MacOS/VoiceBarUIE2ETests-Runner').resolve())
+            live = {301: dict(started='5.000000', cmd=qa, parent=1, state='S'),
+                    302: dict(started='20.000000', cmd=xr, parent=1, state='S'),
+                    303: dict(started='20.000000', cmd='/elsewhere/VoiceBar', parent=1, state='S')}
+            host.process_state = lambda pid: dict(live[pid]) if pid in live else None
+            host.process_rows = lambda: {pid: (s['parent'], s['cmd']) for pid, s in live.items()}
+            host.launch_birth = (10, 0)
+            host.collect_owned()
+            self.assertEqual(set(host.owned), {302})  # QA born before launch is not ours.
+
+    def test_r3_mute_guard_failure_never_blocks_termination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {200: dict(started='r', cmd='runner', parent=99, state='S'),
+                    201: dict(started='x', cmd='xcodebuild', parent=200, state='S'),
+                    202: dict(started='q', cmd='qa', parent=1, state='S')}
+            host = self.r2_host(tmp, live, child_alive=lambda: 200 in live)
+            host.owned = {pid: dict(live[pid], kind='k') for pid in live}
+            def broken(): raise RuntimeError('osascript timeout')
+            host.guard_mute = broken
+            host.shutdown_wait = lambda seconds: host.guard_mute()
+            signals = []
+            def kill(pid, sig): signals.append((pid, sig)); live.pop(pid, None)
+            with patch('os.kill', side_effect=kill):
+                self.assertFalse(host.stop())
+            self.assertFalse(live)
+            self.assertIn('osascript timeout', str(host.shutdown[-1]['errors']))
+
+    def test_r3_scan_failure_between_steps_keeps_escalating(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {200: dict(started='r', cmd='runner', parent=99, state='S')}
+            host = self.r2_host(tmp, live, child_alive=lambda: 200 in live)
+            host.owned = {200: dict(live[200], kind='runner')}
+            signals = []
+            def kill(pid, sig):
+                signals.append(sig)
+                if sig == module.signal.SIGKILL: live.pop(pid)
+                else: host.process_rows = lambda: (_ for _ in ()).throw(RuntimeError('ps timeout'))
+            with patch('os.kill', side_effect=kill):
+                self.assertFalse(host.stop())
+            self.assertEqual(signals, [module.signal.SIGINT, module.signal.SIGTERM, module.signal.SIGKILL])
+            self.assertFalse(live)
+            self.assertIn('ps timeout', str(host.shutdown[-1]['errors']))
+
+    def test_r4_child_forked_during_another_shutdown_is_drained(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {200: dict(started='q', cmd='qa', parent=1, state='S')}
+            host = self.r2_host(tmp, live)
+            host.owned = {200: dict(live[200], kind='qa')}
+            waits = []
+            def shutdown_wait(seconds):
+                waits.append(1)
+                if len(waits) == 2: live.pop(200, None)  # Parent ends after its helper was adopted.
+            host.shutdown_wait = shutdown_wait
+            signals = []
+            def kill(pid, sig):
+                signals.append((pid, sig))
+                if pid == 200: live[201] = dict(started='h', cmd='helper', parent=200, state='S')
+                else: live.pop(pid, None)
+            with patch('os.kill', side_effect=kill):
+                self.assertTrue(host.stop())
+            self.assertIn((201, module.signal.SIGTERM), signals)
+            self.assertFalse(live)
+
+    def test_r4_cleanup_has_an_overall_deadline(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {200: dict(started='q', cmd='qa', parent=1, state='S')}
+            host = self.r2_host(tmp, live)
+            host.owned = {200: dict(live[200], kind='qa')}
+            clock = [0.0]
+            def shutdown_wait(seconds): clock[0] += 1000
+            host.shutdown_wait = shutdown_wait
+            with patch('os.kill'), patch.object(module.time, 'monotonic', side_effect=lambda: clock[0]):
+                self.assertFalse(host.stop())
+            self.assertIn('deadline', str(host.shutdown[-1]['errors']).lower())
 
 if __name__=='__main__': unittest.main()

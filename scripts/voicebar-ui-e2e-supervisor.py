@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Guard the native gate lifecycle; refuse UI mutation without causal Settings ownership."""
 import argparse
+import ctypes
 import datetime
+import errno
 import hashlib
 import importlib.util
 import json
@@ -19,6 +21,8 @@ import time
 # Full PASS recorded 1488.545 s (earlier run 1504 s); keep 40 min for both broad suites.
 # gate2246 run-01 reached 250 s of recording, before xcodebuild/recorder overhead.
 SCENARIO_BUDGET_SECONDS = {'full': 2400, 'focused-338': 2400, 'gate2246': 600, 'hide1': 300}
+# Whole owned-process cleanup (runner SIGINT 45 s + TERM/KILL legs + late children), bounded.
+CLEANUP_BUDGET_SECONDS = 180
 
 # The notch resident (2.2.45+) exposes one AX state group whose description is its visual
 # state (VoiceBarNotchContract.accessibilityLabel(for:)): exactly 'VoiceBar' when idle,
@@ -41,6 +45,66 @@ AX_PUBLIC_LABELS = frozenset((NOTCH_IDLE_LABEL, 'VoiceBar launcher', 'VoiceBar h
 
 class OwnershipRace(RuntimeError):
     """A candidate's ownership could not be proven during a scan; it is skipped, never signalled."""
+
+
+class _BsdInfo(ctypes.Structure):
+    # struct proc_bsdinfo (sys/proc_info.h): 136 bytes, pbi_start_tvsec at 120, pbi_start_tvusec at 128.
+    _fields_ = [('head', ctypes.c_uint8 * 120), ('start_tvsec', ctypes.c_uint64), ('start_tvusec', ctypes.c_uint64)]
+
+
+_LIBSYSTEM = []
+
+
+def _proc_pidinfo(pid):
+    if not _LIBSYSTEM:
+        library = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)
+        library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        library.proc_pidinfo.restype = ctypes.c_int
+        _LIBSYSTEM.append(library)
+    info = _BsdInfo()
+    size = _LIBSYSTEM[0].proc_pidinfo(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))  # PROC_PIDTBSDINFO
+    if size != ctypes.sizeof(info):
+        return 0, ctypes.get_errno()
+    return (int(info.start_tvsec), int(info.start_tvusec)), 0
+
+
+def kernel_birth(pid):
+    """Kernel start time (seconds, microseconds) of a live PID; None only on ESRCH; else fail closed."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        raise RuntimeError('Process identity unreadable: invalid pid %r' % (pid,))
+    birth, error = _proc_pidinfo(pid)
+    if birth:
+        return birth
+    if error == errno.ESRCH:
+        return None
+    raise RuntimeError('Process identity unreadable: %d (errno %d)' % (pid, error))
+
+
+def birth_text(birth):
+    return '%d.%06d' % tuple(birth)
+
+
+def parse_birth(started):
+    try:
+        seconds, micros = str(started).split('.')
+        return int(seconds), int(micros)
+    except ValueError:
+        return None
+
+
+def token_digest(token):
+    return hashlib.sha256(token.encode()).hexdigest()[:32]
+
+
+def register_owned(registry, token, kind, pid, birth):
+    """Append one acknowledged launch: the runner calls this in the child before exec."""
+    line = json.dumps(dict(token=token_digest(token), kind=kind, pid=pid, birth=list(birth))) + '\n'
+    fd = os.open(str(registry), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, line.encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def redacted(text):
@@ -138,9 +202,14 @@ def wait_until_safe(host):
 
 def require_supervisor(output, environment):
     proof = json.loads((output / 'supervisor-authority.json').read_text())
+    birth = proof.get('birth')
     if (proof.get('pid') != os.getppid() or not proof.get('token')
-            or proof['token'] != environment.get('VOICEBAR_UIE2E_SUPERVISOR_TOKEN')):
+            or proof['token'] != environment.get('VOICEBAR_UIE2E_SUPERVISOR_TOKEN')
+            or not isinstance(birth, list) or len(birth) != 2
+            or kernel_birth(proof['pid']) != tuple(birth)):
         raise ValueError('Native launch requires its live parent safety supervisor')
+    # The authenticated identity, carried into run_suite; never re-derived from a later getppid().
+    return dict(pid=proof['pid'], birth=tuple(birth))
 
 
 def supervise(host):
@@ -241,6 +310,12 @@ class NativeHost:
         self.log = None
         self.owned = {}
         self.ownership_races = []
+        self.cleanup_notes = []
+        self.token = None
+        self.registry = output / 'owned-registrations.jsonl'
+        # Launchd-launched apps count only if born after this supervisor began (exact path AND birth).
+        now = time.time()
+        self.launch_birth = (int(now), int(now % 1 * 10**6))
         self.shutdown = []
         self.runner_launch_attempted = False
         self.mute_retention_reason = None
@@ -529,9 +604,9 @@ class NativeHost:
         subprocess.run([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-results.py'), 'configure',
                         str(self.output), str(self.sandbox / 'VoiceBarQA.app'), str(self.sandbox),
                         '--scenario', self.scenario], check=True, timeout=120)
-        token = secrets.token_hex(24)
+        token = self.token = secrets.token_hex(24)
         with (self.output / 'supervisor-authority.json').open('x') as file:
-            json.dump(dict(pid=os.getpid(), token=token), file)
+            json.dump(dict(pid=os.getpid(), birth=list(kernel_birth(os.getpid())), token=token), file)
         env = dict(os.environ, VOICEBAR_UIE2E_SUPERVISOR_TOKEN=token,
                    VOICEBAR_UIE2E_RESIDENT_SNAPSHOT=str(self.output / 'resident-visibility.json'))
         self.log = (self.output / 'supervisor.log').open('w')
@@ -589,12 +664,29 @@ class NativeHost:
         fields = raw.split(None, 7)
         if len(fields) != 8:
             raise RuntimeError('Process identity unreadable: ' + str(pid))
-        return dict(started=' '.join(fields[:5]), state=fields[5], parent=int(fields[6]), cmd=fields[7])
+        # Birth identity is the kernel's microsecond start time (lstart is only whole seconds),
+        # read after ps and again; a change across the reads is never one identity.
+        before = self.kernel_birth(pid)
+        if before is None:
+            return None
+        after = self.kernel_birth(pid)
+        if after != before:
+            raise OwnershipRace('Process identity changed during read; no signal: %d (%r then %r)' % (pid, before, after))
+        return dict(started=birth_text(before), lstart=' '.join(fields[:5]), state=fields[5],
+                    parent=int(fields[6]), cmd=fields[7])
 
-    def remember(self, pid, kind, expected_cmd=None, parent=None):
+    def kernel_birth(self, pid):
+        return kernel_birth(pid)
+
+    def remember(self, pid, kind, expected_cmd=None, parent=None, expected_started=None, born_after=None):
         if pid in [os.getpid(), self.resident.get('pid'), self.resident.get('daemonPid')]:
             raise RuntimeError('Protected identity cannot be owned')
         state = self.process_state(pid)
+        if state is not None and expected_started is not None and state['started'] != expected_started:
+            raise OwnershipRace('Registered PID is a different process; no signal: %d (registered birth %s, observed %s)'
+                                % (pid, expected_started, state['started']))
+        if state is not None and born_after is not None and (parse_birth(state['started']) or (0, 0)) < born_after:
+            raise OwnershipRace('Exact-path process predates this gate; not owned: %d (born %s)' % (pid, state['started']))
         if state is not None and expected_cmd is not None and state['cmd'] != expected_cmd:
             raise OwnershipRace('Process changed during ownership capture; no signal: %d (expected cmd %r, observed %r)'
                                % (pid, expected_cmd, state['cmd']))
@@ -606,16 +698,36 @@ class NativeHost:
         if state is not None and pid not in self.owned:
             self.owned[pid] = dict(state, kind=kind)
 
-    def adopt(self, pid, kind, expected_cmd=None, parent=None):
+    def adopt(self, pid, kind, expected_cmd=None, parent=None, **identity):
         # A process that exits, is reparented or reused mid-scan is unprovable, not fatal:
         # skip it (never signal it) and keep scanning. Launch completeness stays NOT_PROVEN.
         try:
-            self.remember(pid, kind, expected_cmd, parent)
+            self.remember(pid, kind, expected_cmd, parent, **identity)
         except OwnershipRace as error:
             if len(self.ownership_races) < 50:
                 self.ownership_races.append(dict(pid=pid, kind=kind, error=str(error)))
 
+    def registered(self):
+        # Acknowledged launches: the runner appends PID + kernel birth in each child before exec,
+        # so a child reparented (or in its own session) before any scan is still ours.
+        if not self.token or not self.registry.exists():
+            return []
+        digest, rows = token_digest(self.token), []
+        for line in self.registry.read_text().splitlines():
+            try:
+                row = json.loads(line)
+                pid, birth = row['pid'], row['birth']
+                if row['token'] != digest or not isinstance(pid, int) or pid <= 1:
+                    continue
+                rows.append((pid, str(row['kind']), birth_text(birth)))
+            except (ValueError, KeyError, TypeError):
+                continue  # A torn final line from a killed writer proves nothing.
+        return rows
+
     def collect_owned(self):
+        for pid, kind, started in self.registered():
+            if pid not in self.owned:
+                self.adopt(pid, 'registered-' + kind, expected_started=started)
         rows = self.process_rows()
         # Unique run-local executables, never a name match. XCTest launches its runner app
         # through launchd, so no PPID chain from our runner reaches it (run-03 PID 47300).
@@ -623,8 +735,8 @@ class NativeHost:
                   str((self.output / 'DerivedData/Build/Products/Debug/VoiceBarUIE2ETests-Runner.app/Contents'
                        '/MacOS/VoiceBarUIE2ETests-Runner').resolve()): 'xctest-runner'}
         for pid, (_, cmd) in rows.items():
-            if cmd in unique:
-                self.adopt(pid, unique[cmd], cmd)
+            if cmd in unique and pid not in self.owned:
+                self.adopt(pid, unique[cmd], cmd, born_after=self.launch_birth)
         while True:
             added = False
             for pid, (parent, cmd) in rows.items():
@@ -639,7 +751,16 @@ class NativeHost:
         if self.child is not None and pid == self.child.pid:
             # Our own unreaped child: its PID cannot be reused, whatever it exec'd into.
             # Once poll() reaps it, it is never signalled again (run-03 PID 46884).
-            return self.child.poll() is None
+            alive = self.child.poll() is None
+            if alive:
+                try:  # Receipt only: record the runner's exec transitions.
+                    current = self.process_state(pid)
+                    if current and owned.get('cmd') and current['cmd'] != owned['cmd'] \
+                            and current['cmd'] not in owned.setdefault('execs', []):
+                        owned['execs'].append(current['cmd'])
+                except Exception:
+                    pass
+            return alive
         if owned.get('retired'):
             return False
         current = self.process_state(pid)
@@ -656,24 +777,39 @@ class NativeHost:
             owned['execs'].append(current['cmd'])
         return True
 
+    def cleanup_note(self, message):
+        if message not in self.cleanup_notes:
+            self.cleanup_notes.append(message)
+
+    def cleanup_step(self, label, action):
+        # Mute, discovery and wait failures are recorded (termination then stays NOT_PROVEN and
+        # mute retained) but never stop signalling an already provable target.
+        try:
+            action()
+        except BaseException as error:
+            self.cleanup_note(label + ': ' + repr(error))
+
     def shutdown_wait(self, seconds):
         # Ignore latched cancellation/deadline here: they must not interrupt cleanup or mute checks.
         end = time.monotonic() + seconds
         while time.monotonic() < end:
-            self.guard_mute()
+            self.cleanup_step('mute guard', self.guard_mute)
             time.sleep(min(.2, max(0, end - time.monotonic())))
 
-    def terminate_owned(self, pid, runner=False):
+    def terminate_owned(self, pid, runner=False, deadline=None):
         for sig, seconds in ([(signal.SIGINT, 45)] if runner else []) + [(signal.SIGTERM, 5), (signal.SIGKILL, 5)]:
-            self.guard_mute()
-            # Re-read PID/start/command immediately before EVERY individual signal, never killpg.
+            self.cleanup_step('mute guard', self.guard_mute)
+            # Re-read PID/birth immediately before EVERY individual signal, never killpg. A residual
+            # exit-and-recycle between this read and kill() remains possible for non-child PIDs.
             if not self.owned_alive(pid):
                 return
             os.kill(pid, sig)
             self.shutdown.append(dict(pid=pid, signal=int(sig), identity=self.owned[pid]))
             for _ in range(seconds):
-                self.collect_owned()
-                self.shutdown_wait(1)
+                if deadline is not None and time.monotonic() > deadline:
+                    raise RuntimeError('Cleanup deadline reached; owned termination NOT_PROVEN: ' + str(pid))
+                self.cleanup_step('discovery', self.collect_owned)
+                self.cleanup_step('wait', lambda: self.shutdown_wait(1))
                 if self.child is not None:
                     self.child.poll()  # Reap the direct child without a blocking wait.
                 if not self.owned_alive(pid):
@@ -683,6 +819,8 @@ class NativeHost:
     def stop(self):
         errors = []
         self.mute_retention_reason = None
+        self.cleanup_notes = []
+        deadline = time.monotonic() + CLEANUP_BUDGET_SECONDS
         # Runner, QA/descendant cleanup and final proof are independent, even if a leg fails.
         def attempt(action):
             try:
@@ -690,15 +828,25 @@ class NativeHost:
             except BaseException as error:
                 errors.append(repr(error))
         attempt(self.collect_owned)
+        handled = set()
         if self.child is not None and self.child.poll() is None:
             # The unreaped Popen handle is the runner's identity proof, even if ps missed it.
             self.owned.setdefault(self.child.pid, dict(kind='runner', source='popen-handle'))
-            attempt(lambda: self.terminate_owned(self.child.pid, runner=True))
-        attempt(self.collect_owned)  # Include QA launched while the runner was shutting down.
-        for pid in list(self.owned):
-            if self.child is None or pid != self.child.pid:
-                attempt(lambda pid=pid: self.terminate_owned(pid))
-        attempt(self.collect_owned)
+            handled.add(self.child.pid)
+            attempt(lambda: self.terminate_owned(self.child.pid, runner=True, deadline=deadline))
+        # Fixed-point drain: anything adopted while another PID was shutting down is terminated too.
+        while True:
+            attempt(self.collect_owned)  # Include QA launched while the runner was shutting down.
+            pending = [pid for pid in self.owned if pid not in handled
+                       and (self.child is None or pid != self.child.pid)]
+            if not pending:
+                break
+            if time.monotonic() > deadline:
+                errors.append('Cleanup deadline reached; owned termination NOT_PROVEN: %r' % pending)
+                break
+            for pid in pending:
+                handled.add(pid)
+                attempt(lambda pid=pid: self.terminate_owned(pid, deadline=deadline))
         for pid in self.owned:
             def prove(pid=pid):
                 if self.owned_alive(pid):
@@ -706,9 +854,10 @@ class NativeHost:
             attempt(prove)
         if self.child is not None and self.child.poll() is None:
             errors.append('Runner termination NOT_PROVEN')
+        errors.extend(self.cleanup_notes)
         if self.runner_launch_attempted or self.child is not None:
-            # No acknowledged pre-exec registration exists in this runner. Even exit 0 and
-            # an empty descendant scan cannot exclude reparented capture/xcodebuild children.
+            # The runner registers its own launches before exec, but processes those launch in turn
+            # (xcodebuild's tools, launchd-started apps beyond the exact paths) are only discovered.
             reason = 'Launch completeness NOT_PROVEN; discovered subset is not all-owned proof'
             errors.append(reason)
         if self.log:
