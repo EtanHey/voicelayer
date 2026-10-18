@@ -57,6 +57,8 @@ function makeApp(root: string, commit = COMMIT, buildTime = BUILD_TIME) {
     BuildTimeUTC: buildTime,
   });
   writeFileSync(join(app, "Contents", "Resources", "package.json"), JSON.stringify({ version }));
+  mkdirSync(join(app, "Contents", "Resources", "src"));
+  writeFileSync(join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts"), "setInterval(() => {}, 1000); // synthetic daemon\n");
   return app;
 }
 
@@ -359,7 +361,8 @@ describe("release delivery refuses without a matching T3 Option+F5 proof", () =>
 });
 
 describe("promote-voicebar-release.sh is the only delivery path and requires the proof", () => {
-  const FORMULA_SHA = "f".repeat(64);
+  const FORMULA_BYTES = "synthetic published npm tarball";
+  const FORMULA_SHA = sha256(FORMULA_BYTES);
   const git = (cwd: string, ...args: string[]) =>
     Bun.spawnSync(["git", ...args], {
       cwd,
@@ -393,13 +396,19 @@ describe("promote-voicebar-release.sh is the only delivery path and requires the
       join(dir, "bin", "gh"),
       `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${join(dir, "gh.log")}"
-if [[ "$1 $2" == "release upload" ]]; then cp "$4" "${store}/VoiceBar.zip"; exit 0; fi
+if [[ "$1 $2" == "release view" ]]; then [[ -f "${store}/VoiceBar.zip" ]] && printf 'VoiceBar.zip'; exit 0; fi
+if [[ "$1 $2" == "release upload" ]]; then
+  [[ -f "${store}/VoiceBar.zip" && "$*" != *--clobber* ]] && exit 1
+  cp "$4" "${store}/VoiceBar.zip"; exit 0
+fi
 if [[ "$1 $2" == "release download" ]]; then cat "${store}/VoiceBar.zip"; exit 0; fi
 exit 2
 `,
     );
     chmodSync(join(dir, "bin", "gh"), 0o755);
-    return { tap, remote };
+    writeFileSync(join(dir, "bin", "curl"), `#!/usr/bin/env bash\nprintf '%s' '${FORMULA_BYTES}'\n`);
+    chmodSync(join(dir, "bin", "curl"), 0o755);
+    return { tap, remote, store };
   }
 
   function runPromote(args: string[]) {
@@ -479,13 +488,81 @@ exit 2
     expect(pushed).toContain("Formula/voicelayer.rb");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 
-  test("a published asset that differs from the verified ZIP stops before the tap is touched", () => {
+  test("a rejected tap push retries the existing release commit without uploading again", () => {
     const { tap, remote } = promoteFixture();
-    writeFileSync(
-      join(dir, "bin", "gh"),
-      `#!/usr/bin/env bash\nif [[ "$1 $2" == "release download" ]]; then printf 'other bytes'; fi\nexit 0\n`,
-    );
+    const hook = join(remote, "hooks", "pre-receive");
+    writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+    chmodSync(hook, 0o755);
+    const args = ["--t3-proof", writeProof(proof())];
+    expect(runPromote(args).code).not.toBe(0);
+    const head = git(tap, "rev-parse", "HEAD").stdout.toString().trim();
+    expect(git(tap, "log", "-1", "--format=%s").stdout.toString()).toContain(version);
+    expect(remoteLog(remote).trim()).toBe("previous release");
+    rmSync(hook);
+    const retry = runPromote(args);
+    expect(retry.err).toBe("");
+    expect(retry.code).toBe(0);
+    expect(git(remote, "rev-parse", "main").stdout.toString().trim()).toBe(head);
+    expect(git(tap, "rev-parse", "HEAD").stdout.toString().trim()).toBe(head);
+    expect(retry.gh.match(/release upload/g)?.length).toBe(1);
+    // A retry after a lost successful push response is also harmless.
+    expect(runPromote(args).code).toBe(0);
+    expect(git(remote, "rev-parse", "main").stdout.toString().trim()).toBe(head);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("unrelated unpushed tap commits are refused before upload", () => {
+    const { tap, remote } = promoteFixture();
+    writeFileSync(join(tap, "unrelated"), "not part of this release");
+    git(tap, "add", ".");
+    git(tap, "commit", "-q", "-m", "unrelated");
     const r = runPromote(["--t3-proof", writeProof(proof())]);
+    expect(r.code).not.toBe(0);
+    expect(r.gh).not.toContain("release upload");
+    expect(remoteLog(remote).trim()).toBe("previous release");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a same-version pending release commit with different checksums is refused", () => {
+    const { tap, remote } = promoteFixture();
+    const hook = join(remote, "hooks", "pre-receive");
+    writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+    chmodSync(hook, 0o755);
+    const args = ["--t3-proof", writeProof(proof())];
+    expect(runPromote(args).code).not.toBe(0);
+    const cask = join(tap, "Casks", "voicebar.rb");
+    writeFileSync(cask, readFileSync(cask, "utf8").replace(/sha256 "[a-f0-9]+"/, `sha256 "${"c".repeat(64)}"`));
+    git(tap, "add", ".");
+    git(tap, "commit", "-q", "--amend", "--no-edit");
+    rmSync(hook);
+    const retry = runPromote(args);
+    expect(retry.code).not.toBe(0);
+    expect(retry.err).toContain("pending");
+    expect(remoteLog(remote).trim()).toBe("previous release");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("promotion refuses a tap checked out on a non-default branch", () => {
+    const { tap, remote } = promoteFixture();
+    git(tap, "checkout", "-q", "-b", "unrelated-branch");
+    const r = runPromote(["--t3-proof", writeProof(proof())]);
+    expect(r.code).not.toBe(0);
+    expect(r.gh).not.toContain("release upload");
+    expect(remoteLog(remote).trim()).toBe("previous release");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a published asset that differs is never overwritten and the tap is untouched", () => {
+    const { tap, remote, store } = promoteFixture();
+    writeFileSync(join(store, "VoiceBar.zip"), "other bytes");
+    const r = runPromote(["--t3-proof", writeProof(proof())]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("published");
+    expect(r.gh).not.toContain("release upload");
+    expect(readFileSync(join(store, "VoiceBar.zip"), "utf8")).toBe("other bytes");
+    expect(git(tap, "status", "--porcelain").stdout.toString()).toBe("");
+    expect(remoteLog(remote).trim()).toBe("previous release");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("an incorrect published npm checksum refuses before committing the tap", () => {
+    const { tap, remote } = promoteFixture();
+    const r = runPromote(["--t3-proof", writeProof(proof()), "--formula-sha256", "f".repeat(64)]);
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("published");
     expect(git(tap, "status", "--porcelain").stdout.toString()).toBe("");
@@ -511,13 +588,13 @@ const sleepSync = (ms: number) => Bun.sleepSync(ms);
 
 // A real running "installed VoiceBar": a symlink to bash at <app>/Contents/MacOS/VoiceBar, so
 // `ps` shows the bundle executable path, with a child whose command names mcp-server-daemon.
-// The child is `exec -a`'d sleep, so the fixture tree is exactly two processes, no grandchild.
+// The child is a real Bun process running a timer-only synthetic script; no audio/devices.
 // Started more than a second after the bundle was written, like a relaunch after install.
-function launchFakeVoiceBar(app: string, interpreter = "/bin/bash") {
+function launchFakeVoiceBar(app: string, interpreter = "/bin/bash", script = join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts")) {
   mkdirSync(join(app, "Contents", "MacOS"), { recursive: true });
   symlinkSync(interpreter, join(app, "Contents", "MacOS", "VoiceBar"));
   const proc = Bun.spawn(
-    [join(app, "Contents", "MacOS", "VoiceBar"), "-c", "(exec -a mcp-server-daemon /bin/sleep 120) & wait"],
+    [join(app, "Contents", "MacOS", "VoiceBar"), "-c", '"$1" run "$2" & wait', "fixture", process.execPath, script],
     { stdout: "ignore", stderr: "ignore" },
   );
   sleepSync(300); // let the daemon-like child appear
@@ -575,17 +652,17 @@ function producerFixture(app = installedApp) {
   return { installed: app, t3, log, history, expected, state, out };
 }
 
-function runProducer(args: string[]) {
+function runProducer(args: string[], env: Record<string, string> = {}) {
   // bun test runs in UTC; the producer parses VoiceBar's local-time log prefix, so pin both.
   const r = Bun.spawnSync([process.execPath, proofScript, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, TZ: "Etc/UTC" },
+    env: { ...process.env, TZ: "Etc/UTC", ...env },
   });
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
-function start(f: ReturnType<typeof producerFixture>) {
+function start(f: ReturnType<typeof producerFixture>, env: Record<string, string> = {}) {
   return runProducer([
     "start",
     "--state", f.state,
@@ -594,7 +671,7 @@ function start(f: ReturnType<typeof producerFixture>) {
     "--voicebar-log", f.log,
     "--history-file", f.history,
     "--expected-text-file", f.expected,
-  ]);
+  ], env);
 }
 
 function finish(f: ReturnType<typeof producerFixture>) {
@@ -814,6 +891,70 @@ describe("t3-optf5-proof producer reads the installed app's real artifacts", () 
       expect(r.err).toContain("not the executable installed at");
     } finally {
       await stopFakeVoiceBar(old);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("ps start-time collection forces C locale even under de_DE", () => {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "ps"), `#!/bin/bash
+if [[ "$*" == *lstart=* && ( "$LC_ALL" != C || "$LANG" != C ) ]]; then
+  printf 'So. 18 Okt. 04:21:50 2026\\n'; exit 0
+fi
+exec /bin/ps "$@"
+`);
+    chmodSync(join(bin, "ps"), 0o755);
+    const r = start(producerFixture(), { PATH: `${bin}:${process.env.PATH}`, LC_ALL: "de_DE.UTF-8", LANG: "de_DE.UTF-8" });
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a stale daemon after its script is replaced refuses even with an unchanged plist and executable", async () => {
+    const app = makeApp(join(dir, "daemon-swap"));
+    sleepSync(1_100);
+    const old = launchFakeVoiceBar(app);
+    try {
+      sleepSync(1_100);
+      writeFileSync(join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts"), "// newer daemon\n");
+      const r = start(producerFixture(app));
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("mcp-server-daemon");
+      expect(existsSync(join(dir, "state.json"))).toBe(false);
+    } finally {
+      await stopFakeVoiceBar(old);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a daemon child using a script outside the installed Resources refuses", async () => {
+    const app = makeApp(join(dir, "outside-daemon"));
+    sleepSync(1_100);
+    const outside = join(dir, "mcp-server-daemon.ts");
+    writeFileSync(outside, "setInterval(() => {}, 1000);\n");
+    const child = launchFakeVoiceBar(app, "/bin/bash", outside);
+    try {
+      const r = start(producerFixture(app));
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("mcp-server-daemon");
+    } finally {
+      await stopFakeVoiceBar(child);
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("a daemon script symlink escaping Resources refuses", async () => {
+    const app = makeApp(join(dir, "linked-daemon"));
+    const script = join(app, "Contents", "Resources", "src", "mcp-server-daemon.ts");
+    const outside = join(dir, "mcp-server-daemon.ts");
+    writeFileSync(outside, "setInterval(() => {}, 1000); // outside bundle\n");
+    rmSync(script);
+    symlinkSync(outside, script);
+    sleepSync(1_100);
+    const child = launchFakeVoiceBar(app);
+    try {
+      const r = start(producerFixture(app));
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("Resources");
+    } finally {
+      await stopFakeVoiceBar(child);
     }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 

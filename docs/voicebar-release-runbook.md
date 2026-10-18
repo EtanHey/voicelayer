@@ -38,11 +38,17 @@ cannot produce native proof, so CI is not gated on it.
    ```
    The tap must be clean. In order, the script:
    1. verifies the artifact against the proof;
-   2. uploads the ZIP;
-   3. downloads the published asset and requires it to be byte-identical;
+   2. requires the tap to be on the origin default branch with no unrelated unpushed commits;
+   3. verifies the published npm tarball checksum and uploads the ZIP only if absent, then
+      downloads the published ZIP and requires it to be byte-identical (never overwrites it);
    4. writes the formula (npm url + sha256) and the cask (version + ZIP sha256);
    5. runs the tap-check verification with the proof;
-   6. commits both files and pushes.
+   6. commits both files and pushes that commit to the tap default branch.
+
+   Retry the same command after a push failure. The script reuses the single pending release
+   commit only when its version, both checksums and full file contents match the intended
+   release delta. An already-pushed release is a no-op. A diverged tap or unrelated pending
+   commit is refused; reconcile it before retrying.
 
    Any failure stops it. The tap is not touched before the published asset is confirmed, and
    its edits are reverted if the tap check fails.
@@ -87,7 +93,10 @@ a harness that sends a real CGEvent, does the Option+F5.
    It refuses unless exactly one VoiceBar runs from the installed bundle, with an
    `mcp-server-daemon` child. Both processes must have started in a later second than the
    bundle was installed, and the VoiceBar process's mapped executable (per `lsof`) must be
-   the very file installed at the bundle path. So a bundle swapped under an old running
+   the very file installed at the bundle path. The child must run `bun run` with the installed
+   `Contents/Resources/src/mcp-server-daemon.ts` path (resolved inside Resources), and must
+   have started after that script was installed or replaced. Process timestamps use C locale.
+   So a bundle swapped under an old running
    VoiceBar, including a staged directory moved into place, cannot certify itself.
 3. With output muted, select the paragraph in the rendered assistant message (not the
    composer) and press **Option+F5 once**. Let it finish.
