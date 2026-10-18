@@ -31,9 +31,13 @@ unfinished runs, failed teardown, or unexercised controls cannot pass. An aborte
 with individual receipts still gets a contact sheet marked incomplete. QA-app fixture
 sinks (events/settings/dictionary) remain in its scratch directory. No entitlements change.
 
-Every UI run records the main screen by default before XCTest launches. The runner
-compiles `voicebar-ui-e2e-capture.swift`, a standalone ScreenCaptureKit helper whose
-filter accepts only the main `SCDisplay`. It registers only a `.screen` stream output,
+Every UI run records a movie before XCTest launches, of this run's QA process only (GATECAP1):
+the full desktop is never recorded. The runner compiles `voicebar-ui-e2e-capture.swift`, a
+standalone ScreenCaptureKit helper that requires `--include-bundle` and `--include-executable`.
+Its filter includes only the applications whose bundle ID AND exact executable path match this
+run's sandboxed QA app; other apps, the desktop and system dialogs are never composited (black
+until the QA process appears). It prints `source=` lines; a movie that never observed the
+proven QA process, or names any other source, is rejected. It registers only a `.screen` stream output,
 disables system audio and microphone capture, and writes a single H.264 video track
 through AVAssetWriter with one-second MOV fragments. There is no camera lookup or
 AVFoundation device-name selection, so a camera named `Capture screen 0` cannot be
@@ -61,7 +65,23 @@ If macOS blocks screen capture/UI Automation, stop without granting access and h
 the lead arrange a human-present retry. Recording lifecycle unit tests use stub processes; recorded native UI receipts are
 linked from `docs.local/UIE2E.2/DONE.md`. Silent fixtures never prove audio playback.
 
-Capture uses Apple's [ScreenCaptureKit display filter](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
+Step frames (GATECAP1): there is no desktop screenshot or crop. Before each step's UI action,
+each fixture command and each still, the sandboxed runner posts a name-only distributed
+notification to the owned boundary broker (`voicebar-ui-e2e-permissions --broker`), which takes
+a fresh synchronous foreign-modal decision. A still is a ScreenCaptureKit desktop-independent
+window capture (the equivalent of `screencapture -l<id> -o`) of each visible window owned by the
+one process running this run's QA executable, composited on black; with no proven QA window
+the step's frame is `NOT_PROVEN` and no image exists (`qa-report.json` `visualNotProven`).
+
+Foreign modals (GATECAP1): any visible system-agent window (CoreServicesUIAgent, SecurityAgent,
+UserNotificationCenter, coreautha), any window at the modal-panel level, or any app's AX modal
+window or sheet, on any display, refuses the run before Hide Others and STOPs it at every
+boundary (exit 2: `PREFLIGHT_REFUSED` / `FOREIGN_MODAL_STOP`). An unreadable CG/AX inventory is
+`NOT_PROVEN` and refused the same way. Any detection latches STOP; nothing is ever pressed or
+dismissed. Fixture commands are notifications, never keystrokes; remaining injected keystrokes are
+checked against enabled `com.apple.symbolichotkeys` by keycode and full modifier set.
+
+Movie capture uses Apple's [ScreenCaptureKit application filter](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
 and [AVAssetWriter movie fragments](https://developer.apple.com/documentation/avfoundation/avassetwriter/moviefragmentinterval).
 
 The Xcode project contains only a UI-test target. Xcode supplies its XCTest runner;
@@ -95,9 +115,9 @@ date, then hides their windows without quitting/closing. The supervisor restores
 snapshot after recorder flush, including failed preparation/tests and cancellation. Initially
 hidden apps stay hidden; terminated apps are never relaunched and reused PIDs are never adopted.
 `visibility.json` retains the before/restore result; a failed hide or restore fails the run.
-Each tab sweep activates QA and verifies foreground/on-screen/hittable state. The XCTest
-interruption monitor only reactivates QA for known T3/Screenshot overlays; it never clicks a
-foreign control. Permission or unknown/persistent interruptions produce a clear BLOCKED failure.
+Each tab sweep activates QA and verifies foreground/on-screen/hittable state. Any XCTest
+interruption latches a foreign-modal STOP (logged redacted); it never reactivates QA to continue
+and never clicks a foreign control.
 
 The QA floating panel now follows the synthetic hidden flag. Its native AX role is Dialog;
 queries and Hide preconditions use that role, so a missing Window cannot vacuously pass Hide. Settings' navigation footer

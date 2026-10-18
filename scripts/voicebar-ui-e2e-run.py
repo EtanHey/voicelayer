@@ -7,6 +7,7 @@ import json
 import math
 import os
 import pathlib
+import plistlib
 import re
 import signal
 import subprocess
@@ -64,17 +65,98 @@ class Visibility:
             raise RuntimeError('Hide Others / restore visibility failed: ' + result.stderr.strip())
 
 
+QA_BUNDLE = 'com.voicelayer.voicebar.uie2e'
+
+
+def qa_executable(output):
+    """This run's QA executable (symlinks resolved, as proc_pidpath reports it)."""
+    app = pathlib.Path((output / 'sandbox-path.txt').read_text().strip()) / 'VoiceBarQA.app'
+    try:
+        name = plistlib.loads((app / 'Contents/Info.plist').read_bytes())['CFBundleExecutable']
+    except Exception:
+        name = 'VoiceBar'
+    return str((app / 'Contents/MacOS' / name).resolve())
+
+
+def capture_source(progress, executable):
+    """The recorder's declared sources: only this run's QA process windows may ever be composited."""
+    sources = re.findall(r'^source=application bundle=(\S+) executable=(\S+) pids=([0-9,]*)$', progress, re.MULTILINE)
+    if not sources or any(bundle != QA_BUNDLE or path != executable for bundle, path, _ in sources):
+        raise RuntimeError('Recorder capture source is not the QA app window set; movie rejected')
+    pids = sorted({int(pid) for _, _, group in sources for pid in group.split(',') if pid})
+    if not pids:
+        raise RuntimeError('Recorder never observed the proven QA process; movie is not QA evidence')
+    return dict(kind='application', bundle=QA_BUNDLE, executable=executable, observedPids=pids, fullDisplay=False)
+
+
+def write_latch(output, record):
+    """Latch a foreign-modal STOP for the supervisor (exit 2). First writer wins; entries redacted."""
+    try:
+        with (output / safety.FOREIGN_MODAL_LATCH).open('x') as file:
+            json.dump(record, file)
+    except FileExistsError:
+        pass
+
+
+def modal_gate(output):
+    """Fresh synchronous modal decision before Hide Others mutates any app's visibility (R2)."""
+    helper = output / 'voicebar-ui-e2e-permissions'
+    try:
+        result = subprocess.run([str(helper)], capture_output=True, text=True, timeout=15, start_new_session=True,
+                                **owned_launch('modal-gate'))
+        parsed = json.loads(result.stdout)
+        entries = safety.modal_receipt(parsed)
+    except Exception as error:
+        entries = getattr(error, 'modals', None) or [dict(owner='unknown', source='not-proven',
+                                                          title=safety.redacted(''), reason='modal-gate-unreadable')]
+    if entries:
+        write_latch(output, dict(status='stop', phase='before-hide-others',
+                                 modals=[e for e in entries if e['source'] != 'not-proven'],
+                                 errors=[e for e in entries if e['source'] == 'not-proven']))
+        raise InterruptedError('Foreign modal or NOT_PROVEN inventory before Hide Others; STOP latched')
+
+
+class Boundary:
+    """Owned broker answering the runner's per-command/action/still modal checks (R4)."""
+    def __init__(self, output):
+        self.output = output
+        self.sandbox = pathlib.Path((output / 'sandbox-path.txt').read_text().strip())
+        self.process = None
+
+    def start(self):
+        ready = self.sandbox / 'boundary/ready.json'
+        self.process = subprocess.Popen([str(self.output / 'voicebar-ui-e2e-permissions'), '--broker', self.sandbox.name,
+                                         str(self.sandbox), qa_executable(self.output), str(self.output / safety.FOREIGN_MODAL_LATCH)],
+                                        stdout=subprocess.DEVNULL, stderr=(self.output / 'boundary.log').open('w'),
+                                        start_new_session=True, **owned_launch('boundary'))
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                raise RuntimeError('Boundary broker exited before UI launch')
+            if ready.is_file():
+                return
+            time.sleep(.05)
+        raise RuntimeError('Boundary broker never became ready; no UI launch without per-boundary modal checks')
+
+    def stop(self):
+        if self.process is not None and self.process.poll() is None:
+            self.process.terminate()  # Our own child handle (never a PID lookup).
+            try: self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired: self.process.kill(); self.process.wait()
+
+
 class Recording:
     def __init__(self, output, capture=None, ffprobe='ffprobe'):
         self.output, self.capture, self.ffprobe = output, capture or str(output / 'voicebar-ui-e2e-capture'), ffprobe
+        self.executable = qa_executable(output)
         self.path = output / ('run-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.mov')
         self.progress = output / 'recording-progress.log'
         self.process = None
         self.files = []
 
     def arguments(self):
-        # Typed ScreenCaptureKit display input; no camera/device-name selection API.
-        return [self.capture, str(self.path)]
+        # ScreenCaptureKit, QA app windows only; no full-display mode, camera or device-name selection.
+        return [self.capture, '--include-bundle', QA_BUNDLE, '--include-executable', self.executable, str(self.path)]
 
     def start(self):
         for tool, option in [(self.capture, '--version'), (self.ffprobe, '-version')]:
@@ -130,7 +212,7 @@ class Recording:
         size = self.path.stat().st_size
         if not math.isfinite(duration) or duration <= 0 or size <= 0 or 'video' not in streams or 'audio' in streams:
             raise RuntimeError('ffprobe requires nonempty video, positive duration and zero audio streams')
-        return dict(durationSeconds=duration, bytes=size, valid=True)
+        return dict(durationSeconds=duration, bytes=size, valid=True, captureSource=capture_source(self.progress.read_text(), self.executable))
 
 
 def stop_test(process):
@@ -154,8 +236,9 @@ def receipt_html(info):
             '">Screen recording (.mov)</a><pre>' + html.escape(json.dumps(info, indent=2)) + '</pre>')
 
 
-def run_suite(output, arguments=None, recording=None, supervisor=None, registry=None):
+def run_suite(output, arguments=None, recording=None, supervisor=None, registry=None, boundary=None):
     recording = recording or Recording(output)
+    boundary = boundary or Boundary(output)
     visibility = Visibility(output)
     info = dict(path=recording.path.name, valid=False)
     atomic_write(output / 'recording.json', json.dumps(info, indent=2) + '\n')
@@ -229,7 +312,10 @@ def run_suite(output, arguments=None, recording=None, supervisor=None, registry=
     if registry is not None: REGISTRATION[:] = [registry]
     try:
         check_cancelled()  # Revalidate the supervisor before any launch.
+        modal_gate(output)  # Any visible foreign modal refuses before Hide Others touches other apps.
         visibility.call('hide')
+        check_cancelled()
+        boundary.start()
         check_cancelled()
         recording.start()  # No test may launch until real frames reach the output file.
         check_cancelled()
@@ -240,6 +326,10 @@ def run_suite(output, arguments=None, recording=None, supervisor=None, registry=
                 check_cancelled()
                 if recording.process.poll() is not None:
                     raise RuntimeError('Recorder stopped during UI execution; gate aborted')
+                if boundary.process.poll() is not None:
+                    raise RuntimeError('Boundary broker stopped during UI execution; gate aborted')
+                if (output / safety.FOREIGN_MODAL_LATCH).exists():
+                    raise InterruptedError('Foreign modal STOP latched; UI run aborted')
                 time.sleep(.05)
             if recording.process.poll() is not None:
                 raise RuntimeError('Recorder ended before test completion; gate aborted')
@@ -251,6 +341,8 @@ def run_suite(output, arguments=None, recording=None, supervisor=None, registry=
         try:
             try: stop_test(test)
             except Exception as error: info['testCleanupError'] = str(error); status = 1
+            try: boundary.stop()
+            except Exception as error: info['boundaryCleanupError'] = str(error); status = 1
             try:
                 info.update(recording.stop())
             except Exception as error:

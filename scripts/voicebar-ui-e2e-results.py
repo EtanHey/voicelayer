@@ -84,6 +84,12 @@ def configure(output, app, sandbox, scenario=None):
     write_scenario(output, scenario)
 
 
+def absence_proven(proof):
+    """A successful CG on-screen inventory at the step with zero windows owned by the proven QA PID."""
+    return (isinstance(proof, dict) and proof.get('cgInventory') == 'ok' and proof.get('onScreenQAWindows') == 0
+            and ((isinstance(proof.get('qaPid'), int) and proof['qaPid'] > 0) or proof.get('qaProcess') == 'none'))
+
+
 def report(directory, steps, manifest, recording=None, issues=(), limitations=(), scenario='full'):
     if scenario not in SCENARIOS:
         raise ValueError('Invalid UIE2E report scenario')
@@ -96,7 +102,24 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
     figures = []
     all_passed = not issues
     for step in steps:
+        capture = step.get('capture')
         matches = [a for a in attachments if a['suggestedHumanReadableName'].startswith(step['attachment'])]
+        # Every published frame is a window-ID capture of the proven QA process; never a desktop crop.
+        if not isinstance(capture, dict) or capture.get('source') != 'qa-window-id' \
+                or capture.get('status') not in ('PROVEN', 'NOT_PROVEN') \
+                or (capture['status'] == 'PROVEN' and not (isinstance(capture.get('windows'), list) and capture['windows'])):
+            raise ValueError('Frame capture source is not the QA window/region: ' + str(step.get('attachment')))
+        if capture['status'] == 'NOT_PROVEN':
+            if matches:
+                raise ValueError('NOT_PROVEN frame carries an image: ' + step['attachment'])
+            # Lead ruling: only a step expecting hidden QA, with a positive expected-absent proof, may pass.
+            allowed = step.get('expectsHiddenQA') is True and absence_proven(capture.get('absenceProof'))
+            status = 'ABSENT (proven)' if allowed else 'FAIL VISUAL NOT_PROVEN'
+            caption = f"{step['number']:04d} {status} ({capture.get('reason', 'unproven')}) {step['name']}"
+            print(caption)
+            all_passed = all_passed and step['passed'] and allowed
+            figures.append(f'<figure><figcaption>{html.escape(caption)}</figcaption></figure>')
+            continue
         if len(matches) != 1:
             raise ValueError(f"Expected one screenshot for {step['attachment']}, found {len(matches)}")
         name = matches[0]['exportedFileName']
@@ -117,6 +140,10 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
         name = recording['path']
         if recording.get('valid') is not True or pathlib.Path(name).name != name:
             raise ValueError('Missing/invalid recording proof')
+        source = recording.get('captureSource') or {}
+        if (source.get('kind') != 'application' or source.get('bundle') != 'com.voicelayer.voicebar.uie2e'
+                or source.get('fullDisplay') is not False or not source.get('executable') or not source.get('observedPids')):
+            raise ValueError('Recording capture source is not the QA app window set')
         video = (f'<p><a href="../{html.escape(name, quote=True)}">Screen recording (.mov)</a> — '
                  f'{recording["durationSeconds"]} s · {recording["bytes"]} bytes · no audio</p>')
     warnings = ''.join('<p role="alert">' + html.escape(issue) + '</p>' for issue in issues)
@@ -330,7 +357,9 @@ def export(output, sandbox, scenario=None):
     write_scenario(output, scenario)
     qa = dict(version=1, scenario=scenario, scope=scenario, scenarioPassed=passed,
               verdict=('FOCUSED_SCENARIO_PASS' if scenario in {'focused-338', 'hide1', 'gate2246'} else 'FULL_UI_SCENARIO_PASS') if passed else 'FAIL',
-              fullReleasePass=False, fullReleaseCoverage='NOT_PROVEN', issues=issues)
+              fullReleasePass=False, fullReleaseCoverage='NOT_PROVEN', issues=issues,
+              # Steps with no proven QA window to capture: no frame was taken (never a desktop crop).
+              visualNotProven=[s['number'] for s in steps if (s.get('capture') or {}).get('status') == 'NOT_PROVEN'])
     (output / 'qa-report.json').write_text(json.dumps(qa, indent=2, sort_keys=True) + '\n')
     return passed
 

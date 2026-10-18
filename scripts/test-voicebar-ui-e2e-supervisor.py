@@ -666,6 +666,7 @@ class SupervisorTests(unittest.TestCase):
     def host(self, output):
         (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
         host = self.module().NativeHost(output, 'gate2246')
+        self.hermetic_host_settings(host)
         host.resident = dict(pid=100, started='resident-start', restoreRequired=True,
                              settingsOpened=True, settingsWindowId=77, initialHidden=False)
         host.identity = lambda pid: 'resident-start'
@@ -1030,10 +1031,16 @@ class SupervisorTests(unittest.TestCase):
             self.assertTrue(any(busy in r for r in module.unsafe_reasons([], [], self.tree(('AXStaticText', busy))))
                             , busy)
 
+    def hermetic_host_settings(self, host):
+        # Synthetic hosts never read the operator's real defaults; GATECAP1 tests drive these directly.
+        host.host_settings = lambda: {'com.apple.dock autohide': '0'}
+        host.symbolic_hotkeys = lambda: SimpleNamespace(returncode=0, stdout=b'')
+
     def busy_host(self, output, nodes, children):
         module = self.module()
         (output / 'sandbox-path.txt').write_text(str(output / 'sandbox'))
         host = module.NativeHost(output, 'gate2246')
+        self.hermetic_host_settings(host)
         host.resident = dict(pid=100, started='start')
         host.identity = lambda pid: 'start'
         host.run = lambda args: 'bun src/mcp-server-daemon.ts' if args[-1] == 'args=' else ''
@@ -1308,6 +1315,13 @@ class SupervisorTests(unittest.TestCase):
             self.assertIn('[]', err.getvalue())
 
     def stub_permissions(self, output, payload, code):
+        # The helper always reports its foreign-modal inventory (GATECAP1); fixtures default to none.
+        try:
+            parsed = json.loads(payload)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            payload = json.dumps(dict(dict(modals=[], inventoryErrors=[]), **parsed))
         helper = output / 'voicebar-ui-e2e-permissions'
         helper.write_text('#!/bin/sh\nprintf %s ' + repr(payload) + '\nexit ' + str(code) + '\n')
         helper.chmod(0o755)
