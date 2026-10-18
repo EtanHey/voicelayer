@@ -248,6 +248,8 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         let capture = makeCapture(fake, readAXSelection: { nil }, pasteboard: board, postCopy: { false })
         let report = run(capture)
         XCTAssertEqual(report.details["outcome"], "copy_failed")
+        XCTAssertEqual(report.details["copy_attempted"], "true")
+        XCTAssertEqual(report.details["copy_resolution"], "copy_failed")
         XCTAssertEqual(report.details["preflight_ax_enable"], "attempted")
         XCTAssertEqual(report.message, "Can't copy\nCheck A11y")
         XCTAssertEqual(report.spoken, [])
@@ -271,6 +273,8 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         let report = run(capture)
         XCTAssertEqual(report.details["outcome"], "capture_failed")
         XCTAssertEqual(report.details["preflight_ax_enable"], "attempted")
+        XCTAssertEqual(report.details["preflight_recheck_reason"], "app_changed")
+        XCTAssertEqual(report.details["copy_attempted"], "false")
         XCTAssertEqual(report.message, "Couldn't read the selection, try again")
         XCTAssertEqual(report.spoken, [])
         XCTAssertEqual(board.changeCount, count)
@@ -291,6 +295,8 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         let capture = makeCapture(fake, readAXSelection: { XCTFail("no selection read"); return nil },
                                   pasteboard: board, postCopy: { XCTFail("Cmd+C must not reach app B"); return false })
         let report = run(capture)
+        XCTAssertEqual(report.details["copy_attempted"], "false")
+        XCTAssertEqual(report.details["copy_resolution"], "not_attempted")
         XCTAssertEqual(fake.frontQueries, 4)
         XCTAssertEqual(report.details["outcome"], "capture_failed")
         XCTAssertEqual(report.message, "Couldn't read the selection, try again")
@@ -340,7 +346,7 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         XCTAssertEqual(report.spoken, [])
     }
 
-    func testReadableAppDiagnosticsCarryNoPreflightFields() {
+    func testReadableAppDiagnosticsDoNotClaimRecovery() {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let fake = FakeAX([.success])
@@ -349,6 +355,156 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         XCTAssertNil(report.details["preflight_retries"])
         XCTAssertEqual(report.spoken, ["native"])
         XCTAssertEqual(fake.sets, [])
+    }
+
+    func testDiagnosticReasonsDoNotChangePreflightDecisions() {
+        let fake = FakeAX([.success])
+        func reason() -> String? {
+            let result = SpeakSelectionCapture.preflight(fake.ax, recover: false, copyExemptApp: nil)
+            return result.blockReason?.diagnosticDetails["preflight_recheck_reason"]
+        }
+        fake.secureInput = true
+        XCTAssertEqual(reason(), "secure_input")
+        fake.secureInput = false
+        fake.trusted = false
+        XCTAssertEqual(reason(), "ax_untrusted")
+        fake.trusted = true
+        fake.focus = .init(role: nil, subrole: nil)
+        XCTAssertEqual(reason(), "role_absent")
+        fake.focus = .init(role: "AXTextField", subrole: "AXSecureTextField")
+        XCTAssertEqual(reason(), "secure_role")
+        fake.statuses = [.apiDisabled]
+        XCTAssertEqual(reason(), "focus_query_failed")
+    }
+
+    func testFocusFailureReportsBeforeRecoverySetterRetriesAndFinalStatus() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let fake = FakeAX([.noValue, .cannotComplete, .success])
+        let details = run(makeCapture(fake, readAXSelection: { "private selected words" }, pasteboard: board)).details
+        XCTAssertEqual(details["preflight_initial_reason"], "allowed")
+        XCTAssertEqual(details["preflight_initial_ax_status"], "-25212")
+        XCTAssertEqual(details["preflight_initial_final_ax_status"], "0")
+        XCTAssertEqual(details["preflight_initial_manual_ax_attempted"], "true")
+        XCTAssertEqual(details["preflight_initial_manual_ax_status"], "0")
+        XCTAssertEqual(details["preflight_initial_retry_statuses"], "-25204,0")
+        XCTAssertEqual(details["copy_attempted"], "false")
+        XCTAssertEqual(details["copy_resolution"], "not_attempted")
+        XCTAssertFalse(details.values.contains { $0.contains("private selected words") })
+    }
+
+    func testRefusedRecoveryRetainsItsActualErrorAndNoRetries() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let fake = FakeAX([.noValue])
+        fake.setResult = .attributeUnsupported
+        let details = run(makeCapture(fake, readAXSelection: { nil }, pasteboard: board)).details
+        XCTAssertEqual(details["preflight_initial_reason"], "focus_query_failed")
+        XCTAssertEqual(details["preflight_initial_ax_status"], "-25212")
+        XCTAssertEqual(details["preflight_initial_final_ax_status"], "-25212")
+        XCTAssertEqual(details["preflight_initial_manual_ax_attempted"], "true")
+        XCTAssertEqual(details["preflight_initial_manual_ax_status"], "-25205")
+        XCTAssertEqual(details["preflight_initial_retry_statuses"], "")
+        XCTAssertEqual(details["copy_attempted"], "false")
+    }
+
+    func testCopyDiagnosticsKeepInitialAndRecheckEvidenceAndResolution() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.setString("private clipboard", forType: .string)
+        let fake = FakeAX([.noValue])
+        let details = run(makeCapture(fake, readAXSelection: { nil }, pasteboard: board, postCopy: {
+            board.clearContents()
+            board.setString("private selection", forType: .string)
+            return true
+        })).details
+        XCTAssertEqual(details["preflight_initial_reason"], "focus_query_failed")
+        XCTAssertEqual(details["preflight_initial_retry_statuses"], Array(repeating: "-25212", count: 8).joined(separator: ","))
+        XCTAssertEqual(details["preflight_recheck_reason"], "focus_query_failed")
+        XCTAssertEqual(details["preflight_recheck_manual_ax_attempted"], "false")
+        XCTAssertEqual(details["copy_attempted"], "true")
+        XCTAssertEqual(details["copy_resolution"], "completed")
+        XCTAssertEqual(board.string(forType: .string), "private clipboard")
+        XCTAssertFalse(details.values.contains { $0.contains("private") })
+    }
+
+    func testLiveAdapterClassifiesMalformedFocusAndRoleWithoutLoggingValues() {
+        let handle = AXUIElementCreateApplication(0) // inert handle, no IPC
+        let cases: [(CFTypeRef?, AXError, CFTypeRef?, String)] = [
+            (nil, .success, nil, "focus_absent"),
+            ("PRIVATE" as CFString, .success, nil, "focus_wrong_type"),
+            (handle, .attributeUnsupported, "PRIVATE" as CFString, "role_query_failed"),
+            (handle, .success, nil, "role_absent"),
+            (handle, .success, NSNumber(value: 42), "role_wrong_type"),
+        ]
+        for (value, roleStatus, roleValue, reason) in cases {
+            for recover in [true, false] {
+                let fake = FakeAX([.success])
+                var ax = fake.ax
+                ax.queryFocus = {
+                    SelectionFocusAX.decodeFocus(value) { key in
+                        key == kAXRoleAttribute ? (roleStatus, roleValue) : (.success, nil)
+                    }
+                }
+                let result = SpeakSelectionCapture.preflight(ax, recover: recover, copyExemptApp: nil)
+                let prefix = recover ? "preflight_initial_" : "preflight_recheck_"
+                let details = result.blockReason?.diagnosticDetails ?? [:]
+                XCTAssertEqual(result.blockReason?.outcome, .captureFailed)
+                XCTAssertEqual(details[prefix + "reason"], reason)
+                XCTAssertEqual(details[prefix + "ax_status"], "0")
+                if reason.hasPrefix("role_") {
+                    XCTAssertEqual(details[prefix + "role_ax_status"], String(roleStatus.rawValue))
+                }
+                XCTAssertFalse(details.values.contains { $0.contains("PRIVATE") })
+                XCTAssertEqual(fake.sets, [])
+            }
+        }
+    }
+
+    func testCopyResolutionIncludesEmptyTimeoutOwnershipRestoreAndSnapshotFailures() {
+        for outcome in ["copy_empty", "copy_timeout", "clipboard_changed", "clipboard_restore_failed", "capture_failed"] {
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            board.setString("PRIVATE clipboard", forType: .string)
+            let fake = FakeAX([.success])
+            var time = 0.0
+            let capture = SpeakSelectionCapture(focusAX: fake.ax, snapshotReader: {
+                outcome == "capture_failed" ? nil : [[(.string, Data("PRIVATE clipboard".utf8))]]
+            }, writeRestoredItems: { board.writeObjects($0) && outcome != "clipboard_restore_failed" },
+            readAXSelection: { nil }, pasteboard: board, postCopy: {
+                XCTAssertNotEqual(outcome, "capture_failed", "snapshot failure must stop before Copy")
+                if outcome != "copy_timeout" {
+                    board.clearContents()
+                    board.setString(outcome == "copy_empty" ? "" : "PRIVATE selection", forType: .string)
+                    if outcome == "clipboard_changed" { board.clearContents() }
+                }
+                return true
+            }, schedule: { delay, work in time += delay; work() }, now: { time })
+            let details = run(capture).details
+            XCTAssertEqual(details["outcome"], outcome)
+            XCTAssertEqual(details["copy_attempted"], String(outcome != "capture_failed"))
+            XCTAssertEqual(details["copy_resolution"], outcome == "capture_failed" ? "not_attempted" : outcome)
+            XCTAssertFalse(details.values.contains { $0.contains("PRIVATE") })
+        }
+    }
+
+    func testRoleFailureStillYieldsToSecureSubroleAndSecureInput() {
+        for secureInput in [false, true] {
+            let fake = FakeAX([.success])
+            var ax = fake.ax
+            var checks = 0
+            ax.secureInputEnabled = { checks += 1; return secureInput && checks == 2 }
+            ax.queryFocus = {
+                SelectionFocusAX.decodeFocus(AXUIElementCreateApplication(0)) { key in
+                    key == kAXRoleAttribute ? (.attributeUnsupported, nil)
+                        : (.success, "AXSecureTextField" as CFString)
+                }
+            }
+            let result = SpeakSelectionCapture.preflight(ax, recover: true, copyExemptApp: nil)
+            XCTAssertEqual(result.blockReason?.outcome, .secureField)
+            XCTAssertEqual(result.details["preflight_initial_reason"], secureInput ? "secure_input" : "secure_role")
+            XCTAssertEqual(result.details["preflight_initial_role_ax_status"], "-25205")
+        }
     }
 
     // MARK: helpers

@@ -80,7 +80,8 @@ final class SpeakSelectionTests: XCTestCase {
         XCTAssertEqual(events.first?.0, "selection_capture")
         let details = events.first?.1 ?? [:]
         XCTAssertEqual(Set(details.keys), Set(["outcome", "ax_read", "path", "host_structure", "appKeyWindowTitle",
-                                             "utf16_count", "line_breaks", "tabs", "object_replacements", "list_marker_lines", "pipe_lines"]))
+            "utf16_count", "line_breaks", "tabs", "object_replacements", "list_marker_lines", "pipe_lines",
+            "copy_attempted", "copy_resolution"]))
         XCTAssertEqual(details["appKeyWindowTitle"], "not_recorded")
         XCTAssertFalse(details.values.contains { $0.contains("PRIVATE_SELECTION") || $0.contains("שלום") })
     }
