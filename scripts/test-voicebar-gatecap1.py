@@ -268,7 +268,7 @@ class HostSettings(unittest.TestCase):
             with patch.object(module.subprocess, 'run', run):
                 values = host.host_settings()
             self.assertIsNone(values['com.apple.dock autohide'])
-            self.assertRegex(values['com.apple.HIToolbox AppleSelectedInputSources'], r'^<redacted len=\d+ sha256=')
+            self.assertRegex(values['com.apple.HIToolbox AppleSelectedInputSources'], r'^<redacted len=\d+ hmac-sha256=')  # REDACT2
             self.assertNotIn('Private', json.dumps(values))
             self.assertFalse(any('write' in a for a in seen))
 
@@ -550,7 +550,7 @@ print("PASS")
             log = (output / 'supervisor-preflight.log').read_text()
             for text in [str(stop.exception), log]:
                 self.assertIn('owner=com.apple.coreservices.uiagent', text)
-                self.assertRegex(text, r'title=<redacted len=%d sha256=' % len(GATEKEEPER_TITLE))
+                self.assertRegex(text, r'title=<redacted len=%d hmac-sha256=' % len(GATEKEEPER_TITLE))  # REDACT2 keyed digest
                 self.assertNotIn('BrainBar', text)
 
     def test_r3_inventory_errors_missing_fields_and_unreadable_helper_are_not_proven(self):

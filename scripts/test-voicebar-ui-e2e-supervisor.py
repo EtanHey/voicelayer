@@ -1,10 +1,13 @@
 import importlib.util
 import contextlib
 import io
+import hashlib
+import hmac
 import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -13,6 +16,191 @@ from types import SimpleNamespace
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 class SupervisorTests(unittest.TestCase):
+    def test_redaction_uses_one_memory_only_32_byte_hmac_key_per_run(self):
+        import secrets
+        key = secrets.token_bytes(32)
+        with patch.object(secrets, 'token_bytes', return_value=key) as generate:
+            module = self.module()
+        generate.assert_called_once_with(32)
+        text = 'hello'
+        tag = hmac.new(key, text.encode(), hashlib.sha256).hexdigest()[:8]
+        expected = '<redacted len=5 hmac-sha256=%s>' % tag
+        self.assertEqual(module.redacted(text), expected)
+        self.assertEqual(module.redacted(text), expected)
+        self.assertNotEqual(tag, hashlib.sha256(text.encode()).hexdigest()[:8])
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            module.note(module.redacted(text), output / 'supervisor-preflight.log')
+            (output / 'receipt.json').write_text(json.dumps(module.ax_receipt([
+                dict(role='AXStaticText', value=text)])))
+            host = module.NativeHost.__new__(module.NativeHost)
+            host.output, host.checks, host.shutdown, host.preflight = output, [], [], {}
+            host.owned = {}
+            host.ownership_races = []
+            host.unproven = {}
+            host.save(dict(error=module.redacted(text)))
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)):
+                with module.supervisor_lock():
+                    for path in output.rglob('*'):
+                        if path.is_file():
+                            data = path.read_bytes()
+                            for encoded in [key, key.hex().encode(), repr(key).encode()]:
+                                self.assertNotIn(encoded, data, path.name)
+
+    def test_redaction_tags_differ_across_supervisor_processes(self):
+        script = ('import runpy; m = runpy.run_path(%r); '
+                  'print(m["redacted"]("hello"))' %
+                  str(ROOT / 'scripts/voicebar-ui-e2e-supervisor.py'))
+        tags = [subprocess.check_output([sys.executable, '-c', script], text=True, timeout=10).strip()
+                for _ in range(2)]
+        self.assertNotEqual(tags[0], tags[1])
+        for tag in tags:
+            self.assertRegex(tag, r'^<redacted len=5 hmac-sha256=[0-9a-f]{8}>$')
+
+    def lock_path(self, tmp):
+        return pathlib.Path(tmp) / ('voicebar-ui-e2e-supervisor-%d.lock' % os.getuid())
+
+    def supervisor_fixture_script(self, tmp):
+        # Inject only in this test process, never via a production env override.
+        return ('import runpy, sys, pathlib; m = runpy.run_path(%r); '
+                'm["main"].__globals__["SUPERVISOR_LOCK_PATH"] = pathlib.Path(%r); ' %
+                (str(ROOT / 'scripts/voicebar-ui-e2e-supervisor.py'), str(self.lock_path(tmp))))
+
+    @contextlib.contextmanager
+    def locked_supervisor(self, tmp):
+        script = self.supervisor_fixture_script(tmp) + (
+            'lock = m["supervisor_lock"](); lock.__enter__(); '
+            'print("locked", flush=True); sys.stdin.read()')
+        process = subprocess.Popen([sys.executable, '-c', script],
+                                   env=dict(os.environ, TMPDIR=tmp), stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            # Bound readiness so a broken fixture cannot hang the test suite.
+            import select
+            self.assertTrue(select.select([process.stdout], [], [], 10)[0], 'lock helper not ready')
+            self.assertEqual(process.stdout.readline().strip(), 'locked')
+            yield process
+        finally:
+            if process.poll() is None:
+                process.kill()  # Only this test's own subprocess; exercise kernel lock release.
+            process.communicate(timeout=10)
+
+    def test_second_supervisor_refuses_before_native_host_or_mute_access(self):
+        with tempfile.TemporaryDirectory() as tmp, self.locked_supervisor(tmp) as owner:
+            module = self.module()
+            first_output, second_output = pathlib.Path(tmp) / 'one', pathlib.Path(tmp) / 'two'
+            first_output.mkdir()
+            second_output.mkdir()
+            # The first run's output root is independent of the second run's root.
+            lock = next(pathlib.Path(tmp).glob('*.lock'))
+            owner_record = lock.read_text()
+            self.assertEqual(owner_record.strip(), str(owner.pid))
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)), \
+                    patch.object(module, 'NativeHost') as host, \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(module.main([str(first_output)]), 2)
+                host.assert_not_called()
+            self.assertIn('Another supervisor run is active', err.getvalue())
+            script = self.supervisor_fixture_script(tmp) + 'sys.exit(m["main"]([%r]))' % str(second_output)
+            result = subprocess.run([sys.executable, '-c', script], env=dict(os.environ, TMPDIR=tmp),
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('Another supervisor run is active', result.stderr)
+            self.assertIn('Another supervisor run is active',
+                          (second_output / 'supervisor-preflight.log').read_text())
+            self.assertEqual(lock.read_text(), owner_record, 'contender rewrote owner PID')
+            self.assertIsNone(owner.poll())
+
+    def test_dead_supervisor_lock_is_reclaimed_without_replacing_lockfile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.locked_supervisor(tmp) as owner:
+                lock = next(pathlib.Path(tmp).glob('*.lock'))
+                inode = lock.stat().st_ino
+            self.assertIsNotNone(owner.returncode)
+            self.assertEqual(lock.read_text().strip(), str(owner.pid))
+            module = self.module()
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)):
+                for _ in range(2):
+                    with module.supervisor_lock():
+                        self.assertEqual(lock.read_text().strip(), str(os.getpid()))
+                        self.assertEqual(lock.stat().st_ino, inode)
+                        with self.assertRaisesRegex(RuntimeError, 'Another supervisor run is active'):
+                            with module.supervisor_lock():
+                                self.fail('overlapping supervisor admitted')
+
+    def test_startup_lock_covers_host_and_supervision_then_releases_on_error(self):
+        module = self.module()
+        for fail in [False, True]:
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as tmp:
+                def assert_locked(*args):
+                    with self.assertRaises(module.SupervisorActiveError):
+                        with module.supervisor_lock():
+                            self.fail('supervisor lifecycle is unlocked')
+                def supervise(host):
+                    assert_locked()
+                    if fail:
+                        raise RuntimeError('synthetic supervisor failure')
+                    return 0
+                with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)), \
+                        patch.object(module, 'NativeHost', side_effect=assert_locked) as host, \
+                        patch.object(module, 'supervise', side_effect=supervise) as run, \
+                        patch.object(module.signal, 'signal'):
+                    if fail:
+                        with self.assertRaisesRegex(RuntimeError, 'synthetic supervisor failure'):
+                            module.main([tmp])
+                    else:
+                        self.assertEqual(module.main([tmp]), 0)
+                    host.assert_called_once()
+                    run.assert_called_once()
+                    with module.supervisor_lock():
+                        pass
+
+    def test_supervisor_lock_is_shared_across_different_tmpdirs(self):
+        with tempfile.TemporaryDirectory() as tmp, self.locked_supervisor(tmp):
+            other_tmp = pathlib.Path(tmp) / 'different-tmpdir'
+            other_tmp.mkdir()
+            script = self.supervisor_fixture_script(tmp) + 'sys.exit(m["main"]([%r]))' % tmp
+            result = subprocess.run([sys.executable, '-c', script],
+                                    env=dict(os.environ, TMPDIR=str(other_tmp)),
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('Another supervisor run is active', result.stderr)
+            # Production path is fixed, with no test/environment override.
+            module = self.module()
+            self.assertEqual(module.SUPERVISOR_LOCK_PATH,
+                             pathlib.Path('/tmp/voicebar-ui-e2e-supervisor-%d.lock' % os.getuid()))
+
+    def test_lock_refusal_with_missing_output_directory_still_exits_two(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp, self.locked_supervisor(tmp):
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', self.lock_path(tmp)), \
+                    patch.object(module, 'NativeHost') as native, \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(module.main([str(pathlib.Path(tmp) / 'missing' / 'output')]), 2)
+                native.assert_not_called()
+            self.assertIn('PREFLIGHT_REFUSED', err.getvalue())
+            self.assertIn('Another supervisor run is active', err.getvalue())
+            self.assertNotIn('Traceback', err.getvalue())
+
+    def test_symlink_lock_is_refused_without_modifying_its_target(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp)
+            target = output / 'preserved.txt'
+            target.write_text('preserve this fixture\n')
+            lock = self.lock_path(tmp)
+            lock.symlink_to(target)
+            with patch.object(module, 'SUPERVISOR_LOCK_PATH', lock), \
+                    patch.object(module, 'NativeHost') as native, \
+                    patch.object(module, 'supervise', return_value=0), \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(module.main([tmp]), 2)
+                native.assert_not_called()
+            self.assertEqual(target.read_text(), 'preserve this fixture\n')
+            self.assertTrue(lock.is_symlink())
+            self.assertIn('PREFLIGHT_REFUSED', err.getvalue())
+            self.assertIn('Cannot open supervisor lock', err.getvalue())
+
     def test_each_scenario_launch_uses_its_pinned_budget(self):
         module = self.module()
         for scenario, seconds in [('full', 2400), ('focused-338', 2400),
@@ -959,7 +1147,6 @@ class SupervisorTests(unittest.TestCase):
                     self.assertEqual(host.preconditions(), expected)
 
     def test_ax_receipts_and_logs_redact_teleprompter_words_and_unknown_labels(self):
-        import hashlib
         word = 'synthetic-private-מילה'
         # Exercise both diagnostic paths: busy substring and missing idle evidence.
         for text, state in [(word, 'VoiceBar teleprompter'), ('Transcribing ' + word, 'VoiceBar'), (word, 'VoiceBar unknown')]:
@@ -976,7 +1163,7 @@ class SupervisorTests(unittest.TestCase):
                                       if p.suffix == '.json' else p.read_text()
                                       for p in host.output.iterdir() if p.is_file()) + err.getvalue()
                 self.assertNotIn(word, persisted)
-                redacted = '<redacted len=%d sha256=%s>' % (len(text), hashlib.sha256(text.encode()).hexdigest()[:8])
+                redacted = module.redacted(text)
                 self.assertIn(redacted, persisted)
                 saved = json.loads((host.output / 'resident-visibility.json').read_text())
                 retained = saved['preconditions'][-1]['axNodes'][-1]
@@ -1004,7 +1191,7 @@ class SupervisorTests(unittest.TestCase):
                     self.assertEqual(module.supervise(host), 2)
                 persisted = '\n'.join(p.read_text() for p in host.output.iterdir() if p.is_file()) + err.getvalue()
                 self.assertNotIn(word, persisted)
-                self.assertIn('<redacted len=28 sha256=', persisted)
+                self.assertIn('<redacted len=28 hmac-sha256=', persisted)
 
     def test_prepare_errors_preserve_initial_inventory_without_claiming_resident(self):
         for failure in ['count', 'identity', 'ax', 'rows']:
@@ -1097,7 +1284,7 @@ class SupervisorTests(unittest.TestCase):
         for observed in ['4242', 'voicelayer-session-a.lock', 'VoiceBar recording']:
             self.assertIn(observed, text)
         self.assertEqual(len(reasons), 3)
-        self.assertIn('<redacted len=17 sha256=', '\n'.join(module.unsafe_reasons([], [], ['Status unreadable'])))
+        self.assertIn('<redacted len=17 hmac-sha256=', '\n'.join(module.unsafe_reasons([], [], ['Status unreadable'])))
         self.assertEqual(len(module.unsafe_reasons([], [], [])), 1)
 
     def test_failing_preflight_logs_observed_values_to_stderr(self):
@@ -1117,7 +1304,7 @@ class SupervisorTests(unittest.TestCase):
             err = io.StringIO()
             with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
                 self.assertFalse(host.preconditions())
-            self.assertIn('<redacted len=17 sha256=', err.getvalue())
+            self.assertIn('<redacted len=17 hmac-sha256=', err.getvalue())
             self.assertIn('precondition', err.getvalue())
             # No daemon child: also logged, never a silent False.
             host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')}
@@ -1187,7 +1374,7 @@ class SupervisorTests(unittest.TestCase):
             self.assertIn('UserNotificationCenter', str(stop.exception))
             self.assertEqual(host.checks[-1]['permissionsExit'], 2)
             self.assertRegex(host.checks[-1]['permissions']['prompts'][0]['labels'][0],
-                             r'^<redacted len=5 sha256=[0-9a-f]{8}>$')
+                             r'^<redacted len=5 hmac-sha256=[0-9a-f]{8}>$')
             host.collect_owned = lambda: None
             host.muted = lambda: True
             with self.assertRaises(RuntimeError) as stop:
@@ -1200,7 +1387,7 @@ class SupervisorTests(unittest.TestCase):
                 host.prepare_resident()
             self.assertIn('exit 2', str(unreadable.exception))
             self.assertNotIn('not json', str(unreadable.exception))
-            self.assertIn('<redacted len=8 sha256=', str(unreadable.exception))
+            self.assertIn('<redacted len=8 hmac-sha256=', str(unreadable.exception))
 
     def test_permission_owner_or_process_name_rejects_free_text(self):
         for field in ['owner', 'processName']:
@@ -1218,7 +1405,7 @@ class SupervisorTests(unittest.TestCase):
                                                        if p.suffix in ['.json', '.log'])
                 self.assertNotIn(private, persisted)
                 self.assertRegex(host.checks[-1]['permissions']['prompts'][0]['owner'],
-                                 r'^<redacted len=29 sha256=[0-9a-f]{8}>$')
+                                 r'^<redacted len=29 hmac-sha256=[0-9a-f]{8}>$')
 
     def test_resident_count_failure_records_count_and_pids(self):
         module = self.module()
@@ -1791,6 +1978,31 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(plain.current_birth(300), '20.000002')
             plain.kernel_birth = lambda pid: None
             self.assertIsNone(plain.current_birth(300))
+
+    def test_real_current_birth_wiring_withholds_signal_from_replaced_pid(self):
+        # CR outside-diff: keep the PRODUCTION current_birth; mock only the kernel birth source.
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {300: dict(started='10.000001', cmd='/fixture/qa', parent=1, state='S')}
+            host = self.r2_host(tmp, live)
+            del host.current_birth  # Drop the fixture override; the real method is back.
+            source_module = type(host).current_birth.__globals__  # The module this host was built from.
+            self.assertIs(host.current_birth.__func__, type(host).current_birth)
+            self.assertNotIn('kernel_birth', vars(host))  # The production NativeHost.kernel_birth too.
+            host.owned = {300: dict(live[300], kind='qa')}
+            source = dict(birth=(10, 1))
+            # Only the kernel birth source (the module-level proc_pidinfo reader) is mocked.
+            with patch.dict(source_module, kernel_birth=lambda pid: source['birth'] if pid == 300 else None):
+                source['birth'] = (20, 2)  # Recycled after ownership was recorded.
+                with patch('os.kill') as kill:
+                    host.terminate_owned(300)
+                    kill.assert_not_called()
+                self.assertEqual(host.owned[300]['retired'], dict(reason='pid-reused', observedBirth='20.000002'))
+                host.owned = {300: dict(live[300], kind='qa')}
+                source['birth'] = (10, 1)  # The same lifetime: the gate lets the signal through.
+                def kill(pid, sig): live.pop(pid, None)
+                with patch('os.kill', side_effect=kill) as killed:
+                    host.terminate_owned(300)
+                killed.assert_called_once_with(300, source_module['signal'].SIGTERM)
 
     def test_n2_one_unreadable_registration_never_starves_other_owned_targets(self):
         module = self.module()
