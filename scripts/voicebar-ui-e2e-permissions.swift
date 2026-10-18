@@ -108,6 +108,19 @@ func provenQAWindows(_ rows: [CGRow], qaPid: Int32?) -> [CGRow] {
     guard let qaPid else { return [] }
     return rows.filter { $0.pid == qaPid && $0.alpha > 0 && !($0.bounds?.isEmpty ?? true) }
 }
+/// Positive expected-absent proof for a hidden-state step: a SUCCESSFUL CG on-screen inventory with
+/// zero visible windows owned by the proven QA PID (or, after QA exited, no process running this
+/// run's QA executable at all). A failed read, an unreadable QA window geometry, or an ambiguous
+/// QA process gives no proof, so the step fails.
+func expectedAbsentProof(_ rows: [CGRow]?, qaPid: Int32?, qaProcessCount: Int) -> [String: Any]? {
+    guard let rows else { return nil }
+    if let qaPid {
+        let owned = rows.filter { $0.pid == qaPid && $0.alpha > 0 }
+        guard owned.allSatisfy({ $0.bounds.map { $0.isEmpty } ?? false }) else { return nil }
+        return ["cgInventory": "ok", "qaPid": Int(qaPid), "onScreenQAWindows": 0]
+    }
+    return qaProcessCount == 0 ? ["cgInventory": "ok", "qaProcess": "none", "onScreenQAWindows": 0] : nil
+}
 /// Window-isolated captures (front to back) composited at their screen positions on black:
 /// transparent QA pixels become black; no other window or desktop pixel is ever an input.
 func compositeOnBlack(_ shots: [(image: CGImage, frame: CGRect)]) -> CGImage? {
@@ -211,19 +224,22 @@ func json(_ object: Any) -> Data { try! JSONSerialization.data(withJSONObject: o
 
 /// Window-ID capture of the proven QA process only (ScreenCaptureKit desktop-independent window,
 /// the equivalent of `screencapture -l<id> -o`), composited on black. nil reason = captured.
-func captureStill(qaPid: Int32?, to path: URL) -> (windows: [UInt32], reason: String?) {
-    guard let qaPid else { return ([], "no-proven-qa-process") }
-    guard let rows = LiveModalSource().windows() else { return ([], "cg-enumeration") }
+func captureStill(qaPid: Int32?, qaProcessCount: Int, to path: URL) -> (windows: [UInt32], reason: String?, proof: [String: Any]?) {
+    let rows = LiveModalSource().windows()   // one fresh CG read at this step, for capture and proof
+    let proof = expectedAbsentProof(rows, qaPid: qaPid, qaProcessCount: qaProcessCount)
+    guard let qaPid else { return ([], "no-proven-qa-process", proof) }
+    guard let rows else { return ([], "cg-enumeration", nil) }
     let targets = provenQAWindows(rows, qaPid: qaPid)
-    guard !targets.isEmpty else { return ([], "no-proven-qa-window") }
+    guard !targets.isEmpty else { return ([], "no-proven-qa-window", proof) }
+    func failed(_ reason: String) -> (windows: [UInt32], reason: String?, proof: [String: Any]?) { ([], reason, nil) }
     let done = DispatchSemaphore(value: 0)
     var content: SCShareableContent?
     SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { found, _ in content = found; done.signal() }
-    guard done.wait(timeout: .now() + 3) == .success, let content else { return ([], "sck-content") }
+    guard done.wait(timeout: .now() + 3) == .success, let content else { return failed("sck-content") }
     var shots: [(image: CGImage, frame: CGRect)] = []
     for target in targets {
         guard let window = content.windows.first(where: { $0.windowID == target.id && $0.owningApplication?.processID == qaPid }),
-              let frame = target.bounds else { return ([], "window-identity-changed") }
+              let frame = target.bounds else { return failed("window-identity-changed") }
         let config = SCStreamConfiguration()
         let scale = NSScreen.screens.first { $0.frame.intersects(frame) }?.backingScaleFactor ?? 2
         config.width = Int(frame.width * scale); config.height = Int(frame.height * scale)
@@ -233,13 +249,13 @@ func captureStill(qaPid: Int32?, to path: URL) -> (windows: [UInt32], reason: St
         SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: config) { found, _ in
             image = found; shot.signal()
         }
-        guard shot.wait(timeout: .now() + 3) == .success, let image else { return ([], "window-capture-failed") }
+        guard shot.wait(timeout: .now() + 3) == .success, let image else { return failed("window-capture-failed") }
         shots.append((image, frame))
     }
     guard let composite = compositeOnBlack(shots),
-          let destination = CGImageDestinationCreateWithURL(path as CFURL, "public.png" as CFString, 1, nil) else { return ([], "composite") }
+          let destination = CGImageDestinationCreateWithURL(path as CFURL, "public.png" as CFString, 1, nil) else { return failed("composite") }
     CGImageDestinationAddImage(destination, composite, nil)
-    return CGImageDestinationFinalize(destination) ? (targets.map(\.id), nil) : ([], "png-write")
+    return CGImageDestinationFinalize(destination) ? (targets.map(\.id), nil, nil) : failed("png-write")
 }
 
 /// Long-lived boundary broker. The sandboxed XCTest runner posts a name-only distributed
@@ -262,7 +278,9 @@ final class Broker {
     }
     func answer(_ kind: String) {
         count += 1
-        let qaPid = provenQAPid(executable: executable, candidates: qaCandidates())
+        let candidates = qaCandidates()
+        let qaPid = provenQAPid(executable: executable, candidates: candidates)
+        let qaProcessCount = candidates.filter { $0.path == executable }.count
         let inventory = modalInventory(LiveModalSource(), qaPids: qaPid.map { [$0] } ?? [])
         let status = latch.decide(inventory)
         var ack: [String: Any] = ["count": count, "kind": kind, "status": status]
@@ -276,10 +294,14 @@ final class Broker {
         if kind == "still" {
             if status == "clear" {
                 let path = boundary.appendingPathComponent("still-\(count).png")
-                let still = captureStill(qaPid: qaPid, to: path)
-                ack["capture"] = still.reason == nil
-                    ? ["status": "PROVEN", "path": path.path, "windows": still.windows.map(Int.init), "qaPid": Int(qaPid ?? 0)]
-                    : ["status": "NOT_PROVEN", "reason": still.reason!]
+                let still = captureStill(qaPid: qaPid, qaProcessCount: qaProcessCount, to: path)
+                if still.reason == nil {
+                    ack["capture"] = ["status": "PROVEN", "path": path.path, "windows": still.windows.map(Int.init), "qaPid": Int(qaPid ?? 0)]
+                } else {
+                    var capture: [String: Any] = ["status": "NOT_PROVEN", "reason": still.reason!]
+                    if let proof = still.proof { capture["absenceProof"] = proof }
+                    ack["capture"] = capture
+                }
             } else { ack["capture"] = ["status": "NOT_PROVEN", "reason": "foreign-modal-stop"] }
         }
         try? json(ack).write(to: boundary.appendingPathComponent("ack.json"), options: .atomic)

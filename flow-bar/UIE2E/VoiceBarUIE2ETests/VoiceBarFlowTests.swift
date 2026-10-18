@@ -23,9 +23,44 @@ func uie2eStillReceipt(_ ack: [String: Any]?, count: Int) -> [String: Any] {
         return ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "no-broker-answer"]
     }
     guard status == "PROVEN", capture["path"] is String, let windows = capture["windows"] as? [Int], !windows.isEmpty else {
-        return ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": capture["reason"] as? String ?? "unproven"]
+        var receipt: [String: Any] = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": capture["reason"] as? String ?? "unproven"]
+        if let proof = capture["absenceProof"] as? [String: Any], uie2eAbsenceProven(proof) { receipt["absenceProof"] = proof }
+        return receipt
     }
     return ["source": "qa-window-id", "status": "PROVEN", "windows": windows, "qaPid": capture["qaPid"] ?? 0]
+}
+/// Steps whose EXPECTED state has no QA window on screen (hidden or terminated). Only these may
+/// pass with a NOT_PROVEN frame, and only with an expected-absent proof; every other step expects
+/// a visible QA window and fails on NOT_PROVEN.
+func uie2eExpectsHiddenQA(step name: String, scenario: String) -> Bool {
+    if name == "terminate QA app" || (name.hasPrefix("GUARD launch ") && name.hasSuffix(" no tripwire")) { return true }
+    guard ["hide1", "gate2246"].contains(scenario) else { return false }
+    // The visual scenarios install their menu with every QA window ordered out.
+    if ["launch isolated QA app", "relaunch isolated QA app"].contains(name)
+        || (name.hasPrefix("GUARD launch ") && name.hasSuffix(" installed")) { return true }
+    if ["HIDE1VIS", "GATE2246"].contains(where: { name == $0 + " no-device guard installed before fixtures"
+        || name == $0 + " no device-start or process tripwire invoked" }) { return true }
+    if name.hasPrefix("HIDE1VIS "), name.hasSuffix(" hidden") { return true }
+    // Deferred failures keep every QA window hidden until Show; a dismissed immediate alert
+    // leaves the snoozed panel hidden (except the "visible" case).
+    if ["GATE2246 HIDE background failure", "GATE2246 HIDE recovered failure"].contains(name) { return true }
+    if name.hasPrefix("GATE2246 HIDE "), name.hasSuffix(" dismiss Later"),
+       !["GATE2246 HIDE visible dismiss Later", "GATE2246 HIDE background dismiss Later"].contains(name) { return true }
+    return false
+}
+/// A positive expected-absent proof: a successful CG inventory with zero on-screen QA windows.
+func uie2eAbsenceProven(_ proof: [String: Any]?) -> Bool {
+    proof?["cgInventory"] as? String == "ok" && proof?["onScreenQAWindows"] as? Int == 0
+        && (proof?["qaPid"] as? Int ?? 0 > 0 || proof?["qaProcess"] as? String == "none")
+}
+/// Lead ruling: a NOT_PROVEN frame passes only for a step whose expected state is hidden AND that
+/// carries an expected-absent proof. Any step expecting a visible QA window fails on NOT_PROVEN.
+func uie2eFrameFailure(_ capture: [String: Any], expectsHiddenQA: Bool) -> String? {
+    guard capture["status"] as? String != "PROVEN" else { return nil }
+    let reason = capture["reason"] as? String ?? "unproven"
+    if !expectsHiddenQA { return "visual NOT_PROVEN on a step expecting a visible QA window (" + reason + ")" }
+    return uie2eAbsenceProven(capture["absenceProof"] as? [String: Any]) ? nil
+        : "hidden-state frame lacks an expected-absent proof (" + reason + ")"
 }
 func uie2eRedacted(_ text: String) -> String {
     let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -164,6 +199,7 @@ final class VoiceBarFlowTests: XCTestCase {
     /// A failed assertion/action still produces a keepAlways attachment and a FAIL receipt.
     func step(_ name: String, skipped: String? = nil, expected issue: UIE2EKnownIssue? = nil,
               surface: String? = nil, surfaces: [String] = [], _ body: () -> Void) {
+        let expectsHiddenQA = uie2eExpectsHiddenQA(step: name, scenario: scenario)
         let number = steps.count + 1
         let attachment = String(format: "UIE2E-%04d", number)
         let before = testRun?.failureCount ?? 0
@@ -198,11 +234,12 @@ final class VoiceBarFlowTests: XCTestCase {
                         activity.add(screenshot)
                     } else { capture = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "still-unreadable"] }
                 }
+                if let failure = uie2eFrameFailure(capture, expectsHiddenQA: expectsHiddenQA) { XCTFail(failure) }
             }
         }
         let passed = (testRun?.failureCount ?? 0) == before
         var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed,
-                                      "capture": capture]
+                                      "capture": capture, "expectsHiddenQA": expectsHiddenQA]
         if let skipped { receipt["skipped"] = skipped }
         if let issue, !matched.isEmpty, passed {
             var expectedReceipt: [String: Any] = ["packet": issue.rawValue, "surface": surface ?? "", "descriptions": matched]

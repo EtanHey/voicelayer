@@ -84,6 +84,12 @@ def configure(output, app, sandbox, scenario=None):
     write_scenario(output, scenario)
 
 
+def absence_proven(proof):
+    """A successful CG on-screen inventory at the step with zero windows owned by the proven QA PID."""
+    return (isinstance(proof, dict) and proof.get('cgInventory') == 'ok' and proof.get('onScreenQAWindows') == 0
+            and ((isinstance(proof.get('qaPid'), int) and proof['qaPid'] > 0) or proof.get('qaProcess') == 'none'))
+
+
 def report(directory, steps, manifest, recording=None, issues=(), limitations=(), scenario='full'):
     if scenario not in SCENARIOS:
         raise ValueError('Invalid UIE2E report scenario')
@@ -106,9 +112,12 @@ def report(directory, steps, manifest, recording=None, issues=(), limitations=()
         if capture['status'] == 'NOT_PROVEN':
             if matches:
                 raise ValueError('NOT_PROVEN frame carries an image: ' + step['attachment'])
-            caption = f"{step['number']:04d} VISUAL NOT_PROVEN ({capture.get('reason', 'unproven')}) {step['name']}"
+            # Lead ruling: only a step expecting hidden QA, with a positive expected-absent proof, may pass.
+            allowed = step.get('expectsHiddenQA') is True and absence_proven(capture.get('absenceProof'))
+            status = 'ABSENT (proven)' if allowed else 'FAIL VISUAL NOT_PROVEN'
+            caption = f"{step['number']:04d} {status} ({capture.get('reason', 'unproven')}) {step['name']}"
             print(caption)
-            all_passed = all_passed and step['passed']
+            all_passed = all_passed and step['passed'] and allowed
             figures.append(f'<figure><figcaption>{html.escape(caption)}</figcaption></figure>')
             continue
         if len(matches) != 1:
