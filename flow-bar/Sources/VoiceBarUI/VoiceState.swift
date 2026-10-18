@@ -341,7 +341,7 @@ public final class VoiceState {
             if mode == .disconnected {
                 invalidateSelectionSpeechIdentity()
             } else if mode != .speaking {
-                clearCurrentSelectionReadIdentity()
+                clearCurrentSelectionReadIdentity(advanceEpoch: false)
             }
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
@@ -953,7 +953,7 @@ public final class VoiceState {
     }
 
     /// Current playback owns only its acknowledged identity, never other pending submissions.
-    private func clearCurrentSelectionReadIdentity(advanceEpoch: Bool = true) {
+    private func clearCurrentSelectionReadIdentity(advanceEpoch: Bool = false) {
         if let id = selectionReadRequestID {
             retireSelectionRequest(id)
             if selectionSpeechRequestID == id {
@@ -977,7 +977,7 @@ public final class VoiceState {
         for id in ids { retireSelectionRequest(id) }
         if let id = selectionSpeechRequestID { retireSelectionRequest(id) }
         if !ids.isEmpty || selectionSubmittedText != nil { selectionSpeechEpoch += 1 }
-        clearCurrentSelectionReadIdentity()
+        clearCurrentSelectionReadIdentity(advanceEpoch: true)
         selectionSpeechRequestID = nil
         selectionSubmittedText = nil
         selectionSubmissionOrder = 0
@@ -1901,7 +1901,8 @@ public final class VoiceState {
                     if requestID != selectionReadRequestID {
                         clearCurrentSelectionReadIdentity(advanceEpoch: false)
                     }
-                    if !acknowledgesSubmission { selectionSpeechEpoch += 1 }
+                    // A different read supersedes this capture, without becoming a user Stop.
+                    if !acknowledgesSubmission, selectionCaptureInFlight { selectionCaptureCancelled = true }
                     selectionReadID = readID
                     selectionReadText = submission?.text ?? (acknowledgesSubmission ? selectionSubmittedText : nil)
                     selectionReadRequestID = requestID ?? (acknowledgesSubmission ? selectionSpeechRequestID : nil)
