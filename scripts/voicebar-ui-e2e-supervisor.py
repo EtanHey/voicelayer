@@ -39,6 +39,10 @@ AX_PUBLIC_LABELS = frozenset((NOTCH_IDLE_LABEL, 'VoiceBar launcher', 'VoiceBar h
                               'Re-transcribing…') + BUSY_PREFIXES + BUSY_TEXT)
 
 
+class OwnershipRace(RuntimeError):
+    """A candidate's ownership could not be proven during a scan; it is skipped, never signalled."""
+
+
 def redacted(text):
     return '<redacted len=%d sha256=%s>' % (len(text), hashlib.sha256(text.encode()).hexdigest()[:8])
 
@@ -236,6 +240,7 @@ class NativeHost:
         self.deadline = None
         self.log = None
         self.owned = {}
+        self.ownership_races = []
         self.shutdown = []
         self.runner_launch_attempted = False
         self.mute_retention_reason = None
@@ -570,7 +575,8 @@ class NativeHost:
 
     def process_state(self, pid):
         try:
-            raw = self.run(['ps', '-p', str(pid), '-o', 'lstart=,stat=,ppid=,comm='])
+            # lstart is local time: pin locale and zone so a DST change cannot fake a reuse.
+            raw = self.run(['env', 'LC_ALL=C', 'TZ=UTC0', 'ps', '-p', str(pid), '-o', 'lstart=,stat=,ppid=,comm='])
         except subprocess.CalledProcessError as error:
             if error.returncode == 1 and not (error.output or '').strip():
                 try:
@@ -590,38 +596,64 @@ class NativeHost:
             raise RuntimeError('Protected identity cannot be owned')
         state = self.process_state(pid)
         if state is not None and expected_cmd is not None and state['cmd'] != expected_cmd:
-            raise RuntimeError('Process changed during ownership capture; no signal: %d (expected cmd %r, observed %r)'
+            raise OwnershipRace('Process changed during ownership capture; no signal: %d (expected cmd %r, observed %r)'
                                % (pid, expected_cmd, state['cmd']))
         if state is not None and parent is not None:
             parent_alive = self.owned_alive(parent) if state['parent'] == parent else None
             if not parent_alive:
-                raise RuntimeError('Child ownership changed during capture; no signal: %d (expected parent %d, '
+                raise OwnershipRace('Child ownership changed during capture; no signal: %d (expected parent %d, '
                                    'observed parent %d, parentAlive=%r)' % (pid, parent, state['parent'], parent_alive))
         if state is not None and pid not in self.owned:
             self.owned[pid] = dict(state, kind=kind)
 
+    def adopt(self, pid, kind, expected_cmd=None, parent=None):
+        # A process that exits, is reparented or reused mid-scan is unprovable, not fatal:
+        # skip it (never signal it) and keep scanning. Launch completeness stays NOT_PROVEN.
+        try:
+            self.remember(pid, kind, expected_cmd, parent)
+        except OwnershipRace as error:
+            if len(self.ownership_races) < 50:
+                self.ownership_races.append(dict(pid=pid, kind=kind, error=str(error)))
+
     def collect_owned(self):
         rows = self.process_rows()
-        expected = str((self.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
+        # Unique run-local executables, never a name match. XCTest launches its runner app
+        # through launchd, so no PPID chain from our runner reaches it (run-03 PID 47300).
+        unique = {str((self.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve()): 'qa',
+                  str((self.output / 'DerivedData/Build/Products/Debug/VoiceBarUIE2ETests-Runner.app/Contents'
+                       '/MacOS/VoiceBarUIE2ETests-Runner').resolve()): 'xctest-runner'}
         for pid, (_, cmd) in rows.items():
-            if cmd == expected:
-                self.remember(pid, 'qa', expected)  # Unique sandbox executable, never a name match.
+            if cmd in unique:
+                self.adopt(pid, unique[cmd], cmd)
         while True:
             added = False
             for pid, (parent, cmd) in rows.items():
                 if pid not in self.owned and parent in self.owned:
-                    self.remember(pid, 'child', cmd, parent)
+                    self.adopt(pid, 'child', cmd, parent)
                     added = added or pid in self.owned
             if not added:
                 break
 
     def owned_alive(self, pid):
+        owned = self.owned[pid]
+        if self.child is not None and pid == self.child.pid:
+            # Our own unreaped child: its PID cannot be reused, whatever it exec'd into.
+            # Once poll() reaps it, it is never signalled again (run-03 PID 46884).
+            return self.child.poll() is None
+        if owned.get('retired'):
+            return False
         current = self.process_state(pid)
         if current is None or current['state'].startswith('Z'):
             return False
-        owned = self.owned[pid]
-        if any(current[k] != owned[k] for k in ['started', 'cmd']):
-            raise RuntimeError('Owned PID identity changed; no signal: ' + str(pid))
+        # Identity is PID + start time. exec keeps both (framework Python's bin/python3 stub,
+        # xcrun's xcodebuild shim); a reused PID always has a new start time.
+        if current['started'] != owned['started']:
+            owned['retired'] = dict(reason='pid-reused', observed=current)
+            self.note('owned PID %d exited and was reused (owned %r, observed %r); never signalled'
+                      % (pid, {k: owned.get(k) for k in ['started', 'cmd', 'parent']}, current))
+            return False
+        if current['cmd'] != owned['cmd'] and current['cmd'] not in owned.setdefault('execs', []):
+            owned['execs'].append(current['cmd'])
         return True
 
     def shutdown_wait(self, seconds):
@@ -659,10 +691,9 @@ class NativeHost:
                 errors.append(repr(error))
         attempt(self.collect_owned)
         if self.child is not None and self.child.poll() is None:
-            if self.child.pid not in self.owned:
-                errors.append('Runner identity was not captured at launch; no signal permitted')
-            else:
-                attempt(lambda: self.terminate_owned(self.child.pid, runner=True))
+            # The unreaped Popen handle is the runner's identity proof, even if ps missed it.
+            self.owned.setdefault(self.child.pid, dict(kind='runner', source='popen-handle'))
+            attempt(lambda: self.terminate_owned(self.child.pid, runner=True))
         attempt(self.collect_owned)  # Include QA launched while the runner was shutting down.
         for pid in list(self.owned):
             if self.child is None or pid != self.child.pid:
@@ -768,6 +799,9 @@ class NativeHost:
         receipt['checks'] = self.checks
         receipt['shutdown'] = self.shutdown
         receipt['preflight'] = self.preflight
+        # Before/after identity of every owned PID (execs, reuse retirements) and skipped races.
+        receipt['owned'] = {str(pid): owned for pid, owned in self.owned.items()}
+        receipt['ownershipRaces'] = self.ownership_races
         (self.output / 'operator-state.json').write_text(json.dumps(receipt, indent=2) + '\n')
 
 

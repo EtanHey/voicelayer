@@ -122,20 +122,24 @@ def stop_test(process):
             os.killpg(process.pid, signal.SIGKILL); process.wait()
 
 
-def run_suite(output, arguments=None, recording=None):
+def run_suite(output, arguments=None, recording=None, supervisor=None):
     recording = recording or Recording(output)
     visibility = Visibility(output)
     info = dict(path=recording.path.name, valid=False)
     (output / 'recording.json').write_text(json.dumps(info, indent=2) + '\n')
     test = None
     status = 1
-    previous = {sig: signal.getsignal(sig) for sig in [signal.SIGINT, signal.SIGTERM]}
+    # SIGHUP too: a torn-down operator session must not kill the runner before it stops its children.
+    previous = {sig: signal.getsignal(sig) for sig in [signal.SIGINT, signal.SIGTERM, signal.SIGHUP]}
     cancelled = []
     def interrupted(sig, frame):
         # Latch throughout startup, execution AND cleanup. Never interrupt media flush.
         cancelled.append(int(sig))
     def check_cancelled():
         if cancelled: raise InterruptedError('UI run interrupted by signal ' + str(cancelled[0]))
+        # Parent-death handling: reparented away from the safety supervisor, stop owned children now.
+        if supervisor is not None and os.getppid() != supervisor:
+            raise InterruptedError('Safety supervisor %d exited; UI run aborted' % supervisor)
     def publish():
         info['cancelledSignals'] = list(cancelled)
         if cancelled: info['error'] = 'UI run interrupted by signal ' + str(cancelled[0])
@@ -215,4 +219,4 @@ if __name__ == '__main__':
             json.dump({'authorizedBy': 'GATE2246B-BRIEF and QA-only seam ruling',
                        'claimedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}, receipt)
     # Validate selection before changing visibility or starting the recorder.
-    sys.exit(run_suite(output, test_arguments(output, args.scenario)))
+    sys.exit(run_suite(output, test_arguments(output, args.scenario), supervisor=os.getppid()))

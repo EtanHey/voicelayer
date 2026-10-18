@@ -722,9 +722,10 @@ class SupervisorTests(unittest.TestCase):
             host.process_rows = lambda: {}
             def signal_sent(pid, sig): live['started'] = 'replacement-start'
             with patch('os.kill', side_effect=signal_sent) as kill:
-                with self.assertRaisesRegex(RuntimeError, 'identity changed'):
-                    host.terminate_owned(200, runner=True)
+                # SUP3: a new start time means the owned process exited; its PID is retired, never re-signalled.
+                host.terminate_owned(200, runner=True)
                 self.assertEqual(kill.call_count, 1)
+            self.assertEqual(host.owned[200]['retired']['reason'], 'pid-reused')
 
     def test_successful_owned_shutdown_and_unreadable_identity_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1404,5 +1405,161 @@ class SupervisorTests(unittest.TestCase):
                 binary.write(marker.encode()); binary.flush()
                 result=subprocess.run(['bash',str(ROOT/'scripts/check-voicebar-qa-free.sh'),binary.name],capture_output=True)
                 self.assertEqual(result.returncode,1,marker)
+
+    # SUP3 (run-03, 2026-10-18): the runner was launched through framework Python's bin/python3
+    # stub, which re-execs Python.app in place. Same PID, same start time, new comm; the
+    # supervisor called that an identity change, aborted, and then refused to signal anything.
+    STUB = '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3'
+    APP = '/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python'
+
+    def sup3_tree(self, host):
+        live = {200: dict(started='runner-start', cmd=self.STUB, parent=99, state='S')}
+        class Child:
+            pid = 200
+            def poll(self): return None if 200 in live else 0
+        host.child = Child()
+        host.process_state = lambda pid: dict(live[pid]) if pid in live else None
+        host.process_rows = lambda: {pid: (s['parent'], s['cmd']) for pid, s in live.items()}
+        host.guard_mute = lambda: None
+        host.shutdown_wait = lambda seconds: None
+        host.remember(200, 'runner')
+        live[200]['cmd'] = self.APP  # The stub's execv lands after Popen returned.
+        qa = str((host.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve())
+        live[201] = dict(started='xcodebuild-start', cmd='/usr/bin/xcodebuild', parent=200, state='S')
+        live[202] = dict(started='qa-start', cmd=qa, parent=1, state='S')
+        return live
+
+    def test_sup3_runner_reexec_is_not_an_identity_change_and_run_continues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            live = self.sup3_tree(host)
+            host.collect_owned()  # run-03 raised 'Owned PID identity changed; no signal: 46884' here.
+            self.assertEqual(set(host.owned), {200, 201, 202})
+            # xcrun's /usr/bin/xcodebuild shim also execs in place; still the same owned process.
+            live[201]['cmd'] = '/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild'
+            self.assertTrue(host.owned_alive(201))
+            self.assertTrue(host.owned_alive(200))
+
+    def test_sup3_supervisor_failure_terminates_runner_xcodebuild_and_qa_with_proof(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            state = {}
+            def start():
+                state['live'] = self.sup3_tree(host)
+                host.runner_launch_attempted = True
+            host.start = start
+            host.prepare_resident = host.restore_resident = lambda: None
+            host.export = lambda: 0
+            host.save = lambda receipt: setattr(host, 'receipt', json.loads(json.dumps(receipt)))
+            mute = [False]
+            host.muted = lambda: mute[0]
+            host.set_mute = lambda value: mute.__setitem__(0, value)
+            checks = []
+            def check():
+                host.collect_owned()
+                checks.append(1)
+                if len(checks) == 3: raise RuntimeError('Device tripwire invoked')
+            host.check = check
+            host.wait = lambda seconds: None
+            signals = []
+            def kill(pid, sig):
+                live = state['live']
+                signals.append((pid, sig))
+                if pid == 200:
+                    # The runner dies; its xcodebuild (exec'd, own session) is reparented.
+                    live.pop(200)
+                    live[201].update(parent=1, cmd='/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild')
+                else:
+                    live.pop(pid, None)
+            with patch.object(module.os, 'kill', side_effect=kill), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                code = module.supervise(host)
+            self.assertEqual(code, 1)
+            self.assertIn('Device tripwire', host.receipt['error'])
+            self.assertEqual(signals[0], (200, module.signal.SIGINT))
+            self.assertEqual({pid for pid, _ in signals}, {200, 201, 202})
+            self.assertFalse(state['live'], 'owned xcodebuild/runner/QA left orphaned')
+            errors = host.shutdown[-1]['errors']
+            self.assertNotIn('identity changed', str(errors))
+            self.assertNotIn('Runner termination NOT_PROVEN', errors)
+            self.assertEqual(errors, ['Launch completeness NOT_PROVEN; discovered subset is not all-owned proof'])
+            self.assertTrue(host.receipt['muteRetained'])  # Launch completeness is still never claimed.
+
+    def test_sup3_reused_pid_is_retired_and_never_signalled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            host.owned = {300: dict(started='start', cmd='/fixture/qa', parent=1, state='S', kind='qa')}
+            reused = dict(started='other-start', cmd='/fixture/qa', parent=1, state='S')
+            host.process_state = lambda pid: dict(reused)
+            host.process_rows = lambda: {300: (1, '/fixture/qa'), 301: (300, '/fixture/grandchild')}
+            host.guard_mute = lambda: None
+            host.shutdown_wait = lambda seconds: None
+            with patch('os.kill') as kill:
+                host.collect_owned()  # A transient reuse never aborts the run.
+                self.assertFalse(host.owned_alive(300))
+                host.terminate_owned(300)
+                self.assertTrue(host.stop())  # The original exited: reuse is termination proof.
+                kill.assert_not_called()
+            self.assertNotIn(301, host.owned)  # A reused PID's children are not ours.
+            self.assertIn('pid-reused', json.dumps(host.owned[300]))
+            self.assertNotIn('NOT_PROVEN: 300', str(host.shutdown))
+
+    def test_sup3_reaped_runner_is_never_signalled_even_if_ps_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            class Child:
+                pid = 200
+                def poll(self): return 0  # Reaped: PID 200 is free for reuse.
+            host.child = Child()
+            host.owned = {200: dict(started='s', cmd='python', parent=1, state='S', kind='runner')}
+            host.process_state = lambda pid: dict(started='s', cmd='python', parent=1, state='S')
+            host.process_rows = lambda: {}
+            host.guard_mute = lambda: None
+            with patch('os.kill') as kill:
+                host.stop()
+                kill.assert_not_called()
+
+    def test_sup3_unreaped_runner_is_signalled_from_its_handle_even_if_ps_is_unreadable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            alive = [True]
+            class Child:
+                pid = 200
+                def poll(self): return None if alive[0] else 130
+            host.child = Child()
+            host.owned = {200: dict(started='s', cmd=self.STUB, parent=1, state='S', kind='runner')}
+            def unreadable(pid): raise RuntimeError('identity unavailable')
+            host.process_state = unreadable
+            host.process_rows = lambda: {}
+            host.guard_mute = lambda: None
+            host.shutdown_wait = lambda seconds: None
+            def kill(pid, sig): alive[0] = False
+            with patch('os.kill', side_effect=kill) as kill_mock:
+                host.terminate_owned(200, runner=True)
+            kill_mock.assert_called_once_with(200, self.module().signal.SIGINT)
+
+    def test_sup3_reparent_race_during_scan_is_skipped_not_fatal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            host.owned = {500: dict(started='s', cmd='runner', parent=1, state='S', kind='qa')}
+            states = {500: dict(started='s', cmd='runner', parent=1, state='S'),
+                      600: dict(started='t', cmd='helper', parent=1, state='S')}  # Reparented after the rows read.
+            host.process_state = lambda pid: dict(states[pid])
+            host.process_rows = lambda: {500: (1, 'runner'), 600: (500, 'helper')}
+            host.collect_owned()
+            self.assertNotIn(600, host.owned)
+            self.assertIn('600', json.dumps(host.ownership_races))
+
+    def test_sup3_owned_identity_reads_are_locale_and_timezone_pinned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            calls = []
+            def run(args):
+                calls.append(args)
+                return 'Sun Oct 18 07:14:49 2026 S 46291 /usr/bin/python3'
+            host.run = run
+            self.assertEqual(host.process_state(46884)['started'], 'Sun Oct 18 07:14:49 2026')
+            self.assertEqual(calls[0][:3], ['env', 'LC_ALL=C', 'TZ=UTC0'])
 
 if __name__=='__main__': unittest.main()

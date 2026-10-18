@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 MODULE = pathlib.Path(__file__).with_name('voicebar-ui-e2e-run.py')
 spec = importlib.util.spec_from_file_location('runner', MODULE)
@@ -208,6 +209,28 @@ class RunnerTests(unittest.TestCase):
 
     def test_process_group_cancel_during_flush_preserves_recorder(self):
         self.assert_cleanup_interrupt('flush', signal.SIGTERM, whole_group=True)
+
+    def test_sighup_from_session_teardown_is_latched_and_cleans_up(self):
+        # SUP3: run-03's runner died without publishing a receipt, orphaning xcodebuild.
+        self.assert_interrupt(signal.SIGHUP, False)
+
+    def test_supervisor_death_aborts_and_stops_owned_children(self):
+        # SUP3: parent-death handling. A runner reparented away from its supervisor stops its test.
+        marker = self.root / 'test-started'
+        parents = iter([4242] * 3)
+        def getppid(): return next(parents, 1)
+        started = time.monotonic()
+        with unittest.mock.patch.object(runner.os, 'getppid', side_effect=getppid):
+            result = runner.run_suite(self.output, [sys.executable, '-c',
+                f'import pathlib,time;pathlib.Path({str(marker)!r}).touch();time.sleep(60)'],
+                self.recorder(), supervisor=4242)
+        self.assertNotEqual(result, 0)
+        self.assertLess(time.monotonic() - started, 30)
+        info = json.loads((self.output / 'recording.json').read_text())
+        self.assertIn('supervisor', info['error'].lower())
+        self.assertTrue(info['valid'])  # The recorder is still flushed, never abandoned.
+        self.assertFalse(info['runPassed'])
+        self.assertTrue(json.loads((self.output / 'visibility.json').read_text())['restored'])
 
     def assert_cleanup_interrupt(self, phase, sig, whole_group=False):
         (self.root / ('delay-' + phase)).touch()
