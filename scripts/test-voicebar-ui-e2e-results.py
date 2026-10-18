@@ -140,6 +140,125 @@ class ReportTests(unittest.TestCase):
                     self.assertEqual(configured['EnvironmentVariables']['VOICEBAR_UIE2E_SCENARIO'], scenario)
                     self.assertEqual(json.loads((self.root / 'scenario.json').read_text())['scenario'], scenario)
 
+    def test_configure_refuses_every_guarded_scenario_without_the_exact_guard_proof(self):
+        products = self.root / 'DerivedData/Build/Products'
+        products.mkdir(parents=True)
+        for scenario in ['hide1', 'gate2246']:
+            with self.subTest(scenario=scenario):
+                (self.root / 'scenario.json').unlink(missing_ok=True)
+                (self.root / 'UIE2E.xctestrun').unlink(missing_ok=True)
+                (products / 'test.xctestrun').write_bytes(plistlib.dumps({'VoiceBarUIE2ETests': {'EnvironmentVariables': {}}}))
+                with self.assertRaises(FileNotFoundError):
+                    results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox', scenario)
+                self.assertFalse((self.root / 'UIE2E.xctestrun').exists())
+                with patch.object(results, 'load_guard') as load:
+                    load.return_value.required.return_value = True
+                    load.return_value.verify.return_value = self.root / 'device-guard.dylib'
+                    results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox', scenario)
+                env = plistlib.loads((self.root / 'UIE2E.xctestrun').read_bytes())['VoiceBarUIE2ETests']['EnvironmentVariables']
+                self.assertEqual(env['VOICEBAR_UIE2E_DEVICE_GUARD'], str(self.root / 'device-guard.dylib'))
+
+    INSTALLED = 'voicebar-no-device-guard-v1:installed\n'
+
+    def guard_logs(self, sandbox, *contents):
+        for launch, text in enumerate(contents, 1):
+            name = 'no-device-guard.log' if launch == 1 else 'no-device-guard-launch-%d.log' % launch
+            (sandbox / name).write_text(text)
+
+    def test_guard_receipt_steps_cover_every_launch_and_the_scenario_boundaries(self):
+        launch = lambda n: {'GUARD launch %d installed' % n, 'GUARD launch %d no tripwire' % n}
+        for scenario, prefix in [('hide1', 'HIDE1VIS'), ('gate2246', 'GATE2246')]:
+            with self.subTest(scenario=scenario):
+                self.assertEqual(results.guard_receipt_steps(scenario, 1),
+                                 {prefix + ' no-device guard installed before fixtures',
+                                  prefix + ' no device-start or process tripwire invoked'} | launch(1))
+        self.assertEqual(results.guard_receipt_steps('full', 3, gate_build=True),
+                         {'GATE2245 no-device guard installed before fixtures',
+                          'GATE2245 no device-start or process tripwire invoked'} | launch(1) | launch(2) | launch(3))
+        self.assertEqual(results.guard_receipt_steps('full', 0), set())
+        self.assertEqual(results.guard_receipt_steps('focused-338', 0), set())
+
+    def test_one_install_marker_per_launch_passes_and_any_other_line_is_a_trip(self):
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        self.assertEqual(results.guard_launch_issues(sandbox), (0, ['FAIL no-device guard receipt missing for launch 1']))
+        self.guard_logs(sandbox, self.INSTALLED, self.INSTALLED)
+        self.assertEqual(results.guard_launch_issues(sandbox), (2, []))
+        for launch in [1, 2]:
+            with self.subTest(trip_on=launch):
+                logs = [self.INSTALLED, self.INSTALLED]
+                logs[launch - 1] += 'AudioDeviceStart\n'
+                self.guard_logs(sandbox, *logs)
+                count, issues = results.guard_launch_issues(sandbox)
+                self.assertEqual(count, 2)
+                self.assertEqual(issues, ['FAIL device tripwire on launch %d: AudioDeviceStart' % launch])
+        # Two installs in one launch log mean two processes shared one receipt: never accepted.
+        self.guard_logs(sandbox, self.INSTALLED * 2, self.INSTALLED)
+        self.assertEqual(results.guard_launch_issues(sandbox)[1],
+                         ['FAIL launch 1 guard receipt is not exactly one install marker'])
+        # A gap in the launch sequence cannot hide a launch.
+        self.guard_logs(sandbox, self.INSTALLED, self.INSTALLED)
+        (sandbox / 'no-device-guard-launch-2.log').rename(sandbox / 'no-device-guard-launch-3.log')
+        self.assertEqual(results.guard_launch_issues(sandbox)[1],
+                         ['FAIL no-device guard launch receipts are not contiguous: [1, 3]'])
+
+    def named_run(self, names, scenario):
+        directory = self.root / 'screenshots'; directory.mkdir()
+        steps = [dict(number=n, name=name, attachment='UIE2E-%04d' % n, passed=True) for n, name in enumerate(names, 1)]
+        coverage = dict(observed=[], exercised=[], missing=[], scenario=scenario)
+        ledger = dict(version=1, steps=steps, completed=True, failures=0, coverage=coverage, knownVisualGaps=[],
+                      scenario=scenario, scope=scenario)
+        manifest = []
+        for step in steps:
+            png = '%04d.png' % step['number']
+            (directory / png).write_bytes(b'png' + str(step['number']).encode())
+            (directory / ('r%04d.json' % step['number'])).write_text(json.dumps(step))
+            manifest += [dict(suggestedHumanReadableName=step['attachment'] + '_0_UUID.png', exportedFileName=png,
+                              isAssociatedWithFailure=False),
+                         dict(suggestedHumanReadableName='UIE2E-RECEIPT-%04d_0_UUID.json' % step['number'],
+                              exportedFileName='r%04d.json' % step['number'], isAssociatedWithFailure=False)]
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        manifest.append(dict(suggestedHumanReadableName='UIE2E-LEDGER_0_UUID.json', exportedFileName='ledger.json',
+                             isAssociatedWithFailure=False))
+        (directory / 'manifest.json').write_text(json.dumps([dict(attachments=manifest)]))
+        (self.root / 'run.mov').write_bytes(b'video')
+        (self.root / 'recording.json').write_text(json.dumps(dict(path='run.mov', valid=True, durationSeconds=1, bytes=5)))
+        (self.root / 'scenario.json').write_text(json.dumps({'scenario': scenario}))
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        return sandbox
+
+    def test_gate2245_full_run_with_a_relaunch_requires_receipts_for_both_launches(self):
+        names = ['launch isolated QA app', 'GUARD launch 1 installed',
+                 'GATE2245 no-device guard installed before fixtures', 'HIDE1 fixtures',
+                 'GATE2245 no device-start or process tripwire invoked', 'popover quit',
+                 'GUARD launch 1 no tripwire', 'relaunch isolated QA app', 'GUARD launch 2 installed',
+                 'terminate QA app', 'GUARD launch 2 no tripwire']
+        for case in ['clean', 'trip-on-relaunch', 'missing-relaunch-step', 'missing-boundary-step']:
+            with self.subTest(case=case):
+                for path in [self.root / 'screenshots', self.root / 'sandbox']:
+                    if path.exists():
+                        __import__('shutil').rmtree(path)
+                run_names = [n for n in names if not (
+                    (case == 'missing-relaunch-step' and n == 'GUARD launch 2 no tripwire')
+                    or (case == 'missing-boundary-step' and n.startswith('GATE2245 no device-start')))]
+                sandbox = self.named_run(run_names, 'full')
+                (sandbox / 'VoiceBarQA.app/Contents').mkdir(parents=True)
+                (sandbox / 'VoiceBarQA.app/Contents/Info.plist').write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
+                self.guard_logs(sandbox, self.INSTALLED,
+                                self.INSTALLED + ('posix_spawn\n' if case == 'trip-on-relaunch' else ''))
+                with patch.object(results.subprocess, 'run'):
+                    passed = results.export(self.root, sandbox)
+                self.assertEqual(passed, case == 'clean')
+                qa = json.loads((self.root / 'qa-report.json').read_text())
+                if case == 'trip-on-relaunch':
+                    self.assertIn('FAIL device tripwire on launch 2: posix_spawn', qa['issues'])
+                if case.startswith('missing'):
+                    self.assertTrue(any(i.startswith('FAIL no-device guard receipt steps missing') for i in qa['issues']))
+
+    def test_ordinary_full_run_needs_no_guard_receipts(self):
+        sandbox = self.named_run(['launch isolated QA app', 'terminate QA app'], 'full')
+        with patch.object(results.subprocess, 'run'):
+            self.assertTrue(results.export(self.root, sandbox))
+
     def focused_run(self):
         directory, ledger, manifest = self.attachment_run()
         ledger.update(scenario='focused-338', scope='focused-338')
