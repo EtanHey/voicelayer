@@ -27,7 +27,10 @@ class SupervisorTests(unittest.TestCase):
             host.set_mute = lambda value: mute.__setitem__(0, value)
             host.check = lambda: None
             host.remember = lambda *args: None
-            host.stop = lambda: False  # Unknown descendants must retain mute, not suppress verdicts.
+            def stop():
+                if host.log: host.log.close()
+                return False  # Unknown descendants retain mute without suppressing verdicts.
+            host.stop = stop
             host.export = lambda: actions.append('export') or 0
             class Child:
                 pid = 200
@@ -50,6 +53,22 @@ class SupervisorTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'shown resident'):
                 host.prepare_resident()
             self.assertFalse(host.runner_launch_attempted)
+
+    def test_ship2246_shown_surface_and_identity_drift_never_clear_obligations(self):
+        for failure in ['surface', 'resident', 'daemon']:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                host = self.host(pathlib.Path(tmp))
+                host.resident.update(visibilityPolicy='leave-shown', settingsOpened=False,
+                                     restoreRequired=False, daemonPid=101, daemonStarted='daemon-start')
+                host.resident.pop('settingsWindowId')
+                host.identity = lambda pid: ('changed' if failure == 'resident' and pid == 100 else
+                    'changed' if failure == 'daemon' and pid == 101 else
+                    'daemon-start' if pid == 101 else 'resident-start')
+                actions = []
+                host.ax = lambda mode: actions.append(mode) or dict(screenWindows=[])
+                with self.assertRaises(RuntimeError): host.restore_resident()
+                self.assertFalse(host.resident['shownUnchanged'])
+                self.assertTrue(all(mode == 'read' for mode in actions))
 
     def test_hrest3_native_mutations_refuse_before_helper_dispatch(self):
         # A successful receipt, including a new ID, can describe a concurrent user open.
@@ -162,7 +181,7 @@ class SupervisorTests(unittest.TestCase):
                 return json.dumps(dict(pid=100, action=mode, nodes=[], screenWindows=[]))
             host.run = io
             with self.assertRaises(RuntimeError): host.prepare_resident()
-            self.assertEqual(actions, ['read', 'read'])
+            self.assertEqual(actions, ['read'])
             self.assertFalse(before_open)  # No possibly-applied action needs a new obligation.
             self.assertFalse(host.runner_launch_attempted)
             source = (ROOT / 'scripts/voicebar-ui-e2e-resident.swift').read_text()

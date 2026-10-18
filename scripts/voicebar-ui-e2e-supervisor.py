@@ -242,31 +242,23 @@ class NativeHost:
                              settingsOpened=False)
         self.save_resident()
         snapshot = self.ax('read')
-        nodes = snapshot['nodes']
-        if any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings' for n in nodes):
-            raise RuntimeError('Resident Settings already open; cannot close a user-owned window')
         self.resident['initialSurface'] = self.surface(snapshot)
-        # Settings would expose the footer, but current resident ownership cannot be proven.
-        # settings(True) must STOP before dispatch; this path cannot authorize a runner.
-        self.settings(True)
-        wait_until_safe(self)
-        nodes = self.ax('read')['nodes']
-        self.resident['initialHidden'] = any('Show VoiceBar' in [n.get('title'), n.get('description')] for n in nodes)
-        if bool(self.resident['initialSurface']) == self.resident['initialHidden']:
-            raise RuntimeError('Initial visibility and surface evidence disagree; no Hide permitted')
-        if not self.resident['initialHidden']:
-            self.resident['restoreRequired'] = True  # Write BEFORE a possibly applied AX press.
-            self.save_resident()
-            result = self.ax('hide')
-            if not any('Show VoiceBar' in [n.get('title'), n.get('description')] for n in result['nodes']):
-                raise RuntimeError('Own Hide unconfirmed; no workaround')
+        if not self.resident['initialSurface']:
+            raise RuntimeError('A shown resident surface is required; no native visibility mutation permitted')
+        # SHIP2246 ruling: leave the installed resident shown. Settings ownership
+        # is unavailable, so do not open, close, Hide or Show any resident window.
+        self.resident.update(visibilityPolicy='leave-shown', initialHidden=False)
         self.save_resident()
+        wait_until_safe(self)
 
     def start(self):
-        wait_until_safe(self)  # Recheck before launch, with hidden-state AX footer readable.
-        self.settings(False)
-        if self.ax('read')['screenWindows']:
-            raise RuntimeError('Resident window remains on screen after own Hide')
+        wait_until_safe(self)
+        if self.resident.get('visibilityPolicy') == 'leave-shown':
+            self.verify_shown_resident()
+        else:
+            self.settings(False)
+            if self.ax('read')['screenWindows']:
+                raise RuntimeError('Resident window remains on screen after own Hide')
         self.check()
         subprocess.run([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-results.py'), 'configure',
                         str(self.output), str(self.sandbox / 'VoiceBarQA.app'), str(self.sandbox),
@@ -426,8 +418,27 @@ class NativeHost:
         self.shutdown.append(dict(errors=errors, terminationProven=not errors))
         return not errors
 
+    def verify_shown_resident(self):
+        if self.identity(self.resident['pid']) != self.resident['started']:
+            raise RuntimeError('Resident identity changed during shown gate')
+        if ('daemonPid' in self.resident and
+                self.identity(self.resident['daemonPid']) != self.resident['daemonStarted']):
+            raise RuntimeError('Resident daemon identity changed during shown gate')
+        current = self.surface(self.ax('read'))
+        initial = self.resident.get('initialSurface')
+        if not initial or not all(window in current for window in initial):
+            raise RuntimeError('Original shown resident surface NOT_PROVEN; no Settings mutation permitted')
+        self.resident['shownUnchanged'] = True
+        self.resident['identitiesUnchanged'] = True
+        self.save_resident()
+
     def restore_resident(self):
         if not self.resident:
+            return
+        if self.resident.get('visibilityPolicy') == 'leave-shown':
+            self.resident['shownUnchanged'] = False
+            self.save_resident()
+            self.verify_shown_resident()
             return
         required = any(self.resident.get(key) for key in
                        ['restoreRequired', 'settingsRestoreRequired', 'settingsActionPending',
