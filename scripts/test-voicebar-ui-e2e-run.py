@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -235,6 +237,85 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(info['valid'])  # The recorder is still flushed, never abandoned.
         self.assertFalse(info['runPassed'])
         self.assertTrue(json.loads((self.output / 'visibility.json').read_text())['restored'])
+
+    def test_supervisor_death_after_child_launch_reaps_child_and_fails_receipt(self):
+        # CR 4306348751: the child really starts, THEN the supervisor dies mid-run.
+        marker = self.root / 'test-started'
+        def birth(pid):
+            return (7, 7) if pid == 4242 and not marker.exists() else None
+        with unittest.mock.patch.object(runner.os, 'getppid', return_value=4242), \
+                unittest.mock.patch.object(runner.safety, 'kernel_birth', side_effect=birth):
+            result = runner.run_suite(self.output, [sys.executable, '-c',
+                f'import os,pathlib,time;pathlib.Path({str(marker)!r}).write_text(str(os.getpid()));time.sleep(60)'],
+                self.recorder(), supervisor=dict(pid=4242, birth=(7, 7)))
+        self.assertTrue(marker.exists(), 'the child must have launched before the supervisor died')
+        with self.assertRaises(ProcessLookupError):  # Stopped AND reaped: no live or zombie PID left.
+            os.kill(int(marker.read_text()), 0)
+        self.assertNotEqual(result, 0)
+        info = json.loads((self.output / 'recording.json').read_text())
+        self.assertIn('supervisor', info['error'].lower())
+        self.assertIsNotNone(info['testExit'])
+        self.assertTrue(info['valid'])  # Media still finalizes after the supervisor is gone.
+        self.assertFalse(info['runPassed'])
+        self.assertTrue(json.loads((self.output / 'visibility.json').read_text())['restored'])
+
+    def test_supervisor_lost_after_final_loop_check_never_publishes_pass(self):
+        # CR 4306348758: alive for every loop check, dead by the time cleanup publishes.
+        lost = []
+        recording = self.recorder()
+        stop = recording.stop
+        def stop_then_lose_supervisor():
+            lost.append(True)  # Dies without a caught signal while media flushes.
+            return stop()
+        recording.stop = stop_then_lose_supervisor
+        def birth(pid): return (7, 7) if pid == 4242 and not lost else None
+        printed = io.StringIO()
+        with unittest.mock.patch.object(runner.os, 'getppid', return_value=4242), \
+                unittest.mock.patch.object(runner.safety, 'kernel_birth', side_effect=birth), \
+                contextlib.redirect_stdout(printed):
+            result = runner.run_suite(self.output, [sys.executable, '-c', 'pass'], recording,
+                                      supervisor=dict(pid=4242, birth=(7, 7)))
+        self.assertNotEqual(result, 0)
+        info = json.loads((self.output / 'recording.json').read_text())
+        self.assertEqual(info['testExit'], 0)
+        self.assertTrue(info['valid'])
+        self.assertFalse(info['runPassed'])
+        self.assertEqual(info['failReason'], 'supervisor-lost')
+        self.assertIn('supervisor-lost', (self.output / 'recording.html').read_text())
+        self.assertNotIn('PASS', printed.getvalue())
+        self.assertIn('FAIL recording:', printed.getvalue())
+
+    def test_supervisor_replaced_by_same_pid_before_publish_never_passes(self):
+        # Same PID, different microsecond birth: a recycled PID is not the authenticated supervisor.
+        recording = self.recorder()
+        stop = recording.stop
+        births = [(7, 7)]
+        def stop_then_replace():
+            births[0] = (7, 8)
+            return stop()
+        recording.stop = stop_then_replace
+        with unittest.mock.patch.object(runner.os, 'getppid', return_value=4242), \
+                unittest.mock.patch.object(runner.safety, 'kernel_birth', side_effect=lambda pid: births[0]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            result = runner.run_suite(self.output, [sys.executable, '-c', 'pass'], recording,
+                                      supervisor=dict(pid=4242, birth=(7, 7)))
+        self.assertNotEqual(result, 0)
+        info = json.loads((self.output / 'recording.json').read_text())
+        self.assertFalse(info['runPassed'])
+        self.assertEqual(info['failReason'], 'supervisor-lost')
+
+    def test_live_authenticated_supervisor_at_publish_still_passes(self):
+        printed = io.StringIO()
+        with unittest.mock.patch.object(runner.os, 'getppid', return_value=4242), \
+                unittest.mock.patch.object(runner.safety, 'kernel_birth', return_value=(7, 7)), \
+                contextlib.redirect_stdout(printed):
+            result = runner.run_suite(self.output, [sys.executable, '-c', 'pass'], self.recorder(),
+                                      supervisor=dict(pid=4242, birth=(7, 7)))
+        self.assertEqual(result, 0)
+        info = json.loads((self.output / 'recording.json').read_text())
+        self.assertTrue(info['runPassed'])
+        self.assertNotIn('failReason', info)
+        self.assertIn('PASS recording:', printed.getvalue())
 
     def test_supervisor_death_before_suite_entry_never_launches(self):
         # Sol R5: validated supervisor 4242 died; launchd (1) is now the parent. Never adopt it.

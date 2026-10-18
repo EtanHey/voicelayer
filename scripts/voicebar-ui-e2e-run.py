@@ -155,21 +155,28 @@ def run_suite(output, arguments=None, recording=None, supervisor=None, registry=
     def interrupted(sig, frame):
         # Latch throughout startup, execution AND cleanup. Never interrupt media flush.
         cancelled.append(int(sig))
+    def supervisor_alive():
+        # The authenticated supervisor identity (PID + kernel birth), never a re-sampled parent:
+        # launchd adopting us must not pass as the supervisor.
+        try:
+            return (os.getppid() == supervisor['pid'] and
+                    safety.kernel_birth(supervisor['pid']) == tuple(supervisor['birth']))
+        except RuntimeError:
+            return False
     def check_cancelled():
         if cancelled: raise InterruptedError('UI run interrupted by signal ' + str(cancelled[0]))
-        # Parent-death handling against the authenticated supervisor identity (PID + kernel birth),
-        # never a re-sampled parent: launchd adopting us must not pass as the supervisor.
-        if supervisor is not None:
-            try:
-                alive = (os.getppid() == supervisor['pid'] and
-                         safety.kernel_birth(supervisor['pid']) == tuple(supervisor['birth']))
-            except RuntimeError:
-                alive = False
-            if not alive:
-                raise InterruptedError('Safety supervisor %d exited; UI run aborted' % supervisor['pid'])
+        if supervisor is not None and not supervisor_alive():
+            raise InterruptedError('Safety supervisor %d exited; UI run aborted' % supervisor['pid'])
     def publish():
+        nonlocal status
         info['cancelledSignals'] = list(cancelled)
         if cancelled: info['error'] = 'UI run interrupted by signal ' + str(cancelled[0])
+        # A PASS needs a live authenticated supervisor at publish time: it can die without a caught
+        # signal after the last loop check, while cleanup flushes and probes.
+        if status == 0 and not cancelled and supervisor is not None and not supervisor_alive():
+            status = 1
+            info['failReason'] = 'supervisor-lost'
+            info.setdefault('error', 'Safety supervisor %d lost before publish (supervisor-lost)' % supervisor['pid'])
         info['runPassed'] = status == 0 and not cancelled
         (output / 'recording.json').write_text(json.dumps(info, indent=2) + '\n')
         caption = html.escape(json.dumps(info, indent=2))

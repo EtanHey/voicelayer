@@ -1778,6 +1778,31 @@ class SupervisorTests(unittest.TestCase):
             plain.kernel_birth = lambda pid: None
             self.assertIsNone(plain.current_birth(300))
 
+    def test_real_current_birth_wiring_withholds_signal_from_replaced_pid(self):
+        # CR outside-diff: keep the PRODUCTION current_birth; mock only the kernel birth source.
+        with tempfile.TemporaryDirectory() as tmp:
+            live = {300: dict(started='10.000001', cmd='/fixture/qa', parent=1, state='S')}
+            host = self.r2_host(tmp, live)
+            del host.current_birth  # Drop the fixture override; the real method is back.
+            source_module = type(host).current_birth.__globals__  # The module this host was built from.
+            self.assertIs(host.current_birth.__func__, type(host).current_birth)
+            self.assertNotIn('kernel_birth', vars(host))  # The production NativeHost.kernel_birth too.
+            host.owned = {300: dict(live[300], kind='qa')}
+            source = dict(birth=(10, 1))
+            # Only the kernel birth source (the module-level proc_pidinfo reader) is mocked.
+            with patch.dict(source_module, kernel_birth=lambda pid: source['birth'] if pid == 300 else None):
+                source['birth'] = (20, 2)  # Recycled after ownership was recorded.
+                with patch('os.kill') as kill:
+                    host.terminate_owned(300)
+                    kill.assert_not_called()
+                self.assertEqual(host.owned[300]['retired'], dict(reason='pid-reused', observedBirth='20.000002'))
+                host.owned = {300: dict(live[300], kind='qa')}
+                source['birth'] = (10, 1)  # The same lifetime: the gate lets the signal through.
+                def kill(pid, sig): live.pop(pid, None)
+                with patch('os.kill', side_effect=kill) as killed:
+                    host.terminate_owned(300)
+                killed.assert_called_once_with(300, source_module['signal'].SIGTERM)
+
     def test_n2_one_unreadable_registration_never_starves_other_owned_targets(self):
         module = self.module()
         with tempfile.TemporaryDirectory() as tmp:
