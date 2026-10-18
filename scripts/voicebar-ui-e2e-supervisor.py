@@ -2,6 +2,7 @@
 """Guard the native gate lifecycle; refuse UI mutation without causal Settings ownership."""
 import argparse
 import datetime
+import hashlib
 import importlib.util
 import json
 import os
@@ -26,15 +27,33 @@ RESIDENT_EXECUTABLE = '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'
 NOTCH_IDLE_LABEL = 'VoiceBar'
 BUSY_PREFIXES = ('Recording', 'Starting microphone', 'Stop recording', 'Cancel recording')
 BUSY_TEXT = ('VoiceBar recording', 'VoiceBar status', 'VoiceBar teleprompter', 'Stop speaking',
-             'Cancel transcription', 'Transcribing', 'Agent speaking')
-# Capture, playback and one-shot transcription children of the resident daemon.
-BUSY_CHILDREN = ('rec', 'sox', 'play', 'afplay', 'whisper-cli')
-LEGACY_IDLE_TEXT = ('Ready', 'Start voice recording')
-LEGACY_IDLE_PREFIXES = ('Ready.', 'Hidden until ')
+             'VoiceBar launcher', 'VoiceBar history', 'Cancel transcription', 'Transcribing',
+             'Agent speaking', 'Re-transcribing')
+# Deliberately empty: no daemon descendant has a proven, permanently idle contract.
+# This includes recognizers, recorders, players, Python TTS and unknown/new workers.
+# Adding an exception requires documenting its idle contract here, never a busy-name list.
+IDLE_DAEMON_CHILDREN = frozenset()
+# Exact labels only. Prefix/substring matching can detect busy state in memory but
+# must never authorize retention of a spoken word or a dynamic status suffix.
+AX_PUBLIC_LABELS = frozenset((NOTCH_IDLE_LABEL, 'VoiceBar launcher', 'VoiceBar history',
+                              'Ready', 'Start voice recording', 'Re-transcribing stored audio',
+                              'Re-transcribing…') + BUSY_PREFIXES + BUSY_TEXT)
+
+
+def ax_text_receipt(text):
+    if text in AX_PUBLIC_LABELS or text == '':
+        return text
+    return '<redacted len=%d sha256=%s>' % (len(text), hashlib.sha256(text.encode()).hexdigest()[:8])
+
+
+def ax_receipt(nodes):
+    return [dict({k: n[k] for k in ['role', 'identifier', 'frame'] if k in n},
+                 **{k: ax_text_receipt(n[k]) for k in ['title', 'description', 'value'] if k in n})
+            for n in nodes]
 
 
 def ax_nodes(ax_tree):
-    # A bare string is unstructured text: it can match busy or legacy text, never the notch group.
+    # A bare string is unstructured text: it can match busy text, never the notch group.
     return [dict(value=x) if isinstance(x, str) else x for x in ax_tree]
 
 
@@ -53,18 +72,16 @@ def unsafe_reasons(busy_children, fresh_locks, ax_tree):
     labels = [x for n in nodes for x in node_labels(n)]
     reasons = []
     if busy_children:
-        reasons.append('capture/playback/transcription process(es) under resident daemon: '
+        reasons.append('unallowlisted child process(es) under resident daemon: '
                        + repr(list(busy_children)))
     if fresh_locks:
         reasons.append('fresh session lock(s) (<300s): ' + repr(list(fresh_locks)))
     busy = [x for x in labels if x.startswith(BUSY_PREFIXES) or any(t in x for t in BUSY_TEXT)]
     if busy:
-        reasons.append('AX shows busy resident: ' + repr(busy))
+        reasons.append('AX shows busy resident: ' + repr([ax_text_receipt(x) for x in busy]))
     # Require positive AX evidence. A collapsed/empty tree is UNKNOWN, never idle.
-    elif not (notch_idle(nodes) or any(x in LEGACY_IDLE_TEXT or x.startswith(LEGACY_IDLE_PREFIXES)
-                                       for x in labels)):
-        reasons.append('no positive idle AX evidence; observed ' + repr(
-            [dict(role=n.get('role'), labels=node_labels(n)) for n in nodes if node_labels(n)]))
+    elif not notch_idle(nodes):
+        reasons.append('no positive idle AX evidence; observed ' + repr(ax_receipt(nodes)))
     return reasons
 
 
@@ -242,6 +259,15 @@ class NativeHost:
         result = json.loads(self.run(args))
         return result
 
+    def read_resident_ax(self):
+        try:
+            return self.ax('read')
+        except Exception as error:
+            # Helper failures may embed stdout/AX text. Never propagate that payload
+            # into supervise()'s operator receipt or its FAILED log line.
+            raise RuntimeError('Resident AX read failed: %s %s' %
+                               (type(error).__name__, ax_text_receipt(str(error)))) from None
+
     def guard_mute(self):
         if not self.muted():
             self.set_mute(True)
@@ -267,7 +293,7 @@ class NativeHost:
     def settings_state(self):
         # Retire before reading: even an unreadable/absent snapshot cannot renew a lease.
         self.retire_settings_claim()
-        result = self.ax('read')
+        result = self.read_resident_ax()
         opened = any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings'
                      for n in result['nodes'])
         if opened:
@@ -294,7 +320,8 @@ class NativeHost:
         return [dict(bounds=w['bounds'], layer=w['layer']) for w in windows]
 
     def save_resident(self):
-        (self.output / 'resident-visibility.json').write_text(json.dumps(self.resident, indent=2) + '\n')
+        (self.output / 'resident-visibility.json').write_text(
+            json.dumps(dict(self.resident, preflight=self.preflight), indent=2) + '\n')
 
     def process_rows(self):
         rows = {}
@@ -322,102 +349,118 @@ class NativeHost:
             raise RuntimeError('Resident child args unreadable; PID still exists: %d (ps exit %d, output %r)'
                                % (pid, error.returncode, error.output)) from error
 
-    def preconditions(self):
+    def resident_inventory(self, attempt):
         rows = self.process_rows()
-        pid = self.resident['pid']
         residents = sorted(p for p, (_, cmd) in rows.items() if cmd == RESIDENT_EXECUTABLE)
-        related = set(residents)
+        related = set(residents) | ({self.resident['pid']} if self.resident.get('pid') in rows else set())
         while True:
             extended = related | {p for p, (parent, _) in rows.items() if parent in related}
             if extended == related:
                 break
             related = extended
-        inventory = dict(residentPids=residents, residentCount=len(residents),
-                         processRows={str(p): list(rows[p]) for p in sorted(related)})
+        attempt.update(residentPids=residents, residentCount=len(residents),
+                       processRows={str(p): list(rows[p]) for p in sorted(related)})
         self.preflight.update(residentPids=residents, residentCount=len(residents))
-        attempts = self.resident.setdefault('preconditions', [])
-        if residents != [pid]:
-            attempts.append(dict(inventory, safe=False))
+        return rows
+
+    def preconditions(self):
+        attempt = dict(safe=False, residentPids=None, residentCount=None, daemonPids=None,
+                       daemonCount=None, processRows={})
+        self.resident.setdefault('preconditions', []).append(attempt)
+        try:
+            rows = self.resident_inventory(attempt)
+            # Save an unsafe observation before any identity/args/AX reads can fail.
             self.save_resident()
-            message = ('Exactly one installed resident required on recheck; never launch/replace one '
-                       '(expected [%d], observed %d %r)' % (pid, len(residents), residents))
-            self.note(message)
-            raise RuntimeError(message)
-        cmd = rows.get(pid, (None, None))[1]
-        observed = (cmd, self.identity(pid) if cmd == RESIDENT_EXECUTABLE else None)
-        if observed != (RESIDENT_EXECUTABLE, self.resident['started']):
-            message = ('Resident identity changed; no action permitted (pid %d expected started %r, observed %r)'
-                       % (pid, self.resident['started'], observed))
-            self.note(message)
-            raise RuntimeError(message)
-        children = {p: self.child_args(p) for p, (parent, _) in sorted(rows.items()) if parent == pid}
-        daemons = [p for p, args in children.items() if args is not None and 'mcp-server-daemon.ts' in args]
-        attempt = dict(inventory, daemonPids=daemons, daemonCount=len(daemons))
-        if len(daemons) != 1:
-            attempts.append(dict(attempt, safe=False))
+            pid = self.resident['pid']
+            residents = attempt['residentPids']
+            if residents != [pid]:
+                raise RuntimeError('Exactly one installed resident required on recheck; never launch/replace one '
+                                   '(expected [%d], observed %d %r)' % (pid, len(residents), residents))
+            observed = self.identity(pid)
+            attempt['residentStarted'] = observed
+            if observed != self.resident['started']:
+                raise RuntimeError('Resident identity changed; no action permitted (pid %d expected started %r, observed %r)'
+                                   % (pid, self.resident['started'], observed))
+            children = attempt['residentChildren'] = {}
+            for p, (parent, _) in sorted(rows.items()):
+                if parent == pid:
+                    children[p] = self.child_args(p)
+            daemons = [p for p, args in children.items() if args is not None and 'mcp-server-daemon.ts' in args]
+            attempt.update(daemonPids=daemons, daemonCount=len(daemons))
+            if len(daemons) != 1:
+                self.note('precondition failed: expected exactly one mcp-server-daemon.ts child of resident %d; '
+                          'observed %d %r; resident children %r' % (pid, len(daemons), daemons, children))
+                return False
+            daemon = daemons[0]
+            identity = self.identity(daemon)
+            attempt['daemonStarted'] = identity
+            if 'daemonPid' in self.resident and (daemon != self.resident['daemonPid'] or identity != self.resident['daemonStarted']):
+                raise RuntimeError('Resident daemon identity changed; no action permitted (expected pid %r started %r, '
+                                   'observed pid %d started %r)' % (self.resident['daemonPid'], self.resident['daemonStarted'],
+                                                                    daemon, identity))
+            self.resident.update(daemonPid=daemon, daemonStarted=identity)
+            descendants = {daemon}
+            while True:
+                extended = descendants | {p for p, (parent, _) in rows.items() if parent in descendants}
+                if extended == descendants:
+                    break
+                descendants = extended
+            busy = [p for p in sorted(descendants - {daemon}) if rows[p][1] not in IDLE_DAEMON_CHILDREN]
+            locks = []
+            attempt.update(capturePids=busy, freshLocks=locks)
+            for path in pathlib.Path('/tmp').glob('voicelayer-session-*.lock'):
+                try:
+                    if time.time() - path.stat().st_mtime < 300:
+                        locks.append(path.name)
+                except FileNotFoundError:
+                    pass
+            nodes = self.read_resident_ax()['nodes']
+            attempt.update(axNodes=ax_receipt(nodes), axLabels=[ax_text_receipt(x) for n in nodes for x in node_labels(n)],
+                           notchIdle=notch_idle(nodes))
+            reasons = unsafe_reasons(['%d %s' % (p, pathlib.Path(rows[p][1]).name) for p in busy], locks, nodes)
+            for reason in reasons:
+                self.note('precondition failed: ' + reason)
+            attempt['safe'] = not reasons
+            return attempt['safe']
+        except BaseException as error:
+            attempt.update(safe=False, error=repr(error))
+            self.note('precondition failed: ' + repr(error))
+            raise
+        finally:
             self.save_resident()
-            self.note('precondition failed: expected exactly one mcp-server-daemon.ts child of resident %d; '
-                      'observed %d %r; resident children %r' % (pid, len(daemons), daemons, children))
-            return False
-        daemon = daemons[0]
-        identity = self.identity(daemon)
-        if 'daemonPid' in self.resident and (daemon != self.resident['daemonPid'] or identity != self.resident['daemonStarted']):
-            attempts.append(dict(attempt, daemonStarted=identity, safe=False))
-            self.save_resident()
-            message = ('Resident daemon identity changed; no action permitted (expected pid %r started %r, '
-                       'observed pid %d started %r)' % (self.resident['daemonPid'], self.resident['daemonStarted'],
-                                                         daemon, identity))
-            self.note(message)
-            raise RuntimeError(message)
-        self.resident.update(daemonPid=daemon, daemonStarted=identity)
-        descendants = {daemon}
-        while True:
-            extended = descendants | {p for p, (parent, _) in rows.items() if parent in descendants}
-            if extended == descendants:
-                break
-            descendants = extended
-        busy = [p for p in sorted(descendants) if pathlib.Path(rows[p][1]).name in BUSY_CHILDREN]
-        locks = []
-        for path in pathlib.Path('/tmp').glob('voicelayer-session-*.lock'):
-            try:
-                if time.time() - path.stat().st_mtime < 300:
-                    locks.append(path.name)
-            except FileNotFoundError:
-                pass
-        nodes = self.ax('read')['nodes']
-        labels = [x for node in nodes for x in node_labels(node)]
-        reasons = unsafe_reasons(['%d %s' % (p, pathlib.Path(rows[p][1]).name) for p in busy], locks, nodes)
-        for reason in reasons:
-            self.note('precondition failed: ' + reason)
-        safe = not reasons
-        attempts.append(dict(attempt, capturePids=busy, freshLocks=locks, axLabels=labels,
-                             notchIdle=notch_idle(nodes), safe=safe))
-        self.save_resident()
-        return safe
 
     def prepare_resident(self):
-        code, permission = self.permissions()
-        self.checks.append(dict(phase='preflight', permissionsExit=code, permissions=permission))
-        self.refuse_permissions(code, permission)
-        residents = sorted(p for p, (_, cmd) in self.process_rows().items() if cmd == RESIDENT_EXECUTABLE)
-        self.preflight.update(residentPids=residents, residentCount=len(residents))
-        if len(residents) != 1:
-            message = ('Exactly one installed resident required; never launch/replace one (observed %d %r)'
-                       % (len(residents), residents))
-            self.note(message)
-            raise RuntimeError(message)
-        self.resident = dict(pid=residents[0], started=self.identity(residents[0]), restoreRequired=False,
-                             settingsOpened=False)
-        self.save_resident()
-        snapshot = self.ax('read')
-        self.resident['initialSurface'] = self.surface(snapshot)
-        if not self.resident['initialSurface']:
-            raise RuntimeError('A shown resident surface is required; no native visibility mutation permitted')
-        # SHIP2246 ruling: leave the installed resident shown. Settings ownership
-        # is unavailable, so do not open, close, Hide or Show any resident window.
-        self.resident.update(visibilityPolicy='leave-shown', initialHidden=False)
-        self.save_resident()
-        wait_until_safe(self)
+        attempt = dict(safe=False, processRows={})
+        self.preflight['prepareInventory'] = attempt
+        try:
+            code, permission = self.permissions()
+            self.checks.append(dict(phase='preflight', permissionsExit=code, permissions=permission))
+            self.refuse_permissions(code, permission)
+            self.resident_inventory(attempt)
+            self.save_resident()
+            residents = attempt['residentPids']
+            if len(residents) != 1:
+                raise RuntimeError('Exactly one installed resident required; never launch/replace one (observed %d %r)'
+                                   % (len(residents), residents))
+            self.resident = dict(pid=residents[0], started=self.identity(residents[0]), restoreRequired=False,
+                                 settingsOpened=False)
+            self.save_resident()
+            snapshot = self.read_resident_ax()
+            attempt['axNodes'] = ax_receipt(snapshot['nodes'])
+            self.resident['initialSurface'] = self.surface(snapshot)
+            if not self.resident['initialSurface']:
+                raise RuntimeError('A shown resident surface is required; no native visibility mutation permitted')
+            # Leave the installed resident shown: no open/close/Hide/Show action.
+            self.resident.update(visibilityPolicy='leave-shown', initialHidden=False)
+            self.save_resident()
+            wait_until_safe(self)
+            attempt['safe'] = True
+        except BaseException as error:
+            attempt.update(safe=False, error=repr(error))
+            self.note('prepare failed: ' + repr(error))
+            raise
+        finally:
+            self.save_resident()
 
     def start(self):
         wait_until_safe(self)
@@ -425,7 +468,7 @@ class NativeHost:
             self.verify_shown_resident()
         else:
             self.settings(False)
-            if self.ax('read')['screenWindows']:
+            if self.read_resident_ax()['screenWindows']:
                 raise RuntimeError('Resident window remains on screen after own Hide')
         self.check()
         subprocess.run([sys.executable, str(self.repo / 'scripts/voicebar-ui-e2e-results.py'), 'configure',
@@ -600,7 +643,7 @@ class NativeHost:
         if ('daemonPid' in self.resident and
                 self.identity(self.resident['daemonPid']) != self.resident['daemonStarted']):
             raise RuntimeError('Resident daemon identity changed during shown gate')
-        current = self.surface(self.ax('read'))
+        current = self.surface(self.read_resident_ax())
         initial = self.resident.get('initialSurface')
         if not initial or not all(window in current for window in initial):
             raise RuntimeError('Original shown resident surface NOT_PROVEN; no Settings mutation permitted')
@@ -631,17 +674,17 @@ class NativeHost:
             raise RuntimeError('Settings restoration NOT_PROVEN; pending action/retired claim requires recovery')
         if self.resident.get('restoreRequired'):
             self.settings(True)
-            result = self.ax('read')
+            result = self.read_resident_ax()
             if any('Show VoiceBar' in [n.get('title'), n.get('description')] for n in result['nodes']):
                 try:
                     self.ax('show')
                 except Exception as error:
                     self.resident.setdefault('reconciledActionErrors', []).append(repr(error))
-                result = self.ax('read')  # Never retry a possibly applied Show.
+                result = self.read_resident_ax()  # Never retry a possibly applied Show.
             if not any('Hide VoiceBar for 1 hour' in [n.get('title'), n.get('description')] for n in result['nodes']):
                 raise RuntimeError('Own Show unconfirmed')
             self.settings(False)
-            snapshot = self.ax('read')
+            snapshot = self.read_resident_ax()
             if any(n.get('role') == 'AXWindow' and n.get('title') == 'VoiceBar Settings' for n in snapshot['nodes']):
                 raise RuntimeError('Settings reopened; restoration NOT_PROVEN, no user-owned close permitted')
             restored = self.surface(snapshot)
@@ -652,7 +695,7 @@ class NativeHost:
                 raise RuntimeError('Original resident surface restoration NOT_PROVEN')
         if self.resident.get('settingsOpened'):
             self.settings(False)
-        if self.resident.get('initialHidden') and self.surface(self.ax('read')):
+        if self.resident.get('initialHidden') and self.surface(self.read_resident_ax()):
             raise RuntimeError('Initially hidden resident is now visible; restoration NOT_PROVEN')
         self.resident['identitiesUnchanged'] = False
         self.save_resident()

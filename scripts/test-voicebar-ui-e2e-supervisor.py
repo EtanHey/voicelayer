@@ -790,8 +790,8 @@ class SupervisorTests(unittest.TestCase):
         module = self.module()
         for children, locks, labels in [(['rec'], [], ['Ready']), ([], [1], ['Ready']), ([], [], ['Recording']), ([], [], []), ([], [], ['Status unreadable'])]:
             self.assertFalse(module.safe_to_hide(children, locks, labels))
-        self.assertTrue(module.safe_to_hide([], [], ['Ready. Transcribed on this Mac']))
-        self.assertTrue(module.safe_to_hide([], [], ['Hidden until 23:00']))
+        self.assertFalse(module.safe_to_hide([], [], ['Ready. Transcribed on this Mac']))
+        self.assertFalse(module.safe_to_hide([], [], ['Hidden until 23:00']))
         events=[]
         class Host:
             def preconditions(self):
@@ -837,9 +837,6 @@ class SupervisorTests(unittest.TestCase):
             self.assertFalse(module.safe_to_hide([], [], self.tree(('AXStaticText', busy))), busy)
             self.assertTrue(any(busy in r for r in module.unsafe_reasons([], [], self.tree(('AXStaticText', busy))))
                             , busy)
-        # Legacy idle text still counts when nothing busy is present.
-        self.assertTrue(module.safe_to_hide([], [], ['Ready']))
-        self.assertTrue(module.safe_to_hide([], [], ['Start voice recording']))
 
     def busy_host(self, output, nodes, children):
         module = self.module()
@@ -862,6 +859,131 @@ class SupervisorTests(unittest.TestCase):
                 from types import SimpleNamespace
                 return SimpleNamespace(st_mtime=module.time.time() - age)
         return Lock()
+
+    def test_real_preconditions_require_idle_group_despite_start_button_or_ready_text(self):
+        trees = [[dict(role='AXStaticText', value='Ready')]]
+        for state in ['VoiceBar launcher', 'VoiceBar history', 'VoiceBar unknown']:
+            trees.append(self.tree(('AXButton', 'Start voice recording'), state=state))
+        trees.append(self.tree(('AXButton', 'Start voice recording'),
+                               ('AXGroup', 'Re-transcribing stored audio'),
+                               ('AXStaticText', 'Re-transcribing…'), state='VoiceBar history'))
+        for nodes in trees:
+            for age in [None, 400]:
+                with self.subTest(nodes=nodes, lock_age=age), tempfile.TemporaryDirectory() as tmp:
+                    module, host = self.busy_host(pathlib.Path(tmp), nodes, [])
+                    locks = [] if age is None else [self.lock(module, age)]
+                    with patch.object(pathlib.Path, 'glob', return_value=locks), contextlib.redirect_stderr(io.StringIO()):
+                        self.assertFalse(host.preconditions())
+
+    def test_real_preconditions_refuse_all_unallowlisted_daemon_descendants(self):
+        for name in ['whisper-cpp', 'whisper-cli', 'afplay', 'rec', 'sox', 'python3', 'unknown-worker']:
+            for age in [None, 400]:
+                with self.subTest(child=name, lock_age=age), tempfile.TemporaryDirectory() as tmp:
+                    module, host = self.busy_host(pathlib.Path(tmp), self.IDLE_TREE, ['/fixture/' + name])
+                    rows = host.process_rows()
+                    rows[201] = (200, '/fixture/nested-worker')
+                    host.process_rows = lambda: dict(rows)
+                    locks = [] if age is None else [self.lock(module, age)]
+                    with patch.object(pathlib.Path, 'glob', return_value=locks), contextlib.redirect_stderr(io.StringIO()):
+                        self.assertFalse(host.preconditions())
+                    saved = json.loads((host.output / 'resident-visibility.json').read_text())
+                    self.assertEqual(saved['preconditions'][-1]['capturePids'], [200, 201])
+
+    def test_every_failed_recheck_persists_new_inventory_after_success(self):
+        for failure in ['resident-change', 'daemon-change', 'resident-read', 'daemon-read', 'child-read', 'ax-read', 'rows-read']:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                module, host = self.busy_host(pathlib.Path(tmp), self.IDLE_TREE, [])
+                rows = host.process_rows()
+                with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertTrue(host.preconditions())
+                    rows[222] = (101, '/usr/bin/afplay')
+                    host.process_rows = lambda: dict(rows)
+                    def fail(*args): raise RuntimeError('fixture ' + failure)
+                    if failure.endswith('-change'):
+                        changed = 100 if failure == 'resident-change' else 101
+                        host.identity = lambda pid: 'changed' if pid == changed else 'start'
+                    elif failure in ['resident-read', 'daemon-read']:
+                        unreadable = 100 if failure == 'resident-read' else 101
+                        host.identity = lambda pid: fail() if pid == unreadable else 'start'
+                    else:
+                        setattr(host, {'child-read': 'child_args', 'ax-read': 'ax', 'rows-read': 'process_rows'}[failure], fail)
+                    with self.assertRaises(RuntimeError): host.preconditions()
+                saved = json.loads((host.output / 'resident-visibility.json').read_text())
+                self.assertEqual(len(saved['preconditions']), 2)
+                attempt = saved['preconditions'][-1]
+                self.assertFalse(attempt['safe'])
+                self.assertTrue(attempt['error'])
+                if failure != 'rows-read':
+                    self.assertEqual(attempt['processRows']['222'], [101, '/usr/bin/afplay'])
+                else:
+                    self.assertEqual(attempt['processRows'], {})
+
+    def test_ax_receipts_and_logs_redact_teleprompter_words_and_unknown_labels(self):
+        import hashlib
+        word = 'synthetic-private-מילה'
+        # Exercise both diagnostic paths: busy substring and missing idle evidence.
+        for text, state in [(word, 'VoiceBar teleprompter'), ('Transcribing ' + word, 'VoiceBar'), (word, 'VoiceBar unknown')]:
+            with self.subTest(state=state, text=text), tempfile.TemporaryDirectory() as tmp:
+                node = dict(role='AXStaticText', identifier='fixture-word', frame=dict(X=1, Y=2, Width=3, Height=4),
+                            title=text, description=text, value=text, help=word)
+                nodes = self.tree(state=state) + [node]
+                module, host = self.busy_host(pathlib.Path(tmp), nodes, [])
+                err = io.StringIO()
+                with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
+                    self.assertFalse(host.preconditions())
+                host.save({})
+                persisted = '\n'.join(json.dumps(json.loads(p.read_text()), ensure_ascii=False)
+                                      if p.suffix == '.json' else p.read_text()
+                                      for p in host.output.iterdir() if p.is_file()) + err.getvalue()
+                self.assertNotIn(word, persisted)
+                redacted = '<redacted len=%d sha256=%s>' % (len(text), hashlib.sha256(text.encode()).hexdigest()[:8])
+                self.assertIn(redacted, persisted)
+                saved = json.loads((host.output / 'resident-visibility.json').read_text())
+                retained = saved['preconditions'][-1]['axNodes'][-1]
+                for key in ['role', 'identifier', 'frame']: self.assertEqual(retained[key], node[key])
+                for key in ['title', 'description', 'value']: self.assertEqual(retained[key], redacted)
+                self.assertNotIn('help', retained)
+                self.assertIn(state if state != 'VoiceBar unknown' else '<redacted', persisted)
+
+    def test_ax_read_error_payload_never_reaches_operator_or_resident_receipts(self):
+        for phase in ['prepare', 'recheck']:
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as tmp:
+                word = 'syntheticPrivateErrorPayload'
+                module, host = self.busy_host(pathlib.Path(tmp), self.IDLE_TREE, [])
+                def fail(mode): raise RuntimeError(word)
+                host.ax = fail
+                host.permissions = lambda: (0, dict(axTrusted=True, prompts=[]))
+                host.muted = lambda: True
+                host.set_mute = lambda value: None
+                host.stop = lambda: True
+                host.restore_resident = lambda: None
+                if phase == 'recheck': host.prepare_resident = host.preconditions
+                err = io.StringIO()
+                with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(module.supervise(host), 2)
+                persisted = '\n'.join(p.read_text() for p in host.output.iterdir() if p.is_file()) + err.getvalue()
+                self.assertNotIn(word, persisted)
+                self.assertIn('<redacted len=28 sha256=', persisted)
+
+    def test_prepare_errors_preserve_initial_inventory_without_claiming_resident(self):
+        for failure in ['count', 'identity', 'ax', 'rows']:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                module, host = self.busy_host(pathlib.Path(tmp), self.IDLE_TREE, ['/usr/bin/afplay'])
+                host.resident = {}
+                rows = host.process_rows()
+                if failure == 'count': rows[300] = (1, module.RESIDENT_EXECUTABLE)
+                host.process_rows = lambda: dict(rows)
+                host.permissions = lambda: (0, dict(axTrusted=True, prompts=[]))
+                def fail(*args): raise RuntimeError('fixture ' + failure)
+                if failure != 'count':
+                    setattr(host, {'identity': 'identity', 'ax': 'ax', 'rows': 'process_rows'}[failure], fail)
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(RuntimeError): host.prepare_resident()
+                saved = json.loads((host.output / 'resident-visibility.json').read_text())
+                attempt = saved['preflight']['prepareInventory']
+                self.assertFalse(attempt['safe'])
+                self.assertTrue(attempt['error'])
+                if failure != 'rows': self.assertIn('200', attempt['processRows'])
 
     def test_real_preconditions_refuse_mixed_busy_trees_players_and_transcribers(self):
         import contextlib
@@ -935,7 +1057,7 @@ class SupervisorTests(unittest.TestCase):
         for observed in ['4242', 'voicelayer-session-a.lock', 'VoiceBar recording']:
             self.assertIn(observed, text)
         self.assertEqual(len(reasons), 3)
-        self.assertIn("'Status unreadable'", '\n'.join(module.unsafe_reasons([], [], ['Status unreadable'])))
+        self.assertIn('<redacted len=17 sha256=', '\n'.join(module.unsafe_reasons([], [], ['Status unreadable'])))
         self.assertEqual(len(module.unsafe_reasons([], [], [])), 1)
 
     def test_failing_preflight_logs_observed_values_to_stderr(self):
@@ -955,7 +1077,7 @@ class SupervisorTests(unittest.TestCase):
             err = io.StringIO()
             with patch.object(pathlib.Path, 'glob', return_value=[]), contextlib.redirect_stderr(err):
                 self.assertFalse(host.preconditions())
-            self.assertIn('Status unreadable', err.getvalue())
+            self.assertIn('<redacted len=17 sha256=', err.getvalue())
             self.assertIn('precondition', err.getvalue())
             # No daemon child: also logged, never a silent False.
             host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')}
@@ -1153,13 +1275,12 @@ class SupervisorTests(unittest.TestCase):
             host.resident = dict(pid=100, started='start')
             host.identity = lambda pid: 'start'
             host.run = lambda args: 'bun src/mcp-server-daemon.ts'
-            host.ax = lambda mode: dict(nodes=[dict(value='Ready. Transcribed on this Mac')])
             safe_rows = {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar'), 101: (100, 'bun')}
-            for capture, fresh, label, expected in [(False, False, 'Ready. Local', True),
-                    (True, False, 'Ready. Local', False), (False, True, 'Ready. Local', False),
-                    (False, False, 'Recording. Local', False), (False, False, '', False)]:
+            for capture, fresh, nodes, expected in [(False, False, self.IDLE_TREE, True),
+                    (True, False, self.IDLE_TREE, False), (False, True, self.IDLE_TREE, False),
+                    (False, False, self.tree(state='VoiceBar recording'), False), (False, False, [], False)]:
                 host.process_rows = lambda: dict(safe_rows, **{}) | ({102: (101, '/usr/bin/rec')} if capture else {})
-                host.ax = lambda mode: dict(nodes=[dict(value=label)])
+                host.ax = lambda mode: dict(nodes=nodes)
                 class Lock:
                     name = 'voicelayer-session-fixture.lock'
                     def stat(self):
