@@ -530,6 +530,8 @@ describe("stt-quality-mining", () => {
         outputDir,
       ], {
         cwd: process.cwd(),
+        // Bun.spawn's default env predates the preload; pass the isolated one.
+        env: process.env,
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -568,6 +570,8 @@ describe("stt-quality-mining", () => {
         join(root, "reports"),
       ], {
         cwd: process.cwd(),
+        // Bun.spawn's default env predates the preload; pass the isolated one.
+        env: process.env,
         stdout: "pipe",
         stderr: "pipe",
       });

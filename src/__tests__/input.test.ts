@@ -95,7 +95,10 @@ describe("input module", () => {
       "last-recording.wav",
     );
     process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL = "1";
-    process.env.QA_VOICE_STT_VOCABULARY_PATH = "";
+    process.env.QA_VOICE_STT_VOCABULARY_PATH = join(
+      testStateRoot,
+      "stt-vocabulary.json",
+    );
   });
 
   afterEach(() => {
