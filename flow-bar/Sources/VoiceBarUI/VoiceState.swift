@@ -41,11 +41,15 @@ public struct SelectionCaptureResult: Equatable {
     }
     public enum AXRead: String { case notAttempted = "not_attempted", unavailable, empty, text }
     public enum Path: String { case unknown, ax, copy }
+    /// AXManualAccessibility recovery for a Chromium/Electron app whose AX tree was still off.
+    public enum AXEnable: String { case attempted, set, failed }
 
     public let outcome: Outcome
     public let text: String?
     public private(set) var axRead: AXRead = .notAttempted
     public private(set) var path: Path = .unknown
+    public private(set) var preflightAXEnable: AXEnable?
+    public private(set) var preflightRetries = 0
 
     private init(_ outcome: Outcome, text: String? = nil) {
         self.outcome = outcome
@@ -68,6 +72,13 @@ public struct SelectionCaptureResult: Equatable {
         return result
     }
 
+    public func withPreflight(axEnable: AXEnable?, retries: Int) -> Self {
+        var result = self
+        result.preflightAXEnable = axEnable
+        result.preflightRetries = retries
+        return result
+    }
+
     /// Counts describe the observed String, never host blocks, list items or table nodes.
     /// Do not serialize this result or its text into diagnostics.
     public var diagnosticDetails: [String: String] {
@@ -75,6 +86,10 @@ public struct SelectionCaptureResult: Equatable {
                       "path": path.rawValue, "host_structure": "not_observed",
                       // The app's generic logger merges in a window title; never include it here.
                       "appKeyWindowTitle": "not_recorded"]
+        if let preflightAXEnable {
+            fields["preflight_ax_enable"] = preflightAXEnable.rawValue
+            fields["preflight_retries"] = String(preflightRetries)
+        }
         if let text {
             let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: .newlines)
             fields["utf16_count"] = String(text.utf16.count)

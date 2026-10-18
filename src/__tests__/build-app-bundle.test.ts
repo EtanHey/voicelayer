@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
 // Real subprocesses: standalone p95 <= 19 ms; 4x rounded up, with a 5 s scheduling floor.
@@ -52,6 +53,68 @@ function plistString(plist: string, key: string): string | undefined {
 }
 
 describe("build-app.sh bundles runtime assets", () => {
+  test("copies runtime sources without tests and checks the finished bundle", () => {
+    const root = mkdtempSync(join(tmpdir(), "priv2-bundle-"));
+    const repo = join(root, "source repo");
+    const app = join(root, "VoiceBar.app");
+    const resources = join(app, "Contents/Resources");
+    const checker = join(import.meta.dir, "../../scripts/check-voicebar-test-free.sh");
+    const runCheck = () => Bun.spawnSync(["bash", checker, app], { stdout: "pipe", stderr: "pipe" });
+    try {
+      for (const relative of ["src/__tests__/fixtures", "src/nested/__tests__", "src/nested"]) {
+        mkdirSync(join(repo, relative), { recursive: true });
+      }
+      for (const relative of ["src/runtime.ts", "src/nested/worker.ts", "src/nested/helper.ts"]) {
+        writeFileSync(join(repo, relative), "export {};\n");
+      }
+      for (const relative of ["src/__tests__/fixtures/sample.md", "src/nested/__tests__/sample.txt", "src/root.test.ts", "src/nested/worker.test.ts"]) {
+        writeFileSync(join(repo, relative), "synthetic test fixture\n");
+      }
+      const copy = Bun.spawnSync(["bash", "-c",
+        'VOICEBAR_BUILD_APP_SOURCE_ONLY=1 source "$1"; REPO_ROOT="$2"; APP_DIR="$3"; bundle_runtime_source',
+        "_", buildScriptPath, repo, app], { stdout: "pipe", stderr: "pipe" });
+      expect(copy.exitCode).toBe(0);
+      expect(readFileSync(join(resources, "src/runtime.ts"), "utf8")).toBe("export {};\n");
+      expect(existsSync(join(resources, "src/nested/worker.ts"))).toBe(true);
+      expect(existsSync(join(resources, "src/nested/helper.ts"))).toBe(true);
+      for (const relative of ["src/__tests__", "src/nested/__tests__", "src/root.test.ts", "src/nested/worker.test.ts"]) {
+        expect(existsSync(join(resources, relative))).toBe(false);
+      }
+      expect(runCheck().exitCode).toBe(0);
+      // Vendored packages may ship their own tests; only our source is in scope.
+      const vendorTests = join(resources, "node_modules/example/__tests__");
+      mkdirSync(vendorTests, { recursive: true });
+      writeFileSync(join(vendorTests, "vendor.test.ts"), "vendor test\n");
+      expect(runCheck().exitCode).toBe(0);
+      for (const relative of ["Contents/Resources/src/__tests__", "Contents/Resources/src/nested/stray.test.ts"]) {
+        const badPath = join(app, relative);
+        mkdirSync(join(badPath, ".."), { recursive: true });
+        if (relative.endsWith("__tests__")) {
+          mkdirSync(badPath);
+          writeFileSync(join(badPath, "planted.txt"), "synthetic leak\n");
+        } else {
+          writeFileSync(badPath, "synthetic leak\n");
+        }
+        const rejected = runCheck();
+        expect(rejected.exitCode).toBe(1);
+        expect(new TextDecoder().decode(rejected.stderr)).toContain(badPath);
+        rmSync(badPath, { recursive: true });
+      }
+      expect(runCheck().exitCode).toBe(0);
+      const checkCall = buildScript.indexOf('bash "$REPO_ROOT/scripts/check-voicebar-test-free.sh" "$APP_DIR"');
+      expect(checkCall).toBeGreaterThan(buildScript.indexOf("# App icon"));
+      expect(checkCall).toBeLessThan(buildScript.indexOf('echo "[build-app] Signing..."'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("bundle test check rejects missing input instead of passing an empty scan", () => {
+    const checker = join(import.meta.dir, "../../scripts/check-voicebar-test-free.sh");
+    expect(Bun.spawnSync(["bash", checker], { stdout: "pipe", stderr: "pipe" }).exitCode).toBe(2);
+    expect(Bun.spawnSync(["bash", checker, "/nonexistent-priv2.app"], { stdout: "pipe", stderr: "pipe" }).exitCode).toBe(2);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   test("bundles the Silero VAD model (regression: #241)", () => {
     expect(buildScript).toContain("models/silero_vad.onnx");
     expect(buildScript).toMatch(/cp -R "\$REPO_ROOT\/models"/);
@@ -332,7 +395,8 @@ describe("VoiceBar Homebrew release script contract", () => {
     expect(releaseScript).toContain("EtanHey/homebrew-layers");
     expect(releaseScript).toContain("Casks/voicebar.rb");
     expect(releaseScript).toContain("sha256");
-    expect(releaseScript).toContain("gh release upload");
+    // T3GATE1: uploading is publication and is gated on the T3 proof in its own script.
+    expect(releaseScript).toContain("promote-voicebar-release.sh");
   });
 
   test("runs release verification before printing the zip sha256", () => {
@@ -354,8 +418,7 @@ describe("VoiceBar Homebrew release script contract", () => {
   test("can build a new release artifact before the tap is bumped", () => {
     expect(releaseScript).toContain("--skip-tap-check");
     expect(releaseScript).toContain("SKIP_TAP_CHECK=1");
-    expect(releaseScript).toContain(
-      '[[ "$SKIP_TAP_CHECK" -eq 1 && -n "$TAP_ROOT" ]]',
-    );
+    expect(releaseScript).toContain('if [[ "$SKIP_TAP_CHECK" -eq 1 ]]; then');
+    expect(releaseScript).toContain("--t3-proof PROOF.json");
   });
 });
