@@ -147,6 +147,14 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         XCTAssertEqual(fake.sets, [])
     }
 
+    func testExemptionRecheckRefusesAnotherAppEvenWhenItsFocusIsReadable() {
+        let fake = FakeAX([.success])
+        fake.front = FakeAX.appB
+        let recheck = SpeakSelectionCapture.preflight(fake.ax, recover: false, copyExemptApp: FakeAX.appA)
+        XCTAssertEqual(recheck.blockReason?.outcome, .captureFailed)
+        XCTAssertNil(recheck.copyExemptApp)
+    }
+
     func testRecoveredSecureFocusIsStillASecureField() {
         let fake = FakeAX([.noValue, .success])
         fake.focus = SelectionFocusAX.Focus(role: "AXTextField", subrole: "AXSecureTextField")
