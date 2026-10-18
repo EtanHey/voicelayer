@@ -209,7 +209,11 @@ function processRows(): ProcessRow[] {
 }
 
 function processStartMs(pid: number): number {
-  const out = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { stdout: "pipe", stderr: "pipe" });
+  const out = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
+    stdout: "pipe", stderr: "pipe",
+    // Date.parse understands the C month/day names, not localized ps output.
+    env: { ...process.env, LC_ALL: "C", LANG: "C" },
+  });
   const parsed = out.exitCode === 0 ? Date.parse(out.stdout.toString().trim()) : NaN;
   if (!Number.isFinite(parsed)) fail(`cannot read the start time of process ${pid}`);
   return parsed;
@@ -230,14 +234,28 @@ function installedRuntime(app: string): { voiceBarPid: number; daemonPids: numbe
   if (voiceBars.length > 1) fail(`${voiceBars.length} VoiceBar processes run from ${binary}; one resident only`);
   const voiceBarPid = voiceBars[0].pid;
   requireRunningExecutable(voiceBarPid, binary);
-  const daemonPids = rows
-    .filter((row) => row.ppid === voiceBarPid && row.command.includes("mcp-server-daemon"))
-    .map((row) => row.pid);
+  if (Math.floor(processStartMs(voiceBarPid) / 1000) <= installedSecond) {
+    fail(`VoiceBar process ${voiceBarPid} is older than the installed bundle; relaunch VoiceBar after installing`);
+  }
+  const daemons = rows.filter((row) => row.ppid === voiceBarPid && row.command.includes("mcp-server-daemon"));
+  const daemonPids = daemons.map((row) => row.pid);
   if (daemonPids.length === 0) fail(`VoiceBar ${voiceBarPid} has no running mcp-server-daemon child`);
-  const processes: [string, number][] = [["VoiceBar", voiceBarPid], ...daemonPids.map((d): [string, number] => ["mcp-server-daemon", d])];
-  for (const [label, pid] of processes) {
-    if (Math.floor(processStartMs(pid) / 1000) <= installedSecond) {
-      fail(`${label} process ${pid} is older than the installed bundle; relaunch VoiceBar after installing`);
+  const resources = realpathSync(`${app}/Contents/Resources`);
+  const script = `${app}/Contents/Resources/src/mcp-server-daemon.ts`;
+  if (!existsSync(script) || !realpathSync(script).startsWith(`${resources}/`)) {
+    fail("mcp-server-daemon script must be inside the installed bundle's Resources");
+  }
+  const daemonInstalledSecond = Math.max(installedSecond, Math.floor(statSync(script).ctimeMs / 1000));
+  for (const daemon of daemons) {
+    // ps prints argv joined with spaces (including spaces in the bundle path).
+    const commandScript = daemon.command.match(/^(?:\S*\/)?bun run (.+)$/)?.[1];
+    if (commandScript !== script) {
+      fail(`mcp-server-daemon child ${daemon.pid} is not running bun run ${script}`);
+    }
+    // Bun maps its executable, not the TypeScript it loaded. A rewritten script can leave
+    // the old daemon running with an unchanged VoiceBar binary and Info.plist.
+    if (Math.floor(processStartMs(daemon.pid) / 1000) <= daemonInstalledSecond) {
+      fail(`mcp-server-daemon process ${daemon.pid} is older than the installed daemon script; relaunch VoiceBar after installing`);
     }
   }
   return { voiceBarPid, daemonPids };
