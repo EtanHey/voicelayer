@@ -137,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         environment: ProcessInfo.processInfo.environment,
         defaults: defaults
     )
-    private let daemonController = VoiceBarDaemonController()
+    private var daemonController = VoiceBarDaemonController()
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
 
@@ -600,9 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         server.onControlCommand = { [weak self] command in
             self?.handleLocalControlCommand(command)
         }
-        server.onCaptureFailure = { [weak self] failureType in
-            self?.daemonController.handleCaptureFailure(type: failureType)
-        }
+        configureCaptureFailurePresentation(server)
         #if VOICEBAR_QA
             let contextMenuReceiptPath = ProcessInfo.processInfo.environment[
                 "QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH"
@@ -1148,6 +1146,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     #endif
 
+    func configureCaptureFailurePresentation(_ server: SocketServer, controller: VoiceBarDaemonController? = nil) {
+        if let controller { daemonController = controller }
+        daemonController.isMicrophonePromptHidden = { [weak self] in
+            guard let self else { return true }
+            return isSnoozed || voiceState.isHidden
+        }
+        server.onCaptureFailure = { [weak self] failureType in
+            // The existing wire identifies capture failures, but cannot positively
+            // identify background origin. Missing/ambiguous provenance must surface.
+            self?.daemonController.handleCaptureFailure(type: failureType, userInitiated: true)
+        }
+        server.onCaptureResolved = { [weak self] in
+            self?.daemonController.clearDeferredMicrophonePermissionPrompt()
+        }
+    }
+
     private func snoozeForOneHour() {
         snoozeTask?.cancel()
         isSnoozed = true
@@ -1174,6 +1188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         reapplyAnchoredPanelPosition()
         orderPanelFront(reason: "unsnooze")
         presentAutomaticSetupIfNeeded()
+        daemonController.presentDeferredMicrophonePermissionPrompt()
     }
 
     private func orderPanelFront(reason: String, regardless: Bool = false) {

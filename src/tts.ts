@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { normalizedSpeechHash } from "./speech-identity";
 /**
  * TTS module — multi-engine voice synthesis with context-aware routing.
  *
@@ -760,6 +762,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   text: string;
   voice: string;
   longRead?: StateEvent["long_read"];
+  speechIdentity?: SpeechIdentity;
   playbackOffsetMs?: number;
   utteranceDurationMs?: number;
   getUtteranceDurationMs?(): number;
@@ -1374,6 +1377,7 @@ class PlaybackQueueManager {
         text: next.metadata.text,
         voice: next.metadata.voice,
         readback_id: readbackID,
+        ...next.metadata.speechIdentity,
         ...(next.metadata.longRead ? { long_read: next.metadata.longRead } : {}),
         ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
         ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
@@ -1874,13 +1878,16 @@ export function resolveLongReadProfile(kind: "auto" | "short" | "long", text: st
     rate: profile.rate, fallbackVoice: resolved.fallbackVoice };
 }
 
-export function speakText(text: string, kind: "auto" | "short" | "long" = "auto"): LongReadHandle {
+type SpeechIdentity = Pick<StateEvent, "request_id" | "text_hash">;
+
+export function speakText(text: string, kind: "auto" | "short" | "long" = "auto", identity: SpeechIdentity = {}): LongReadHandle {
   const receivedAt = Date.now();
-  return speakLongRead(text, resolveLongReadProfile(kind, text), receivedAt);
+  return speakLongRead(text, resolveLongReadProfile(kind, text), receivedAt, identity);
 }
 
 /** Long reads bypass XTTS/F5 truncation and call the Qwen3 clone tier directly. */
-export function speakLongRead(text: string, profile: LongReadProfile, receivedAt = Date.now()): LongReadHandle {
+export function speakLongRead(text: string, profile: LongReadProfile, receivedAt = Date.now(), identity: SpeechIdentity = {}): LongReadHandle {
+  const speechIdentity = { request_id: identity.request_id ?? randomUUID(), text_hash: identity.text_hash ?? normalizedSpeechHash(text) };
   const chars = text.length;
   const requestedClone = profile.requestedClone ?? (profile.engine === "clone");
   assertSpeakerClear();
@@ -1910,7 +1917,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   const chunkEngines = new Map<string, string>();
   const cloneProjections = new Map<string, ReturnType<typeof projectSpeakableText>>();
   // Swift routes Escape only in active modes. Actual playback resets this clock/text.
-  broadcast({ type: "state", state: "speaking", text: "Preparing speech…", voice: profile.voice,
+  broadcast({ type: "state", state: "speaking", text: "Preparing speech…", voice: profile.voice, ...speechIdentity,
     long_read: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0, preparing: true } });
   const run = async () => {
     if (signal.aborted) return;
@@ -1985,7 +1992,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         let resolveStarted!: (value: boolean) => void;
         const start = new Promise<boolean>((resolve) => { resolveStarted = resolve; });
         const playback = playAudioNonBlocking(chunk.audioFile, {
-          text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs, longRead: info,
+          text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs, longRead: info, speechIdentity,
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
           cloneProjection: cloneProjections.get(chunk.audioFile),
           playbackOffsetMs: info.chunk_start_ms + position.offsetMs,
