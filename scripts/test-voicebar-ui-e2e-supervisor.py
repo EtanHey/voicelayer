@@ -9,6 +9,48 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 class SupervisorTests(unittest.TestCase):
+    def test_ship2246_shown_resident_reaches_launch_and_export_without_settings(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            actions = []
+            surface = [dict(layer=25, bounds=dict(X=500, Y=0, Width=200, Height=32))]
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')}
+            host.preconditions = lambda: True
+            def io(args):
+                if len(args) == 1: return json.dumps(dict(axTrusted=True, prompts=[]))
+                actions.append(args[2])
+                return json.dumps(dict(nodes=[], screenWindows=surface))
+            host.run = io
+            mute = [False]
+            host.muted = lambda: mute[0]
+            host.set_mute = lambda value: mute.__setitem__(0, value)
+            host.check = lambda: None
+            host.remember = lambda *args: None
+            host.stop = lambda: False  # Unknown descendants must retain mute, not suppress verdicts.
+            host.export = lambda: actions.append('export') or 0
+            class Child:
+                pid = 200
+                def poll(self): return 0
+            with patch.object(module.subprocess, 'run'), patch.object(module.subprocess, 'Popen', return_value=Child()):
+                self.assertEqual(module.supervise(host), 1)  # Safety uncertainty remains explicit.
+            receipt = json.loads((host.output / 'operator-state.json').read_text())
+            self.assertEqual(receipt['suiteExit'], 0)
+            self.assertEqual(receipt['exportExit'], 0)
+            self.assertTrue(receipt['muteRetained'])
+            self.assertTrue(host.resident['shownUnchanged'])
+            self.assertEqual(set(actions), {'read', 'export'})
+
+    def test_ship2246_missing_shown_surface_stops_before_any_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = self.host(pathlib.Path(tmp))
+            host.process_rows = lambda: {100: (1, '/Applications/VoiceBar.app/Contents/MacOS/VoiceBar')}
+            host.run = lambda args: json.dumps(dict(axTrusted=True, prompts=[])) if len(args) == 1 else json.dumps(dict(nodes=[], screenWindows=[]))
+            host.preconditions = lambda: True
+            with self.assertRaisesRegex(RuntimeError, 'shown resident'):
+                host.prepare_resident()
+            self.assertFalse(host.runner_launch_attempted)
+
     def test_hrest3_native_mutations_refuse_before_helper_dispatch(self):
         # A successful receipt, including a new ID, can describe a concurrent user open.
         for outcome in ['concurrent-open', 'same-id-reopen', 'rejected', 'lost-response']:
