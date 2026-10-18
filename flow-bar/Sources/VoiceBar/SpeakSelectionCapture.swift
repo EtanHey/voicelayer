@@ -6,12 +6,14 @@ import VoiceBarUI
 /// The AX calls the selection preflight makes, injectable so the Electron recovery is testable.
 struct SelectionFocusAX {
     struct Focus: Equatable { var role: String?; var subrole: String? }
+    /// A PID alone can be reused; the kernel start time pins one process lifetime.
+    struct AppIdentity: Equatable { var pid: pid_t; var startTime: UInt64 }
     var secureInputEnabled: () -> Bool
     var trusted: () -> Bool
     /// The system-wide focused element; `.success` always carries a focus.
     var queryFocus: () -> (AXError, Focus?)
-    var frontmostPID: () -> pid_t?
-    var setManualAccessibility: (pid_t) -> AXError
+    var frontmostApp: () -> AppIdentity?
+    var setManualAccessibility: (AppIdentity) -> AXError
     var sleep: (TimeInterval) -> Void
 
     static let live = SelectionFocusAX(
@@ -33,17 +35,23 @@ struct SelectionFocusAX {
             }
             return (.success, Focus(role: attribute(kAXRoleAttribute), subrole: attribute(kAXSubroleAttribute)))
         },
-        frontmostPID: {
+        frontmostApp: {
             guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
                   pid != ProcessInfo.processInfo.processIdentifier else { return nil }
-            return pid
+            var info = kinfo_proc()
+            var size = MemoryLayout<kinfo_proc>.stride
+            var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+            guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0 else { return nil }
+            let start = info.kp_proc.p_un.__p_starttime
+            return AppIdentity(pid: pid, startTime: UInt64(start.tv_sec) * 1_000_000 + UInt64(start.tv_usec))
         },
-        setManualAccessibility: { pid in
+        setManualAccessibility: { app in
+            let pid = app.pid
             // Chromium keeps its AX tree off until an assistive client asks. Prefer Manual over
             // AXEnhancedUserInterface, which also changes window animation behaviour.
-            let app = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(app, 0.2)
-            return AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            let element = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(element, 0.2)
+            return AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         },
         sleep: { Thread.sleep(forTimeInterval: $0) })
 }
@@ -52,15 +60,17 @@ struct SelectionFocusPreflight {
     var blockReason: SelectionCaptureResult?
     var axEnable: SelectionCaptureResult.AXEnable?
     var retries = 0
-    /// The focus stayed unreadable in an app that accepted AXManualAccessibility (Chromium family,
-    /// whose password fields enable secure event input), so preserved-clipboard Copy may still run.
-    var unreadableFocusAllowsCopy = false
+    /// The focus stayed unreadable in this app, which accepted AXManualAccessibility (Chromium family,
+    /// whose password fields enable secure event input). Preserved-clipboard Copy may run only while
+    /// this exact process is still frontmost.
+    var copyExemptApp: SelectionFocusAX.AppIdentity?
+    var unreadableFocusAllowsCopy: Bool { copyExemptApp != nil }
 }
 
 final class SpeakSelectionCapture {
     private static let captureQueue = DispatchQueue(label: "com.voicelayer.speak-selection", qos: .utility)
     typealias Snapshot = [[(NSPasteboard.PasteboardType, Data)]]
-    private let preflight: (_ recover: Bool, _ allowUnreadableFocus: Bool) -> SelectionFocusPreflight
+    private let preflight: (_ recover: Bool, _ copyExemptApp: SelectionFocusAX.AppIdentity?) -> SelectionFocusPreflight
     private let snapshotReader: () -> Snapshot?
     private let writeRestoredItems: ([NSPasteboardItem]) -> Bool
     private let readAXSelection: () -> String?
@@ -83,7 +93,7 @@ final class SpeakSelectionCapture {
          },
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.preflight = canCapture.map { check in { _, _ in SelectionFocusPreflight(blockReason: check() ? nil : .secureField) } }
-            ?? { SpeakSelectionCapture.preflight(focusAX, recover: $0, allowUnreadableFocus: $1) }
+            ?? { SpeakSelectionCapture.preflight(focusAX, recover: $0, copyExemptApp: $1) }
         let pasteboardName = pasteboard.name.rawValue
         self.snapshotReader = snapshotReader ?? { SelectionPasteboardSnapshot.readInHelper(name: pasteboardName) }
         self.writeRestoredItems = writeRestoredItems ?? { pasteboard.writeObjects($0) }
@@ -98,7 +108,7 @@ final class SpeakSelectionCapture {
     func capture(completion: @escaping (SelectionCaptureResult) -> Void) {
         Self.captureQueue.async {
             // AX IPC can take multiple messaging timeouts. Never do it on the tap's run loop.
-            let preflight = self.preflight(true, false)
+            let preflight = self.preflight(true, nil)
             let complete = { (result: SelectionCaptureResult) in
                 completion(result.withPreflight(axEnable: preflight.axEnable, retries: preflight.retries))
             }
@@ -114,7 +124,7 @@ final class SpeakSelectionCapture {
                     : selectedText == nil ? .unavailable : .empty
                 // Keep AppKit pasteboard/item access serialized with the app's other clipboard users.
                 Self.onMain {
-                    self.captureUsingPasteboard(allowUnreadableFocus: preflight.unreadableFocusAllowsCopy) {
+                    self.captureUsingPasteboard(copyExemptApp: preflight.copyExemptApp) {
                         complete($0.observed(axRead: axRead, path: .copy))
                     }
                 }
@@ -122,14 +132,14 @@ final class SpeakSelectionCapture {
         }
     }
 
-    private func captureUsingPasteboard(allowUnreadableFocus: Bool,
+    private func captureUsingPasteboard(copyExemptApp: SelectionFocusAX.AppIdentity?,
                                         completion: @escaping (SelectionCaptureResult) -> Void) {
         // Unlike the transcript-paste snapshot, keep dynamic and org.nspasteboard
         // types too. Fail closed if any advertised representation cannot be saved.
         let changeCount = pasteboard.changeCount
         Self.captureQueue.async {
             let snapshot = self.snapshotReader()
-            let blockReason = self.preflight(false, allowUnreadableFocus).blockReason
+            let blockReason = self.preflight(false, copyExemptApp).blockReason
             Self.onMain {
                 guard let snapshot else { completion(.captureFailed); return }
                 guard self.pasteboard.changeCount == changeCount else { completion(.clipboardChanged); return }
@@ -222,13 +232,15 @@ final class SpeakSelectionCapture {
 
     /// Gates every read. A fresh Electron/Chromium app answers the focus query with kAXErrorNoValue
     /// until AXManualAccessibility is set on it, so set it once and re-query for under a second.
-    static func preflight(_ ax: SelectionFocusAX, recover: Bool, allowUnreadableFocus: Bool) -> SelectionFocusPreflight {
+    static func preflight(_ ax: SelectionFocusAX, recover: Bool,
+                          copyExemptApp: SelectionFocusAX.AppIdentity?) -> SelectionFocusPreflight {
         if ax.secureInputEnabled() { return SelectionFocusPreflight(blockReason: .secureField) }
         guard ax.trusted() else { return SelectionFocusPreflight(blockReason: .captureFailed) }
         var (status, focus) = ax.queryFocus()
         var result = SelectionFocusPreflight()
-        if recover, status == .noValue || status == .cannotComplete, let pid = ax.frontmostPID() {
-            guard ax.setManualAccessibility(pid) == .success else {
+        let unreadable = status == .noValue || status == .cannotComplete
+        if recover, unreadable, let app = ax.frontmostApp() {
+            guard ax.setManualAccessibility(app) == .success else {
                 result.axEnable = .failed
                 result.blockReason = .captureFailed
                 return result
@@ -241,17 +253,19 @@ final class SpeakSelectionCapture {
             }
             if status == .success {
                 result.axEnable = .set
-            } else {
-                result.unreadableFocusAllowsCopy = true
+            } else if ax.frontmostApp() == app {
+                result.copyExemptApp = app
             }
-        } else if !recover, allowUnreadableFocus, status == .noValue || status == .cannotComplete {
-            result.unreadableFocusAllowsCopy = true
+        } else if !recover, unreadable, let copyExemptApp, ax.frontmostApp() == copyExemptApp {
+            // The Copy recheck: the exemption belongs to the app that earned it, never to whatever is
+            // frontmost after a switch during the retries or the clipboard snapshot.
+            result.copyExemptApp = copyExemptApp
         }
         // An unreadable focus cannot establish permission to synthesize Copy, except in an app that
         // accepted AXManualAccessibility while secure event input stays off.
         guard status == .success, let focus else {
             if result.unreadableFocusAllowsCopy, !ax.secureInputEnabled() { return result }
-            result.unreadableFocusAllowsCopy = false
+            result.copyExemptApp = nil
             result.blockReason = .captureFailed
             return result
         }
