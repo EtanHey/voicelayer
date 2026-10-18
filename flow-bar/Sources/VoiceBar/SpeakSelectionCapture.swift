@@ -13,6 +13,10 @@ struct SelectionFocusAX {
     /// The system-wide focused element; `.success` always carries a focus.
     var queryFocus: () -> (AXError, Focus?)
     var frontmostApp: () -> AppIdentity?
+    /// The unreadable-focus Copy policy: only a Chromium/Electron bundle qualifies, because Chromium turns on
+    /// secure event input for password fields, which every preflight and the Copy shortcut still check.
+    /// A successful AXManualAccessibility set alone proves nothing about how an app protects secrets.
+    var isChromiumFamily: (AppIdentity) -> Bool
     var setManualAccessibility: (AppIdentity) -> AXError
     var sleep: (TimeInterval) -> Void
 
@@ -45,6 +49,13 @@ struct SelectionFocusAX {
             let start = info.kp_proc.p_un.__p_starttime
             return AppIdentity(pid: pid, startTime: UInt64(start.tv_sec) * 1_000_000 + UInt64(start.tv_usec))
         },
+        isChromiumFamily: { app in
+            guard let bundle = NSRunningApplication(processIdentifier: app.pid)?.bundleURL else { return false }
+            let frameworks = bundle.appendingPathComponent("Contents/Frameworks")
+            return chromiumFrameworks.contains {
+                FileManager.default.fileExists(atPath: frameworks.appendingPathComponent($0).path)
+            }
+        },
         setManualAccessibility: { app in
             let pid = app.pid
             // Chromium keeps its AX tree off until an assistive client asks. Prefer Manual over
@@ -54,6 +65,11 @@ struct SelectionFocusAX {
             return AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         },
         sleep: { Thread.sleep(forTimeInterval: $0) })
+
+    static let chromiumFrameworks = [
+        "Electron Framework.framework", "Chromium Embedded Framework.framework", "Chromium Framework.framework",
+        "Google Chrome Framework.framework", "Microsoft Edge Framework.framework", "Brave Browser Framework.framework",
+    ]
 }
 
 struct SelectionFocusPreflight {
@@ -71,6 +87,7 @@ final class SpeakSelectionCapture {
     private static let captureQueue = DispatchQueue(label: "com.voicelayer.speak-selection", qos: .utility)
     typealias Snapshot = [[(NSPasteboard.PasteboardType, Data)]]
     private let preflight: (_ recover: Bool, _ copyExemptApp: SelectionFocusAX.AppIdentity?) -> SelectionFocusPreflight
+    private let frontmostApp: () -> SelectionFocusAX.AppIdentity?
     private let snapshotReader: () -> Snapshot?
     private let writeRestoredItems: ([NSPasteboardItem]) -> Bool
     private let readAXSelection: () -> String?
@@ -94,6 +111,7 @@ final class SpeakSelectionCapture {
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.preflight = canCapture.map { check in { _, _ in SelectionFocusPreflight(blockReason: check() ? nil : .secureField) } }
             ?? { SpeakSelectionCapture.preflight(focusAX, recover: $0, copyExemptApp: $1) }
+        self.frontmostApp = focusAX.frontmostApp
         let pasteboardName = pasteboard.name.rawValue
         self.snapshotReader = snapshotReader ?? { SelectionPasteboardSnapshot.readInHelper(name: pasteboardName) }
         self.writeRestoredItems = writeRestoredItems ?? { pasteboard.writeObjects($0) }
@@ -144,12 +162,13 @@ final class SpeakSelectionCapture {
                 guard let snapshot else { completion(.captureFailed); return }
                 guard self.pasteboard.changeCount == changeCount else { completion(.clipboardChanged); return }
                 if let blockReason { completion(blockReason); return }
-                self.copyAndPoll(snapshot: snapshot, changeCount: changeCount, completion: completion)
+                self.copyAndPoll(snapshot: snapshot, changeCount: changeCount, copyExemptApp: copyExemptApp,
+                                 completion: completion)
             }
         }
     }
 
-    private func copyAndPoll(snapshot: Snapshot, changeCount: Int,
+    private func copyAndPoll(snapshot: Snapshot, changeCount: Int, copyExemptApp: SelectionFocusAX.AppIdentity?,
                              completion: @escaping (SelectionCaptureResult) -> Void) {
         let deadline = now() + 0.4
         func finish(_ result: SelectionCaptureResult, expectedChangeCount: Int) {
@@ -162,6 +181,11 @@ final class SpeakSelectionCapture {
                 NSLog("[VoiceBar] Selection capture could not restore the pasteboard")
                 completion(.clipboardRestoreFailed)
             }
+        }
+        // An unreadable-focus Copy goes only to the exact process that earned it, checked right before Cmd+C.
+        if let copyExemptApp, frontmostApp() != copyExemptApp {
+            finish(.captureFailed, expectedChangeCount: changeCount)
+            return
         }
         guard postCopy() else { finish(.copyFailed, expectedChangeCount: changeCount); return }
         func poll() {
@@ -253,7 +277,7 @@ final class SpeakSelectionCapture {
             }
             if status == .success {
                 result.axEnable = .set
-            } else if ax.frontmostApp() == app {
+            } else if ax.isChromiumFamily(app), ax.frontmostApp() == app {
                 result.copyExemptApp = app
             }
         } else if !recover, let copyExemptApp {
@@ -265,8 +289,8 @@ final class SpeakSelectionCapture {
             }
             if unreadable { result.copyExemptApp = copyExemptApp }
         }
-        // An unreadable focus cannot establish permission to synthesize Copy, except in an app that
-        // accepted AXManualAccessibility while secure event input stays off.
+        // An unreadable focus cannot establish permission to synthesize Copy, except in the Chromium-family
+        // app that accepted AXManualAccessibility, while it stays frontmost and secure event input stays off.
         guard status == .success, let focus else {
             if result.unreadableFocusAllowsCopy, !ax.secureInputEnabled() { return result }
             result.copyExemptApp = nil
