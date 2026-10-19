@@ -14,8 +14,8 @@
         },
         {
           "id": "en-dev-002",
-          "text": "Ask orcClaude to review the cmux handoff before we merge main.",
-          "expected_terms": ["orcClaude", "cmux", "handoff", "merge main"]
+          "text": "Ask Claude to review the cmux handoff before we merge main.",
+          "expected_terms": ["Claude", "cmux", "handoff", "merge main"]
         },
         {
           "id": "en-dev-003",

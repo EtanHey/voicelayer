@@ -1405,22 +1405,22 @@ describe("input module", () => {
 
   describe("STT corrector feature flag", () => {
     it("preserves existing cleanup when QA_VOICE_CORRECTOR is unset or off", () => {
-      expect(finalizeTranscriptionText("brain layer", {})).toBe("BrainLayer.");
-      expect(finalizeTranscriptionText("brain layer", { QA_VOICE_CORRECTOR: "off" })).toBe(
-        "BrainLayer.",
+      expect(finalizeTranscriptionText("voice layer", {})).toBe("VoiceLayer.");
+      expect(finalizeTranscriptionText("voice layer", { QA_VOICE_CORRECTOR: "off" })).toBe(
+        "VoiceLayer.",
       );
     });
 
     it("can bypass cleanup with identity mode for baseline evals", () => {
       expect(
-        finalizeTranscriptionText("brain layer", { QA_VOICE_CORRECTOR: "identity" }),
-      ).toBe("brain layer");
+        finalizeTranscriptionText("voice layer", { QA_VOICE_CORRECTOR: "identity" }),
+      ).toBe("voice layer");
     });
 
     it("runs the explicit rules backend when enabled", () => {
       expect(
-        finalizeTranscriptionText("brain layer", { QA_VOICE_CORRECTOR: "rules" }),
-      ).toBe("BrainLayer.");
+        finalizeTranscriptionText("voice layer", { QA_VOICE_CORRECTOR: "rules" }),
+      ).toBe("VoiceLayer.");
     });
 
     it("routes both VoiceBar dictation and voice_ask through polish", async () => {
@@ -1449,7 +1449,7 @@ describe("input module", () => {
             for (const line of lines) {
               if (!line.trim()) continue;
               received.push(line);
-              socket.write(`${JSON.stringify({ text: "Brain Layer." })}\n`);
+              socket.write(`${JSON.stringify({ text: "Voice Layer." })}\n`);
             }
           },
           close() {},
@@ -1470,11 +1470,11 @@ describe("input module", () => {
         };
 
         await expect(
-          finalizeTranscriptionTextForSurface("brain layer", null, env),
-        ).resolves.toBe("BrainLayer.");
+          finalizeTranscriptionTextForSurface("voice layer", null, env),
+        ).resolves.toBe("VoiceLayer.");
         await expect(
-          finalizeTranscriptionTextForSurface("brain layer", "dictation", env),
-        ).resolves.toBe("Brain Layer.");
+          finalizeTranscriptionTextForSurface("voice layer", "dictation", env),
+        ).resolves.toBe("Voice Layer.");
         expect(received.length).toBe(1);
         for (let i = 0; i < 50 && !existsSync(logPath); i++) {
           await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1502,8 +1502,8 @@ describe("input module", () => {
             surface: "dictation",
             changed: true,
           });
-          expect(payload.cleaned_chars).toBe("BrainLayer.".length);
-          expect(payload.final_chars).toBe("Brain Layer.".length);
+          expect(payload.cleaned_chars).toBe("VoiceLayer.".length);
+          expect(payload.final_chars).toBe("Voice Layer.".length);
         } finally {
           db.close();
         }
@@ -1550,10 +1550,10 @@ describe("input module", () => {
       const result = await transcribeChunkSequence(
         [new Uint8Array([1]), new Uint8Array([2])],
         async (_chunk, _prompt) =>
-          "work claude opened voice layer in whisper flow",
+          "claw desktop opened voice layer in whisper flow",
       );
 
-      expect(result).toContain("orcClaude");
+      expect(result).toContain("Claude Desktop");
       expect(result).toContain("VoiceLayer");
       expect(result).toContain("Wispr Flow");
     });

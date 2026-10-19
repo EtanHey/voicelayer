@@ -71,9 +71,30 @@ test("required redirects and missing isolated roots reject fallback before user 
         delete env[name];
       }
     }
-    // Non-test defaults are unchanged; these calls resolve names only, never read stores.
-    if (p.getTmpRoot({}) !== '/tmp') failures.push('production tmp');
-    if (!v.getSTTVocabularyPath({env: {}}).endsWith('/.local/state/voicelayer/stt-vocabulary.json')) failures.push('production vocabulary');
+    const { join } = await import('node:path');
+    const runRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
+    const preloadVocabulary = process.env.QA_VOICE_STT_VOCABULARY_PATH;
+    const homeVocabulary = join(runRoot, 'synthetic-home', '.local/state/voicelayer/stt-vocabulary.json');
+    const classifyVocabulary = path => path === preloadVocabulary && path.startsWith(runRoot + '/')
+      ? [] : ['production vocabulary'];
+    // Process isolation wins over empty/partial caller envs; none may fall back to HOME.
+    for (const env of [{}, { VOICELAYER_TEST_ISOLATED: '0' },
+      { QA_VOICE_STT_VOCABULARY_PATH: '' }, { QA_VOICE_STT_VOCABULARY_PATH: '  ' }]) {
+      failures.push(...classifyVocabulary(v.getSTTVocabularyPath({ env })));
+    }
+    // Negative control: the same guard must reject an actual HOME-default candidate.
+    if (JSON.stringify(classifyVocabulary(homeVocabulary)) !== JSON.stringify(['production vocabulary'])) {
+      failures.push('HOME fallback negative control');
+    }
+    // Resolve production names only with process isolation absent, still under synthetic HOME.
+    const isolated = process.env.VOICELAYER_TEST_ISOLATED;
+    delete process.env.VOICELAYER_TEST_ISOLATED;
+    try {
+      if (p.getTmpRoot({}) !== '/tmp') failures.push('production tmp');
+      if (v.getSTTVocabularyPath({ env: {} }) !== homeVocabulary) failures.push('production vocabulary default');
+    } finally {
+      process.env.VOICELAYER_TEST_ISOLATED = isolated;
+    }
     console.log(JSON.stringify(failures));`;
   const child = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: join(process.env.VOICELAYER_TEST_RUN_ROOT!, "synthetic-home") },
