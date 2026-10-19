@@ -44,7 +44,7 @@ final class STTVocabularyPreviewSearchTests: XCTestCase {
             updatedAt: nil,
             promptTerms: ["VoiceLayer", "Wispr Flow"],
             aliases: [
-                STTVocabularyAliasPreview(from: "work claude", to: "orcClaude"),
+                STTVocabularyAliasPreview(from: "sample agent", to: "sampleAgent"),
                 STTVocabularyAliasPreview(from: "voice lair", to: "VoiceLayer"),
             ]
         )
@@ -54,8 +54,8 @@ final class STTVocabularyPreviewSearchTests: XCTestCase {
             ["voice lair"]
         )
         XCTAssertEqual(
-            preview.filteredAliases(matching: "orc").map(\.to),
-            ["orcClaude"]
+            preview.filteredAliases(matching: "sample").map(\.to),
+            ["sampleAgent"]
         )
     }
 

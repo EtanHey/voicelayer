@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { TEST_TMP } from "./setup/test-tmp";
-import { mkdtempSync, rmSync, symlinkSync } from "fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import syntheticSeed from "./fixtures/personal-vocabulary-seed.json";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -14,20 +15,17 @@ import {
 } from "../stt-vocabulary-store";
 
 describe("stt-cleanup", () => {
-  // Tests that assert deterministic BUILTIN_STT_ALIASES behavior call
-  // cleanupTranscriptionText() with no env, so they fall back to process.env
-  // and would otherwise pick up the developer's live STT vocabulary snapshot
-  // at ~/.local/state/voicelayer/stt-vocabulary.json. Per the "snapshot wins"
-  // alias-merge rule a stale snapshot alias (e.g. "voice layer codex" ->
-  // "VoiceLayerCodex") silently overrides the canonical builtin and flips these
-  // assertions on a per-machine basis. Kill-switch the snapshot for the whole
-  // block (tests that exercise snapshot behavior pass their own explicit env).
+  // Personal examples use an isolated synthetic user store, never bundled aliases.
+  let personalRoot: string;
   let previousVocabularyPath: string | undefined;
   beforeAll(() => {
     previousVocabularyPath = process.env.QA_VOICE_STT_VOCABULARY_PATH;
-    process.env.QA_VOICE_STT_VOCABULARY_PATH = join(TEST_TMP, "empty-vocabulary.json");
+    personalRoot = mkdtempSync(join(TEST_TMP, "personal-cleanup-"));
+    process.env.QA_VOICE_STT_VOCABULARY_PATH = join(personalRoot, "vocab.json");
+    writeFileSync(`${process.env.QA_VOICE_STT_VOCABULARY_PATH}.seed.json`, JSON.stringify(syntheticSeed));
   });
   afterAll(() => {
+    rmSync(personalRoot, { recursive: true, force: true });
     if (previousVocabularyPath === undefined) {
       delete process.env.QA_VOICE_STT_VOCABULARY_PATH;
     } else {
@@ -65,46 +63,46 @@ describe("stt-cleanup", () => {
 
   it("preserves exact canonical casing for product and agent aliases", () => {
     const cleaned = cleanupTranscriptionText(
-      "work claude opened voice layer codex in whisper flow",
+      "fixtureVariant33 opened fixtureVariant8 in whisper flow",
     );
 
-    expect(cleaned).toContain("orcClaude");
-    expect(cleaned).toContain("voicelayerCodex");
+    expect(cleaned).toContain("vTerm3");
+    expect(cleaned).toContain("vTerm6");
     expect(cleaned).toContain("Wispr Flow");
-    expect(cleaned).not.toContain("OrcClaude");
+    expect(cleaned).not.toContain("VTerm3");
   });
 
-  it("normalizes repoGolem layer aliases without splitting the entity names", () => {
+  it("normalizes vTerm10 layer aliases without splitting the entity names", () => {
     const cleaned = cleanupTranscriptionText(
-      "send a new narration layer codex to compare brain layer codex, voice layer codex, and cmux layer codex",
+      "send a new fixtureVariant6 to compare fixtureVariant7, fixtureVariant8, and fixtureVariant9",
     );
 
     expect(cleaned).toBe(
-      "Send a new narrationlayerCodex to compare brainlayerCodex, voicelayerCodex, and cmuxlayerCodex",
+      "Send a new vTerm4 to compare vTerm5, vTerm6, and vTerm7",
     );
   });
 
   it("normalizes synthetic spoken-form alias combinations", () => {
     const cleaned = cleanupTranscriptionText(
-      "fixture whisperflow orc clawed orcclawed skill creator clawed seamux cee mux karabiner example",
+      "fixture whisperflow fixtureVariant27 fixtureVariant29 fixtureVariant35 seamux cee mux karabiner example",
     );
 
     expect(cleaned).toContain("Wispr Flow");
-    expect(cleaned).toContain("orcClaude");
-    expect(cleaned).toContain("SkillCreatorClaude");
+    expect(cleaned).toContain("vTerm3");
+    expect(cleaned).toContain("vTerm8");
     expect(cleaned).toContain("cmux");
     expect(cleaned).toContain("Karabiner");
     expect(cleaned).not.toContain("Whisperflow");
-    expect(cleaned).not.toContain("OrcClawed");
+    expect(cleaned).not.toContain("fixtureVariant29");
     expect(cleaned).not.toContain("Seamux");
   });
 
   it("normalizes aliases in synthetic command fixtures", () => {
     const cases: Array<[input: string, expected: string]> = [
-      ["fixture uses brain lair now", "Fixture uses BrainLayer now"],
-      ["fixture uses brain lear now", "Fixture uses BrainLayer now"],
-      ["fixture uses bearing layer now", "Fixture uses BrainLayer now"],
-      ["fixture uses narration layer now", "Fixture uses NarrationLayer now"],
+      ["fixture uses fixtureVariant3 now", "Fixture uses vTerm2 now"],
+      ["fixture uses fixtureVariant4 now", "Fixture uses vTerm2 now"],
+      ["fixture uses fixtureVariant2 now", "Fixture uses vTerm2 now"],
+      ["fixture uses fixtureVariant1 now", "Fixture uses vTerm1 now"],
       ["fixture uses tailscale now", "Fixture uses Tailscale now"],
       ["fixture uses olama now", "Fixture uses Ollama now"],
       ["fixture uses comfy ui now", "Fixture uses ComfyUI now"],
@@ -127,7 +125,7 @@ describe("stt-cleanup", () => {
       ["fixture uses claw dot md now", "Fixture uses CLAUDE.md now"],
       ["fixture uses clawed desktop now", "Fixture uses Claude Desktop now"],
       ["fixture uses claw desktop now", "Fixture uses Claude Desktop now"],
-      ["fixture uses orkclaud now", "Fixture uses orcClaude now"],
+      ["fixture uses fixtureVariant5 now", "Fixture uses vTerm3 now"],
       ["fixture uses cmuxs now", "Fixture uses cmux now"],
       [
         "fixture uses if they eyes bg large now",
@@ -140,45 +138,45 @@ describe("stt-cleanup", () => {
     }
   });
 
-  it("cleans YashClaude spoken forms used in agent routing", () => {
+  it("cleans vTerm9 spoken forms used in agent routing", () => {
     expect(
-      cleanupTranscriptionText("ask yash claude to watch the pr loop"),
-    ).toBe("Ask YashClaude to watch the pr loop");
-    expect(cleanupTranscriptionText("tell yash clawed to review the pr")).toBe(
-      "Tell YashClaude to review the pr",
+      cleanupTranscriptionText("ask fixtureVariant13 to watch the pr loop"),
+    ).toBe("Ask vTerm9 to watch the pr loop");
+    expect(cleanupTranscriptionText("tell fixtureVariant15 to review the pr")).toBe(
+      "Tell vTerm9 to review the pr",
     );
   });
 
-  it("normalizes repoGolem spawn flags glued onto an agent token", () => {
+  it("normalizes vTerm10 spawn flags glued onto an agent token", () => {
     // Whisper renders dictated "-s -c" as an upper-cased, space-less suffix
     // ("-S-C") glued to the camelCase agent identifier. Synthetic fixtures
     // exercise both the glued suffix and canonicalization before splitting.
-    expect(cleanupTranscriptionText("voicelayerCodex-S")).toBe(
-      "voicelayerCodex -s",
+    expect(cleanupTranscriptionText("vTerm6-S")).toBe(
+      "vTerm6 -s",
     );
-    expect(cleanupTranscriptionText("voicelayerCodex-S-C")).toBe(
-      "voicelayerCodex -s -c",
+    expect(cleanupTranscriptionText("vTerm6-S-C")).toBe(
+      "vTerm6 -s -c",
     );
     // A synthetic sentence preserves surrounding prose while splitting flags.
     expect(
-      cleanupTranscriptionText("Fixture ready. sampleproject orcClaude-S-C"),
-    ).toBe("Fixture ready. Sampleproject orcClaude -s -c");
-    // The agent-name canonicalizer first folds "voice layer Codex" ->
-    // "voicelayerCodex"; the glued flag suffix must still be split off.
-    expect(cleanupTranscriptionText("voice layer Codex-S-C")).toBe(
-      "voicelayerCodex -s -c",
+      cleanupTranscriptionText("Fixture ready. sampleproject vTerm3-S-C"),
+    ).toBe("Fixture ready. Sampleproject vTerm3 -s -c");
+    // The agent-name canonicalizer first folds "fixtureVariant8" ->
+    // "vTerm6"; the glued flag suffix must still be split off.
+    expect(cleanupTranscriptionText("fixtureVariant8-S-C")).toBe(
+      "vTerm6 -s -c",
     );
   });
 
-  it("normalizes loosely-spaced repoGolem spawn flags after an agent token", () => {
-    expect(cleanupTranscriptionText("voicelayerCodex - S - C")).toBe(
-      "voicelayerCodex -s -c",
+  it("normalizes loosely-spaced vTerm10 spawn flags after an agent token", () => {
+    expect(cleanupTranscriptionText("vTerm6 - S - C")).toBe(
+      "vTerm6 -s -c",
     );
-    expect(cleanupTranscriptionText("orcClaude dash s dash c")).toBe(
-      "orcClaude -s -c",
+    expect(cleanupTranscriptionText("vTerm3 dash s dash c")).toBe(
+      "vTerm3 -s -c",
     );
-    expect(cleanupTranscriptionText("brainlayerClaude -w")).toBe(
-      "brainlayerClaude -w",
+    expect(cleanupTranscriptionText("vTerm11 -w")).toBe(
+      "vTerm11 -w",
     );
   });
 
@@ -216,9 +214,9 @@ describe("stt-cleanup", () => {
   it("cleans path-token spacing in a synthetic path fixture", () => {
     expect(
       cleanupTranscriptionText(
-        "Fixture directory is under -, is it ~ /.Golems - brain / zigon, ready.",
+        "Fixture directory is under -, is it ~ /.sample - cache / index, ready.",
       ),
-    ).toBe("Fixture directory is under ~/.golems-brain/zikaron, ready.");
+    ).toBe("Fixture directory is under ~/.sample-cache/index, ready.");
     expect(cleanupTranscriptionText("keep the and/or wording")).toBe(
       "Keep the and/or wording",
     );
@@ -234,11 +232,11 @@ describe("stt-cleanup", () => {
   });
 
   it("seeds Hebrew script preserved terms for tax and location dictation", () => {
-    expect(cleanupTranscriptionText("Osek Patur")).toBe("עוסק פטור");
-    expect(cleanupTranscriptionText("Reshut HaMisim")).toBe("רשות המסים");
-    expect(cleanupTranscriptionText("Rechovot")).toBe("רחובות");
-    expect(cleanupTranscriptionText("Osekpatur bereshutamisin")).toBe(
-      "עוסק פטור ברשות המסים",
+    expect(cleanupTranscriptionText("fixtureVariant64")).toBe("vTerm19");
+    expect(cleanupTranscriptionText("fixtureVariant66")).toBe("vTerm20");
+    expect(cleanupTranscriptionText("fixtureVariant69")).toBe("vTerm21");
+    expect(cleanupTranscriptionText("fixtureVariant65 fixtureVariant68")).toBe(
+      "vTerm19 בvTerm20",
     );
   });
 
@@ -356,25 +354,24 @@ describe("stt-cleanup", () => {
     const prompt = getSTTVocabularyPrompt();
 
     expect(prompt).toContain("cmux");
-    expect(prompt).toContain("BrainLayer");
+    expect(prompt).toContain("vTerm2");
     expect(prompt).toContain("VoiceLayer");
-    expect(prompt).toContain("Golems");
+    expect(prompt).toContain("vTerm14");
     expect(prompt).toContain("T3 Code");
-    expect(prompt).toContain("Qelos");
-    expect(prompt).toContain("nanoClaw");
+    expect(prompt).toContain("vTerm15");
+    expect(prompt).toContain("vTerm16");
     expect(prompt).toContain("Apple Container");
     expect(prompt).toContain("Docker");
     expect(prompt).toContain("Telegram");
     expect(prompt).toContain("WhatsApp");
-    expect(prompt).toContain("zikaron");
-    expect(prompt).toContain("golems-brain");
-    expect(prompt).toContain("~/.golems-brain/zikaron");
-    expect(prompt).toContain("עוסק פטור");
-    expect(prompt).toContain("רשות המסים");
-    expect(prompt).toContain("רחובות");
+    expect(prompt).toContain("vTerm17");
+    expect(prompt).toContain("vTerm18");
+    expect(prompt).toContain("vTerm19");
+    expect(prompt).toContain("vTerm20");
+    expect(prompt).toContain("vTerm21");
     expect(prompt).not.toContain("kilos");
-    expect(prompt).not.toContain("nanoClawed");
-    expect(prompt).not.toContain("nanoclawed");
+    expect(prompt).not.toContain("fixtureVariant58");
+    expect(prompt).not.toContain("fixtureVariant58");
   });
 
   it("caps the STT vocabulary prompt at the whisper initial-prompt budget", () => {
@@ -417,9 +414,6 @@ describe("stt-cleanup", () => {
       expect(estimatedTokens).toBeLessThanOrEqual(224);
 
       // High-value proper nouns whisper mishears MUST survive the cap.
-      expect(prompt).toContain("orcClaude");
-      expect(prompt).toContain("voicelayerCodex");
-      expect(prompt).toContain("BrainLayer");
       expect(prompt).toContain("VoiceLayer");
       expect(prompt).toContain("Tailscale");
 
@@ -855,43 +849,43 @@ describe("stt-cleanup", () => {
 
   it("cleans spoken project and domain aliases to canonical spelling", () => {
     const cleaned = cleanupTranscriptionText(
-      "c mux brain layer voice layer golems t three code kilos project nano clawed apple container docker telegram whats app",
+      "c mux fixtureVariant20 voice layer vTerm14 t three code fixtureVariant42 fixtureVariant56 apple container docker telegram whats app",
     );
 
     expect(cleaned).toBe(
-      "cmux BrainLayer VoiceLayer Golems T3 Code Qelos project nanoClaw Apple Container Docker Telegram WhatsApp",
+      "cmux vTerm2 VoiceLayer vTerm14 T3 Code vTerm15 project vTerm16 Apple Container Docker Telegram WhatsApp",
     );
     expect(cleaned).not.toContain("kilos");
-    expect(cleaned).not.toContain("nanoClawed");
-    expect(cleaned).not.toContain("nanoclawed");
+    expect(cleaned).not.toContain("fixtureVariant58");
+    expect(cleaned).not.toContain("fixtureVariant58");
   });
 
-  it("does not rewrite ordinary kilos weight units as Qelos", () => {
+  it("does not rewrite ordinary kilos weight units as vTerm15", () => {
     expect(cleanupTranscriptionText("ship 10 kilos of flour")).toBe(
       "Ship 10 kilos of flour",
     );
   });
 
-  it("differentiates the Qelos repo from the kilos measurement unit by context", () => {
-    // Repo/code context → Qelos (the repo). "kilos" alone stays a measurement,
+  it("differentiates the vTerm15 repo from the kilos measurement unit by context", () => {
+    // Repo/code context → vTerm15 (the repo). "kilos" alone stays a measurement,
     // but "kilos <repo-noun>" is unambiguously the repo.
-    expect(cleanupTranscriptionText("check the kilos repo")).toBe(
-      "Check the Qelos repo",
+    expect(cleanupTranscriptionText("check the fixtureVariant44")).toBe(
+      "Check the vTerm15 repo",
     );
-    expect(cleanupTranscriptionText("the kilos adapter needs work")).toBe(
-      "The Qelos adapter needs work",
+    expect(cleanupTranscriptionText("the fixtureVariant46 needs work")).toBe(
+      "The vTerm15 adapter needs work",
     );
-    expect(cleanupTranscriptionText("open the kilos dashboard")).toBe(
-      "Open the Qelos dashboard",
+    expect(cleanupTranscriptionText("open the fixtureVariant47")).toBe(
+      "Open the vTerm15 dashboard",
     );
-    expect(cleanupTranscriptionText("rebase the kilos branch")).toBe(
-      "Rebase the Qelos branch",
+    expect(cleanupTranscriptionText("rebase the fixtureVariant49")).toBe(
+      "Rebase the vTerm15 branch",
     );
-    // Bare phonetic mishears (non-words) → Qelos.
-    expect(cleanupTranscriptionText("deploy kelos now")).toBe(
-      "Deploy Qelos now",
+    // Bare phonetic mishears (non-words) → vTerm15.
+    expect(cleanupTranscriptionText("deploy fixtureVariant52 now")).toBe(
+      "Deploy vTerm15 now",
     );
-    // Measurement context is preserved (NOT rewritten to Qelos).
+    // Measurement context is preserved (NOT rewritten to vTerm15).
     expect(cleanupTranscriptionText("ship 10 kilos of flour")).toBe(
       "Ship 10 kilos of flour",
     );
@@ -903,10 +897,10 @@ describe("stt-cleanup", () => {
   it("keeps conversational one as a word while preserving numeric agent counts", () => {
     expect(
       cleanupTranscriptionText(
-        "1 more thing. The other 1. I want 1 orcClaude and I want 1 BrainLayer clawed.",
+        "1 more thing. The other 1. I want 1 vTerm3 and I want 1 fixtureVariant22.",
       ),
     ).toBe(
-      "One more thing. The other one. I want 1 orcClaude and I want 1 brainlayerClaude.",
+      "One more thing. The other one. I want 1 vTerm3 and I want 1 vTerm11.",
     );
   });
 
@@ -924,37 +918,37 @@ describe("stt-cleanup", () => {
     );
   });
 
-  it("cleans BrainLayer coordination terms from long dictation", () => {
+  it("cleans vTerm2 coordination terms from long dictation", () => {
     expect(
       cleanupTranscriptionText(
-        "go back to orc claud and ask whether pending cues are working",
+        "go back to fixtureVariant26 and ask whether pending cues are working",
       ),
-    ).toBe("Go back to orcClaude and ask whether pending queues are working");
+    ).toBe("Go back to vTerm3 and ask whether pending queues are working");
 
     expect(
       cleanupTranscriptionText(
-        "go back to orcclaud and ask the skill creator claude",
+        "go back to fixtureVariant28 and ask the fixtureVariant12",
       ),
-    ).toBe("Go back to orcClaude and ask the SkillCreatorClaude");
+    ).toBe("Go back to vTerm3 and ask the vTerm8");
 
     expect(
       cleanupTranscriptionText(
-        "ask or claude whether pending cues are working in brain layer",
+        "fixtureVariant30 whether pending cues are working in fixtureVariant20",
       ),
-    ).toBe("Ask orcClaude whether pending queues are working in BrainLayer");
+    ).toBe("Ask vTerm3 whether pending queues are working in vTerm2");
 
     expect(
       cleanupTranscriptionText(
-        "then tell or claude whether pending cues are working",
+        "then fixtureVariant31 whether pending cues are working",
       ),
-    ).toBe("Then tell orcClaude whether pending queues are working");
+    ).toBe("Then tell vTerm3 whether pending queues are working");
 
     expect(cleanupTranscriptionText("ask Gemini or Claude")).toBe(
       "Ask Gemini or Claude",
     );
 
-    expect(cleanupTranscriptionText("please ask or claude about this")).toBe(
-      "Please ask orcClaude about this",
+    expect(cleanupTranscriptionText("please fixtureVariant30 about this")).toBe(
+      "Please ask vTerm3 about this",
     );
   });
 
@@ -978,8 +972,8 @@ describe("stt-cleanup", () => {
     );
 
     expect(
-      cleanupTranscriptionText("pending cues are working in brain layer"),
-    ).toBe("Pending queues are working in BrainLayer");
+      cleanupTranscriptionText("pending cues are working in fixtureVariant20"),
+    ).toBe("Pending queues are working in vTerm2");
   });
 
   it("formats certainty percentages in migration planning dictation", () => {
