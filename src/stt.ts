@@ -2442,19 +2442,24 @@ export class WhisperServerBackend implements STTBackend {
     // append them after a 2-word overlap such as "All right".
     if (isLowEnergyWavSegment(tailWav)) return unchanged;
 
-    const logWouldAppend = (mergedText: string | null, decode: string) => {
-      const delta = mergedText === null
-        ? 0
-        : normalizeChunkWords(
-            stripTailVerificationArtifact(mergedText, fullText),
-          ).length - normalizeChunkWords(fullText).length;
+    // Main returned the artifact-stripped merge, so "would rewrite" is judged
+    // on that exact string: a strip that undoes the change kept main's gates
+    // eligible (TAILLOG2, Sol R2), and a zero-word change still counts.
+    const report = (mergedText: string | null, decode: string) => {
+      const wouldText = mergedText === null
+        ? fullText
+        : stripTailVerificationArtifact(mergedText, fullText);
+      const wouldRewrite = wouldText !== fullText;
+      const delta = normalizeChunkWords(wouldText).length -
+        normalizeChunkWords(fullText).length;
       console.error(
         `[voicelayer] tail verify (log-only): ` +
-          (mergedText === null
-            ? "would not append"
-            : `would append ${delta >= 0 ? "+" : ""}${delta} words`) +
+          (wouldRewrite
+            ? `would append ${delta >= 0 ? "+" : ""}${delta} words`
+            : "would not append") +
           ` via ${decode} decode; backend=${this.name}`,
       );
+      return { text: fullText, wouldRewrite };
     };
 
     try {
@@ -2469,15 +2474,13 @@ export class WhisperServerBackend implements STTBackend {
       );
       const merged = mergeTailVerificationTranscript(fullText, tailText);
       if (merged.text !== fullText) {
-        logWouldAppend(merged.text, "prompted");
-        return { text: fullText, wouldRewrite: true };
+        return report(merged.text, "prompted");
       }
       if (
         merged.confirmedOverlap &&
         !hasDanglingTailContinuationCue(normalizeChunkWords(fullText))
       ) {
-        logWouldAppend(null, "prompted");
-        return unchanged;
+        return report(null, "prompted");
       }
 
       const unpromptedTailText = await this.transcribeResident(
@@ -2488,9 +2491,10 @@ export class WhisperServerBackend implements STTBackend {
         fullText,
         unpromptedTailText,
       );
-      const wouldRewrite = unpromptedMerged.text !== fullText;
-      logWouldAppend(wouldRewrite ? unpromptedMerged.text : null, "unprompted");
-      return { text: fullText, wouldRewrite };
+      return report(
+        unpromptedMerged.text !== fullText ? unpromptedMerged.text : null,
+        "unprompted",
+      );
     } catch (err) {
       console.error(
         `[voicelayer] whisper-server tail verification failed; keeping full-window text: ${

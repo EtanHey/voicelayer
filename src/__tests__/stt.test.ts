@@ -532,6 +532,51 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+outro");
     });
 
+    // TAILLOG2 (Sol R2): main returned the artifact-stripped merge. When the
+    // strip undoes the whole change, main's text was unchanged and its gates
+    // ran; the gate skip must follow the same post-strip comparison.
+    for (const decode of ["prompted", "unprompted"] as const) {
+      it(`still gates an interior outro when the artifact strip undoes the ${decode} tail merge`, async () => {
+        const savedGate = process.env.VOICELAYER_STT_OUTRO_GATE;
+        process.env.VOICELAYER_STT_OUTRO_GATE = "1";
+        try {
+          const wavPath = testTmp(`voicelayer-tail-artifact-edge-${decode}.wav`);
+          await Bun.write(wavPath, quietCloserWav(180));
+          const full = "We should ship the release build. Thank you. Is it ready?";
+          let calls = 0;
+          const backend = new WhisperServerBackend({
+            isServerAvailable: () => true,
+            transcribeViaServer: async (_wavData, options) => {
+              calls++;
+              if (calls === 1) {
+                options?.onSegments?.([
+                  { text: "We should ship the release build.", startS: 0, endS: 24 },
+                  { text: " Thank you.", startS: 25, endS: 25.8 },
+                  { text: " Is it ready?", startS: 28, endS: 28.8 },
+                ]);
+                return full;
+              }
+              if (decode === "unprompted" && calls === 2) return "unrelated noise";
+              return "Is it ready? okay.";
+            },
+          });
+
+          const { value: result, lines } = await captureTailVerifyLog(() =>
+            backend.transcribe(wavPath),
+          );
+
+          expect(calls).toBe(decode === "prompted" ? 2 : 3);
+          expect(result.text).toBe("We should ship the release build. Is it ready?");
+          expect(result.backend).toBe("whisper-server+outro");
+          expect(lines[0]).toContain("would not append");
+          expect(lines[0]).toContain(`via ${decode} decode`);
+        } finally {
+          if (savedGate === undefined) delete process.env.VOICELAYER_STT_OUTRO_GATE;
+          else process.env.VOICELAYER_STT_OUTRO_GATE = savedGate;
+        }
+      });
+    }
+
     it("keeps a quiet final caption-class line when tail verify would have rewritten the text", async () => {
       // Main's caption gate refused stale segments too; log-only must keep that refusal.
       const { value: result, lines } = await transcribeWithFinalCloser(
