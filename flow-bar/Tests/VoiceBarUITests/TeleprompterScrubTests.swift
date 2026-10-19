@@ -171,13 +171,162 @@ final class TeleprompterScrubTests: XCTestCase {
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"))
         XCTAssertTrue(view.contains("Button {"))
         XCTAssertTrue(view.contains(".accessibilityHint(\"Seek to this word\")"))
-        XCTAssertTrue(bar.contains("if state.mode == .speaking"))
-        XCTAssertTrue(bar.contains("TeleprompterPlaybackScrubBar(state: state)"))
+        XCTAssertTrue(bar.contains("if state.showsTeleprompterScrubber {\n                    TeleprompterPlaybackScrubBar(state: state)"),
+                      "SCRUB1: ended readback keeps the scrubber mounted")
         let scrub = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SettingsPlaybackScrubBar.swift"))
         XCTAssertTrue(scrub.contains("if isPlaying {\n                TimelineView"), "idle has no periodic schedule")
         let wrapper = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/TeleprompterPlaybackScrubBar.swift"))
-        XCTAssertTrue(wrapper.contains("control.disabled(!state.isTeleprompterPlaybackReady)"))
+        XCTAssertTrue(wrapper.contains("control.disabled(!state.isTeleprompterScrubSeekable)"))
         XCTAssertLessThanOrEqual(1 / SettingsPlaybackScrubBar.tickInterval, 10)
+    }
+
+    // SCRUB1: Etan, 2.2.46 — "the scrub doesn't work at all" on an ended read.
+    func testEndedReadbackKeepsARealDurationScrubberThatSeeksTheRetainedReadback() {
+        for (chunkStart, stoppedAt) in [(0, 18300), (12000, 15000)] {
+            var now = 100.0
+            let state = VoiceState(playbackAmplitudeClock: { now })
+            var event: [String: Any] = ["type": "state", "state": "speaking", "text": "Hello world",
+                                       "playback_offset_ms": chunkStart, "duration_ms": 18300, "readback_id": "fixture"]
+            if chunkStart > 0 { event["long_read"] = ["id": "read", "chunk_start_ms": chunkStart, "estimated_total_ms": 18300] }
+            state.handleEvent(event)
+            now += Double(stoppedAt - chunkStart) / 1000
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            XCTAssertTrue(state.isTeleprompterReadback)
+            XCTAssertTrue(state.showsTeleprompterScrubber)
+            XCTAssertTrue(state.isTeleprompterScrubSeekable)
+            XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 18.3, accuracy: 0.001)
+            XCTAssertEqual(state.teleprompterPlaybackPosition.currentTime, Double(stoppedAt) / 1000, accuracy: 0.001)
+            let wrapper = TeleprompterPlaybackScrubBar(state: state)
+            XCTAssertTrue(wrapper.control.allowsSeeking)
+            XCTAssertFalse(wrapper.control.isPlaying, "an ended read samples no clock")
+            XCTAssertFalse(wrapper.control.isGrowing)
+            XCTAssertNil(wrapper.timingNotice)
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            wrapper.control.seek(5)
+            XCTAssertEqual(commands.count, 1)
+            XCTAssertEqual(commands.first?["cmd"] as? String, "seek")
+            XCTAssertEqual(commands.first?["offset_ms"] as? Int, 5000)
+            XCTAssertEqual(commands.first?["scope"] as? String, "readback")
+            XCTAssertEqual(commands.first?["readback_id"] as? String, "fixture")
+            XCTAssertEqual(state.mode, .idle, "only the daemon's speaking receipt restarts the clock")
+            now += 30
+            XCTAssertEqual(state.teleprompterPlaybackPosition.currentTime, Double(stoppedAt) / 1000, accuracy: 0.001)
+            state.handleEvent(["type": "state", "state": "speaking", "text": "Hello world", "playback_offset_ms": 5000,
+                               "duration_ms": 18300, "readback_id": "fixture"])
+            XCTAssertTrue(state.isTeleprompterPlaybackReady)
+            XCTAssertEqual(state.teleprompterPlaybackPosition.currentTime, 5, accuracy: 0.001)
+            state.handleEvent(["type": "state", "state": "recording"])
+            XCTAssertFalse(state.showsTeleprompterScrubber)
+            XCTAssertFalse(state.isTeleprompterScrubSeekable)
+        }
+    }
+
+    // SCRUB1 R2 (Sol #2): a stopped long read only offers what the daemon retained, not its lookahead.
+    func testStoppedLongReadReadbackOffersOnlyTheRetainedRange() {
+        var now = 100.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Chunk zero", "duration_ms": 1000,
+                           "readback_id": "fixture", "readback_duration_ms": 1000,
+                           "long_read": ["id": "read", "chunk_start_ms": 0]])
+        state.handleEvent(["type": "playback_duration", "long_read_id": "read", "duration_ms": 3000, "final": true])
+        XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 3, "live speech shows the synthesized total")
+        now += 0.6
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 1, "readback shows only the retained range")
+        XCTAssertEqual(state.teleprompterPlaybackPosition.currentTime, 0.6, accuracy: 0.001)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        let wrapper = TeleprompterPlaybackScrubBar(state: state)
+        var drag = SettingsScrubDrag()
+        drag.ended(atFraction: 1, duration: state.teleprompterPlaybackPosition.duration, seek: wrapper.control.seek)
+        XCTAssertEqual(commands.last?["offset_ms"] as? Int, 900, "the far end stays inside the retained 1000 ms")
+        XCTAssertEqual(commands.last?["scope"] as? String, "readback")
+
+        let legacy = VoiceState(playbackAmplitudeClock: { 100 })
+        legacy.handleEvent(["type": "state", "state": "speaking", "text": "Old daemon", "duration_ms": 4000, "readback_id": "old"])
+        legacy.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertEqual(legacy.teleprompterPlaybackPosition.duration, 4, "an older daemon falls back to its duration")
+    }
+
+    func testReadbackWithoutRetainedAudioOrDurationShowsAnInertScrubber() {
+        for event: [String: Any] in [
+            ["type": "state", "state": "speaking", "text": "No audio identity", "duration_ms": 4000],
+            ["type": "state", "state": "speaking", "text": "No duration", "readback_id": "fixture"],
+        ] {
+            let state = VoiceState(playbackAmplitudeClock: { 100 })
+            state.handleEvent(event)
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            XCTAssertTrue(state.showsTeleprompterScrubber)
+            XCTAssertFalse(state.isTeleprompterScrubSeekable)
+            XCTAssertFalse(TeleprompterPlaybackScrubBar(state: state).control.allowsSeeking)
+        }
+        let dismissed = VoiceState(playbackAmplitudeClock: { 100 })
+        dismissed.handleEvent(["type": "state", "state": "speaking", "text": "Gone", "duration_ms": 4000, "readback_id": "fixture"])
+        dismissed.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        dismissed.dismissRetainedTeleprompter()
+        XCTAssertFalse(dismissed.showsTeleprompterScrubber)
+        XCTAssertFalse(dismissed.isTeleprompterScrubSeekable)
+    }
+
+    func testLongReadDurationUpdatesReplaceTheStaleSoFarTotal() {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
+                           "long_read": ["id": "read", "chunk_start_ms": 0, "preparing": true]])
+        state.handleEvent(["type": "playback_duration", "long_read_id": "read", "duration_ms": 5000, "final": false])
+        XCTAssertFalse(state.isTeleprompterPlaybackReady, "preparation stays static until audio starts")
+        state.handleEvent(["type": "state", "state": "speaking", "text": "First chunk", "duration_ms": 5000,
+                           "long_read": ["id": "read", "chunk_start_ms": 0]])
+        XCTAssertTrue(state.isPlaybackDurationGrowing)
+        state.handleEvent(["type": "playback_duration", "long_read_id": "other", "duration_ms": 99000, "final": true])
+        XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 5, "a foreign read never moves this clock")
+        state.handleEvent(["type": "playback_duration", "long_read_id": "read", "duration_ms": 11000, "final": false])
+        XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 11)
+        XCTAssertTrue(state.isPlaybackDurationGrowing)
+        state.handleEvent(["type": "playback_duration", "long_read_id": "read", "duration_ms": 18300, "final": true])
+        XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 18.3, accuracy: 0.001)
+        XCTAssertFalse(state.isPlaybackDurationGrowing, "the final total drops the \"so far\" label")
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Second chunk", "playback_offset_ms": 5000,
+                           "duration_ms": 11000, "long_read": ["id": "read", "chunk_start_ms": 5000]])
+        XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 18.3, accuracy: 0.001,
+                       "a later chunk edge never shrinks a total the read already reported")
+        XCTAssertFalse(state.isPlaybackDurationGrowing)
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        state.handleEvent(["type": "playback_duration", "long_read_id": "read", "duration_ms": 30000, "final": true])
+        XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 18.3, accuracy: 0.001, "idle ignores late totals")
+    }
+
+    // SCRUB1 parity (QA 2026-10-19 03:48, Findings 1–2): readback wears the speaking chrome.
+    func testReadbackWearsTheSpeakingChromeWithAFilledWingAndCentredText() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"))
+        XCTAssertTrue(bar.contains(".frame(height: state.showsTeleprompterScrubber ? Theme.teleprompterViewportHeight : nil)"))
+        XCTAssertTrue(bar.contains("if state.showsTeleprompterScrubber { Spacer(minLength: 0) }"))
+        XCTAssertTrue(bar.contains("case .teleprompter:\n            if state.mode == .speaking || state.isTeleprompterReadback {\n                notchWaveform"),
+                      "the reserved trailing wing is never left empty in readback")
+        XCTAssertTrue(bar.contains("isPlaybackEnded: state.isTeleprompterReadback"))
+        XCTAssertTrue(bar.contains("accessibilityLabel: \"Dismiss teleprompter\""), "readback keeps its dismiss control")
+        XCTAssertEqual(TeleprompterScrollPolicy.initialViewportAlignment, .center)
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Done", "duration_ms": 4000, "readback_id": "fixture"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertEqual(state.showsTeleprompterScrubber, true)
+    }
+
+    func testEndedPlaybackWingIsAVisibleRestingBedThatSamplesNoLevel() async throws {
+        XCTAssertNotEqual(VoiceBarNotchWaveform.waveformColor(mode: .idle, isCaptureLive: false, isPlaybackEnded: true), .clear)
+        XCTAssertEqual(VoiceBarNotchWaveform.waveformColor(mode: .idle, isCaptureLive: false), .clear)
+        var reads = 0
+        let host = NSHostingView(rootView: VoiceBarNotchWaveform(
+            mode: .idle, isListening: false, isCaptureLive: false,
+            recordingLevel: { reads += 1; return 1 }, playbackLevel: { reads += 1; return 1 },
+            isPlaybackEnded: true
+        ).frame(width: 60, height: 20))
+        host.frame = NSRect(x: 0, y: 0, width: 60, height: 20)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(reads, 0, "an ended read has no level to show")
     }
 
     func testPreparingIsStaticUntilDurationAndNotReadyAckDoesNotJumpClock() {

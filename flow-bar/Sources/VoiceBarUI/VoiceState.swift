@@ -433,6 +433,9 @@ public final class VoiceState {
     public private(set) var isPlaybackDurationGrowing = false
     public private(set) var playbackDurationMilliseconds: Int?
     private var playbackStartedAt: TimeInterval?
+    private var playbackLongReadID: String?
+    /// What a readback seek can reach once this read ends: the retained chunks, not the synthesized lookahead.
+    private var playbackReadbackDurationMilliseconds: Int?
     /// Advances for every speaking receipt, including same-text replay.
     public private(set) var playbackEpoch = 0
     private var recordingWaveformHistory = WaveformEnvelopeHistory()
@@ -457,6 +460,9 @@ public final class VoiceState {
     public var wordBoundaries: [TeleprompterBoundary] = []
     private var playbackReadbackID: String?
     private var retainedReadbackID: String?
+    /// The ended read's clock, frozen at idle so the readback scrubber shows real time without sampling.
+    private var retainedPlaybackDurationMilliseconds: Int?
+    private var retainedPlaybackPositionMilliseconds = 0
     private var pendingReadbackSeekIDs: Set<String> = []
     private var retainedTeleprompterText: String?
     private var retainedTeleprompterWordBoundaries: [TeleprompterBoundary] = []
@@ -1598,9 +1604,25 @@ public final class VoiceState {
         mode == .speaking && (playbackDurationMilliseconds ?? 0) > 0
     }
 
+    /// Speaking, or an ended read whose retained audio the daemon can replay (SEEK2 readback scope).
+    public var showsTeleprompterScrubber: Bool {
+        mode == .speaking || isTeleprompterReadback
+    }
+
+    public var isTeleprompterScrubSeekable: Bool {
+        isTeleprompterPlaybackReady || (isTeleprompterReadback && retainedReadbackID != nil &&
+            (retainedPlaybackDurationMilliseconds ?? 0) > 0)
+    }
+
     /// F supplies a global clock and global subtitle offsets. Do not add chunk_start_ms twice.
     public var teleprompterPlaybackPosition: SettingsAudioPlaybackPosition {
-        SettingsAudioPlaybackPosition(
+        if isTeleprompterReadback {
+            return SettingsAudioPlaybackPosition(
+                currentTime: Double(retainedPlaybackPositionMilliseconds) / 1000,
+                duration: Double(max(0, retainedPlaybackDurationMilliseconds ?? 0)) / 1000
+            )
+        }
+        return SettingsAudioPlaybackPosition(
             currentTime: Double(playbackElapsedMilliseconds()) / 1000,
             duration: Double(max(0, playbackDurationMilliseconds ?? 0)) / 1000
         )
@@ -1981,16 +2003,30 @@ public final class VoiceState {
                 clearHistoryRetranscriptionRequest(removeSuppression: false)
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
+                let previousLongRead = mode == .speaking ? playbackLongReadID.map {
+                    (id: $0, duration: playbackDurationMilliseconds, growing: isPlaybackDurationGrowing)
+                } : nil
                 resetAudioLevels()
                 let playbackStart = playbackAmplitudeClock()
                 let offset = (event["playback_offset_ms"] as? NSNumber)?.doubleValue
                 let validOffset = offset.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
                 playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000
                 playbackReadbackID = event["readback_id"] as? String
-                playbackDurationMilliseconds = (event["duration_ms"] as? NSNumber)?.intValue
+                playbackReadbackDurationMilliseconds = (event["readback_duration_ms"] as? NSNumber)?.intValue
                 playbackChunkStartMilliseconds = (event["long_read"] as? [String: Any])?["chunk_start_ms"] as? Int ?? 0
                 let longRead = event["long_read"] as? [String: Any]
-                isPlaybackDurationGrowing = longRead != nil && longRead?["estimated_total_ms"] == nil
+                let longReadID = longRead?["id"] as? String
+                let duration = (event["duration_ms"] as? NSNumber)?.intValue
+                let growing = longRead != nil && longRead?["estimated_total_ms"] == nil
+                // A chunk edge of the same read never undoes a total its playback_duration already reported.
+                if let previousLongRead, longReadID == previousLongRead.id, let previous = previousLongRead.duration {
+                    playbackDurationMilliseconds = max(previous, duration ?? 0)
+                    isPlaybackDurationGrowing = previousLongRead.growing && growing
+                } else {
+                    playbackDurationMilliseconds = duration
+                    isPlaybackDurationGrowing = growing
+                }
+                playbackLongReadID = longReadID
                 playbackEpoch += 1
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
@@ -2187,6 +2223,14 @@ public final class VoiceState {
                     recordingIsLatest: recordingIsLatest
                 )
             }
+
+        case "playback_duration":
+            // SCRUB1: a long read's total grows as chunks synthesize; `final` drops "so far".
+            // Preparation has no duration yet; the first speaking edge carries its own.
+            guard mode == .speaking, let current = playbackDurationMilliseconds, let id = event["long_read_id"] as? String,
+                  id == playbackLongReadID, let duration = (event["duration_ms"] as? NSNumber)?.intValue, duration > 0 else { return }
+            playbackDurationMilliseconds = max(current, duration)
+            if event["final"] as? Bool == true { isPlaybackDurationGrowing = false }
 
         case "subtitle":
             // Old daemons' missing/mistyped words are a no-op. Indexed payloads
@@ -2692,6 +2736,8 @@ public final class VoiceState {
         playbackAmplitudeStartedAt = nil
         playbackStartedAt = nil
         playbackDurationMilliseconds = nil
+        playbackLongReadID = nil
+        playbackReadbackDurationMilliseconds = nil
         playbackChunkStartMilliseconds = 0
         isPlaybackDurationGrowing = false
     }
@@ -2822,6 +2868,10 @@ public final class VoiceState {
             let trimmed = statusText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 retainedReadbackID = playbackReadbackID
+                // An older daemon sends no retained range; its duration is the best it can say.
+                let readbackDuration = playbackReadbackDurationMilliseconds ?? playbackDurationMilliseconds
+                retainedPlaybackDurationMilliseconds = readbackDuration
+                retainedPlaybackPositionMilliseconds = min(playbackElapsedMilliseconds(), readbackDuration ?? 0)
                 retainedTeleprompterText = statusText
                 retainedTeleprompterWordBoundaries = wordBoundaries
                 notifyPanelLayoutChangedIfNeeded(true)
@@ -2878,6 +2928,8 @@ public final class VoiceState {
     private func clearRetainedTeleprompter() {
         let hadRetainedTeleprompter = retainedTeleprompterText != nil
         retainedReadbackID = nil
+        retainedPlaybackDurationMilliseconds = nil
+        retainedPlaybackPositionMilliseconds = 0
         pendingReadbackSeekIDs.removeAll()
         retainedTeleprompterText = nil
         retainedTeleprompterWordBoundaries = []

@@ -157,16 +157,18 @@ final class ProcessingTogglesTests: XCTestCase {
         XCTAssertTrue(state.processingPending.isEmpty)
     }
 
-    func testBusyShowsTheSameReasonInTheProcessingCard() throws {
+    /// SETUI1: Etan's screenshot showed "Recording…" twice on one page. The busy reason is said once, above
+    /// both the Load/Unload button and the Processing toggles it disables.
+    func testBusyReasonIsShownOncePerPage() throws {
         var busy = Self.health(Self.controls())
         busy["queue_depth"] = 1
-        let state = ModelsSettingsState(healthEvent: busy)
-        let reason = try XCTUnwrap(ModelsSettingsView.effortDisabledReason(for: state))
-        XCTAssertEqual(ModelsSettingsView.processingBusyReason(for: state), reason)
-        XCTAssertNil(ModelsSettingsView
-            .processingBusyReason(for: ModelsSettingsState(healthEvent: Self.health(Self.controls()))))
-        XCTAssertNil(ModelsSettingsView.processingBusyReason(for: .disconnected),
-                     "unavailable already shows its own Processing placeholder")
+        XCTAssertNotNil(ModelsSettingsView.effortDisabledReason(for: ModelsSettingsState(healthEvent: busy)))
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift"))
+        XCTAssertEqual(source.components(separatedBy: "Text(reason)").count - 1, 1)
+        XCTAssertTrue(source.contains("models-busy-reason"))
+        XCTAssertFalse(source.contains("models-processing-busy-reason"))
     }
 
     func testEverySettledToggleAsksForARebuild() {

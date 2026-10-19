@@ -402,17 +402,15 @@ final class SettingsViewTests: XCTestCase {
     /// chevron has a fixed width so the row does not shift, and the header rhythm matches the other tabs.
     func testDictionaryAccessibilityAndRhythmPins() throws {
         let source = try settingsViewSource()
-        XCTAssertTrue(source.contains(".accessibilityValue(includedTermsExpanded ? \"Expanded\" : \"Collapsed\")"))
+        // The header is the shared Settings drawer, which announces Expanded/Collapsed (SETUI1).
+        XCTAssertTrue(source.contains("includedHeader.title, isExpanded: $includedTermsExpanded,"))
         // Esc closes the Add/Edit sheet (its Cancel is the cancel action); there is no inline editor any more.
         let sheet = try String(contentsOf: URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/DictionaryAddSheetView.swift"))
         XCTAssertTrue(sheet.contains(".keyboardShortcut(.cancelAction)"))
-        // The chevron keeps its 14 pt column (independent of how deep the header is indented).
-        let chevron = try XCTUnwrap(
-            source.range(of: "Image(systemName: includedTermsExpanded ? \"chevron.down\" : \"chevron.right\")")
-        )
-        XCTAssertTrue(source[chevron.upperBound...].drop { $0.isWhitespace }.hasPrefix(".frame(width: 14)"))
+        // The chevron keeps a fixed column even with nothing to open, so the row does not shift (shared drawer).
+        XCTAssertTrue(source.contains("isEnabled: includedHeader.showsChevron, hint: \"Built-in terms are read-only\""))
         XCTAssertTrue(source
             .contains("VStack(alignment: .leading, spacing: 3) {\n                    Text(\"Dictionary\")"))
     }

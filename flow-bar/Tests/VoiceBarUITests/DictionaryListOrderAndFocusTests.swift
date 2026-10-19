@@ -86,8 +86,7 @@ final class DictionaryListOrderAndFocusTests: XCTestCase {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("@State private var yourTermsExpanded"))
-        XCTAssertTrue(source.contains("yourTermsExpanded.toggle()"))
-        XCTAssertTrue(source.contains(".accessibilityValue(yourTermsExpanded ? \"Expanded\" : \"Collapsed\")"))
+        XCTAssertTrue(source.contains("SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded)"))
         XCTAssertTrue(source.contains("if yourTermsExpanded || isSearching {"))
     }
 

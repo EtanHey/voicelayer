@@ -1,4 +1,5 @@
 import { pauseParagraphsEnabled } from "./stt-paragraphs";
+import { coherentParagraphsEnabled } from "./stt-coherent-paragraphs";
 import { getSTTPolishMode } from "./stt-polish";
 import { outroGateEnabled } from "./stt-outro-gate";
 import { isSmartWavChunkingEnabled } from "./stt";
@@ -20,6 +21,7 @@ export type PolishControlsStatus = {
   outro_gate: Setting<boolean>;
   smart_chunks: Setting<boolean>;
   pause_paragraphs: Setting<boolean>;
+  coherent_paragraphs: Setting<boolean>;
 };
 
 function setting<T>(
@@ -47,5 +49,6 @@ export function readPolishControlsStatus(
     outro_gate: setting(env, "outro_gate" in file, "outro_gate", outroGateEnabled(effective)),
     smart_chunks: setting(env, "smart_chunks" in file, "smart_chunks", isSmartWavChunkingEnabled(effective)),
     pause_paragraphs: setting(env, "pause_paragraphs" in file, "pause_paragraphs", pauseParagraphsEnabled(effective)),
+    coherent_paragraphs: setting(env, "coherent_paragraphs" in file, "coherent_paragraphs", coherentParagraphsEnabled(effective)),
   };
 }
