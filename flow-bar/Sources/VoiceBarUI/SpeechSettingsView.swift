@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 public struct SpeechSettingsView: View {
@@ -21,6 +22,15 @@ public struct SpeechSettingsView: View {
     static let daemonCommand = "voicelayer daemon"
     static let rateRange: ClosedRange<Double> = -30...50
     static let normalRateFraction = (0 - rateRange.lowerBound) / (rateRange.upperBound - rateRange.lowerBound)
+    /// The native horizontal knob's width (20 pt on macOS 14–27); its centre stops half of it in from each end.
+    static let sliderKnobWidth: CGFloat = NSSliderCell().knobThickness
+
+    /// Where a caption must be centred to sit under the knob at `fraction` of the range. SETUI1: centring on
+    /// `width * fraction` put "Normal" 2.5 pt left of the knob at 300 pt, because the knob never reaches the edges.
+    static func rateCaptionX(fraction: Double, width: CGFloat, knobWidth: CGFloat) -> CGFloat {
+        guard width > knobWidth else { return width * fraction }
+        return knobWidth / 2 + (width - knobWidth) * fraction
+    }
 
     struct DisplayProfile {
         let engine: String
@@ -113,7 +123,11 @@ public struct SpeechSettingsView: View {
                                                     }
                                                     Text("Normal")
                                                         .fixedSize()
-                                                        .position(x: geometry.size.width * Self.normalRateFraction,
+                                                        .position(x: Self.rateCaptionX(
+                                                            fraction: Self.normalRateFraction,
+                                                            width: geometry.size.width,
+                                                            knobWidth: Self.sliderKnobWidth
+                                                        ),
                                                                   y: geometry.size.height / 2)
                                                 }
                                                 .font(.caption2).foregroundStyle(.secondary)
