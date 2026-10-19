@@ -339,3 +339,60 @@ describe("HALLU1: caption tail over silence or a dead device", () => {
     expect(result.removed).toBeNull();
   });
 });
+
+describe("HALLU1: recordings just over one 30 s Whisper window", () => {
+  // Loud deterministic noise stands in for speech energy; Silero evidence is injected.
+  function shaped(seconds: number, speech: Array<[number, number]>): Uint8Array {
+    let seed = 5;
+    return filledWav(seconds, (frame) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const t = frame / 16_000;
+      const amp = speech.some(([a, b]) => t >= a && t < b) ? 3000 : 20;
+      return Math.round((seed / 0x7fffffff * 2 - 1) * amp);
+    });
+  }
+  function vad(seconds: number, speech: Array<[number, number]>): number[] {
+    return quiet(seconds).map((_, i) =>
+      speech.some(([a, b]) => (i * 512) / 16_000 >= a && (i * 512) / 16_000 < b) ? 0.95 : 0.01);
+  }
+
+  test("speech, a 12 s mid gap, speech to 31.3 s: every real segment is kept", async () => {
+    const speech: Array<[number, number]> = [[0.5, 9.5], [21.5, 31.2]];
+    const segments = [
+      { text: "first spoken part", startS: 0.5, endS: 9.5 },
+      { text: " second spoken part thanks for watching", startS: 21.5, endS: 31.2 },
+    ];
+    const text = segments.map((segment) => segment.text).join("");
+    const result = await stripHallucinatedCaption(text, shaped(31.3, speech), {
+      segments, segmentsText: text, speechProbabilities: vad(31.3, speech),
+    });
+    expect(result.text).toBe(text);
+  });
+
+  test("speech to 31.3 s with no gap: a spoken caption-class ending is kept", async () => {
+    const speech: Array<[number, number]> = [[0.3, 31.2]];
+    const segments = [
+      { text: "one long spoken take", startS: 0.3, endS: 28 },
+      { text: " Thanks for watching", startS: 28, endS: 31.2 },
+    ];
+    const text = segments.map((segment) => segment.text).join("");
+    const result = await stripHallucinatedCaption(text, shaped(31.3, speech), {
+      segments, segmentsText: text, speechProbabilities: vad(31.3, speech),
+    });
+    expect(result.text).toBe(text);
+  });
+
+  test("a stray 'you' past the last speech span is removed and the real words stay", async () => {
+    const speech: Array<[number, number]> = [[0.5, 9.5], [21.5, 29.5]];
+    const segments = [
+      { text: "first spoken part", startS: 0.5, endS: 9.5 },
+      { text: " second spoken part", startS: 21.5, endS: 29.5 },
+      { text: " you", startS: 30.2, endS: 31.3 },
+    ];
+    const text = segments.map((segment) => segment.text).join("");
+    const result = await stripHallucinatedCaption(text, shaped(31.3, speech), {
+      segments, segmentsText: text, speechProbabilities: vad(31.3, speech),
+    });
+    expect(result.text).toBe("first spoken part second spoken part");
+  });
+});
