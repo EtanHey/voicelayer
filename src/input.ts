@@ -464,7 +464,8 @@ export async function finalizeTranscriptionTextForSurface(
 /** Short paragraph-only dictations need no audio read, SHA or Silero pass. */
 export function shouldBuildBoundaryContext(text: string, env: STTFinalizeEnv = processingEnv()): boolean {
   return smartBoundariesEnabled(env) ||
-    (pauseParagraphsEnabled(env) && text.length >= 2 * MIN_PARAGRAPH_CHARS);
+    (pauseParagraphsEnabled(env) && !coherentParagraphsEnabled(env) &&
+      text.length >= 2 * MIN_PARAGRAPH_CHARS);
 }
 
 /**
@@ -483,7 +484,9 @@ export async function buildBoundaryContext(
   env: STTFinalizeEnv = processingEnv(),
   signal?: AbortSignal,
 ): Promise<STTPolishBoundaryContext | undefined> {
-  if (!smartBoundariesEnabled(env) && !pauseParagraphsEnabled(env)) return undefined;
+  // Coherent paragraphs replace pause paragraphs and read only the text.
+  if (!smartBoundariesEnabled(env) &&
+      (!pauseParagraphsEnabled(env) || coherentParagraphsEnabled(env))) return undefined;
   // Never pair unbound segment times with an arbitrary WAV.
   if (!segmentsAudioSha256) return undefined;
   if (signal?.aborted) return undefined;

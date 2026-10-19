@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { applyCoherentParagraphs, coherentParagraphsEnabled } from '../stt-coherent-paragraphs';
-import { finalizeTranscriptionResultForSurface } from '../input';
+import { finalizeTranscriptionResultForSurface, shouldBuildBoundaryContext } from '../input';
 import { readPolishControlsStatus } from '../polish-controls-status';
 
 const tokens = (s: string): string[] => s.split(/\s+/u).filter(Boolean);
@@ -50,6 +50,23 @@ describe('coherent paragraphs', () => {
     }
     const lower = [filler, filler, filler, 'It ended. then it carried on with more.', filler, filler, filler].join(' ');
     expect(applyCoherentParagraphs(lower)).not.toContain('ended.\n\nthen');
+  });
+
+  test('never breaks after an initial, an unlisted abbreviation, a URL or a dotted token', () => {
+    const left = 'The deployment pipeline builds a signed application bundle for the release server every morning. ';
+    const right = 'Smith manages restaurant bookings and dinner menus for large parties on busy holiday weekends. ';
+    for (const token of ['J.', 'A.', 'Capt.', 'Jan.', 'Sept.', 'approx.', 'https://example.com/help?', 'https://example.com/help!',
+      'example.com.', 'www.example.org.', 'v2.3.', 'version 3.5.', 'me@example.com.', 'docs/setup.md.']) {
+      const input = left.repeat(4) + 'We assigned the next task to ' + token + ' ' + right.repeat(5);
+      const output = applyCoherentParagraphs(input);
+      expectOnlyBreaksInserted(input, output);
+      expect(output).not.toContain(`${token}\n\n`);
+    }
+  });
+
+  test('a single soft line wrap does not disable the stage', () => {
+    const input = [...deploy.slice(0, 2), `${deploy[2]}\n${deploy[3]}`, ...dinner].join(' ');
+    expect(applyCoherentParagraphs(input)).toContain('\n\nAnyway');
   });
 
   test('existing line breaks and numbered lists are left alone', () => {
@@ -105,6 +122,13 @@ describe('coherent paragraphs', () => {
     expect(coherentParagraphsEnabled({ VOICELAYER_STT_COHERENT_PARAGRAPHS: '0' })).toBe(false);
     const status = readPolishControlsStatus({ VOICELAYER_STT_COHERENT_PARAGRAPHS: '1', VOICELAYER_PROCESSING_SETTINGS_PATH: '/nonexistent/p.json' });
     expect(status.coherent_paragraphs).toEqual({ source: 'environment', raw: '1', effective: true });
+  });
+
+  test('coherent paragraphs do not need the pause map', () => {
+    const long = 'x'.repeat(500);
+    expect(shouldBuildBoundaryContext(long, {})).toBe(true);
+    expect(shouldBuildBoundaryContext(long, { VOICELAYER_STT_COHERENT_PARAGRAPHS: '1' })).toBe(false);
+    expect(shouldBuildBoundaryContext(long, { VOICELAYER_STT_COHERENT_PARAGRAPHS: '1', VOICELAYER_STT_SMART_BOUNDARIES: '1' })).toBe(true);
   });
 
   test('finalize applies it without any audio evidence when enabled', async () => {

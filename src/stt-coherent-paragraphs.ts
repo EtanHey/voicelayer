@@ -62,6 +62,28 @@ function opener(sentence: string): string {
 
 interface Boundary { start: number; end: number }
 
+// Titles, months, days and common short forms the shared set does not cover.
+const EXTRA_ABBREVIATIONS = new Set((
+  "capt col gen lt sgt cmdr adm gov sen rep rev hon pres supt det insp fr br sr jr st mt ft " +
+  "jan feb mar apr jun jul aug sep sept oct nov dec mon tue tues wed thu thur thurs fri sat sun " +
+  "approx dept est fig no nos vol vols ch sec pp op ed eds inc ltd corp co bros assn univ ave blvd rd hwy"
+).split(" "));
+
+/**
+ * The whitespace-delimited token that owns the mark at `at` must read as a
+ * plain word. When in doubt, no break: an initial ("J."), a short form, a URL
+ * or path ("help?", "docs/setup.md."), an address or any dotted token
+ * ("example.com.", "v2.3.") never ends a sentence here.
+ */
+function plainSentenceToken(text: string, at: number): boolean {
+  const token = /\S*$/u.exec(text.slice(0, at))![0].replace(/^["'“‘(\[]+/u, "");
+  if (/[/@\\:=&#]|www\.|\.\S/u.test(token)) return false;
+  const word = token.replace(/["'”’»)\]]+$/u, "");
+  if (text[at] === "." && /^\p{L}$/u.test(word)) return false;
+  if (text[at] === "." && EXTRA_ABBREVIATIONS.has(word.toLowerCase())) return false;
+  return true;
+}
+
 /** Whitespace runs after a completed sentence that may become "\n\n". */
 function sentenceBoundaries(text: string): Boundary[] {
   const out: Boundary[] = [];
@@ -70,6 +92,7 @@ function sentenceBoundaries(text: string): Boundary[] {
     // A single mark after a word: "...", "?." or a bare mark is not a sentence end.
     if (!/[\p{L}\p{N}\p{M}'’"”)\]%]/u.test(text[at - 1] ?? "")) continue;
     if (text[at] === "." && endsWithAbbreviation(text, at)) continue;
+    if (!plainSentenceToken(text, at)) continue;
     const next = text.slice(at + m[0].length);
     // A lowercase opener continues the sentence (cased scripts only).
     if (/^["'“‘(\[]*\p{Ll}/u.test(next)) continue;
@@ -112,7 +135,8 @@ function feasible(words: number, sentences: number): boolean {
 }
 
 export function applyCoherentParagraphs(text: string): string {
-  if (/[\r\n]/u.test(text)) return text; // existing paragraphs or list lines win
+  // Existing paragraphs or list lines win; a lone soft wrap does not.
+  if (/\r?\n[^\S\r\n]*\r?\n/u.test(text) || /(?:^|\n)[^\S\r\n]*(?:\d+[.)]|[-*•])[^\S\r\n]/u.test(text)) return text;
   const boundaries = sentenceBoundaries(text);
   const units: string[] = [];
   let from = 0;
