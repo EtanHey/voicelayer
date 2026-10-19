@@ -316,12 +316,14 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(capture).toHaveBeenCalledTimes(1);
   });
 
-  it("R1-2 stopped history excludes every chunk that never played", async () => {
+  it("HISTDUP1 stopped history keeps the whole text and names chunks with no audio", async () => {
     holdSynth = true; const h = start(); await playerBarrier.at(0); await synthBarrier.at(1);
-    const spokenChunk = events.find((e) => e.state === "speaking" && !e.long_read?.preparing).text;
     await handleSocketCommand({ cmd: "stop", playback_elapsed_ms: 250 }); await h.done;
-    expect(loadHistory()[0].text).toBe(spokenChunk);
-    expect(loadHistory()[0].text).not.toBe(text);
+    const [entry] = loadHistory(), count = events.find((e) => e.state === "speaking" && !e.long_read?.preparing).long_read.chunk_count;
+    expect(entry.text).toBe(text);
+    // Chunk 0 played; chunk 1 was killed mid-synthesis; the rest never started.
+    expect(historyInputs[0]).toHaveLength(1);
+    expect(entry.audioMissingChunks).toEqual(Array.from({ length: count - 1 }, (_, i) => i + 1));
   });
 
   it("R1-6 a replacement read cannot synthesize while the predecessor history job is running", async () => {
@@ -440,9 +442,11 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       playback_offset_ms: 0, long_read: { id: h.id, chunk_index: 0, chunk_start_ms: 0 },
     });
     clockMs += 100; stopPlayback(100); await h.done;
-    // HISTDUP1: the restart re-heard 0-100 ms of the 0-250 ms already heard; history keeps it once.
-    expect(loadHistory()).toHaveLength(1); expect(readText.startsWith(loadHistory()[0].text)).toBe(true);
-    expect(historyInputs[0]).toHaveLength(1);
+    // HISTDUP1: the restart re-heard chunk 0; history holds the whole text once and each
+    // synthesized chunk once (clone may have chunk 1 ready; edge's is still held).
+    expect(loadHistory()).toHaveLength(1); expect(loadHistory()[0].text).toBe(readText);
+    expect(new Set(historyInputs[0]).size).toBe(historyInputs[0].length);
+    expect(historyInputs[0].length).toBeGreaterThanOrEqual(1);
   });
 
   it("REP1 replays the prefix after a cross-chunk seek without resynthesis", async () => {

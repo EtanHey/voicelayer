@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "bun:test";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
-import { historyText, runLongRead, type LongReadChunk, type LongReadDependencies, type PlayedChunk } from "../tts/long-read";
+import { runLongRead, type LongReadChunk, type LongReadDependencies, type PlayedChunk } from "../tts/long-read";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -99,7 +99,8 @@ describe("long-read pipeline", () => {
     f.controller.abort(); f.playback[0].resolve({ status: "interrupted", stopped_at_ms: 230 });
     f.synthesis[1].resolve(chunk(1)); await done;
     expect(f.plays).toEqual([0]); expect(f.synths).toEqual([0, 1]);
-    expect(f.saved().map((p) => p.playedMs)).toEqual([230]);
+    // History is the utterance: both synthesized chunks whole, though only 230 ms was heard.
+    expect(f.saved().map((p) => p.playedMs)).toEqual([1000, 1000]);
     expect(f.disposed.sort()).toEqual([0, 1]);
   });
 
@@ -146,28 +147,36 @@ describe("REP1 owned long-read restart", () => {
   });
 });
 
-describe("HISTDUP1 history represents the utterance once after replay and seeks", () => {
+describe("HISTDUP1 history is the whole utterance once, whatever was replayed, skipped or stopped", () => {
   type Exit = { status: string; stopped_at_ms?: number };
-  function scrubbed(texts: string[]) {
+  type Saved = { audio: PlayedChunk[]; text: string; missingChunks: number[] };
+  function scrubbed(texts: string[], opts: { lookahead?: 1 | 2; unsynthesized?: number[] } = {}) {
     const controller = new AbortController(), plays = fixtureBarrier<{ index: number; offsetMs: number; exit: ReturnType<typeof deferred<Exit>> }>();
-    let control!: import("../tts/long-read").LongReadSeek; let saved: PlayedChunk[] = [];
+    let control!: import("../tts/long-read").LongReadSeek; let saved: Saved | undefined;
     const chunks = texts.map((_t, i) => chunk(i));
     const done = runLongRead(texts, "scrub", controller.signal, {
       registerSeek: value => { control = value; },
-      synthesize: async (_text, i) => chunks[i],
+      // An "unsynthesized" chunk's synthesis only ends when the read is stopped.
+      synthesize: (_text, i, signal) => opts.unsynthesized?.includes(i)
+        ? new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }))
+        : Promise.resolve(chunks[i]),
       play: (_chunk, _text, info, position) => {
         const exit = deferred<Exit>(); plays.push({ index: info.chunk_index, offsetMs: position.offsetMs, exit });
         return { started: Promise.resolve(true), exited: exit.promise };
       },
-      saveHistory: async played => { saved = played.map(p => ({ ...p })); },
+      saveHistory: async (audio, info) => { saved = { audio: audio.map(p => ({ ...p })), ...info }; },
       dispose: () => {},
-    });
+    }, opts.lookahead ?? 1);
     // The real player reports the position it reached when a seek interrupts it.
     const scrub = async (n: number, stoppedAt: number, act: () => unknown) => {
-      await plays.at(n); act(); plays.values[n].exit.resolve({ status: "interrupted", stopped_at_ms: stoppedAt });
+      await plays.at(n); await tick(); act(); plays.values[n].exit.resolve({ status: "interrupted", stopped_at_ms: stoppedAt });
     };
     const finish = async (n: number) => { await plays.at(n); plays.values[n].exit.resolve({ status: "completed" }); };
-    return { controller, plays, done, scrub, finish, control: () => control, saved: () => saved, chunks };
+    const stop = async (n: number, stoppedAt: number) => {
+      await plays.at(n); controller.abort(); plays.values[n].exit.resolve({ status: "interrupted", stopped_at_ms: stoppedAt });
+    };
+    const whole = (indexes: number[]) => indexes.map(i => ({ chunk: chunks[i], text: texts[i], playedMs: 1000 }));
+    return { plays, done, scrub, finish, stop, whole, control: () => control, saved: () => saved! };
   }
 
   it("RED repro: 1 play + 1 replay + 5 seeks saves the sentence once, not ×7", async () => {
@@ -180,9 +189,9 @@ describe("HISTDUP1 history represents the utterance once after replay and seeks"
     await f.scrub(5, 900, () => f.control().seek(300));
     await f.finish(6); await f.done;
     expect(f.plays.values).toHaveLength(7);
-    expect(historyText(f.saved())).toBe("The whole sentence.");
-    // Audio: one linear range over the chunk, so the assembled replay plays it once.
-    expect(f.saved()).toEqual([{ chunk: f.chunks[0], text: "The whole sentence.", playedMs: 1000 }]);
+    expect(f.saved().text).toBe("The whole sentence.");
+    // Audio: the chunk once, whole, so the assembled replay plays it once.
+    expect(f.saved().audio).toEqual(f.whole([0]));
   });
 
   it("a backward seek across chunks keeps every chunk once, in order", async () => {
@@ -190,20 +199,39 @@ describe("HISTDUP1 history represents the utterance once after replay and seeks"
     await f.finish(0);
     await f.scrub(1, 500, () => f.control().seek(200)); // back into chunk 0
     await f.finish(2); await f.finish(3); await f.finish(4); await f.done;
-    expect(historyText(f.saved())).toBe("One. Two. Three.");
-    expect(f.saved().map(p => [p.chunk.audioFile, p.startMs ?? 0, p.playedMs])).toEqual([["0.mp3", 0, 1000], ["1.mp3", 0, 1000], ["2.mp3", 0, 1000]]);
+    expect(f.saved()).toEqual({ text: "One. Two. Three.", audio: f.whole([0, 1, 2]), missingChunks: [] });
   });
 
-  it("a forward skip keeps only heard audio, with the chunk text still once", async () => {
+  it("RED: a forward skip inside a chunk keeps the skipped words", async () => {
     const f = scrubbed(["One.", "Two."]);
     await f.scrub(0, 300, () => f.control().seek(700));
     await f.finish(1); await f.finish(2); await f.done;
-    expect(historyText(f.saved())).toBe("One. Two.");
-    expect(f.saved().map(p => [p.chunk.audioFile, p.startMs ?? 0, p.playedMs])).toEqual([["0.mp3", 0, 300], ["0.mp3", 700, 300], ["1.mp3", 0, 1000]]);
+    expect(f.saved()).toEqual({ text: "One. Two.", audio: f.whole([0, 1]), missingChunks: [] });
   });
 
-  it("repeated sentences that are really in the text stay repeated", () => {
-    const a = chunk(0), b = chunk(1);
-    expect(historyText([{ chunk: a, text: "Again.", playedMs: 1000 }, { chunk: b, text: "Again.", playedMs: 1000 }])).toBe("Again. Again.");
+  it("RED: a seek past a whole chunk keeps that chunk", async () => {
+    const f = scrubbed(["One.", "Two.", "Three."], { lookahead: 2 });
+    await f.scrub(0, 300, () => f.control().seek(2000));
+    await f.finish(1); await f.done;
+    expect(f.plays.values.map(p => p.index)).toEqual([0, 2]);
+    expect(f.saved()).toEqual({ text: "One. Two. Three.", audio: f.whole([0, 1, 2]), missingChunks: [] });
+  });
+
+  it("RED: an interrupted final chunk keeps its whole audio and text", async () => {
+    const f = scrubbed(["One.", "Two."]);
+    await f.finish(0); await f.stop(1, 300); await f.done;
+    expect(f.saved()).toEqual({ text: "One. Two.", audio: f.whole([0, 1]), missingChunks: [] });
+  });
+
+  it("RED: a stop before later chunks were synthesized keeps their text and names the audio gap", async () => {
+    const f = scrubbed(["One.", "Two.", "Three."], { unsynthesized: [2] });
+    await f.stop(0, 300); await f.done;
+    expect(f.saved()).toEqual({ text: "One. Two. Three.", audio: f.whole([0, 1]), missingChunks: [2] });
+  });
+
+  it("sentences really repeated in the text stay repeated", async () => {
+    const f = scrubbed(["Again.", "Again."]);
+    await f.finish(0); await f.finish(1); await f.done;
+    expect(f.saved()).toEqual({ text: "Again. Again.", audio: f.whole([0, 1]), missingChunks: [] });
   });
 });

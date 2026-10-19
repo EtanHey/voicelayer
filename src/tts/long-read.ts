@@ -32,7 +32,8 @@ export interface LongReadDependencies {
     started: Promise<boolean>;
     exited: Promise<Pick<PlaybackOutcomeEvent, "status" | "stopped_at_ms">>;
   };
-  saveHistory(played: PlayedChunk[]): Promise<void>;
+  /** Whole utterance once: every synthesized chunk in order, plus the canonical text. */
+  saveHistory(audio: PlayedChunk[], info: { text: string; missingChunks: number[] }): Promise<void>;
   dispose(chunk: LongReadChunk, index: number): void;
 }
 
@@ -44,7 +45,7 @@ export async function runLongRead(
 ): Promise<void> {
   const owned = new Map<number, LongReadChunk>();
   const ready = new Map<number, Promise<Synthesis>>();
-  const played: { index: number; item: PlayedChunk }[] = [];
+  let heard = false;
   let inFlight: Promise<Synthesis> | undefined;
   let currentIndex = 0;
   let nextIndex = 0;
@@ -164,9 +165,7 @@ export async function runLongRead(
       if (started) {
         const endMs = outcome.status === "completed" ? result.chunk.durationMs
           : Math.max(0, Math.min(result.chunk.durationMs, outcome.stopped_at_ms));
-        const playedMs = Math.max(0, endMs - localOffsetMs);
-        if (playedMs > 0) played.push({ index, item: { chunk: result.chunk, text: texts[index], playedMs,
-          ...(localOffsetMs ? { startMs: localOffsetMs } : {}) } });
+        if (endMs > localOffsetMs) heard = true;
       }
       if (signal.aborted) break;
       if (target) continue;
@@ -182,27 +181,20 @@ export async function runLongRead(
     // Reap the owned synthesis before history/disposal; a late result is never played.
     if (inFlight) await inFlight;
     try {
-      if (played.length > 0) await deps.saveHistory(coverage(played));
+      // History is the utterance, not the listening path: replays and seeks never
+      // repeat it, and skipped or unheard words stay. Only a chunk never synthesized
+      // (stopped first) lacks audio, and it is named rather than silently dropped.
+      if (heard) {
+        const audio: PlayedChunk[] = [], missingChunks: number[] = [];
+        texts.forEach((text, index) => {
+          const chunk = owned.get(index);
+          if (chunk) audio.push({ chunk, text, playedMs: chunk.durationMs }); else missingChunks.push(index);
+        });
+        await deps.saveHistory(audio, { text: texts.join(" "), missingChunks });
+      }
     } finally {
       for (const [index, chunk] of owned) deps.dispose(chunk, index);
     }
   }
 }
 
-/** Each chunk's text once, in utterance order; real repeats are distinct chunks. */
-export const historyText = (played: PlayedChunk[]) =>
-  played.filter((item, i) => i === 0 || item.chunk !== played[i - 1].chunk).map((item) => item.text).join(" ");
-
-/** Heard ranges in utterance order, overlaps merged: replay and seeks never repeat audio. */
-function coverage(heard: { index: number; item: PlayedChunk }[]): PlayedChunk[] {
-  const sorted = heard.map(({ index, item }) => ({ index, item, start: item.startMs ?? 0, end: (item.startMs ?? 0) + item.playedMs }))
-    .sort((a, b) => a.index - b.index || a.start - b.start);
-  const merged: typeof sorted = [];
-  for (const range of sorted) {
-    const last = merged.at(-1);
-    if (last && last.index === range.index && range.start <= last.end) last.end = Math.max(last.end, range.end);
-    else merged.push({ ...range });
-  }
-  return merged.map(({ item, start, end }) => ({ chunk: item.chunk, text: item.text, playedMs: end - start,
-    ...(start ? { startMs: start } : {}) }));
-}
