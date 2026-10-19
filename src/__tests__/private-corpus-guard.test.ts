@@ -77,10 +77,6 @@ const ALLOWED: Record<string, Array<[string, number]>> = {
   "src/__tests__/speakable-text.test.ts": [
     ["[\"/Users/dev/app/qwen3_tts/qwen3_tts.py\", \"slash Users slash dev slash app slash qwen three T T S slash qwen three T T S dot P Y\"],", 1],
   ],
-  // Prompt string assertion only.
-  "src/__tests__/stt-cleanup.test.ts": [
-    ["expect(prompt).toContain(\"~/.golems-brain/zikaron\");", 1],
-  ],
   // Synthetic path-preservation input; no filesystem access.
   "src/__tests__/stt-polish.test.ts": [
     ["cleanedText: \"Read /Users/fixture-user/project/src/input.ts before editing.\",", 1],

@@ -35,6 +35,8 @@ export type STTPromptPolicy = "include" | "exclude" | "reserve";
 export interface STTDictionaryEntry {
   canonical: string;
   variants: string[];
+  /** Former bundled spelling, without changing a pre-existing user canonical. */
+  cleanup_spelling?: string;
   prompt?: STTPromptPolicy;
   /** Builtin priority term after which this reserve slot is inserted. */
   prompt_after?: string;
@@ -89,6 +91,7 @@ export const BUILTIN_STT_DICTIONARY_ENTRIES: readonly STTDictionaryEntry[] = [
 export interface STTVocabularySnapshot {
   updated_at: string | null;
   entries: STTDictionaryEntry[];
+  applied_migrations?: string[];
 }
 
 export interface STTVocabularyWarning {
@@ -117,6 +120,7 @@ interface RawVocabularySnapshot {
   entries?: unknown;
   prompt_terms?: unknown;
   aliases?: unknown;
+  applied_migrations?: unknown;
 }
 
 export function getSTTVocabularyPath(
@@ -126,6 +130,11 @@ export function getSTTVocabularyPath(
   const env = options.env ?? process.env;
   requireIsolatedOverride(env, VOCABULARY_PATH_ENV);
   const override = env[VOCABULARY_PATH_ENV]?.trim();
+  if (!override && process.env.VOICELAYER_TEST_ISOLATED === "1") {
+    const isolatedPath = process.env[VOCABULARY_PATH_ENV]?.trim();
+    if (!isolatedPath) throw new Error("isolated vocabulary path is required");
+    return isolatedPath;
+  }
   return (
     override ||
     join(homedir(), ".local", "state", "voicelayer", "stt-vocabulary.json")
@@ -139,7 +148,60 @@ export function isUnsafeDynamicAliasSource(source: string): boolean {
 export function listVocabulary(
   options: STTVocabularyStoreOptions = {},
 ): STTVocabularySnapshot {
+  tryMigrateVocabularySeed(options);
   return readSnapshot(getSTTVocabularyPath(options));
+}
+
+/** Consume an optional, privately provisioned sibling file; never bundle seeds. */
+export function migrateVocabularySeed(options: STTVocabularyStoreOptions = {}): void {
+  const path = getSTTVocabularyPath(options);
+  const seedPath = `${path}.seed.json`;
+  if (!existsSync(seedPath)) return;
+  const seed = JSON.parse(readFileSync(seedPath, "utf8"));
+  if (!seed || typeof seed.id !== "string" || !seed.id.trim() || !Array.isArray(seed.entries) ||
+      seed.entries.some((entry: STTDictionaryEntry) => !entry || !isNonEmptyString(entry.canonical) ||
+        !Array.isArray(entry.variants) || !entry.variants.every(isNonEmptyString))) {
+    throw new Error("invalid vocabulary seed");
+  }
+  // Already-applied reads must not create and fsync a lock on the STT hot path.
+  if (readSnapshot(path).applied_migrations?.includes(seed.id)) return;
+  withVocabularyLock(path, options, () => {
+    const snapshot = readSnapshot(path);
+    if (snapshot.applied_migrations?.includes(seed.id)) return;
+    const incoming = normalizeEntries(seed.entries);
+    // Reserve all canonical names first, so a seed variant cannot take another
+    // entry's name. Existing policies and alias owners win; the private seed
+    // supplies the spelling formerly enforced by the bundled cleanup tier.
+    const previous = new Set(snapshot.entries.map((entry) => entry.canonical.toLowerCase()));
+    for (const entry of incoming) {
+      if (variantAliasCollisionWarning(snapshot.entries, entry.canonical)) continue;
+      upsertEntry(snapshot.entries, entry.canonical);
+    }
+    for (const entry of incoming) {
+      const target = snapshot.entries.find((item) => sameSurface(item.canonical, entry.canonical));
+      if (!target) continue;
+      target.cleanup_spelling = previous.has(target.canonical.toLowerCase())
+        ? entry.cleanup_spelling ?? entry.canonical : entry.canonical;
+      for (const variant of entry.variants) {
+        if (canonicalAliasCollisionWarning(snapshot.entries, variant, target.canonical)) continue;
+        if (snapshot.entries.some((other) => other !== target && other.variants.some((item) => aliasKey(item) === aliasKey(variant)))) continue;
+        upsertEntryVariant(snapshot.entries, target.canonical, variant);
+      }
+      if (!target.prompt && entry.prompt) {
+        Object.assign(target, promptPolicyFields(entry));
+        if (entry.prompt === "reserve" && previous.has(target.canonical.toLowerCase())) target.prompt_user = true;
+      }
+    }
+    snapshot.applied_migrations = [...(snapshot.applied_migrations ?? []), seed.id];
+    // The entries and receipt commit together. A crash cannot mark a partial
+    // import complete, and later CLI edits retain the receipt after deletion.
+    writeSnapshot(path, stampSnapshot(snapshot, options), true);
+  });
+}
+
+export function tryMigrateVocabularySeed(options: STTVocabularyStoreOptions = {}): void {
+  try { migrateVocabularySeed(options); }
+  catch { console.error("[voicelayer] personal vocabulary migration failed; seed retained"); }
 }
 
 /**
@@ -173,6 +235,7 @@ export function addAlias(
 ): STTVocabularyMutationResult {
   const normalized = validateAlias(alias);
   const path = getSTTVocabularyPath(options);
+  tryMigrateVocabularySeed(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
     const collision = canonicalAliasCollisionWarning(
@@ -220,6 +283,7 @@ export function addPromptTerm(
 ): STTVocabularyMutationResult {
   const normalized = validateText(term, "term");
   const path = getSTTVocabularyPath(options);
+  tryMigrateVocabularySeed(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
     const collision = variantAliasCollisionWarning(
@@ -258,6 +322,7 @@ export function setPromptPolicy(
   if (!["include", "exclude", "reserve"].includes(policy.prompt ?? "")) throw new Error("invalid prompt policy");
   const fields = promptPolicyFields(policy);
   const path = getSTTVocabularyPath(options);
+  tryMigrateVocabularySeed(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
     const entry = snapshot.entries.find((entry) => sameSurface(entry.canonical, canonical));
@@ -274,6 +339,7 @@ export function removePromptTerm(
 ): STTVocabularyMutationResult {
   const normalized = validateText(term, "term");
   const path = getSTTVocabularyPath(options);
+  tryMigrateVocabularySeed(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
     const entries = snapshot.entries.filter(
@@ -297,6 +363,7 @@ export function removeAlias(
 ): STTVocabularyMutationResult {
   const normalizedFrom = validateAliasSource(from);
   const path = getSTTVocabularyPath(options);
+  tryMigrateVocabularySeed(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
     let removed = false;
@@ -364,6 +431,8 @@ function normalizeSnapshot(
         ? parsed.updated_at
         : null,
     entries,
+    ...(Array.isArray(parsed.applied_migrations)
+      ? { applied_migrations: parsed.applied_migrations.filter(isNonEmptyString) } : {}),
   };
 }
 
@@ -397,6 +466,8 @@ function normalizeEntries(values: unknown[]): STTDictionaryEntry[] {
     if (!isNonEmptyString(canonical)) continue;
     upsertEntry(entries, canonical.trim());
     const entry = entries.find((entry) => entry.canonical.toLowerCase() === canonical.trim().toLowerCase())!;
+    const spelling = (value as STTDictionaryEntry).cleanup_spelling;
+    if (isNonEmptyString(spelling)) entry.cleanup_spelling = spelling.trim();
     if (!entry.prompt) Object.assign(entry, promptPolicyFields(value));
     if (!Array.isArray(variants)) continue;
     for (const variant of variants) {
@@ -590,6 +661,7 @@ function stampSnapshot(
   options: STTVocabularyStoreOptions,
 ): STTVocabularySnapshot {
   return {
+    ...snapshot,
     updated_at: (options.now?.() ?? new Date()).toISOString(),
     entries: snapshot.entries,
   };

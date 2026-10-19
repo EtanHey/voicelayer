@@ -1,0 +1,377 @@
+{
+  "id": "bundled-vocabulary-v1",
+  "entries": [
+    {
+      "canonical": "vTerm3",
+      "variants": [
+        "fixtureVariant5",
+        "fixtureVariant25",
+        "fixtureVariant26",
+        "fixtureVariant27",
+        "fixtureVariant28",
+        "fixtureVariant29",
+        "fixtureVariant33"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 0,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm6",
+      "variants": [
+        "fixtureVariant8"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 1,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm11",
+      "variants": [
+        "fixtureVariant21",
+        "fixtureVariant22",
+        "fixtureVariant23"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 2,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm5",
+      "variants": [
+        "fixtureVariant7"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 3,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm7",
+      "variants": [
+        "fixtureVariant9",
+        "fixtureVariant10",
+        "fixtureVariant11"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 4,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm16",
+      "variants": [
+        "fixtureVariant55",
+        "fixtureVariant56",
+        "fixtureVariant58"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 5,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm9",
+      "variants": [
+        "fixtureVariant13",
+        "fixtureVariant14",
+        "fixtureVariant15",
+        "fixtureVariant17",
+        "fixtureVariant18"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 6,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm13",
+      "variants": [
+        "fixtureVariant34"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 7,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm8",
+      "variants": [
+        "fixtureVariant12",
+        "fixtureVariant35"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 8,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm2",
+      "variants": [
+        "fixtureVariant2",
+        "fixtureVariant3",
+        "fixtureVariant4",
+        "fixtureVariant20"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 9,
+      "prompt_user": false
+    },
+    {
+      "canonical": "VoiceLayer",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 10,
+      "prompt_user": false
+    },
+    {
+      "canonical": "VoiceBar",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 11,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm12",
+      "variants": [
+        "fixtureVariant24"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 12,
+      "prompt_user": false
+    },
+    {
+      "canonical": "Tailscale",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 13,
+      "prompt_user": false
+    },
+    {
+      "canonical": "tailnet",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 14,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm10",
+      "variants": [
+        "fixtureVariant19",
+        "fixtureVariant36"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 15,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm14",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 16,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm15",
+      "variants": [
+        "fixtureVariant38",
+        "fixtureVariant40",
+        "fixtureVariant41",
+        "fixtureVariant52",
+        "fixtureVariant53",
+        "fixtureVariant54"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 17,
+      "prompt_user": false
+    },
+    {
+      "canonical": "cmux",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 18,
+      "prompt_user": false
+    },
+    {
+      "canonical": "Wispr Flow",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 19,
+      "prompt_user": false
+    },
+    {
+      "canonical": "Karabiner",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 20,
+      "prompt_user": false
+    },
+    {
+      "canonical": "CLAUDE.md",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 21,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm17",
+      "variants": [
+        "fixtureVariant59"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 22,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm18",
+      "variants": [
+        "fixtureVariant61"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 23,
+      "prompt_user": false
+    },
+    {
+      "canonical": "sampleCache",
+      "variants": [],
+      "prompt": "reserve",
+      "prompt_order": 24,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm19",
+      "variants": [
+        "fixtureVariant64",
+        "fixtureVariant65"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 25,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm20",
+      "variants": [
+        "fixtureVariant66",
+        "fixtureVariant67"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 26,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm21",
+      "variants": [
+        "fixtureVariant69"
+      ],
+      "prompt": "reserve",
+      "prompt_order": 27,
+      "prompt_user": false
+    },
+    {
+      "canonical": "vTerm1",
+      "variants": [
+        "fixtureVariant1"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm4",
+      "variants": [
+        "fixtureVariant6"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "ask vTerm3",
+      "variants": [
+        "fixtureVariant30"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "tell vTerm3",
+      "variants": [
+        "fixtureVariant31"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "message vTerm3",
+      "variants": [
+        "fixtureVariant32"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 project",
+      "variants": [
+        "fixtureVariant42"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 programming project",
+      "variants": [
+        "fixtureVariant43"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 repo",
+      "variants": [
+        "fixtureVariant44"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 repository",
+      "variants": [
+        "fixtureVariant45"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 adapter",
+      "variants": [
+        "fixtureVariant46"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 dashboard",
+      "variants": [
+        "fixtureVariant47"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 codebase",
+      "variants": [
+        "fixtureVariant48"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 branch",
+      "variants": [
+        "fixtureVariant49"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 app",
+      "variants": [
+        "fixtureVariant50"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "vTerm15 code",
+      "variants": [
+        "fixtureVariant51"
+      ],
+      "prompt": "exclude"
+    },
+    {
+      "canonical": "\u05d1vTerm20",
+      "variants": [
+        "fixtureVariant68"
+      ],
+      "prompt": "exclude"
+    }
+  ]
+}

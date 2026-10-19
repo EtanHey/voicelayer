@@ -157,3 +157,16 @@ interface STTResult {
 ```
 
 The backend name and duration are logged to stderr for debugging.
+
+## Personal vocabulary migration
+
+Personal aliases use the store edited by `voicelayer vocab` and Dictionary settings.
+Privately provision `<vocabulary-path>.seed.json` (mode `0600`), never in the package.
+Its default path is `~/.local/state/voicelayer/stt-vocabulary.json.seed.json`.
+A seed has a unique `id` and `entries` with `canonical`, `variants`, and optional
+prompt policies. Unanchored `reserve` entries follow `prompt_order` before bundled
+priority terms; `prompt_after` anchors a term and `exclude` keeps it cleanup-only.
+Startup, reads and mutations import under the store lock. Entries and the migration
+receipt commit atomically; later deletions stay deleted. Existing names, prompt
+policies and alias ownership remain intact. Compatibility spelling retains prior
+cleanup and prompt behavior. Invalid seeds warn, leave the store usable and retry.

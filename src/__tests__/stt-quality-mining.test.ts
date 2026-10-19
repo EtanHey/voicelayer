@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
 import {
   analyzeTranscriptCandidate,
   buildCleanupPairsFromRecordings,
@@ -438,7 +438,7 @@ describe("stt-quality-mining", () => {
         directory: "/tmp/changed",
         audioPath: "/tmp/changed/audio.wav",
         transcriptPath: "/tmp/changed/voicelayer-transcript.txt",
-        transcript: "um brain layer",
+        transcript: "um voice layer",
         durationMs: 1000,
         backend: "whisper-server",
         languageMode: "auto",
@@ -449,8 +449,8 @@ describe("stt-quality-mining", () => {
     expect(pairs).toEqual([
       {
         id: "changed",
-        rawText: "um brain layer",
-        cleanedText: "BrainLayer",
+        rawText: "um voice layer",
+        cleanedText: "VoiceLayer",
       },
     ]);
   });
@@ -464,9 +464,9 @@ describe("stt-quality-mining", () => {
         `${JSON.stringify({
           id: "latest",
           observed_text:
-            "or should I not change it, or just relay everything that we're about to do to code? Coach Claude, or I'll just remember that we're doing something and I'll just still present what I have in the lecture.",
+            "or should I not change it, or just relay everything that we're about to do to code? VoiceLayer, or I'll just remember that we're doing something and I'll just still present what I have in the lecture.",
           expected_text:
-            "or should I not change it, or just relay everything that we're about to do to Coach Claude? or I'll just remember that we're doing something and I'll just still present what I have in the lecture?",
+            "or should I not change it, or just relay everything that we're about to do to VoiceLayer? or I'll just remember that we're doing something and I'll just still present what I have in the lecture?",
         })}\n`,
       );
 
@@ -493,6 +493,83 @@ describe("stt-quality-mining", () => {
     }
   });
 
+  describe("entity boundary vocabulary", () => {
+    // The preload points the store at its isolated run root; never the real one.
+    function withUserVocabulary<T>(
+      entries: Array<{ canonical: string; variants: string[] }>,
+      run: () => T,
+    ): T {
+      const isolatedPath = process.env.QA_VOICE_STT_VOCABULARY_PATH;
+      if (!isolatedPath) throw new Error("preload vocabulary path missing");
+      const root = mkdtempSync(join(dirname(isolatedPath), "dedupe-"));
+      try {
+        const vocabularyPath = join(root, "vocabulary.json");
+        writeFileSync(vocabularyPath, JSON.stringify({ entries }));
+        process.env.QA_VOICE_STT_VOCABULARY_PATH = vocabularyPath;
+        return run();
+      } finally {
+        process.env.QA_VOICE_STT_VOCABULARY_PATH = isolatedPath;
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    function entityFindings(observedText: string, expectedText: string) {
+      const report = buildSTTQualityMiningReport({
+        createdAt: "2026-05-21T12:00:00.000Z",
+        recordings: [],
+        freshDecodes: [],
+        cleanupPairs: [],
+        polishPairs: [],
+        correctionPairs: [{ id: "entity", observedText, expectedText }],
+      });
+      return report.passes
+        .flatMap((pass) => pass.findings)
+        .filter((finding) => finding.category === "entity_boundary_errors");
+    }
+
+    it("counts a built-in entity once when the user dictionary repeats it", () => {
+      const findings = withUserVocabulary(
+        [{ canonical: "VoiceLayer", variants: ["voicelayer", "Voice-Layer"] }],
+        () =>
+          entityFindings(
+            "Send this to code? VoiceLayer, then continue.",
+            "Send this to VoiceLayer? then continue.",
+          ),
+      );
+
+      expect(findings.map((finding) => finding.pattern)).toEqual([
+        "entity-boundary:VoiceLayer",
+      ]);
+    });
+
+    it("keeps distinct built-in and user entities", () => {
+      const findings = withUserVocabulary(
+        [{ canonical: "Gemini", variants: [] }],
+        () =>
+          entityFindings(
+            "Send this to code? VoiceLayer, then ask Claude Gemini.",
+            "Send this to VoiceLayer? then ask Gemini.",
+          ),
+      );
+
+      expect(findings.map((finding) => finding.pattern).sort()).toEqual([
+        "entity-boundary:Gemini",
+        "entity-boundary:VoiceLayer",
+      ]);
+    });
+
+    it("keeps a user-only entity", () => {
+      const findings = withUserVocabulary(
+        [{ canonical: "Gemini", variants: [] }],
+        () => entityFindings("Ask Claude Gemini.", "Ask Gemini."),
+      );
+
+      expect(findings.map((finding) => finding.pattern)).toEqual([
+        "entity-boundary:Gemini",
+      ]);
+    });
+  });
+
   it("runs the CLI with a corrections JSONL and writes a report", async () => {
     const root = mkdtempSync(join(tmpdir(), "voicelayer-cli-corrections-"));
     const archiveRoot = join(root, "recordings");
@@ -509,8 +586,8 @@ describe("stt-quality-mining", () => {
         correctionsPath,
         `${JSON.stringify({
           id: "cli-correction",
-          observed: "Send this to code? Coach Claude, then continue.",
-          expected: "Send this to Coach Claude? then continue.",
+          observed: "Send this to code? VoiceLayer, then continue.",
+          expected: "Send this to VoiceLayer? then continue.",
         })}\n`,
       );
 
@@ -531,6 +608,8 @@ describe("stt-quality-mining", () => {
       ], {
         env: process.env,
         cwd: process.cwd(),
+        // Bun.spawn's default env predates the preload; pass the isolated one.
+        env: process.env,
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -570,6 +649,8 @@ describe("stt-quality-mining", () => {
       ], {
         env: process.env,
         cwd: process.cwd(),
+        // Bun.spawn's default env predates the preload; pass the isolated one.
+        env: process.env,
         stdout: "pipe",
         stderr: "pipe",
       });
