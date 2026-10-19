@@ -1635,45 +1635,18 @@ export function trimTrailingSilenceForSTT(
     Math.floor(windowBytes / BYTES_PER_SAMPLE) * BYTES_PER_SAMPLE,
   );
 
+  // TRIM2 (Etan's #1 law): the trim end is never before the last speech or
+  // quiet-speechlike window anywhere in the capture. A tail is trimmable only
+  // when every window after that point is inactive.
   let lastActiveEnd = 0;
-  const windows: Array<{ start: number; end: number; kind: TrimWindowKind }> =
-    [];
   for (
     let offset = 0;
     offset < pcmData.byteLength;
     offset += alignedWindowBytes
   ) {
     const windowEnd = Math.min(offset + alignedWindowBytes, pcmData.byteLength);
-    const window = pcmData.slice(offset, windowEnd);
-    windows.push({
-      start: offset,
-      end: windowEnd,
-      kind: classifyTrimWindow(window),
-    });
-  }
-
-  for (let index = 0; index < windows.length; index++) {
-    const current = windows[index];
-    if (current.kind === "inactive") continue;
-    if (current.kind === "speech") {
-      lastActiveEnd = current.end;
-      continue;
-    }
-
-    const previousActive = index > 0 && windows[index - 1].kind !== "inactive";
-    const nextActive =
-      index + 1 < windows.length && windows[index + 1].kind !== "inactive";
-    if (previousActive || nextActive) {
-      lastActiveEnd = current.end;
-      continue;
-    }
-
-    const gapMs = pcmDurationMs(
-      pcmData.slice(lastActiveEnd, current.start),
-      sampleRate,
-    );
-    if (lastActiveEnd === 0 || gapMs < TRAILING_SILENCE_TRIM_MIN_QUIET_MS) {
-      lastActiveEnd = current.end;
+    if (isActiveTrimWindow(pcmData.subarray(offset, windowEnd))) {
+      lastActiveEnd = windowEnd;
     }
   }
 

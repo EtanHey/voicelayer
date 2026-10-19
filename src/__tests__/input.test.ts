@@ -1044,7 +1044,7 @@ describe("input module", () => {
       expect(result.transcribedDurationMs).toBe(22250);
     });
 
-    it("trims a long quiet tail even when isolated quiet-speechlike clicks appear in it", () => {
+    it("keeps isolated quiet-speechlike windows in a long quiet tail (TRIM2)", () => {
       const opening = pcmWithConstantSample(2000, 2000);
       const quietAfterSpeech = pcmWithConstantSample(0, 19250);
       const midClick = pcmWithSparseQuietSpeechlikeBurst(655, 250, 4);
@@ -1062,9 +1062,12 @@ describe("input module", () => {
 
       const result = trimTrailingSilenceForSTT(pcm, true);
 
-      expect(result.trimmed).toBe(true);
+      // TRIM2: the stop-click window is quiet-speechlike, so the trim end is at
+      // least its end plus the 1 s pad, which runs past the capture: no trim.
+      expect(result.trimmed).toBe(false);
+      expect(result.pcmData).toBe(pcm);
       expect(result.rawDurationMs).toBe(51103);
-      expect(result.transcribedDurationMs).toBe(3000);
+      expect(result.transcribedDurationMs).toBe(51103);
     });
 
     it("keeps a short cluster of consecutive quiet speech after a long pause and pads 1s", () => {
@@ -1086,6 +1089,112 @@ describe("input module", () => {
 
       expect(result.trimmed).toBe(true);
       expect(result.transcribedDurationMs).toBe(17500);
+    });
+
+    describe("TRIM2: never drops a quiet-speechlike window", () => {
+      const WINDOW_BYTES = 16000 * 2 / 4;
+      const quietWindow = () => pcmWithSparseQuietSpeechlikeBurst(450, 250);
+      const bytesAt = (ms: number) => (16000 * 2 * ms) / 1000;
+      const sameBytes = (a: Uint8Array, b: Uint8Array) =>
+        Buffer.from(a).equals(Buffer.from(b));
+
+      it("keeps a lone quiet-speechlike window after a gap of 4 s or more, plus the pad", () => {
+        const pcm = concatPcm([
+          pcmWithConstantSample(2000, 2000),
+          pcmWithConstantSample(0, 6000),
+          quietWindow(),
+          pcmWithConstantSample(0, 6000),
+        ]);
+
+        const result = trimTrailingSilenceForSTT(pcm, true);
+
+        expect(result.trimmed).toBe(true);
+        expect(result.rawDurationMs).toBe(14250);
+        expect(result.transcribedDurationMs).toBe(9250);
+        expect(sameBytes(result.pcmData, pcm.subarray(0, bytesAt(9250)))).toBe(true);
+      });
+
+      it("still trims a pure inactive tail of 4 s or more, byte-identical to main", () => {
+        const cases: Array<{ tail: Uint8Array; keptMs: number }> = [
+          { tail: pcmWithConstantSample(0, 5000), keptMs: 3000 },
+          { tail: pcmWithConstantSample(0, 9000), keptMs: 3000 },
+          { tail: pcmWithConstantSample(250, 9000), keptMs: 3000 },
+          { tail: pcmWithSparseQuietSpeechlikeBurst(399, 9000), keptMs: 3000 },
+        ];
+        for (const { tail, keptMs } of cases) {
+          const pcm = concatPcm([pcmWithConstantSample(2000, 2000), tail]);
+          const result = trimTrailingSilenceForSTT(pcm, true);
+          expect(result.trimmed).toBe(true);
+          expect(result.transcribedDurationMs).toBe(keptMs);
+          expect(sameBytes(result.pcmData, pcm.subarray(0, bytesAt(keptMs)))).toBe(true);
+        }
+      });
+
+      it("leaves no-trim captures byte-identical to main", () => {
+        const shortTail = concatPcm([
+          pcmWithConstantSample(2000, 2000),
+          pcmWithConstantSample(0, 4999),
+        ]);
+        const sustainedQuiet = concatPcm([
+          pcmWithConstantSample(2000, 2000),
+          pcmWithConstantSample(0, 1500),
+          pcmWithConstantSample(350, 18000),
+          pcmWithConstantSample(0, 750),
+        ]);
+        const allInactive = pcmWithConstantSample(0, 9000);
+        for (const pcm of [shortTail, sustainedQuiet, allInactive]) {
+          const result = trimTrailingSilenceForSTT(pcm, true);
+          expect(result.trimmed).toBe(false);
+          expect(result.pcmData).toBe(pcm);
+          expect(result.transcribedDurationMs).toBe(result.rawDurationMs);
+        }
+        const vad = concatPcm([
+          pcmWithConstantSample(2000, 2000),
+          quietWindow(),
+          pcmWithConstantSample(0, 9000),
+        ]);
+        expect(trimTrailingSilenceForSTT(vad, false).pcmData).toBe(vad);
+      });
+
+      // Synthetic shape of archive …7265703f (TRIMLEGACY report): last speech
+      // ends ~54.75 s, five isolated quiet-speechlike windows at 60–67 s, then
+      // a short inactive tail. Main trimmed it to 55.75 s and dropped all five.
+      function softTailShape(trailingQuietMs: number): Uint8Array {
+        const parts: Uint8Array[] = [
+          pcmWithConstantSample(2000, 54750),
+          pcmWithConstantSample(0, 5250),
+        ];
+        // quiet-speechlike windows at 60.0, 61.5, 63.0, 64.5, 66.75 s
+        const gapsAfter = [1250, 1250, 1250, 2000];
+        for (const gap of gapsAfter) {
+          parts.push(quietWindow(), pcmWithConstantSample(0, gap));
+        }
+        parts.push(quietWindow(), pcmWithConstantSample(0, trailingQuietMs));
+        return concatPcm(parts);
+      }
+
+      it("keeps all five soft-tail windows of the …7265703f shape", () => {
+        const pcm = softTailShape(413);
+        expect(pcm.byteLength % WINDOW_BYTES).not.toBe(0);
+
+        const result = trimTrailingSilenceForSTT(pcm, true);
+
+        expect(result.trimmed).toBe(false);
+        expect(result.pcmData).toBe(pcm);
+        expect(result.rawDurationMs).toBe(67413);
+        expect(result.transcribedDurationMs).toBe(67413);
+      });
+
+      it("trims the …7265703f shape only after its last soft window plus the pad", () => {
+        const pcm = softTailShape(6000);
+
+        const result = trimTrailingSilenceForSTT(pcm, true);
+
+        expect(result.trimmed).toBe(true);
+        expect(result.rawDurationMs).toBe(73000);
+        expect(result.transcribedDurationMs).toBe(68000);
+        expect(sameBytes(result.pcmData, pcm.subarray(0, bytesAt(68000)))).toBe(true);
+      });
     });
 
     it("does not trim ordinary short pauses before stop", () => {
