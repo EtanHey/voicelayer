@@ -112,6 +112,23 @@ final class SettingsGeneralDisclosureTests: XCTestCase {
         }
     }
 
+    /// SETUI1 round 2 (Opus UI review #2, #4): the Dictionary drawers look exactly like Advanced (regular title
+    /// weight) and both have the same header-to-first-row gap.
+    func testDictionaryDrawersMatchAdvancedExactly() throws {
+        let source = try settingsViewSource()
+        let tab = try XCTUnwrap(source.components(separatedBy: "private var dictionaryTab: some View {").dropFirst().first?
+            .components(separatedBy: "private var searchRow: some View").first)
+        let yourHeader = try XCTUnwrap(tab.components(separatedBy: "let yourTermsTitle").dropFirst().first?
+            .components(separatedBy: "if yourTermsExpanded || isSearching").first)
+        let includedLabel = try XCTUnwrap(source.components(separatedBy: "private func includedTermsHeaderLabel(")
+            .dropFirst().first?.components(separatedBy: "private var searchRow").first)
+        for header in [yourHeader, includedLabel] {
+            XCTAssertFalse(header.contains(".font(.headline)"), "drawer titles use Advanced's body weight")
+        }
+        XCTAssertFalse(yourHeader.contains(".padding(.bottom"), "no extra gap under Your terms only")
+        XCTAssertTrue(source.contains("SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded)\n"))
+    }
+
     func testDisabledHeaderIsNotAButton() {
         var expanded = false
         let binding = Binding(get: { expanded }, set: { expanded = $0 })

@@ -2022,11 +2022,8 @@ public struct SettingsView: View {
                             matches: isSearching ? personal.count : nil,
                             loaded: hasLoadedDictionaryOnce
                         )
-                        SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded) {
-                            Text(yourTermsTitle).font(.headline)
-                        }
-                        .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
-                        .padding(.bottom, 8)
+                        SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded)
+                            .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
                         if yourTermsExpanded || isSearching {
                             switch Self.dictionaryPlaceholder(
                                 loaded: hasLoadedDictionaryOnce, personalIsEmpty: personal.isEmpty,
@@ -2121,7 +2118,6 @@ public struct SettingsView: View {
             Spacer()
             Text("built in").font(.caption).foregroundStyle(.secondary)
         }
-        .font(.headline)
     }
 
     private var searchRow: some View {
