@@ -20,6 +20,13 @@ after Stop remain no-ops. Readback replay is cancelled and reaped through the sa
 capture fences as ordinary speech. Retained audio is replaced when the next utterance starts.
 There is no pause state: a playing utterance continues playing from the accepted position.
 
+The teleprompter scrubber stays mounted on an ended readback, showing the retained duration and
+stop position, and its drag/click sends the same readback-scope seek as a word click. Every speaking
+edge carries `duration_ms` (an idle history Replay reports the probed file length). A long read
+broadcasts `{"type":"playback_duration","long_read_id":…,"duration_ms":…,"final":…}` as each chunk
+synthesizes; once every chunk exists, `final` is true and the chunk's `long_read` carries
+`estimated_total_ms`, which drops the scrubber's "so far" label.
+
 The ack reports `accept`, `noop` (nothing playing, not ready, or duration unavailable), or
 `reject` (`busy` while recording/transcribing). Before the first synthesized chunk exists,
 `noop` with `reason: "not ready"` tells the scrub client to disable seeking until audio is ready.
