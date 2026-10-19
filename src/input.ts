@@ -3342,7 +3342,8 @@ export async function waitForInput(
       }
     }
     throwIfWaitForInputAborted(options.signal);
-    const text = finalized.text;
+    // Whitespace is no words: identity mode hands the raw decode back untouched.
+    const text = finalized.text.trim() ? finalized.text : "";
     const finalTranscriptReadyAtMs =
       options.archiveSource === "voicebar" && text
         ? readReceiptMonotonicNow(options.monotonicNow)
@@ -3737,7 +3738,14 @@ function markArchivedRecordingNotTranscribed(
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     // A transcript already on disk wins over a later failed or empty decode.
     if (metadata.transcription_status === "transcribed") return;
-    if (details.keepExisting && typeof metadata.not_transcribed_reason === "string") return;
+    // Keep an earlier audio diagnosis (it says more than "no words"), never a stale backend failure.
+    if (
+      details.keepExisting &&
+      typeof metadata.not_transcribed_reason === "string" &&
+      metadata.not_transcribed_reason !== "transcription-failed"
+    ) {
+      return;
+    }
     metadata.not_transcribed_reason = reason;
     metadata.not_transcribed_detail = details.detail ?? null;
     if (details.dbfs !== undefined) {
@@ -4315,7 +4323,7 @@ export async function retranscribeRecordingCapture(
             )
           : undefined,
       );
-      const text = finalized.text;
+      const text = finalized.text.trim() ? finalized.text : "";
       if (result.text.trim() && !text) {
         console.error(
           `[voicelayer] Suppressed non-meaningful archived retranscription: raw_chars=${result.text.length}`,
@@ -4430,7 +4438,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
             )
           : undefined,
       );
-      const text = finalized.text;
+      const text = finalized.text.trim() ? finalized.text : "";
       if (result.text.trim() && !text) {
         console.error(
           `[voicelayer] Suppressed non-meaningful retranscription: raw_chars=${result.text.length}`,
