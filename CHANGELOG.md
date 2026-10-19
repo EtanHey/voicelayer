@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.48] - 2026-10-20
+
+### Changed
+- Tail verification on long transcripts is log-only: it no longer appends words, which stops the last sentence repeating at the end of long transcripts. The hallucinated-closer and caption gates still run when the skipped merge would not have changed the text (#469, #470).
+- Transient notes such as "Busy recording. Selection not read" now show inside the notch, which grows briefly to fit them, instead of below it (#471).
+
+### Fixed
+- A microphone lost mid-recording no longer cuts the recording short: every byte is kept, and History and the pill say when the mic was lost. Only the recorder actually stopping ends a capture; a CoreAudio device report alone is recorded as evidence (#467).
+- Replay keeps every word's timing, and a later chunk of a long read never wipes an earlier chunk's timeline (#472).
+
+The UI end-to-end runner restores the output mute state it found instead of leaving the Mac muted (#468).
+
 ## [2.2.47] - 2026-10-19
 
 ### Added
