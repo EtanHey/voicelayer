@@ -1940,6 +1940,63 @@ describe("input recording durability", () => {
     });
   });
 
+  // NOTX1 round 2 (Sol #1): History caches rows and only re-reads one on archive_metadata_updated.
+  function metadataUpdates(): unknown[] {
+    return broadcasts.filter((event) => event.type === "archive_metadata_updated");
+  }
+
+  async function silentVoiceBarArchive(): Promise<string> {
+    vadProcessSpy!.mockResolvedValue(0);
+    installFakeRecorder(Array.from({ length: 60 }, () => makePcmChunk(1)), false);
+    const { waitForInput } = await import("../input");
+    const result = waitForInput(5_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(60 * VAD_CHUNK_BYTES);
+    await result;
+    return capturedVoiceBarAudio()[0];
+  }
+
+  it("NOTX1 tells History when a live capture is kept with a reason", async () => {
+    const archive = await silentVoiceBarArchive();
+    expect(metadataUpdates()).toEqual([
+      { type: "archive_metadata_updated", recording_path: archive },
+    ]);
+  });
+
+  it("NOTX1 tells History when a failed Re-transcribe changes the reason", async () => {
+    const archive = await silentVoiceBarArchive();
+    broadcasts = [];
+    backendMode = "throw-on-get";
+    const { retranscribeRecordingCapture } = await import("../input");
+    await expect(retranscribeRecordingCapture(archive)).rejects.toThrow("whisper backend is still warming");
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      not_transcribed_reason: "transcription-failed",
+    });
+    expect(metadataUpdates()).toEqual([
+      { type: "archive_metadata_updated", recording_path: archive },
+    ]);
+  });
+
+  it("NOTX1 tells History when an empty Re-transcribe gives a legacy row its reason", async () => {
+    const archive = await silentVoiceBarArchive();
+    // A row archived before NOTX1 has no reason fields.
+    const metadataPath = archive.replace("audio.wav", "metadata.json");
+    const legacy = voiceBarArchiveMetadata(archive);
+    delete legacy.not_transcribed_reason;
+    delete legacy.not_transcribed_detail;
+    delete legacy.input_dbfs;
+    writeFileSync(metadataPath, `${JSON.stringify(legacy, null, 2)}\n`);
+    broadcasts = [];
+    backendText = "";
+    const { retranscribeRecordingCapture } = await import("../input");
+    await expect(retranscribeRecordingCapture(archive)).resolves.toBeNull();
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      not_transcribed_reason: "empty-transcript",
+    });
+    expect(metadataUpdates()).toEqual([
+      { type: "archive_metadata_updated", recording_path: archive },
+    ]);
+  });
+
   it("NOTX1 records empty-transcript when the live decode returns no words", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);

@@ -3716,9 +3716,18 @@ function noSpeechArchiveReason(
 function markArchivedRecordingNotTranscribed(
   audioPath: string,
   reason: ArchivedNotTranscribedReason,
-  details: { detail?: string; dbfs?: number; keepExisting?: boolean } = {},
+  details: {
+    detail?: string;
+    dbfs?: number;
+    keepExisting?: boolean;
+    /** The path History knows the row by (Re-transcribe echoes VoiceBar's own string). */
+    eventPath?: string;
+  } = {},
 ): void {
-  updateArchivedRecordingMetadata(audioPath, (metadata) => {
+  const metadataPath = join(dirname(audioPath), "metadata.json");
+  try {
+    if (!existsSync(metadataPath)) return;
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     // A transcript already on disk wins over a later failed or empty decode.
     if (metadata.transcription_status === "transcribed") return;
     if (details.keepExisting && typeof metadata.not_transcribed_reason === "string") return;
@@ -3729,6 +3738,17 @@ function markArchivedRecordingNotTranscribed(
         ? Math.round(details.dbfs * 10) / 10
         : null;
     }
+    atomicWriteFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+  } catch (err) {
+    console.error(
+      `[voicelayer] Failed to record why a recording was not transcribed: ${archiveDiagnosticReason(err)}`,
+    );
+    return;
+  }
+  // History caches rows and re-reads one only on this event; the write above is durable.
+  broadcast({
+    type: "archive_metadata_updated",
+    recording_path: details.eventPath ?? audioPath,
   });
 }
 
@@ -4315,6 +4335,7 @@ export async function retranscribeRecordingCapture(
         // A silent capture re-decoded to nothing: the original reason says more.
         markArchivedRecordingNotTranscribed(wavPath, "empty-transcript", {
           keepExisting: true,
+          eventPath: eventAudioPath,
         });
       }
       setRecordingState("idle");
@@ -4328,6 +4349,7 @@ export async function retranscribeRecordingCapture(
     const detail = err instanceof Error ? err.message : String(err);
     markArchivedRecordingNotTranscribed(wavPath, "transcription-failed", {
       detail,
+      eventPath: eventAudioPath,
     });
     const retryableError = new Error(
       `Could not retranscribe archived recording ${wavPath}. The audio was kept; retry after the speech backend is available. Backend error: ${detail}`,
