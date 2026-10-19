@@ -69,18 +69,27 @@ const EXTRA_ABBREVIATIONS = new Set((
   "approx dept est fig no nos vol vols ch sec pp op ed eds inc ltd corp co bros assn univ ave blvd rd hwy"
 ).split(" "));
 
+/** A capitalised form this short before a capitalised word may be a title ("Maj. Smith"). */
+const AMBIGUOUS_MAX_LETTERS = 5;
+
 /**
  * The whitespace-delimited token that owns the mark at `at` must read as a
- * plain word. When in doubt, no break: an initial ("J."), a short form, a URL
- * or path ("help?", "docs/setup.md."), an address or any dotted token
- * ("example.com.", "v2.3.") never ends a sentence here.
+ * plain word. When in doubt, no break: an initial ("J.", "É." however it is
+ * encoded), any short capitalised form before a capitalised word ("Maj. Smith",
+ * "Assoc. Prof"), a URL or path ("help?", "docs/setup.md."), an address or any
+ * dotted token ("example.com.", "v2.3.") never ends a sentence here. The text
+ * itself is never normalised; NFC is only used to read the token.
  */
-function plainSentenceToken(text: string, at: number): boolean {
+function plainSentenceToken(text: string, at: number, next: string): boolean {
   const token = /\S*$/u.exec(text.slice(0, at))![0].replace(/^["'“‘(\[]+/u, "");
   if (/[/@\\:=&#]|www\.|\.\S/u.test(token)) return false;
-  const word = token.replace(/["'”’»)\]]+$/u, "");
-  if (text[at] === "." && /^\p{L}$/u.test(word)) return false;
-  if (text[at] === "." && EXTRA_ABBREVIATIONS.has(word.toLowerCase())) return false;
+  if (text[at] !== ".") return true;
+  const word = token.replace(/["'”’»)\]]+$/u, "").normalize("NFC");
+  // One letter plus any combining marks is one grapheme: an initial.
+  if (/^\p{L}\p{M}*$/u.test(word)) return false;
+  if (EXTRA_ABBREVIATIONS.has(word.toLowerCase())) return false;
+  if (/^\p{Lu}[\p{L}\p{M}]*$/u.test(word) && word.match(/\p{L}/gu)!.length <= AMBIGUOUS_MAX_LETTERS
+    && /^["'“‘(\[]*\p{Lu}/u.test(next)) return false;
   return true;
 }
 
@@ -92,8 +101,8 @@ function sentenceBoundaries(text: string): Boundary[] {
     // A single mark after a word: "...", "?." or a bare mark is not a sentence end.
     if (!/[\p{L}\p{N}\p{M}'’"”)\]%]/u.test(text[at - 1] ?? "")) continue;
     if (text[at] === "." && endsWithAbbreviation(text, at)) continue;
-    if (!plainSentenceToken(text, at)) continue;
     const next = text.slice(at + m[0].length);
+    if (!plainSentenceToken(text, at, next)) continue;
     // A lowercase opener continues the sentence (cased scripts only).
     if (/^["'“‘(\[]*\p{Ll}/u.test(next)) continue;
     const start = at + m[0].length - m[1].length;
