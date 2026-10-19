@@ -561,6 +561,8 @@ export interface TTSHistoryEntry {
   text: string; // original message
   voice: string; // which voice was used
   timestamp: number; // Date.now()
+  /** Long-read chunks whose audio was never synthesized (stopped first); their text is still in `text`. */
+  audioMissingChunks?: number[];
 }
 
 let ringIndex = 0;
@@ -583,7 +585,7 @@ function saveHistory(entries: TTSHistoryEntry[]): void {
 }
 
 /** Add an entry to the ring buffer. Overwrites oldest when full. */
-function addToHistory(text: string, audioFile: string, voice: string): void {
+function addToHistory(text: string, audioFile: string, voice: string, audioMissingChunks: number[] = []): void {
   const entries = loadHistory();
   const id = ringIndex % RING_BUFFER_SIZE;
   const historyFile = ttsHistoryFilePath(id);
@@ -601,6 +603,7 @@ function addToHistory(text: string, audioFile: string, voice: string): void {
     text,
     voice,
     timestamp: Date.now(),
+    ...(audioMissingChunks.length ? { audioMissingChunks } : {}),
   };
 
   // Find existing entry with same id and replace, or push new
@@ -2215,12 +2218,13 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         return { started: start, exited: playback.exited.then(async outcome => { await audioExited; return outcome; }),
           interrupt: () => playbackQueueManager.interrupt(playback.id) };
       },
-      saveHistory: async (played) => {
+      saveHistory: async (audio, { text, missingChunks }) => {
         const combined = ttsFilePath(process.pid, ttsCounter++);
         try {
-          await assembleLongReadHistory(played, combined);
-          addToHistory(played.map((item) => item.text).join(" "), combined,
-            chunkVoices.get(played[0]?.chunk.audioFile) ?? profile.voice);
+          if (missingChunks.length) console.error(`[voicelayer] Long-read history audio lacks chunks ${missingChunks.join(",")} of ${texts.length} (stopped before synthesis); text is complete`);
+          await assembleLongReadHistory(audio, combined);
+          addToHistory(text, combined,
+            chunkVoices.get(audio[0]?.chunk.audioFile) ?? profile.voice, missingChunks);
         } catch (error) {
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);
         } finally { try { unlinkSync(combined); } catch {} }
