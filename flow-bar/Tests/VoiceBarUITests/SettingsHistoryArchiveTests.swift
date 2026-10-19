@@ -250,6 +250,47 @@ final class SettingsHistoryArchiveTests: XCTestCase {
         XCTAssertFalse(page.hasMore)
     }
 
+    // NOTX1: a kept recording without a transcript shows why, not a bare placeholder.
+    func testAnUntranscribedRecordingShowsTheStoredReason() throws {
+        let cases: [(String, String)] = [
+            (#""not_transcribed_reason": "silent-input", "input_dbfs": -93.9"#,
+             "Not transcribed: the microphone sent only silence (-93.9 dBFS)"),
+            (#""not_transcribed_reason": "no-speech", "input_dbfs": -46.9"#,
+             "Not transcribed: no speech detected"),
+            (#""not_transcribed_reason": "transcription-failed", "not_transcribed_detail": "whisper-server timed out""#,
+             "Transcription failed: whisper-server timed out"),
+            (#""not_transcribed_reason": "empty-transcript""#,
+             "Transcribed, but no words were recognized"),
+            (#""not_transcribed_reason": "something-new""#, "No transcript stored"),
+            (#""backend": "not-transcribed""#, "No transcript stored"),
+        ]
+        for (index, (fields, expected)) in cases.enumerated() {
+            let id = "2026-10-19T03-3\(index)-42-436Z-notx\(index)"
+            try writeUntranscribedRecording(day: "2026-10-19", id: id, extraFields: fields)
+            let entry = try XCTUnwrap(
+                SettingsHistoryArchive.load(from: tempRoot).flatMap(\.entries).first { $0.recordingID == id }
+            )
+            XCTAssertFalse(entry.hasTranscript)
+            XCTAssertEqual(entry.displayTranscript, expected, fields)
+        }
+    }
+
+    private func writeUntranscribedRecording(day: String, id: String, extraFields: String) throws {
+        let dir = tempRoot.appendingPathComponent(day).appendingPathComponent(id)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data([0, 1, 2, 3]).write(to: dir.appendingPathComponent("audio.wav"))
+        let metadata = """
+        {
+          "id": "\(id)",
+          "created_at": "2026-10-19T03:31:42.436Z",
+          "source": "voicebar",
+          "transcription_status": "captured",
+          \(extraFields)
+        }
+        """
+        try metadata.write(to: dir.appendingPathComponent("metadata.json"), atomically: true, encoding: .utf8)
+    }
+
     private func writeRecording(
         day: String,
         id: String,

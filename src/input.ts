@@ -3144,6 +3144,20 @@ export async function waitForInput(
         `dbfs=${Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs.toFixed(1) : "-inf"})`,
     );
     clearCancelSignal();
+    if (voiceBarArchivePath) {
+      markArchivedRecordingNotTranscribed(
+        join(voiceBarArchivePath, "audio.wav"),
+        noSpeechArchiveReason(
+          noSpeechReason === "vad-no-speech" ||
+            noSpeechReason === "too-short" ||
+            noSpeechReason === "too-quiet"
+            ? noSpeechReason
+            : "no-speech",
+          noSpeechGate.dbfs,
+        ),
+        { dbfs: noSpeechGate.dbfs },
+      );
+    }
     invokeCaptureObserver("no_speech", options.onNoSpeech);
     appendControlLayerEvent("capture.no_speech", {
       reason: noSpeechReason ?? null,
@@ -3185,6 +3199,13 @@ export async function waitForInput(
       );
       if (!pushToEndSpeechGate.detected) {
         clearCancelSignal();
+        if (voiceBarArchivePath) {
+          markArchivedRecordingNotTranscribed(
+            join(voiceBarArchivePath, "audio.wav"),
+            noSpeechArchiveReason("no-speech", noSpeechGate.dbfs),
+            { dbfs: noSpeechGate.dbfs },
+          );
+        }
         invokeCaptureObserver("no_speech", options.onNoSpeech);
         broadcast({ type: "state", state: "idle", source: "recording" });
         return null;
@@ -3402,6 +3423,11 @@ export async function waitForInput(
       if (archivedRecordingPath) {
         linkRetainedCaptureToArchive(join(archivedRecordingPath, "audio.wav"));
       }
+    } else if (voiceBarArchivePath) {
+      markArchivedRecordingNotTranscribed(
+        join(voiceBarArchivePath, "audio.wav"),
+        "empty-transcript",
+      );
     }
 
     throwIfWaitForInputAborted(options.signal);
@@ -3450,6 +3476,13 @@ export async function waitForInput(
       throw err;
     }
     const errorMessage = err instanceof Error ? err.message : String(err);
+    if (voiceBarArchivePath) {
+      markArchivedRecordingNotTranscribed(
+        join(voiceBarArchivePath, "audio.wav"),
+        "transcription-failed",
+        { detail: errorMessage },
+      );
+    }
     broadcast({
       type: "error",
       message: errorMessage.startsWith("voice_ask archive failed:")
@@ -3554,6 +3587,8 @@ export function updateArchivedTranscript(
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
+    delete metadata.not_transcribed_reason;
+    delete metadata.not_transcribed_detail;
     if (transcription.transcribedDurationMs !== undefined) {
       metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
     }
@@ -3651,6 +3686,50 @@ function updateArchivedRecordingMetadata(
       `[voicelayer] Failed to update archived recording metadata: ${archiveDiagnosticReason(err)}`,
     );
   }
+}
+
+/**
+ * NOTX1: why a kept recording has no transcript. History shows this instead of a
+ * bare "No transcript stored". `updateArchivedTranscript` clears it.
+ */
+export type ArchivedNotTranscribedReason =
+  | "silent-input"
+  | "too-short"
+  | "too-quiet"
+  | "no-speech"
+  | "vad-no-speech"
+  | "empty-transcript"
+  | "transcription-failed";
+
+/** At or below this the device delivered digital silence (a ±1 LSB floor reads ≈ -90 dBFS). */
+const SILENT_INPUT_DBFS = -85;
+
+function noSpeechArchiveReason(
+  reason: ArchivedNotTranscribedReason,
+  dbfs: number,
+): ArchivedNotTranscribedReason {
+  return !Number.isFinite(dbfs) || dbfs <= SILENT_INPUT_DBFS
+    ? "silent-input"
+    : reason;
+}
+
+function markArchivedRecordingNotTranscribed(
+  audioPath: string,
+  reason: ArchivedNotTranscribedReason,
+  details: { detail?: string; dbfs?: number; keepExisting?: boolean } = {},
+): void {
+  updateArchivedRecordingMetadata(audioPath, (metadata) => {
+    // A transcript already on disk wins over a later failed or empty decode.
+    if (metadata.transcription_status === "transcribed") return;
+    if (details.keepExisting && typeof metadata.not_transcribed_reason === "string") return;
+    metadata.not_transcribed_reason = reason;
+    metadata.not_transcribed_detail = details.detail ?? null;
+    if (details.dbfs !== undefined) {
+      metadata.input_dbfs = Number.isFinite(details.dbfs)
+        ? Math.round(details.dbfs * 10) / 10
+        : null;
+    }
+  });
 }
 
 function refreshArchivedAudioChecksum(audioPath: string): void {
@@ -4232,6 +4311,11 @@ export async function retranscribeRecordingCapture(
           recording_is_latest: archivedRecordingIsLatest(wavPath),
           ...transcriptionPolishMetadata(finalized),
         });
+      } else {
+        // A silent capture re-decoded to nothing: the original reason says more.
+        markArchivedRecordingNotTranscribed(wavPath, "empty-transcript", {
+          keepExisting: true,
+        });
       }
       setRecordingState("idle");
       broadcast({ type: "state", state: "idle", source: "recording" });
@@ -4242,6 +4326,9 @@ export async function retranscribeRecordingCapture(
   } catch (err) {
     setRecordingState("idle");
     const detail = err instanceof Error ? err.message : String(err);
+    markArchivedRecordingNotTranscribed(wavPath, "transcription-failed", {
+      detail,
+    });
     const retryableError = new Error(
       `Could not retranscribe archived recording ${wavPath}. The audio was kept; retry after the speech backend is available. Backend error: ${detail}`,
     );

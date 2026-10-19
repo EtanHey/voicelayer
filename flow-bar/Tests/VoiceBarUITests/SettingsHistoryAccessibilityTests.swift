@@ -42,6 +42,18 @@ final class SettingsHistoryAccessibilityTests: XCTestCase {
         )
     }
 
+    func testARowWithoutATranscriptSpeaksTheStoredReason() {
+        let entry = entry(
+            transcript: "", durationMs: 29_739, effort: nil,
+            missingTranscript: SettingsHistoryMissingTranscript(reason: "silent-input", detail: nil, inputDbfs: -93.9)
+        )
+
+        XCTAssertEqual(
+            SettingsHistoryAccessibility.rowLabel(entry, locale: english, timeZone: utc),
+            "Not transcribed: the microphone sent only silence (-93.9 dBFS), Sep 25, 2026 at 9:30 AM, 30 seconds"
+        )
+    }
+
     func testTheOpeningCutsAtAWordBoundary() {
         XCTAssertEqual(SettingsHistoryAccessibility.opening("one two three", limit: 9), "one two…")
         XCTAssertEqual(SettingsHistoryAccessibility.opening("  short  ", limit: 80), "short")
@@ -128,7 +140,8 @@ final class SettingsHistoryAccessibilityTests: XCTestCase {
     // MARK: - Helpers
 
     private func entry(transcript: String, durationMs: Int?,
-                       effort: VoiceBarPerformanceEffort?) -> SettingsHistoryEntry {
+                       effort: VoiceBarPerformanceEffort?,
+                       missingTranscript: SettingsHistoryMissingTranscript? = nil) -> SettingsHistoryEntry {
         var components = DateComponents()
         components.calendar = Calendar(identifier: .gregorian)
         components.timeZone = utc
@@ -145,7 +158,8 @@ final class SettingsHistoryAccessibilityTests: XCTestCase {
             transcript: transcript,
             audioPath: URL(fileURLWithPath: "/tmp/a11y/audio.wav"),
             durationMs: durationMs,
-            performanceEffort: effort
+            performanceEffort: effort,
+            missingTranscript: missingTranscript
         )
     }
 
