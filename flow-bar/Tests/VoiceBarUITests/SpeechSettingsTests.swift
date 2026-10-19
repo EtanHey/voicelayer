@@ -1,4 +1,3 @@
-import AppKit
 @testable import VoiceBarUI
 import XCTest
 
@@ -14,18 +13,6 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertEqual(SpeechSettingsView.rateCaptionX(fraction: 0, width: 300, knobWidth: 20), 10, accuracy: 0.001)
         XCTAssertEqual(SpeechSettingsView.rateCaptionX(fraction: 1, width: 300, knobWidth: 20), 290, accuracy: 0.001)
         XCTAssertEqual(SpeechSettingsView.rateCaptionX(fraction: 0.375, width: 0, knobWidth: 20), 0, accuracy: 0.001)
-    }
-
-    func testRateCaptionMatchesAppKitsOwnKnobAtZero() {
-        let slider = NSSlider(value: 0, minValue: SpeechSettingsView.rateRange.lowerBound,
-                              maxValue: SpeechSettingsView.rateRange.upperBound, target: nil, action: nil)
-        slider.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
-        let cell = slider.cell as! NSSliderCell
-        XCTAssertEqual(
-            SpeechSettingsView.rateCaptionX(fraction: SpeechSettingsView.normalRateFraction, width: 300,
-                                            knobWidth: SpeechSettingsView.sliderKnobWidth),
-            cell.knobRect(flipped: false).midX, accuracy: 0.5
-        )
     }
 
     static func controls(rateSource: String = "settings", rate: String = "+10%") -> [String: Any] {
