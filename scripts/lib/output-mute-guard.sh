@@ -5,33 +5,50 @@
 # The UIE2E runner used to mute and deliberately leave output muted, relying on
 # every operator to restore it by hand. Never mute without this guard.
 #
-# Sourceable and side-effect free: sourcing defines functions only. Call
-# output_mute_guard_begin once; it records the prior state, installs EXIT, INT and
-# TERM traps that restore it, and only then mutes. The restore runs on success,
+# Sourceable and side-effect free: sourcing touches no audio state. The first
+# output_mute_guard_begin records the prior state, installs EXIT, INT and TERM
+# traps that restore it (with a bounded retry), and only then mutes; a later begin
+# keeps that first state. The restore runs on success,
 # failure and interrupt. SIGKILL cannot be trapped. A caller that needs its own
-# EXIT trap must call output_mute_guard_restore from it (restore is idempotent).
+# EXIT trap must call output_mute_guard_final from it (restore is idempotent).
 
-output_mute_guard_prior=
+# Re-sourcing keeps an active guard's saved state.
+output_mute_guard_prior=${output_mute_guard_prior:-}
 
+# Clears the saved state only after the restore is read back; returns nonzero otherwise.
 output_mute_guard_restore() {
   [[ -n $output_mute_guard_prior ]] || return 0
-  local prior=$output_mute_guard_prior
-  output_mute_guard_prior=
-  if osascript -e "set volume output muted $prior" >/dev/null; then
-    echo "output mute restored to $prior" >&2
-  else
-    echo "WARN output mute restore to $prior failed; restore it by hand" >&2
+  if osascript -e "set volume output muted $output_mute_guard_prior" >/dev/null &&
+    [[ $(osascript -e 'output muted of (get volume settings)') == "$output_mute_guard_prior" ]]; then
+    echo "output mute restored to $output_mute_guard_prior" >&2
+    output_mute_guard_prior=
+    return 0
   fi
+  echo "WARN output mute restore to $output_mute_guard_prior failed" >&2
+  return 1
+}
+
+# Final cleanup from the traps: a bounded retry, so one transient failure is recoverable.
+output_mute_guard_final() {
+  for _ in 1 2 3; do
+    output_mute_guard_restore && return 0
+    sleep 0.2
+  done
+  echo "FAIL output mute not restored to $output_mute_guard_prior; restore it by hand" >&2
+  return 1
 }
 
 output_mute_guard_begin() {
-  local prior
-  prior=$(osascript -e 'output muted of (get volume settings)') || { echo 'FAIL output mute unreadable'; return 1; }
-  [[ $prior == true || $prior == false ]] || { echo "FAIL output mute unreadable: $prior"; return 1; }
-  output_mute_guard_prior=$prior
-  trap output_mute_guard_restore EXIT
-  trap 'output_mute_guard_restore; exit 130' INT
-  trap 'output_mute_guard_restore; exit 143' TERM
+  # A second begin keeps the first saved state; capturing again would save the guard's own mute.
+  if [[ -z $output_mute_guard_prior ]]; then
+    local prior
+    prior=$(osascript -e 'output muted of (get volume settings)') || { echo 'FAIL output mute unreadable'; return 1; }
+    [[ $prior == true || $prior == false ]] || { echo "FAIL output mute unreadable: $prior"; return 1; }
+    output_mute_guard_prior=$prior
+    trap output_mute_guard_final EXIT
+    trap 'output_mute_guard_final; exit 130' INT
+    trap 'output_mute_guard_final; exit 143' TERM
+  fi
   osascript -e 'set volume output muted true' >/dev/null || { echo 'FAIL output mute write'; return 1; }
   output_mute_guard_confirm || { echo 'FAIL output mute unconfirmed'; return 1; }
 }

@@ -14,9 +14,20 @@ const SUBPROCESS_TEST_TIMEOUT_MS = 20_000;
 
 const CODE = /\.(sh|bash|zsh|ts|tsx|js|mjs|cjs|py|swift|applescript|scpt)$/;
 const SKIP_DIRS = new Set([".build", "node_modules", "DerivedData", ".swiftpm", ".test-tmp"]);
-// Any write of the output mute or volume. Read-only queries such as
-// `output muted of (get volume settings)` match none of these.
-const MUTE_WRITE = /set volume|output muted true|with output muted/;
+
+// Fail closed: a file that writes the output mute or volume must be a reviewed writer with a
+// behavioural restore test. Everything else mutes through scripts/lib/output-mute-guard.sh.
+const REVIEWED_WRITERS: Record<string, string> = {
+  "scripts/lib/output-mute-guard.sh": 'describe("output-mute-guard.sh restores the state it found")',
+  "scripts/auto-f5-verify.sh": 'describe("auto-f5-verify.sh restores the volume and mute it found")',
+};
+// Matched on lowercased, whitespace-collapsed text, so `set  volume` or `SET VOLUME` still count.
+// Read-only queries such as `output muted of (get volume settings)` match none of these.
+const MUTE_WRITE = /\bset ?volume\b|output muted (true|false)\b|\b(with|without) output muted\b/;
+const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, " ");
+const writesMute = (text: string) => MUTE_WRITE.test(normalize(text));
+const offenders = (files: { path: string; text: string }[]) =>
+  files.filter((f) => writesMute(f.text) && !(f.path in REVIEWED_WRITERS)).map((f) => f.path);
 
 function codeFiles(dir: string): string[] {
   const out: string[] = [];
@@ -29,84 +40,94 @@ function codeFiles(dir: string): string[] {
   return out;
 }
 
-function shellFunctionBody(source: string, name: string): string | undefined {
-  const start = source.search(new RegExp(`^\\s*(?:function\\s+)?${name}\\s*\\(\\)\\s*\\{`, "m"));
-  if (start < 0) return undefined;
-  const end = source.indexOf("\n}", start);
-  return source.slice(start, end < 0 ? undefined : end);
-}
+describe("MUTE1 contract: only reviewed writers touch the output mute", () => {
+  const tree = ["scripts", "src", "flow-bar"].flatMap((d) => codeFiles(join(repo, d)))
+    .map((f) => ({ path: relative(repo, f), text: readFileSync(f, "utf8") }))
+    .filter((f) => f.path !== SELF);
 
-// True when the EXIT trap (directly or through up to three function calls) writes the mute back.
-function shellExitTrapRestores(source: string): boolean {
-  const traps = [...source.matchAll(/^\s*trap\s+('[^']*'|"[^"]*"|\S+)\s+([A-Z ]+)$/gm)]
-    .filter((m) => m[2].split(/\s+/).includes("EXIT"));
-  const restores = (code: string, depth: number): boolean => {
-    if (MUTE_WRITE.test(code) || /set volume output muted \$/.test(code)) return true;
-    if (depth === 0) return false;
-    for (const call of code.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []) {
-      const body = shellFunctionBody(source, call);
-      if (body && body !== code && restores(body, depth - 1)) return true;
-    }
-    return false;
-  };
-  return traps.some((m) => restores(m[1].replace(/^['"]|['"]$/g, ""), 3));
-}
-
-describe("MUTE1 contract: every output-mute writer restores what it found", () => {
-  const files = ["scripts", "src", "flow-bar"].flatMap((d) => codeFiles(join(repo, d)))
-    .filter((f) => relative(repo, f) !== SELF);
-  const writers = files.filter((f) => readFileSync(f, "utf8").split("\n").some((l) => MUTE_WRITE.test(l)));
-
-  test("the scan sees the known writers", () => {
-    const names = writers.map((f) => relative(repo, f)).sort();
-    expect(names).toContain("scripts/auto-f5-verify.sh");
-    expect(names).toContain("scripts/lib/output-mute-guard.sh");
+  test("no unreviewed file in scripts/, src/ or flow-bar/ writes the output mute or volume", () => {
+    expect(offenders(tree)).toEqual([]);
   });
 
-  test("each writer restores from an EXIT trap or a finally", () => {
-    const offenders = writers.filter((f) => {
-      const source = readFileSync(f, "utf8");
-      return /\.(sh|bash|zsh)$/.test(f) ? !shellExitTrapRestores(source) : !/\bfinally\b/.test(source);
-    }).map((f) => relative(repo, f));
-    expect(offenders).toEqual([]);
+  test("every reviewed writer still writes, and its restore test exists in this file", () => {
+    expect(tree.filter((f) => writesMute(f.text)).map((f) => f.path).sort()).toEqual(Object.keys(REVIEWED_WRITERS).sort());
+    const self = readFileSync(import.meta.path, "utf8");
+    for (const anchor of Object.values(REVIEWED_WRITERS)) expect(self).toContain(anchor);
   });
 
   test("the UIE2E runner mutes only through the guard and never leaves output muted", () => {
     const script = readFileSync(join(repo, "scripts/voicebar-ui-e2e.sh"), "utf8");
-    expect(script.split("\n").filter((l) => MUTE_WRITE.test(l))).toEqual([]);
+    expect(writesMute(script)).toBe(false);
     expect(script).toContain('source "$repo/scripts/lib/output-mute-guard.sh"');
     expect(script).toContain("output_mute_guard_begin");
     expect(script).not.toMatch(/Leave output muted/i);
   });
 
-  test("read-only queries are not writes", () => {
-    expect(MUTE_WRITE.test("osascript -e 'output muted of (get volume settings)'")).toBe(false);
-  });
+  // Sol R1 bypasses: none of these restores, so each must fail the contract.
+  const unsafe: [string, string][] = [
+    ["mute-only-exit.sh", `osascript -e 'set volume output muted true'\ntrap 'osascript -e "set volume output muted true"' EXIT\n`],
+    ["comment-finally.ts", "// finally\nBun.spawnSync(['osascript', '-e', 'set volume output muted true']);\n"],
+    ["unrelated-finally.py", "try:\n    pass\nfinally:\n    print('done')\nsubprocess.run(['osascript', '-e', 'set volume output volume 0'])\n"],
+    ["comment-finally.swift", '// finally\nlet p = Process(); p.arguments = ["-e", "set volume with output muted"]\n'],
+    ["double-space.sh", "osascript -e 'set  volume output volume 0'\n"],
+    ["case-and-tab.sh", "osascript -e 'SET\tVOLUME output muted TRUE'\n"],
+    ["jxa.js", "Application.currentApplication().setVolume(0)\n"],
+    ["guard-plus-direct.sh", 'source scripts/lib/output-mute-guard.sh\noutput_mute_guard_begin\nosascript -e "set volume without output muted"\n'],
+  ];
+  for (const [path, text] of unsafe) {
+    test(`fails closed: ${path}`, () => expect(offenders([{ path, text }])).toEqual([path]));
+  }
+
+  const readOnly = [
+    "osascript -e 'output muted of (get volume settings)'",
+    "osascript -e 'output volume of (get volume settings)'",
+    "[[ $(osascript -e 'output  muted of (get volume settings)') == true ]]",
+    "let offset = volumeOffset // reset() volumes",
+  ];
+  for (const text of readOnly) {
+    test(`read-only is allowed: ${text}`, () => expect(offenders([{ path: "probe.sh", text }])).toEqual([]));
+  }
 });
 
-// A stateful osascript: reads print the stored mute state, writes store it, every call is logged.
-function osascriptStub(bin: string, state: string, log: string) {
+// A stateful osascript: reads print the stored state, writes store it, every call is logged.
+// While `fail-unmute-once` exists, the next `set volume output muted false` fails and deletes it.
+function osascriptStub(bin: string, dir: string, log: string) {
   writeFileSync(join(bin, "osascript"), `#!/bin/bash
 printf '%s\\n' "$*" >> '${log}'
+m='${dir}/muted' v='${dir}/volume'
 case "$*" in
-  *"output muted of (get volume settings)"*) cat '${state}' ;;
-  *"set volume output muted true"*) echo true > '${state}' ;;
-  *"set volume output muted false"*) echo false > '${state}' ;;
-  *) echo "unexpected osascript: $*" >&2; exit 9 ;;
+  *"set volume output muted false"*)
+    if [[ -e '${dir}/fail-unmute-once' ]]; then rm '${dir}/fail-unmute-once'; exit 1; fi ;;
 esac
+case "$*" in
+  *"return (output volume of s as string)"*) printf '%s:%s\\n' "$(cat $v)" "$(cat $m)"; exit 0 ;;
+  *"output muted of (get volume settings)"*) cat $m; exit 0 ;;
+esac
+for arg; do
+  case "$arg" in
+    -e) ;;
+    "set volume output muted true"|"set volume with output muted") echo true > $m ;;
+    "set volume output muted false"|"set volume without output muted") echo false > $m ;;
+    "set volume output volume "*) echo "\${arg##* }" > $v ;;
+    *) echo "unexpected osascript: $*" >&2; exit 9 ;;
+  esac
+done
 `, { mode: 0o700 });
 }
 
-function sandbox(prior: "true" | "false") {
+function sandbox(prior: "true" | "false", volume = 35) {
   const dir = mkdtempSync(join(tmpdir(), "mute1-"));
   const bin = join(dir, "bin");
   mkdirSync(bin);
-  const state = join(dir, "muted"), log = join(dir, "osascript.log");
-  writeFileSync(state, `${prior}\n`);
-  osascriptStub(bin, state, log);
-  const read = () => readFileSync(state, "utf8").trim();
+  const log = join(dir, "osascript.log");
+  writeFileSync(join(dir, "muted"), `${prior}\n`);
+  writeFileSync(join(dir, "volume"), `${volume}\n`);
+  osascriptStub(bin, dir, log);
+  const read = () => readFileSync(join(dir, "muted"), "utf8").trim();
+  const readVolume = () => readFileSync(join(dir, "volume"), "utf8").trim();
   const calls = () => existsSync(log) ? readFileSync(log, "utf8") : "";
-  return { dir, bin, read, calls, path: `${bin}:/usr/bin:/bin` };
+  const failUnmuteOnce = () => writeFileSync(join(dir, "fail-unmute-once"), "");
+  return { dir, bin, read, readVolume, calls, failUnmuteOnce, path: `${bin}:/usr/bin:/bin` };
 }
 
 async function waitFor(path: string, ms = 10_000) {
@@ -119,12 +140,13 @@ async function waitFor(path: string, ms = 10_000) {
 
 describe("output-mute-guard.sh restores the state it found", () => {
   const guard = join(repo, "scripts/lib/output-mute-guard.sh");
-  const driver = (dir: string, tail: string) => {
+  const driver = (dir: string, tail: string, begin = "output_mute_guard_begin || exit 1") => {
     const path = join(dir, "driver.sh");
-    writeFileSync(path, `set -euo pipefail\nsource '${guard}'\noutput_mute_guard_begin || exit 1\n` +
+    writeFileSync(path, `set -euo pipefail\nsource '${guard}'\n${begin}\n` +
       `output_mute_guard_confirm || exit 1\ntouch '${dir}/muted-during-run'\n${tail}\n`);
     return path;
   };
+  const unmutes = (calls: string) => calls.split("\n").filter((l) => l === "-e set volume output muted false").length;
 
   for (const prior of ["false", "true"] as const) {
     for (const [name, tail, code] of [["exit 0", "exit 0", 0], ["exit 1", "false", 1]] as const) {
@@ -135,11 +157,21 @@ describe("output-mute-guard.sh restores the state it found", () => {
           expect(r.exitCode).toBe(code);
           expect(existsSync(join(s.dir, "muted-during-run"))).toBe(true);
           expect(s.calls()).toContain("set volume output muted true");
-          expect(s.calls().trim().split("\n").at(-1)).toBe(`-e set volume output muted ${prior}`);
           expect(s.read()).toBe(prior);
         } finally { rmSync(s.dir, { recursive: true, force: true }); }
       }, SUBPROCESS_TEST_TIMEOUT_MS);
     }
+
+    // Sol R1 defect 1: a second begin (or a re-source) must keep the first saved state.
+    test(`begin twice and re-source keep prior muted=${prior}`, () => {
+      const s = sandbox(prior);
+      try {
+        const twice = `output_mute_guard_begin || exit 1\nsource '${guard}'\noutput_mute_guard_begin || exit 1`;
+        const r = Bun.spawnSync(["/bin/bash", driver(s.dir, "exit 0", twice)], { env: { ...process.env, PATH: s.path } });
+        expect(r.exitCode).toBe(0);
+        expect(s.read()).toBe(prior);
+      } finally { rmSync(s.dir, { recursive: true, force: true }); }
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
   for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
@@ -154,7 +186,48 @@ describe("output-mute-guard.sh restores the state it found", () => {
         expect(s.read()).toBe("false");
       } finally { rmSync(s.dir, { recursive: true, force: true }); }
     }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+    // Sol R1 defect 2: one failed unmute must not discard the saved state.
+    test(`${signal} with one failed unmute still restores muted=false`, async () => {
+      const s = sandbox("false");
+      try {
+        const child = Bun.spawn(["/bin/bash", driver(s.dir, "while :; do sleep 0.05; done")], { env: { ...process.env, PATH: s.path } });
+        await waitFor(join(s.dir, "muted-during-run"));
+        s.failUnmuteOnce();
+        child.kill(signal);
+        expect(await child.exited).toBe(code);
+        expect(s.read()).toBe("false");
+        expect(unmutes(s.calls())).toBe(2);
+      } finally { rmSync(s.dir, { recursive: true, force: true }); }
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
+
+  test("EXIT with one failed unmute still restores muted=false", () => {
+    const s = sandbox("false");
+    try {
+      const r = Bun.spawnSync(["/bin/bash", driver(s.dir, `touch '${s.dir}/fail-unmute-once'\nexit 0`)], { env: { ...process.env, PATH: s.path } });
+      expect(r.exitCode).toBe(0);
+      expect(s.read()).toBe("false");
+      expect(unmutes(s.calls())).toBe(2);
+    } finally { rmSync(s.dir, { recursive: true, force: true }); }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("explicit restore reports a failure, keeps the state, and a later restore succeeds", () => {
+    const s = sandbox("false");
+    try {
+      const tail = `touch '${s.dir}/fail-unmute-once'
+if output_mute_guard_restore; then exit 7; fi
+[[ $output_mute_guard_prior == false ]] || exit 8
+output_mute_guard_restore || exit 9
+[[ -z $output_mute_guard_prior ]] || exit 10
+output_mute_guard_restore || exit 11
+exit 0`;
+      const r = Bun.spawnSync(["/bin/bash", driver(s.dir, tail)], { env: { ...process.env, PATH: s.path } });
+      expect(r.exitCode).toBe(0);
+      expect(s.read()).toBe("false");
+      expect(unmutes(s.calls())).toBe(2);
+    } finally { rmSync(s.dir, { recursive: true, force: true }); }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("an unreadable prior state refuses to mute at all", () => {
     const s = sandbox("false");
@@ -163,6 +236,47 @@ describe("output-mute-guard.sh restores the state it found", () => {
       const r = Bun.spawnSync(["/bin/bash", driver(s.dir, "exit 0")], { env: { ...process.env, PATH: s.path } });
       expect(r.exitCode).toBe(1);
       expect(s.calls()).not.toContain("set volume");
+    } finally { rmSync(s.dir, { recursive: true, force: true }); }
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+});
+
+// The reviewed second writer: its own cleanup EXIT trap, driven in source-only mode.
+describe("auto-f5-verify.sh restores the volume and mute it found", () => {
+  const script = join(repo, "scripts/auto-f5-verify.sh");
+  const driver = (dir: string, tail: string) => {
+    const path = join(dir, "driver.sh");
+    writeFileSync(path, `set -euo pipefail\nVOICELAYER_AUTO_F5_SOURCE_ONLY=1 source '${script}'\ntrap cleanup EXIT\n` +
+      `capture_system_volume\nset_system_volume_for_capture\ntouch '${dir}/capturing'\n${tail}\n`);
+    return path;
+  };
+  const f5Env = (s: { dir: string; path: string }) => ({ PATH: s.path,
+    VOICELAYER_AUTO_F5_WORK_DIR: s.dir, VOICELAYER_AUTO_F5_LOG_FILE: join(s.dir, "auto-f5.log") });
+
+  for (const prior of ["false", "true"] as const) {
+    for (const [name, tail, code] of [["exit 0", "exit 0", 0], ["die", "die boom", 1]] as const) {
+      test(`${name} with prior muted=${prior}`, () => {
+        const s = sandbox(prior, 35);
+        try {
+          const r = Bun.spawnSync(["/bin/bash", driver(s.dir, tail)], { env: { ...process.env, ...f5Env(s) } });
+          expect(r.exitCode).toBe(code);
+          expect(s.calls()).toContain("set volume without output muted");
+          expect(s.read()).toBe(prior);
+          expect(s.readVolume()).toBe("35");
+        } finally { rmSync(s.dir, { recursive: true, force: true }); }
+      }, SUBPROCESS_TEST_TIMEOUT_MS);
+    }
+  }
+
+  test("SIGTERM mid-capture restores muted=true and the volume", async () => {
+    const s = sandbox("true", 35);
+    try {
+      const child = Bun.spawn(["/bin/bash", driver(s.dir, "while :; do sleep 0.05; done")], { env: { ...process.env, ...f5Env(s) } });
+      await waitFor(join(s.dir, "capturing"));
+      expect(s.read()).toBe("false");
+      child.kill("SIGTERM");
+      await child.exited;
+      expect(s.read()).toBe("true");
+      expect(s.readVolume()).toBe("35");
     } finally { rmSync(s.dir, { recursive: true, force: true }); }
   }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
