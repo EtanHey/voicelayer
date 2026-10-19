@@ -6,13 +6,13 @@ import { polishTranscriptionText } from "../stt-polish";
 import { WhisperServerBackend } from "../stt";
 
 // P1: a read site that still passes process.env ignores the Settings toggle
-// silently: the "toggle that does nothing" bug. Every pipeline read of the four
+// silently: the "toggle that does nothing" bug. Every pipeline read of the
 // processing flags must go through processingEnv().
 const SRC = join(import.meta.dir, "..");
 const files = readdirSync(SRC).filter((name) => name.endsWith(".ts"));
 
 const FORBIDDEN: Array<[RegExp, string]> = [
-  [/\b(pauseParagraphsEnabled|outroGateEnabled|smartBoundariesEnabled|isSmartWavChunkingEnabled|getSTTPolishMode)\(\s*(process\.env)?\s*\)/g,
+  [/\b(pauseParagraphsEnabled|outroGateEnabled|isSmartWavChunkingEnabled|getSTTPolishMode)\(\s*(process\.env)?\s*\)/g,
     "a processing-flag parser called with process.env or no env"],
   [/\b(finalizeTranscriptionResultForSurface|buildBoundaryContext|finalizeTranscriptionTextForSurface)\([^;]*?process\.env/gs,
     "a finalize/boundary call handed process.env"],
@@ -90,7 +90,7 @@ describe("a settings file reaches the pipeline with no env set (P1)", () => {
       },
     });
 
-    useSettings({ outro_gate: false, smart_boundaries: false });
+    useSettings({ outro_gate: false });
     await backend.transcribe(wavPath);
     expect(segmentRequests.length).toBeGreaterThan(0);
     expect(segmentRequests.every((asked) => !asked)).toBe(true);

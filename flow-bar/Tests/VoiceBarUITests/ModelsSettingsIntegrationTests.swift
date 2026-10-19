@@ -35,7 +35,6 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
             "model_polish": ["source": "environment", "raw": "shadow", "effective": "shadow"],
             "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
             "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
-            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
         ]
         voiceState.handleEvent(health)
         let host = NSHostingView(rootView: makeSettingsView(voiceState: voiceState))

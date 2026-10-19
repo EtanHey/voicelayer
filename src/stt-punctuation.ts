@@ -2,7 +2,7 @@ import { questionBoundaryIndices } from "./stt-polish";
 import {
   continuesSameClause,
   endsWithAbbreviation,
-} from "./stt-sentence-boundaries";
+} from "./stt-transcript-alignment";
 
 /**
  * Deterministic sentence-terminal punctuation restoration.

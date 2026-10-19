@@ -13,7 +13,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { existsSync } from "fs";
 import { resolveBinary, resolveBinaryAsync } from "./resolve-binary";
-import type { TranscriptSegment } from "./stt-sentence-boundaries";
+import type { TranscriptSegment } from "./stt-transcript-alignment";
 import {
   configureWhisperPerformanceRestart,
   getWhisperPerformanceEffort,
@@ -1346,7 +1346,7 @@ export interface WhisperServerTranscribeOptions {
   /** A timed-out advisory request must not retire a server healthy enough for primary work. */
   preserveServerOnTimeout?: boolean;
   /**
-   * Request segment timestamps for smart boundaries or the outro gate. This
+   * Request segment timestamps for the outro gate and pause paragraphs. This
    * switches the request to `response_format=verbose_json`; the default-on
    * outro gate therefore makes that the normal single-pass request shape.
    *
@@ -1502,7 +1502,7 @@ async function transcribeViaServerAttempt(
       throw new Error(`whisper-server inference error: ${result.error}`);
     }
     // Segments are advisory: a response without them still transcribes, the
-    // boundary stage just gets nothing to judge and leaves the text alone.
+    // pause-paragraph stage just gets nothing to judge and leaves the text alone.
     options?.onSegments?.(parseVerboseSegments(result));
     recordSuccessfulInferenceRtf(wavData, Date.now() - attemptStartedAt);
     return normalizeTranscriptionText(result.text || "");

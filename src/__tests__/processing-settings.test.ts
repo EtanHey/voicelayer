@@ -11,7 +11,6 @@ import { readPolishControlsStatus } from "../polish-controls-status";
 import { getSTTPolishMode } from "../stt-polish";
 import { outroGateEnabled } from "../stt-outro-gate";
 import { isSmartWavChunkingEnabled } from "../stt";
-import { smartBoundariesEnabled } from "../stt-sentence-boundaries";
 
 const dir = join(TEST_TMP, "processing-settings");
 let n = 0;
@@ -25,12 +24,11 @@ function fileEnv(content?: string): Record<string, string | undefined> {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("processing settings (P1)", () => {
-  test("no file keeps today's four defaults", () => {
+  test("no file keeps today's defaults", () => {
     const env = processingEnv(fileEnv());
     expect(getSTTPolishMode(env)).toBe("on");
     expect(outroGateEnabled(env)).toBe(true);
     expect(isSmartWavChunkingEnabled(env)).toBe(false);
-    expect(smartBoundariesEnabled(env)).toBe(false);
   });
 
   test("writes only the keys the user set, and reads them back", () => {
@@ -45,7 +43,6 @@ describe("processing settings (P1)", () => {
     expect(outroGateEnabled(effective)).toBe(false);
     expect(isSmartWavChunkingEnabled(effective)).toBe(true);
     expect(getSTTPolishMode(effective)).toBe("on");
-    expect(smartBoundariesEnabled(effective)).toBe(false);
   });
 
   test("polish is stored as on/off", () => {
@@ -57,8 +54,8 @@ describe("processing settings (P1)", () => {
 
   test("a corrupt file or a wrong-typed value falls back to the default", () => {
     expect(readProcessingSettings(fileEnv("{not json"))).toEqual({});
-    const env = fileEnv(JSON.stringify({ version: 1, outro_gate: "no", smart_chunks: 1, smart_boundaries: true }));
-    expect(readProcessingSettings(env)).toEqual({ smart_boundaries: true });
+    const env = fileEnv(JSON.stringify({ version: 1, outro_gate: "no", smart_chunks: 1, pause_paragraphs: false }));
+    expect(readProcessingSettings(env)).toEqual({ pause_paragraphs: false });
     expect(outroGateEnabled(processingEnv(env))).toBe(true);
   });
 
@@ -81,14 +78,37 @@ describe("processing settings (P1)", () => {
   });
 
   test("status reports settings as the source only for keys in the file", () => {
-    const env = fileEnv(JSON.stringify({ version: 1, smart_boundaries: true }));
+    const env = fileEnv(JSON.stringify({ version: 1, smart_chunks: true }));
     expect(readPolishControlsStatus({ ...env, VOICELAYER_STT_OUTRO_GATE: "0" })).toEqual({
       model_polish: { source: "default", raw: null, effective: "on" },
       outro_gate: { source: "environment", raw: "0", effective: false },
-      smart_chunks: { source: "default", raw: null, effective: false },
-      smart_boundaries: { source: "settings", raw: null, effective: true },
+      smart_chunks: { source: "settings", raw: null, effective: true },
       pause_paragraphs: { source: "default", raw: null, effective: true },
     });
+  });
+
+  test("a saved file that still carries the removed smart_boundaries key loads and ignores it", () => {
+    // Smart boundaries was removed 2026-10-19. A file written before then must
+    // keep every other toggle, report nothing for the old key, and drop it on
+    // the next write.
+    const env = fileEnv(JSON.stringify({
+      version: 1,
+      outro_gate: false,
+      smart_chunks: true,
+      smart_boundaries: true,
+      updated_at: "2026-10-01T00:00:00.000Z",
+    }));
+    expect(readProcessingSettings(env)).toEqual({ outro_gate: false, smart_chunks: true });
+    const effective = processingEnv(env);
+    expect(effective.VOICELAYER_STT_SMART_BOUNDARIES).toBeUndefined();
+    expect(outroGateEnabled(effective)).toBe(false);
+    expect(isSmartWavChunkingEnabled(effective)).toBe(true);
+    expect("smart_boundaries" in readPolishControlsStatus(env)).toBe(false);
+
+    setProcessingSetting("model_polish", false, env);
+    const written = JSON.parse(readFileSync(env.VOICELAYER_PROCESSING_SETTINGS_PATH!, "utf8"));
+    expect(written).not.toHaveProperty("smart_boundaries");
+    expect(written).toMatchObject({ outro_gate: false, smart_chunks: true, model_polish: "off" });
   });
 });
 

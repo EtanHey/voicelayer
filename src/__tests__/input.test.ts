@@ -1865,7 +1865,7 @@ describe("buildBoundaryContext", () => {
   }
 
   const SEGMENTS = [{ text: "alpha bravo", startS: 0, endS: 2 }];
-  const ON = { VOICELAYER_STT_SMART_BOUNDARIES: "1" } as NodeJS.ProcessEnv;
+  const ON = { VOICELAYER_STT_PAUSE_PARAGRAPHS: "1" } as NodeJS.ProcessEnv;
 
   function writeWav(dir: string, seconds: number): { path: string; sha: string } {
     const wav = silentWav(seconds);
@@ -1880,6 +1880,21 @@ describe("buildBoundaryContext", () => {
       const { path, sha } = writeWav(dir, 1);
       expect(
         await buildBoundaryContext(path, SEGMENTS, sha, { VOICELAYER_STT_PAUSE_PARAGRAPHS: "0" } as NodeJS.ProcessEnv),
+      ).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores the removed smart-boundaries env var", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vl-bctx-"));
+    try {
+      const { path, sha } = writeWav(dir, 1);
+      expect(
+        await buildBoundaryContext(path, SEGMENTS, sha, {
+          VOICELAYER_STT_PAUSE_PARAGRAPHS: "0",
+          VOICELAYER_STT_SMART_BOUNDARIES: "1",
+        } as NodeJS.ProcessEnv),
       ).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -242,7 +242,7 @@ public struct ModelsSettingsView: View {
         state.availability == .available ? effortDisabledReason(for: state) : nil
     }
 
-    /// D194-r1: smart chunks and smart boundaries exist only on the resident Whisper server path (src/stt.ts);
+    /// D194-r1: smart chunks exist only on the resident Whisper server path (src/stt.ts);
     /// whisper-cli and Wispr Flow return no segments, and a server request that falls back to the CLI skips them.
     static let whisperServerOnly = "Whisper server only: the whisper-cli and Wispr Flow fallbacks skip it."
 
@@ -275,14 +275,6 @@ public struct ModelsSettingsView: View {
                 experimental: true,
                 isOn: controls.smartChunks.effective,
                 lockedReason: locked(.smartChunks, controls.smartChunks)
-            ),
-            ProcessingRow(
-                key: .smartBoundaries,
-                line: "Turns a full stop into a comma when the sentence isn't finished or runs straight on without "
-                    + "a pause. Never adds a stop or drops a word. " + Self.whisperServerOnly,
-                experimental: true,
-                isOn: controls.smartBoundaries.effective,
-                lockedReason: locked(.smartBoundaries, controls.smartBoundaries)
             ),
         ]
     }

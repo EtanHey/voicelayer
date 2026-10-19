@@ -7,13 +7,6 @@ import { homedir } from "os";
 import { dirname, join } from "path";
 import { NDJSONByteFramer } from "./ndjson-byte-framer";
 import { SocketOutboundQueue } from "./socket-outbound-queue";
-import type { PauseSpan } from "./stt-pause-map";
-import {
-  applyPauseAwareBoundaries,
-  smartBoundariesEnabled,
-  type BoundaryDemotion,
-  type TranscriptSegment,
-} from "./stt-sentence-boundaries";
 
 export type STTPolishMode = "off" | "shadow" | "on";
 export type STTPolishStatus =
@@ -42,17 +35,6 @@ export interface STTPolishEnv {
   VOICELAYER_STT_POLISH_ADDED_CONTENT_GUARD?: string;
   VOICELAYER_STT_POLISH_WARMUP?: string;
   VOICELAYER_STT_POLISH_WARMUP_TIMEOUT_MS?: string;
-  VOICELAYER_STT_SMART_BOUNDARIES?: string;
-}
-
-/**
- * Where Etan actually stopped, for `VOICELAYER_STT_SMART_BOUNDARIES=1`.
- * Supplied by the caller that holds the audio (`src/input.ts`); this module
- * never touches a WAV itself.
- */
-export interface STTPolishBoundaryContext {
-  segments: TranscriptSegment[];
-  pauses: PauseSpan[];
 }
 
 export interface STTPolishInput {
@@ -60,7 +42,6 @@ export interface STTPolishInput {
   cleanedText: string;
   surface?: STTPolishSurface;
   env?: STTPolishEnv;
-  boundaryContext?: STTPolishBoundaryContext;
 }
 
 export interface STTPolishResult {
@@ -78,16 +59,6 @@ export interface STTPolishResult {
   /** Structured transport failure; timeouts/HTTP errors never trigger recovery. */
   failureKind?: STTPolishFailureKind;
   error?: string;
-  /** Terminal marks the pause-aware stage turned into commas. Flag-gated. */
-  boundaryDemotions?: BoundaryDemotion[];
-  /**
-   * `changed` as it was BEFORE boundary validation, i.e. whether the MODEL
-   * changed anything. The no-op retry logic must judge the model, not this
-   * stage: a demotion is a change to the text but not evidence that polish did
-   * its job, and reading `changed` there skipped the punctuation-repair retry
-   * and returned the unpunctuated run-on (Macroscope round 1).
-   */
-  candidateChanged?: boolean;
 }
 
 export type STTPolishWarmupStatus = "skipped" | "warmed" | "failed";
@@ -1855,7 +1826,6 @@ function writePolishLog(
     reason: result.reason,
     failure_kind: result.failureKind,
     error: result.error,
-    boundary_demotions: result.boundaryDemotions ?? null,
   })}\n`;
 
   void mkdir(dirname(path), { recursive: true, mode: 0o700 })
@@ -1877,39 +1847,6 @@ export async function polishTranscriptionText(
   const surface = input.surface ?? "dictation";
   const startedAt = performance.now();
 
-  // Etan's law, applied at the single point every return path funnels through:
-  // a period survives only where a pause AND a complete clause coincide.
-  // Default OFF, and a no-op without the audio evidence to judge with.
-  const boundaryContext = input.boundaryContext;
-  // An EMPTY pause map does NOT disable the stage: Rule B's second arm (the
-  // clause and what follows it) is audio-independent, so a recording whose VAD
-  // pass failed or was aborted still gets judged on that arm alone. Only a
-  // missing segment list leaves nothing to align against (Macroscope round 1).
-  const boundariesOn =
-    smartBoundariesEnabled(env) &&
-    boundaryContext !== undefined &&
-    boundaryContext.segments.length > 0;
-
-  const validateBoundaries = (
-    text: string,
-  ): { text: string; demotions?: BoundaryDemotion[] } => {
-    if (!boundariesOn || !text.trim()) return { text };
-    const result = applyPauseAwareBoundaries(
-      text,
-      boundaryContext.segments,
-      boundaryContext.pauses,
-    );
-    if (result.skippedReason) {
-      console.error(
-        `[voicelayer] pause-aware boundaries skipped: ${result.skippedReason}`,
-      );
-      return { text };
-    }
-    return result.demotions.length > 0
-      ? { text: result.text, demotions: result.demotions }
-      : { text: result.text };
-  };
-
   const buildResult = (
     text: string,
     polishedText: string | null,
@@ -1919,27 +1856,20 @@ export async function polishTranscriptionText(
     failureKind?: STTPolishFailureKind,
   ): STTPolishResult => {
     const polished = status === "applied";
-    const validated = validateBoundaries(text);
-    // Shadow mode observes and never changes what Etan gets: the demotions are
-    // recorded on the row, the returned text stays exactly as it was
-    // (Macroscope round 1).
-    const finalText = mode === "shadow" ? text : validated.text;
     return {
       inputText: input.cleanedText,
-      text: finalText,
-      candidateChanged: text !== input.cleanedText,
+      text,
       polishedText,
       mode,
       status,
       surface,
-      changed: finalText !== input.cleanedText,
+      changed: text !== input.cleanedText,
       retried,
       latencyMs: performance.now() - startedAt,
       polished,
       reason: polished ? undefined : error ?? status,
       error,
       ...(failureKind ? { failureKind } : {}),
-      ...(validated.demotions ? { boundaryDemotions: validated.demotions } : {}),
     };
   };
 
@@ -1995,7 +1925,7 @@ export async function polishTranscriptionText(
       );
       const retryReason =
         result.status === "applied" &&
-        !(result.candidateChanged ?? result.changed) &&
+        !result.changed &&
         shouldRetryNoopPolish(input.cleanedText)
           ? "noop"
           : shouldRetryRejectedPolish(input.cleanedText, result)
@@ -2035,7 +1965,7 @@ export async function polishTranscriptionText(
               );
               if (
                 latestResult.status !== "applied" ||
-                (latestResult.candidateChanged ?? latestResult.changed) ||
+                latestResult.changed ||
                 !shouldRetryNoopPolish(input.cleanedText)
               ) {
                 writePolishLog(

@@ -89,13 +89,10 @@ import {
 } from "./stt-corrector";
 import { reserveArchiveRetranscription } from "./voice-operation-reservation";
 import { computePauseMap } from "./stt-pause-map";
-import {
-  smartBoundariesEnabled,
-  type TranscriptSegment,
-} from "./stt-sentence-boundaries";
+import type { PauseSpan } from "./stt-pause-map";
+import type { TranscriptSegment } from "./stt-transcript-alignment";
 import {
   polishTranscriptionText,
-  type STTPolishBoundaryContext,
   warmPolishEndpoint,
   type STTPolishEnv,
   type STTPolishWarmupResult,
@@ -462,15 +459,20 @@ export async function finalizeTranscriptionTextForSurface(
 
 /** Short paragraph-only dictations need no audio read, SHA or Silero pass. */
 export function shouldBuildBoundaryContext(text: string, env: STTFinalizeEnv = processingEnv()): boolean {
-  return smartBoundariesEnabled(env) ||
-    (pauseParagraphsEnabled(env) && text.length >= 2 * MIN_PARAGRAPH_CHARS);
+  return pauseParagraphsEnabled(env) && text.length >= 2 * MIN_PARAGRAPH_CHARS;
+}
+
+/** Where Etan stopped: whisper segments plus the Silero pause map over the same WAV. */
+export interface BoundaryContext {
+  segments: TranscriptSegment[];
+  pauses: PauseSpan[];
 }
 
 /**
- * Where Etan stopped, for the pause-aware boundary stage.
+ * Where Etan stopped, for the pause-paragraph stage.
  *
  * Returns undefined — the documented "leave today's behaviour alone" answer —
- * unless smart boundaries or pause paragraphs are enabled AND the decode handed back segment
+ * unless pause paragraphs are enabled AND the decode handed back segment
  * timestamps. Costs one Silero pass over the finished WAV, so it runs only
  * when timing evidence is present. Never throws: a recording it cannot analyse just gets no
  * boundary validation, and the reason is logged.
@@ -481,8 +483,8 @@ export async function buildBoundaryContext(
   segmentsAudioSha256: string | undefined,
   env: STTFinalizeEnv = processingEnv(),
   signal?: AbortSignal,
-): Promise<STTPolishBoundaryContext | undefined> {
-  if (!smartBoundariesEnabled(env) && !pauseParagraphsEnabled(env)) return undefined;
+): Promise<BoundaryContext | undefined> {
+  if (!pauseParagraphsEnabled(env)) return undefined;
   // Never pair unbound segment times with an arbitrary WAV.
   if (!segmentsAudioSha256) return undefined;
   if (signal?.aborted) return undefined;
@@ -506,8 +508,7 @@ export async function buildBoundaryContext(
         return undefined;
       }
     }
-    // An empty pause map is NOT a reason to skip: Rule B still judges the clause
-    // and what follows it. Only an abort or an unreadable file drops the stage.
+    // Only an abort or an unreadable file drops the stage.
     const pauses = await computePauseMap(wavData, { signal });
     if (signal?.aborted) return undefined;
     return { segments, pauses };
@@ -532,7 +533,7 @@ export async function finalizeTranscriptionResultForSurface(
   rawText: string,
   surface: STTPolishSurface | null,
   env: STTFinalizeEnv = processingEnv(),
-  boundaryContext?: STTPolishBoundaryContext,
+  boundaryContext?: BoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
   const paragraphText = (text: string): string =>
@@ -545,7 +546,6 @@ export async function finalizeTranscriptionResultForSurface(
     cleanedText,
     surface,
     env,
-    ...(boundaryContext ? { boundaryContext } : {}),
   });
   appendControlLayerEvent(
     "transcription.polish",
@@ -564,7 +564,6 @@ export async function finalizeTranscriptionResultForSurface(
       reason: polished.reason ?? null,
       failure_kind: polished.failureKind ?? null,
       error: polished.error ?? null,
-      boundary_demotions: polished.boundaryDemotions?.length ?? 0,
     },
     { topic: "voice.transcription" },
   );

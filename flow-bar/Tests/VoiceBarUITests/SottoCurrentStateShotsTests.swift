@@ -464,7 +464,6 @@ final class SottoCurrentStateShotsTests: XCTestCase {
                 "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
                 "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
                 "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
-                "smart_boundaries": ["source": "environment", "raw": "1", "effective": true],
             ],
             "model_status": [
                 "configured_model": ["name": "fixture-whisper-model", "size_bytes": 1_000_000, "installed": true],

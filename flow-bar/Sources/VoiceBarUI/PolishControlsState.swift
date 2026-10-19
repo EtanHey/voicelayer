@@ -7,12 +7,11 @@ public enum PolishSettingSource: String, Equatable, Sendable {
     case `default`
 }
 
-/// The four Processing toggles, keyed as the daemon names them (P1).
+/// The Processing toggles, keyed as the daemon names them (P1).
 public enum ProcessingKey: String, CaseIterable, Equatable, Hashable, Sendable {
     case modelPolish = "model_polish"
     case outroGate = "outro_gate"
     case smartChunks = "smart_chunks"
-    case smartBoundaries = "smart_boundaries"
 
     /// The environment variable that, when set, overrides the saved toggle.
     public var environmentVariable: String {
@@ -20,7 +19,6 @@ public enum ProcessingKey: String, CaseIterable, Equatable, Hashable, Sendable {
         case .modelPolish: "QA_VOICE_STT_POLISH"
         case .outroGate: "VOICELAYER_STT_OUTRO_GATE"
         case .smartChunks: "VOICELAYER_STT_SMART_CHUNKS"
-        case .smartBoundaries: "VOICELAYER_STT_SMART_BOUNDARIES"
         }
     }
 
@@ -29,7 +27,6 @@ public enum ProcessingKey: String, CaseIterable, Equatable, Hashable, Sendable {
         case .modelPolish: "Polish"
         case .outroGate: "Closing-phrase filter"
         case .smartChunks: "Smart chunks"
-        case .smartBoundaries: "Smart boundaries"
         }
     }
 }
@@ -58,7 +55,6 @@ public struct PolishControlsState: Equatable, Sendable {
     public let modelPolish: PolishSetting<ModelPolishMode>
     public let outroGate: PolishSetting<Bool>
     public let smartChunks: PolishSetting<Bool>
-    public let smartBoundaries: PolishSetting<Bool>
 
     public init?(healthEvent: [String: Any]) {
         guard healthEvent["type"] as? String == "health",
@@ -74,13 +70,11 @@ public struct PolishControlsState: Equatable, Sendable {
             value: { ModelPolishMode(rawValue: $0 as? String ?? "") }
         ),
             let outro = Self.parse(controls["outro_gate"], value: { $0 as? Bool }),
-            let chunks = Self.parse(controls["smart_chunks"], value: { $0 as? Bool }),
-            let boundaries = Self.parse(controls["smart_boundaries"], value: { $0 as? Bool })
+            let chunks = Self.parse(controls["smart_chunks"], value: { $0 as? Bool })
         else { return nil }
         modelPolish = model
         outroGate = outro
         smartChunks = chunks
-        smartBoundaries = boundaries
     }
 
     private static func parse<Value: Equatable & Sendable>(
