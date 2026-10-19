@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  confirmDeviceReport,
   isDeadDeviceChunk,
   isDeadDevicePcm,
   locateMicLoss,
@@ -60,6 +61,33 @@ describe("mic disconnect (MICDROP2)", () => {
       reason: "device-not-alive", atMs: null, lastSignalMs: null,
     });
     expect(micDisconnectNote({ reason: "recorder-ended", atMs: null, lastSignalMs: null })).toBe("Mic produced no signal");
+  });
+
+  // MICDROP3: a CoreAudio report only labels, and only when the audio after it is dead-device flat.
+  const bytes = (chunks: Uint8Array[]) => chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  it("a CoreAudio report is labelled at its event offset when the audio after it is flat", () => {
+    const before = times(speech, 10);
+    expect(confirmDeviceReport([...before, ...times(dither, 5)], "device-removed", bytes(before), RATE)).toEqual({
+      reason: "device-removed", atMs: 1_000, lastSignalMs: 1_000,
+    });
+    // Mid gated pause: the clock is the event, never the flat-tail start or the capture end.
+    const paused = [...times(speech, 5), ...times(zeros, 3)];
+    expect(confirmDeviceReport([...paused, ...times(zeros, 4)], "device-not-alive", bytes(paused), RATE)).toEqual({
+      reason: "device-not-alive", atMs: 800, lastSignalMs: 500,
+    });
+  });
+
+  it("a CoreAudio report on a healthy mic, or with nothing after it, is never labelled", () => {
+    const before = times(speech, 10);
+    expect(confirmDeviceReport([...before, ...times(speech, 5)], "device-removed", bytes(before), RATE)).toBeNull();
+    expect(confirmDeviceReport([...before, ...times(dither, 4), ...times(quietButLive, 1)], "device-removed", bytes(before), RATE)).toBeNull();
+    expect(confirmDeviceReport(before, "device-removed", bytes(before), RATE)).toBeNull();
+  });
+
+  it("a confirmed CoreAudio report on a device that never carried signal has no clock", () => {
+    expect(confirmDeviceReport(times(dither, 10), "device-removed", bytes(times(dither, 5)), RATE)).toEqual({
+      reason: "device-removed", atMs: null, lastSignalMs: null,
+    });
   });
 
   it("formats the note with an m:ss clock", () => {

@@ -128,6 +128,7 @@ import {
 } from "./recording-hold";
 import { buildDictationReceipt } from "./dictation-receipt";
 import {
+  confirmDeviceReport,
   locateMicLoss,
   micDisconnectNote,
   type DeviceLossReason,
@@ -665,8 +666,10 @@ export interface RecordingCaptureState {
   onCaptureStart?: () => void;
   onSpeechStart?: () => void;
   onRecordingHoldChange?: (engaged: boolean) => void;
-  /** MICDROP2: set only on OS evidence of a lost input device; flatness merely locates it. */
+  /** MICDROP2/3: a labelled loss. EOF evidence, or a CoreAudio report confirmed by a flat tail. */
   micDisconnect?: MicDisconnect;
+  /** MICDROP3: a CoreAudio report the audio after it did not confirm. Journal-only, never shown. */
+  unconfirmedDeviceLoss?: { reason: DeviceLossReason; eventOffsetMs: number };
   /**
    * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
    * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
@@ -680,10 +683,11 @@ export interface RecordingCaptureState {
 let captureGeneration = 0;
 // The live capture's sink for VoiceBar's CoreAudio device-loss evidence.
 let activeDeviceLoss: { captureId: number; sink: (reason: DeviceLossReason) => void } | null = null;
-/** After a device event, how long the recorder gets to exit and flush stdout before the capture freezes anyway. */
-const DEVICE_LOSS_DRAIN_MAX_MS = 1_500;
 
-/** Reports that capture `captureId`'s input device went away. False when it is not the live capture. */
+/**
+ * Records that capture `captureId`'s input device went away. Evidence only: the capture keeps
+ * recording (MICDROP3). False when it is not the live capture.
+ */
 export function reportInputDeviceLost(reason: DeviceLossReason, captureId: number): boolean {
   if (!activeDeviceLoss || activeDeviceLoss.captureId !== captureId) return false;
   activeDeviceLoss.sink(reason);
@@ -2431,8 +2435,9 @@ export async function recordToBuffer(
       micLossReason = reason;
       console.error(`[voicelayer] Input device lost mid-recording (${reason}) — keeping the whole recording`);
     };
-    // A device event stops the recorder, then ordinary stops wait while its stdout drains (Sol R1 #1).
-    let lossDrainDeadline: ReturnType<typeof setTimeout> | undefined;
+    // MICDROP3: a CoreAudio report and the 16 kHz PCM bytes captured when it arrived. Never ends anything.
+    let deviceReport: { reason: DeviceLossReason; offsetBytes: number } | null = null;
+    let capturedPcmBytesSoFar = 0;
     const captureId = ++captureGeneration;
     const recoveryWriter = new IncrementalRecoveryWavWriter(null);
     const silencePolicy = new RecordingSilenceAutoClosePolicy({
@@ -2491,11 +2496,9 @@ export async function recordToBuffer(
       return false;
     };
 
-    const finish = (error?: Error, lossDrained = false) => {
+    const finish = (error?: Error) => {
       if (resolved) return;
-      if (lossDrainDeadline && !lossDrained && !error) return;
       resolved = true;
-      clearTimeout(lossDrainDeadline);
       if (activeDeviceLoss?.captureId === captureId) activeDeviceLoss = null;
       setRecordingState("idle");
       try {
@@ -2555,8 +2558,7 @@ export async function recordToBuffer(
         resolve(null);
       } else {
         if (!pushToEnd && captureState) {
-          // After a device event VAD never saw the drained tail: unknown, so the energy gate decides.
-          captureState.vadSpeechDetected = lossDrainDeadline && !hasSpeech ? undefined : hasSpeech;
+          captureState.vadSpeechDetected = hasSpeech;
         }
         const selectedChunks =
           !pushToEnd && hasSpeech && firstSpeechChunkIndex >= 0
@@ -2573,7 +2575,17 @@ export async function recordToBuffer(
           result.set(chunk, offset);
           offset += chunk.byteLength;
         }
-        if (captureState && micLossReason) {
+        if (captureState && deviceReport) {
+          // The offset counts from the capture start; VAD pre-roll selection drops leading chunks.
+          const offsetBytes = deviceReport.offsetBytes - (capturedPcmBytes - selectedPcmBytes);
+          const confirmed = confirmDeviceReport(selectedChunks, deviceReport.reason, offsetBytes, SAMPLE_RATE);
+          if (confirmed) captureState.micDisconnect = confirmed;
+          else captureState.unconfirmedDeviceLoss = {
+            reason: deviceReport.reason,
+            eventOffsetMs: Math.round((Math.max(0, offsetBytes) / BYTES_PER_SAMPLE / SAMPLE_RATE) * 1000),
+          };
+        }
+        if (captureState && micLossReason && !captureState.micDisconnect) {
           captureState.micDisconnect = locateMicLoss(selectedChunks, micLossReason, SAMPLE_RATE);
         }
         resolve(result);
@@ -2632,12 +2644,11 @@ export async function recordToBuffer(
       finish();
     }, STOP_POLL_MS);
     stopSignalPoll.unref?.();
+    // MICDROP3: CoreAudio can name the wrong device (Sol R2 #1), so its report only notes evidence.
     activeDeviceLoss = { captureId, sink: (reason) => {
-      if (resolved || lossDrainDeadline) return;
-      noteMicLoss(reason);
-      if (!recorder) return finish();
-      lossDrainDeadline = setTimeout(() => finish(undefined, true), DEVICE_LOSS_DRAIN_MAX_MS);
-      void terminateRecorderProcess(recorder).catch(() => {});
+      if (resolved || deviceReport) return;
+      deviceReport = { reason, offsetBytes: capturedPcmBytesSoFar };
+      console.error(`[voicelayer] CoreAudio reports the input device lost (${reason}) — evidence only, still recording`);
     } };
 
     try {
@@ -2763,12 +2774,10 @@ export async function recordToBuffer(
               ? resamplePCM16(monoChunk, nativeRate, SAMPLE_RATE)
               : monoChunk;
             chunkQueue.push(chunk);
+            capturedPcmBytesSoFar += chunk.byteLength;
           }
         }
         readerDone = true;
-        // After a device event: recorder gone and stdout fully read, so freeze now; finish() drains
-        // the queue, even when a VAD call is still in flight (Sol R1 #2).
-        if (lossDrainDeadline) finish(undefined, true);
       };
 
       // chunkProcessor: runs VAD on queued chunks (can take its time)
@@ -2788,8 +2797,6 @@ export async function recordToBuffer(
           pcmChunks.push(chunk);
           totalChunksProcessed++;
           recoveryWriter.appendCapturedChunk(chunk, pcmChunks);
-          // MICDROP2: after a device event the recorder's drain decides the end; no stop or VAD close.
-          if (lossDrainDeadline) continue;
 
           // Broadcast audio level every ~100ms (3 chunks × 32ms)
           if (totalChunksProcessed % 3 === 0) {
@@ -2813,9 +2820,9 @@ export async function recordToBuffer(
           } else {
             // VAD: ONNX inference happens here, decoupled from pipe reader
             const speechProb = await processVADChunk(chunk);
-            // A continuation resuming after a device event or a frozen loss capture must not touch
-            // the session (rebuilt from the final PCM) or decide anything.
-            if (lossDrainDeadline || (resolved && micLossReason)) continue;
+            // A continuation resuming after a capture with loss evidence finished must not touch the
+            // session (rebuilt from the final PCM) or decide anything.
+            if (resolved && (micLossReason || deviceReport)) continue;
             const speechDetected = isSpeech(speechProb);
             chunkedSession?.pushChunk(chunk, speechDetected);
 
@@ -3029,8 +3036,18 @@ export async function waitForInput(
     }
     throw err;
   }
-  // MICDROP2: the archive and the decoder both get the whole kept PCM; at_ms is where it ends.
+  // MICDROP2/3: the archive and the decoder both get the whole kept PCM; at_ms is the observed loss.
   const micDisconnect = captureState.micDisconnect ?? null;
+  const unconfirmedDeviceLoss = captureState.unconfirmedDeviceLoss ?? null;
+  if (unconfirmedDeviceLoss) {
+    // A report the audio did not confirm (a wrong device, or nothing after it): journal only.
+    appendControlLayerEvent("capture.mic_loss_unconfirmed", {
+      reason: unconfirmedDeviceLoss.reason,
+      event_offset_ms: unconfirmedDeviceLoss.eventOffsetMs,
+      push_to_end: pushToEnd,
+      archive_source: options.archiveSource ?? null,
+    });
+  }
   const micNote = micDisconnect ? micDisconnectNote(micDisconnect) : null;
   if (micDisconnect && micNote) {
     appendControlLayerEvent("capture.mic_disconnected", {
@@ -3335,8 +3352,8 @@ export async function waitForInput(
     const sttWavData = sttTrim.trimmed
       ? createWavBuffer(sttTrim.pcmData)
       : retainedWavData;
-    // MICDROP2: after a loss the session may lack chunks VAD never reached; rebuild it whole (Sol R1 #2).
-    if (chunkedSession && (sttTrim.trimmed || micDisconnect)) {
+    // MICDROP2: after loss evidence the session may lack chunks VAD never reached; rebuild it whole (Sol R1 #2).
+    if (chunkedSession && (sttTrim.trimmed || micDisconnect || unconfirmedDeviceLoss)) {
       chunkedSession.replaceWithPCM(sttTrim.pcmData, true);
     }
     const useChunkedTranscription = !!chunkedSession;

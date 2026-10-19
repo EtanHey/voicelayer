@@ -6,8 +6,10 @@ import Foundation
 /// AIDEV-NOTE: sox binds the default input device once, when it opens, a few milliseconds around the
 /// daemon's `recording` event. The binding is taken at that event (never at VoiceBar's optimistic UI
 /// mode) and is trusted only when the default input did not move within `settleSeconds` either side
-/// of it; otherwise sox may be on another device and a report could stop a healthy capture (Sol R1
-/// #3). A missed label beats a false stop. A default change well after the start does not move sox.
+/// of it; otherwise sox may be on another device (Sol R1 #3). This cannot catch every callback order
+/// (Sol R2 #1: the device-list callback first), so the daemon treats a report as evidence only: it
+/// never stops a capture and is labelled only over a dead-flat tail (MICDROP3). A default change well
+/// after the start does not move sox.
 public struct InputDeviceLossBinding: Equatable {
     public static let settleSeconds: TimeInterval = 2
 

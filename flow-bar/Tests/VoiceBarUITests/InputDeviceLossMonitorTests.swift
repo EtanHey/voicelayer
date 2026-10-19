@@ -26,6 +26,18 @@ final class InputDeviceLossMonitorTests: XCTestCase {
         XCTAssertNil(after.lossReason(isListed: false, isAlive: false))
     }
 
+    /// Sol R2 #1, sox on B after a startup move A -> B, then A is removed. Default-input callback
+    /// first: ambiguous, nothing sent. Device-list callback first: A is reported. The daemon takes that
+    /// report as evidence only (MICDROP3), so neither order can stop the healthy capture on B.
+    func testBothCallbackOrdersOfAStartupMove() {
+        var defaultFirst = InputDeviceLossBinding(captureID: 7, deviceID: 81, startedAt: start, lastDefaultInputChange: nil)
+        defaultFirst.defaultInputChanged(at: start.addingTimeInterval(0.1))
+        XCTAssertNil(defaultFirst.lossReason(isListed: false, isAlive: false))
+
+        let listFirst = InputDeviceLossBinding(captureID: 7, deviceID: 81, startedAt: start, lastDefaultInputChange: nil)
+        XCTAssertEqual(listFirst.lossReason(isListed: false, isAlive: false), "device-removed")
+    }
+
     /// A default move well clear of the start does not move sox: its device's removal is still a loss.
     func testADefaultMoveClearOfTheStartKeepsTheBinding() {
         var binding = InputDeviceLossBinding(

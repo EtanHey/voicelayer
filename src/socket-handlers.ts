@@ -487,8 +487,9 @@ export function handleSocketCommand(
         return buildAck(command, "reject", vocabularyErrorReason(error));
       }
     case "input_device_lost":
-      // MICDROP2: OS evidence from VoiceBar's CoreAudio listener; ends that capture cleanly. A report
-      // for another or a finished capture is stale and ignored. No ack: VoiceBar acts on nothing back.
+      // MICDROP3: evidence from VoiceBar's CoreAudio listener; it never ends the capture, it only
+      // labels it when the audio after it is flat. A report for another or a finished capture is
+      // stale and ignored. No ack: VoiceBar acts on nothing back.
       if (!reportInputDeviceLost(command.reason, command.capture_id)) {
         console.error(`[voicelayer] input_device_lost (${command.reason}, device ${command.device_id}) for capture ${command.capture_id} is not the live capture — ignored`);
       }

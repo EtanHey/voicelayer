@@ -156,7 +156,7 @@ export interface ErrorEvent {
   capture_failure?: "broken-mic";
 }
 
-/** MICDROP2: the input device was lost mid-recording; the decoded audio ends at `at_ms`. */
+/** MICDROP2/3: the input device was lost mid-recording, observed at `at_ms`; every byte is still decoded. */
 export interface MicDisconnectedEvent {
   type: "mic_disconnected";
   at_ms: number;

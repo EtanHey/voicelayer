@@ -270,6 +270,8 @@ function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean, befo
   return {
     waitForSpawn: () => waitUntil(() => spawned, "fake recorder spawn"),
     push: (chunk: Uint8Array) => stdoutController!.enqueue(chunk),
+    /** The recorder exiting on its own: stdout EOF before our teardown. */
+    end: () => stdoutController!.close(),
   };
 }
 
@@ -2135,35 +2137,96 @@ describe("input recording durability", () => {
     }
   }, 10_000);
 
-  it("MICDROP2 CoreAudio removal drains PCM still unread in recorder stdout before freezing (Sol R1 #1)", async () => {
-    vadProcessSpy!.mockResolvedValue(0.95);
-    const recorder = installFakeRecorder(liveChunks(40), true);
-    const { waitForInput, reportInputDeviceLost } = await import("../input");
-    let archivePath = "";
-    const pending = waitForInput(20_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
-    try {
-      await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === 40 * VAD_CHUNK_BYTES,
-        "first 40 chunks captured", 10_000);
-      // Ten more chunks sit unread in stdout at the event edge.
-      for (const chunk of liveChunks(10)) recorder.push(chunk);
-      // A user stop racing the drain must wait for it too.
-      writeFileSync(STOP_FILE, "stop");
-      expect(reportInputDeviceLost("device-removed", liveCaptureId())).toBe(true);
-      expect(await raceStillRecording(pending, 4_000)).toBe("Retained transcript.");
-      expect({
-        archive: readWavDataSize(join(archivePath, "audio.wav")),
-        recovery: readWavDataSize(retainedPath),
-        decode: backendTranscribedDataSize,
-      }).toEqual({ archive: 50 * VAD_CHUNK_BYTES, recovery: 50 * VAD_CHUNK_BYTES, decode: 50 * VAD_CHUNK_BYTES });
-      expect(archiveMetadata(archivePath)).toMatchObject({
-        mic_disconnected_at_ms: 1600, mic_disconnect_reason: "device-removed", mic_disconnect_note: "Mic disconnected at 0:02",
-      });
-    } finally {
-      writeFileSync(STOP_FILE, "stop");
-      await pending.catch(() => null);
-      clearStopSignal();
+  // MICDROP3: a CoreAudio report never ends, stops, drains or trims a capture. It is evidence only:
+  // labelled at its observed event offset when the audio after it is dead-device flat, else journal-only.
+  const reportViaSocket = async (captureId: number, deviceId: number) => {
+    const { parseCommand } = await import("../socket-protocol");
+    const { handleSocketCommand } = await import("../socket-handlers");
+    const command = parseCommand(JSON.stringify({ cmd: "input_device_lost", reason: "device-removed", capture_id: captureId, device_id: deviceId }));
+    expect(command).not.toBeNull();
+    handleSocketCommand(command!);
+  };
+
+  // Sol R2 #1: default A -> B at startup, sox on healthy B. If CoreAudio delivers the device-list
+  // callback first, VoiceBar reports A's removal for this live capture; if the default-input callback
+  // comes first, the binding is ambiguous and nothing is sent. Both orders must look like main.
+  for (const ptt of [true, false]) {
+    for (const [order, reported] of [["device-list callback first", true], ["default-input callback first", false]] as const) {
+      it(`MICDROP3 Sol R2 ${order}, ${ptt ? "PTT" : "VAD"}: a report for the old default never stops a healthy capture or shows a label`, async () => {
+        vadProcessSpy!.mockResolvedValue(0.95);
+        const recorder = installFakeRecorder(liveChunks(40), true);
+        const journal = await import("../control-layer-journal");
+        const events = spyOn(journal, "appendControlLayerEvent").mockImplementation(() => {});
+        const { waitForInput } = await import("../input");
+        let archivePath = "";
+        const pending = waitForInput(20_000, "standard", ptt, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+        try {
+          await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === 40 * VAD_CHUNK_BYTES,
+            "capture running", 10_000);
+          if (reported) await reportViaSocket(liveCaptureId(), 10);
+          expect(await raceStillRecording(pending, 300)).toBe("still recording");
+          // Etan keeps talking on B.
+          for (const chunk of liveChunks(20)) recorder.push(chunk);
+          await stopPushToEndOnceCaptured(60 * VAD_CHUNK_BYTES);
+          expect(await pending).toBe("Retained transcript.");
+          expect(backendTranscribedDataSize).toBe(60 * VAD_CHUNK_BYTES);
+          expect(readWavDataSize(join(archivePath, "audio.wav"))).toBe(60 * VAD_CHUNK_BYTES);
+          expect(broadcasts.some(e => e.type === "mic_disconnected")).toBe(false);
+          expect(JSON.stringify(broadcasts)).not.toContain("Mic ");
+          expect(archiveMetadata(archivePath).mic_disconnect_reason).toBeUndefined();
+          const journaled = events.mock.calls.filter(([name]) => name === "capture.mic_loss_unconfirmed");
+          expect(journaled.map(([, fields]) => fields)).toEqual(
+            reported ? [expect.objectContaining({ reason: "device-removed", event_offset_ms: 1280 })] : [],
+          );
+          expect(events.mock.calls.some(([name]) => name === "capture.mic_disconnected")).toBe(false);
+        } finally {
+          events.mockRestore();
+          writeFileSync(STOP_FILE, "stop");
+          await pending.catch(() => null);
+          clearStopSignal();
+        }
+      }, 10_000);
     }
-  }, 10_000);
+  }
+
+  // Sol R2 #2: event at 1,280 ms, then 20 post-event chunks. The label is the event offset (0:01),
+  // never the capture end (0:02); the report stops nothing and every byte is decoded.
+  for (const ending of ["user stop", "VAD silence", "recorder EOF"] as const) {
+    it(`MICDROP3 real loss: a report, then dead dither, ends by ${ending}; the label shows the event offset`, async () => {
+      if (ending === "VAD silence") vadProbabilityForCall = call => (call <= 40 ? 0.95 : 0);
+      else vadProcessSpy!.mockResolvedValue(0.95);
+      const tail = ending === "VAD silence" ? 100 : 20;
+      const recorder = installFakeRecorder(liveChunks(40), true);
+      const { waitForInput, reportInputDeviceLost } = await import("../input");
+      let archivePath = "";
+      const pending = waitForInput(20_000, "standard", ending !== "VAD silence", { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+      try {
+        await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === 40 * VAD_CHUNK_BYTES,
+          "first 40 chunks captured", 10_000);
+        expect(reportInputDeviceLost("device-removed", liveCaptureId())).toBe(true);
+        expect(await raceStillRecording(pending, 300)).toBe("still recording");
+        for (let n = 0; n < tail; n++) recorder.push(ditherChunk());
+        if (ending === "user stop") await stopPushToEndOnceCaptured((40 + tail) * VAD_CHUNK_BYTES);
+        if (ending === "recorder EOF") {
+          await waitUntil(() => readWavDataSize(retainedPath) === (40 + tail) * VAD_CHUNK_BYTES, "tail captured", 10_000);
+          recorder.end();
+        }
+        expect(await raceStillRecording(pending, 6_000)).toBe("Retained transcript.");
+        expect(backendTranscribedDataSize).toBe((40 + tail) * VAD_CHUNK_BYTES);
+        expect(readWavDataSize(join(archivePath, "audio.wav"))).toBe((40 + tail) * VAD_CHUNK_BYTES);
+        expect(broadcasts.find(e => e.type === "mic_disconnected")).toEqual({
+          type: "mic_disconnected", at_ms: 1280, reason: "device-removed", message: "Mic disconnected at 0:01",
+        });
+        expect(archiveMetadata(archivePath)).toMatchObject({
+          mic_disconnected_at_ms: 1280, mic_disconnect_reason: "device-removed", mic_disconnect_note: "Mic disconnected at 0:01",
+        });
+      } finally {
+        writeFileSync(STOP_FILE, "stop");
+        await pending.catch(() => null);
+        clearStopSignal();
+      }
+    }, 10_000);
+  }
 
   it("MICDROP2 a stale or another capture's device report is rejected and stops nothing (Sol R1 #3)", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
@@ -2190,9 +2253,9 @@ describe("input recording durability", () => {
     }
   }, 10_000);
 
-  it("MICDROP2 a gated pause right before the unplug keeps its clock and its audio (Sol R1 #4)", async () => {
+  it("MICDROP3 a gated pause right before the unplug: the clock is the event, and every byte stays (Sol R1 #4)", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
-    installFakeRecorder([...liveChunks(40), ...Array.from({ length: 100 }, () => makePcmChunk(0))], true);
+    const recorder = installFakeRecorder([...liveChunks(40), ...Array.from({ length: 100 }, () => makePcmChunk(0))], true);
     const { recordToBuffer, reportInputDeviceLost } = await import("../input");
     const captureState: { micDisconnect?: { atMs: number | null; lastSignalMs: number | null } } = {};
     const recording = recordToBuffer(20_000, "standard", true, undefined, undefined, true, captureState as never);
@@ -2200,7 +2263,9 @@ describe("input recording durability", () => {
       await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === 140 * VAD_CHUNK_BYTES,
         "full gated pause", 10_000);
       expect(reportInputDeviceLost("device-removed", liveCaptureId())).toBe(true);
-      expect((await recording)?.byteLength).toBe(140 * VAD_CHUNK_BYTES);
+      for (let n = 0; n < 20; n++) recorder.push(makePcmChunk(0));
+      await stopPushToEndOnceCaptured(160 * VAD_CHUNK_BYTES);
+      expect((await recording)?.byteLength).toBe(160 * VAD_CHUNK_BYTES);
       expect(captureState.micDisconnect).toMatchObject({ atMs: 4480, lastSignalMs: 1280 });
     } finally {
       writeFileSync(STOP_FILE, "stop");
@@ -2209,11 +2274,11 @@ describe("input recording durability", () => {
     }
   }, 10_000);
 
-  for (const [label, tail, decoded] of [
-    ["untrimmed", 0, 40],
-    ["trimmed", 60, 40],
+  for (const [label, tail] of [
+    ["untrimmed", 0],
+    ["trimmed", 60],
   ] as const) {
-    it(`MICDROP2 chunked STT, VAD backlogged at the CoreAudio event, ${label}: decoder gets the whole kept audio (Sol R1 #2)`, async () => {
+    it(`MICDROP3 chunked STT, VAD backlogged at a CoreAudio report, ${label}: recording continues and the decoder gets every byte (Sol R1 #2)`, async () => {
       const previous = process.env.QA_VOICE_CHUNKED_STT;
       process.env.QA_VOICE_CHUNKED_STT = "1";
       let release!: () => void;
@@ -2231,12 +2296,15 @@ describe("input recording durability", () => {
       try {
         await waitUntil(() => blocked, "VAD suspended on chunk 11", 10_000);
         expect(reportInputDeviceLost("device-removed", liveCaptureId())).toBe(true);
+        expect(await raceStillRecording(pending, 300)).toBe("still recording");
+        release();
+        await stopPushToEndOnceCaptured((40 + tail) * VAD_CHUNK_BYTES);
         expect(await raceStillRecording(pending, 4_000)).toBe("Retained transcript.");
-        release(); // the late VAD continuation must not reach the finalized session
-        await Bun.sleep(20);
         expect(readWavDataSize(join(archivePath, "audio.wav"))).toBe((40 + tail) * VAD_CHUNK_BYTES);
-        if (tail === 0) expect(backendTranscribedDataSize).toBe(decoded * VAD_CHUNK_BYTES);
-        else expect(backendTranscribedDataSize).toBeGreaterThanOrEqual(decoded * VAD_CHUNK_BYTES);
+        if (tail === 0) expect(backendTranscribedDataSize).toBe(40 * VAD_CHUNK_BYTES);
+        else expect(backendTranscribedDataSize).toBeGreaterThanOrEqual(40 * VAD_CHUNK_BYTES);
+        // Nothing arrived after the report: no flat evidence, so no label.
+        expect(broadcasts.some(e => e.type === "mic_disconnected")).toBe(false);
       } finally {
         release();
         await pending.catch(() => null);
