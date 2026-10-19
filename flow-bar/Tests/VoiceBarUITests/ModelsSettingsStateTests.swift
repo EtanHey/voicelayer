@@ -414,9 +414,8 @@ final class ModelsSettingsStateTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/ModelsSettingsView.swift")
         let source = try String(contentsOf: url)
-        XCTAssertTrue(source.contains("Recognizer details"))
-        XCTAssertTrue(source.contains("Configured effort"))
-        XCTAssertTrue(source.contains("Active effort"))
+        XCTAssertTrue(source.contains("SettingsDisclosureRow(\"Recognizer details\""))
+        XCTAssertEqual(ModelsSettingsView.recognizerDetailRows(for: state).map(\.label), ["Model", "Effort"])
         XCTAssertFalse(source.contains("no measurable word difference"))
     }
 

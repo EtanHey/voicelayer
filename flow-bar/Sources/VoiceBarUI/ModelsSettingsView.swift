@@ -10,6 +10,7 @@ public struct ModelsSettingsView: View {
     private let processingNotice: String?
     private let onToggleProcessing: ((ProcessingKey, Bool) -> Void)?
     private let onSelectResidency: ((VoiceModelResidency) -> Void)?
+    @State private var isRecognizerDetailsExpanded = false
 
     public init(
         state: ModelsSettingsState,
@@ -73,6 +74,8 @@ public struct ModelsSettingsView: View {
                         }
                     }
                 }
+                // SETUI1: the page's one busy line. It sits above everything it disables (Load/Unload and the
+                // Processing toggles), so Processing no longer repeats it.
                 if state.availability == .available, let reason = Self.effortDisabledReason(for: state) {
                     Text(reason)
                         .font(.caption)
@@ -80,17 +83,14 @@ public struct ModelsSettingsView: View {
                         .accessibilityIdentifier("models-busy-reason")
                 }
                 if state.availability == .available {
-                    DisclosureGroup("Recognizer details") {
-                        LabeledContent("Configured model", value: VoiceModelDisplayName.normalize(state.configuredModelName) ?? "Unknown")
-                        LabeledContent("Active model", value: VoiceModelDisplayName.normalize(state.activeModelName) ?? "Unknown")
-                        LabeledContent("Configured effort", value: state.configuredEffort?.displayName ?? "Unknown")
-                        LabeledContent("Active effort", value: state.activeEffort?.displayName ?? "Unknown")
-                        if let note = Self.effortStatusNote(for: state) {
-                            Text(note).font(.caption).foregroundStyle(.orange)
+                    SettingsDisclosureRow("Recognizer details", isExpanded: $isRecognizerDetailsExpanded) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Self.recognizerDetailRows(for: state), id: \.label) { row in
+                                LabeledContent(row.label, value: row.value)
+                            }
+                            recognizerNotes
                         }
-                        if let notice {
-                            Text(notice).font(.caption).foregroundStyle(.orange)
-                        }
+                        .padding(.top, 4)
                     }
                 }
                 if let residencyNotice {
@@ -102,12 +102,6 @@ public struct ModelsSettingsView: View {
                 if let controls = state.polishControls, state.availability == .available {
                     ForEach(Self.processingRows(for: controls), id: \.key) { row in
                         processingToggle(row)
-                    }
-                    if let busyReason = Self.processingBusyReason(for: state) {
-                        Text(busyReason)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("models-processing-busy-reason")
                     }
                     Text("Applies to your next dictation.")
                         .font(.caption)
@@ -125,6 +119,39 @@ public struct ModelsSettingsView: View {
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("models-settings-form")
+    }
+
+    @ViewBuilder private var recognizerNotes: some View {
+        if let note = Self.effortStatusNote(for: state) {
+            Text(note).font(.caption).foregroundStyle(.orange)
+        }
+        if let notice {
+            Text(notice).font(.caption).foregroundStyle(.orange)
+        }
+    }
+
+    struct RecognizerDetailRow: Equatable {
+        let label: String
+        let value: String
+    }
+
+    /// SETUI1 (Etan, 2026-10-19): "accurate accurate … We don't need this repetitiveness." A loaded model whose
+    /// active fact matches its configured one is one row; the pair shows only when they differ or it is not loaded.
+    static func recognizerDetailRows(for state: ModelsSettingsState) -> [RecognizerDetailRow] {
+        func rows(_ noun: String, configured: String?, active: String?) -> [RecognizerDetailRow] {
+            if state.residency == .loaded, let configured, configured == active {
+                return [RecognizerDetailRow(label: noun, value: configured)]
+            }
+            return [
+                RecognizerDetailRow(label: "Configured \(noun.lowercased())", value: configured ?? "Unknown"),
+                RecognizerDetailRow(label: "Active \(noun.lowercased())", value: active ?? "Unknown"),
+            ]
+        }
+        return rows(
+            "Model",
+            configured: VoiceModelDisplayName.normalize(state.configuredModelName),
+            active: VoiceModelDisplayName.normalize(state.activeModelName)
+        ) + rows("Effort", configured: state.configuredEffort?.displayName, active: state.activeEffort?.displayName)
     }
 
     private var modelSummary: String {
@@ -236,11 +263,6 @@ public struct ModelsSettingsView: View {
         }
     }
 
-    /// Busy always shows a reason beside the Processing controls. nil when the
-    /// section already shows its own placeholder (status unavailable or still loading).
-    static func processingBusyReason(for state: ModelsSettingsState) -> String? {
-        state.availability == .available ? effortDisabledReason(for: state) : nil
-    }
 
     /// D194-r1: smart chunks and smart boundaries exist only on the resident Whisper server path (src/stt.ts);
     /// whisper-cli and Wispr Flow return no segments, and a server request that falls back to the CLI skips them.
