@@ -472,8 +472,10 @@ public enum TeleprompterPlaybackPolicy {
         isReadback ? 0.9 : nil
     }
 
-    public static func showsScrollIndicators(isReadback: Bool) -> Bool {
-        isReadback
+    /// Never: with "Show scroll bars: Always", a legacy scroller's gutter re-centres readback text
+    /// left of where it was spoken. Readback still scrolls by trackpad and wheel.
+    public static func showsScrollIndicators(isReadback _: Bool) -> Bool {
+        false
     }
 }
 

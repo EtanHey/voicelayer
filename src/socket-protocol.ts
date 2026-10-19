@@ -42,6 +42,8 @@ export interface StateEvent {
   playback_offset_ms?: number;
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
+  /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
+  readback_duration_ms?: number;
   /** Chunk-local playback clock; additive global position for future seek clients. */
   long_read?: {
     id: string;

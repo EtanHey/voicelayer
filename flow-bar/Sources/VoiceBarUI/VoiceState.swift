@@ -434,6 +434,8 @@ public final class VoiceState {
     public private(set) var playbackDurationMilliseconds: Int?
     private var playbackStartedAt: TimeInterval?
     private var playbackLongReadID: String?
+    /// What a readback seek can reach once this read ends: the retained chunks, not the synthesized lookahead.
+    private var playbackReadbackDurationMilliseconds: Int?
     /// Advances for every speaking receipt, including same-text replay.
     public private(set) var playbackEpoch = 0
     private var recordingWaveformHistory = WaveformEnvelopeHistory()
@@ -2010,6 +2012,7 @@ public final class VoiceState {
                 let validOffset = offset.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
                 playbackStartedAt = playbackStart - (validOffset ?? 0) / 1000
                 playbackReadbackID = event["readback_id"] as? String
+                playbackReadbackDurationMilliseconds = (event["readback_duration_ms"] as? NSNumber)?.intValue
                 playbackChunkStartMilliseconds = (event["long_read"] as? [String: Any])?["chunk_start_ms"] as? Int ?? 0
                 let longRead = event["long_read"] as? [String: Any]
                 let longReadID = longRead?["id"] as? String
@@ -2734,6 +2737,7 @@ public final class VoiceState {
         playbackStartedAt = nil
         playbackDurationMilliseconds = nil
         playbackLongReadID = nil
+        playbackReadbackDurationMilliseconds = nil
         playbackChunkStartMilliseconds = 0
         isPlaybackDurationGrowing = false
     }
@@ -2864,8 +2868,10 @@ public final class VoiceState {
             let trimmed = statusText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 retainedReadbackID = playbackReadbackID
-                retainedPlaybackDurationMilliseconds = playbackDurationMilliseconds
-                retainedPlaybackPositionMilliseconds = min(playbackElapsedMilliseconds(), playbackDurationMilliseconds ?? 0)
+                // An older daemon sends no retained range; its duration is the best it can say.
+                let readbackDuration = playbackReadbackDurationMilliseconds ?? playbackDurationMilliseconds
+                retainedPlaybackDurationMilliseconds = readbackDuration
+                retainedPlaybackPositionMilliseconds = min(playbackElapsedMilliseconds(), readbackDuration ?? 0)
                 retainedTeleprompterText = statusText
                 retainedTeleprompterWordBoundaries = wordBoundaries
                 notifyPanelLayoutChangedIfNeeded(true)

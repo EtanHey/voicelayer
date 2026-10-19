@@ -1534,18 +1534,21 @@ class PlaybackQueueManager {
     next.lifecycle.track(proc.exited);
     this.current = { job: next, proc, startedAt: Date.now() - (next.metadata?.localOffsetMs ?? 0) };
     this.armPlayerWatchdog(this.current, durationMs);
+    // A history Replay carries no metadata duration. The probed file length becomes the job's own,
+    // so current seeks, the retained readback and the advertised scrubber all share one truth.
+    if (next.metadata && !(next.metadata.durationMs! > 0) && durationMs && durationMs > 0) next.metadata.durationMs = durationMs;
     const readbackID = next.metadata?.retainedReplay ? next.metadata.readbackID
       : next.metadata ? retainedReadback.remember(next.audioFile, next.metadata, next.id) : undefined;
     if (next.metadata) {
-      // A history Replay carries no metadata duration; the probed file length is the real one.
       const utteranceMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ??
-        next.metadata.durationMs ?? durationMs ?? undefined;
+        next.metadata.durationMs;
       broadcast({
         type: "state",
         state: "speaking",
         text: next.metadata.text,
         voice: next.metadata.voice,
         readback_id: readbackID,
+        ...(readbackID ? { readback_duration_ms: retainedReadback.seekableMs(readbackID) } : {}),
         ...next.metadata.speechIdentity,
         ...(next.metadata.longRead ? { long_read: next.metadata.longRead } : {}),
         ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),

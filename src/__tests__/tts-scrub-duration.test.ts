@@ -14,8 +14,7 @@ afterEach(async () => {
   for (const restore of restores.splice(0)) restore();
 });
 
-it("idle Replay of a history file without metadata duration still reports its real duration", async () => {
-  const file = `${TEST_TMP}/scrub-history.mp3`; writeFileSync(file, "fixture");
+function fakePlayback() {
   const events: any[] = [], players = fixtureBarrier<{ exit: ReturnType<typeof deferred<number>> }>();
   const broadcast = spyOn(socket, "broadcast").mockImplementation(e => { events.push(e); });
   const originalSpawnSync = Bun.spawnSync;
@@ -28,6 +27,7 @@ it("idle Replay of a history file without metadata duration still reports its re
   const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
     const exit = deferred<number>();
     if (argv[0] === "which" || argv[1] === "-version" || argv[1] === "--version") exit.resolve(0);
+    else if (argv.includes("-ss")) { writeFileSync(argv.at(-1)!, "slice"); exit.resolve(0); }
     else players.push({ exit });
     return { pid: 95100, exited: exit.promise, kill: () => exit.resolve(143), stdout: new Blob([""]).stream() };
   }) as any);
@@ -35,11 +35,33 @@ it("idle Replay of a history file without metadata duration still reports its re
     result: Promise.resolve({ source: "unavailable", sample_interval_ms: 50, samples: [] }), cancel() {},
   });
   restores.push(() => { Bun.spawnSync = originalSpawnSync; spawn.mockRestore(); broadcast.mockRestore(); decode.mockRestore(); });
+  return { events, players, speaking: () => events.filter(e => e.type === "state" && e.state === "speaking").at(-1) };
+}
 
+it("idle Replay of a history file without metadata duration reports and seeks its real duration", async () => {
+  const file = `${TEST_TMP}/scrub-history.mp3`; writeFileSync(file, "fixture");
+  const f = fakePlayback();
   tts.playAudioNonBlocking(file, { text: "Retained speech.", voice: "fixture" });
-  const player = await players.at(0);
-  expect(events.find(e => e.type === "state" && e.state === "speaking")).toMatchObject({ duration_ms: 18300 });
-  player.exit.resolve(0);
+  await f.players.at(0);
+  expect(f.speaking()).toMatchObject({ duration_ms: 18300, readback_duration_ms: 18300 });
+  // Sol R1 #1: the scrubber it enables must seek, live and after the read ends.
+  expect(tts.seekPlayback(5000)).toMatchObject({ outcome: "accept", offset_ms: 5000 });
+  tts.stopPlayback(); await tts.awaitCurrentPlayback();
+  expect(tts.seekPlayback(5000, "readback", f.speaking().readback_id)).toMatchObject({ outcome: "accept", offset_ms: 5000 });
+});
+
+it("a stopped long read advertises only its retained, seekable readback range", async () => {
+  // Sol R1 #2: chunk 0 (1 s) played; lookahead made the synthesized total 3 s; Stop before chunk 1 plays.
+  const file = `${TEST_TMP}/scrub-chunk0.mp3`; writeFileSync(file, "fixture");
+  const f = fakePlayback();
+  tts.playAudioNonBlocking(file, { text: "Chunk zero.", voice: "fixture", durationMs: 1000, utteranceDurationMs: 3000,
+    longRead: { id: "scrub-long", chunk_index: 0, chunk_count: 3, chunk_start_ms: 0 } });
+  await f.players.at(0);
+  const speaking = f.speaking();
+  expect(speaking).toMatchObject({ duration_ms: 3000, readback_duration_ms: 1000 });
+  tts.stopPlayback(); await tts.awaitCurrentPlayback();
+  expect(tts.seekPlayback(1500, "readback", speaking.readback_id)).toMatchObject({ outcome: "reject" });
+  expect(tts.seekPlayback(speaking.readback_duration_ms - 100, "readback", speaking.readback_id)).toMatchObject({ outcome: "accept" });
 });
 
 const chunk = (i: number): LongReadChunk => ({ audioFile: `${i}.mp3`, durationMs: 1000 * (i + 1), wordBoundaries: [] });

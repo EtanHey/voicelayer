@@ -82,27 +82,59 @@ struct SettingsPlaybackScrubBar: View {
         let shownTime = drag.fraction.map(position.time(atFraction:)) ?? position.currentTime
         let shown = SettingsAudioPlaybackPosition(currentTime: shownTime, duration: position.duration)
 
-        return HStack(spacing: 8) {
+        return HStack(spacing: isTeleprompter ? Self.teleprompterLabelSpacing : 8) {
             Text(SettingsAudioPlaybackPosition.clockLabel(shown.currentTime))
                 .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
                 .lineLimit(1)
-                .frame(width: isTeleprompter ? 42 : nil, alignment: .trailing)
+                .frame(width: isTeleprompter ? Self.teleprompterLabelWidth : nil, alignment: .trailing)
                 .frame(minWidth: 34, alignment: .trailing)
-                .opacity(isTeleprompter && !allowsSeeking && position.duration > 0 ? 0 : 1)
+                .opacity(labelOpacity(duration: position.duration))
             track(shown)
-            Text(SettingsAudioPlaybackPosition.clockLabel(shown.duration) + (isGrowing ? " so far…" : ""))
+            Text(durationLabel(shown.duration))
                 .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
-                .frame(width: isTeleprompter ? 90 : nil, alignment: .leading)
+                .frame(width: isTeleprompter ? Self.teleprompterLabelWidth : nil, alignment: .leading)
                 .frame(minWidth: 34, alignment: .leading)
-                .opacity(isTeleprompter && !allowsSeeking && position.duration > 0 ? 0 : 1)
+                // The growing note hangs under the total so both label slots stay equal and the
+                // track stays on the panel's centre axis.
+                .overlay(alignment: .bottomLeading) {
+                    if isTeleprompter && isGrowing {
+                        Text("so far…")
+                            .font(.system(size: 9, design: .monospaced))
+                            .fixedSize()
+                            .offset(y: 11)
+                    }
+                }
+                .opacity(labelOpacity(duration: position.duration))
         }
         .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
         .foregroundStyle(isTeleprompter ? Color(red: 154/255, green: 154/255, blue: 163/255) : Color.secondary)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback position, \(accessibilityNoun)")
         .accessibilityValue(shown.spokenValue + (isGrowing ? ", synthesized so far; duration growing" : ""))
+    }
+
+    /// Equal teleprompter label slots keep the track centred on the panel's axis.
+    static let teleprompterLabelWidth: CGFloat = 46
+    /// Wider than the knob radius, so the knob at either extreme never touches a label.
+    static let teleprompterLabelSpacing: CGFloat = 12
+
+    /// Teleprompter labels only describe a real duration; a row that cannot seek dims them.
+    private func labelOpacity(duration: TimeInterval) -> Double {
+        guard isTeleprompter else { return 1 }
+        guard duration > 0 else { return 0 }
+        return allowsSeeking ? 1 : 0.45
+    }
+
+    /// A sub-second agent reply reads `0:01`, never the `0:00` QA logged as a broken scrubber.
+    static func teleprompterDurationLabel(_ duration: TimeInterval) -> String {
+        SettingsAudioPlaybackPosition.clockLabel(duration > 0 ? max(duration, 1) : 0)
+    }
+
+    private func durationLabel(_ duration: TimeInterval) -> String {
+        if isTeleprompter { return Self.teleprompterDurationLabel(duration) }
+        return SettingsAudioPlaybackPosition.clockLabel(duration) + (isGrowing ? " so far…" : "")
     }
 
     private func track(_ position: SettingsAudioPlaybackPosition) -> some View {

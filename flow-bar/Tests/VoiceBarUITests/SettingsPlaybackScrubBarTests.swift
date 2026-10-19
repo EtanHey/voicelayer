@@ -77,6 +77,38 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
         XCTAssertGreaterThan(colorDistance(earlyMid, lateMid), 0.2)
     }
 
+    // SCRUB1 R2 (Opus UI #1): the teleprompter track sits on the panel's centre axis, growing or not.
+    func testTeleprompterTrackIsCentredAndGrowingDoesNotMoveIt() throws {
+        func bitmap(time: Double, growing: Bool) throws -> NSBitmapImageRep {
+            try render(SettingsPlaybackScrubBar(position: { SettingsAudioPlaybackPosition(currentTime: time, duration: 100) },
+                seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: false, isGrowing: growing,
+                allowsSeeking: true, isTeleprompter: true).frame(width: 400, height: 24),
+                size: CGSize(width: 400, height: 24), appearance: NSAppearance(named: .darkAqua))
+        }
+        func row(_ image: NSBitmapImageRep) -> [NSColor] {
+            (0..<image.pixelsWide).map { image.colorAt(x: $0, y: image.pixelsHigh / 2)?.usingColorSpace(.sRGB) ?? .clear }
+        }
+        func fillStart(_ image: NSBitmapImageRep) throws -> Int {
+            try XCTUnwrap(row(image).firstIndex { $0.blueComponent - $0.redComponent > 0.25 })
+        }
+        let full = try bitmap(time: 100, growing: false)
+        let scale = CGFloat(full.pixelsWide) / 400
+        let knob = row(full).indices.filter { index in
+            let c = row(full)[index]
+            return min(c.redComponent, c.greenComponent, c.blueComponent) > 0.68
+        }
+        let trackStart = CGFloat(try fillStart(full)), trackEnd = CGFloat(try XCTUnwrap(knob.first) + XCTUnwrap(knob.last)) / 2
+        XCTAssertEqual((trackStart + trackEnd) / 2 / scale, 200, accuracy: 2, "track midpoint on the row's centre axis")
+        XCTAssertEqual(try fillStart(bitmap(time: 50, growing: true)), try fillStart(bitmap(time: 50, growing: false)),
+                       "the growing note must not widen one label slot")
+    }
+
+    func testTeleprompterDurationLabelNeverReadsZeroForARealRead() {
+        XCTAssertEqual(SettingsPlaybackScrubBar.teleprompterDurationLabel(0.8), "0:01")
+        XCTAssertEqual(SettingsPlaybackScrubBar.teleprompterDurationLabel(18.3), "0:18")
+        XCTAssertEqual(SettingsPlaybackScrubBar.teleprompterDurationLabel(0), "0:00")
+    }
+
     func testCloneTrackIsUniformAcrossPlaybackPositions() throws {
         func bitmap(at time: Double) throws -> NSBitmapImageRep {
             try render(SettingsPlaybackScrubBar(position: { SettingsAudioPlaybackPosition(currentTime: time, duration: 100) },

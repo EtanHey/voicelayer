@@ -222,6 +222,33 @@ final class TeleprompterScrubTests: XCTestCase {
         }
     }
 
+    // SCRUB1 R2 (Sol #2): a stopped long read only offers what the daemon retained, not its lookahead.
+    func testStoppedLongReadReadbackOffersOnlyTheRetainedRange() {
+        var now = 100.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Chunk zero", "duration_ms": 1000,
+                           "readback_id": "fixture", "readback_duration_ms": 1000,
+                           "long_read": ["id": "read", "chunk_start_ms": 0]])
+        state.handleEvent(["type": "playback_duration", "long_read_id": "read", "duration_ms": 3000, "final": true])
+        XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 3, "live speech shows the synthesized total")
+        now += 0.6
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 1, "readback shows only the retained range")
+        XCTAssertEqual(state.teleprompterPlaybackPosition.currentTime, 0.6, accuracy: 0.001)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        let wrapper = TeleprompterPlaybackScrubBar(state: state)
+        var drag = SettingsScrubDrag()
+        drag.ended(atFraction: 1, duration: state.teleprompterPlaybackPosition.duration, seek: wrapper.control.seek)
+        XCTAssertEqual(commands.last?["offset_ms"] as? Int, 900, "the far end stays inside the retained 1000 ms")
+        XCTAssertEqual(commands.last?["scope"] as? String, "readback")
+
+        let legacy = VoiceState(playbackAmplitudeClock: { 100 })
+        legacy.handleEvent(["type": "state", "state": "speaking", "text": "Old daemon", "duration_ms": 4000, "readback_id": "old"])
+        legacy.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertEqual(legacy.teleprompterPlaybackPosition.duration, 4, "an older daemon falls back to its duration")
+    }
+
     func testReadbackWithoutRetainedAudioOrDurationShowsAnInertScrubber() {
         for event: [String: Any] in [
             ["type": "state", "state": "speaking", "text": "No audio identity", "duration_ms": 4000],
