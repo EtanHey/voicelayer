@@ -118,6 +118,7 @@ public struct WaveformView: View {
     private let currentLevel: () -> Double?
     private let isListening: Bool
     private let mode: RenderMode
+    private let isPaused: Bool
     @StateObject private var envelopeStore = WaveformEnvelopeStore()
 
     private let barCount = WaveformLayout.barCount
@@ -131,10 +132,12 @@ public struct WaveformView: View {
         isListening: Bool = false,
         isProcessing: Bool = false,
         isBooting: Bool = false,
+        isPaused: Bool = false,
         currentLevel: @escaping () -> Double?
     ) {
         self.color = color
         self.isListening = isListening
+        self.isPaused = isPaused
         self.currentLevel = currentLevel
         // Booting outranks every other treatment: until the recorder delivers a
         // frame there is nothing truthful to animate.
@@ -150,14 +153,15 @@ public struct WaveformView: View {
     public init(processingColor color: Color) {
         self.color = color
         isListening = false
+        isPaused = false
         currentLevel = { nil }
         mode = .processing
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: isPaused)) { timeline in
             let now = timeline.date.timeIntervalSinceReferenceDate
-            let envelopeLevel = mode == .audioDriven
+            let envelopeLevel = mode == .audioDriven && !isPaused
                 ? envelopeStore.sample(rawLevel: currentLevel(), at: now)
                 : 0
             TimelineSample(
@@ -252,14 +256,18 @@ public struct VoiceBarNotchWaveform: View {
     public let isCaptureLive: Bool
     private let recordingLevel: () -> Double?
     private let playbackLevel: () -> Double?
+    /// An ended readback keeps the teleprompter wing filled with a still, dimmed bed.
+    public let isPlaybackEnded: Bool
 
     public init(
         mode: VoiceMode,
         isListening: Bool,
         isCaptureLive: Bool,
         recordingLevel: @escaping () -> Double?,
-        playbackLevel: @escaping () -> Double?
+        playbackLevel: @escaping () -> Double?,
+        isPlaybackEnded: Bool = false
     ) {
+        self.isPlaybackEnded = isPlaybackEnded
         self.mode = mode
         self.isListening = isListening
         self.isCaptureLive = isCaptureLive
@@ -269,17 +277,19 @@ public struct VoiceBarNotchWaveform: View {
 
     public var body: some View {
         WaveformView(
-            color: Self.waveformColor(mode: mode, isCaptureLive: isCaptureLive),
+            color: Self.waveformColor(mode: mode, isCaptureLive: isCaptureLive, isPlaybackEnded: isPlaybackEnded),
             isListening: mode == .recording && isListening,
             isProcessing: mode == .transcribing,
             isBooting: isBooting,
+            isPaused: isPlaybackEnded,
             currentLevel: currentLevel
         )
     }
 
     /// Red is reserved for a capture that actually exists.
-    public static func waveformColor(mode: VoiceMode, isCaptureLive: Bool) -> Color {
-        switch mode {
+    public static func waveformColor(mode: VoiceMode, isCaptureLive: Bool, isPlaybackEnded: Bool = false) -> Color {
+        if isPlaybackEnded, mode == .idle { return Theme.speakingColor.opacity(0.45) }
+        return switch mode {
         case .recording:
             isCaptureLive ? Theme.recordingColor : Theme.captureBootingColor
         case .transcribing:

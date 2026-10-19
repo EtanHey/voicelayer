@@ -16,7 +16,17 @@ const CAPTION_PREFIXES = [
   { key: "please subscribe", class: "please-subscribe", extraWords: 0 },
   { key: "transcribed by", class: "transcribed-by", extraWords: 3 },
   { key: "subtitles by rev com", class: "rev-subtitles", extraWords: 0 },
+  { key: "transcription by castingwords", class: "castingwords", extraWords: 0 },
+  { key: "transcription by casting words", class: "castingwords", extraWords: 0 },
+  // After the specific credits above, so they keep their own class.
+  { key: "subtitles by", class: "subtitles-by", extraWords: 4 },
+  // Whisper's commonest silence token. Alone it is only ever a whole trailing
+  // segment run, so "thank you" inside a spoken segment can never match.
+  { key: "you", class: "stray-you", extraWords: 0 },
 ] as const;
+
+/** Whisper often emits a bare "you" just before a caption; it goes with it. */
+const STRAY_BOUNDARY_WORD = "you";
 
 /** The pinned caption has one blip; two may be a word. Both VAD states must agree. */
 const MAX_SPEECH_CHUNKS = 1;
@@ -28,6 +38,36 @@ const MAX_TRAILING_SECONDS = 8;
 const CLEAR_BEFORE_SECONDS = 0.3;
 /** Whisper can timestamp beyond EOF; 5 s bounds the pinned 4.69 s overrun. */
 const MAX_TIMESTAMP_OVERRUN_SECONDS = 5;
+/**
+ * A dead input device keeps delivering exact zeros, +/-1 dither or a constant
+ * DC level (HALLU1: 33 s of {-1, 0, 1} at -94 dBFS after a mic died). Real room
+ * noise on the same mic spans dozens of codes even at -76 dBFS. A run whose
+ * whole in-file span is this flat may exceed MAX_TRAILING_SECONDS; every
+ * acoustic check below still applies.
+ */
+const DEAD_DEVICE_MAX_RANGE = 2;
+
+function isDeadDeviceSpan(
+  wav: Uint8Array,
+  info: { dataOffset: number; dataSize: number; sampleRate: number },
+  startS: number,
+  endS: number,
+): boolean {
+  const frames = Math.floor(info.dataSize / 2);
+  const first = Math.max(0, Math.floor(startS * info.sampleRate));
+  const last = Math.min(frames, Math.ceil(endS * info.sampleRate));
+  if (last - first < MIN_OBSERVED_CHUNKS * VAD_CHUNK_SAMPLES) return false;
+  const view = new DataView(wav.buffer, wav.byteOffset + info.dataOffset, frames * 2);
+  let min = Infinity;
+  let max = -Infinity;
+  for (let frame = first; frame < last; frame++) {
+    const sample = view.getInt16(frame * 2, true);
+    if (sample < min) min = sample;
+    if (sample > max) max = sample;
+    if (max - min > DEAD_DEVICE_MAX_RANGE) return false;
+  }
+  return true;
+}
 
 export interface CaptionGateOptions {
   segments?: TranscriptSegment[];
@@ -84,19 +124,27 @@ export async function stripHallucinatedCaption(
     (index > 0 && segment.startS < segments[index - 1]!.startS)
   )) return untouched("no-segments");
 
+  const parsed = parseWavAudioInfo(wavData);
+  const info = parsed && parsed.audioFormat === WAVE_FORMAT_PCM && parsed.sampleRate === 16_000 &&
+    parsed.channels === 1 && parsed.bitsPerSample === 16 ? parsed : null;
   let candidate: { index: number; class: string; startS: number; endS: number; wordOffset: number } | null = null;
   let wordOffset = 0;
   for (let index = 0; index < segments.length; index++) {
     const run = segments.slice(index);
     const runWords = segmentWords.slice(index).flat();
+    const startS = run[0]!.startS;
+    const endS = run[run.length - 1]!.endS;
     if (run.length > MAX_TRAILING_SEGMENTS ||
-        run[run.length - 1]!.endS - run[0]!.startS > MAX_TRAILING_SECONDS) {
+        (endS - startS > MAX_TRAILING_SECONDS &&
+          !(info && isDeadDeviceSpan(wavData, info, startS, endS)))) {
       wordOffset += segmentWords[index]!.length;
       continue;
     }
-    const key = runWords.join(" ");
+    const body = runWords.length > 1 && runWords[0] === STRAY_BOUNDARY_WORD
+      ? runWords.slice(1) : runWords;
+    const key = body.join(" ");
     const phrase = CAPTION_PREFIXES.find((entry) =>
-      runWords.length <= words(entry.key).length + entry.extraWords &&
+      body.length <= words(entry.key).length + entry.extraWords &&
       (key === entry.key || key.startsWith(`${entry.key} `)));
     if (phrase) {
       candidate = { index, class: phrase.class, startS: run[0]!.startS,
@@ -107,9 +155,7 @@ export async function stripHallucinatedCaption(
   }
   if (!candidate) return untouched("no-candidate");
 
-  const info = parseWavAudioInfo(wavData);
-  if (!info || info.audioFormat !== WAVE_FORMAT_PCM || info.sampleRate !== 16_000 ||
-      info.channels !== 1 || info.bitsPerSample !== 16) return untouched("no-audio");
+  if (!info) return untouched("no-audio");
   const count = Math.floor(info.dataSize / (VAD_CHUNK_SAMPLES * 2));
   const chunkSeconds = VAD_CHUNK_SAMPLES / info.sampleRate;
   const durationSeconds = info.dataSize / (info.sampleRate * info.channels * 2);

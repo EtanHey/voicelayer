@@ -31,15 +31,26 @@ export class RetainedReadback {
     return this.identity;
   }
 
+  /** The span a readback seek can reach right now; 0 when `acquire` would refuse it. */
+  seekableMs(owner?: string): number {
+    return this.replayable(owner)?.reduce((sum, [, c]) => sum + c.metadata.durationMs!, 0) ?? 0;
+  }
+
   acquire(owner?: string): { chunks: RetainedChunk[]; release(): void } | undefined {
-    if (!owner || owner !== this.identity) return;
-    const chunks = [...this.chunks.entries()].sort(([a], [b]) => a - b);
-    if (!chunks.length || chunks.some(([i, c], n) => i !== n || !existsSync(c.file) || !Number.isFinite(c.metadata.durationMs) || !(c.metadata.durationMs! > 0))) return;
+    const chunks = this.replayable(owner);
+    if (!chunks) return;
     this.readers++;
     let released = false;
     return { chunks: chunks.map(([, c]) => c), release: () => {
       if (released) return; released = true; this.readers--; this.clean();
     } };
+  }
+
+  private replayable(owner?: string): [number, RetainedChunk][] | undefined {
+    if (!owner || owner !== this.identity) return;
+    const chunks = [...this.chunks.entries()].sort(([a], [b]) => a - b);
+    if (!chunks.length || chunks.some(([i, c], n) => i !== n || !existsSync(c.file) || !Number.isFinite(c.metadata.durationMs) || !(c.metadata.durationMs! > 0))) return;
+    return chunks;
   }
 
   /** Called only at process exit; no playback can resume in this process. */
