@@ -583,7 +583,7 @@ final class VoiceStatePasteTests: XCTestCase {
                 ["VoiceLayer", "Wispr Flow"]
             },
             transcriptionVocabularyAliasLoader: {
-                [STTVocabularyAliasPreview(from: "work claude", to: "orcClaude")]
+                [STTVocabularyAliasPreview(from: "sample agent", to: "sampleAgent")]
             }
         )
 
@@ -593,7 +593,7 @@ final class VoiceStatePasteTests: XCTestCase {
         ])
         XCTAssertEqual(state.transcriptionVocabularyTerms, ["VoiceLayer", "Wispr Flow"])
         XCTAssertEqual(state.transcriptionVocabularyAliases, [
-            STTVocabularyAliasPreview(from: "work claude", to: "orcClaude"),
+            STTVocabularyAliasPreview(from: "sample agent", to: "sampleAgent"),
         ])
     }
 
@@ -645,7 +645,7 @@ final class VoiceStatePasteTests: XCTestCase {
             transcriptionVocabularyAliasLoader: { vocabularyAliases }
         )
         vocabularyTerms = ["VoiceLayer"]
-        vocabularyAliases = [STTVocabularyAliasPreview(from: "work claude", to: "orcClaude")]
+        vocabularyAliases = [STTVocabularyAliasPreview(from: "sample agent", to: "sampleAgent")]
 
         assertVoiceStateEventTriggersPanelLayoutRefresh(
             [

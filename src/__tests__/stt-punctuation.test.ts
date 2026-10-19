@@ -105,7 +105,7 @@ describe("restoreSentencePunctuation", () => {
 
   test("never appends to a bare slash command or @mention", () => {
     expect(restoreSentencePunctuation("/whats-new")).toBe("/whats-new");
-    expect(restoreSentencePunctuation("@orcClaude")).toBe("@orcClaude");
+    expect(restoreSentencePunctuation("@sampleAgent")).toBe("@sampleAgent");
   });
 
   test("does not append to a bare single code/path token", () => {

@@ -784,13 +784,13 @@ describe("stt-polish", () => {
 
   it("allows known cleaned vocabulary identifiers when polish adds sentence punctuation", async () => {
     const polished =
-      "Wait, what? Work with a cmuxlayerCodex. When you eval, only spawn cursors as dummies.";
+      "Wait, what? Work with a sampleAgent. When you eval, only spawn cursors as dummies.";
     server = createMockPolishServer(() => ({
       text: polished,
     }));
 
     const cleanedText =
-      "Wait what work with a cmuxlayerCodex when you eval only spawn cursors as dummies.";
+      "Wait what work with a sampleAgent when you eval only spawn cursors as dummies.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
