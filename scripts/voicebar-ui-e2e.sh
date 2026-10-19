@@ -34,9 +34,11 @@ mkdir "$sandbox/home"
 printf '%s\n' "$sandbox" > "$output/sandbox-path.txt"
 # Keep the sandbox, QA app, settings and receipts for failure analysis. No broad cleanup/kill.
 app="$sandbox/VoiceBarQA.app"
+# XCUITest audio must be silent. The guard records the prior mute state and restores it
+# from EXIT/INT/TERM traps, so success, failure and interrupt never leave the Mac muted.
+source "$repo/scripts/lib/output-mute-guard.sh"
 if [[ $build_only == 0 ]]; then
-  /usr/bin/osascript -e 'set volume output muted true'
-  [[ $(/usr/bin/osascript -e 'output muted of (get volume settings)') == true ]] || { echo 'FAIL output mute unconfirmed'; exit 1; }
+  output_mute_guard_begin || exit 1
 fi
 # This never stops, swaps or launches the installed app, and never installs the F5 relay.
 VOICEBAR_QA_BUILD=1 VOICEBAR_UIE2E_FOCUSED_338=$focused_338 VOICEBAR_UIE2E_ADHOC=1 VOICEBAR_CODESIGN_IDENTITY=- \
@@ -79,8 +81,8 @@ xcodebuild build-for-testing -project "$repo/flow-bar/UIE2E/VoiceBarUIE2E.xcodep
 echo 'PASS build-for-testing (UI execution NOT_PROVEN)'
 [[ $build_only == 0 ]] || exit 0
 python3 "$repo/scripts/voicebar-ui-e2e-results.py" configure "$output" "$app" "$sandbox" --scenario "$scenario"
-# Reconfirm immediately before XCUITest takes the screen. Leave output muted after the run.
-[[ $(/usr/bin/osascript -e 'output muted of (get volume settings)') == true ]] || { echo 'FAIL output mute changed'; exit 1; }
+# Reconfirm immediately before XCUITest takes the screen. The guard restores the prior state on exit.
+output_mute_guard_confirm || { echo 'FAIL output mute changed'; exit 1; }
 status=0
 # Default recording is part of the run, not an optional adapter. Build-only exits above.
 python3 "$repo/scripts/voicebar-ui-e2e-run.py" "$output" --scenario "$scenario" || status=$?
