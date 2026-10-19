@@ -2013,6 +2013,79 @@ describe("input recording durability", () => {
     });
   });
 
+  // NOTX1-FU: the reason always reflects the LATEST outcome, and whitespace counts as no words.
+  it("NOTX1-FU replaces a stale transcription-failed reason when a Re-transcribe finds no words", async () => {
+    const archive = await silentVoiceBarArchive();
+    backendMode = "throw-on-get";
+    const { retranscribeRecordingCapture } = await import("../input");
+    await expect(retranscribeRecordingCapture(archive)).rejects.toThrow("whisper backend is still warming");
+    broadcasts = [];
+    backendMode = "ok";
+    backendText = "";
+    await expect(retranscribeRecordingCapture(archive)).resolves.toBeNull();
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      transcription_status: "captured",
+      not_transcribed_reason: "empty-transcript",
+      not_transcribed_detail: null,
+    });
+    expect(metadataUpdates()).toEqual([
+      { type: "archive_metadata_updated", recording_path: archive },
+    ]);
+  });
+
+  // Identity mode hands the raw decode back untouched, so whitespace reaches the success check.
+  async function withIdentityCorrector(run: () => Promise<void>): Promise<void> {
+    const saved = process.env.QA_VOICE_CORRECTOR;
+    process.env.QA_VOICE_CORRECTOR = "identity";
+    try {
+      await run();
+    } finally {
+      if (saved === undefined) delete process.env.QA_VOICE_CORRECTOR;
+      else process.env.QA_VOICE_CORRECTOR = saved;
+    }
+  }
+
+  it("NOTX1-FU records empty-transcript when the live decode returns only whitespace", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    backendText = "  \n\t ";
+    const { waitForInput } = await import("../input");
+    await withIdentityCorrector(async () => {
+      const result = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+      await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+      expect(await result).toBeNull();
+    });
+    expect(backendTranscribeCalls).toBe(1);
+    const [archive] = capturedVoiceBarAudio();
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      transcription_status: "captured",
+      not_transcribed_reason: "empty-transcript",
+    });
+    expect(broadcasts.some((event) => event.type === "transcription")).toBe(false);
+  });
+
+  it("NOTX1-FU treats a whitespace-only Re-transcribe as no words", async () => {
+    const archive = await silentVoiceBarArchive();
+    const metadataPath = archive.replace("audio.wav", "metadata.json");
+    const legacy = voiceBarArchiveMetadata(archive);
+    delete legacy.not_transcribed_reason;
+    writeFileSync(metadataPath, `${JSON.stringify(legacy, null, 2)}\n`);
+    broadcasts = [];
+    backendText = " \n ";
+    const { retranscribeRecordingCapture } = await import("../input");
+    await withIdentityCorrector(async () => {
+      await expect(retranscribeRecordingCapture(archive)).resolves.toBeNull();
+    });
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      transcription_status: "captured",
+      not_transcribed_reason: "empty-transcript",
+    });
+    expect(broadcasts.some((event) => event.type === "transcription")).toBe(false);
+    expect(metadataUpdates()).toEqual([
+      { type: "archive_metadata_updated", recording_path: archive },
+    ]);
+  });
+
   it("permanently archives failed VoiceBar STT before another capture overwrites recovery", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     const chunks = Array.from({ length: 24 }, () => makePcmChunk(1800));
