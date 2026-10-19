@@ -64,6 +64,20 @@ describe('coherent paragraphs', () => {
     }
   });
 
+  // Sol PARA1 R2 #1: a finite list always misses one. Any short capitalised
+  // token before a capitalised word is ambiguous, and an initial is one
+  // grapheme, however many code points it is written with.
+  test('never breaks after any short capitalised form or a combining-mark initial', () => {
+    const left = 'The deployment pipeline builds a signed application bundle for the release server every morning. ';
+    const right = 'Smith manages restaurant bookings and dinner menus for large parties on busy holiday weekends. ';
+    for (const token of ['Maj.', 'Cpl.', 'Asst.', 'Assoc.', 'É.', 'Brig.', 'Hosp.', 'Ǻ.', '"É."']) {
+      const input = left.repeat(4) + 'We assigned the next task to ' + token + ' ' + right.repeat(5);
+      const output = applyCoherentParagraphs(input);
+      expectOnlyBreaksInserted(input, output);
+      expect(output).not.toContain(`${token}\n\nSmith`);
+    }
+  });
+
   test('a single soft line wrap does not disable the stage', () => {
     const input = [...deploy.slice(0, 2), `${deploy[2]}\n${deploy[3]}`, ...dinner].join(' ');
     expect(applyCoherentParagraphs(input)).toContain('\n\nAnyway');
