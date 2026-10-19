@@ -369,7 +369,74 @@ describe("STT backends", () => {
       expect(result.durationMs).toBeGreaterThanOrEqual(0);
     });
 
-    it("verifies long recordings with a tail decode and merges recovered final words", async () => {
+    async function captureTailVerifyLog<T>(
+      run: () => Promise<T>,
+    ): Promise<{ value: T; lines: string[] }> {
+      const lines: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: unknown[]) => {
+        const line = args.map(String).join(" ");
+        if (line.includes("tail verify")) lines.push(line);
+      };
+      try {
+        return { value: await run(), lines };
+      } finally {
+        console.error = originalError;
+      }
+    }
+
+    it("returns the full-decode text verbatim when tail verify would append a duplicated last sentence", async () => {
+      const wavPath = testTmp("voicelayer-whisper-server-tail-log-dup-test.wav");
+      await Bun.write(wavPath, makePcm16Wav(31));
+      const fullText =
+        "We should ship the plan today. Then we can test the release build.";
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) =>
+          options?.prompt
+            ? "Then we can test the release build. Then we can test the release build."
+            : fullText,
+      });
+
+      const { value: result, lines } = await captureTailVerifyLog(() =>
+        backend.transcribe(wavPath),
+      );
+
+      expect(result.text).toBe(fullText);
+      expect(result.backend).toBe("whisper-server");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("would append");
+      expect(lines[0]).toContain("+7 words");
+      expect(lines[0]).toContain("backend=whisper-server");
+      expect(lines[0]).not.toContain("release build");
+    });
+
+    it("keeps the text unchanged and logs the word count when the tail decode finds extra words", async () => {
+      const wavPath = testTmp("voicelayer-whisper-server-tail-log-extra-test.wav");
+      await Bun.write(wavPath, makePcm16Wav(31));
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) =>
+          options?.prompt
+            ? "backfill migration. And lastly, how long will it take?"
+            : "Let's plan the backfill migration",
+      });
+
+      const { value: result, lines } = await captureTailVerifyLog(() =>
+        backend.transcribe(wavPath),
+      );
+
+      expect(result.text).toBe("Let's plan the backfill migration");
+      expect(result.backend).toBe("whisper-server");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("would append");
+      expect(lines[0]).toContain("+7 words");
+      expect(lines[0]).toContain("prompted");
+      expect(lines[0]).toContain("backend=whisper-server");
+      expect(lines[0]).not.toContain("lastly");
+    });
+
+    it("verifies long recordings with a tail decode but keeps the full-decode text (log-only)", async () => {
       const wavPath = testTmp("voicelayer-whisper-server-tail-verify-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
       const requestSizes: number[] = [];
@@ -390,10 +457,9 @@ describe("STT backends", () => {
       expect(requestSizes).toHaveLength(2);
       expect(requestSizes[1]).toBeLessThan(requestSizes[0]);
       expect(prompts[1]).toContain("Let's plan the backfill migration");
-      expect(result.text).toBe(
-        "Let's plan the backfill migration. And lastly, how long do you think it'll take to do the backfill?",
-      );
-      expect(result.backend).toBe("whisper-server+tail");
+      // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
+      expect(result.text).toBe("Let's plan the backfill migration");
+      expect(result.backend).toBe("whisper-server");
     });
 
     it("does not append All right / Thank you from a silent 12s tail on a sub-chunked recording", async () => {
@@ -424,7 +490,7 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server");
     });
 
-    it("still recovers final words when a sub-chunked recording has speech in the last 12s", async () => {
+    it("still runs the tail decode but keeps the full-decode text when a sub-chunked recording has speech in the last 12s", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-subchunked-energetic-tail-test.wav");
       await Bun.write(wavPath, makePcm16Wav(64.8));
@@ -443,10 +509,9 @@ describe("STT backends", () => {
 
       expect(requestSizes).toHaveLength(2);
       expect(requestSizes[1]).toBeLessThan(requestSizes[0]);
-      expect(result.text).toBe(
-        "Let's plan the backfill migration. And lastly, how long do you think it'll take to do the backfill?",
-      );
-      expect(result.backend).toBe("whisper-server+tail");
+      // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
+      expect(result.text).toBe("Let's plan the backfill migration");
+      expect(result.backend).toBe("whisper-server");
     });
 
     it("keeps full-window text when tail verification has no overlap", async () => {
@@ -508,7 +573,7 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server");
     });
 
-    it("preserves a real tail extension that intentionally repeats an earlier phrase", async () => {
+    it("does not append a tail extension that intentionally repeats an earlier phrase (log-only)", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-tail-repeat-extension-test.wav");
       await Bun.write(wavPath, makePcm16Wav(71));
@@ -525,13 +590,14 @@ describe("STT backends", () => {
 
       const result = await backend.transcribe(wavPath);
 
+      // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
       expect(result.text).toBe(
-        "intro alpha beta gamma delta prior thought and then alpha beta gamma delta new words",
+        "intro alpha beta gamma delta prior thought and then alpha beta",
       );
-      expect(result.backend).toBe("whisper-server+tail");
+      expect(result.backend).toBe("whisper-server");
     });
 
-    it("preserves a one-word tail extension after an intentionally repeated phrase", async () => {
+    it("does not append a one-word tail extension after an intentionally repeated phrase (log-only)", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-tail-one-word-extension-test.wav");
       await Bun.write(wavPath, makePcm16Wav(71));
@@ -548,10 +614,11 @@ describe("STT backends", () => {
 
       const result = await backend.transcribe(wavPath);
 
+      // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
       expect(result.text).toBe(
-        "intro alpha beta gamma delta prior thought and then alpha beta gamma delta finale",
+        "intro alpha beta gamma delta prior thought and then alpha beta",
       );
-      expect(result.backend).toBe("whisper-server+tail");
+      expect(result.backend).toBe("whisper-server");
     });
 
     it("repairs a leading punctuation-only resident decode when retry preserves the start", async () => {
@@ -651,7 +718,7 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+clean");
     });
 
-    it("repairs a compressed final sentence when prompted tail decode has no overlap", async () => {
+    it("keeps a compressed final sentence when prompted tail decode has no overlap (log-only)", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-tail-compressed-sentence-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
@@ -673,13 +740,14 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(calls).toBe(3);
+      // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
       expect(result.text).toBe(
-        "Are these two separate or parallel tracks or are they sequenced? I'm confused about those tracks. I like that Comfy UI feeds both tracks.",
+        "Are these two separate or parallel tracks or are they sequenced? I'm confused about those tracks. Tracks.",
       );
-      expect(result.backend).toBe("whisper-server+tail");
+      expect(result.backend).toBe("whisper-server");
     });
 
-    it("repairs a prompted tail after dropping a repeated non-short orphan", async () => {
+    it("keeps a repeated non-short orphan instead of repairing it from the prompted tail (log-only)", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-tail-prompted-orphan-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
@@ -697,13 +765,12 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(calls).toBe(2);
-      expect(result.text).toBe(
-        "I'm confused about those tracks. I like that Comfy UI feeds both tracks.",
-      );
-      expect(result.backend).toBe("whisper-server+tail");
+      // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
+      expect(result.text).toBe("I'm confused about those tracks. Tracks.");
+      expect(result.backend).toBe("whisper-server");
     });
 
-    it("verifies medium recordings so live dictation does not lose the final phrase", async () => {
+    it("verifies medium recordings with a tail decode but keeps the full-decode text (log-only)", async () => {
       const wavPath = testTmp("voicelayer-whisper-server-medium-tail-test.wav");
       await Bun.write(wavPath, makePcm16Wav(17));
       let calls = 0;
@@ -720,10 +787,11 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(calls).toBe(2);
+      // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
       expect(result.text).toBe(
-        "can you just do this and then tell me when you have the next goal for the next brain layer codex do you have the next goal for the next brain layer codex",
+        "can you just do this and then tell me when you have the next goal for the next brain layer codex do you",
       );
-      expect(result.backend).toBe("whisper-server+tail");
+      expect(result.backend).toBe("whisper-server");
     });
 
     it("skips unprompted tail retry when prompted tail confirms the current ending", async () => {
@@ -747,7 +815,7 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server");
     });
 
-    it("still retries unprompted tail when the confirmed ending is a dangling cue", async () => {
+    it("still retries unprompted tail when the confirmed ending is a dangling cue, but keeps the full-decode text (log-only)", async () => {
       const wavPath =
         testTmp("voicelayer-whisper-server-dangling-confirmed-tail-test.wav");
       await Bun.write(wavPath, makePcm16Wav(17));
@@ -765,10 +833,9 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(calls).toBe(3);
-      expect(result.text).toBe(
-        "we should talk about it do you want the next goal",
-      );
-      expect(result.backend).toBe("whisper-server+tail");
+      // Etan's ruling B (2026-10-19): tail verify is log-only, so the full-decode text stands.
+      expect(result.text).toBe("we should talk about it do you");
+      expect(result.backend).toBe("whisper-server");
     });
 
     it("refuses to drop a repeated short common word as a tail orphan", async () => {

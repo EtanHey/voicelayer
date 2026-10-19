@@ -278,8 +278,8 @@ export interface OutroGateOptions {
    * Macroscope, PR #34: the span lookup counts words to find a candidate's
    * position, so it is only sound while the text still matches the segment
    * stream. `verifyLeadingPunctuation` can swap in a retry decode that adds
-   * leading words, `verifyTailForLongRecording` can merge in recovered tail
-   * words, and `trimEchoedTrailingPhrase` can remove some — each shifts every
+   * leading words and `trimEchoedTrailingPhrase` can remove some
+   * (`verifyTailForLongRecording` is log-only since 2026-10-19) — each shifts every
    * later offset, and the word-verification check catches most but not all
    * misalignments. When this is given and differs from `text`, the gate
    * refuses outright rather than measuring a span it cannot vouch for.
