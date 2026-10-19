@@ -214,7 +214,8 @@ export type PlaybackOutcomeReason =
   | "expired"
   | "collapsed"
   | "refused"
-  | "player-error";
+  | "player-error"
+  | "replaced";
 
 export interface PlaybackOutcomeEvent {
   type: "playback_outcome";
@@ -227,6 +228,21 @@ export interface PlaybackOutcomeEvent {
   /** Zero-based word active at the stopped position, when available. */
   word_index?: number;
   word_count?: number;
+}
+
+/** A parked utterance's frozen cursor; `resumed` is sent only when a player actually starts. */
+export interface PlaybackStateEvent {
+  type: "playback_state";
+  state: "paused" | "resumed";
+  playback_id: string;
+  generation: number;
+  /** Global utterance position (chunk start + chunk-local offset). */
+  offset_ms: number;
+  chunk_offset_ms: number;
+  duration_ms?: number;
+  word_index?: number;
+  word_count?: number;
+  long_read?: StateEvent["long_read"];
 }
 
 export type CommandModePhase =
@@ -257,6 +273,8 @@ export type IntentOutcome = "accept" | "noop" | "reject" | "loading";
 
 export type AckCommand =
   | "seek"
+  | "pause"
+  | "resume"
   | "speak_text"
   | "stop"
   | "cancel"
@@ -317,6 +335,7 @@ export type SocketEvent =
   | SubtitleEvent
   | QueueEvent
   | PlaybackOutcomeEvent
+  | PlaybackStateEvent
   | CommandModeEvent
   | ClipMarkerEvent
   | AckEvent
@@ -465,8 +484,18 @@ export interface SeekCommand extends SocketCommandBase {
   readback_id?: string;
 }
 
+/** Pause/Resume are idempotent; an identity, when sent, must match the parked item. */
+export interface PlaybackControlCommand extends SocketCommandBase {
+  cmd: "pause" | "resume";
+  playback_id?: string;
+  generation?: number;
+  /** Pause only: VoiceBar's teleprompter clock, so the frozen word matches what was shown. */
+  playback_elapsed_ms?: number;
+}
+
 export type SocketCommand =
   | SeekCommand
+  | PlaybackControlCommand
   | SpeakTextCommand
   | { cmd: "history_playback_ready"; id: string }
   | StopCommand
@@ -649,6 +678,17 @@ export function parseCommand(line: string): SocketCommand | null {
         return withCommandId<SeekCommand>({ cmd: "seek", offset_ms: parsed.offset_ms,
           ...(parsed.scope !== undefined ? { scope: parsed.scope as SeekCommand["scope"] } : {}),
           ...(parsed.scope === "readback" ? { readback_id: parsed.readback_id as string } : {}) }, id);
+      case "pause":
+      case "resume": {
+        const { playback_id, generation, playback_elapsed_ms } = parsed;
+        if (playback_id !== undefined && (typeof playback_id !== "string" || !playback_id)) return null;
+        if (generation !== undefined && (!Number.isSafeInteger(generation) || generation < 1)) return null;
+        if (playback_elapsed_ms !== undefined && playbackElapsedMs === undefined) return null;
+        return withCommandId<PlaybackControlCommand>({ cmd: parsed.cmd,
+          ...(playback_id !== undefined ? { playback_id } : {}),
+          ...(generation !== undefined ? { generation } : {}),
+          ...(playbackElapsedMs !== undefined ? { playback_elapsed_ms: playbackElapsedMs } : {}) }, id);
+      }
       case "speak_text": {
         if (typeof parsed.text !== "string" || !parsed.text.trim() || parsed.text.length > SPEAK_TEXT_MAX_CHARS) return null;
         if (parsed.profile !== undefined && !["auto", "short", "long"].includes(parsed.profile)) return null;
