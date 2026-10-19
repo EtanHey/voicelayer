@@ -440,7 +440,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       playback_offset_ms: 0, long_read: { id: h.id, chunk_index: 0, chunk_start_ms: 0 },
     });
     clockMs += 100; stopPlayback(100); await h.done;
-    expect(loadHistory()).toHaveLength(1); expect(historyInputs[0]).toHaveLength(2);
+    // HISTDUP1: the restart re-heard 0-100 ms of the 0-250 ms already heard; history keeps it once.
+    expect(loadHistory()).toHaveLength(1); expect(readText.startsWith(loadHistory()[0].text)).toBe(true);
+    expect(historyInputs[0]).toHaveLength(1);
   });
 
   it("REP1 replays the prefix after a cross-chunk seek without resynthesis", async () => {

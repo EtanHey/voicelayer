@@ -65,7 +65,7 @@ import { RetainedReadback } from "./tts/retained-readback";
 import { prepareSeekSlice, disposeSeekSlice } from "./tts/seek-audio";
 import { PlaybackLifecycle, type PlaybackScope, type QueuedPlaybackHandle } from "./tts/playback-lifecycle";
 export type { PlaybackScope, QueuedPlaybackHandle } from "./tts/playback-lifecycle";
-import { runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read";
+import { historyText, runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
@@ -2216,7 +2216,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         const combined = ttsFilePath(process.pid, ttsCounter++);
         try {
           await assembleLongReadHistory(played, combined);
-          addToHistory(played.map((item) => item.text).join(" "), combined,
+          addToHistory(historyText(played), combined,
             chunkVoices.get(played[0]?.chunk.audioFile) ?? profile.voice);
         } catch (error) {
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);

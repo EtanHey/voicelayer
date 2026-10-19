@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "bun:test";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
-import { runLongRead, type LongReadChunk, type LongReadDependencies } from "../tts/long-read";
+import { historyText, runLongRead, type LongReadChunk, type LongReadDependencies, type PlayedChunk } from "../tts/long-read";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -143,5 +143,67 @@ describe("REP1 owned long-read restart", () => {
       controller.abort(); for (const prep of preparations.values) prep.resolve("stale.wav");
       for (const play of plays.values) play.exit.resolve({ status: "interrupted", stopped_at_ms: 200 }); await done;
     }
+  });
+});
+
+describe("HISTDUP1 history represents the utterance once after replay and seeks", () => {
+  type Exit = { status: string; stopped_at_ms?: number };
+  function scrubbed(texts: string[]) {
+    const controller = new AbortController(), plays = fixtureBarrier<{ index: number; offsetMs: number; exit: ReturnType<typeof deferred<Exit>> }>();
+    let control!: import("../tts/long-read").LongReadSeek; let saved: PlayedChunk[] = [];
+    const chunks = texts.map((_t, i) => chunk(i));
+    const done = runLongRead(texts, "scrub", controller.signal, {
+      registerSeek: value => { control = value; },
+      synthesize: async (_text, i) => chunks[i],
+      play: (_chunk, _text, info, position) => {
+        const exit = deferred<Exit>(); plays.push({ index: info.chunk_index, offsetMs: position.offsetMs, exit });
+        return { started: Promise.resolve(true), exited: exit.promise };
+      },
+      saveHistory: async played => { saved = played.map(p => ({ ...p })); },
+      dispose: () => {},
+    });
+    // The real player reports the position it reached when a seek interrupts it.
+    const scrub = async (n: number, stoppedAt: number, act: () => unknown) => {
+      await plays.at(n); act(); plays.values[n].exit.resolve({ status: "interrupted", stopped_at_ms: stoppedAt });
+    };
+    const finish = async (n: number) => { await plays.at(n); plays.values[n].exit.resolve({ status: "completed" }); };
+    return { controller, plays, done, scrub, finish, control: () => control, saved: () => saved, chunks };
+  }
+
+  it("RED repro: 1 play + 1 replay + 5 seeks saves the sentence once, not ×7", async () => {
+    const f = scrubbed(["The whole sentence."]);
+    await f.scrub(0, 400, () => f.control().restart());
+    await f.scrub(1, 600, () => f.control().seek(200));
+    await f.scrub(2, 500, () => f.control().seek(100));
+    await f.scrub(3, 300, () => f.control().seek(250));
+    await f.scrub(4, 700, () => f.control().seek(50));
+    await f.scrub(5, 900, () => f.control().seek(300));
+    await f.finish(6); await f.done;
+    expect(f.plays.values).toHaveLength(7);
+    expect(historyText(f.saved())).toBe("The whole sentence.");
+    // Audio: one linear range over the chunk, so the assembled replay plays it once.
+    expect(f.saved()).toEqual([{ chunk: f.chunks[0], text: "The whole sentence.", playedMs: 1000 }]);
+  });
+
+  it("a backward seek across chunks keeps every chunk once, in order", async () => {
+    const f = scrubbed(["One.", "Two.", "Three."]);
+    await f.finish(0);
+    await f.scrub(1, 500, () => f.control().seek(200)); // back into chunk 0
+    await f.finish(2); await f.finish(3); await f.finish(4); await f.done;
+    expect(historyText(f.saved())).toBe("One. Two. Three.");
+    expect(f.saved().map(p => [p.chunk.audioFile, p.startMs ?? 0, p.playedMs])).toEqual([["0.mp3", 0, 1000], ["1.mp3", 0, 1000], ["2.mp3", 0, 1000]]);
+  });
+
+  it("a forward skip keeps only heard audio, with the chunk text still once", async () => {
+    const f = scrubbed(["One.", "Two."]);
+    await f.scrub(0, 300, () => f.control().seek(700));
+    await f.finish(1); await f.finish(2); await f.done;
+    expect(historyText(f.saved())).toBe("One. Two.");
+    expect(f.saved().map(p => [p.chunk.audioFile, p.startMs ?? 0, p.playedMs])).toEqual([["0.mp3", 0, 300], ["0.mp3", 700, 300], ["1.mp3", 0, 1000]]);
+  });
+
+  it("repeated sentences that are really in the text stay repeated", () => {
+    const a = chunk(0), b = chunk(1);
+    expect(historyText([{ chunk: a, text: "Again.", playedMs: 1000 }, { chunk: b, text: "Again.", playedMs: 1000 }])).toBe("Again. Again.");
   });
 });
