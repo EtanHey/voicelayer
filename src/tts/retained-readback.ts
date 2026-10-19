@@ -31,6 +31,12 @@ export class RetainedReadback {
     return this.identity;
   }
 
+  /** Late clone alignment for a retained chunk, pinned to the snapshot identity it measured. */
+  rememberAlignedWords(identity: string, index: number, alignedWords: PlaybackMetadata["alignedWords"]): void {
+    const chunk = identity === this.identity ? this.chunks.get(index) : undefined;
+    if (chunk) chunk.metadata = { ...chunk.metadata, alignedWords };
+  }
+
   /** The span a readback seek can reach right now; 0 when `acquire` would refuse it. */
   seekableMs(owner?: string): number {
     return this.replayable(owner)?.reduce((sum, [, c]) => sum + c.metadata.durationMs!, 0) ?? 0;

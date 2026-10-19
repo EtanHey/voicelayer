@@ -557,7 +557,7 @@ export function alignWordBoundariesToDisplayText(
 }
 
 /** Edge timings one per display token. Raw engine words (display === spoken) still need the token map. */
-function displayTokenBoundaries(displayText: string, wordBoundaries: WordBoundary[]): WordBoundary[] {
+export function displayTokenBoundaries(displayText: string, wordBoundaries: WordBoundary[]): WordBoundary[] {
   const tokens = Array.from(displayText.matchAll(/\S+/gu), match => match[0]);
   if (wordBoundaries.length === tokens.length && wordBoundaries.every((word, i) => word.text === tokens[i])) return wordBoundaries;
   const whole = { start: 0, end: displayText.length };
@@ -1610,8 +1610,10 @@ class PlaybackQueueManager {
         chunkId: String(next.metadata.longRead?.chunk_index ?? 0),
       }, () => this.current === active && !next.completed && next.lifecycle.generation === generation,
       aligned_words => {
-        // A seek restarts this job; its next start re-broadcasts what was measured here.
+        // A seek restarts this job, and an idle word click replays the retained snapshot;
+        // both re-broadcast what was measured here at their start.
         next.metadata!.alignedWords = aligned_words;
+        if (readbackID) retainedReadback.rememberAlignedWords(readbackID, next.metadata!.longRead?.chunk_index ?? 0, aligned_words);
         broadcast({ type: "subtitle", words: [], aligned_words, duration_ms: durationMs });
         next.metadata!.onAlignedWords?.(aligned_words);
       });

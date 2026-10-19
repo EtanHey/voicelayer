@@ -2014,6 +2014,8 @@ public final class VoiceState {
                 clearHistoryRetranscriptionRequest(removeSuppression: false)
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
+                // WORDTIME1: chunk identity is read + chunk start; text equality is not identity.
+                let previousChunk = mode == .speaking ? (read: playbackLongReadID, start: playbackChunkStartMilliseconds) : nil
                 let previousLongRead = mode == .speaking ? playbackLongReadID.map {
                     (id: $0, duration: playbackDurationMilliseconds, growing: isPlaybackDurationGrowing)
                 } : nil
@@ -2046,8 +2048,10 @@ public final class VoiceState {
                 clearRetainedTeleprompter()
                 // A speaking event precedes the fresh subtitle payload. Do not let
                 // timings from the previous utterance animate a similar new one.
-                if validOffset == nil || statusText != event["text"] as? String {
-                    // Re-entering a chunk of this read (a seek back) restores the timings it already had.
+                let sameChunk = validOffset != nil && statusText == event["text"] as? String &&
+                    previousChunk?.read == longReadID && previousChunk?.start == playbackChunkStartMilliseconds
+                if !sameChunk {
+                    // Entering a chunk of this read (a seek back) restores the timings it already had.
                     let stored = playbackTimelineChunks[playbackChunkStartMilliseconds]
                     wordBoundaries = stored?.text == event["text"] as? String ? stored?.words ?? [] : []
                 }

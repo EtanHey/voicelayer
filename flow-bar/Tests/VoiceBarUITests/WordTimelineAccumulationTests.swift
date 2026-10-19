@@ -71,4 +71,44 @@ final class WordTimelineAccumulationTests: XCTestCase {
         speak(state, "other read", read: "read-2")
         XCTAssertTrue(state.playbackWordTimeline.isEmpty, "a new read starts its own timeline")
     }
+
+    // R2 S1: chunk identity is read + chunk start, never text equality.
+    func testRepeatedChunkTextSelectsTimingsByChunkIdentity() {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        speak(state, "repeat me")
+        state.handleEvent(["type": "subtitle", "words": [], "duration_ms": 1000,
+                           "aligned_words": [row(0, "repeat", 0, 200), row(1, "me", 300, 200)]])
+        speak(state, "repeat me", chunkStart: 1000)
+        XCTAssertTrue(state.wordBoundaries.isEmpty, "a new chunk never inherits the previous chunk's offsets")
+        state.handleEvent(["type": "subtitle", "words": [], "duration_ms": 1000,
+                           "aligned_words": [row(0, "repeat", 0, 200), row(1, "me", 300, 200)]])
+        speak(state, "repeat me", chunkStart: 0)
+        XCTAssertEqual(words(state).map(\.offsetMs), [0, 300], "seeking back restores chunk 0, not chunk 1")
+        state.handleEvent(["type": "state", "state": "speaking", "text": "repeat me", "duration_ms": 5000,
+                           "playback_offset_ms": 300, "long_read": ["id": "read-1", "chunk_start_ms": 0]])
+        XCTAssertEqual(words(state).map(\.offsetMs), [0, 300], "a seek inside the same chunk keeps its timings")
+        speak(state, "repeat me", chunkStart: 2000)
+        XCTAssertTrue(state.wordBoundaries.isEmpty, "an untimed identical chunk shows no stale timings")
+        speak(state, "repeat me", read: "read-2", chunkStart: 0)
+        XCTAssertTrue(state.wordBoundaries.isEmpty, "a new read with the same text starts untimed")
+    }
+
+    // R2 S2+S3: a replay of history shows the first run's timeline, Edge anchors and per-chunk estimates included.
+    func testPersistedEstimatesAndEdgeAnchorsReplayUnchanged() {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        speak(state, "- MP3 anchor tail head end", read: nil, duration: 2500)
+        let estimated = { (index: Int, text: String, offset: Int, duration: Int) -> [String: Any] in
+            var value = self.row(index, text, offset, duration); value["estimated"] = true; return value }
+        state.handleEvent(["type": "subtitle", "words": [], "duration_ms": 2500, "aligned_words": [
+            estimated(0, "-", 0, 0), row(1, "MP3", 0, 250), row(2, "anchor", 500, 100), estimated(3, "tail", 600, 900),
+            estimated(4, "head", 1500, 500), row(5, "end", 2000, 100)]])
+        let mapped = words(state)
+        XCTAssertEqual(mapped.map(\.offsetMs), [0, 0, 500, 600, 1500, 2000])
+        XCTAssertEqual(mapped.map(\.durationMs), [0, 250, 100, 900, 500, 100])
+        XCTAssertEqual(mapped.map(\.hasInterpolatedTiming), [true, false, false, true, true, false])
+        XCTAssertEqual(mapped.map { TeleprompterSeekPolicy.offset(for: $0, isReadback: false) }, [0, 0, 500, 600, 1500, 2000])
+        speak(state, "- MP3", read: nil)
+        state.handleEvent(["type": "subtitle", "words": [], "aligned_words": [row(0, "-", 0, 0), row(1, "MP3", 0, 250)]])
+        XCTAssertEqual(words(state).map(\.offsetMs), [nil, 0], "a measured clone row still needs a positive span")
+    }
 }

@@ -162,11 +162,13 @@ public struct TeleprompterBoundary: Equatable {
             let offset = indexed ? milliseconds(row["offset_ms"]) : legacyMilliseconds(row["offset_ms"])
             let duration = indexed ? milliseconds(row["duration_ms"]) : legacyMilliseconds(row["duration_ms"])
             let index = milliseconds(row["word_index"], integral: true)
+            // WORDTIME1 history: an estimate or Edge seek anchor, which may be zero-length. Measured rows never are.
+            let estimated = indexed && (row["estimated"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue } == true
             if !indexed, offset == nil || duration == nil { return nil }
             var globalOffset: Int?
             // Legacy values retain their signs and zero-duration markdown anchors.
             // Only indexed timing requires a nonnegative start and positive span.
-            if let offset, let duration, (!indexed || (offset >= 0 && duration > 0 && chunkStartMs >= 0)) {
+            if let offset, let duration, (!indexed || (offset >= 0 && (duration > 0 || estimated) && chunkStartMs >= 0)) {
                 let global = offset.addingReportingOverflow(chunkStartMs)
                 if !global.overflow && !global.partialValue.addingReportingOverflow(duration).overflow {
                     globalOffset = global.partialValue
@@ -175,7 +177,7 @@ public struct TeleprompterBoundary: Equatable {
             // A legacy placeholder would enable estimated karaoke without timing.
             if !indexed, globalOffset == nil { return nil }
             return Self(offsetMs: globalOffset, durationMs: globalOffset == nil ? nil : duration,
-                        text: text, wordIndex: indexed ? (index ?? -1) : nil)
+                        text: text, wordIndex: indexed ? (index ?? -1) : nil, isInterpolated: estimated && globalOffset != nil)
         }
     }
 }

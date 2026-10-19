@@ -183,6 +183,8 @@ export interface AlignedWordBoundary {
   /** Chunk-local playback milliseconds, already adjusted for the player rate. */
   offset_ms: number | null;
   duration_ms: number | null;
+  /** WORDTIME1 history only: interpolated or an Edge seek anchor (may be zero-length), not measured. */
+  estimated?: true;
 }
 
 /** Legacy Edge events are unchanged. Nullable updates may arrive during playback.
