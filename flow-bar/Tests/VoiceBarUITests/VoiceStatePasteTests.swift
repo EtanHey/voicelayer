@@ -38,6 +38,27 @@ final class VoiceStatePasteTests: XCTestCase {
         }
     }
 
+    /// MICDROP2: the partial transcript still pastes, and the pill then says why it is short.
+    func testMicDisconnectNoticeOutlastsThePastedTranscript() {
+        let harness = TerminalDelayHarness(bundle: "com.cmuxterm.app")
+        harness.state.record()
+        harness.state.handleEvent([
+            "type": "mic_disconnected", "at_ms": 42400, "reason": "device-removed",
+            "message": "Mic disconnected at 0:42",
+        ])
+        XCTAssertEqual(harness.state.confirmationText, MicDisconnectFeedback.pill(atMs: 42400))
+        harness.begin(source: "auto")
+        harness.activateThenMoveFocus(to: .unchanged)
+        harness.deliver()
+        XCTAssertEqual(harness.typed, [TerminalDelayHarness.delivered], "the partial transcript is still delivered")
+        XCTAssertEqual(harness.state.confirmationText, "Mic lost\nat 0:42")
+        XCTAssertTrue(TwoLineStatusFeedback.contains(harness.state.confirmationText))
+
+        // Consumed once: the next dictation's paste shows its own words.
+        harness.state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        XCTAssertNil(harness.state.pendingMicDisconnectNotice)
+    }
+
     func testOtherManualTerminalRoutesNeverReceiveAPID() {
         for source in ["context_menu_latest", "context_menu_history", "menu_bar", "bar_history", "local_control", "unknown"] {
             let harness = TerminalDelayHarness(bundle: "com.cmuxterm.app")

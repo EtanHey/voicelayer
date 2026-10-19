@@ -25,10 +25,26 @@ enum SelectionErrorFeedback {
     }
 }
 
+/// MICDROP2: the input device was lost mid-recording. The pill and History share one clock.
+enum MicDisconnectFeedback {
+    static func clock(_ milliseconds: Int) -> String {
+        let totalSeconds = max(0, Int((Double(milliseconds) / 1000).rounded()))
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
+
+    static func pill(atMs: Int) -> String { "Mic lost\nat \(clock(atMs))" }
+    static func historyNote(atMs: Int) -> String { "Mic disconnected at \(clock(atMs))" }
+
+    static func contains(_ text: String?) -> Bool {
+        text?.hasPrefix("Mic lost\nat ") == true
+    }
+}
+
 /// Only these short notices opt into two lines; transcript previews keep their limit.
 enum TwoLineStatusFeedback {
     static func contains(_ text: String?) -> Bool {
         PasteRecoveryFeedback.contains(text) || SelectionErrorFeedback.contains(text)
+            || MicDisconnectFeedback.contains(text)
     }
 }
 

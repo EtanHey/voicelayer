@@ -13,6 +13,7 @@ import type { WhisperPerformanceEffort } from "./whisper-performance";
 import type { WhisperModelResidency, WhisperModelStatus } from "./model-status";
 import type { DictationReceiptMetadata } from "./dictation-receipt";
 import type { STTDictionaryDisplayEntry } from "./stt-vocabulary-store";
+import { DEVICE_LOSS_REASONS, type DeviceLossReason, type MicLossReason } from "./mic-disconnect";
 import {
   PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
   type PlaybackAmplitudeEnvelope,
@@ -80,6 +81,8 @@ export interface StateEvent {
    * (see BoundaryContractTests). Live repro 2026-07-26 12:55:30 (466 chars pasted into Preview).
    */
   bar_owned?: boolean;
+  /** MICDROP2: this capture's generation; `input_device_lost` must name it. Recording state only. */
+  capture_id?: number;
 }
 
 export interface SpeechEvent {
@@ -151,6 +154,15 @@ export interface ErrorEvent {
   show_during_bar_recording?: boolean;
   /** Machine-readable capture failure signal for VoiceBar daemon supervision. */
   capture_failure?: "broken-mic";
+}
+
+/** MICDROP2/3: the input device was lost mid-recording, observed at `at_ms`; every byte is still decoded. */
+export interface MicDisconnectedEvent {
+  type: "mic_disconnected";
+  at_ms: number;
+  reason: MicLossReason;
+  /** "Mic disconnected at m:ss": the same note History shows. */
+  message: string;
 }
 
 /** Word boundary from edge-tts WordBoundary event. */
@@ -344,6 +356,7 @@ export type SocketEvent =
   | PolishReadyEvent
   | AudioLevelEvent
   | ErrorEvent
+  | MicDisconnectedEvent
   | SubtitleEvent
   | QueueEvent
   | PlaybackOutcomeEvent
@@ -377,6 +390,16 @@ export interface StopCommand extends SocketCommandBase {
   physical_press?: boolean;
   /** VoiceBar's teleprompter clock at the stop edge. */
   playback_elapsed_ms?: number;
+}
+
+/** MICDROP2: VoiceBar's CoreAudio listener saw capture `capture_id`'s input device go away. */
+export interface InputDeviceLostCommand extends SocketCommandBase {
+  cmd: "input_device_lost";
+  reason: DeviceLossReason;
+  /** The `capture_id` of the `recording` state event VoiceBar bound the device to. */
+  capture_id: number;
+  /** The CoreAudio AudioDeviceID VoiceBar watched (diagnostic). */
+  device_id: number;
 }
 
 export interface CancelCommand extends SocketCommandBase {
@@ -527,6 +550,7 @@ export type SocketCommand =
   | VocabAddTermCommand
   | VocabRemoveTermCommand
   | SetRecordingHoldCommand
+  | InputDeviceLostCommand
   | SetWhisperEffortCommand
   | PreviewTTSProfileCommand
   | SetTTSSettingCommand
@@ -918,6 +942,12 @@ export function parseCommand(line: string): SocketCommand | null {
           id,
         );
       }
+      case "input_device_lost":
+        if (!(DEVICE_LOSS_REASONS as readonly unknown[]).includes(parsed.reason) ||
+            !Number.isSafeInteger(parsed.capture_id) || parsed.capture_id < 1 ||
+            !Number.isSafeInteger(parsed.device_id) || parsed.device_id < 1) return null;
+        return withCommandId<InputDeviceLostCommand>({ cmd: "input_device_lost", reason: parsed.reason,
+          capture_id: parsed.capture_id, device_id: parsed.device_id }, id);
       case "toggle": {
         if (typeof parsed.enabled !== "boolean") return null;
         const scope = parsed.scope;

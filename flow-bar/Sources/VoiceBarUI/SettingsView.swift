@@ -108,6 +108,8 @@ struct SettingsHistoryMediaPart: Equatable {
     var spokenDurationLabel: String?
     /// "1.2 s processing", the same figure as the last-dictation card.
     var processingLabel: String?
+    /// MICDROP2: "Mic disconnected at 0:42" when the input device was lost mid-recording.
+    var micDisconnectLabel: String?
 
     var label: String? {
         switch role {
@@ -251,7 +253,9 @@ struct SettingsHistoryRowModel: Equatable {
                     durationLabel: durationLabels.audio,
                     transcribedDurationLabel: hasSpokenLength ? nil : durationLabels.transcribed,
                     spokenDurationLabel: hasSpokenLength ? durationLabels.transcribed : nil,
-                    processingLabel: processingLabel(entry.processingDurationMs)
+                    processingLabel: processingLabel(entry.processingDurationMs),
+                    micDisconnectLabel: entry.micDisconnectNote
+                        ?? entry.micDisconnectedAtMs.map(MicDisconnectFeedback.historyNote(atMs:))
                 ),
             ]
         )
@@ -1818,8 +1822,11 @@ public struct SettingsView: View {
         let heardLabel = part.transcribedDurationLabel
         let spokenLabel = part.spokenDurationLabel
         let processingLabel = part.processingLabel
+        let micDisconnectLabel = part.micDisconnectLabel
 
-        if audioLabel != nil || heardLabel != nil || spokenLabel != nil || processingLabel != nil {
+        if audioLabel != nil || heardLabel != nil || spokenLabel != nil || processingLabel != nil
+            || micDisconnectLabel != nil
+        {
             HStack(spacing: 12) {
                 if let audioLabel {
                     Label(audioLabel, systemImage: "waveform")
@@ -1842,6 +1849,12 @@ public struct SettingsView: View {
                     Label(processingLabel, systemImage: "timer")
                         .help("Processing — from the end of recording to the finished transcript")
                         .accessibilityLabel("Processing time \(processingLabel)")
+                }
+                if let micDisconnectLabel {
+                    Label(micDisconnectLabel, systemImage: "mic.slash")
+                        .foregroundStyle(.orange)
+                        .help("The microphone signal was lost here; the whole recording is kept, and only the audio before it was transcribed")
+                        .accessibilityLabel(micDisconnectLabel)
                 }
             }
             .font(.caption.monospacedDigit())
