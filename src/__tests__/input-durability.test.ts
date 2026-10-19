@@ -2274,45 +2274,147 @@ describe("input recording durability", () => {
     }
   }, 10_000);
 
-  for (const [label, tail] of [
-    ["untrimmed", 0],
-    ["trimmed", 60],
-  ] as const) {
-    it(`MICDROP3 chunked STT, VAD backlogged at a CoreAudio report, ${label}: recording continues and the decoder gets every byte (Sol R1 #2)`, async () => {
-      const previous = process.env.QA_VOICE_CHUNKED_STT;
-      process.env.QA_VOICE_CHUNKED_STT = "1";
-      let release!: () => void;
-      let blocked = false;
-      let calls = 0;
-      const gate = new Promise<void>(resolve => { release = resolve; });
-      vadProcessSpy!.mockImplementation(async () => {
-        if (++calls === 11) { blocked = true; await gate; }
-        return 0.95;
-      });
-      installFakeRecorder([...liveChunks(40), ...Array.from({ length: tail }, () => makePcmChunk(0))], true);
+  it("MICDROP3 chunked STT, VAD backlogged at a CoreAudio report: recording continues and the decoder gets every byte (Sol R1 #2)", async () => {
+    const previous = process.env.QA_VOICE_CHUNKED_STT;
+    process.env.QA_VOICE_CHUNKED_STT = "1";
+    let release!: () => void;
+    let blocked = false;
+    let calls = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vadProcessSpy!.mockImplementation(async () => {
+      if (++calls === 11) { blocked = true; await gate; }
+      return 0.95;
+    });
+    installFakeRecorder(liveChunks(40), true);
+    const { waitForInput, reportInputDeviceLost } = await import("../input");
+    let archivePath = "";
+    const pending = waitForInput(20_000, "standard", false, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+    try {
+      await waitUntil(() => blocked, "VAD suspended on chunk 11", 10_000);
+      expect(reportInputDeviceLost("device-removed", liveCaptureId())).toBe(true);
+      expect(await raceStillRecording(pending, 300)).toBe("still recording");
+      release();
+      await stopPushToEndOnceCaptured(40 * VAD_CHUNK_BYTES);
+      expect(await raceStillRecording(pending, 4_000)).toBe("Retained transcript.");
+      expect(readWavDataSize(join(archivePath, "audio.wav"))).toBe(40 * VAD_CHUNK_BYTES);
+      expect(backendTranscribedDataSize).toBe(40 * VAD_CHUNK_BYTES);
+      // Nothing arrived after the report: no flat evidence, so no label.
+      expect(broadcasts.some(e => e.type === "mic_disconnected")).toBe(false);
+    } finally {
+      release();
+      await pending.catch(() => null);
+      if (previous === undefined) delete process.env.QA_VOICE_CHUNKED_STT;
+      else process.env.QA_VOICE_CHUNKED_STT = previous;
+    }
+  }, 10_000);
+
+  // MICDROP3 R1 (Sol): any loss evidence bypasses the legacy PTT silence trimmer, so the backend,
+  // the rebuilt chunked session and recovery all get the complete capture. 40 live chunks, then a
+  // 6.4 s tail (200 chunks, well past the trim threshold). Without evidence main's trimmer still runs.
+  const quietLiveChunk = () => {
+    const chunk = makePcmChunk(0);
+    const view = new DataView(chunk.buffer);
+    for (let i = 0; i < VAD_CHUNK_SAMPLES; i++) view.setInt16(i * 2, [0, 18, -3, -18, 7, 1][i % 6]!, true);
+    return chunk; // 36 LSB: a live quiet floor, never dead-device flat
+  };
+  const withChunking = async (chunked: boolean, body: () => Promise<void>) => {
+    const previous = process.env.QA_VOICE_CHUNKED_STT;
+    process.env.QA_VOICE_CHUNKED_STT = chunked ? "1" : "0";
+    try { await body(); } finally {
+      if (previous === undefined) delete process.env.QA_VOICE_CHUNKED_STT;
+      else process.env.QA_VOICE_CHUNKED_STT = previous;
+    }
+  };
+  for (const chunked of [false, true]) {
+    for (const ending of ["confirmed report", "unconfirmed report", "recorder EOF", "no-event control"] as const) {
+      it(`MICDROP3 R1 long tail past the PTT trimmer, chunked=${chunked}, ${ending}: exact bytes in archive, recovery and backend`, async () => {
+        await withChunking(chunked, async () => {
+          vadProcessSpy!.mockResolvedValue(0.95);
+          const recorder = installFakeRecorder(liveChunks(40), true);
+          const { waitForInput, reportInputDeviceLost } = await import("../input");
+          let archivePath = "";
+          const pending = waitForInput(20_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+          try {
+            await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === 40 * VAD_CHUNK_BYTES,
+              "live first", 10_000);
+            if (ending.endsWith("report")) expect(reportInputDeviceLost("device-removed", liveCaptureId())).toBe(true);
+            const tail = ending === "unconfirmed report" ? quietLiveChunk : ditherChunk;
+            for (let n = 0; n < 200; n++) recorder.push(tail());
+            await waitUntil(() => readWavDataSize(retainedPath) === 240 * VAD_CHUNK_BYTES, "long tail", 10_000);
+            if (ending === "recorder EOF") recorder.end();
+            else writeFileSync(STOP_FILE, "stop");
+            expect(await raceStillRecording(pending, 6_000)).toBe("Retained transcript.");
+            // Main's trimmer output for this fixture (Sol R1: 80,000 bytes, 2,500 ms) when there is no evidence.
+            const expected = ending === "no-event control" ? 80_000 : 240 * VAD_CHUNK_BYTES;
+            expect({
+              archive: readWavDataSize(join(archivePath, "audio.wav")),
+              recovery: readWavDataSize(retainedPath),
+              backend: backendTranscribedDataSize,
+            }).toEqual({ archive: 240 * VAD_CHUNK_BYTES, recovery: expected, backend: expected });
+            const loss = broadcasts.find(e => e.type === "mic_disconnected");
+            if (ending === "confirmed report") expect(loss).toMatchObject({ at_ms: 1280, reason: "device-removed" });
+            else if (ending === "recorder EOF") expect(loss).toMatchObject({ at_ms: 7680, reason: "recorder-ended" });
+            else expect(loss).toBeUndefined();
+          } finally {
+            writeFileSync(STOP_FILE, "stop");
+            await pending.catch(() => null);
+            clearStopSignal();
+          }
+        });
+      }, 15_000);
+    }
+  }
+
+  it("MICDROP3 R1 a quiet live floor BEFORE a confirmed report is decoded whole (Sol R1 pre-event control)", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    const recorder = installFakeRecorder([...liveChunks(40), ...Array.from({ length: 200 }, quietLiveChunk)], true);
+    const { waitForInput, reportInputDeviceLost } = await import("../input");
+    let archivePath = "";
+    const pending = waitForInput(20_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+    try {
+      await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === 240 * VAD_CHUNK_BYTES,
+        "quiet live floor before the event", 10_000);
+      expect(reportInputDeviceLost("device-removed", liveCaptureId())).toBe(true);
+      for (let n = 0; n < 20; n++) recorder.push(ditherChunk());
+      await stopPushToEndOnceCaptured(260 * VAD_CHUNK_BYTES);
+      expect(await pending).toBe("Retained transcript.");
+      expect({
+        archive: readWavDataSize(join(archivePath, "audio.wav")),
+        recovery: readWavDataSize(retainedPath),
+        backend: backendTranscribedDataSize,
+      }).toEqual({ archive: 260 * VAD_CHUNK_BYTES, recovery: 260 * VAD_CHUNK_BYTES, backend: 260 * VAD_CHUNK_BYTES });
+      expect(broadcasts.find(e => e.type === "mic_disconnected")).toMatchObject({ at_ms: 7680, message: "Mic disconnected at 0:08" });
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await pending.catch(() => null);
+      clearStopSignal();
+    }
+  }, 15_000);
+
+  it("MICDROP3 R1 trimmed: chunked PTT, a report with a zero tail past the trimmer → the rebuilt session gets every byte", async () => {
+    await withChunking(true, async () => {
+      vadProcessSpy!.mockResolvedValue(0.95);
+      installFakeRecorder([...liveChunks(40), ...Array.from({ length: 200 }, () => makePcmChunk(0))], true);
       const { waitForInput, reportInputDeviceLost } = await import("../input");
       let archivePath = "";
-      const pending = waitForInput(20_000, "standard", false, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+      const pending = waitForInput(20_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
       try {
-        await waitUntil(() => blocked, "VAD suspended on chunk 11", 10_000);
+        await waitUntil(() => Number.isSafeInteger(liveCaptureId()), "capture running", 10_000);
         expect(reportInputDeviceLost("device-removed", liveCaptureId())).toBe(true);
-        expect(await raceStillRecording(pending, 300)).toBe("still recording");
-        release();
-        await stopPushToEndOnceCaptured((40 + tail) * VAD_CHUNK_BYTES);
-        expect(await raceStillRecording(pending, 4_000)).toBe("Retained transcript.");
-        expect(readWavDataSize(join(archivePath, "audio.wav"))).toBe((40 + tail) * VAD_CHUNK_BYTES);
-        if (tail === 0) expect(backendTranscribedDataSize).toBe(40 * VAD_CHUNK_BYTES);
-        else expect(backendTranscribedDataSize).toBeGreaterThanOrEqual(40 * VAD_CHUNK_BYTES);
-        // Nothing arrived after the report: no flat evidence, so no label.
-        expect(broadcasts.some(e => e.type === "mic_disconnected")).toBe(false);
+        await stopPushToEndOnceCaptured(240 * VAD_CHUNK_BYTES);
+        expect(await pending).toBe("Retained transcript.");
+        expect({
+          archive: readWavDataSize(join(archivePath, "audio.wav")),
+          recovery: readWavDataSize(retainedPath),
+          backend: backendTranscribedDataSize,
+        }).toEqual({ archive: 240 * VAD_CHUNK_BYTES, recovery: 240 * VAD_CHUNK_BYTES, backend: 240 * VAD_CHUNK_BYTES });
       } finally {
-        release();
+        writeFileSync(STOP_FILE, "stop");
         await pending.catch(() => null);
-        if (previous === undefined) delete process.env.QA_VOICE_CHUNKED_STT;
-        else process.env.QA_VOICE_CHUNKED_STT = previous;
+        clearStopSignal();
       }
-    }, 10_000);
-  }
+    });
+  }, 15_000);
 
   for (const [label, tail] of [
     ["gated zeros", () => makePcmChunk(0)],

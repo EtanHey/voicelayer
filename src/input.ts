@@ -3095,7 +3095,14 @@ export async function waitForInput(
   }
   // Physical-stop fallback must really keep everything. The legacy silence
   // trimmer could otherwise cut seconds before this feature's bounded window.
-  const sttTrim = isPhysicalStop ? {
+  // MICDROP3 R1 (Sol): any loss evidence (EOF, or a CoreAudio report confirmed or not) decodes the
+  // complete kept capture: no trimmer, so the backend WAV, the rebuilt session and recovery are whole.
+  const hasMicLossEvidence = micDisconnect !== null || unconfirmedDeviceLoss !== null;
+  const sttTrim = hasMicLossEvidence ? {
+    pcmData, trimmed: false,
+    rawDurationMs: pcmDurationMs(pcmData),
+    transcribedDurationMs: pcmDurationMs(pcmData),
+  } : isPhysicalStop ? {
     pcmData: pressInput.pcmData, trimmed: pressInput.reason === "cut",
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pressInput.pcmData),
@@ -3353,7 +3360,7 @@ export async function waitForInput(
       ? createWavBuffer(sttTrim.pcmData)
       : retainedWavData;
     // MICDROP2: after loss evidence the session may lack chunks VAD never reached; rebuild it whole (Sol R1 #2).
-    if (chunkedSession && (sttTrim.trimmed || micDisconnect || unconfirmedDeviceLoss)) {
+    if (chunkedSession && (sttTrim.trimmed || hasMicLossEvidence)) {
       chunkedSession.replaceWithPCM(sttTrim.pcmData, true);
     }
     const useChunkedTranscription = !!chunkedSession;
@@ -3461,9 +3468,9 @@ export async function waitForInput(
     });
     console.error(`[voicelayer] Transcription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
 
-    // MICDROP2: after a lost device, recovery keeps the whole recording, not a trimmed decode copy.
+    // MICDROP2/3: after any loss evidence, recovery keeps the whole recording, not a trimmed decode copy.
     retainLastCaptureForRecovery(
-      micDisconnect ? retainedWavData : sttWavData,
+      hasMicLossEvidence ? retainedWavData : sttWavData,
       polishSurfaceForWaitOptions(options),
     );
     if (voiceBarArchivePath) {
