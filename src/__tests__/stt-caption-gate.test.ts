@@ -223,3 +223,119 @@ describe("caption hallucination gate", () => {
     }
   });
 });
+
+/** `fill(frame)` sets each sample; the rest of the header matches `silentWav`. */
+function filledWav(seconds: number, fill: (frame: number) => number): Uint8Array {
+  const wav = silentWav(seconds);
+  const view = new DataView(wav.buffer);
+  for (let frame = 0; frame < Math.round(seconds * 16_000); frame++) {
+    view.setInt16(44 + frame * 2, fill(frame), true);
+  }
+  return wav;
+}
+
+function quiet(seconds: number): number[] {
+  return Array(Math.floor(seconds * 16_000 / 512)).fill(0.01) as number[];
+}
+
+describe("HALLU1: caption tail over silence or a dead device", () => {
+  test("removes 'Transcription by CastingWords' over non-speech", async () => {
+    const tail = "Ship it. Transcription by CastingWords";
+    const result = await stripHallucinatedCaption(tail, silentWav(4), {
+      segments: [
+        { text: "Ship it.", startS: 0, endS: 1 },
+        { text: " Transcription by CastingWords", startS: 2, endS: 3.5 },
+      ],
+      segmentsText: tail,
+      speechProbabilities: quiet(4),
+    });
+    expect(result.text).toBe("Ship it.");
+    expect(result.removed?.class).toBe("castingwords");
+  });
+
+  test("a stray boundary 'You' glued to the caption goes with it", async () => {
+    for (const segments of [
+      [{ text: "Ship it.", startS: 0, endS: 1 }, { text: " You", startS: 2, endS: 2.6 },
+        { text: " Transcription by CastingWords.", startS: 2.6, endS: 3.5 }],
+      [{ text: "Ship it.", startS: 0, endS: 1 },
+        { text: " You Transcription by CastingWords.", startS: 2, endS: 3.5 }],
+    ]) {
+      const tail = segments.map((segment) => segment.text).join("");
+      const result = await stripHallucinatedCaption(tail, silentWav(4), {
+        segments, segmentsText: tail, speechProbabilities: quiet(4),
+      });
+      expect(result.text).toBe("Ship it.");
+      expect(result.removed?.class).toBe("castingwords");
+    }
+  });
+
+  test("removes a lone unpunctuated boundary 'you' over non-speech, keeps it over speech", async () => {
+    const tail = "there's no further action needed you";
+    const segments = [
+      { text: "there's no further action needed", startS: 0, endS: 1 },
+      { text: " you", startS: 2, endS: 3 },
+    ];
+    const removed = await stripHallucinatedCaption(tail, silentWav(4), {
+      segments, segmentsText: tail, speechProbabilities: quiet(4),
+    });
+    expect(removed.text).toBe("there's no further action needed");
+    expect(removed.removed?.class).toBe("stray-you");
+    const spoken = quiet(4);
+    spoken.fill(0.95, 63, 90);
+    const kept = await stripHallucinatedCaption(tail, silentWav(4), {
+      segments, segmentsText: tail, speechProbabilities: spoken,
+    });
+    expect(kept.text).toBe(tail);
+  });
+
+  test("'you' that ends a spoken segment is never a boundary 'you'", async () => {
+    const tail = "Ship it. Thank you";
+    const result = await stripHallucinatedCaption(tail, silentWav(4), {
+      segments: [{ text: "Ship it.", startS: 0, endS: 1 }, { text: " Thank you", startS: 2, endS: 3 }],
+      segmentsText: tail,
+      speechProbabilities: quiet(4),
+    });
+    expect(result.text).toBe(tail);
+  });
+
+  test("removes a generic 'Subtitles by …' credit over non-speech", async () => {
+    const tail = "Ship it. Subtitles by the community";
+    const result = await stripHallucinatedCaption(tail, silentWav(4), {
+      segments: [{ text: "Ship it.", startS: 0, endS: 1 }, { text: " Subtitles by the community", startS: 2, endS: 3.5 }],
+      segmentsText: tail,
+      speechProbabilities: quiet(4),
+    });
+    expect(result.text).toBe("Ship it.");
+    expect(result.removed?.class).toBe("subtitles-by");
+  });
+
+  // Speech, then a microphone that died: the device keeps delivering samples
+  // in {-1, 0, 1}. Whisper attributes its caption to a long stretch of that.
+  const longTail = "Ship it. You Transcription by CastingWords.";
+  const longSegments = [
+    { text: "Ship it.", startS: 0, endS: 1 },
+    { text: " You", startS: 2, endS: 4 },
+    { text: " Transcription by CastingWords.", startS: 4, endS: 20 },
+  ];
+  test("a caption spread over a dead-device span longer than 8 s is removable", async () => {
+    const dead = filledWav(21, (frame) => (frame % 3) - 1);
+    const result = await stripHallucinatedCaption(longTail, dead, {
+      segments: longSegments, segmentsText: longTail, speechProbabilities: quiet(21),
+    });
+    expect(result.text).toBe("Ship it.");
+    expect(result.removed?.class).toBe("castingwords");
+  });
+
+  test("the same long span over a live room floor keeps the 8 s bound", async () => {
+    let seed = 11;
+    const room = filledWav(21, () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return Math.round((seed / 0x7fffffff * 2 - 1) * 20);
+    });
+    const result = await stripHallucinatedCaption(longTail, room, {
+      segments: longSegments, segmentsText: longTail, speechProbabilities: quiet(21),
+    });
+    expect(result.text).toBe(longTail);
+    expect(result.removed).toBeNull();
+  });
+});
