@@ -24,6 +24,18 @@ if (PRIVATE_CORPUS && !available) {
 }
 const specimenTest = available ? test : test.skip;
 
+// Second HALLU1 case: room noise, no dead device; speech runs to EOF. Its
+// duplicated last line came from the tail-verify merge over REAL speech, so
+// the acoustic gates must keep anything placed there.
+const ID2 = "2026-10-19T03-36-43-695Z-6c56c313";
+const SHA256_2 = "14a7a772c26a640ca86f402cf9f19c1da991e883709aed04cd2b38a1e3446088";
+const wavPath2 = join(PRIVATE_CORPUS?.recordings ?? "", "2026-10-19", ID2, "audio.wav");
+const available2 = Boolean(PRIVATE_CORPUS) && existsSync(wavPath2);
+if (PRIVATE_CORPUS && !available2) {
+  console.error(`[caption-hallu1] SKIPPING missing private specimen ${ID2}.`);
+}
+const specimenTest2 = available2 ? test : test.skip;
+
 const SPOKEN = "placeholder words for the spoken take";
 
 describe("HALLU1 private specimen", () => {
@@ -53,5 +65,21 @@ describe("HALLU1 private specimen", () => {
     const result = await stripHallucinatedCaption(text, wav, { segments, segmentsText: text });
     expect(result.text).toBe(text);
     expect(result.removed).toBeNull();
+  });
+
+  specimenTest2("keeps a caption-class line laid over the second case's real speech tail", async () => {
+    const wav = new Uint8Array(readFileSync(wavPath2));
+    expect(createHash("sha256").update(wav).digest("hex")).toBe(SHA256_2);
+    // Re-decode timings of a copy: the last two segments are 24.0-31.28 s.
+    for (const tail of [" You Transcription by CastingWords.", " you", " Thanks for watching"]) {
+      const segments = [
+        { text: SPOKEN, startS: 0, endS: 22.8 },
+        { text: tail, startS: 24, endS: 31.28 },
+      ];
+      const text = segments.map((segment) => segment.text).join("");
+      const result = await stripHallucinatedCaption(text, wav, { segments, segmentsText: text });
+      expect(result.text).toBe(text);
+      expect(result.removed).toBeNull();
+    }
   });
 });
