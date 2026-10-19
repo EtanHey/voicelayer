@@ -34,25 +34,28 @@ final class NullableSubtitleTests: XCTestCase {
         }
     }
 
-    func testIndexedPartialTimelineUsesOnlyMeasuredWords() {
+    // WORDTIME1 supersedes CLN1B's measured-only rule: a null word between measured ones is interpolated.
+    func testIndexedPartialTimelineInterpolatesBetweenMeasuredWords() {
         let mapped = words(receive("one two three", [row(0, "one", 0, 200), row(1, "two"), row(2, "three", 700, 200)]))
         XCTAssertTrue(TeleprompterPlaybackPolicy.usesServerTimestamps(in: mapped))
-        XCTAssertNil(TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(forWordAt: 1, in: mapped))
-        XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: mapped, elapsedMilliseconds: 660), 0)
+        XCTAssertEqual(TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(forWordAt: 1, in: mapped), 200)
+        XCTAssertEqual(mapped.map(\.hasInterpolatedTiming), [false, true, false])
+        XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: mapped, elapsedMilliseconds: 660), 1)
         XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: mapped, elapsedMilliseconds: 700), 2)
     }
 
-    func testNullWordsKeepTheirPositionsAndOnlyProvenOccurrencesSeek() {
+    func testNullWordsKeepTheirPositionsAndSeekAsInterpolatedEstimates() {
         let state = receive("go now go home", [row(3, "home", 900, 100), row(1, "now", 200, 100),
                                                 row(0, "go"), row(2, "go")], chunkStart: 12000)
         let mapped = words(state)
         XCTAssertEqual(mapped.map(\.text), ["go", "now", "go", "home"])
-        XCTAssertEqual(mapped.map(\.offsetMs), [nil, 12200, nil, 12900])
-        XCTAssertEqual(mapped.map(\.durationMs), [nil, 100, nil, 100])
+        XCTAssertEqual(mapped.map(\.offsetMs), [12000, 12200, 12300, 12900])
+        XCTAssertEqual(mapped.map(\.durationMs), [200, 100, 600, 100])
+        XCTAssertEqual(mapped.map(\.hasInterpolatedTiming), [true, false, true, false])
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         for word in mapped { TeleprompterSeekPolicy.seek(word, isReadback: false, seek: state.seek) }
-        XCTAssertEqual(commands.compactMap { $0["offset_ms"] as? Int }, [12200, 12900])
+        XCTAssertEqual(commands.compactMap { $0["offset_ms"] as? Int }, [12000, 12200, 12300, 12900])
         XCTAssertTrue(mapped.allSatisfy { !$0.hasEstimatedTiming })
     }
 
@@ -62,13 +65,14 @@ final class NullableSubtitleTests: XCTestCase {
             $0 % 3 == 0 && $0 != 0 ? row($0, "word\($0)") : row($0, "word\($0)", $0 * 100, 80)
         })
         XCTAssertEqual(state.wordBoundaries.count, 10)
-        XCTAssertEqual(words(state).map(\.offsetMs), [0, 100, 200, nil, 400, 500, nil, 700, 800, nil])
+        XCTAssertEqual(words(state).map(\.offsetMs), [0, 100, 200, 280, 400, 500, 580, 700, 800, 880])
+        XCTAssertEqual(words(state).map(\.hasInterpolatedTiming), (0..<10).map { $0 % 3 == 0 && $0 != 0 })
     }
 
     func testIndexIsBeforeVisualWrappingAndSparseRowsNeverShift() {
         let token = String(repeating: "a", count: 50)
         let mapped = words(receive(token + " gap end", [row(2, "end", 700, 80), row(0, token, 100, 300)]))
-        XCTAssertEqual(mapped.map(\.offsetMs), [100, 100, 100, nil, 700])
+        XCTAssertEqual(mapped.map(\.offsetMs), [100, 100, 100, 400, 700])
         XCTAssertEqual(mapped.map(\.text).joined(), token + "gapend")
         XCTAssertTrue(TeleprompterPlaybackPolicy.usesServerTimestamps(in: mapped))
     }
@@ -83,11 +87,12 @@ final class NullableSubtitleTests: XCTestCase {
         }
     }
 
-    func testMalformedTimingStaysNullWithoutLosingTheWord() {
+    func testMalformedTimingIsInterpolatedWithoutLosingTheWord() {
         for pair: (Any, Any) in [(NSNull(), 80), (100, NSNull()), (-1, 80), (-0.5, 80), (100, -1),
                                  (true, 80), (Double.infinity, 80), (1e100, 80)] {
             let state = receive("first second", [row(0, "first", pair.0, pair.1), row(1, "second", 500, 80)])
-            XCTAssertEqual(words(state).map(\.offsetMs), [nil, 500])
+            XCTAssertEqual(words(state).map(\.offsetMs), [0, 500])
+            XCTAssertEqual(words(state).map(\.hasInterpolatedTiming), [true, false])
         }
     }
 
@@ -99,8 +104,8 @@ final class NullableSubtitleTests: XCTestCase {
         state.handleEvent(["type": "subtitle", "words": [], "aligned_words": [row(0, "Hello"), row(1, "world", 500, 90)]])
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         let retained = TeleprompterContentModel.words(text: state.teleprompterText ?? "", wordBoundaries: state.teleprompterWordBoundaries)
-        XCTAssertEqual(retained.map(\.offsetMs), [nil, 500])
-        XCTAssertEqual(retained.map { TeleprompterSeekPolicy.offset(for: $0, isReadback: true) }, [nil, 500])
+        XCTAssertEqual(retained.map(\.offsetMs), [0, 500])
+        XCTAssertEqual(retained.map { TeleprompterSeekPolicy.offset(for: $0, isReadback: true) }, [0, 500])
         state.handleEvent(["type": "state", "state": "speaking", "text": "Next reply", "duration_ms": 5000])
         XCTAssertTrue(state.wordBoundaries.isEmpty)
     }
@@ -116,9 +121,9 @@ final class NullableSubtitleTests: XCTestCase {
         XCTAssertEqual(state.playbackEpoch, epoch, "timing delivery does not restart audio")
         XCTAssertNil(wrapper.timingNotice)
         XCTAssertTrue(TeleprompterPlaybackPolicy.usesServerTimestamps(in: words(state)))
-        XCTAssertNil(TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(forWordAt: 0, in: words(state)))
+        XCTAssertEqual(TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(forWordAt: 0, in: words(state)), 0)
         XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: words(state), elapsedMilliseconds: 600), 1)
-        XCTAssertEqual(words(state).map { TeleprompterSeekPolicy.offset(for: $0, isReadback: false) }, [nil, 500])
+        XCTAssertEqual(words(state).map { TeleprompterSeekPolicy.offset(for: $0, isReadback: false) }, [0, 500])
     }
 
     func testWritesNullableTimingArtifacts() async throws {

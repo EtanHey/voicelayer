@@ -74,12 +74,58 @@ public struct TeleprompterBoundary: Equatable {
     public let durationMs: Int?
     public let text: String
     public let wordIndex: Int?
+    /// WORDTIME1: estimated between measured neighbours, not measured itself.
+    public let isInterpolated: Bool
 
-    public init(offsetMs: Int?, durationMs: Int?, text: String, wordIndex: Int? = nil) {
+    public init(offsetMs: Int?, durationMs: Int?, text: String, wordIndex: Int? = nil, isInterpolated: Bool = false) {
         self.offsetMs = offsetMs
         self.durationMs = durationMs
         self.text = text
         self.wordIndex = wordIndex
+        self.isInterpolated = isInterpolated
+    }
+
+    /// Indexed rows by word_index, or nil when any row fails its token identity (the caller fails closed).
+    static func indexedRows(_ rows: [Self], tokens: [String]) -> [Int: Self]? {
+        var byIndex: [Int: Self] = [:]
+        for row in rows {
+            guard let index = row.wordIndex, tokens.indices.contains(index),
+                  tokens[index] == row.text, byIndex[index] == nil else { return nil }
+            byIndex[index] = row
+        }
+        return byIndex
+    }
+
+    /// WORDTIME1: clone timing leaves short and punctuation-glued tokens null. Each one gets an even
+    /// share of the gap between its timed neighbours (the chunk start before the first, the chunk's
+    /// audio end after the last), so every displayed word highlights and seeks. Offsets stay in token
+    /// order; a gap with no room, or a tail with no known audio end, stays untimed.
+    static func interpolated(_ rows: [Self], text: String, startMs: Int, endMs: Int?) -> [Self] {
+        let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard rows.contains(where: { $0.wordIndex != nil }),
+              let byIndex = indexedRows(rows, tokens: tokens) else { return rows }
+        var result = tokens.indices.map { byIndex[$0] ?? Self(offsetMs: nil, durationMs: nil, text: tokens[$0], wordIndex: $0) }
+        let timed = result.indices.filter { result[$0].offsetMs != nil }
+        guard let first = timed.first, let last = timed.last else { return result }
+        func end(_ index: Int) -> Int { result[index].offsetMs! + (result[index].durationMs ?? 0) }
+        func fill(_ gap: Range<Int>, from: Int, to: Int) {
+            guard !gap.isEmpty, to > from else { return }
+            let span = Double(to - from), count = Double(gap.count)
+            for (step, index) in gap.enumerated() {
+                let start = from + Int(span * Double(step) / count), stop = from + Int(span * Double(step + 1) / count)
+                guard stop > start else { continue }
+                result[index] = Self(offsetMs: start, durationMs: stop - start, text: tokens[index],
+                                     wordIndex: index, isInterpolated: true)
+            }
+        }
+        fill(0 ..< first, from: max(0, startMs), to: result[first].offsetMs!)
+        for (left, right) in zip(timed, timed.dropFirst()) where right > left + 1 {
+            let next = result[right].offsetMs!
+            // Overlapping neighbours: share the left word's window rather than tie with it.
+            fill(left + 1 ..< right, from: end(left) < next ? end(left) : result[left].offsetMs! + 1, to: next)
+        }
+        if let endMs { fill(last + 1 ..< tokens.count, from: end(last), to: endMs) }
+        return result
     }
 
     static func subtitleWords(_ event: [String: Any], chunkStartMs: Int) -> [Self] {
@@ -116,11 +162,13 @@ public struct TeleprompterBoundary: Equatable {
             let offset = indexed ? milliseconds(row["offset_ms"]) : legacyMilliseconds(row["offset_ms"])
             let duration = indexed ? milliseconds(row["duration_ms"]) : legacyMilliseconds(row["duration_ms"])
             let index = milliseconds(row["word_index"], integral: true)
+            // WORDTIME1 history: an estimate or Edge seek anchor, which may be zero-length. Measured rows never are.
+            let estimated = indexed && (row["estimated"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue } == true
             if !indexed, offset == nil || duration == nil { return nil }
             var globalOffset: Int?
             // Legacy values retain their signs and zero-duration markdown anchors.
             // Only indexed timing requires a nonnegative start and positive span.
-            if let offset, let duration, (!indexed || (offset >= 0 && duration > 0 && chunkStartMs >= 0)) {
+            if let offset, let duration, (!indexed || (offset >= 0 && (duration > 0 || estimated) && chunkStartMs >= 0)) {
                 let global = offset.addingReportingOverflow(chunkStartMs)
                 if !global.overflow && !global.partialValue.addingReportingOverflow(duration).overflow {
                     globalOffset = global.partialValue
@@ -129,7 +177,7 @@ public struct TeleprompterBoundary: Equatable {
             // A legacy placeholder would enable estimated karaoke without timing.
             if !indexed, globalOffset == nil { return nil }
             return Self(offsetMs: globalOffset, durationMs: globalOffset == nil ? nil : duration,
-                        text: text, wordIndex: indexed ? (index ?? -1) : nil)
+                        text: text, wordIndex: indexed ? (index ?? -1) : nil, isInterpolated: estimated && globalOffset != nil)
         }
     }
 }
@@ -143,6 +191,8 @@ public struct TeleprompterWord: Equatable, Identifiable {
     public var hasEstimatedTiming = false
     /// Only the indexed format opts into a measured-only partial timeline.
     public var usesIndexedTiming = false
+    /// WORDTIME1: an indexed estimate between measured words. Unlike a reschedule, it seeks.
+    public var hasInterpolatedTiming = false
 }
 
 public enum TeleprompterPacePolicy {
@@ -212,18 +262,14 @@ public enum TeleprompterContentModel {
     ) -> [TeleprompterWord] {
         if wordBoundaries.contains(where: { $0.wordIndex != nil }) {
             let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            var byIndex: [Int: TeleprompterBoundary] = [:]
-            for boundary in wordBoundaries {
-                guard let index = boundary.wordIndex, tokens.indices.contains(index),
-                      tokens[index] == boundary.text, byIndex[index] == nil else {
-                    return words(text: text, wordBoundaries: [])
-                }
-                byIndex[index] = boundary
+            guard let byIndex = TeleprompterBoundary.indexedRows(wordBoundaries, tokens: tokens) else {
+                return words(text: text, wordBoundaries: [])
             }
             return assignStableIDs(to: tokens.enumerated().flatMap { index, token in
                 let boundary = byIndex[index]
                 return splitDisplayToken(TeleprompterWord(id: 0, text: token,
-                    offsetMs: boundary?.offsetMs, durationMs: boundary?.durationMs, usesIndexedTiming: true))
+                    offsetMs: boundary?.offsetMs, durationMs: boundary?.durationMs, usesIndexedTiming: true,
+                    hasInterpolatedTiming: boundary?.isInterpolated ?? false))
             })
         }
         let textWords = text
@@ -351,7 +397,8 @@ public enum TeleprompterContentModel {
                 offsetMs: word.offsetMs,
                 durationMs: word.durationMs,
                 hasEstimatedTiming: word.hasEstimatedTiming,
-                usesIndexedTiming: word.usesIndexedTiming
+                usesIndexedTiming: word.usesIndexedTiming,
+                hasInterpolatedTiming: word.hasInterpolatedTiming
             )
         }
     }
@@ -373,7 +420,8 @@ public enum TeleprompterContentModel {
                     offsetMs: word.offsetMs,
                     durationMs: word.durationMs,
                     hasEstimatedTiming: word.hasEstimatedTiming,
-                    usesIndexedTiming: word.usesIndexedTiming
+                    usesIndexedTiming: word.usesIndexedTiming,
+                    hasInterpolatedTiming: word.hasInterpolatedTiming
                 )
             )
             start = end

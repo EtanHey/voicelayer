@@ -462,6 +462,13 @@ public final class VoiceState {
 
     /// Word boundary timestamps from TTS engine (ms offsets from audio start).
     public var wordBoundaries: [TeleprompterBoundary] = []
+    /// WORDTIME1: this read's timed chunks by chunk_start_ms, in global offsets. A later chunk
+    /// appends; an untimed or mismatched chunk never erases one that was timed.
+    private var playbackTimelineChunks: [Int: (text: String, words: [TeleprompterBoundary])] = [:]
+    private var playbackTimelineReadID: String?
+    public var playbackWordTimeline: [TeleprompterBoundary] {
+        playbackTimelineChunks.sorted { $0.key < $1.key }.flatMap(\.value.words)
+    }
     private var playbackReadbackID: String?
     private var retainedReadbackID: String?
     /// The ended read's clock, frozen at idle so the readback scrubber shows real time without sampling.
@@ -2007,6 +2014,8 @@ public final class VoiceState {
                 clearHistoryRetranscriptionRequest(removeSuppression: false)
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
+                // WORDTIME1: chunk identity is read + chunk start; text equality is not identity.
+                let previousChunk = mode == .speaking ? (read: playbackLongReadID, start: playbackChunkStartMilliseconds) : nil
                 let previousLongRead = mode == .speaking ? playbackLongReadID.map {
                     (id: $0, duration: playbackDurationMilliseconds, growing: isPlaybackDurationGrowing)
                 } : nil
@@ -2031,14 +2040,20 @@ public final class VoiceState {
                     isPlaybackDurationGrowing = growing
                 }
                 playbackLongReadID = longReadID
+                if longReadID == nil || longReadID != playbackTimelineReadID { playbackTimelineChunks = [:] }
+                playbackTimelineReadID = longReadID
                 playbackEpoch += 1
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
                 clearRetainedTeleprompter()
                 // A speaking event precedes the fresh subtitle payload. Do not let
                 // timings from the previous utterance animate a similar new one.
-                if validOffset == nil || statusText != event["text"] as? String {
-                    wordBoundaries = []
+                let sameChunk = validOffset != nil && statusText == event["text"] as? String &&
+                    previousChunk?.read == longReadID && previousChunk?.start == playbackChunkStartMilliseconds
+                if !sameChunk {
+                    // Entering a chunk of this read (a seek back) restores the timings it already had.
+                    let stored = playbackTimelineChunks[playbackChunkStartMilliseconds]
+                    wordBoundaries = stored?.text == event["text"] as? String ? stored?.words ?? [] : []
                 }
                 mode = .speaking
                 isTeleprompterDismissed = false
@@ -2244,7 +2259,14 @@ public final class VoiceState {
             // Old daemons' missing/mistyped words are a no-op. Indexed payloads
             // still replace the timeline even when malformed, so they fail closed.
             guard event["aligned_words"] != nil || event["words"] is [[String: Any]] else { return }
-            wordBoundaries = TeleprompterBoundary.subtitleWords(event, chunkStartMs: playbackChunkStartMilliseconds)
+            let chunkStart = playbackChunkStartMilliseconds
+            let chunkMs = (event["duration_ms"] as? NSNumber).map(\.intValue).flatMap { $0 > 0 ? $0 : nil }
+            wordBoundaries = TeleprompterBoundary.interpolated(
+                TeleprompterBoundary.subtitleWords(event, chunkStartMs: chunkStart), text: statusText, startMs: chunkStart,
+                endMs: chunkMs.map { chunkStart + $0 } ?? (playbackLongReadID == nil ? playbackDurationMilliseconds : nil))
+            if TeleprompterContentModel.words(text: statusText, wordBoundaries: wordBoundaries).contains(where: { $0.offsetMs != nil }) {
+                playbackTimelineChunks[chunkStart] = (statusText, wordBoundaries)
+            }
 
         case "queue":
             if let depth = event["depth"] as? Int {

@@ -68,7 +68,9 @@ for (const [count, played, stopped, clone] of [[1, 1, false, false], [3, 3, fals
     expect(tts.seekPlayback(offset, "readback", readbackID)).toMatchObject({ outcome: "reject", reason: "busy" });
     const replay = await players.at(played);
     if (clone) {
+      // WORDTIME1 S4: the retained snapshot re-broadcasts the first run's timings at start; re-alignment still runs.
       expect((await subtitles.at(1)).aligned_words[0].offset_ms).toBe(300);
+      expect((await subtitles.at(2)).aligned_words[0].offset_ms).toBe(300);
       expect(alignments[1].audioPath).toBe(trims[0][trims[0].indexOf("-i") + 1]);
       expect(alignments[1].audioPath).not.toBe(replay.argv.at(-1));
       expect(alignments[1].speechText).toBe("Chunk 0");

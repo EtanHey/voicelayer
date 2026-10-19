@@ -24,11 +24,17 @@ export class RetainedReadback {
     const retained = ttsFilePath(process.pid, ++this.counter).replace(".mp3", `.${this.identity}.readback.mp3`);
     try {
       copyFileSync(file, retained);
-      const { onStarted, onCompleted, onQueued, nextState, seekSliceFile, localOffsetMs, isSeek, getUtteranceDurationMs, ...facts } = metadata;
+      const { onStarted, onCompleted, onQueued, onAlignedWords, nextState, seekSliceFile, localOffsetMs, isSeek, getUtteranceDurationMs, ...facts } = metadata;
       this.chunks.set(index, { file: retained, metadata: { ...facts,
         utteranceDurationMs: metadata.getUtteranceDurationMs?.() ?? metadata.utteranceDurationMs } });
     } catch { try { unlinkSync(retained); } catch {} } // Failed copies stay unavailable.
     return this.identity;
+  }
+
+  /** Late clone alignment for a retained chunk, pinned to the snapshot identity it measured. */
+  rememberAlignedWords(identity: string, index: number, alignedWords: PlaybackMetadata["alignedWords"]): void {
+    const chunk = identity === this.identity ? this.chunks.get(index) : undefined;
+    if (chunk) chunk.metadata = { ...chunk.metadata, alignedWords };
   }
 
   /** The span a readback seek can reach right now; 0 when `acquire` would refuse it. */
