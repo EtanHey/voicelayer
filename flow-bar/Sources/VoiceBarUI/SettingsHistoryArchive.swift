@@ -57,6 +57,10 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     public let spokenDurationMs: Int?
     /// Post-capture processing time of the dictation (F1). Nil on older entries.
     public let processingDurationMs: Int?
+    /// MICDROP2: the mic was lost at this point of the recording; nil when it never was.
+    public let micDisconnectedAtMs: Int?
+    /// MICDROP2: the archived note; wins over a label rebuilt from `micDisconnectedAtMs`.
+    public let micDisconnectNote: String?
     public let modelLabel: String?
     public let performanceEffort: VoiceBarPerformanceEffort?
     public let inputDeviceLabel: String?
@@ -73,6 +77,8 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         transcribedDurationMs: Int? = nil,
         spokenDurationMs: Int? = nil,
         processingDurationMs: Int? = nil,
+        micDisconnectedAtMs: Int? = nil,
+        micDisconnectNote: String? = nil,
         modelLabel: String? = nil,
         performanceEffort: VoiceBarPerformanceEffort? = nil,
         inputDeviceLabel: String? = nil,
@@ -88,6 +94,8 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         self.transcribedDurationMs = transcribedDurationMs
         self.spokenDurationMs = spokenDurationMs
         self.processingDurationMs = processingDurationMs
+        self.micDisconnectedAtMs = micDisconnectedAtMs
+        self.micDisconnectNote = micDisconnectNote
         self.modelLabel = modelLabel
         self.performanceEffort = performanceEffort
         self.inputDeviceLabel = inputDeviceLabel
@@ -262,6 +270,9 @@ public enum SettingsHistoryArchive {
             transcribedDurationMs: metadata?.transcribedDurationMs,
             spokenDurationMs: metadata?.spokenDurationMs,
             processingDurationMs: metadata?.processingDurationMs,
+            micDisconnectedAtMs: metadata?.micDisconnectedAtMs,
+            micDisconnectNote: metadata?.micDisconnectNote?
+                .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty,
             modelLabel: VoiceModelDisplayName.normalize(metadata?.provenance?.whisperModelPath),
             performanceEffort: metadata?.provenance?.performanceEffort.flatMap(VoiceBarPerformanceEffort.init),
             inputDeviceLabel: metadata?.inputDeviceName?

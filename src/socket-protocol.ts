@@ -13,6 +13,7 @@ import type { WhisperPerformanceEffort } from "./whisper-performance";
 import type { WhisperModelResidency, WhisperModelStatus } from "./model-status";
 import type { DictationReceiptMetadata } from "./dictation-receipt";
 import type { STTDictionaryDisplayEntry } from "./stt-vocabulary-store";
+import { DEVICE_LOSS_REASONS, type DeviceLossReason, type MicLossReason } from "./mic-disconnect";
 import {
   PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
   type PlaybackAmplitudeEnvelope,
@@ -151,6 +152,15 @@ export interface ErrorEvent {
   show_during_bar_recording?: boolean;
   /** Machine-readable capture failure signal for VoiceBar daemon supervision. */
   capture_failure?: "broken-mic";
+}
+
+/** MICDROP2: the input device was lost mid-recording; the decoded audio ends at `at_ms`. */
+export interface MicDisconnectedEvent {
+  type: "mic_disconnected";
+  at_ms: number;
+  reason: MicLossReason;
+  /** "Mic disconnected at m:ss": the same note History shows. */
+  message: string;
 }
 
 /** Word boundary from edge-tts WordBoundary event. */
@@ -344,6 +354,7 @@ export type SocketEvent =
   | PolishReadyEvent
   | AudioLevelEvent
   | ErrorEvent
+  | MicDisconnectedEvent
   | SubtitleEvent
   | QueueEvent
   | PlaybackOutcomeEvent
@@ -377,6 +388,12 @@ export interface StopCommand extends SocketCommandBase {
   physical_press?: boolean;
   /** VoiceBar's teleprompter clock at the stop edge. */
   playback_elapsed_ms?: number;
+}
+
+/** MICDROP2: VoiceBar's CoreAudio listener saw the capturing input device go away. */
+export interface InputDeviceLostCommand extends SocketCommandBase {
+  cmd: "input_device_lost";
+  reason: DeviceLossReason;
 }
 
 export interface CancelCommand extends SocketCommandBase {
@@ -527,6 +544,7 @@ export type SocketCommand =
   | VocabAddTermCommand
   | VocabRemoveTermCommand
   | SetRecordingHoldCommand
+  | InputDeviceLostCommand
   | SetWhisperEffortCommand
   | PreviewTTSProfileCommand
   | SetTTSSettingCommand
@@ -918,6 +936,9 @@ export function parseCommand(line: string): SocketCommand | null {
           id,
         );
       }
+      case "input_device_lost":
+        if (!(DEVICE_LOSS_REASONS as readonly unknown[]).includes(parsed.reason)) return null;
+        return withCommandId<InputDeviceLostCommand>({ cmd: "input_device_lost", reason: parsed.reason }, id);
       case "toggle": {
         if (typeof parsed.enabled !== "boolean") return null;
         const scope = parsed.scope;

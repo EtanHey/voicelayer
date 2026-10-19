@@ -56,7 +56,7 @@ import type {
 } from "./socket-protocol";
 import { buildHealthResponse } from "./daemon-health";
 import { getPlaybackQueueDepth } from "./tts";
-import { getRecordingState } from "./input";
+import { getRecordingState, reportInputDeviceLost } from "./input";
 import {
   addAlias,
   addPromptTerm,
@@ -486,6 +486,13 @@ export function handleSocketCommand(
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));
       }
+    case "input_device_lost":
+      // MICDROP2: OS evidence from VoiceBar's CoreAudio listener; ends the capture cleanly. No ack:
+      // VoiceBar sends it once and acts on nothing back.
+      if (!reportInputDeviceLost(command.reason)) {
+        console.error(`[voicelayer] input_device_lost (${command.reason}) with no capture running — ignored`);
+      }
+      return;
   }
 }
 

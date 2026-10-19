@@ -626,6 +626,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.sendCommand = { [weak server] cmd in
             server?.sendCommandToOwner(command: cmd)
         }
+        voiceState.inputDeviceLossMonitor = InputDeviceLossMonitor { [weak voiceState] reason in
+            voiceState?.sendCommand?(["cmd": "input_device_lost", "reason": reason])
+        }
         configurePanelStateObservation()
         voiceState.onHistoryArchiveChange = { path in
             // Drop that entry from the History index first, so the reload the notification triggers can't serve a

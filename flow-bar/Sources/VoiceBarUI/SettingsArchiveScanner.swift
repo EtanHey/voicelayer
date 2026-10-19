@@ -155,6 +155,10 @@ struct SettingsArchiveMetadata: Decodable {
     let spokenDurationMs: Int?
     /// The dictation's post-capture processing time (F1).
     let processingDurationMs: Int?
+    /// MICDROP2: where the input device was lost, into the kept audio.
+    let micDisconnectedAtMs: Int?
+    /// The note VoiceLayer wrote: "Mic disconnected at m:ss" or "Mic produced no signal".
+    let micDisconnectNote: String?
     let inputDeviceName: String?
     /// NOTX1: why the daemon kept this recording without a transcript.
     let notTranscribedReason: String?
@@ -180,6 +184,8 @@ struct SettingsArchiveMetadata: Decodable {
         case transcribedDurationMs = "transcribed_duration_ms"
         case spokenDurationMs = "spoken_duration_ms"
         case processingDurationMs = "processing_duration_ms"
+        case micDisconnectedAtMs = "mic_disconnected_at_ms"
+        case micDisconnectNote = "mic_disconnect_note"
         case inputDeviceName = "input_device_name"
         case notTranscribedReason = "not_transcribed_reason"
         case notTranscribedDetail = "not_transcribed_detail"

@@ -3,6 +3,7 @@
  * sits over Silero non-speech. The ordinary closer gate deliberately does not
  * handle unpunctuated captions or noisy recordings.
  */
+import { isDeadDevicePcm } from "./mic-disconnect";
 import { createVADSession, VAD_CHUNK_SAMPLES } from "./vad";
 import { parseWavAudioInfo, WAVE_FORMAT_PCM } from "./stt-pause-map";
 import { measureSpan, measureWavWindows, normalizeOutroKey, SPEECH_LEVEL_GUARD_DB, SPEECH_OVER_FLOOR_DB } from "./stt-outro-gate";
@@ -45,8 +46,8 @@ const MAX_TIMESTAMP_OVERRUN_SECONDS = 5;
  * whole in-file span is this flat may exceed MAX_TRAILING_SECONDS; every
  * acoustic check below still applies.
  */
-const DEAD_DEVICE_MAX_RANGE = 2;
-
+// The range predicate and its 2 LSB bound are shared with src/mic-disconnect.ts (MICDROP2); the
+// whole-span window and MIN_OBSERVED_CHUNKS stay this gate's own policy.
 function isDeadDeviceSpan(
   wav: Uint8Array,
   info: { dataOffset: number; dataSize: number; sampleRate: number },
@@ -58,15 +59,7 @@ function isDeadDeviceSpan(
   const last = Math.min(frames, Math.ceil(endS * info.sampleRate));
   if (last - first < MIN_OBSERVED_CHUNKS * VAD_CHUNK_SAMPLES) return false;
   const view = new DataView(wav.buffer, wav.byteOffset + info.dataOffset, frames * 2);
-  let min = Infinity;
-  let max = -Infinity;
-  for (let frame = first; frame < last; frame++) {
-    const sample = view.getInt16(frame * 2, true);
-    if (sample < min) min = sample;
-    if (sample > max) max = sample;
-    if (max - min > DEAD_DEVICE_MAX_RANGE) return false;
-  }
-  return true;
+  return isDeadDevicePcm(view, first, last);
 }
 
 export interface CaptionGateOptions {

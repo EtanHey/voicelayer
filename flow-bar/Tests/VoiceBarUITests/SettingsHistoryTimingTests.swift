@@ -63,6 +63,48 @@ final class SettingsHistoryTimingTests: XCTestCase {
         XCTAssertEqual(loaded.processingDurationMs, 1234)
     }
 
+    /// MICDROP2: a recording cut short by a lost mic says so, and where, beside its lengths.
+    func testMicDisconnectNoteLoadsFromMetadataAndShowsOnTheRow() throws {
+        let dir = tempRoot.appendingPathComponent("2026-10-19/2026-10-19T03-31-00-000Z-drop")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data([0, 1, 2, 3]).write(to: dir.appendingPathComponent("audio.wav"))
+        try """
+        {
+          "id": "2026-10-19T03-31-00-000Z-drop",
+          "created_at": "2026-10-19T03:31:00.000Z",
+          "source": "voicebar",
+          "duration_ms": 42400,
+          "mic_disconnected_at_ms": 42400,
+          "mic_disconnect_reason": "device-removed",
+          "mic_disconnect_note": "Mic disconnected at 0:42",
+          "transcription_status": "captured"
+        }
+        """.write(to: dir.appendingPathComponent("metadata.json"), atomically: true, encoding: .utf8)
+
+        let loaded = try XCTUnwrap(SettingsHistoryArchive.loadPage(from: tempRoot).groups.first?.entries.first)
+        XCTAssertEqual(loaded.micDisconnectedAtMs, 42400)
+
+        XCTAssertEqual(SettingsHistoryRowModel.recording(loaded).parts[0].micDisconnectLabel, "Mic disconnected at 0:42")
+        XCTAssertNil(SettingsHistoryRowModel.recording(entry()).parts[0].micDisconnectLabel)
+    }
+
+    /// A recorder that never carried signal has no loss point: its note, never a "0:00".
+    func testNoSignalNoteShowsWithoutAClock() {
+        var noSignal = SettingsHistoryEntry(
+            id: "/tmp/nosig/audio.wav", dayKey: "2026-10-19", recordingID: "nosig",
+            createdAt: Date(timeIntervalSince1970: 0), transcript: "",
+            audioPath: URL(fileURLWithPath: "/tmp/nosig/audio.wav"),
+            micDisconnectedAtMs: nil, micDisconnectNote: "Mic produced no signal"
+        )
+        XCTAssertEqual(SettingsHistoryRowModel.recording(noSignal).parts[0].micDisconnectLabel, "Mic produced no signal")
+        noSignal = SettingsHistoryEntry(
+            id: "/tmp/old/audio.wav", dayKey: "2026-10-19", recordingID: "old",
+            createdAt: Date(timeIntervalSince1970: 0), transcript: "",
+            audioPath: URL(fileURLWithPath: "/tmp/old/audio.wav"), micDisconnectedAtMs: 42400
+        )
+        XCTAssertEqual(SettingsHistoryRowModel.recording(noSignal).parts[0].micDisconnectLabel, "Mic disconnected at 0:42")
+    }
+
     func testSpokenLengthReplacesTheTrimmedLengthAndProcessingSitsBesideThem() {
         let part = SettingsHistoryRowModel.recording(
             entry(spokenDurationMs: 30250, processingDurationMs: 1234)

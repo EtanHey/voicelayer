@@ -366,8 +366,12 @@ public final class VoiceState {
 
     /// UI-bound properties -- all mutations must happen on the main thread.
     public private(set) var previousMode: VoiceMode = .idle
+    /// MICDROP2: CoreAudio evidence of a lost input device during a capture; nil in tests.
+    public var inputDeviceLossMonitor: InputDeviceLossMonitor?
+
     public var mode: VoiceMode = .idle {
         didSet {
+            inputDeviceLossMonitor?.setCapturing(mode == .recording)
             clearSelectionBusyNoteIfSessionEnded()
             if mode == .recording || mode == .transcribing || mode == .disconnected || mode == .error {
                 if selectionCaptureInFlight { selectionCaptureCancelled = true }
@@ -2045,6 +2049,7 @@ public final class VoiceState {
                 expandFromCollapse()
             case "recording":
                 isRecordingHandoffPending = false
+                pendingMicDisconnectNotice = nil
                 let startsNewRecording = mode != .recording
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 // AIDEV-NOTE: `bar_owned` is optional on the wire. Only explicit `true` confirms
@@ -2311,6 +2316,13 @@ public final class VoiceState {
 
         case "command_mode":
             handleCommandModeEvent(event)
+
+        case "mic_disconnected":
+            // MICDROP2: say it now, and again in place of this dictation's paste confirmation so the
+            // notice is the last thing the pill shows. Presentation only: the capture already ended.
+            let notice = MicDisconnectFeedback.pill(atMs: (event["at_ms"] as? NSNumber)?.intValue ?? 0)
+            pendingMicDisconnectNotice = notice
+            showConfirmation(notice, duration: Self.micDisconnectNoticeSeconds)
 
         case "archive_metadata_updated":
             // F1: metadata written after the transcript was delivered (the ≈ spoken length). Refresh History's copy
@@ -3705,6 +3717,17 @@ public final class VoiceState {
             showConfirmation(Self.failureMessageWithRetryHint(message), duration: 4.0)
         }
 
+        // A failed or recovery outcome keeps its own message; it already points at History, which has the note.
+        if let notice = pendingMicDisconnectNotice, let operationID, operationID == latestDictationOperationID {
+            pendingMicDisconnectNotice = nil
+            switch outcome {
+            case .insertedAtCursor, .pasted, .unverified:
+                showConfirmation(notice, duration: Self.micDisconnectNoticeSeconds)
+            case .notInserted, .partial, .failed:
+                break
+            }
+        }
+
         if pendingIdleAfterAutoPasteCompletion {
             pendingIdleAfterAutoPasteCompletion = false
             pendingRecoveredTranscriptionPaste = false
@@ -3712,6 +3735,10 @@ public final class VoiceState {
             enterIdleState(clearQueue: false)
         }
     }
+
+    static let micDisconnectNoticeSeconds: TimeInterval = 6.0
+    /// MICDROP2 notice waiting for the current dictation's paste confirmation; cleared by the next recording.
+    var pendingMicDisconnectNotice: String?
 
     private func showConfirmation(_ message: String, duration: TimeInterval = 1.5) {
         confirmationText = message

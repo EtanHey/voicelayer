@@ -2086,6 +2086,176 @@ describe("input recording durability", () => {
     ]);
   });
 
+  // MICDROP2: the device dies mid-dictation. Only OS evidence (recorder EOF, a CoreAudio device
+  // event) decides; flatness only locates. Synthetic only: fake recorder streams, zero/dither padding.
+  // Dither in {-1, 0, +1} is the 06:33 dead device (docs.local/HALLU1/DONE.md); sox kept streaming it.
+  const ditherChunk = () => {
+    const chunk = makePcmChunk(0);
+    const view = new DataView(chunk.buffer);
+    for (let i = 0; i < VAD_CHUNK_SAMPLES; i++) view.setInt16(i * 2, [1, -1, 0][i % 3]!, true);
+    return chunk;
+  };
+  // Live speech: alternating samples, never within 2 LSB.
+  const liveChunks = (n: number) =>
+    Array.from({ length: n }, (_, k) => makePcmChunk(k % 2 ? 2400 : -2400).map((b, i) => (i % 4 < 2 ? b : 0)));
+  const archiveMetadata = (archivePath: string) =>
+    JSON.parse(readFileSync(join(archivePath, "metadata.json"), "utf8"));
+  const raceStillRecording = <T,>(pending: Promise<T>, ms: number) =>
+    Promise.race([pending, Bun.sleep(ms).then(() => "still recording" as const)]);
+
+  it("MICDROP2 recorder EOF: stops on its own, keeps every byte, decodes only pre-drop audio", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder([...liveChunks(40), ...Array.from({ length: 20 }, () => makePcmChunk(0))], false);
+    const { waitForInput } = await import("../input");
+    let archivePath = "";
+    // Push-to-end with no stop file: only the recorder's EOF can end this before the 20 s timer.
+    const pending = waitForInput(20_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+    try {
+      expect(await raceStillRecording(pending, 4_000)).toBe("Retained transcript.");
+      expect(backendTranscribedDataSize).toBe(40 * VAD_CHUNK_BYTES);
+      expectValidRetainedWav(join(archivePath, "audio.wav"), 60 * VAD_CHUNK_BYTES);
+      // Recovery keeps the whole recording too, not the decode subset (Sol R2 caveat).
+      expectValidRetainedWav(retainedPath, 60 * VAD_CHUNK_BYTES);
+      expect(archiveMetadata(archivePath)).toMatchObject({
+        transcription_status: "transcribed",
+        mic_disconnected_at_ms: 1280,
+        mic_disconnect_reason: "recorder-ended",
+        mic_disconnect_note: "Mic disconnected at 0:01",
+      });
+      expect(broadcasts.find(e => e.type === "mic_disconnected")).toEqual({
+        type: "mic_disconnected", at_ms: 1280, reason: "recorder-ended", message: "Mic disconnected at 0:01",
+      });
+      expect(broadcasts.some(e => e.capture_failure)).toBe(false);
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await pending.catch(() => null);
+      clearStopSignal();
+    }
+  }, 10_000);
+
+  it("MICDROP2 CoreAudio device removal: ends an open recorder, labels and bounds STT at the dead tail", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder([...liveChunks(40), ...Array.from({ length: 40 }, ditherChunk)], true);
+    const { waitForInput, reportInputDeviceLost } = await import("../input");
+    expect(reportInputDeviceLost("device-removed")).toBe(false); // no capture yet
+    let archivePath = "";
+    const pending = waitForInput(20_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+    try {
+      await waitUntil(() => existsSync(retainedPath) && readWavDataSize(retainedPath) === 80 * VAD_CHUNK_BYTES,
+        "capture to hold all fake PCM", 10_000);
+      expect(reportInputDeviceLost("device-removed")).toBe(true);
+      expect(await raceStillRecording(pending, 4_000)).toBe("Retained transcript.");
+      expect(backendTranscribedDataSize).toBe(40 * VAD_CHUNK_BYTES);
+      expectValidRetainedWav(join(archivePath, "audio.wav"), 80 * VAD_CHUNK_BYTES);
+      expect(archiveMetadata(archivePath)).toMatchObject({
+        mic_disconnected_at_ms: 1280, mic_disconnect_reason: "device-removed", mic_disconnect_note: "Mic disconnected at 0:01",
+      });
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await pending.catch(() => null);
+      clearStopSignal();
+    }
+  }, 10_000);
+
+  for (const [label, tail] of [
+    ["gated zeros", () => makePcmChunk(0)],
+    ["dead-device dither", ditherChunk],
+  ] as const) {
+    it(`MICDROP2 no OS event: a ${label} final pause on an open recorder changes nothing`, async () => {
+      vadProcessSpy!.mockResolvedValue(0.95);
+      installFakeRecorder([...liveChunks(40), ...Array.from({ length: 40 }, tail)], true);
+      const { waitForInput } = await import("../input");
+      let archivePath = "";
+      const pending = waitForInput(20_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+      try {
+        await stopPushToEndOnceCaptured(80 * VAD_CHUNK_BYTES);
+        expect(await pending).toBe("Retained transcript.");
+        // Main's decoder input, byte for byte (Sol R2 #1 probe: 81,920 bytes, no loss event).
+        expect(backendTranscribedDataSize).toBe(80 * VAD_CHUNK_BYTES);
+        expect(broadcasts.some(e => e.type === "mic_disconnected")).toBe(false);
+        expect(archiveMetadata(archivePath).mic_disconnect_reason).toBeUndefined();
+      } finally {
+        await pending.catch(() => null);
+        clearStopSignal();
+      }
+    }, 10_000);
+  }
+
+  it("MICDROP2: a live mic noise-gated to zeros for 4.5 s keeps recording and keeps the words after it", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    const gatedPause = Array.from({ length: 140 }, () => makePcmChunk(0)); // 4.48 s of exact zeros
+    installFakeRecorder([...liveChunks(40), ...gatedPause, ...liveChunks(40)], true);
+    const { recordToBuffer } = await import("../input");
+    const captureState: { micDisconnect?: unknown } = {};
+    const recording = recordToBuffer(20_000, "standard", true, undefined, undefined, true, captureState as never);
+    try {
+      await stopPushToEndOnceCaptured(220 * VAD_CHUNK_BYTES);
+      expect((await recording)?.byteLength).toBe(220 * VAD_CHUNK_BYTES);
+      expect(captureState.micDisconnect).toBeUndefined();
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+      clearStopSignal();
+    }
+  }, 15_000);
+
+  for (const silenceMode of ["quick", "standard", "thoughtful"] as const) {
+    it(`MICDROP2 VAD ${silenceMode}: EOF seen before the silence close is still attached`, async () => {
+      vadProbabilityForCall = call => (call <= 50 ? 0.95 : 0);
+      // Interior gated gap, then dither and EOF: the VAD close wins the race to finish().
+      installFakeRecorder([...liveChunks(30), ...Array.from({ length: 10 }, () => makePcmChunk(0)),
+        ...liveChunks(10), ...Array.from({ length: 100 }, ditherChunk)], false);
+      const { waitForInput } = await import("../input");
+      let archivePath = "";
+      const pending = waitForInput(20_000, silenceMode, false, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+      try {
+        expect(await raceStillRecording(pending, 6_000)).toBe("Retained transcript.");
+        expect(backendTranscribedDataSize).toBe(50 * VAD_CHUNK_BYTES);
+        expect(readWavDataSize(join(archivePath, "audio.wav"))).toBeGreaterThan(50 * VAD_CHUNK_BYTES);
+        expect(broadcasts.find(e => e.type === "mic_disconnected")).toEqual({
+          type: "mic_disconnected", at_ms: 1600, reason: "recorder-ended", message: "Mic disconnected at 0:02",
+        });
+      } finally {
+        writeFileSync(STOP_FILE, "stop");
+        await pending.catch(() => null);
+        clearStopSignal();
+      }
+    }, 10_000);
+  }
+
+  it("MICDROP2: a recorder that ends having never carried signal says so, with no fake 0:00", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 10 }, ditherChunk), false);
+    const { waitForInput } = await import("../input");
+    let archivePath = "";
+    const pending = waitForInput(20_000, "standard", true, { archiveSource: "voicebar", onArchiveCreated: p => { archivePath = p; } });
+    try {
+      expect(await raceStillRecording(pending, 4_000)).toBeNull();
+      expect(broadcasts.some(e => e.type === "mic_disconnected")).toBe(false);
+      expect(JSON.stringify(broadcasts)).not.toContain("0:00");
+      expect(broadcasts.find(e => e.type === "error")?.message).toBe("Mic produced no signal");
+      expectValidRetainedWav(join(archivePath, "audio.wav"), 10 * VAD_CHUNK_BYTES);
+      expect(archiveMetadata(archivePath)).toMatchObject({
+        mic_disconnected_at_ms: null, mic_disconnect_reason: "recorder-ended", mic_disconnect_note: "Mic produced no signal",
+      });
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await pending.catch(() => null);
+      clearStopSignal();
+    }
+  }, 10_000);
+
+  it("MICDROP2: the EOF our own teardown causes is never evidence", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(liveChunks(24), true);
+    const { recordToBuffer } = await import("../input");
+    const captureState: { micDisconnect?: unknown } = {};
+    const recording = recordToBuffer(2_000, "standard", true, undefined, undefined, true, captureState as never);
+    await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+    expect((await recording)?.byteLength).toBe(24 * VAD_CHUNK_BYTES);
+    expect(captureState.micDisconnect).toBeUndefined();
+  });
+
   it("permanently archives failed VoiceBar STT before another capture overwrites recovery", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     const chunks = Array.from({ length: 24 }, () => makePcmChunk(1800));
@@ -2665,9 +2835,10 @@ describe("input recording durability", () => {
 
   it("labels paired archive failures at the capture-end boundary", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
+    // Open stdout: a recorder EOF would be MICDROP2 device-loss evidence, not this test's subject.
     installFakeRecorder(
       Array.from({ length: 24 }, () => makePcmChunk(1800)),
-      false,
+      true,
     );
     const archiveRootFile = join(tmpRoot, "archive-root-is-a-file");
     writeFileSync(archiveRootFile, "not a directory");
