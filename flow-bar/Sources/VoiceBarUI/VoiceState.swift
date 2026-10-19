@@ -949,7 +949,10 @@ public final class VoiceState {
     private var selectionReadID: String?
     private var selectionReadIsPreparing = false
     private var selectionSpeechEpoch = 0
-    public private(set) var showsSelectionBusyNote = false
+    public private(set) var showsSelectionBusyNote = false {
+        // NOTCH1: the note lives inside the notch, so showing or clearing it resizes the panel.
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != showsSelectionBusyNote) }
+    }
     @ObservationIgnored private var selectionBusyNoteTask: Task<Void, Never>?
 
     private var selectionRejectionMessage: String?

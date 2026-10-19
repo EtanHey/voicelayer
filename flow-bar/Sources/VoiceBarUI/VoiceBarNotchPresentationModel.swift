@@ -25,6 +25,7 @@ public final class VoiceBarNotchPresentationModel {
     private var coreWidth = VoiceBarNotchContract.coreWidth
     private var visibleCoreOcclusionInset: CGFloat = 0
     private var virtualNotchIdleCoreHeight: CGFloat?
+    private var transientNoteWidth: CGFloat?
     @ObservationIgnored private let onLayoutInvalidated: () -> Void
 
     public init(
@@ -59,7 +60,8 @@ public final class VoiceBarNotchPresentationModel {
         keepsIdleExpanded: Bool = false,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
         visibleCoreOcclusionInset: CGFloat = 0,
-        virtualNotchIdleCoreHeight: CGFloat? = nil
+        virtualNotchIdleCoreHeight: CGFloat? = nil,
+        transientNoteWidth: CGFloat? = nil
     ) {
         self.hasTeleprompter = hasTeleprompter
         self.isRecording = isRecording
@@ -72,6 +74,7 @@ public final class VoiceBarNotchPresentationModel {
         self.coreWidth = coreWidth
         self.visibleCoreOcclusionInset = visibleCoreOcclusionInset
         self.virtualNotchIdleCoreHeight = virtualNotchIdleCoreHeight
+        self.transientNoteWidth = transientNoteWidth
         resolvePresentation()
     }
 
@@ -111,7 +114,8 @@ public final class VoiceBarNotchPresentationModel {
             isKeyboardFocused: isKeyboardFocused,
             coreWidth: coreWidth,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
-            virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight
+            virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
+            transientNoteWidth: transientNoteWidth
         )
         guard next != presentation else { return }
 
