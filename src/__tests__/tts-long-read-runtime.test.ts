@@ -10,7 +10,7 @@ import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
-import { awaitCurrentPlayback, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
+import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand } from "../socket-handlers";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
@@ -148,7 +148,11 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       { word_index: 0, text: "Export", offset_ms: 0, duration_ms: 80 },
       { word_index: 1, text: "MP3", offset_ms: null, duration_ms: null },
       { word_index: 2, text: "now.", offset_ms: 200, duration_ms: 80 },
-    ] });
+    ], duration_ms: 1000 });
+    // WORDTIME1: the finished read's history entry keeps the timings replay will re-broadcast.
+    players[0].exit.resolve(0);
+    if (route === "long") await handles[0].done; else await awaitCurrentPlayback();
+    expect(getHistoryEntry(0)?.alignedWords).toEqual((await published.at(0)).aligned_words);
   });
 
   for (const cmd of ["stop", "cancel"] as const) it(`R2 ${cmd} ack waits for alignment child reap after audio exits`, async () => {

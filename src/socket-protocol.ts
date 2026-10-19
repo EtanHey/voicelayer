@@ -191,7 +191,7 @@ export interface AlignedWordBoundary {
  * The caller owns request/chunk/audio/rate freshness before publishing. */
 export type SubtitleEvent = { type: "subtitle" } & (
   | { words: WordBoundary[]; aligned_words?: never }
-  | { words: []; aligned_words: AlignedWordBoundary[] }
+  | { words: []; aligned_words: AlignedWordBoundary[]; /** Chunk-local audio length: interpolation never passes it. */ duration_ms?: number }
 );
 
 export type PlaybackPriority =

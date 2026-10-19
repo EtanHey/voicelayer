@@ -86,6 +86,7 @@ import {
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 import { reserveStandardVoiceOperation, hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { markdownToSpeech } from "./tts/markdown-to-speech";
+import { clipAlignedWordsToText } from "./tts/history-timings";
 
 let modelStatusRevision = 0;
 function publishModelStatusEvent(): void {
@@ -192,9 +193,13 @@ export function handleSocketCommand(
       const entry = getHistoryEntry(0);
       if (entry && existsSync(entry.file)) {
         try {
+          const text = entry.text.slice(0, 2000);
+          // WORDTIME1: a replay carries the timings the read used, so it is never less timed than the first run.
           playAudioNonBlocking(entry.file, {
-            text: entry.text.slice(0, 2000),
+            text,
             voice: entry.voice,
+            ...(entry.alignedWords?.length ? { alignedWords: clipAlignedWordsToText(entry.alignedWords, text) } : {}),
+            ...(entry.wordBoundaries?.length ? { wordBoundaries: entry.wordBoundaries } : {}),
           });
         } catch (err) {
           return buildAck(

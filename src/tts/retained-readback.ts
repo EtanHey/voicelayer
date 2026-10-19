@@ -24,7 +24,7 @@ export class RetainedReadback {
     const retained = ttsFilePath(process.pid, ++this.counter).replace(".mp3", `.${this.identity}.readback.mp3`);
     try {
       copyFileSync(file, retained);
-      const { onStarted, onCompleted, onQueued, nextState, seekSliceFile, localOffsetMs, isSeek, getUtteranceDurationMs, ...facts } = metadata;
+      const { onStarted, onCompleted, onQueued, onAlignedWords, nextState, seekSliceFile, localOffsetMs, isSeek, getUtteranceDurationMs, ...facts } = metadata;
       this.chunks.set(index, { file: retained, metadata: { ...facts,
         utteranceDurationMs: metadata.getUtteranceDurationMs?.() ?? metadata.utteranceDurationMs } });
     } catch { try { unlinkSync(retained); } catch {} } // Failed copies stay unavailable.
