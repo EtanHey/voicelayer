@@ -19,7 +19,7 @@ enum SettingsHistoryAccessibility {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         var parts = [
-            entry.hasTranscript ? opening(entry.transcript, limit: openingLimit) : "No transcript stored",
+            entry.hasTranscript ? opening(entry.transcript, limit: openingLimit) : entry.missingTranscriptLabel,
             // ICU puts a narrow no-break space before "AM"; a plain space reads the same and compares plainly.
             formatter.string(from: entry.createdAt).replacingOccurrences(of: "\u{202F}", with: " "),
         ]

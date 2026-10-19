@@ -4,6 +4,43 @@ public extension Notification.Name {
     static let voiceBarHistoryArchiveDidChange = Notification.Name("VoiceBarHistoryArchiveDidChange")
 }
 
+/// NOTX1: why a kept recording has no transcript (metadata `not_transcribed_reason`, written by the
+/// daemon when STT was skipped, failed or found no words). Unknown reasons fall back to the old placeholder.
+public struct SettingsHistoryMissingTranscript: Equatable, Sendable {
+    public let reason: String
+    public let detail: String?
+    public let inputDbfs: Double?
+
+    public init(reason: String, detail: String?, inputDbfs: Double?) {
+        self.reason = reason
+        self.detail = detail
+        self.inputDbfs = inputDbfs
+    }
+
+    public var label: String? {
+        switch reason {
+        case "silent-input":
+            guard let inputDbfs else { return "Not transcribed: the microphone sent only silence" }
+            return String(format: "Not transcribed: the microphone sent only silence (%.1f dBFS)", inputDbfs)
+        case "no-speech", "vad-no-speech":
+            return "Not transcribed: no speech detected"
+        case "too-short":
+            return "Not transcribed: too short to transcribe"
+        case "too-quiet":
+            return "Not transcribed: too quiet to transcribe"
+        case "empty-transcript":
+            return "Transcribed, but no words were recognized"
+        case "transcription-failed":
+            guard let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty else {
+                return "Transcription failed"
+            }
+            return "Transcription failed: \(detail)"
+        default:
+            return nil
+        }
+    }
+}
+
 public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     public let id: String
     public let dayKey: String
@@ -23,6 +60,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     public let modelLabel: String?
     public let performanceEffort: VoiceBarPerformanceEffort?
     public let inputDeviceLabel: String?
+    public let missingTranscript: SettingsHistoryMissingTranscript?
 
     public init(
         id: String,
@@ -37,7 +75,8 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         processingDurationMs: Int? = nil,
         modelLabel: String? = nil,
         performanceEffort: VoiceBarPerformanceEffort? = nil,
-        inputDeviceLabel: String? = nil
+        inputDeviceLabel: String? = nil,
+        missingTranscript: SettingsHistoryMissingTranscript? = nil
     ) {
         self.id = id
         self.dayKey = dayKey
@@ -52,6 +91,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         self.modelLabel = modelLabel
         self.performanceEffort = performanceEffort
         self.inputDeviceLabel = inputDeviceLabel
+        self.missingTranscript = missingTranscript
     }
 
     public var durationLabel: String? {
@@ -77,7 +117,11 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     }
 
     public var displayTranscript: String {
-        hasTranscript ? transcript : "No transcript stored"
+        hasTranscript ? transcript : missingTranscriptLabel
+    }
+
+    public var missingTranscriptLabel: String {
+        missingTranscript?.label ?? "No transcript stored"
     }
 
     public func timestamp(
@@ -221,7 +265,14 @@ public enum SettingsHistoryArchive {
             modelLabel: VoiceModelDisplayName.normalize(metadata?.provenance?.whisperModelPath),
             performanceEffort: metadata?.provenance?.performanceEffort.flatMap(VoiceBarPerformanceEffort.init),
             inputDeviceLabel: metadata?.inputDeviceName?
-                .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty
+                .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty,
+            missingTranscript: metadata?.notTranscribedReason.map {
+                SettingsHistoryMissingTranscript(
+                    reason: $0,
+                    detail: metadata?.notTranscribedDetail,
+                    inputDbfs: metadata?.inputDbfs
+                )
+            }
         )
     }
 

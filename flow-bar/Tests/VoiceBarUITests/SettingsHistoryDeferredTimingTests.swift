@@ -131,4 +131,53 @@ final class SettingsHistoryDeferredTimingTests: XCTestCase {
 
         XCTAssertEqual(calls, 0)
     }
+
+    /// NOTX1 round 2 (Sol #1): a failed or empty Re-transcribe rewrites only metadata.json inside an existing
+    /// entry, which the index's day-directory check cannot see. The daemon announces it with
+    /// `archive_metadata_updated`, and the open row must then show the new reason.
+    func testAnOpenUntranscribedRowShowsTheNewReasonAfterArchiveMetadataUpdate() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notx1-reason-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("2026-10-19/2026-10-19T03-31-42-436Z-0000notx")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let audio = dir.appendingPathComponent("audio.wav")
+        try Data([0, 1]).write(to: audio)
+        let metadata = dir.appendingPathComponent("metadata.json")
+        func writeReason(_ fields: String) throws {
+            try (#"{"id":"notx","created_at":"2026-10-19T03:31:42.436Z","source":"voicebar","#
+                + #""transcription_status":"captured","# + fields + "}")
+                .write(to: metadata, atomically: true, encoding: .utf8)
+        }
+        try writeReason(#""not_transcribed_reason":"silent-input","input_dbfs":-93.9"#)
+        let index = SettingsArchiveIndex()
+        let before = await index.dictationPage(from: root)
+        XCTAssertEqual(
+            before.groups.flatMap(\.entries).map(\.displayTranscript),
+            ["Not transcribed: the microphone sent only silence (-93.9 dBFS)"]
+        )
+
+        try writeReason(#""not_transcribed_reason":"transcription-failed","not_transcribed_detail":"backend down""#)
+        let cached = await index.dictationPage(from: root)
+        XCTAssertEqual(
+            cached.groups.flatMap(\.entries).map(\.displayTranscript),
+            ["Not transcribed: the microphone sent only silence (-93.9 dBFS)"],
+            "without the event the index keeps serving the old reason"
+        )
+
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+        )
+        var invalidated: [String] = []
+        state.onHistoryArchiveChange = { path in if let path { invalidated.append(path) } }
+        state.handleEvent(["type": "archive_metadata_updated", "recording_path": audio.path])
+        XCTAssertEqual(invalidated, [audio.path])
+        for path in invalidated {
+            await index.invalidate(entryPath: path)
+        }
+
+        let after = await index.dictationPage(from: root)
+        XCTAssertEqual(after.groups.flatMap(\.entries).map(\.displayTranscript), ["Transcription failed: backend down"])
+    }
 }

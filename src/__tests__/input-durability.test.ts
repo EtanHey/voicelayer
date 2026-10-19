@@ -1862,6 +1862,157 @@ describe("input recording durability", () => {
     expect(metadata.audio_sha256).toBe(createHash("sha256").update(readFileSync(retainedPath)).digest("hex"));
   }
 
+  function voiceBarArchiveMetadata(audioPath: string): Record<string, unknown> {
+    return JSON.parse(readFileSync(audioPath.replace("audio.wav", "metadata.json"), "utf8"));
+  }
+
+  // NOTX1: a kept recording that never got a transcript must say why, not a bare "captured".
+  it("NOTX1 records silent-input when a push-to-end capture is digital silence", async () => {
+    vadProcessSpy!.mockResolvedValue(0);
+    // ±1 LSB for 1.9 s: the shape of the 2026-10-19 06:31 capture (wireless mic link dropped).
+    const chunks = Array.from({ length: 60 }, () => makePcmChunk(1));
+    installFakeRecorder(chunks, false);
+    const { waitForInput } = await import("../input");
+    const result = waitForInput(5_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(60 * VAD_CHUNK_BYTES);
+    expect(await result).toBeNull();
+    expect(backendTranscribeCalls).toBe(0);
+    const archives = capturedVoiceBarAudio();
+    expect(archives).toHaveLength(1);
+    const metadata = voiceBarArchiveMetadata(archives[0]);
+    expect(metadata).toMatchObject({
+      transcription_status: "captured",
+      not_transcribed_reason: "silent-input",
+    });
+    expect(metadata.input_dbfs as number).toBeLessThan(-85);
+  });
+
+  it("NOTX1 records no-speech when an audible push-to-end capture has no voice", async () => {
+    vadProcessSpy!.mockResolvedValue(0);
+    installFakeRecorder(Array.from({ length: 60 }, () => makePcmChunk(1800)), false);
+    const { waitForInput } = await import("../input");
+    const result = waitForInput(5_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(60 * VAD_CHUNK_BYTES);
+    expect(await result).toBeNull();
+    const [archive] = capturedVoiceBarAudio();
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      transcription_status: "captured",
+      not_transcribed_reason: "no-speech",
+    });
+  });
+
+  it("NOTX1 records the STT failure reason and a later re-transcribe clears it", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    backendMode = "throw-on-get";
+    const { waitForInput, retranscribeRecordingCapture } = await import("../input");
+    const failed = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+    await expect(failed).rejects.toThrow("whisper backend is still warming");
+    const [archive] = capturedVoiceBarAudio();
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      transcription_status: "captured",
+      not_transcribed_reason: "transcription-failed",
+      not_transcribed_detail: "whisper backend is still warming",
+    });
+
+    backendMode = "ok";
+    await expect(retranscribeRecordingCapture(archive)).resolves.toBe("Retained transcript.");
+    const metadata = voiceBarArchiveMetadata(archive);
+    expect(metadata.transcription_status).toBe("transcribed");
+    expect(metadata).not.toHaveProperty("not_transcribed_reason");
+    expect(metadata).not.toHaveProperty("not_transcribed_detail");
+  });
+
+  it("NOTX1 keeps the original reason when a re-transcribe of silence finds no words", async () => {
+    vadProcessSpy!.mockResolvedValue(0);
+    installFakeRecorder(Array.from({ length: 60 }, () => makePcmChunk(1)), false);
+    const { waitForInput, retranscribeRecordingCapture } = await import("../input");
+    const result = waitForInput(5_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(60 * VAD_CHUNK_BYTES);
+    await result;
+    const [archive] = capturedVoiceBarAudio();
+    backendText = "";
+    await expect(retranscribeRecordingCapture(archive)).resolves.toBeNull();
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      transcription_status: "captured",
+      not_transcribed_reason: "silent-input",
+    });
+  });
+
+  // NOTX1 round 2 (Sol #1): History caches rows and only re-reads one on archive_metadata_updated.
+  function metadataUpdates(): unknown[] {
+    return broadcasts.filter((event) => event.type === "archive_metadata_updated");
+  }
+
+  async function silentVoiceBarArchive(): Promise<string> {
+    vadProcessSpy!.mockResolvedValue(0);
+    installFakeRecorder(Array.from({ length: 60 }, () => makePcmChunk(1)), false);
+    const { waitForInput } = await import("../input");
+    const result = waitForInput(5_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(60 * VAD_CHUNK_BYTES);
+    await result;
+    return capturedVoiceBarAudio()[0];
+  }
+
+  it("NOTX1 tells History when a live capture is kept with a reason", async () => {
+    const archive = await silentVoiceBarArchive();
+    expect(metadataUpdates()).toEqual([
+      { type: "archive_metadata_updated", recording_path: archive },
+    ]);
+  });
+
+  it("NOTX1 tells History when a failed Re-transcribe changes the reason", async () => {
+    const archive = await silentVoiceBarArchive();
+    broadcasts = [];
+    backendMode = "throw-on-get";
+    const { retranscribeRecordingCapture } = await import("../input");
+    await expect(retranscribeRecordingCapture(archive)).rejects.toThrow("whisper backend is still warming");
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      not_transcribed_reason: "transcription-failed",
+    });
+    expect(metadataUpdates()).toEqual([
+      { type: "archive_metadata_updated", recording_path: archive },
+    ]);
+  });
+
+  it("NOTX1 tells History when an empty Re-transcribe gives a legacy row its reason", async () => {
+    const archive = await silentVoiceBarArchive();
+    // A row archived before NOTX1 has no reason fields.
+    const metadataPath = archive.replace("audio.wav", "metadata.json");
+    const legacy = voiceBarArchiveMetadata(archive);
+    delete legacy.not_transcribed_reason;
+    delete legacy.not_transcribed_detail;
+    delete legacy.input_dbfs;
+    writeFileSync(metadataPath, `${JSON.stringify(legacy, null, 2)}\n`);
+    broadcasts = [];
+    backendText = "";
+    const { retranscribeRecordingCapture } = await import("../input");
+    await expect(retranscribeRecordingCapture(archive)).resolves.toBeNull();
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      not_transcribed_reason: "empty-transcript",
+    });
+    expect(metadataUpdates()).toEqual([
+      { type: "archive_metadata_updated", recording_path: archive },
+    ]);
+  });
+
+  it("NOTX1 records empty-transcript when the live decode returns no words", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    backendText = "";
+    const { waitForInput } = await import("../input");
+    const result = waitForInput(2_000, "standard", true, { archiveSource: "voicebar" });
+    await stopPushToEndOnceCaptured(24 * VAD_CHUNK_BYTES);
+    expect(await result).toBeNull();
+    expect(backendTranscribeCalls).toBe(1);
+    const [archive] = capturedVoiceBarAudio();
+    expect(voiceBarArchiveMetadata(archive)).toMatchObject({
+      transcription_status: "captured",
+      not_transcribed_reason: "empty-transcript",
+    });
+  });
+
   it("permanently archives failed VoiceBar STT before another capture overwrites recovery", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     const chunks = Array.from({ length: 24 }, () => makePcmChunk(1800));

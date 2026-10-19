@@ -156,6 +156,10 @@ struct SettingsArchiveMetadata: Decodable {
     /// The dictation's post-capture processing time (F1).
     let processingDurationMs: Int?
     let inputDeviceName: String?
+    /// NOTX1: why the daemon kept this recording without a transcript.
+    let notTranscribedReason: String?
+    let notTranscribedDetail: String?
+    let inputDbfs: Double?
     let provenance: RecordingModelProvenance?
 
     struct RecordingModelProvenance: Decodable {
@@ -177,6 +181,9 @@ struct SettingsArchiveMetadata: Decodable {
         case spokenDurationMs = "spoken_duration_ms"
         case processingDurationMs = "processing_duration_ms"
         case inputDeviceName = "input_device_name"
+        case notTranscribedReason = "not_transcribed_reason"
+        case notTranscribedDetail = "not_transcribed_detail"
+        case inputDbfs = "input_dbfs"
         case provenance
     }
 
