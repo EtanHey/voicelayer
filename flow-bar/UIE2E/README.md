@@ -17,7 +17,7 @@ On an occupied Mac, compilation only:
 bash scripts/voicebar-ui-e2e.sh --output /tmp/voicebar-ui-build-$(date +%s) --build-only
 ```
 
-The output path must be new. The runner leaves output muted, retains the QA app and sandbox
+The output path must be new. The runner mutes output for the run and restores the prior mute state on exit, failure or interrupt, retains the QA app and sandbox
 (path in `sandbox-path.txt`), and writes `VoiceBar.xcresult`, step receipts, exported attachments,
 and an ordered `screenshots/index.html`. Failed or missing actions/screenshots fail the run.
 Build-only neither changes volume nor launches any app or test runner.
@@ -250,8 +250,8 @@ final deletion. Movie evidence and formal review must not silently promote these
 receipts into stronger UI guarantees. Generic Open Settings correctly raises the
 currently selected Settings tab and need not select General.
 
-The shell runner deliberately leaves output muted. Recorded gate operators must
-capture the initial mute state and restore it in a finally/trap, including failure.
+The shell runner restores the mute state it found (`scripts/lib/output-mute-guard.sh`, EXIT/INT/TERM
+traps). Recorded gate operators must still capture the initial state and restore it in a finally/trap.
 The acceptance receipts use an outer `operator-run.py` beside each result, which
 also verifies the exact QA bundle/head and cleans only that run's QA executable
 paths. The supervisor itself restores the recorded hide-others snapshot. No
