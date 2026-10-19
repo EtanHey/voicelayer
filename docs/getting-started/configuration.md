@@ -12,6 +12,7 @@ VoiceLayer is configured entirely via environment variables. All settings have s
 | `QA_VOICE_WHISPER_MODEL` | auto-detected | Absolute path to a whisper.cpp GGML model file |
 | `QA_VOICE_WISPR_KEY` | — | Wispr Flow API key (cloud fallback only) |
 | `VOICELAYER_STT_PAUSE_PARAGRAPHS` | `1` | Insert blank lines at existing sentence ends supported by long pauses; `0` disables |
+| `VOICELAYER_STT_COHERENT_PARAGRAPHS` | `0` | Opt-in, text-only paragraphs: blank lines at existing sentence ends, preferring topic turns; replaces pause paragraphs when on |
 
 **Auto-detection** (`auto` mode) checks for whisper.cpp first, falls back to Wispr Flow if `QA_VOICE_WISPR_KEY` is set.
 

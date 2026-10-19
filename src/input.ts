@@ -24,6 +24,7 @@
  */
 
 import { applyPauseParagraphs, MIN_PARAGRAPH_CHARS, pauseParagraphsEnabled } from "./stt-paragraphs";
+import { applyCoherentParagraphs, coherentParagraphsEnabled } from "./stt-coherent-paragraphs";
 import { processingEnv } from "./processing-settings";
 import { physicalStopInput, STOP_CAPTURE_DRAIN_MS as PUSH_TO_END_STOP_CAPTURE_DRAIN_MS, STOP_POLL_MS } from "./physical-stop-input";
 import { createHash, randomBytes } from "crypto";
@@ -463,7 +464,8 @@ export async function finalizeTranscriptionTextForSurface(
 /** Short paragraph-only dictations need no audio read, SHA or Silero pass. */
 export function shouldBuildBoundaryContext(text: string, env: STTFinalizeEnv = processingEnv()): boolean {
   return smartBoundariesEnabled(env) ||
-    (pauseParagraphsEnabled(env) && text.length >= 2 * MIN_PARAGRAPH_CHARS);
+    (pauseParagraphsEnabled(env) && !coherentParagraphsEnabled(env) &&
+      text.length >= 2 * MIN_PARAGRAPH_CHARS);
 }
 
 /**
@@ -482,7 +484,9 @@ export async function buildBoundaryContext(
   env: STTFinalizeEnv = processingEnv(),
   signal?: AbortSignal,
 ): Promise<STTPolishBoundaryContext | undefined> {
-  if (!smartBoundariesEnabled(env) && !pauseParagraphsEnabled(env)) return undefined;
+  // Coherent paragraphs replace pause paragraphs and read only the text.
+  if (!smartBoundariesEnabled(env) &&
+      (!pauseParagraphsEnabled(env) || coherentParagraphsEnabled(env))) return undefined;
   // Never pair unbound segment times with an arbitrary WAV.
   if (!segmentsAudioSha256) return undefined;
   if (signal?.aborted) return undefined;
@@ -535,8 +539,11 @@ export async function finalizeTranscriptionResultForSurface(
   boundaryContext?: STTPolishBoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
+  // Coherent paragraphs read only the text, so when enabled they own paragraphing.
   const paragraphText = (text: string): string =>
-    pauseParagraphsEnabled(env) && boundaryContext
+    coherentParagraphsEnabled(env)
+      ? applyCoherentParagraphs(text)
+      : pauseParagraphsEnabled(env) && boundaryContext
       ? applyPauseParagraphs(text, boundaryContext.segments, boundaryContext.pauses)
       : text;
   if (!surface) return { text: paragraphText(cleanedText) };
