@@ -2017,25 +2017,15 @@ public struct SettingsView: View {
                     let personal = dictionaryDisplayIndex.entries(source: "personal", matching: dictionarySearch)
                     let included = dictionaryDisplayIndex.entries(source: "bundled", matching: dictionarySearch)
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        Button {
-                            yourTermsExpanded.toggle()
-                        } label: {
-                            HStack {
-                                Image(systemName: yourTermsExpanded ? "chevron.down" : "chevron.right")
-                                    .frame(width: 14)
-                                Text(Self.dictionarySectionTitle(
-                                    "Your terms", count: dictionaryDisplayIndex.personalCount,
-                                    matches: isSearching ? personal.count : nil,
-                                    loaded: hasLoadedDictionaryOnce
-                                ))
-                                Spacer()
-                            }
-                            .font(.headline)
-                            .contentShape(Rectangle())
+                        let yourTermsTitle = Self.dictionarySectionTitle(
+                            "Your terms", count: dictionaryDisplayIndex.personalCount,
+                            matches: isSearching ? personal.count : nil,
+                            loaded: hasLoadedDictionaryOnce
+                        )
+                        SettingsDisclosureHeader(yourTermsTitle, isExpanded: $yourTermsExpanded) {
+                            Text(yourTermsTitle).font(.headline)
                         }
-                        .buttonStyle(.plain)
                         .help(yourTermsExpanded ? "Collapse your terms" : "Show your terms")
-                        .accessibilityValue(yourTermsExpanded ? "Expanded" : "Collapsed")
                         .padding(.bottom, 8)
                         if yourTermsExpanded || isSearching {
                             switch Self.dictionaryPlaceholder(
@@ -2070,23 +2060,15 @@ public struct SettingsView: View {
                             matches: isSearching ? included.count : nil,
                             loaded: hasLoadedDictionaryOnce
                         )
-                        if includedHeader.showsChevron {
-                            Button {
-                                includedTermsExpanded.toggle()
-                            } label: {
-                                includedTermsHeaderLabel(includedHeader)
-                            }
-                            .buttonStyle(.plain)
-                            .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
-                            .accessibilityValue(includedTermsExpanded ? "Expanded" : "Collapsed")
-                            .accessibilityHint("Built-in terms are read-only")
-                            .padding(.top, 18)
-                        } else {
-                            // Nothing to open: loading, or a list the daemon reports empty (UXP-1).
+                        // Nothing to open while loading, or for a list the daemon reports empty (UXP-1).
+                        SettingsDisclosureHeader(
+                            includedHeader.title, isExpanded: $includedTermsExpanded,
+                            isEnabled: includedHeader.showsChevron, hint: "Built-in terms are read-only"
+                        ) {
                             includedTermsHeaderLabel(includedHeader)
-                                .accessibilityElement(children: .combine)
-                                .padding(.top, 18)
                         }
+                        .help(includedTermsExpanded ? "Collapse included terms" : "Show included terms")
+                        .padding(.top, 18)
                         if includedTermsExpanded || isSearching {
                             ForEach(included, id: \.rowID) { row in
                                 dictionaryEntryCard(row.entry, rowID: row.rowID, isEditable: false)
@@ -2131,10 +2113,6 @@ public struct SettingsView: View {
 
     private func includedTermsHeaderLabel(_ header: IncludedTermsHeader) -> some View {
         HStack {
-            Image(systemName: includedTermsExpanded ? "chevron.down" : "chevron.right")
-                .frame(width: 14)
-                .opacity(header.showsChevron ? 1 : 0)
-                .accessibilityHidden(!header.showsChevron)
             Text(header.title)
             if header.isLoading {
                 ProgressView().controlSize(.small)
@@ -2144,7 +2122,6 @@ public struct SettingsView: View {
             Text("built in").font(.caption).foregroundStyle(.secondary)
         }
         .font(.headline)
-        .contentShape(Rectangle())
     }
 
     private var searchRow: some View {
