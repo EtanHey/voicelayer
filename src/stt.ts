@@ -2260,11 +2260,12 @@ export class WhisperServerBackend implements STTBackend {
         text,
         options,
       );
-      const verifiedText = await this.verifyTailForLongRecording(
+      const tail = await this.verifyTailForLongRecording(
         wavData,
         headResult.text,
         options,
       );
+      const verifiedText = tail.text;
       const cleanedText = trimEchoedTrailingPhrase(verifiedText, {
         allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
       });
@@ -2274,23 +2275,27 @@ export class WhisperServerBackend implements STTBackend {
       //
       // `segmentsText` is the raw decode output, so the gate can refuse when an
       // earlier stage rewrote the transcript out from under those timings.
-      // `verifyLeadingPunctuation` can swap in a whole retry decode,
-      // `verifyTailForLongRecording` can merge in recovered tail words, and
-      // `trimEchoedTrailingPhrase` can remove some — each shifts the word
+      // `verifyLeadingPunctuation` can swap in a whole retry decode and
+      // `trimEchoedTrailingPhrase` can remove words — each shifts the word
       // positions the span lookup counts on. A repaired transcript therefore
       // gets NO outro gating, which is the deliberate trade: skipping a
       // hallucinated closer is recoverable, deleting a real word is not.
       //
-      // AIDEV-NOTE: that is also the answer to "a long recording through
-      // `verifyTailForLongRecording` can still keep its closer" — it can, by
-      // design, whenever that stage changed the text. Widening this needs the
-      // repaired text's own decode segments, not a looser check here.
-      const gated = outroGate
-        ? stripHallucinatedOutro(cleanedText, wavData, {
-            segments,
-            segmentsText: text,
-          })
-        : { text: cleanedText, removed: [], reason: "no-candidate" as const };
+      // AIDEV-NOTE: `verifyTailForLongRecording` is log-only since Etan's
+      // ruling B (2026-10-19): it always returns its input. When it WOULD have
+      // rewritten the text, both deletion gates keep the skip main took here
+      // as segments-stale (TAILLOG1 R1, Sol): un-skipping them deleted a
+      // quietly spoken real "Thank you." that sits under the floor+16 dB
+      // threshold. Widening this needs the repaired text's own decode
+      // segments, not a looser check here.
+      const gated = !outroGate
+        ? { text: cleanedText, removed: [], reason: "no-candidate" as const }
+        : tail.wouldRewrite
+          ? { text: cleanedText, removed: [], reason: "segments-stale" as const }
+          : stripHallucinatedOutro(cleanedText, wavData, {
+              segments,
+              segmentsText: text,
+            });
       if (outroGate && gated.reason === "segments-stale") {
         console.error(
           "[voicelayer] outro gate: transcript was repaired after the decode; " +
@@ -2307,7 +2312,7 @@ export class WhisperServerBackend implements STTBackend {
       // Captions are gated only on this single-pass path. Chunked recordings
       // need a separate bounded tail-VAD design before paying another full-WAV
       // pass or trusting stitched segment timing for deletion.
-      const caption = outroGate
+      const caption = outroGate && !tail.wouldRewrite
         ? await stripHallucinatedCaption(gated.text, wavData, {
             segments,
             segmentsText: text,
@@ -2321,7 +2326,6 @@ export class WhisperServerBackend implements STTBackend {
       if (headResult.changed) {
         backendParts.push(headResult.backendSuffix ?? "head");
       }
-      if (verifiedText !== headResult.text) backendParts.push("tail");
       if (cleanedText !== verifiedText) backendParts.push("clean");
       if (gated.removed.length > 0) backendParts.push("outro");
       if (caption.removed) backendParts.push("caption");
@@ -2414,22 +2418,44 @@ export class WhisperServerBackend implements STTBackend {
     return { text: fullText, changed: false };
   }
 
+  // AIDEV-NOTE: log-only (Etan's ruling B, 2026-10-19). The merge appended
+  // genuinely new words 0 times in 51 measured runs (docs.local/TAILDUP2) and
+  // was the source of repeated last sentences, so this stage never changes
+  // the text. It still decodes and merges, only to log what it would have
+  // done: a count and a decode label, never transcript words. `wouldRewrite`
+  // tells the deletion gates to keep the skip they took when this rewrote.
   private async verifyTailForLongRecording(
     wavData: Uint8Array,
     fullText: string,
     options?: STTTranscribeOptions,
-  ): Promise<string> {
+  ): Promise<{ text: string; wouldRewrite: boolean }> {
+    const unchanged = { text: fullText, wouldRewrite: false };
     const info = parseWavPcmInfo(wavData);
     if (!info || info.durationSeconds < WAV_TAIL_VERIFY_MIN_SECONDS) {
-      return fullText;
+      return unchanged;
     }
 
     const tailWav = sliceWavTail(wavData, WAV_TAIL_VERIFY_SECONDS);
-    if (!tailWav) return fullText;
+    if (!tailWav) return unchanged;
     // Late-stop PTT often leaves a silent last 12s. Decoding that window
     // hallucinates YouTube outros ("All right. Thank you.") and merge can
     // append them after a 2-word overlap such as "All right".
-    if (isLowEnergyWavSegment(tailWav)) return fullText;
+    if (isLowEnergyWavSegment(tailWav)) return unchanged;
+
+    const logWouldAppend = (mergedText: string | null, decode: string) => {
+      const delta = mergedText === null
+        ? 0
+        : normalizeChunkWords(
+            stripTailVerificationArtifact(mergedText, fullText),
+          ).length - normalizeChunkWords(fullText).length;
+      console.error(
+        `[voicelayer] tail verify (log-only): ` +
+          (mergedText === null
+            ? "would not append"
+            : `would append ${delta >= 0 ? "+" : ""}${delta} words`) +
+          ` via ${decode} decode; backend=${this.name}`,
+      );
+    };
 
     try {
       const tailText = await this.transcribeResident(
@@ -2443,13 +2469,15 @@ export class WhisperServerBackend implements STTBackend {
       );
       const merged = mergeTailVerificationTranscript(fullText, tailText);
       if (merged.text !== fullText) {
-        return stripTailVerificationArtifact(merged.text, fullText);
+        logWouldAppend(merged.text, "prompted");
+        return { text: fullText, wouldRewrite: true };
       }
       if (
         merged.confirmedOverlap &&
         !hasDanglingTailContinuationCue(normalizeChunkWords(fullText))
       ) {
-        return fullText;
+        logWouldAppend(null, "prompted");
+        return unchanged;
       }
 
       const unpromptedTailText = await this.transcribeResident(
@@ -2460,16 +2488,16 @@ export class WhisperServerBackend implements STTBackend {
         fullText,
         unpromptedTailText,
       );
-      return unpromptedMerged.text !== fullText
-        ? stripTailVerificationArtifact(unpromptedMerged.text, fullText)
-        : fullText;
+      const wouldRewrite = unpromptedMerged.text !== fullText;
+      logWouldAppend(wouldRewrite ? unpromptedMerged.text : null, "unprompted");
+      return { text: fullText, wouldRewrite };
     } catch (err) {
       console.error(
         `[voicelayer] whisper-server tail verification failed; keeping full-window text: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return fullText;
+      return unchanged;
     }
   }
 
