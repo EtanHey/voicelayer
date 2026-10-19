@@ -24,6 +24,7 @@
  */
 
 import { applyPauseParagraphs, MIN_PARAGRAPH_CHARS, pauseParagraphsEnabled } from "./stt-paragraphs";
+import { applyCoherentParagraphs, coherentParagraphsEnabled } from "./stt-coherent-paragraphs";
 import { processingEnv } from "./processing-settings";
 import { physicalStopInput, STOP_CAPTURE_DRAIN_MS as PUSH_TO_END_STOP_CAPTURE_DRAIN_MS, STOP_POLL_MS } from "./physical-stop-input";
 import { createHash, randomBytes } from "crypto";
@@ -535,8 +536,11 @@ export async function finalizeTranscriptionResultForSurface(
   boundaryContext?: STTPolishBoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
+  // Coherent paragraphs read only the text, so when enabled they own paragraphing.
   const paragraphText = (text: string): string =>
-    pauseParagraphsEnabled(env) && boundaryContext
+    coherentParagraphsEnabled(env)
+      ? applyCoherentParagraphs(text)
+      : pauseParagraphsEnabled(env) && boundaryContext
       ? applyPauseParagraphs(text, boundaryContext.segments, boundaryContext.pauses)
       : text;
   if (!surface) return { text: paragraphText(cleanedText) };

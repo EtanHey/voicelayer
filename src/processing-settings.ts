@@ -17,7 +17,8 @@ export type ProcessingKey =
   | "outro_gate"
   | "smart_chunks"
   | "smart_boundaries"
-  | "pause_paragraphs";
+  | "pause_paragraphs"
+  | "coherent_paragraphs";
 
 export const PROCESSING_KEYS: readonly ProcessingKey[] = [
   "model_polish",
@@ -25,6 +26,7 @@ export const PROCESSING_KEYS: readonly ProcessingKey[] = [
   "smart_chunks",
   "smart_boundaries",
   "pause_paragraphs",
+  "coherent_paragraphs",
 ];
 
 export const PROCESSING_ENV_VARS: Record<ProcessingKey, string> = {
@@ -33,6 +35,7 @@ export const PROCESSING_ENV_VARS: Record<ProcessingKey, string> = {
   smart_chunks: "VOICELAYER_STT_SMART_CHUNKS",
   smart_boundaries: "VOICELAYER_STT_SMART_BOUNDARIES",
   pause_paragraphs: "VOICELAYER_STT_PAUSE_PARAGRAPHS",
+  coherent_paragraphs: "VOICELAYER_STT_COHERENT_PARAGRAPHS",
 };
 
 type Env = Record<string, string | undefined>;

@@ -88,6 +88,7 @@ describe("processing settings (P1)", () => {
       smart_chunks: { source: "default", raw: null, effective: false },
       smart_boundaries: { source: "settings", raw: null, effective: true },
       pause_paragraphs: { source: "default", raw: null, effective: true },
+      coherent_paragraphs: { source: "default", raw: null, effective: false },
     });
   });
 });
