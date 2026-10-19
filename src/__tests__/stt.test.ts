@@ -436,6 +436,127 @@ describe("STT backends", () => {
       expect(lines[0]).not.toContain("lastly");
     });
 
+    // TAILLOG1 R1 (Sol): a 31 s take with loud speech to 24 s, background
+    // peak 40, and a final closer at 28-28.8 s. Peak 180 sits under the outro
+    // gate's floor+16 dB threshold, so only the stale-segments skip protects it.
+    function quietCloserWav(closerPeak: number): Uint8Array {
+      const seconds = 31;
+      const out = new Uint8Array(44 + seconds * 16000 * 2);
+      const view = new DataView(out.buffer);
+      for (const [offset, tag] of [[0, "RIFF"], [8, "WAVE"], [12, "fmt "], [36, "data"]] as const) {
+        for (let j = 0; j < tag.length; j++) out[offset + j] = tag.charCodeAt(j);
+      }
+      view.setUint32(4, out.length - 8, true);
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, 16000, true);
+      view.setUint32(28, 32000, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      view.setUint32(40, out.length - 44, true);
+      for (let i = 0; i < seconds * 16000; i++) {
+        const t = i / 16000;
+        const peak = t < 24 ? 2000 : t >= 28 && t < 28.8 ? closerPeak : 40;
+        view.setInt16(44 + i * 2, Math.round(peak * Math.sin(2 * Math.PI * 180 * t)), true);
+      }
+      return out;
+    }
+
+    async function transcribeWithFinalCloser(
+      closer: string,
+      closerPeak: number,
+      tailText: string,
+    ) {
+      const savedGate = process.env.VOICELAYER_STT_OUTRO_GATE;
+      process.env.VOICELAYER_STT_OUTRO_GATE = "1";
+      try {
+        const wavPath = testTmp(`voicelayer-tail-closer-${closerPeak}-${closer.length}-${tailText.length}.wav`);
+        await Bun.write(wavPath, quietCloserWav(closerPeak));
+        let calls = 0;
+        const backend = new WhisperServerBackend({
+          isServerAvailable: () => true,
+          transcribeViaServer: async (_wavData, options) => {
+            calls++;
+            if (calls === 1) {
+              options?.onSegments?.([
+                { text: "We should ship the release build.", startS: 0, endS: 24 },
+                { text: ` ${closer}`, startS: 28, endS: 28.8 },
+              ]);
+              return `We should ship the release build. ${closer}`;
+            }
+            return tailText;
+          },
+        });
+        return await captureTailVerifyLog(() => backend.transcribe(wavPath));
+      } finally {
+        if (savedGate === undefined) delete process.env.VOICELAYER_STT_OUTRO_GATE;
+        else process.env.VOICELAYER_STT_OUTRO_GATE = savedGate;
+      }
+    }
+
+    it("keeps a quiet real final closer when tail verify would have rewritten the text", async () => {
+      // Main skipped the outro gate as segments-stale here; log-only must keep that skip.
+      const { value: result, lines } = await transcribeWithFinalCloser(
+        "Thank you.",
+        180,
+        "release build. Thank you. Keep going with the plan.",
+      );
+
+      expect(lines[0]).toContain("would append +5 words");
+      expect(result.text).toBe("We should ship the release build. Thank you.");
+      expect(result.backend).toBe("whisper-server");
+    });
+
+    it("keeps a loud real final closer when tail verify would have rewritten the text", async () => {
+      const { value: result } = await transcribeWithFinalCloser(
+        "Thank you.",
+        2000,
+        "release build. Thank you. Keep going with the plan.",
+      );
+
+      expect(result.text).toBe("We should ship the release build. Thank you.");
+      expect(result.backend).toBe("whisper-server");
+    });
+
+    it("still gates the same quiet closer when tail verify confirms the ending", async () => {
+      // Control: the outro gate is live on this fixture; only a would-rewrite skips it.
+      const { value: result, lines } = await transcribeWithFinalCloser(
+        "Thank you.",
+        180,
+        "release build. Thank you.",
+      );
+
+      expect(lines[0]).toContain("would not append");
+      expect(result.text).toBe("We should ship the release build.");
+      expect(result.backend).toBe("whisper-server+outro");
+    });
+
+    it("keeps a quiet final caption-class line when tail verify would have rewritten the text", async () => {
+      // Main's caption gate refused stale segments too; log-only must keep that refusal.
+      const { value: result, lines } = await transcribeWithFinalCloser(
+        "Transcription by CastingWords.",
+        180,
+        "release build. Transcription by CastingWords. Keep going with the plan.",
+      );
+
+      expect(lines[0]).toContain("would append");
+      expect(result.text).toBe("We should ship the release build. Transcription by CastingWords.");
+      expect(result.backend).toBe("whisper-server");
+    });
+
+    it("still gates the same quiet caption-class line when tail verify confirms the ending", async () => {
+      const { value: result, lines } = await transcribeWithFinalCloser(
+        "Transcription by CastingWords.",
+        180,
+        "release build. Transcription by CastingWords.",
+      );
+
+      expect(lines[0]).toContain("would not append");
+      expect(result.text).toBe("We should ship the release build.");
+      expect(result.backend).toBe("whisper-server+caption");
+    });
+
     it("verifies long recordings with a tail decode but keeps the full-decode text (log-only)", async () => {
       const wavPath = testTmp("voicelayer-whisper-server-tail-verify-test.wav");
       await Bun.write(wavPath, makePcm16Wav(31));
