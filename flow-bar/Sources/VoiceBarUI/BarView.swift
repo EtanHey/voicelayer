@@ -522,7 +522,7 @@ public struct BarView: View {
         case .compactStatus:
             notchCompactStatusContent
         case .teleprompter:
-            if state.mode == .speaking {
+            if state.mode == .speaking || state.isTeleprompterReadback {
                 notchWaveform
             }
         }
@@ -585,7 +585,8 @@ public struct BarView: View {
             isListening: !state.speechDetected,
             isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
-            playbackLevel: { state.playbackAudioLevel() }
+            playbackLevel: { state.playbackAudioLevel() },
+            isPlaybackEnded: state.isTeleprompterReadback
         )
         .help("Audio level")
     }
@@ -604,12 +605,12 @@ public struct BarView: View {
         } else if isMorphTeleprompterContentPresented {
             VStack(spacing: 7) {
                 notchTeleprompterTimeline
-                    .frame(maxWidth: .infinity, maxHeight: state.mode == .speaking ? nil : .infinity)
-                    .frame(height: state.mode == .speaking ? Theme.teleprompterViewportHeight : nil)
-                if state.mode == .speaking {
+                    .frame(maxWidth: .infinity, maxHeight: state.showsTeleprompterScrubber ? nil : .infinity)
+                    .frame(height: state.showsTeleprompterScrubber ? Theme.teleprompterViewportHeight : nil)
+                if state.showsTeleprompterScrubber {
                     TeleprompterPlaybackScrubBar(state: state)
                 }
-                if state.mode == .speaking { Spacer(minLength: 0) }
+                if state.showsTeleprompterScrubber { Spacer(minLength: 0) }
                 notchTeleprompterControls
             }
             .padding(

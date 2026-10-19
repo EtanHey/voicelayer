@@ -77,6 +77,9 @@ for (const [count, played, stopped, clone] of [[1, 1, false, false], [3, 3, fals
     expect(trims[0][trims[0].indexOf("-ss") + 1]).toBe("0.3");
     expect(trims[0][trims[0].indexOf("-i") + 1]).not.toBe(sources[count > 1 ? 1 : 0]);
     expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ text: `Chunk ${count > 1 ? 1 : 0}`, playback_offset_ms: offset, readback_id: readbackID });
+    // SCRUB1: a replayed read's total is already final, so the scrubber never says "so far".
+    if (count > 1) expect(events.filter(e => e.state === "speaking").at(-1)).toMatchObject({ duration_ms: played * 1000,
+      long_read: { estimated_total_ms: played * 1000 } });
     replay.exit.resolve(0);
     if (played > 2) {
       const tail = await players.at(played + 1);

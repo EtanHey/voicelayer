@@ -131,7 +131,8 @@ final class TeleprompterContentModelTests: XCTestCase {
     func testInitialWordUsesTopScrollPositionInsteadOfCenteringPastViewportStart() {
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 0), .top)
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 1), .center)
-        XCTAssertEqual(TeleprompterScrollPolicy.initialViewportAlignment, .top)
+        XCTAssertEqual(TeleprompterScrollPolicy.initialViewportAlignment, .center,
+                       "SCRUB1: short text sits centred in the fixed viewport, live and readback alike")
     }
 
     func testNewBriefGetsFreshScrollIdentityBeforeItsFirstPaint() {
@@ -171,7 +172,8 @@ final class TeleprompterContentModelTests: XCTestCase {
     func testReadbackUsesStaticReadableScrollablePresentation() {
         XCTAssertFalse(TeleprompterPlaybackPolicy.animatesTimeline(isReadback: true))
         XCTAssertEqual(TeleprompterPlaybackPolicy.wordOpacity(isReadback: true), 0.9)
-        XCTAssertTrue(TeleprompterPlaybackPolicy.showsScrollIndicators(isReadback: true))
+        XCTAssertFalse(TeleprompterPlaybackPolicy.showsScrollIndicators(isReadback: true),
+                       "SCRUB1 R2: a legacy scroller gutter would shift readback text left of live speech")
     }
 
     func testLivePlaybackKeepsAnimatedHighlightPresentation() {

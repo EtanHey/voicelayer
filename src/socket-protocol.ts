@@ -42,6 +42,8 @@ export interface StateEvent {
   playback_offset_ms?: number;
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
+  /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */
+  readback_duration_ms?: number;
   /** Chunk-local playback clock; additive global position for future seek clients. */
   long_read?: {
     id: string;
@@ -50,6 +52,8 @@ export interface StateEvent {
     chunk_start_ms: number;
     /** Activates existing Stop/Escape UI before first audio; no audio clock yet. */
     preparing?: boolean;
+    /** Present once every chunk is synthesized: duration_ms is the read's final total. */
+    estimated_total_ms?: number;
   };
   /** Fixed-window RMS truth for the audio file that just started playing. */
   playback_amplitude?: PlaybackAmplitudeEnvelope;
@@ -230,6 +234,14 @@ export interface PlaybackOutcomeEvent {
   word_count?: number;
 }
 
+/** A long read's synthesized total grew mid-chunk; `final` once every chunk exists. */
+export interface PlaybackDurationEvent {
+  type: "playback_duration";
+  long_read_id: string;
+  duration_ms: number;
+  final: boolean;
+}
+
 /** A parked utterance's frozen cursor; `resumed` is sent only when a player actually starts. */
 export interface PlaybackStateEvent {
   type: "playback_state";
@@ -336,6 +348,7 @@ export type SocketEvent =
   | QueueEvent
   | PlaybackOutcomeEvent
   | PlaybackStateEvent
+  | PlaybackDurationEvent
   | CommandModeEvent
   | ClipMarkerEvent
   | AckEvent
