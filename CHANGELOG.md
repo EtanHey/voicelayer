@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.47] - 2026-10-19
+
+### Added
+- Click a word in finished teleprompter readback to replay the same utterance from that word, using its retained audio; missing audio or timing reports a clear failure (#453).
+- Pause and resume speech from the same word. This release adds the backend and protocol only; the pill pause/play control comes later (#455).
+- Opt-in coherent paragraphs: long dictations break at completed sentences, preferably where the topic turns, never after abbreviations, initials or fragments. Default off (#461, #465).
+
+### Changed
+- The bundled dictionary now carries only common developer terms; personal terms live in each user's own dictionary and are imported once, without overwriting existing entries or restoring deleted ones (#456).
+- Settings uses one shared expandable drawer for General, Transcription and Dictionary sections; Recognizer details no longer repeat values, and the speech-rate caption sits under the slider knob (#458).
+
+### Removed
+- The Smart boundaries transcription option. Smart chunks stays available as an experimental option, off by default (#463).
+
+### Fixed
+- Speech history keeps each long read once and whole after replays and seeks, so idle Replay no longer plays repeated or cut-off audio (#457).
+- The teleprompter scrubber shows the real duration, stays available in finished readback and seeks there; readback and replay use the same layout as live speech (#460).
+- Drop hallucinated caption tails such as "Transcription by CastingWords" or a stray trailing "you" only when the audio under them is silent or the microphone was dead (#459).
+- History explains why a kept recording has no transcript (silent microphone, no speech, too short, too quiet, no words recognized or a transcription failure) and updates the reason after Re-transcribe (#462, #464).
+
+Test children now inherit the isolated test environment and refuse to fall back to live VoiceLayer state (#448).
+
+### Not in this release
+- TAILDUP2: a fix for a sentence repeated back-to-back in long transcripts (in progress).
+- MICDROP2: handling for a microphone that disconnects mid-recording (in progress).
+- Pause/play buttons on the pill (P16).
+
 ## [2.2.46] - 2026-10-18
 
 ### Fixed
