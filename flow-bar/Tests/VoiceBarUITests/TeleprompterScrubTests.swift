@@ -269,6 +269,39 @@ final class TeleprompterScrubTests: XCTestCase {
         XCTAssertEqual(state.teleprompterPlaybackPosition.duration, 18.3, accuracy: 0.001, "idle ignores late totals")
     }
 
+    // SCRUB1 parity (QA 2026-10-19 03:48, Findings 1–2): readback wears the speaking chrome.
+    func testReadbackWearsTheSpeakingChromeWithAFilledWingAndCentredText() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"))
+        XCTAssertTrue(bar.contains(".frame(height: state.showsTeleprompterScrubber ? Theme.teleprompterViewportHeight : nil)"))
+        XCTAssertTrue(bar.contains("if state.showsTeleprompterScrubber { Spacer(minLength: 0) }"))
+        XCTAssertTrue(bar.contains("case .teleprompter:\n            if state.mode == .speaking || state.isTeleprompterReadback {\n                notchWaveform"),
+                      "the reserved trailing wing is never left empty in readback")
+        XCTAssertTrue(bar.contains("isPlaybackEnded: state.isTeleprompterReadback"))
+        XCTAssertTrue(bar.contains("accessibilityLabel: \"Dismiss teleprompter\""), "readback keeps its dismiss control")
+        XCTAssertEqual(TeleprompterScrollPolicy.initialViewportAlignment, .center)
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Done", "duration_ms": 4000, "readback_id": "fixture"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertEqual(state.showsTeleprompterScrubber, true)
+    }
+
+    func testEndedPlaybackWingIsAVisibleRestingBedThatSamplesNoLevel() async throws {
+        XCTAssertNotEqual(VoiceBarNotchWaveform.waveformColor(mode: .idle, isCaptureLive: false, isPlaybackEnded: true), .clear)
+        XCTAssertEqual(VoiceBarNotchWaveform.waveformColor(mode: .idle, isCaptureLive: false), .clear)
+        var reads = 0
+        let host = NSHostingView(rootView: VoiceBarNotchWaveform(
+            mode: .idle, isListening: false, isCaptureLive: false,
+            recordingLevel: { reads += 1; return 1 }, playbackLevel: { reads += 1; return 1 },
+            isPlaybackEnded: true
+        ).frame(width: 60, height: 20))
+        host.frame = NSRect(x: 0, y: 0, width: 60, height: 20)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(reads, 0, "an ended read has no level to show")
+    }
+
     func testPreparingIsStaticUntilDurationAndNotReadyAckDoesNotJumpClock() {
         let state = VoiceState(playbackAmplitudeClock: { 100 })
         state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",

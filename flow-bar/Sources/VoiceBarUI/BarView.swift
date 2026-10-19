@@ -522,7 +522,7 @@ public struct BarView: View {
         case .compactStatus:
             notchCompactStatusContent
         case .teleprompter:
-            if state.mode == .speaking {
+            if state.mode == .speaking || state.isTeleprompterReadback {
                 notchWaveform
             }
         }
@@ -585,7 +585,8 @@ public struct BarView: View {
             isListening: !state.speechDetected,
             isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
-            playbackLevel: { state.playbackAudioLevel() }
+            playbackLevel: { state.playbackAudioLevel() },
+            isPlaybackEnded: state.isTeleprompterReadback
         )
         .help("Audio level")
     }

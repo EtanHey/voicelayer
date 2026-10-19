@@ -388,7 +388,8 @@ public enum TeleprompterScrollPosition: Equatable {
 }
 
 public enum TeleprompterScrollPolicy {
-    public static let initialViewportAlignment: Alignment = .top
+    /// Short text sits centred in the fixed viewport; longer text still scrolls from word zero.
+    public static let initialViewportAlignment: Alignment = .center
 
     public static func position(for wordIndex: Int) -> TeleprompterScrollPosition {
         wordIndex == 0 ? .top : .center

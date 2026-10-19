@@ -131,7 +131,8 @@ final class TeleprompterContentModelTests: XCTestCase {
     func testInitialWordUsesTopScrollPositionInsteadOfCenteringPastViewportStart() {
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 0), .top)
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 1), .center)
-        XCTAssertEqual(TeleprompterScrollPolicy.initialViewportAlignment, .top)
+        XCTAssertEqual(TeleprompterScrollPolicy.initialViewportAlignment, .center,
+                       "SCRUB1: short text sits centred in the fixed viewport, live and readback alike")
     }
 
     func testNewBriefGetsFreshScrollIdentityBeforeItsFirstPaint() {
