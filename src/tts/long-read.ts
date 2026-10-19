@@ -26,6 +26,8 @@ export interface LongReadDependencies {
   prepareSeek?(chunk: LongReadChunk, offsetMs: number, signal: AbortSignal): Promise<string | undefined>;
   disposeSeek?(file?: string): void;
   seekFailed?(error: unknown): void;
+  /** Every synthesized chunk grows the seekable total; `final` once all chunks exist. */
+  onDuration?(totalMs: number, final: boolean): void;
   synthesize(text: string, index: number, signal: AbortSignal): Promise<LongReadChunk>;
   play(chunk: LongReadChunk, text: string, info: NonNullable<StateEvent["long_read"]>, position: { offsetMs: number; durationMs: number; getDurationMs(): number; isSeek?: boolean; sliceFile?: string }): {
     interrupt?(): void;
@@ -114,7 +116,11 @@ export async function runLongRead(
     const index = nextIndex++;
     // Handle rejection immediately, even while the consumer is preparing/playing.
     const synthesis: Promise<Synthesis> = deps.synthesize(texts[index], index, signal).then(
-      (chunk) => { owned.set(index, chunk); return { chunk }; },
+      (chunk) => {
+        owned.set(index, chunk);
+        if (!signal.aborted) deps.onDuration?.(duration(), owned.size === texts.length);
+        return { chunk };
+      },
       (error) => ({ error }),
     );
     ready.set(index, synthesis);
@@ -156,6 +162,7 @@ export async function runLongRead(
       const offsetMs = chunkStart(index);
       playback = deps.play(result.chunk, texts[index], {
         id, chunk_index: index, chunk_count: texts.length, chunk_start_ms: offsetMs,
+        ...(owned.size === texts.length ? { estimated_total_ms: duration() } : {}),
       }, { offsetMs: localOffsetMs, durationMs: duration(), getDurationMs: duration, isSeek, sliceFile: seekFile });
       seekFile = undefined; // Successful enqueue transfers slice ownership to the player.
       const started = await playback.started;

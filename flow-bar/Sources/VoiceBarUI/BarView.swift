@@ -604,12 +604,12 @@ public struct BarView: View {
         } else if isMorphTeleprompterContentPresented {
             VStack(spacing: 7) {
                 notchTeleprompterTimeline
-                    .frame(maxWidth: .infinity, maxHeight: state.mode == .speaking ? nil : .infinity)
-                    .frame(height: state.mode == .speaking ? Theme.teleprompterViewportHeight : nil)
-                if state.mode == .speaking {
+                    .frame(maxWidth: .infinity, maxHeight: state.showsTeleprompterScrubber ? nil : .infinity)
+                    .frame(height: state.showsTeleprompterScrubber ? Theme.teleprompterViewportHeight : nil)
+                if state.showsTeleprompterScrubber {
                     TeleprompterPlaybackScrubBar(state: state)
                 }
-                if state.mode == .speaking { Spacer(minLength: 0) }
+                if state.showsTeleprompterScrubber { Spacer(minLength: 0) }
                 notchTeleprompterControls
             }
             .padding(

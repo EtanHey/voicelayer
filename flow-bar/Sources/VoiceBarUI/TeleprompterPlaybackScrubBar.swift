@@ -13,21 +13,22 @@ struct TeleprompterPlaybackScrubBar: View {
     }
 
     var control: SettingsPlaybackScrubBar {
-        let interactive = state.isTeleprompterPlaybackReady
+        // An ended read seeks (SEEK2 readback scope) but has no running clock to sample.
+        let playing = state.isTeleprompterPlaybackReady
         return SettingsPlaybackScrubBar(
             position: { state.teleprompterPlaybackPosition },
             seek: { seconds in state.seek(offsetMs: Int((seconds * 1000).rounded())) },
             accessibilityNoun: "agent speech",
-            isPlaying: interactive,
-            isGrowing: interactive && state.isPlaybackDurationGrowing,
-            allowsSeeking: interactive,
+            isPlaying: playing,
+            isGrowing: playing && state.isPlaybackDurationGrowing,
+            allowsSeeking: state.isTeleprompterScrubSeekable,
             isTeleprompter: true
         )
     }
 
     var body: some View {
         VStack(spacing: 3) {
-            control.disabled(!state.isTeleprompterPlaybackReady)
+            control.disabled(!state.isTeleprompterScrubSeekable)
             if let timingNotice {
                 Text(timingNotice)
                     .font(.system(size: 10))

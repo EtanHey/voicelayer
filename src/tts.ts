@@ -1534,7 +1534,9 @@ class PlaybackQueueManager {
     const readbackID = next.metadata?.retainedReplay ? next.metadata.readbackID
       : next.metadata ? retainedReadback.remember(next.audioFile, next.metadata, next.id) : undefined;
     if (next.metadata) {
-      const durationMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ?? next.metadata.durationMs;
+      // A history Replay carries no metadata duration; the probed file length is the real one.
+      const utteranceMs = next.metadata.getUtteranceDurationMs?.() ?? next.metadata.utteranceDurationMs ??
+        next.metadata.durationMs ?? durationMs ?? undefined;
       broadcast({
         type: "state",
         state: "speaking",
@@ -1544,7 +1546,7 @@ class PlaybackQueueManager {
         ...next.metadata.speechIdentity,
         ...(next.metadata.longRead ? { long_read: next.metadata.longRead } : {}),
         ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
-        ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
+        ...(utteranceMs !== undefined ? { duration_ms: utteranceMs } : {}),
         playback_amplitude: next.playbackAmplitude,
       });
       if (next.metadata.wordBoundaries?.length) {
@@ -1970,7 +1972,7 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
       const metadata = chunks[info.chunk_index].metadata;
       const playback = playAudioNonBlocking(chunk.audioFile, { ...metadata, retainedReplay: true, readbackID,
         // Ordinary short speech remains short; long speech keeps its global cursor.
-        longRead: metadata.longRead ? info : undefined,
+        longRead: metadata.longRead ? { ...info, estimated_total_ms: duration } : undefined,
         utteranceDurationMs: duration, getUtteranceDurationMs: () => duration,
         playbackOffsetMs: info.chunk_start_ms + position.offsetMs, localOffsetMs: position.offsetMs,
         isSeek: true, seekSliceFile: position.sliceFile,
@@ -2126,6 +2128,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         ? prepareSeekSlice(chunk.audioFile, offset, seekSignal) : Promise.resolve(undefined),
       disposeSeek: disposeSeekSlice,
       seekFailed: (error) => broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true }),
+      onDuration: (totalMs, final) => broadcast({ type: "playback_duration", long_read_id: id, duration_ms: totalMs, final }),
       synthesize: async (displayChunk, _index, signal) => {
         const audioFile = ttsFilePath(process.pid, ttsCounter++);
         const rules = pronunciationRules();
