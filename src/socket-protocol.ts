@@ -81,6 +81,8 @@ export interface StateEvent {
    * (see BoundaryContractTests). Live repro 2026-07-26 12:55:30 (466 chars pasted into Preview).
    */
   bar_owned?: boolean;
+  /** MICDROP2: this capture's generation; `input_device_lost` must name it. Recording state only. */
+  capture_id?: number;
 }
 
 export interface SpeechEvent {
@@ -390,10 +392,14 @@ export interface StopCommand extends SocketCommandBase {
   playback_elapsed_ms?: number;
 }
 
-/** MICDROP2: VoiceBar's CoreAudio listener saw the capturing input device go away. */
+/** MICDROP2: VoiceBar's CoreAudio listener saw capture `capture_id`'s input device go away. */
 export interface InputDeviceLostCommand extends SocketCommandBase {
   cmd: "input_device_lost";
   reason: DeviceLossReason;
+  /** The `capture_id` of the `recording` state event VoiceBar bound the device to. */
+  capture_id: number;
+  /** The CoreAudio AudioDeviceID VoiceBar watched (diagnostic). */
+  device_id: number;
 }
 
 export interface CancelCommand extends SocketCommandBase {
@@ -937,8 +943,11 @@ export function parseCommand(line: string): SocketCommand | null {
         );
       }
       case "input_device_lost":
-        if (!(DEVICE_LOSS_REASONS as readonly unknown[]).includes(parsed.reason)) return null;
-        return withCommandId<InputDeviceLostCommand>({ cmd: "input_device_lost", reason: parsed.reason }, id);
+        if (!(DEVICE_LOSS_REASONS as readonly unknown[]).includes(parsed.reason) ||
+            !Number.isSafeInteger(parsed.capture_id) || parsed.capture_id < 1 ||
+            !Number.isSafeInteger(parsed.device_id) || parsed.device_id < 1) return null;
+        return withCommandId<InputDeviceLostCommand>({ cmd: "input_device_lost", reason: parsed.reason,
+          capture_id: parsed.capture_id, device_id: parsed.device_id }, id);
       case "toggle": {
         if (typeof parsed.enabled !== "boolean") return null;
         const scope = parsed.scope;

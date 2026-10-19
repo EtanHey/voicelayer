@@ -1,12 +1,39 @@
 @testable import VoiceBarUI
 import XCTest
 
-/// MICDROP2: only a device that left the list or stopped being alive is a loss. A default-input
-/// change alone keeps sox on a live device, so it never reaches the daemon.
+/// MICDROP2: only this capture's device leaving the list or dying is a loss, and only when that
+/// device is known: a default-input move near the capture start leaves sox's device ambiguous.
 final class InputDeviceLossMonitorTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_000)
+
     func testOnlyARemovedOrDeadDeviceIsReported() {
-        XCTAssertEqual(InputDeviceLossMonitor.lossReason(isListed: false, isAlive: false), "device-removed")
-        XCTAssertEqual(InputDeviceLossMonitor.lossReason(isListed: true, isAlive: false), "device-not-alive")
-        XCTAssertNil(InputDeviceLossMonitor.lossReason(isListed: true, isAlive: true))
+        let binding = InputDeviceLossBinding(captureID: 7, deviceID: 81, startedAt: start, lastDefaultInputChange: nil)
+        XCTAssertEqual(binding.lossReason(isListed: false, isAlive: false), "device-removed")
+        XCTAssertEqual(binding.lossReason(isListed: true, isAlive: false), "device-not-alive")
+        XCTAssertNil(binding.lossReason(isListed: true, isAlive: true))
     }
+
+    /// Sol R1 #3: default A -> B around the start, sox on B, A removed later. Never report.
+    func testADefaultMoveAroundTheStartNeverReports() {
+        let before = InputDeviceLossBinding(
+            captureID: 7, deviceID: 81, startedAt: start, lastDefaultInputChange: start.addingTimeInterval(-0.5)
+        )
+        XCTAssertNil(before.lossReason(isListed: false, isAlive: false))
+
+        var after = InputDeviceLossBinding(captureID: 7, deviceID: 81, startedAt: start, lastDefaultInputChange: nil)
+        after.defaultInputChanged(at: start.addingTimeInterval(0.4))
+        XCTAssertTrue(after.ambiguous)
+        XCTAssertNil(after.lossReason(isListed: false, isAlive: false))
+    }
+
+    /// A default move well clear of the start does not move sox: its device's removal is still a loss.
+    func testADefaultMoveClearOfTheStartKeepsTheBinding() {
+        var binding = InputDeviceLossBinding(
+            captureID: 7, deviceID: 81, startedAt: start, lastDefaultInputChange: start.addingTimeInterval(-30)
+        )
+        binding.defaultInputChanged(at: start.addingTimeInterval(10))
+        XCTAssertFalse(binding.ambiguous)
+        XCTAssertEqual(binding.lossReason(isListed: false, isAlive: false), "device-removed")
+    }
+
 }

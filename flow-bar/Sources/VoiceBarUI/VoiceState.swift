@@ -366,12 +366,12 @@ public final class VoiceState {
 
     /// UI-bound properties -- all mutations must happen on the main thread.
     public private(set) var previousMode: VoiceMode = .idle
-    /// MICDROP2: CoreAudio evidence of a lost input device during a capture; nil in tests.
+    /// MICDROP2: CoreAudio evidence of a lost input device, bound to the daemon's `capture_id`; nil in tests.
     public var inputDeviceLossMonitor: InputDeviceLossMonitor?
 
     public var mode: VoiceMode = .idle {
         didSet {
-            inputDeviceLossMonitor?.setCapturing(mode == .recording)
+            if mode != .recording { inputDeviceLossMonitor?.endCapture() }
             clearSelectionBusyNoteIfSessionEnded()
             if mode == .recording || mode == .transcribing || mode == .disconnected || mode == .error {
                 if selectionCaptureInFlight { selectionCaptureCancelled = true }
@@ -2048,6 +2048,9 @@ public final class VoiceState {
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
+                if let captureID = (event["capture_id"] as? NSNumber)?.intValue {
+                    inputDeviceLossMonitor?.beginCapture(captureID: captureID)
+                }
                 isRecordingHandoffPending = false
                 pendingMicDisconnectNotice = nil
                 let startsNewRecording = mode != .recording

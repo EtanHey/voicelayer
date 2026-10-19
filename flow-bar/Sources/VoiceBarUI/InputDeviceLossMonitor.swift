@@ -1,71 +1,99 @@
 import CoreAudio
 import Foundation
 
-/// MICDROP2: OS evidence that the input device a capture opened went away mid-recording.
+/// MICDROP2: which device one daemon capture is on, and whether its loss may be reported.
 ///
-/// AIDEV-NOTE: sox binds the default input device once, when it opens. On any CoreAudio change
-/// during a capture (the device list, that device's IsAlive, the default input) this re-checks that
-/// device and reports only when it has left the device list or is no longer alive. A default-input
-/// change alone (AirPods connecting, a priority apply) leaves sox on a live device, so it reports
-/// nothing: stopping then would cut Etan off mid-thought. Read-only: it never writes the default
-/// input (MicrophonePriorityApplyCoordinator is the only writer).
-public final class InputDeviceLossMonitor {
-    /// The daemon's `input_device_lost` reasons; nil while the device is listed and alive.
-    public static func lossReason(isListed: Bool, isAlive: Bool) -> String? {
+/// AIDEV-NOTE: sox binds the default input device once, when it opens, a few milliseconds around the
+/// daemon's `recording` event. The binding is taken at that event (never at VoiceBar's optimistic UI
+/// mode) and is trusted only when the default input did not move within `settleSeconds` either side
+/// of it; otherwise sox may be on another device and a report could stop a healthy capture (Sol R1
+/// #3). A missed label beats a false stop. A default change well after the start does not move sox.
+public struct InputDeviceLossBinding: Equatable {
+    public static let settleSeconds: TimeInterval = 2
+
+    public let captureID: Int
+    public let deviceID: UInt32
+    private let startedAt: Date
+    public private(set) var ambiguous: Bool
+
+    public init(captureID: Int, deviceID: UInt32, startedAt: Date, lastDefaultInputChange: Date?) {
+        self.captureID = captureID
+        self.deviceID = deviceID
+        self.startedAt = startedAt
+        ambiguous = lastDefaultInputChange.map { startedAt.timeIntervalSince($0) < Self.settleSeconds } ?? false
+    }
+
+    public mutating func defaultInputChanged(at date: Date) {
+        if date.timeIntervalSince(startedAt) < Self.settleSeconds { ambiguous = true }
+    }
+
+    /// The daemon's `input_device_lost` reason; nil while the device is listed and alive, or unknown.
+    public func lossReason(isListed: Bool, isAlive: Bool) -> String? {
+        guard !ambiguous else { return nil }
         if !isListed { return "device-removed" }
         if !isAlive { return "device-not-alive" }
         return nil
     }
+}
 
-    private let report: (String) -> Void
-    private var capturing = false
-    private var deviceID: AudioDeviceID?
-    private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
+/// MICDROP2: CoreAudio evidence that a capture's input device went away. Read-only: it never writes
+/// the default input (MicrophonePriorityApplyCoordinator is the only writer).
+public final class InputDeviceLossMonitor {
+    /// (reason, capture_id, device_id) for the `input_device_lost` command.
+    private let report: (String, Int, UInt32) -> Void
+    private var binding: InputDeviceLossBinding?
+    private var lastDefaultInputChange: Date?
+    private var captureListeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
 
-    public init(report: @escaping (String) -> Void) {
+    public init(report: @escaping (String, Int, UInt32) -> Void) {
         self.report = report
+        // App lifetime: a default change just before a capture starts makes its device ambiguous.
+        var address = Self.address(kAudioHardwarePropertyDefaultInputDevice)
+        _ = AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main) {
+            [weak self] _, _ in
+            guard let self else { return }
+            let now = Date()
+            lastDefaultInputChange = now
+            binding?.defaultInputChanged(at: now)
+            check()
+        }
     }
 
-    /// Follows VoiceState's mode: listens from a capture's start until it ends, reporting at most once.
-    public func setCapturing(_ isCapturing: Bool) {
-        guard isCapturing != capturing else { return }
-        capturing = isCapturing
-        if isCapturing {
-            guard let id = MicrophoneDeviceManager.selectedInputDeviceID().flatMap(AudioDeviceID.init)
-            else { return }
-            deviceID = id
-            let system = AudioObjectID(kAudioObjectSystemObject)
-            listen(system, kAudioHardwarePropertyDevices)
-            listen(system, kAudioHardwarePropertyDefaultInputDevice)
-            listen(id, kAudioDevicePropertyDeviceIsAlive)
-        } else {
-            removeListeners()
+    /// The daemon's authoritative `recording` event for capture `captureID`.
+    public func beginCapture(captureID: Int) {
+        guard binding?.captureID != captureID else { return }
+        endCapture()
+        guard let id = MicrophoneDeviceManager.selectedInputDeviceID().flatMap(AudioDeviceID.init) else { return }
+        binding = InputDeviceLossBinding(
+            captureID: captureID, deviceID: id, startedAt: Date(), lastDefaultInputChange: lastDefaultInputChange
+        )
+        listen(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices)
+        listen(id, kAudioDevicePropertyDeviceIsAlive)
+    }
+
+    public func endCapture() {
+        for (object, address, block) in captureListeners {
+            var address = address
+            AudioObjectRemovePropertyListenerBlock(object, &address, DispatchQueue.main, block)
         }
+        captureListeners = []
+        binding = nil
     }
 
     private func listen(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) {
         var address = Self.address(selector)
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.check() }
         if AudioObjectAddPropertyListenerBlock(object, &address, DispatchQueue.main, block) == noErr {
-            listeners.append((object, address, block))
+            captureListeners.append((object, address, block))
         }
-    }
-
-    private func removeListeners() {
-        for (object, address, block) in listeners {
-            var address = address
-            AudioObjectRemovePropertyListenerBlock(object, &address, DispatchQueue.main, block)
-        }
-        listeners = []
-        deviceID = nil
     }
 
     private func check() {
-        guard let id = deviceID,
-              let reason = Self.lossReason(isListed: Self.isListed(id), isAlive: Self.isAlive(id))
+        guard let binding,
+              let reason = binding.lossReason(isListed: Self.isListed(binding.deviceID), isAlive: Self.isAlive(binding.deviceID))
         else { return }
-        removeListeners()
-        report(reason)
+        endCapture()
+        report(reason, binding.captureID, binding.deviceID)
     }
 
     private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {

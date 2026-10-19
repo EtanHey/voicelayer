@@ -44,39 +44,45 @@ describe("mic disconnect (MICDROP2)", () => {
     expect(isDeadDevicePcm(new DataView(span.buffer), 0, 8)).toBe(false);
   });
 
-  it("locates the boundary where the trailing dead run starts; interior gated gaps stay in", () => {
+  it("shows the observed loss time; the trailing flat run is only an estimate of the last signal", () => {
     const chunks = [...times(speech, 5), ...times(zeros, 3), ...times(speech, 7), ...times(dither, 5)];
     expect(locateMicLoss(chunks, "recorder-ended", RATE)).toEqual({
-      reason: "recorder-ended", atMs: 1_500, decodeBytes: 15 * 3_200,
+      reason: "recorder-ended", atMs: 2_000, lastSignalMs: 1_500,
     });
-    // Lost while live (the device just stopped delivering): the boundary is the end, nothing excluded.
+    // Lost while live (the device just stopped delivering): both are the end.
     expect(locateMicLoss(times(speech, 3), "device-removed", RATE)).toEqual({
-      reason: "device-removed", atMs: 300, decodeBytes: 3 * 3_200,
+      reason: "device-removed", atMs: 300, lastSignalMs: 300,
     });
   });
 
-  it("never live: no loss point, decode input unchanged", () => {
+  it("never live: no loss point", () => {
     expect(locateMicLoss(times(dither, 10), "device-not-alive", RATE)).toEqual({
-      reason: "device-not-alive", atMs: null, decodeBytes: 10 * 3_200,
+      reason: "device-not-alive", atMs: null, lastSignalMs: null,
     });
-    expect(micDisconnectNote({ reason: "recorder-ended", atMs: null, decodeBytes: 0 })).toBe("Mic produced no signal");
+    expect(micDisconnectNote({ reason: "recorder-ended", atMs: null, lastSignalMs: null })).toBe("Mic produced no signal");
   });
 
   it("formats the note with an m:ss clock", () => {
     expect(micDisconnectClock(0)).toBe("0:00");
     expect(micDisconnectClock(42_400)).toBe("0:42");
     expect(micDisconnectClock(61_600)).toBe("1:02");
-    expect(micDisconnectNote({ reason: "device-removed", atMs: 125_000, decodeBytes: 1 })).toBe("Mic disconnected at 2:05");
+    expect(micDisconnectNote({ reason: "device-removed", atMs: 125_000, lastSignalMs: 1 })).toBe("Mic disconnected at 2:05");
   });
 
-  it("parses VoiceBar's input_device_lost command, only with a known CoreAudio reason", () => {
-    expect(parseCommand(JSON.stringify({ cmd: "input_device_lost", reason: "device-removed" })))
-      .toEqual({ cmd: "input_device_lost", reason: "device-removed" });
-    expect(parseCommand(JSON.stringify({ cmd: "input_device_lost", reason: "device-not-alive", id: "a" })))
-      .toEqual({ cmd: "input_device_lost", reason: "device-not-alive", id: "a" });
+  it("parses VoiceBar's input_device_lost command only with a CoreAudio reason, capture and device", () => {
+    const valid = { cmd: "input_device_lost", reason: "device-removed", capture_id: 7, device_id: 81 };
+    expect(parseCommand(JSON.stringify(valid))).toEqual(valid);
+    expect(parseCommand(JSON.stringify({ ...valid, reason: "device-not-alive", id: "a" })))
+      .toEqual({ ...valid, reason: "device-not-alive", id: "a" });
     // Recorder EOF is the daemon's own evidence; VoiceBar cannot claim it, or anything else.
     for (const reason of ["recorder-ended", "dead-signal", undefined]) {
-      expect(parseCommand(JSON.stringify({ cmd: "input_device_lost", reason }))).toBeNull();
+      expect(parseCommand(JSON.stringify({ ...valid, reason }))).toBeNull();
+    }
+    // Unbound reports are refused: no capture generation, no device.
+    for (const key of ["capture_id", "device_id"] as const) {
+      for (const bad of [undefined, 0, -1, 1.5, "7"]) {
+        expect(parseCommand(JSON.stringify({ ...valid, [key]: bad }))).toBeNull();
+      }
     }
   });
 });

@@ -676,13 +676,17 @@ export interface RecordingCaptureState {
   archiveSource?: "voicebar" | "voice_ask";
 }
 
-// MICDROP2: the live capture's sink for VoiceBar's CoreAudio device-loss evidence.
-let activeDeviceLossSink: ((reason: DeviceLossReason) => void) | null = null;
+// MICDROP2: each capture's generation, sent on its `recording` state event as `capture_id`.
+let captureGeneration = 0;
+// The live capture's sink for VoiceBar's CoreAudio device-loss evidence.
+let activeDeviceLoss: { captureId: number; sink: (reason: DeviceLossReason) => void } | null = null;
+/** After a device event, how long the recorder gets to exit and flush stdout before the capture freezes anyway. */
+const DEVICE_LOSS_DRAIN_MAX_MS = 1_500;
 
-/** Reports that the capturing input device went away. False when no capture is running. */
-export function reportInputDeviceLost(reason: DeviceLossReason): boolean {
-  if (!activeDeviceLossSink) return false;
-  activeDeviceLossSink(reason);
+/** Reports that capture `captureId`'s input device went away. False when it is not the live capture. */
+export function reportInputDeviceLost(reason: DeviceLossReason, captureId: number): boolean {
+  if (!activeDeviceLoss || activeDeviceLoss.captureId !== captureId) return false;
+  activeDeviceLoss.sink(reason);
   return true;
 }
 
@@ -2427,6 +2431,9 @@ export async function recordToBuffer(
       micLossReason = reason;
       console.error(`[voicelayer] Input device lost mid-recording (${reason}) — keeping the whole recording`);
     };
+    // A device event stops the recorder, then ordinary stops wait while its stdout drains (Sol R1 #1).
+    let lossDrainDeadline: ReturnType<typeof setTimeout> | undefined;
+    const captureId = ++captureGeneration;
     const recoveryWriter = new IncrementalRecoveryWavWriter(null);
     const silencePolicy = new RecordingSilenceAutoClosePolicy({
       preSpeechChunks,
@@ -2484,10 +2491,12 @@ export async function recordToBuffer(
       return false;
     };
 
-    const finish = (error?: Error) => {
+    const finish = (error?: Error, lossDrained = false) => {
       if (resolved) return;
+      if (lossDrainDeadline && !lossDrained && !error) return;
       resolved = true;
-      activeDeviceLossSink = null;
+      clearTimeout(lossDrainDeadline);
+      if (activeDeviceLoss?.captureId === captureId) activeDeviceLoss = null;
       setRecordingState("idle");
       try {
         clearRecordingHold();
@@ -2546,7 +2555,8 @@ export async function recordToBuffer(
         resolve(null);
       } else {
         if (!pushToEnd && captureState) {
-          captureState.vadSpeechDetected = hasSpeech;
+          // After a device event VAD never saw the drained tail: unknown, so the energy gate decides.
+          captureState.vadSpeechDetected = lossDrainDeadline && !hasSpeech ? undefined : hasSpeech;
         }
         const selectedChunks =
           !pushToEnd && hasSpeech && firstSpeechChunkIndex >= 0
@@ -2622,10 +2632,13 @@ export async function recordToBuffer(
       finish();
     }, STOP_POLL_MS);
     stopSignalPoll.unref?.();
-    activeDeviceLossSink = (reason) => {
+    activeDeviceLoss = { captureId, sink: (reason) => {
+      if (resolved || lossDrainDeadline) return;
       noteMicLoss(reason);
-      finish();
-    };
+      if (!recorder) return finish();
+      lossDrainDeadline = setTimeout(() => finish(undefined, true), DEVICE_LOSS_DRAIN_MAX_MS);
+      void terminateRecorderProcess(recorder).catch(() => {});
+    } };
 
     try {
       // Start mic recording via sox — raw PCM to stdout at device's native rate
@@ -2697,6 +2710,7 @@ export async function recordToBuffer(
         ...(captureState?.archiveSource
           ? { bar_owned: captureState.archiveSource === "voicebar" }
           : {}),
+        capture_id: captureId,
       });
 
       console.error(
@@ -2752,6 +2766,9 @@ export async function recordToBuffer(
           }
         }
         readerDone = true;
+        // After a device event: recorder gone and stdout fully read, so freeze now; finish() drains
+        // the queue, even when a VAD call is still in flight (Sol R1 #2).
+        if (lossDrainDeadline) finish(undefined, true);
       };
 
       // chunkProcessor: runs VAD on queued chunks (can take its time)
@@ -2759,7 +2776,7 @@ export async function recordToBuffer(
         while (!resolved) {
           if (chunkQueue.length === 0) {
             if (readerDone) {
-              // Nothing more can arrive: end now rather than waiting for a stop or the timeout.
+              // Recorder EOF: every byte is queued and processed; end rather than wait for a stop.
               if (micLossReason) finish();
               break;
             }
@@ -2771,6 +2788,8 @@ export async function recordToBuffer(
           pcmChunks.push(chunk);
           totalChunksProcessed++;
           recoveryWriter.appendCapturedChunk(chunk, pcmChunks);
+          // MICDROP2: after a device event the recorder's drain decides the end; no stop or VAD close.
+          if (lossDrainDeadline) continue;
 
           // Broadcast audio level every ~100ms (3 chunks × 32ms)
           if (totalChunksProcessed % 3 === 0) {
@@ -2794,6 +2813,9 @@ export async function recordToBuffer(
           } else {
             // VAD: ONNX inference happens here, decoupled from pipe reader
             const speechProb = await processVADChunk(chunk);
+            // A continuation resuming after a device event or a frozen loss capture must not touch
+            // the session (rebuilt from the final PCM) or decide anything.
+            if (lossDrainDeadline || (resolved && micLossReason)) continue;
             const speechDetected = isSpeech(speechProb);
             chunkedSession?.pushChunk(chunk, speechDetected);
 
@@ -3007,14 +3029,14 @@ export async function waitForInput(
     }
     throw err;
   }
-  // MICDROP2: offsets are into the kept PCM, which the archive stores whole.
+  // MICDROP2: the archive and the decoder both get the whole kept PCM; at_ms is where it ends.
   const micDisconnect = captureState.micDisconnect ?? null;
   const micNote = micDisconnect ? micDisconnectNote(micDisconnect) : null;
   if (micDisconnect && micNote) {
     appendControlLayerEvent("capture.mic_disconnected", {
       reason: micDisconnect.reason,
       at_ms: micDisconnect.atMs,
-      decode_bytes: micDisconnect.decodeBytes,
+      last_signal_ms_estimate: micDisconnect.lastSignalMs,
       push_to_end: pushToEnd,
       archive_source: options.archiveSource ?? null,
     });
@@ -3044,13 +3066,8 @@ export async function waitForInput(
       : undefined;
 
   const retainedWavData = createWavBuffer(pcmData);
-  // MICDROP2: STT input ends where the device was lost. The press transient sits in the dead
-  // tail, so the physical-stop cut does not apply when that tail is excluded.
-  const decodePcm = micDisconnect && micDisconnect.decodeBytes < pcmData.byteLength
-    ? pcmData.subarray(0, micDisconnect.decodeBytes)
-    : pcmData;
   const isPhysicalStop = pushToEnd && options.archiveSource === "voicebar" &&
-    captureState.physicalPressStop === true && !hasCancelSignal() && decodePcm === pcmData;
+    captureState.physicalPressStop === true && !hasCancelSignal();
   const pressInput = physicalStopInput(pcmData, isPhysicalStop);
   if (captureState.physicalPressStop) {
     console.error(`[voicelayer] Physical stop input: ${pressInput.reason}; candidates=${pressInput.candidateFrames.length}`);
@@ -3061,13 +3078,11 @@ export async function waitForInput(
   }
   // Physical-stop fallback must really keep everything. The legacy silence
   // trimmer could otherwise cut seconds before this feature's bounded window.
-  const trimmedDecode = isPhysicalStop ? {
+  const sttTrim = isPhysicalStop ? {
     pcmData: pressInput.pcmData, trimmed: pressInput.reason === "cut",
     rawDurationMs: pcmDurationMs(pcmData),
     transcribedDurationMs: pcmDurationMs(pressInput.pcmData),
-  } : trimTrailingSilenceForSTT(decodePcm, pushToEnd);
-  const sttTrim = decodePcm === pcmData ? trimmedDecode
-    : { ...trimmedDecode, trimmed: true, rawDurationMs: pcmDurationMs(pcmData) };
+  } : trimTrailingSilenceForSTT(pcmData, pushToEnd);
   let voiceAskArchivePath: string | null = null;
   let voiceBarArchivePath: string | null = null;
   // P0: archive completed dictation before any callback, speech gate, or STT.
@@ -3320,7 +3335,8 @@ export async function waitForInput(
     const sttWavData = sttTrim.trimmed
       ? createWavBuffer(sttTrim.pcmData)
       : retainedWavData;
-    if (chunkedSession && sttTrim.trimmed) {
+    // MICDROP2: after a loss the session may lack chunks VAD never reached; rebuild it whole (Sol R1 #2).
+    if (chunkedSession && (sttTrim.trimmed || micDisconnect)) {
       chunkedSession.replaceWithPCM(sttTrim.pcmData, true);
     }
     const useChunkedTranscription = !!chunkedSession;
@@ -3428,7 +3444,7 @@ export async function waitForInput(
     });
     console.error(`[voicelayer] Transcription: chars=${text.length} bytes=${Buffer.byteLength(text, "utf8")}`);
 
-    // MICDROP2: after a lost device, recovery keeps the whole recording, not the decode subset.
+    // MICDROP2: after a lost device, recovery keeps the whole recording, not a trimmed decode copy.
     retainLastCaptureForRecovery(
       micDisconnect ? retainedWavData : sttWavData,
       polishSurfaceForWaitOptions(options),
