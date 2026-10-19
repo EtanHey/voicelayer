@@ -22,7 +22,9 @@ There is no pause state: a playing utterance continues playing from the accepted
 
 The teleprompter scrubber stays mounted on an ended readback, showing the retained duration and
 stop position, and its drag/click sends the same readback-scope seek as a word click. Every speaking
-edge carries `duration_ms` (an idle history Replay reports the probed file length). A long read
+edge carries `duration_ms` (an idle history Replay adopts the probed file length as its own duration) and,
+with a `readback_id`, `readback_duration_ms`: the contiguous retained span a readback seek can reach. A long read
+stopped before its lookahead chunks play retains less than it synthesized, so the ended scrubber shows that span. A long read
 broadcasts `{"type":"playback_duration","long_read_id":…,"duration_ms":…,"final":…}` as each chunk
 synthesizes; once every chunk exists, `final` is true and the chunk's `long_read` carries
 `estimated_total_ms`, which drops the scrubber's "so far" label.
