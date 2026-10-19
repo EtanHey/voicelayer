@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripHallucinatedCaption } from "../stt-caption-gate";
 import { WhisperServerBackend } from "../stt";
-import type { TranscriptSegment } from "../stt-sentence-boundaries";
+import type { TranscriptSegment } from "../stt-transcript-alignment";
 
 function silentWav(seconds: number): Uint8Array {
   const frames = Math.round(seconds * 16_000);

@@ -73,7 +73,7 @@ describe("daemon-health", () => {
     expect(health.polish_controls.model_polish.effective).toBe("on");
     expect(health.polish_controls.outro_gate.effective).toBe(true);
     expect(health.polish_controls.smart_chunks.effective).toBe(false);
-    expect(health.polish_controls.smart_boundaries.effective).toBe(false);
+    expect("smart_boundaries" in health.polish_controls).toBe(false);
   });
 
   it("isPingRequest detects ping messages", () => {

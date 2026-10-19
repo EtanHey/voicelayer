@@ -339,7 +339,7 @@ final class UIE2EModel {
                   "clone_daemon": "down", "available_voices": [
                     ["engine": "edge", "voice": "en-US-JennyNeural"], ["engine": "edge", "voice": "en-US-GuyNeural"],
                     ["engine": "clone", "voice": "theo-c4s"], ["engine": "clone", "voice": "ben-c1"]]]
-        for (key, value) in [("model_polish", "off" as Any), ("outro_gate", true), ("smart_chunks", false), ("smart_boundaries", false)] {
+        for (key, value) in [("model_polish", "off" as Any), ("outro_gate", true), ("smart_chunks", false)] {
             processing[key] = ["source": "settings", "raw": NSNull(), "effective": value]
         }
         // Existing test seams: even accidental paste/record intents cannot reach the host.

@@ -10,13 +10,13 @@ import { STATE_DIR, getStateDir, safeWriteFileSync } from "./paths";
  * `processingEnv()` overlays the file under the environment, so every read
  * site must pass `processingEnv()` instead of `process.env` (a source-scan
  * test enforces it). Only keys the user set are written, so an untouched
- * toggle follows future default changes.
+ * toggle follows future default changes. Keys no longer in PROCESSING_KEYS
+ * (the removed `smart_boundaries`) are ignored on read and dropped on write.
  */
 export type ProcessingKey =
   | "model_polish"
   | "outro_gate"
   | "smart_chunks"
-  | "smart_boundaries"
   | "pause_paragraphs"
   | "coherent_paragraphs";
 
@@ -24,7 +24,6 @@ export const PROCESSING_KEYS: readonly ProcessingKey[] = [
   "model_polish",
   "outro_gate",
   "smart_chunks",
-  "smart_boundaries",
   "pause_paragraphs",
   "coherent_paragraphs",
 ];
@@ -33,7 +32,6 @@ export const PROCESSING_ENV_VARS: Record<ProcessingKey, string> = {
   model_polish: "QA_VOICE_STT_POLISH",
   outro_gate: "VOICELAYER_STT_OUTRO_GATE",
   smart_chunks: "VOICELAYER_STT_SMART_CHUNKS",
-  smart_boundaries: "VOICELAYER_STT_SMART_BOUNDARIES",
   pause_paragraphs: "VOICELAYER_STT_PAUSE_PARAGRAPHS",
   coherent_paragraphs: "VOICELAYER_STT_COHERENT_PARAGRAPHS",
 };

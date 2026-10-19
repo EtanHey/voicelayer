@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import type { TranscriptSegment } from "../stt-sentence-boundaries";
+import type { TranscriptSegment } from "../stt-transcript-alignment";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -1137,8 +1137,8 @@ usage: whisper-server [options]
     });
 
     it("asks for plain json, and no segments, when nothing opts in", async () => {
-      // The default-OFF guarantee for VOICELAYER_STT_SMART_BOUNDARIES: without
-      // an onSegments callback the request is byte-for-byte the shipped one.
+      // Without an onSegments callback (outro gate off) the request is
+      // byte-for-byte the shipped one.
       const originalFetch = globalThis.fetch;
       let inferenceForm: FormData | undefined;
 

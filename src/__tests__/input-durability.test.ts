@@ -2181,12 +2181,15 @@ describe("input recording durability", () => {
       .toBe("Retained transcript.");
   });
 
-  for (const smart of [false, true]) {
-    it(`short dictations ${smart ? "keep smart boundaries" : "skip timing work"} at all three call sites`, async () => {
+  for (const legacy of [undefined, "1"]) {
+    it(`short dictations skip timing work at all three call sites (legacy smart-boundaries env ${legacy ?? "unset"})`, async () => {
       const input = await import("../input");
       const journal = await import("../control-layer-journal");
+      // Smart boundaries was removed (2026-10-19); a leftover env var must not
+      // bring back the per-dictation audio read and Silero pass.
       const saved = process.env.VOICELAYER_STT_SMART_BOUNDARIES;
-      process.env.VOICELAYER_STT_SMART_BOUNDARIES = smart ? "1" : "0";
+      if (legacy === undefined) delete process.env.VOICELAYER_STT_SMART_BOUNDARIES;
+      else process.env.VOICELAYER_STT_SMART_BOUNDARIES = legacy;
       const build = spyOn(input, "buildBoundaryContext").mockResolvedValue(undefined);
       const events = spyOn(journal, "appendControlLayerEvent").mockImplementation(() => {});
       vadProbabilityForCall = () => .95;
@@ -2199,7 +2202,7 @@ describe("input recording durability", () => {
         expect(archive).toBeDefined();
         await input.retranscribeRecordingCapture(archive!);
         await input.retranscribeLastCapture();
-        expect(build).toHaveBeenCalledTimes(smart ? 3 : 0);
+        expect(build).toHaveBeenCalledTimes(0);
       } finally {
         build.mockRestore(); events.mockRestore();
         if (saved === undefined) delete process.env.VOICELAYER_STT_SMART_BOUNDARIES;
@@ -2209,12 +2212,10 @@ describe("input recording durability", () => {
   }
 
   for (const characters of [399, 400, 401]) {
-    it(`paragraph timing threshold at ${characters} chars with smart boundaries off covers all three call sites`, async () => {
+    it(`paragraph timing threshold at ${characters} chars covers all three call sites`, async () => {
       const input = await import("../input");
       const journal = await import("../control-layer-journal");
-      const savedSmart = process.env.VOICELAYER_STT_SMART_BOUNDARIES;
       const savedParagraphs = process.env.VOICELAYER_STT_PAUSE_PARAGRAPHS;
-      process.env.VOICELAYER_STT_SMART_BOUNDARIES = "0";
       process.env.VOICELAYER_STT_PAUSE_PARAGRAPHS = "1";
       backendText = "A" + "b".repeat(characters - 2) + ".";
       expect(backendText.length).toBe(characters);
@@ -2236,8 +2237,6 @@ describe("input recording durability", () => {
         expect(build).toHaveBeenCalledTimes(3 * expectedPerCall);
       } finally {
         build.mockRestore(); events.mockRestore();
-        if (savedSmart === undefined) delete process.env.VOICELAYER_STT_SMART_BOUNDARIES;
-        else process.env.VOICELAYER_STT_SMART_BOUNDARIES = savedSmart;
         if (savedParagraphs === undefined) delete process.env.VOICELAYER_STT_PAUSE_PARAGRAPHS;
         else process.env.VOICELAYER_STT_PAUSE_PARAGRAPHS = savedParagraphs;
       }

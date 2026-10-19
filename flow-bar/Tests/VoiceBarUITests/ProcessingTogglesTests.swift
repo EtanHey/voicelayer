@@ -6,14 +6,12 @@ final class ProcessingTogglesTests: XCTestCase {
     private static func controls(
         polish: (String, Any, String) = ("default", NSNull(), "on"),
         outro: (String, Any, Bool) = ("default", NSNull(), true),
-        chunks: (String, Any, Bool) = ("default", NSNull(), false),
-        boundaries: (String, Any, Bool) = ("settings", NSNull(), true)
+        chunks: (String, Any, Bool) = ("settings", NSNull(), true)
     ) -> [String: Any] {
         [
             "model_polish": ["source": polish.0, "raw": polish.1, "effective": polish.2],
             "outro_gate": ["source": outro.0, "raw": outro.1, "effective": outro.2],
             "smart_chunks": ["source": chunks.0, "raw": chunks.1, "effective": chunks.2],
-            "smart_boundaries": ["source": boundaries.0, "raw": boundaries.1, "effective": boundaries.2],
         ]
     }
 
@@ -32,10 +30,21 @@ final class ProcessingTogglesTests: XCTestCase {
 
     func testParsesTheSettingsSource() throws {
         let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
-        XCTAssertEqual(state.smartBoundaries.source, .settings)
-        XCTAssertTrue(state.smartBoundaries.effective)
+        XCTAssertEqual(state.smartChunks.source, .settings)
+        XCTAssertTrue(state.smartChunks.effective)
         // A settings source must not carry a raw env value.
-        XCTAssertNil(PolishControlsState(healthEvent: Self.health(Self.controls(boundaries: ("settings", "1", true)))))
+        XCTAssertNil(PolishControlsState(healthEvent: Self.health(Self.controls(chunks: ("settings", "1", true)))))
+    }
+
+    /// SMARTB-RM (Etan, 2026-10-19): Smart boundaries is gone. A daemon that still reports it parses fine,
+    /// and the old key never becomes a row.
+    func testALeftoverSmartBoundariesKeyIsIgnored() throws {
+        var controls = Self.controls()
+        controls["smart_boundaries"] = ["source": "environment", "raw": "1", "effective": true]
+        let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(controls)))
+        let rows = ModelsSettingsView.processingRows(for: state)
+        XCTAssertEqual(rows.map(\.key), [.modelPolish, .outroGate, .smartChunks])
+        XCTAssertEqual(ProcessingKey.allCases, [.modelPolish, .outroGate, .smartChunks])
     }
 
     func testRowsSayWhatEachDoesAndLockEnvSetFlags() throws {
@@ -44,34 +53,33 @@ final class ProcessingTogglesTests: XCTestCase {
         ))))
         let rows = ModelsSettingsView.processingRows(for: state)
 
-        XCTAssertEqual(rows.map(\.key), [.modelPolish, .outroGate, .smartChunks, .smartBoundaries])
-        XCTAssertEqual(rows.map(\.isOn), [true, false, false, true])
-        XCTAssertEqual(rows.map(\.experimental), [false, false, true, true])
+        XCTAssertEqual(rows.map(\.key), [.modelPolish, .outroGate, .smartChunks])
+        XCTAssertEqual(rows.map(\.isOn), [true, false, true])
+        XCTAssertEqual(rows.map(\.experimental), [false, false, true])
         XCTAssertTrue(rows.allSatisfy { !$0.line.isEmpty })
         XCTAssertNil(rows[0].lockedReason)
         XCTAssertEqual(rows[1].lockedReason, "Set by VOICELAYER_STT_OUTRO_GATE")
-        XCTAssertNil(rows[3].lockedReason, "a flag from the settings file is the user's to change")
+        XCTAssertNil(rows[2].lockedReason, "a flag from the settings file is the user's to change")
     }
 
-    /// C22 (QA recording 2026-09-25): Smart chunks / Smart boundaries gave no sign of what they do. A flag set by
+    /// C22 (QA recording 2026-09-25): the smart toggles gave no sign of what they do. A flag set by
     /// its env var replaced its explanation with "Set by …", so the explanation vanished exactly there; and the
     /// lines didn't say when each one runs, so on an ordinary short dictation there was nothing to notice.
     func testALockedRowKeepsItsExplanationAndAddsWhyItIsLocked() throws {
         let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls(
-            outro: ("environment", "0", false), boundaries: ("environment", "1", true)
+            outro: ("environment", "0", false), chunks: ("environment", "1", true)
         ))))
         let rows = ModelsSettingsView.processingRows(for: state)
         for row in rows {
             XCTAssertEqual(row.captionLines.first, row.line, "\(row.key): the explanation is always first")
         }
         XCTAssertEqual(rows[1].captionLines, [rows[1].line, "Set by VOICELAYER_STT_OUTRO_GATE"])
-        XCTAssertEqual(rows[3].captionLines, [rows[3].line, "Set by VOICELAYER_STT_SMART_BOUNDARIES"])
-        XCTAssertEqual(rows[2].captionLines, [rows[2].line], "an unlocked row shows only its explanation")
+        XCTAssertEqual(rows[2].captionLines, [rows[2].line, "Set by VOICELAYER_STT_SMART_CHUNKS"])
+        XCTAssertEqual(rows[0].captionLines, [rows[0].line], "an unlocked row shows only its explanation")
     }
 
-    /// D194-r1 (Medium): both features run only on the resident Whisper server path; the whisper-cli and Wispr
-    /// Flow backends return no segments and have no smart chunk path, so the copy must say so, never "every
-    /// dictation". (Low): Rule B demotes a stop only when the clause is unfinished or runs straight on.
+    /// D194-r1 (Medium): smart chunks runs only on the resident Whisper server path; the whisper-cli and Wispr
+    /// Flow backends have no smart chunk path, so the copy must say so, never "every dictation".
     func testSmartRowsSayWhenTheyRunWhatChangesAndWhichBackendRunsThem() throws {
         let state = try XCTUnwrap(PolishControlsState(healthEvent: Self.health(Self.controls())))
         let rows = ModelsSettingsView.processingRows(for: state)
@@ -80,11 +88,6 @@ final class ProcessingTogglesTests: XCTestCase {
             rows[2].line,
             "Recordings of 90 s or more split at your pauses instead of every 30 s; shorter ones are never split. "
                 + serverOnly
-        )
-        XCTAssertEqual(
-            rows[3].line,
-            "Turns a full stop into a comma when the sentence isn't finished or runs straight on without a pause. "
-                + "Never adds a stop or drops a word. " + serverOnly
         )
         XCTAssertFalse(rows.contains { $0.line.contains("Every dictation") })
     }

@@ -12,7 +12,7 @@ import {
   stripHallucinatedOutro,
 } from "../stt-outro-gate";
 import { WhisperServerBackend } from "../stt";
-import type { TranscriptSegment } from "../stt-sentence-boundaries";
+import type { TranscriptSegment } from "../stt-transcript-alignment";
 import { privateCorpusPaths } from "./setup/private-specimens";
 
 // Cold speech fixture is unmeasured (TEST2 forbids synthesis); allow 15 s for say + ffmpeg fixture creation.
@@ -1218,27 +1218,21 @@ describe("stripHallucinatedOutro — specimen 6, one real closer and one invente
 
 const OUTRO_FLAG = "VOICELAYER_STT_OUTRO_GATE";
 
-const SMART_BOUNDARIES_FLAG = "VOICELAYER_STT_SMART_BOUNDARIES";
-
 /** Run `body` with the flag pinned, restoring whatever the caller had. */
 async function withOutroGate<T>(
   value: string | undefined,
   body: () => Promise<T>,
 ): Promise<T> {
   const saved = process.env[OUTRO_FLAG];
-  const savedBoundaries = process.env[SMART_BOUNDARIES_FLAG];
   if (value === undefined) delete process.env[OUTRO_FLAG];
   else process.env[OUTRO_FLAG] = value;
-  // Both flags request verbose_json. Pin smart boundaries off so the outro flag
-  // alone decides the request shape — `"0"` yields `json`, unset `verbose_json`.
-  delete process.env[SMART_BOUNDARIES_FLAG];
+  // The outro flag alone decides the request shape — `"0"` yields `json`,
+  // unset `verbose_json`.
   try {
     return await body();
   } finally {
     if (saved === undefined) delete process.env[OUTRO_FLAG];
     else process.env[OUTRO_FLAG] = saved;
-    if (savedBoundaries === undefined) delete process.env[SMART_BOUNDARIES_FLAG];
-    else process.env[SMART_BOUNDARIES_FLAG] = savedBoundaries;
   }
 }
 

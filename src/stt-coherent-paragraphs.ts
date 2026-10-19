@@ -1,4 +1,4 @@
-import { endsWithAbbreviation } from "./stt-sentence-boundaries";
+import { endsWithAbbreviation } from "./stt-transcript-alignment";
 
 /**
  * Coherent paragraphs (PARA1): break a long dictation between coherent units —

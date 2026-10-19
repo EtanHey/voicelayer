@@ -549,7 +549,7 @@ describe("parseWavAudioInfo", () => {
 });
 
 describe("computePauseMap format guard", () => {
-  // Returns [] rather than throwing: [] is the documented "no smart boundaries
+  // Returns [] rather than throwing: [] is the documented "no pause evidence
   // available" answer and src/stt.ts reads it as "keep the fixed 30 s cut".
   // Every rejection is logged, so an unanalysable recording stays visible.
   test("rejects a sample rate the VAD was not trained for", async () => {

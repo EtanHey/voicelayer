@@ -168,7 +168,7 @@ export function pauseSpansFromProbabilities(
  * Run Silero VAD over a saved 16 kHz mono PCM16 WAV and return its silence spans.
  *
  * Returns `[]` — never throws — when the audio cannot be analysed. `[]` is the
- * documented "no smart boundaries available" answer and every caller must read
+ * documented "no pause evidence available" answer and every caller must read
  * it that way: `src/stt.ts` keeps the fixed 30 s cut, i.e. today's behaviour.
  * The reason is always logged, so an unanalysable recording is visible rather
  * than silently decoded as if it had no pauses.

@@ -7,7 +7,7 @@ import {
   WhisperServerBackend,
 } from "../stt";
 import { findCandidateSpan, findOutroCandidates } from "../stt-outro-gate";
-import type { TranscriptSegment } from "../stt-sentence-boundaries";
+import type { TranscriptSegment } from "../stt-transcript-alignment";
 import realChunkSegments from "./fixtures/h3-real-chunk-segments.json";
 import { TEST_TMP } from "./setup/test-tmp";
 import { privateCorpusPaths } from "./setup/private-specimens";
@@ -20,19 +20,16 @@ import { privateCorpusPaths } from "./setup/private-specimens";
  */
 
 const OUTRO_FLAG = "VOICELAYER_STT_OUTRO_GATE";
-const BOUNDARIES_FLAG = "VOICELAYER_STT_SMART_BOUNDARIES";
 const SMART_CHUNKS_FLAG = "VOICELAYER_STT_SMART_CHUNKS";
 
 const savedEnv = {
   outro: process.env[OUTRO_FLAG],
-  boundaries: process.env[BOUNDARIES_FLAG],
   smartChunks: process.env[SMART_CHUNKS_FLAG],
 };
 
 afterEach(() => {
   for (const [name, value] of [
     [OUTRO_FLAG, savedEnv.outro],
-    [BOUNDARIES_FLAG, savedEnv.boundaries],
     [SMART_CHUNKS_FLAG, savedEnv.smartChunks],
   ] as const) {
     if (value === undefined) delete process.env[name];
@@ -217,7 +214,6 @@ describe("chunk transcript segment stitching", () => {
 
   test("keeps single-pass segment objects byte-identical", async () => {
     process.env[OUTRO_FLAG] = "1";
-    delete process.env[BOUNDARIES_FLAG];
     const wavPath = join(TEST_TMP, "stt-segments-single-pass.wav");
     await Bun.write(wavPath, makePcm16Wav(5));
     const original = [
@@ -320,7 +316,6 @@ describe("chunk transcript segment stitching", () => {
 
   test("keeps the chunked escape hatch on json with no returned segments", async () => {
     process.env[OUTRO_FLAG] = "0";
-    delete process.env[BOUNDARIES_FLAG];
     delete process.env[SMART_CHUNKS_FLAG];
     const wavPath = join(TEST_TMP, "stt-segments-chunked-off.wav");
     await Bun.write(wavPath, makePcm16Wav(100));
@@ -449,7 +444,6 @@ describe("archived long-recording gate input", () => {
 
     specimenTest(`${specimen.id} supplies the gate an absolute candidate span`, async () => {
       process.env[OUTRO_FLAG] = "1";
-      delete process.env[BOUNDARIES_FLAG];
       delete process.env[SMART_CHUNKS_FLAG];
       let call = 0;
       const gateLogs: string[] = [];

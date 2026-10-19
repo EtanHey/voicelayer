@@ -593,7 +593,7 @@ extension VoiceBarFlowTests {
             XCTAssertFalse(app.popUpButtons["models-effort-picker"].exists)
         }
         click(disclosure, "collapse recognizer details")
-        for key in ["model_polish", "outro_gate", "smart_chunks", "smart_boundaries"] {
+        for key in ["model_polish", "outro_gate", "smart_chunks"] {
             let toggle = app.switches["models-processing-\(key)"]
             var before: String?
             step("inspect \(key) switch") {

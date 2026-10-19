@@ -4,7 +4,7 @@ import {
   alignTranscriptWordIndices,
   pauseSupportedWordIndices,
   type TranscriptSegment,
-} from "./stt-sentence-boundaries";
+} from "./stt-transcript-alignment";
 import type { PauseSpan } from "./stt-pause-map";
 
 // Archive measurement (10 long recordings, Oct 6–11): typical medians .672–1.28s,
@@ -28,7 +28,7 @@ function words(text: string): Array<{ value: string; end: number }> {
  * Only replaces inter-sentence whitespace. Missing or ambiguous evidence is a no-op.
  * Sentence-end anchors use the shared bounded word alignment; repeated final
  * context is skipped rather than assigning the same pause twice.
- * Pause support reuses the boundary stage's speech-run allocation and error bar.
+ * Pause support reuses the shared speech-run allocation and error bar.
  * Existing paragraphs are kept.
  * Chunk segments already use absolute times.
  */
@@ -59,7 +59,7 @@ export function applyPauseParagraphs(
   });
   if (alignment.size === 0) return text;
   const candidates: Array<{ start: number; end: number; pauseS: number }> = [];
-  // Reuse the sentence-boundary stage's speech-run allocation (including its
+  // Reuse the shared speech-run allocation (including its
   // one-word error bar), so pauses inside a verbose segment remain usable.
   const supports = evidence.filter(p => p.endS - p.startS >= MIN_PARAGRAPH_PAUSE_SECONDS - 1e-9)
     .map(p => ({ pauseS: p.endS - p.startS, indices: pauseSupportedWordIndices(

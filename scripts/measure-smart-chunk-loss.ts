@@ -62,7 +62,7 @@ import {
 } from "../src/stt-pause-map";
 import { stopServer, transcribeViaServer } from "../src/whisper-server";
 import { allocateFreeLocalhostPort } from "../src/corpus-replay-verify";
-import type { TranscriptSegment } from "../src/stt-sentence-boundaries";
+import type { TranscriptSegment } from "../src/stt-transcript-alignment";
 import {
   findAdjacentDuplicateRun,
   findNearRepeat,

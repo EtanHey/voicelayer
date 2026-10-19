@@ -12,7 +12,6 @@ final class ModelsSettingsStateTests: XCTestCase {
             "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
             "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
             "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
-            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
         ]
         state.handleEvent(health)
         var changed = try XCTUnwrap(health["model_status"] as? [String: Any])
@@ -73,7 +72,6 @@ final class ModelsSettingsStateTests: XCTestCase {
             "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
             "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
             "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
-            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
         ]
         XCTAssertNil(ModelsSettingsView.processingPlaceholder(for: ModelsSettingsState(healthEvent: withControls)))
         XCTAssertEqual(ModelsSettingsView.processingPlaceholder(for: .loading), "Checking…")
@@ -110,7 +108,6 @@ final class ModelsSettingsStateTests: XCTestCase {
             "model_polish": ["source": "default", "raw": NSNull(), "effective": "on"],
             "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
             "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
-            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
         ]
         state.handleEvent(health)
         state.setWhisperResidency(.notLoaded)
@@ -377,7 +374,6 @@ final class ModelsSettingsStateTests: XCTestCase {
             "model_polish": ["source": "environment", "raw": "shadow", "effective": "shadow"],
             "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
             "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
-            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
         ]
         voiceState.handleEvent(health)
         XCTAssertEqual(voiceState.modelsSettingsState.polishControls?.modelPolish.effective, .shadow)

@@ -22,7 +22,6 @@ final class SettingsRegroupShotsTests: XCTestCase {
                 "model_polish": ["source": "default", "raw": NSNull(), "effective": "off"],
                 "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
                 "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
-                "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
             ],
         ])
         for tab in [SettingsTab.general, .transcription] {

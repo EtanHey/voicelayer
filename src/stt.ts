@@ -36,10 +36,7 @@ import {
   SMART_CHUNK_MIN_SECONDS,
   type PauseSpan,
 } from "./stt-pause-map";
-import {
-  smartBoundariesEnabled,
-  type TranscriptSegment,
-} from "./stt-sentence-boundaries";
+import type { TranscriptSegment } from "./stt-transcript-alignment";
 import { outroGateEnabled, stripHallucinatedOutro } from "./stt-outro-gate";
 import { stripHallucinatedCaption } from "./stt-caption-gate";
 import type {
@@ -57,14 +54,13 @@ export interface STTResult extends TranscriptionResult {
   durationMs: number;
   /**
    * Whisper segment timestamps on the source recording's absolute timeline.
-   * Present when the outro gate or smart-boundary feature requests verbose
-   * responses. On the chunked path, overlap words keep the earlier chunk's
+   * Present when the outro gate requests verbose responses. On the chunked path, overlap words keep the earlier chunk's
    * timing; unsafe segment streams fail closed instead of guessing timestamps.
    */
   segments?: TranscriptSegment[];
   /**
-   * sha256 of the EXACT audio `segments` were decoded from. The boundary stage
-   * refuses to use segments whose audio does not match the WAV it computes the
+   * sha256 of the EXACT audio `segments` were decoded from. The pause-paragraph
+   * stage refuses to use segments whose audio does not match the WAV it computes the
    * pause map over, so a retranscribe that swapped the file underneath cannot
    * silently pair one decode's segments with another's timings (Macroscope
    * round 1).
@@ -2227,14 +2223,13 @@ export class WhisperServerBackend implements STTBackend {
         };
       }
 
-      const smartBoundaries = smartBoundariesEnabled(processingEnv());
       const outroGate = outroGateEnabled(processingEnv());
       let segments: TranscriptSegment[] | undefined;
-      // Either feature needs `verbose_json`. The default-on outro gate makes
-      // that normal; explicitly disabling both preserves the old `json` shape.
+      // The outro gate needs `verbose_json`. Default-on makes that normal;
+      // explicitly disabling it preserves the old `json` shape.
       const text = await this.transcribeResident(wavData, {
         ...buildWhisperServerOptions(options),
-        ...(smartBoundaries || outroGate
+        ...(outroGate
           ? {
               onSegments: (found: TranscriptSegment[]) => {
                 segments = found;
@@ -2496,8 +2491,7 @@ export class WhisperServerBackend implements STTBackend {
 
     const transcripts: string[] = [];
     const timedTranscripts: TimedChunkTranscript[] = [];
-    const requestSegments =
-      smartBoundariesEnabled(processingEnv()) || outroGateEnabled(processingEnv());
+    const requestSegments = outroGateEnabled(processingEnv());
     const transcribeTimed = async (
       audio: Uint8Array,
       requestOptions: WhisperServerTranscribeOptions | undefined,

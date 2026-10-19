@@ -39,7 +39,7 @@
  */
 
 import { parseWavAudioInfo, WAVE_FORMAT_PCM } from "./stt-pause-map";
-import type { TranscriptSegment } from "./stt-sentence-boundaries";
+import type { TranscriptSegment } from "./stt-transcript-alignment";
 
 /**
  * How far over its own noise floor a window must read to count as speech.

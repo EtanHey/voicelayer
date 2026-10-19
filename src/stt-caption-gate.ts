@@ -6,7 +6,7 @@
 import { createVADSession, VAD_CHUNK_SAMPLES } from "./vad";
 import { parseWavAudioInfo, WAVE_FORMAT_PCM } from "./stt-pause-map";
 import { measureSpan, measureWavWindows, normalizeOutroKey, SPEECH_LEVEL_GUARD_DB, SPEECH_OVER_FLOOR_DB } from "./stt-outro-gate";
-import type { TranscriptSegment } from "./stt-sentence-boundaries";
+import type { TranscriptSegment } from "./stt-transcript-alignment";
 
 const CAPTION_PREFIXES = [
   { key: "the american pronunciation guide presents", class: "american-pronunciation-guide", extraWords: 6 },

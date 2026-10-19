@@ -142,7 +142,8 @@ describe('coherent paragraphs', () => {
     const long = 'x'.repeat(500);
     expect(shouldBuildBoundaryContext(long, {})).toBe(true);
     expect(shouldBuildBoundaryContext(long, { VOICELAYER_STT_COHERENT_PARAGRAPHS: '1' })).toBe(false);
-    expect(shouldBuildBoundaryContext(long, { VOICELAYER_STT_COHERENT_PARAGRAPHS: '1', VOICELAYER_STT_SMART_BOUNDARIES: '1' })).toBe(true);
+    // Smart boundaries was removed; its leftover env var no longer forces the pause map.
+    expect(shouldBuildBoundaryContext(long, { VOICELAYER_STT_COHERENT_PARAGRAPHS: '1', VOICELAYER_STT_SMART_BOUNDARIES: '1' })).toBe(false);
   });
 
   test('finalize applies it without any audio evidence when enabled', async () => {
