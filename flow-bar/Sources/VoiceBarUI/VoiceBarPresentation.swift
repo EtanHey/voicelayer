@@ -106,6 +106,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var isCollapsed: Bool
     public var coreWidth: CGFloat
     public var visibleCoreOcclusionInset: CGFloat
+    /// NOTCH1: a transient note shown inside the notch, in a band under the top row.
+    public var transientNote: String?
 
     public init(
         mode: VoiceMode,
@@ -124,7 +126,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         isKeyboardFocused: Bool = false,
         isCollapsed: Bool = false,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
-        visibleCoreOcclusionInset: CGFloat = 0
+        visibleCoreOcclusionInset: CGFloat = 0,
+        transientNote: String? = nil
     ) {
         self.mode = mode
         self.showsRecordingHold = showsRecordingHold
@@ -143,6 +146,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.isCollapsed = isCollapsed
         self.coreWidth = coreWidth
         self.visibleCoreOcclusionInset = visibleCoreOcclusionInset
+        self.transientNote = transientNote
     }
 }
 
@@ -215,7 +219,8 @@ public enum VoiceBarPresentation {
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
             coreWidth: input.coreWidth,
-            visibleCoreOcclusionInset: input.visibleCoreOcclusionInset
+            visibleCoreOcclusionInset: input.visibleCoreOcclusionInset,
+            transientNoteWidth: input.transientNote.map(Theme.intrinsicPillStatusWidth(for:))
         )
     }
 

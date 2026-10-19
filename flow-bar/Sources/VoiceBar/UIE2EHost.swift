@@ -175,7 +175,8 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             isHovered: state.isHovering,
             isKeyboardFocused: false,
             isCollapsed: state.isCollapsed,
-            visibleCoreOcclusionInset: 0))
+            visibleCoreOcclusionInset: 0,
+            transientNote: state.selectionFeedbackNote))
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(presentation: presentation,
             interactionConfiguration: AppDelegate.notchInteractionConfiguration(

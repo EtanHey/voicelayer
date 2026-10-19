@@ -1923,7 +1923,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             keepsIdleExpanded: voiceState.mode == .idle && !voiceState.isCollapsed,
             coreWidth: coreWidth,
             visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0,
-            virtualNotchIdleCoreHeight: screenGeometry?.virtualNotchIdleCoreHeight
+            virtualNotchIdleCoreHeight: screenGeometry?.virtualNotchIdleCoreHeight,
+            transientNoteWidth: resolved.transientNoteWidth
         )
         notchPresentationModel.setHovered(voiceState.isHovering)
     }
@@ -1952,7 +1953,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isKeyboardFocused: false,
                 isCollapsed: state?.isCollapsed ?? false,
                 coreWidth: coreWidth,
-                visibleCoreOcclusionInset: visibleCoreOcclusionInset
+                visibleCoreOcclusionInset: visibleCoreOcclusionInset,
+                transientNote: state?.selectionFeedbackNote
             )
         )
     }

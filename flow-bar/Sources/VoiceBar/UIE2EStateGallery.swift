@@ -227,7 +227,8 @@ final class UIE2EStateGallery {
             recordingTrailingWingWidth: base.geometry.trailingWingWidth,
             keepsIdleExpanded: state.mode == .idle && !state.isCollapsed,
             coreWidth: geometry.housingFrame.width, visibleCoreOcclusionInset: geometry.visibleCoreOcclusionInset,
-            virtualNotchIdleCoreHeight: geometry.virtualNotchIdleCoreHeight)
+            virtualNotchIdleCoreHeight: geometry.virtualNotchIdleCoreHeight,
+            transientNoteWidth: base.transientNoteWidth)
         model.setHovered(state.isHovering)
     }
 

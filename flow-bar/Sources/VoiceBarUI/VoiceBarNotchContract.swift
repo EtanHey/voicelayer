@@ -224,6 +224,21 @@ public struct VoiceBarNotchPresentation: Equatable {
     public let virtualNotchIdleCoreHeight: CGFloat?
     public let contentRoles: [VoiceBarNotchContentRole]
     public let accessibilityLabel: String
+    /// NOTCH1: the measured width of a transient note (the selection busy/rejection note). Non-nil means
+    /// the notch grows a band directly under its top row to hold the note.
+    public private(set) var transientNoteWidth: CGFloat? = nil
+
+    /// Where the transient note draws: the band directly under the top row, across the lower body. Any
+    /// existing lower content (teleprompter, History) sits below it.
+    public var transientNoteRect: CGRect? {
+        guard transientNoteWidth != nil else { return nil }
+        return CGRect(
+            x: geometry.bodyOriginX,
+            y: geometry.topHeight,
+            width: geometry.bodyWidth,
+            height: VoiceBarNotchContract.transientNoteBandHeight
+        )
+    }
 
     public static func resolve(
         hasTeleprompter: Bool,
@@ -238,7 +253,8 @@ public struct VoiceBarNotchPresentation: Equatable {
         isKeyboardFocused: Bool,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
         visibleCoreOcclusionInset: CGFloat = 0,
-        virtualNotchIdleCoreHeight: CGFloat? = nil
+        virtualNotchIdleCoreHeight: CGFloat? = nil,
+        transientNoteWidth: CGFloat? = nil
     ) -> VoiceBarNotchPresentation {
         let visualState: VoiceBarNotchVisualState = if hasTeleprompter {
             .teleprompter
@@ -248,7 +264,8 @@ public struct VoiceBarNotchPresentation: Equatable {
             .history
         } else if hasCompactStatus {
             .compactStatus
-        } else if isHovered || isKeyboardFocused {
+        } else if isHovered || isKeyboardFocused || transientNoteWidth != nil {
+            // An idle notch draws no glass, so a note shows the launcher shell rather than nothing.
             .hoverLauncher
         } else {
             .idle
@@ -293,11 +310,14 @@ public struct VoiceBarNotchPresentation: Equatable {
 
         return VoiceBarNotchPresentation(
             visualState: visualState,
-            geometry: geometry,
+            geometry: transientNoteWidth.map {
+                VoiceBarNotchContract.addingTransientNoteBand(to: geometry, noteWidth: $0)
+            } ?? geometry,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles(for: visualState),
-            accessibilityLabel: accessibilityLabel(for: visualState)
+            accessibilityLabel: accessibilityLabel(for: visualState),
+            transientNoteWidth: transientNoteWidth
         )
     }
 
@@ -383,6 +403,10 @@ public enum VoiceBarNotchContract {
     }
 
     public static let topHeight: CGFloat = 32
+    /// NOTCH1: the band a transient note adds under the top row: one 12 pt line with breathing room above
+    /// and room below for the shell's rounded lower corners.
+    public static let transientNoteBandHeight: CGFloat = 26
+    public static let transientNoteHorizontalInset: CGFloat = 16
     /// Spec §4 / Etan: the History panel is the teleprompter's shell, "narrower and taller" (the teleprompter
     /// body is 465 × 196 pt).
     public static let historyBodyWidth: CGFloat = 320
@@ -508,6 +532,29 @@ public enum VoiceBarNotchContract {
                 lowerSurfaceHeight: historyLowerSurfaceHeight
             )
         }
+    }
+
+    /// NOTCH1: grow the shell down by one note band. The top row is untouched. A shell without a lower body
+    /// gets one flush with both wings (the launcher's shape for History), widened symmetrically only when
+    /// the note needs it; a teleprompter or History body grows taller and keeps its content below the band.
+    static func addingTransientNoteBand(
+        to geometry: VoiceBarNotchGeometry,
+        noteWidth: CGFloat
+    ) -> VoiceBarNotchGeometry {
+        let neededExtent = (noteWidth + 2 * transientNoteHorizontalInset - geometry.coreWidth) / 2
+        let hasBody = geometry.lowerSurfaceHeight > 0
+        func extent(_ current: CGFloat, wing: CGFloat) -> CGFloat {
+            min(max(hasBody ? current : wing, neededExtent), max(current, wing, morphCanvasWingCapacity))
+        }
+        return VoiceBarNotchGeometry(
+            coreWidth: geometry.coreWidth,
+            topHeight: geometry.topHeight,
+            leadingWingWidth: geometry.leadingWingWidth,
+            trailingWingWidth: geometry.trailingWingWidth,
+            bodyLeadingExtent: extent(geometry.bodyLeadingExtent, wing: geometry.leadingWingWidth),
+            bodyTrailingExtent: extent(geometry.bodyTrailingExtent, wing: geometry.trailingWingWidth),
+            lowerSurfaceHeight: geometry.lowerSurfaceHeight + transientNoteBandHeight
+        )
     }
 
     /// The History body is centred on the core and as wide as it was with two equal wings (332 pt at a 185 pt

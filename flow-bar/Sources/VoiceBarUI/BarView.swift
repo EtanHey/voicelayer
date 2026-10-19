@@ -340,15 +340,6 @@ public struct BarView: View {
 
     private var appearanceAwareNotchContent: some View {
         notchContent
-            .overlay(alignment: .bottom) {
-                if let note = state.selectionFeedbackNote {
-                    compactStatusLabel(note)
-                        .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
-                        .frame(height: 17)
-                        .offset(y: 17) // Use the existing panel shadow outset; never resize the notch.
-                        .allowsHitTesting(false)
-                }
-            }
             .environment(\.voiceBarNotchAppearance, notchAppearance)
             .background {
                 VoiceBarNotchAppearanceReader(appearance: $notchAppearance)
@@ -432,7 +423,8 @@ public struct BarView: View {
             isHovered: state.isHovering,
             isKeyboardFocused: keepsLauncherMounted,
             isCollapsed: state.isCollapsed,
-            visibleCoreOcclusionInset: 0
+            visibleCoreOcclusionInset: 0,
+            transientNote: state.selectionFeedbackNote
         )
         input.isHistoryPanelOpen = isHistoryPresented
         return VoiceBarPresentation.notchPresentation(from: input)
@@ -591,8 +583,39 @@ public struct BarView: View {
         .help("Audio level")
     }
 
-    @ViewBuilder
+    /// NOTCH1: a transient note gets its own band at the top of the lower body (the presentation grew the
+    /// shell to hold it); the History panel or teleprompter, when open, keeps the space below.
     private var notchLowerContent: some View {
+        VStack(spacing: 0) {
+            if notchPresentation.transientNoteRect != nil, let note = state.selectionFeedbackNote {
+                transientNoteBand(note)
+            }
+            notchLowerPanelContent
+                .frame(maxHeight: .infinity)
+        }
+        .animation(
+            .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration),
+            value: state.selectionFeedbackNote
+        )
+    }
+
+    private func transientNoteBand(_ note: String) -> some View {
+        Text(note)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(notchPrimaryLabelColor)
+            .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
+            .lineLimit(1)
+            .padding(.horizontal, VoiceBarNotchContract.transientNoteHorizontalInset)
+            // Sit just under the top row; the band's lower half is room for the shell's rounded corners.
+            .padding(.bottom, 4)
+            .frame(maxWidth: .infinity)
+            .frame(height: VoiceBarNotchContract.transientNoteBandHeight)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+    }
+
+    @ViewBuilder
+    private var notchLowerPanelContent: some View {
         if isMorphHistoryContentPresented {
             historyPanelContent()
                 .padding(
