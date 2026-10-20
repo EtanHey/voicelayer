@@ -98,10 +98,10 @@ final class TeleprompterPreparingLayoutTests: XCTestCase {
             XCTFail("no ink in \(rect)")
             return .zero
         }
-        // CGContext rows run bottom-up; flip back to the image's top-down points.
+        // A bitmap context's buffer stores the crop's top row first, so rows are already top-down.
         return CGRect(
             x: rect.minX + CGFloat(minX) / scale,
-            y: rect.minY + CGFloat(crop.height - 1 - maxY) / scale,
+            y: rect.minY + CGFloat(minY) / scale,
             width: CGFloat(maxX - minX + 1) / scale,
             height: CGFloat(maxY - minY + 1) / scale
         )
