@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   writeFileSync,
@@ -15,6 +14,7 @@ import {
   acquireProcessLock,
   releaseProcessLock,
   isProcessAlive,
+  readProcessStartUs,
 } from "../process-lock";
 
 const TEST_PID_FILE = join(
@@ -22,7 +22,10 @@ const TEST_PID_FILE = join(
   `voicelayer-process-lock-test-${process.pid}.pid`,
 );
 
-const fixtureChildren: Array<ReturnType<typeof Bun.spawn>> = [];
+type Fixture = ReturnType<typeof Bun.spawn>;
+const fixtureChildren: Fixture[] = [];
+const fixtureDirs: string[] = [];
+const PROCESS_LOCK_MODULE = join(import.meta.dir, "..", "process-lock.ts");
 
 function cleanPidFile() {
   if (existsSync(TEST_PID_FILE)) {
@@ -32,72 +35,86 @@ function cleanPidFile() {
   }
 }
 
-function reapFixtures() {
+// Signal only through Bun's own handle, never a stored numeric PID: once a
+// fixture has exited, its PID is no longer evidence of that fixture.
+async function reapFixtures() {
   while (fixtureChildren.length > 0) {
-    const child = fixtureChildren.pop();
-    if (!child?.pid) continue;
-    try {
-      process.kill(child.pid, "SIGKILL");
-    } catch {}
-    try {
-      child.kill();
-    } catch {}
+    const child = fixtureChildren.pop()!;
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
+    await child.exited;
+  }
+  while (fixtureDirs.length > 0) {
+    rmSync(fixtureDirs.pop()!, { recursive: true, force: true });
   }
 }
 
-function processStartIso(pid: number): string {
-  const result = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
-    stdout: "pipe",
-    stderr: "ignore",
-    env: { ...process.env, LC_ALL: "C", LANG: "C" },
-  });
-  const startedAt = Date.parse(result.stdout.toString().trim());
-  if (!Number.isFinite(startedAt)) {
-    throw new Error(`could not read lstart for pid ${pid}`);
-  }
-  return new Date(startedAt).toISOString();
-}
-
-function spawnUnrelatedFixture(): ReturnType<typeof Bun.spawn> {
-  const child = Bun.spawn(["/bin/sleep", "3600"], {
-    stdout: "ignore",
-    stderr: "ignore",
-    env: process.env,
-  });
-  if (!child.pid) throw new Error("unrelated fixture failed to start");
-  fixtureChildren.push(child);
-  return child;
-}
-
-function spawnDaemonNamedFixture(): {
-  child: ReturnType<typeof Bun.spawn>;
-  scriptPath: string;
-} {
-  const dir = join(TEST_TMP, `lock1-daemon-fixture-${process.pid}-${Date.now()}`);
+function fixtureDir(): string {
+  const dir = join(TEST_TMP, `lock1-fixture-${process.pid}-${fixtureDirs.length}-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
-  const scriptPath = join(dir, "mcp-server-daemon.js");
-  writeFileSync(
-    scriptPath,
-    "#!/usr/bin/env bun\nawait Bun.sleep(3_600_000);\n",
-  );
-  chmodSync(scriptPath, 0o755);
-  const child = Bun.spawn(["bun", "run", scriptPath], {
-    stdout: "ignore",
-    stderr: "ignore",
-    env: process.env,
-  });
-  if (!child.pid) throw new Error("daemon-named fixture failed to start");
+  fixtureDirs.push(dir);
+  return dir;
+}
+
+/** An unrelated sleeping process. Returns the wall-clock bracket around spawn. */
+function spawnSleeper(argv: string[] = ["/bin/sleep", "3600"]) {
+  const beforeMs = Date.now();
+  const child = Bun.spawn(argv, { stdout: "ignore", stderr: "ignore", env: process.env });
+  const afterMs = Date.now();
+  if (!child.pid) throw new Error("fixture failed to start");
   fixtureChildren.push(child);
-  return { child, scriptPath };
+  return { child, beforeMs, afterMs };
+}
+
+/**
+ * A genuine owner: a separate process that takes the lock through the
+ * production writer, then lingers as an orphan.
+ */
+async function spawnLockOwner(options: { relative: boolean }) {
+  const dir = fixtureDir();
+  const entry = "daemon.ts";
+  writeFileSync(
+    join(dir, entry),
+    `import { acquireProcessLock } from ${JSON.stringify(PROCESS_LOCK_MODULE)};\n` +
+      `acquireProcessLock(process.argv[2]);\n` +
+      `console.log("locked");\n` +
+      `await Bun.sleep(3_600_000);\n`,
+  );
+  const beforeMs = Date.now();
+  const child = Bun.spawn(
+    ["bun", options.relative ? entry : join(dir, entry), TEST_PID_FILE],
+    { cwd: dir, stdout: "pipe", stderr: "ignore", env: process.env },
+  );
+  fixtureChildren.push(child);
+  const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
+  const { value } = await reader.read();
+  reader.releaseLock();
+  const afterMs = Date.now();
+  expect(new TextDecoder().decode(value)).toContain("locked");
+  const lock = JSON.parse(readFileSync(TEST_PID_FILE, "utf-8"));
+  expect(lock.pid).toBe(child.pid);
+  return { child, lock, beforeMs, afterMs };
+}
+
+/** The kernel stamps start time at fork, so it lies inside the spawn bracket. */
+function expectStartInside(startUs: number, beforeMs: number, afterMs: number) {
+  expect(Number.isSafeInteger(startUs)).toBe(true);
+  expect(startUs).toBeGreaterThanOrEqual(beforeMs * 1000);
+  expect(startUs).toBeLessThan((afterMs + 1) * 1000);
+}
+
+function sigtermsTo(kill: ReturnType<typeof spyOn>, pid: number): number {
+  return kill.mock.calls.filter((call) => call[0] === pid && call[1] === "SIGTERM").length;
 }
 
 describe("process lock", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     cleanPidFile();
-    reapFixtures();
+    await reapFixtures();
   });
-  afterEach(() => {
-    reapFixtures();
+  afterEach(async () => {
+    await reapFixtures();
     cleanPidFile();
   });
 
@@ -172,8 +189,7 @@ describe("process lock", () => {
     expect(result.acquired).toBe(true);
   });
 
-  it("claims without SIGTERM when an alive PID is not a VoiceLayer daemon (e.g. PID 1)", () => {
-    // PID 1 is alive but never our daemon identity — claim without signalling.
+  it("never SIGTERMs a legacy lock without an exact start (e.g. PID 1)", () => {
     writeFileSync(
       TEST_PID_FILE,
       JSON.stringify({
@@ -190,7 +206,6 @@ describe("process lock", () => {
     try {
       result = acquireProcessLock(TEST_PID_FILE);
       expect(kill.mock.calls).toEqual([[1, 0]]);
-      expect(kill.mock.calls.some((call) => call[1] === "SIGTERM")).toBe(false);
     } finally {
       kill.mockRestore();
     }
@@ -230,114 +245,131 @@ describe("process lock", () => {
     expect(data.pid).toBe(1);
   });
 
-  it("does not SIGTERM a reused PID with a mismatched start time; claims the lock", () => {
-    const child = spawnUnrelatedFixture();
-    const pid = child.pid!;
-    expect(isProcessAlive(pid)).toBe(true);
+  it("persists its own exact kernel start time when it takes the lock", () => {
+    acquireProcessLock(TEST_PID_FILE);
+    const lock = JSON.parse(readFileSync(TEST_PID_FILE, "utf-8"));
+    // Independent reference: this process started before the test ran.
+    const nowUs = Date.now() * 1000;
+    const uptimeUs = Math.ceil(process.uptime() * 1e6);
+    expect(Number.isSafeInteger(lock.processStartUs)).toBe(true);
+    expect(lock.processStartUs).toBeLessThanOrEqual(nowUs);
+    expect(Math.abs(nowUs - uptimeUs - lock.processStartUs)).toBeLessThan(1_000_000);
+    expect(readProcessStartUs(process.pid)).toBe(lock.processStartUs);
+  });
 
+  it("reads a fixture's start time inside its spawn bracket, null once it is gone", async () => {
+    const { child, beforeMs, afterMs } = spawnSleeper();
+    expectStartInside(readProcessStartUs(child.pid)!, beforeMs, afterMs);
+    child.kill("SIGKILL");
+    await child.exited;
+    expect(readProcessStartUs(child.pid)).toBeNull();
+  });
+
+  it("does not SIGTERM an unrelated process whose argv names mcp-server-daemon.ts", async () => {
+    const { child } = spawnSleeper([
+      "bun",
+      "-e",
+      "await Bun.sleep(3_600_000)",
+      "mcp-server-daemon.ts",
+    ]);
+    // R1 killed exactly this: its start second, written as a lock.
+    writeFileSync(
+      TEST_PID_FILE,
+      JSON.stringify({ pid: child.pid, startedAt: new Date().toISOString() }),
+    );
+    const result = acquireProcessLock(TEST_PID_FILE);
+    expect(result).toEqual({ acquired: true, killedStale: false, stalePid: child.pid });
+    expect(isProcessAlive(child.pid)).toBe(true);
+    expect(child.exitCode).toBeNull();
+    expect(JSON.parse(readFileSync(TEST_PID_FILE, "utf-8")).pid).toBe(process.pid);
+  });
+
+  it("does not SIGTERM a process newer than the lock's recorded generation", () => {
+    const { child, beforeMs } = spawnSleeper();
     writeFileSync(
       TEST_PID_FILE,
       JSON.stringify({
-        pid,
-        // Stale lock from a prior process that occupied this PID.
-        startedAt: "2020-01-01T00:00:00.000Z",
+        pid: child.pid,
+        startedAt: new Date(beforeMs).toISOString(),
+        // One microsecond before the spawn bracket: an older generation.
+        processStartUs: beforeMs * 1000 - 1,
       }),
     );
-
     const kill = spyOn(process, "kill");
     let result;
     try {
       result = acquireProcessLock(TEST_PID_FILE);
-      expect(
-        kill.mock.calls.some(
-          (call) => call[0] === pid && call[1] === "SIGTERM",
-        ),
-      ).toBe(false);
+      expect(sigtermsTo(kill, child.pid)).toBe(0);
     } finally {
       kill.mockRestore();
     }
-
-    expect(result.acquired).toBe(true);
-    expect(result.killedStale).toBe(false);
-    expect(result.stalePid).toBe(pid);
-    expect(isProcessAlive(pid)).toBe(true);
-
-    const content = JSON.parse(readFileSync(TEST_PID_FILE, "utf-8"));
-    expect(content.pid).toBe(process.pid);
+    expect(result).toEqual({ acquired: true, killedStale: false, stalePid: child.pid });
+    expect(isProcessAlive(child.pid)).toBe(true);
   });
 
-  it("still SIGTERMs a genuine orphan with matching start time and daemon command", () => {
-    const { child, scriptPath } = spawnDaemonNamedFixture();
-    const pid = child.pid!;
-    expect(isProcessAlive(pid)).toBe(true);
-
+  it("does not SIGTERM a genuine owner whose lock is legacy-format", async () => {
+    const { child, lock } = await spawnLockOwner({ relative: false });
     writeFileSync(
       TEST_PID_FILE,
-      JSON.stringify({
-        pid,
-        startedAt: processStartIso(pid),
-      }),
+      JSON.stringify({ pid: lock.pid, startedAt: lock.startedAt }),
     );
-
-    const kill = spyOn(process, "kill");
-    let result;
-    try {
-      result = acquireProcessLock(TEST_PID_FILE);
-      expect(
-        kill.mock.calls.some(
-          (call) => call[0] === pid && call[1] === "SIGTERM",
-        ),
-      ).toBe(true);
-    } finally {
-      kill.mockRestore();
-    }
-
-    expect(result.acquired).toBe(true);
-    expect(result.killedStale).toBe(true);
-    expect(result.stalePid).toBe(pid);
-
-    const content = JSON.parse(readFileSync(TEST_PID_FILE, "utf-8"));
-    expect(content.pid).toBe(process.pid);
-
-    try {
-      rmSync(join(scriptPath, ".."), { recursive: true, force: true });
-    } catch {}
+    const result = acquireProcessLock(TEST_PID_FILE);
+    expect(result).toEqual({ acquired: true, killedStale: false, stalePid: child.pid });
+    expect(isProcessAlive(child.pid)).toBe(true);
+    expect(child.exitCode).toBeNull();
   });
 
-  it("does not SIGTERM when process start time is unknown; claims the lock", () => {
-    const { child, scriptPath } = spawnDaemonNamedFixture();
-    const pid = child.pid!;
-    expect(isProcessAlive(pid)).toBe(true);
+  it("does not SIGTERM when the start time is unknown", async () => {
+    const { child } = await spawnLockOwner({ relative: false });
+    const result = acquireProcessLock(TEST_PID_FILE, {
+      readProcessStartUs: () => null,
+    });
+    expect(result).toEqual({ acquired: true, killedStale: false, stalePid: child.pid });
+    expect(isProcessAlive(child.pid)).toBe(true);
+  });
 
-    writeFileSync(
-      TEST_PID_FILE,
-      JSON.stringify({
-        pid,
-        startedAt: processStartIso(pid),
-      }),
-    );
+  it("does not SIGTERM when the start time changes before the signal", async () => {
+    const { child, lock } = await spawnLockOwner({ relative: false });
+    let reads = 0;
+    const result = acquireProcessLock(TEST_PID_FILE, {
+      readProcessStartUs: (pid) => {
+        reads += 1;
+        const real = readProcessStartUs(pid);
+        return reads === 1 ? real : real! + 1;
+      },
+    });
+    expect(lock.processStartUs).toBe(readProcessStartUs(child.pid));
+    expect(reads).toBe(2);
+    expect(result).toEqual({ acquired: true, killedStale: false, stalePid: child.pid });
+    expect(isProcessAlive(child.pid)).toBe(true);
+  });
 
-    const kill = spyOn(process, "kill");
-    let result;
-    try {
-      result = acquireProcessLock(TEST_PID_FILE, {
-        readProcessStartTimeMs: () => null,
-      });
-      expect(
-        kill.mock.calls.some(
-          (call) => call[0] === pid && call[1] === "SIGTERM",
-        ),
-      ).toBe(false);
-    } finally {
-      kill.mockRestore();
-    }
+  it("does not SIGTERM when the identity observation is too old", async () => {
+    const { child } = await spawnLockOwner({ relative: false });
+    const clock = [0, 251];
+    const result = acquireProcessLock(TEST_PID_FILE, {
+      monotonicNowMs: () => clock.shift() ?? 251,
+    });
+    expect(result).toEqual({ acquired: true, killedStale: false, stalePid: child.pid });
+    expect(isProcessAlive(child.pid)).toBe(true);
+  });
 
-    expect(result.acquired).toBe(true);
-    expect(result.killedStale).toBe(false);
-    expect(isProcessAlive(pid)).toBe(true);
+  it("reclaims a genuine orphan whose lock carries its exact start", async () => {
+    const { child, lock, beforeMs, afterMs } = await spawnLockOwner({ relative: false });
+    expectStartInside(lock.processStartUs, beforeMs, afterMs);
+    const result = acquireProcessLock(TEST_PID_FILE);
+    expect(result).toEqual({ acquired: true, killedStale: true, stalePid: child.pid });
+    await child.exited;
+    expect(child.signalCode).toBe("SIGTERM");
+    expect(JSON.parse(readFileSync(TEST_PID_FILE, "utf-8")).pid).toBe(process.pid);
+  });
 
-    try {
-      rmSync(join(scriptPath, ".."), { recursive: true, force: true });
-    } catch {}
+  it("reclaims a genuine orphan launched by a relative entrypoint (bun daemon.ts)", async () => {
+    const { child, lock, beforeMs, afterMs } = await spawnLockOwner({ relative: true });
+    expectStartInside(lock.processStartUs, beforeMs, afterMs);
+    const result = acquireProcessLock(TEST_PID_FILE);
+    expect(result).toEqual({ acquired: true, killedStale: true, stalePid: child.pid });
+    await child.exited;
+    expect(child.signalCode).toBe("SIGTERM");
   });
 });

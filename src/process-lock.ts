@@ -12,10 +12,14 @@
  * servers are the root cause of most voice_speak/voice_ask failures.
  *
  * AIDEV-NOTE: LOCK1 — never SIGTERM a PID that merely reused a stale lock's
- * number. Before reclaim, require matching start time (vs lock startedAt) AND
- * a VoiceLayer daemon command. Unknown identity → claim without killing.
+ * number. The lock persists its writer's exact kernel start time (p_starttime,
+ * µs, via sysctl KERN_PROC_PID). Reclaim requires the live PID's start time to
+ * be EXACTLY that value, re-read immediately before the signal. Legacy locks,
+ * unknown or changed start times and stale observations claim without killing.
+ * argv is never consulted: identity is the generation, not the launch spelling.
  */
 
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { existsSync, lstatSync, readFileSync, unlinkSync } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
 import { safeWriteFileSync } from "./paths";
@@ -23,8 +27,8 @@ import { safeWriteFileSync } from "./paths";
 export const MCP_PID_FILE = "/tmp/voicelayer-mcp.pid";
 const MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
 
-/** macOS `ps -o lstart` is second-resolution; allow a short write delay. */
-const START_TIME_TOLERANCE_MS = 10_000;
+/** Oldest identity observation we will still act on with a numeric-PID signal. */
+const MAX_OBSERVATION_AGE_MS = 250;
 
 // Capture the preload boundary before tests temporarily change their env.
 // NODE_ENV catches a Bun test runner that bypassed the preload: fail closed.
@@ -62,6 +66,8 @@ export function getMcpPidFilePath(
 interface PidLockData {
   pid: number;
   startedAt: string;
+  /** Writer's kernel start time, µs since epoch. Absent in legacy locks. */
+  processStartUs?: number;
 }
 
 interface AcquireResult {
@@ -72,10 +78,10 @@ interface AcquireResult {
 
 interface AcquireProcessLockOptions {
   killAlive?: boolean;
-  /** Test hook: override process start-time probe (ms since epoch, or null). */
-  readProcessStartTimeMs?: (pid: number) => number | null;
-  /** Test hook: override process command line probe. */
-  readProcessCommand?: (pid: number) => string | null;
+  /** Test hook: override the owner's kernel start-time probe. */
+  readProcessStartUs?: (pid: number) => number | null;
+  /** Test hook: override the monotonic clock bounding observation age. */
+  monotonicNowMs?: () => number;
 }
 
 /** Check if a process is alive using kill(pid, 0) signal probe. */
@@ -90,85 +96,114 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-/** Read process start time via `ps -o lstart=` (second resolution). */
-export function readProcessStartTimeMs(pid: number): number | null {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
+// struct kinfo_proc (<sys/sysctl.h>), LP64: kp_proc.p_un.__p_starttime is
+// a timeval at offset 0 (tv_sec i64, tv_usec i32 at 8); kp_proc.p_pid at 40.
+const CTL_KERN = 1;
+const KERN_PROC = 14;
+const KERN_PROC_PID = 1;
+const KINFO_PROC_SIZE = 648;
+const P_PID_OFFSET = 40;
+
+type SysctlFn = (
+  name: number,
+  namelen: number,
+  oldp: number,
+  oldlenp: number,
+  newp: null,
+  newlen: bigint,
+) => number;
+
+let sysctl: SysctlFn | null | undefined;
+
+function loadSysctl(): SysctlFn | null {
+  if (sysctl !== undefined) return sysctl;
+  sysctl = null;
+  if (process.platform !== "darwin") return null;
   try {
-    const result = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
-      stdout: "pipe",
-      stderr: "ignore",
-      env: { ...process.env, LC_ALL: "C", LANG: "C" },
+    const lib = dlopen("/usr/lib/libSystem.B.dylib", {
+      sysctl: {
+        args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64],
+        returns: FFIType.i32,
+      },
     });
-    if (result.exitCode !== 0) return null;
-    const startedAt = Date.parse(result.stdout.toString().trim());
-    return Number.isFinite(startedAt) ? startedAt : null;
+    sysctl = lib.symbols.sysctl as unknown as SysctlFn;
+  } catch {
+    sysctl = null;
+  }
+  return sysctl;
+}
+
+/**
+ * Exact kernel start time of `pid` in µs since the epoch (numeric, no text,
+ * no timezone), or null when the process is gone or the probe is unavailable.
+ */
+export function readProcessStartUs(pid: number): number | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const call = loadSysctl();
+  if (!call) return null;
+  try {
+    const mib = new Int32Array([CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]);
+    const buf = new Uint8Array(KINFO_PROC_SIZE);
+    const len = new BigUint64Array([BigInt(KINFO_PROC_SIZE)]);
+    if (call(ptr(mib), mib.length, ptr(buf), ptr(len), null, 0n) !== 0) return null;
+    // A missing PID answers success with zero bytes.
+    if (len[0] !== BigInt(KINFO_PROC_SIZE)) return null;
+    const view = new DataView(buf.buffer);
+    if (view.getInt32(P_PID_OFFSET, true) !== pid) return null;
+    const sec = Number(view.getBigInt64(0, true));
+    const usec = view.getInt32(8, true);
+    if (sec <= 0 || usec < 0 || usec >= 1_000_000) return null;
+    const startUs = sec * 1_000_000 + usec;
+    return Number.isSafeInteger(startUs) ? startUs : null;
   } catch {
     return null;
   }
 }
 
-/** Read the process command line via `ps -o command=`. */
-export function readProcessCommandLine(pid: number): string | null {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  try {
-    const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    if (result.exitCode !== 0) return null;
-    const command = result.stdout.toString().trim();
-    return command || null;
-  } catch {
-    return null;
-  }
-}
+let ownStartUs: number | null | undefined;
+
+type ReclaimOutcome =
+  | "signalled"
+  | "legacy_lock"
+  | "start_unknown"
+  | "start_mismatch"
+  | "start_changed"
+  | "observation_expired"
+  | "signal_failed";
 
 /**
- * True when the command looks like a VoiceLayer MCP/daemon entry
- * (mcp-server-daemon or a voicelayer daemon/CLI entrypoint).
+ * SIGTERM `pid` only when it is the exact generation that wrote the lock.
+ *
+ * Residual race: macOS has no generation-checked signal, so the final
+ * sysctl and kill(2) still address a numeric PID. Hitting it needs the owner
+ * to exit and its PID to be reissued between those two adjacent syscalls.
  */
-export function isVoiceLayerDaemonCommand(command: string | null | undefined): boolean {
-  if (!command) return false;
-  if (
-    command.includes("mcp-server-daemon.ts") ||
-    command.includes("mcp-server-daemon.js") ||
-    command.includes("mcp-server-daemon")
-  ) {
-    return true;
-  }
-  // Standalone daemon entry (`bun src/daemon.ts`) and packaged CLI names.
-  if (/(^|[/\s])daemon\.(ts|js)\b/.test(command) && /voicelayer/i.test(command)) {
-    return true;
-  }
-  if (/\bvoicelayer(-mcp)?\b/i.test(command) && /daemon|mcp/i.test(command)) {
-    return true;
-  }
-  return false;
-}
-
-function startTimesMatch(lockStartedAt: string, processStartMs: number): boolean {
-  const lockMs = Date.parse(lockStartedAt);
-  if (!Number.isFinite(lockMs)) return false;
-  return Math.abs(lockMs - processStartMs) <= START_TIME_TOLERANCE_MS;
-}
-
-/**
- * Same-process identity for reclaim: matching start time AND daemon command.
- * Returns false when either check fails or is unknown (do not signal).
- */
-export function isSameLockProcessIdentity(
+function signalIfSameGeneration(
   pid: number,
-  lockStartedAt: string,
-  options: {
-    readProcessStartTimeMs?: (pid: number) => number | null;
-    readProcessCommand?: (pid: number) => string | null;
-  } = {},
-): boolean {
-  const startMs = (options.readProcessStartTimeMs ?? readProcessStartTimeMs)(pid);
-  if (startMs == null) return false;
-  if (!startTimesMatch(lockStartedAt, startMs)) return false;
-  const command = (options.readProcessCommand ?? readProcessCommandLine)(pid);
-  return isVoiceLayerDaemonCommand(command);
+  lock: PidLockData,
+  options: AcquireProcessLockOptions,
+): ReclaimOutcome {
+  const persisted = lock.processStartUs;
+  if (typeof persisted !== "number" || !Number.isSafeInteger(persisted)) {
+    return "legacy_lock";
+  }
+  const readStart = options.readProcessStartUs ?? readProcessStartUs;
+  const now = options.monotonicNowMs ?? (() => performance.now());
+
+  const observedAt = now();
+  const observed = readStart(pid);
+  if (observed === null) return "start_unknown";
+  if (observed !== persisted) return "start_mismatch";
+
+  // Revalidate immediately before the signal, within a bounded age.
+  if (readStart(pid) !== persisted) return "start_changed";
+  if (now() - observedAt > MAX_OBSERVATION_AGE_MS) return "observation_expired";
+  try {
+    process.kill(pid, "SIGTERM");
+    return "signalled";
+  } catch {
+    return "signal_failed";
+  }
 }
 
 /** Read and parse the PID file. Returns null if missing, corrupt, or invalid. */
@@ -190,10 +225,10 @@ function readPidFile(pidPath: string = getMcpPidFilePath()): PidLockData | null 
  *
  * 1. If no PID file exists → claim it
  * 2. If PID file exists with dead process → claim it
- * 3. If PID file exists with alive process of the SAME identity → SIGTERM it,
- *    wait briefly, claim it
- * 4. If PID file exists with alive process of unknown/mismatched identity
- *    (PID reuse) → claim WITHOUT signalling
+ * 3. If PID file exists with alive process whose kernel start time exactly
+ *    equals the persisted one → SIGTERM it, wait briefly, claim it
+ * 4. Otherwise (legacy lock, PID reuse, unknown/changed/stale evidence) →
+ *    claim WITHOUT signalling
  *
  * Always succeeds when killAlive is true — we're the new owner regardless.
  *
@@ -228,30 +263,21 @@ export function acquireProcessLock(
       return { acquired: false, killedStale: false, stalePid };
     }
 
-    const sameIdentity = isSameLockProcessIdentity(stalePid, existing.startedAt, {
-      readProcessStartTimeMs: options.readProcessStartTimeMs,
-      readProcessCommand: options.readProcessCommand,
-    });
-
-    if (!sameIdentity) {
-      console.error(
-        `[voicelayer] Stale PID lock names live PID ${stalePid} but identity does not match lock startedAt=${existing.startedAt} — claiming without signalling`,
-      );
-      writePidFile(pidPath);
-      return { acquired: true, killedStale: false, stalePid };
-    }
-
-    try {
-      process.kill(stalePid, "SIGTERM");
+    const outcome = signalIfSameGeneration(stalePid, existing, options);
+    if (outcome === "signalled") {
       killedStale = true;
       console.error(
         `[voicelayer] Sent SIGTERM to orphan process (PID ${stalePid}) — was started at ${existing.startedAt}`,
       );
       // Brief wait for the process to die before claiming the lock
       Bun.sleepSync(200);
-    } catch {
+    } else if (outcome === "signal_failed") {
       console.error(
         `[voicelayer] Could not kill orphan process (PID ${stalePid}) — claiming lock anyway`,
+      );
+    } else {
+      console.error(
+        `[voicelayer] Live PID ${stalePid} is not proven to be the lock's writer (${outcome}) — claiming without signalling`,
       );
     }
   } else {
@@ -266,9 +292,11 @@ export function acquireProcessLock(
 
 /** Write our PID to the lockfile. */
 function writePidFile(pidPath: string = getMcpPidFilePath()): void {
+  if (ownStartUs === undefined) ownStartUs = readProcessStartUs(process.pid);
   const data: PidLockData = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
+    ...(ownStartUs === null ? {} : { processStartUs: ownStartUs }),
   };
   safeWriteFileSync(pidPath, JSON.stringify(data));
 }
