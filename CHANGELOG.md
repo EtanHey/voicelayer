@@ -13,7 +13,7 @@ _Nothing yet._
 
 ### Added
 - A pause/play button on the left of the pill while VoiceBar is speaking. Pause stops the read on the current word and folds the teleprompter away; Play reopens it and carries on from that word. F5 over a paused read still records, and the read waits for Play afterwards (#476, #480).
-- Option+F5 on a different selection while a read is playing, preparing or paused queues it instead of replacing the read. The pill shows +N with a Next button, a read that finishes starts the next one, Stop clears the queue, and more than 10 shows "Queue full" (#482). Waiting reads survive an F5 dictation and are cleared when an agent speaks, an Ask starts or VoiceBar is hidden (#484).
+- Option+F5 on a different selection while a read is playing, preparing or paused queues it instead of replacing the read. The pill shows +N with a Next button, a read that finishes starts the next one, Stop clears the queue, and more than 10 shows "Queue full". Option+F5 on the same selection or with no selection stops the read and clears the queue (#482). Waiting reads survive an F5 dictation and are cleared when an agent speaks, an Ask starts or VoiceBar is hidden (#484).
 
 ### Changed
 - A long Option+F5 read is one continuous teleprompter document: the page no longer swaps at each ~400-character chunk, and the highlight, seeks and replay carry across chunks (#477).
