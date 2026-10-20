@@ -196,4 +196,38 @@ final class TeleprompterDocumentTests: XCTestCase {
         XCTAssertEqual(state.teleprompterText, document, "pause/play resumes the continuous document")
         XCTAssertEqual(words(state).map(\.offsetMs), [0, 500, 1000, 1500, nil, nil])
     }
+    /// P16b × TELE1: pause a long read, dictate, and Play comes back on the whole continuous document, not on
+    /// the paused chunk's text alone, with the paused word still the one on screen.
+    func testPauseCaptureThenPlayRestoresTheWholeDocument() {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        state.isConnected = true
+        state.frontmostAppProvider = { nil }
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        prepare(state)
+        state.handleEvent(["type": "state", "state": "speaking", "text": chunks[1], "duration_ms": 3000,
+                           "playback_offset_ms": 1000, "readback_id": "rb-1",
+                           "playback_id": "chunk-1", "generation": 1,
+                           "long_read": ["id": "read-1", "chunk_index": 1, "chunk_count": 3, "chunk_start_ms": 1000]])
+        XCTAssertEqual(state.teleprompterText, document)
+        let mapped = words(state)
+
+        state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "chunk-1", "generation": 2,
+                           "offset_ms": 1500, "chunk_offset_ms": 500])
+        state.record(pressToTalk: true)
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        XCTAssertEqual(state.mode, .recording)
+        state.cancel()
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertTrue(state.isPlaybackPaused, "Play is back after the capture")
+        XCTAssertEqual(state.teleprompterText, document, "the whole document, not chunk 1's text")
+        XCTAssertEqual(words(state).map(\.offsetMs), mapped.map(\.offsetMs), "same global timeline")
+        XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(
+            in: words(state), elapsedMilliseconds: state.playbackElapsedMilliseconds()
+        ), 3, "still on the paused word (two., chunk 1)")
+        state.togglePlaybackPause()
+        XCTAssertEqual(sent.last?["playback_id"] as? String, "chunk-1")
+    }
 }

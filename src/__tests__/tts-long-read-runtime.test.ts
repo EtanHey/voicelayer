@@ -10,6 +10,7 @@ import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
+import { pausePlayback, isPlaybackPaused } from "../tts";
 import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForTTS, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand } from "../socket-handlers";
 import { TTS_HISTORY_FILE } from "../paths";
@@ -686,5 +687,22 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     autoPlay = true;
     for (let i = 0; i < 22; i++) { const h = speakLongRead(`Read ${i}.`, { engine: "edge", voice: "fixture", rate: "+0%" }); handles.push(h); await h.done; }
     expect(loadHistory()).toHaveLength(20); expect(new Set(loadHistory().map((e) => e.id)).size).toBe(20);
+  });
+  // P16b (Sol R2-2 probe, verbatim intent): F5's capture Stop/Cancel over a parked long read acknowledges at once.
+  // The wait watchdog is compressed to 25 ms so a wait on the parked read fails fast instead of at 35 s.
+  for (const cmd of ["stop", "cancel"] as const) it(`P16b parked long read: capture ${cmd} acknowledges without waiting for the park`, async () => {
+    holdSynth = true;
+    start(); await playerBarrier.at(0); await synthBarrier.at(1);
+    clockMs += 250;
+    expect(pausePlayback()).toMatchObject({ outcome: "accept" });
+    await fixtureCheckpoint();
+    const capture = spyOn(input, "getRecordingState").mockReturnValue("recording");
+    const realTimer = globalThis.setTimeout;
+    const timer = spyOn(globalThis, "setTimeout").mockImplementation(((fn: any, ms: number, ...args: any[]) =>
+      realTimer(fn, ms === 35000 ? 25 : ms, ...args)) as any);
+    try {
+      expect(await handleSocketCommand({ cmd, id: `capture-${cmd}` })).toMatchObject({ command: cmd, outcome: "accept" });
+      expect(isPlaybackPaused()).toBe(true);
+    } finally { timer.mockRestore(); capture.mockRestore(); }
   });
 });
