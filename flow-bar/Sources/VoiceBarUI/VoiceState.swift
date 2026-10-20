@@ -1598,7 +1598,10 @@ public final class VoiceState {
         resetAudioLevels()
         hotkeyPhase = .idle
         statusText = ""
-        sendIntent(command: .cancel, payload: ["cmd": "cancel"], retiresSelections: !keepsWaitingReadsThroughCapture)
+        // QUEUE1c: an idle Cancel ends the waiting chain; the mirror clears as the identities retire.
+        let keepsWaitingReads = keepsWaitingReadsThroughCapture
+        sendIntent(command: .cancel, payload: ["cmd": "cancel"], retiresSelections: !keepsWaitingReads)
+        if !keepsWaitingReads { clearReadQueue() }
         if mode == .recording || mode == .transcribing || mode == .speaking {
             mode = isConnected ? .idle : .disconnected
             onModeChange?(mode)

@@ -321,4 +321,28 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertEqual(state.readQueueCount, 0)
         XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
     }
+
+    // MARK: - QUEUE1c (lead ruling): an idle Cancel ends the waiting chain on both sides
+
+    /// Sol's `testReviewIdleCancelMustNotOrphanWaitingReads`, adapted to the ruling: the idle Cancel
+    /// (voicebar://cancel, socket-control) discards the waiting reads instead of orphaning them in the daemon.
+    func testReviewIdleCancelMustNotOrphanWaitingReads() throws {
+        let (state, a) = readingA()
+        press(state, "Bravo selection")
+        let b = try XCTUnwrap(commands.last?["id"] as? String)
+        state.handleEvent(queueEvent(1, a))
+        state.retainingReadQueueOnStop { state.stop() }
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        state.mode = .idle
+        commands = []
+        state.cancel() // voicebar://cancel and socket-control cancel are unguarded
+        XCTAssertEqual(cmds, ["cancel"])
+        XCTAssertEqual(state.readQueueCount, 0, "the mirror clears with the identities")
+        XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
+        commands = []
+        state.skipToNextRead()
+        XCTAssertTrue(commands.isEmpty, "no Next survives an idle Cancel")
+        state.handleEvent(speaking(id: b, text: "Bravo selection", read: "read-B"))
+        XCTAssertNotEqual(state.statusText, "Bravo selection", "B is retired")
+    }
 }
