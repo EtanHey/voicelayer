@@ -10,6 +10,10 @@
  *
  * AIDEV-NOTE: This is the #1 reliability fix for VoiceLayer. Orphan MCP
  * servers are the root cause of most voice_speak/voice_ask failures.
+ *
+ * AIDEV-NOTE: LOCK1 — never SIGTERM a PID that merely reused a stale lock's
+ * number. Before reclaim, require matching start time (vs lock startedAt) AND
+ * a VoiceLayer daemon command. Unknown identity → claim without killing.
  */
 
 import { existsSync, lstatSync, readFileSync, unlinkSync } from "fs";
@@ -18,6 +22,9 @@ import { safeWriteFileSync } from "./paths";
 
 export const MCP_PID_FILE = "/tmp/voicelayer-mcp.pid";
 const MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
+
+/** macOS `ps -o lstart` is second-resolution; allow a short write delay. */
+const START_TIME_TOLERANCE_MS = 10_000;
 
 // Capture the preload boundary before tests temporarily change their env.
 // NODE_ENV catches a Bun test runner that bypassed the preload: fail closed.
@@ -65,6 +72,10 @@ interface AcquireResult {
 
 interface AcquireProcessLockOptions {
   killAlive?: boolean;
+  /** Test hook: override process start-time probe (ms since epoch, or null). */
+  readProcessStartTimeMs?: (pid: number) => number | null;
+  /** Test hook: override process command line probe. */
+  readProcessCommand?: (pid: number) => string | null;
 }
 
 /** Check if a process is alive using kill(pid, 0) signal probe. */
@@ -77,6 +88,87 @@ export function isProcessAlive(pid: number): boolean {
     // EPERM = alive but we can't signal it; ESRCH = not found (dead)
     return code === "EPERM";
   }
+}
+
+/** Read process start time via `ps -o lstart=` (second resolution). */
+export function readProcessStartTimeMs(pid: number): number | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const result = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
+      stdout: "pipe",
+      stderr: "ignore",
+      env: { ...process.env, LC_ALL: "C", LANG: "C" },
+    });
+    if (result.exitCode !== 0) return null;
+    const startedAt = Date.parse(result.stdout.toString().trim());
+    return Number.isFinite(startedAt) ? startedAt : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read the process command line via `ps -o command=`. */
+export function readProcessCommandLine(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (result.exitCode !== 0) return null;
+    const command = result.stdout.toString().trim();
+    return command || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the command looks like a VoiceLayer MCP/daemon entry
+ * (mcp-server-daemon or a voicelayer daemon/CLI entrypoint).
+ */
+export function isVoiceLayerDaemonCommand(command: string | null | undefined): boolean {
+  if (!command) return false;
+  if (
+    command.includes("mcp-server-daemon.ts") ||
+    command.includes("mcp-server-daemon.js") ||
+    command.includes("mcp-server-daemon")
+  ) {
+    return true;
+  }
+  // Standalone daemon entry (`bun src/daemon.ts`) and packaged CLI names.
+  if (/(^|[/\s])daemon\.(ts|js)\b/.test(command) && /voicelayer/i.test(command)) {
+    return true;
+  }
+  if (/\bvoicelayer(-mcp)?\b/i.test(command) && /daemon|mcp/i.test(command)) {
+    return true;
+  }
+  return false;
+}
+
+function startTimesMatch(lockStartedAt: string, processStartMs: number): boolean {
+  const lockMs = Date.parse(lockStartedAt);
+  if (!Number.isFinite(lockMs)) return false;
+  return Math.abs(lockMs - processStartMs) <= START_TIME_TOLERANCE_MS;
+}
+
+/**
+ * Same-process identity for reclaim: matching start time AND daemon command.
+ * Returns false when either check fails or is unknown (do not signal).
+ */
+export function isSameLockProcessIdentity(
+  pid: number,
+  lockStartedAt: string,
+  options: {
+    readProcessStartTimeMs?: (pid: number) => number | null;
+    readProcessCommand?: (pid: number) => string | null;
+  } = {},
+): boolean {
+  const startMs = (options.readProcessStartTimeMs ?? readProcessStartTimeMs)(pid);
+  if (startMs == null) return false;
+  if (!startTimesMatch(lockStartedAt, startMs)) return false;
+  const command = (options.readProcessCommand ?? readProcessCommandLine)(pid);
+  return isVoiceLayerDaemonCommand(command);
 }
 
 /** Read and parse the PID file. Returns null if missing, corrupt, or invalid. */
@@ -98,9 +190,12 @@ function readPidFile(pidPath: string = getMcpPidFilePath()): PidLockData | null 
  *
  * 1. If no PID file exists → claim it
  * 2. If PID file exists with dead process → claim it
- * 3. If PID file exists with alive process → SIGTERM it, wait briefly, claim it
+ * 3. If PID file exists with alive process of the SAME identity → SIGTERM it,
+ *    wait briefly, claim it
+ * 4. If PID file exists with alive process of unknown/mismatched identity
+ *    (PID reuse) → claim WITHOUT signalling
  *
- * Always succeeds — we're the new owner regardless.
+ * Always succeeds when killAlive is true — we're the new owner regardless.
  *
  * @param pidPath Optional PID file path. Defaults to MCP_PID_FILE.
  *   Use DAEMON_PID_FILE from paths.ts for the standalone daemon.
@@ -131,6 +226,19 @@ export function acquireProcessLock(
   if (isProcessAlive(stalePid)) {
     if (!killAlive) {
       return { acquired: false, killedStale: false, stalePid };
+    }
+
+    const sameIdentity = isSameLockProcessIdentity(stalePid, existing.startedAt, {
+      readProcessStartTimeMs: options.readProcessStartTimeMs,
+      readProcessCommand: options.readProcessCommand,
+    });
+
+    if (!sameIdentity) {
+      console.error(
+        `[voicelayer] Stale PID lock names live PID ${stalePid} but identity does not match lock startedAt=${existing.startedAt} — claiming without signalling`,
+      );
+      writePidFile(pidPath);
+      return { acquired: true, killedStale: false, stalePid };
     }
 
     try {

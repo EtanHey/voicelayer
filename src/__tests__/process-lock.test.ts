@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { existsSync, writeFileSync, unlinkSync, readFileSync } from "fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  unlinkSync,
+  readFileSync,
+  rmSync,
+} from "fs";
 import { join } from "path";
 import { TEST_TMP } from "./setup/test-tmp";
 
@@ -14,6 +22,8 @@ const TEST_PID_FILE = join(
   `voicelayer-process-lock-test-${process.pid}.pid`,
 );
 
+const fixtureChildren: Array<ReturnType<typeof Bun.spawn>> = [];
+
 function cleanPidFile() {
   if (existsSync(TEST_PID_FILE)) {
     try {
@@ -22,9 +32,74 @@ function cleanPidFile() {
   }
 }
 
+function reapFixtures() {
+  while (fixtureChildren.length > 0) {
+    const child = fixtureChildren.pop();
+    if (!child?.pid) continue;
+    try {
+      process.kill(child.pid, "SIGKILL");
+    } catch {}
+    try {
+      child.kill();
+    } catch {}
+  }
+}
+
+function processStartIso(pid: number): string {
+  const result = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], {
+    stdout: "pipe",
+    stderr: "ignore",
+    env: { ...process.env, LC_ALL: "C", LANG: "C" },
+  });
+  const startedAt = Date.parse(result.stdout.toString().trim());
+  if (!Number.isFinite(startedAt)) {
+    throw new Error(`could not read lstart for pid ${pid}`);
+  }
+  return new Date(startedAt).toISOString();
+}
+
+function spawnUnrelatedFixture(): ReturnType<typeof Bun.spawn> {
+  const child = Bun.spawn(["/bin/sleep", "3600"], {
+    stdout: "ignore",
+    stderr: "ignore",
+    env: process.env,
+  });
+  if (!child.pid) throw new Error("unrelated fixture failed to start");
+  fixtureChildren.push(child);
+  return child;
+}
+
+function spawnDaemonNamedFixture(): {
+  child: ReturnType<typeof Bun.spawn>;
+  scriptPath: string;
+} {
+  const dir = join(TEST_TMP, `lock1-daemon-fixture-${process.pid}-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const scriptPath = join(dir, "mcp-server-daemon.js");
+  writeFileSync(
+    scriptPath,
+    "#!/usr/bin/env bun\nawait Bun.sleep(3_600_000);\n",
+  );
+  chmodSync(scriptPath, 0o755);
+  const child = Bun.spawn(["bun", "run", scriptPath], {
+    stdout: "ignore",
+    stderr: "ignore",
+    env: process.env,
+  });
+  if (!child.pid) throw new Error("daemon-named fixture failed to start");
+  fixtureChildren.push(child);
+  return { child, scriptPath };
+}
+
 describe("process lock", () => {
-  beforeEach(cleanPidFile);
-  afterEach(cleanPidFile);
+  beforeEach(() => {
+    cleanPidFile();
+    reapFixtures();
+  });
+  afterEach(() => {
+    reapFixtures();
+    cleanPidFile();
+  });
 
   it("acquires lock when no PID file exists", () => {
     const result = acquireProcessLock(TEST_PID_FILE);
@@ -97,8 +172,8 @@ describe("process lock", () => {
     expect(result.acquired).toBe(true);
   });
 
-  it("attempts SIGTERM on alive stale process before claiming lock", () => {
-    // Simulate EPERM; never send a real signal to launchd/PID 1.
+  it("claims without SIGTERM when an alive PID is not a VoiceLayer daemon (e.g. PID 1)", () => {
+    // PID 1 is alive but never our daemon identity — claim without signalling.
     writeFileSync(
       TEST_PID_FILE,
       JSON.stringify({
@@ -114,13 +189,12 @@ describe("process lock", () => {
     let result;
     try {
       result = acquireProcessLock(TEST_PID_FILE);
-      expect(kill.mock.calls).toEqual([[1, 0], [1, "SIGTERM"]]);
+      expect(kill.mock.calls).toEqual([[1, 0]]);
+      expect(kill.mock.calls.some((call) => call[1] === "SIGTERM")).toBe(false);
     } finally {
       kill.mockRestore();
     }
-    // Should still acquire — PID 1 can't be killed but we claim the lock anyway
     expect(result.acquired).toBe(true);
-    // killedStale is false because SIGTERM threw EPERM
     expect(result.killedStale).toBe(false);
     expect(result.stalePid).toBe(1);
   });
@@ -154,5 +228,116 @@ describe("process lock", () => {
     const content = readFileSync(TEST_PID_FILE, "utf-8");
     const data = JSON.parse(content);
     expect(data.pid).toBe(1);
+  });
+
+  it("does not SIGTERM a reused PID with a mismatched start time; claims the lock", () => {
+    const child = spawnUnrelatedFixture();
+    const pid = child.pid!;
+    expect(isProcessAlive(pid)).toBe(true);
+
+    writeFileSync(
+      TEST_PID_FILE,
+      JSON.stringify({
+        pid,
+        // Stale lock from a prior process that occupied this PID.
+        startedAt: "2020-01-01T00:00:00.000Z",
+      }),
+    );
+
+    const kill = spyOn(process, "kill");
+    let result;
+    try {
+      result = acquireProcessLock(TEST_PID_FILE);
+      expect(
+        kill.mock.calls.some(
+          (call) => call[0] === pid && call[1] === "SIGTERM",
+        ),
+      ).toBe(false);
+    } finally {
+      kill.mockRestore();
+    }
+
+    expect(result.acquired).toBe(true);
+    expect(result.killedStale).toBe(false);
+    expect(result.stalePid).toBe(pid);
+    expect(isProcessAlive(pid)).toBe(true);
+
+    const content = JSON.parse(readFileSync(TEST_PID_FILE, "utf-8"));
+    expect(content.pid).toBe(process.pid);
+  });
+
+  it("still SIGTERMs a genuine orphan with matching start time and daemon command", () => {
+    const { child, scriptPath } = spawnDaemonNamedFixture();
+    const pid = child.pid!;
+    expect(isProcessAlive(pid)).toBe(true);
+
+    writeFileSync(
+      TEST_PID_FILE,
+      JSON.stringify({
+        pid,
+        startedAt: processStartIso(pid),
+      }),
+    );
+
+    const kill = spyOn(process, "kill");
+    let result;
+    try {
+      result = acquireProcessLock(TEST_PID_FILE);
+      expect(
+        kill.mock.calls.some(
+          (call) => call[0] === pid && call[1] === "SIGTERM",
+        ),
+      ).toBe(true);
+    } finally {
+      kill.mockRestore();
+    }
+
+    expect(result.acquired).toBe(true);
+    expect(result.killedStale).toBe(true);
+    expect(result.stalePid).toBe(pid);
+
+    const content = JSON.parse(readFileSync(TEST_PID_FILE, "utf-8"));
+    expect(content.pid).toBe(process.pid);
+
+    try {
+      rmSync(join(scriptPath, ".."), { recursive: true, force: true });
+    } catch {}
+  });
+
+  it("does not SIGTERM when process start time is unknown; claims the lock", () => {
+    const { child, scriptPath } = spawnDaemonNamedFixture();
+    const pid = child.pid!;
+    expect(isProcessAlive(pid)).toBe(true);
+
+    writeFileSync(
+      TEST_PID_FILE,
+      JSON.stringify({
+        pid,
+        startedAt: processStartIso(pid),
+      }),
+    );
+
+    const kill = spyOn(process, "kill");
+    let result;
+    try {
+      result = acquireProcessLock(TEST_PID_FILE, {
+        readProcessStartTimeMs: () => null,
+      });
+      expect(
+        kill.mock.calls.some(
+          (call) => call[0] === pid && call[1] === "SIGTERM",
+        ),
+      ).toBe(false);
+    } finally {
+      kill.mockRestore();
+    }
+
+    expect(result.acquired).toBe(true);
+    expect(result.killedStale).toBe(false);
+    expect(isProcessAlive(pid)).toBe(true);
+
+    try {
+      rmSync(join(scriptPath, ".."), { recursive: true, force: true });
+    } catch {}
   });
 });
