@@ -145,6 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
     private var panelPointerMovementHandler: ((NSPoint) -> Void)?
+    /// NOTCH2: the hit providers' animation-aware view of the panel layout (see `VoiceBarPanelHitGate`).
+    private var panelHitGate: VoiceBarPanelHitGate?
+    private var panelHitGateSettleGeneration: UInt = 0
     private var moveObserver: Any?
     private var displayObserver: Any?
     private var panelDiagnosticObservers: [Any] = []
@@ -674,10 +677,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsInteractiveContent(point) ?? false
+            self?.currentPanelHitGate().containsInteractiveContent(point, now: Self.hitGateClock()) ?? false
         }
         hosting.renderedSurfaceHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsVisibleSurface(point) ?? false
+            self?.currentPanelHitGate().containsVisibleSurface(point, now: Self.hitGateClock()) ?? false
         }
         hosting.hoverExpansionHitTestProvider = { [weak self] point in
             self?.currentPanelLayout().containsHoverExpansion(point) ?? false
@@ -724,10 +727,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
         pill.activeHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsInteractiveContent(point) ?? false
+            self?.currentPanelHitGate().containsInteractiveContent(point, now: Self.hitGateClock()) ?? false
         }
         pill.contextMenuHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsVisibleSurface(point) ?? false
+            self?.currentPanelHitGate().containsVisibleSurface(point, now: Self.hitGateClock()) ?? false
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         pill.alphaValue = 0
@@ -1629,6 +1632,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // When the window already matches the destination, forcing an
             // immediate AppKit display pass commits the SwiftUI destination
             // before the shared shell can interpolate, recreating a hard cut.
+            // NOTCH2: a transient note changes the shell inside the same-size
+            // window, so the event gate still needs this change: a stationary
+            // pointer over an expired note band must stop claiming clicks.
+            synchronizePanelMouseEventPassthrough()
             return
         }
         panel?.contentView?.needsLayout = true
@@ -2191,15 +2198,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isIsolatedCapture: Bool? = nil
     ) {
         guard let panel else { return }
-        let layout = currentPanelLayout()
+        let gate = currentPanelHitGate()
         let point = localPoint ?? panel.convertPoint(fromScreen: NSEvent.mouseLocation)
         Self.applyPanelMouseEventPassthrough(
             panel,
-            layout: layout,
+            gate: gate,
             pointer: point,
+            now: Self.hitGateClock(),
             isIsolatedCapture: isIsolatedCapture
                 ?? VoiceBarIsolatedCapturePlacement.isEnabled()
         )
+    }
+
+    static func hitGateClock() -> TimeInterval {
+        ProcessInfo.processInfo.systemUptime
+    }
+
+    /// NOTCH2: the hit providers follow the shell as drawn. A same-size change claims only what both layouts
+    /// cover until the shell settles; then the event gate is refreshed once more, so a pointer that never moves
+    /// still gets the settled answer.
+    private func currentPanelHitGate() -> VoiceBarPanelHitGate {
+        let layout = currentPanelLayout()
+        let now = Self.hitGateClock()
+        guard var gate = panelHitGate else {
+            let gate = VoiceBarPanelHitGate(layout: layout)
+            panelHitGate = gate
+            return gate
+        }
+        if gate.update(to: layout, now: now) {
+            panelHitGate = gate
+            if gate.isSettling(now: now) {
+                panelHitGateSettleGeneration &+= 1
+                let generation = panelHitGateSettleGeneration
+                DispatchQueue.main.asyncAfter(deadline: .now() + (gate.settlesAt - now)) { [weak self] in
+                    guard let self, generation == panelHitGateSettleGeneration else { return }
+                    synchronizePanelMouseEventPassthrough()
+                }
+            }
+        }
+        return gate
+    }
+
+    static func applyPanelMouseEventPassthrough(
+        _ panel: NSPanel,
+        gate: VoiceBarPanelHitGate,
+        pointer: NSPoint,
+        now: TimeInterval,
+        isIsolatedCapture: Bool
+    ) {
+        panel.ignoresMouseEvents = !isIsolatedCapture && !gate.containsVisibleSurface(pointer, now: now)
     }
 
     static func applyPanelMouseEventPassthrough(

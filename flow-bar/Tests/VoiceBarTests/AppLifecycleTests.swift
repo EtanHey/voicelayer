@@ -117,6 +117,71 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertFalse(panel.ignoresMouseEvents)
     }
 
+    /// NOTCH2 R2 (Sol): a note no longer resizes the panel, so its expiry reaches the window's event gate only
+    /// through the same-size refresh. A pointer that never moves over the band must stop claiming clicks.
+    @MainActor
+    func testStationaryPointerOverAnExpiredNoteBandStopsClaimingClicks() {
+        func layout(note: String?) -> VoiceBarPanelLayout {
+            let presentation = VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(mode: .recording, transientNote: note)
+            )
+            return VoiceBarPanelLayout.make(
+                presentation: presentation,
+                interactionConfiguration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 2),
+                canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(for: presentation).canvasGeometry
+            )
+        }
+        let noted = layout(note: "Busy recording. Selection not read")
+        let plain = layout(note: nil)
+        XCTAssertEqual(noted.panelSize, plain.panelSize, "the note no longer resizes the panel")
+        let geometry = noted.presentation.geometry
+        let band = CGPoint(
+            x: noted.visibleContentRect.minX + geometry.coreMidX,
+            y: noted.visibleContentRect.minY + geometry.totalHeight - geometry.topHeight - 13
+        )
+        let panel = NSPanel(
+            contentRect: CGRect(origin: .zero, size: noted.panelSize),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        var gate = VoiceBarPanelHitGate(layout: noted)
+        AppDelegate.applyPanelMouseEventPassthrough(panel, gate: gate, pointer: band, now: 0, isIsolatedCapture: false)
+        XCTAssertFalse(panel.ignoresMouseEvents, "the visible note band is part of the notch")
+
+        // The note expires; the pointer has not moved. The same-size refresh re-applies the gate.
+        XCTAssertTrue(gate.update(to: plain, now: 2))
+        AppDelegate.applyPanelMouseEventPassthrough(panel, gate: gate, pointer: band, now: 2, isIsolatedCapture: false)
+        XCTAssertTrue(panel.ignoresMouseEvents, "the expired band must pass clicks to the app underneath")
+        AppDelegate.applyPanelMouseEventPassthrough(
+            panel, gate: gate, pointer: band, now: 2 + VoiceBarPanelHitGate.settleDuration, isIsolatedCapture: false
+        )
+        XCTAssertTrue(panel.ignoresMouseEvents, "and keeps passing them once settled")
+    }
+
+    func testSameSizeLayoutChangesRefreshTheEventGateWithoutForcingDisplay() throws {
+        let source = try voiceBarAppSource()
+        let commit = try XCTUnwrap(source.range(of: "private func commitNotchContentThenApplyPanelLayout()"))
+        let commitEnd = try XCTUnwrap(source.range(of: "private func schedulePanelBackingScaleRecertification",
+                                                   range: commit.upperBound ..< source.endIndex))
+        let method = String(source[commit.lowerBound ..< commitEnd.lowerBound])
+        let earlyReturn = try XCTUnwrap(method.range(of: "panel?.frame.size == layout.panelSize {"))
+        let branch = String(method[earlyReturn.upperBound...].prefix { $0 != "}" })
+        XCTAssertTrue(branch.contains("synchronizePanelMouseEventPassthrough()"), branch)
+        XCTAssertFalse(branch.contains("displayIfNeeded"), "the same-size path must not force a display pass")
+        XCTAssertFalse(branch.contains("applyPanelLayout"), "nor a resize")
+
+        let gate = try XCTUnwrap(source.range(of: "private func currentPanelHitGate()"))
+        let gateBody = String(source[gate.lowerBound...].prefix(1400))
+        XCTAssertTrue(gateBody.contains("DispatchQueue.main.asyncAfter"), "a settled re-check for a stationary pointer")
+        XCTAssertTrue(gateBody.contains("synchronizePanelMouseEventPassthrough()"))
+        for provider in ["hosting.activeHitTestProvider", "hosting.renderedSurfaceHitTestProvider",
+                         "pill.activeHitTestProvider", "pill.contextMenuHitTestProvider"] {
+            let start = try XCTUnwrap(source.range(of: provider), provider)
+            XCTAssertTrue(source[start.upperBound...].prefix(160).contains("currentPanelHitGate()"), provider)
+        }
+    }
+
     @MainActor
     func testPanelMousePassthroughKeepsAVisibleSurfaceEligibleAcrossControlChanges() {
         let presentation = VoiceBarPresentation.notchPresentation(
@@ -1239,8 +1304,9 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(appSource.contains("containsHoverExpansion(point)"))
         XCTAssertTrue(appSource.contains("hosting.hoverRetentionHitTestProvider"))
         XCTAssertTrue(appSource.contains("containsHoverRetention(point)"))
-        XCTAssertTrue(appSource.contains("containsInteractiveContent(point)"))
-        XCTAssertTrue(appSource.contains("containsVisibleSurface($0)"))
+        // NOTCH2: the click providers go through the animation-aware hit gate.
+        XCTAssertTrue(appSource.contains("containsInteractiveContent(point, now: Self.hitGateClock())"))
+        XCTAssertTrue(appSource.contains("containsVisibleSurface(point, now: Self.hitGateClock())"))
         XCTAssertFalse(appSource.contains("containsActiveContent("))
         XCTAssertTrue(appSource.contains("hosting.onHoverChanged"))
         XCTAssertTrue(appSource.contains("voiceState.setHoveringFromDebouncedPointer(hovering)"))

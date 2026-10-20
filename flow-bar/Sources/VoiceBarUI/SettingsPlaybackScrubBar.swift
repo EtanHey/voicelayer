@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The timeline under a playing History clip: current/total time, drag to seek, ←/→ to step,
@@ -86,7 +87,8 @@ struct SettingsPlaybackScrubBar: View {
             Text(SettingsAudioPlaybackPosition.clockLabel(shown.currentTime))
                 .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
                 .lineLimit(1)
-                .frame(width: isTeleprompter ? Self.teleprompterLabelWidth : nil, alignment: .trailing)
+                .frame(width: isTeleprompter ? Self.teleprompterLabelWidth(for: position.duration) : nil,
+                       alignment: .trailing)
                 .frame(minWidth: 34, alignment: .trailing)
                 .opacity(labelOpacity(duration: position.duration))
             track(shown)
@@ -96,7 +98,8 @@ struct SettingsPlaybackScrubBar: View {
                 .fixedSize(horizontal: true, vertical: false)
                 // "so far" fits inside this slot, which stays equal to the leading one, so the track stays on
                 // the panel's centre axis and keeps its length when the total turns final.
-                .frame(width: isTeleprompter ? Self.teleprompterLabelWidth : nil, alignment: .leading)
+                .frame(width: isTeleprompter ? Self.teleprompterLabelWidth(for: position.duration) : nil,
+                       alignment: .leading)
                 .frame(minWidth: 34, alignment: .leading)
                 .opacity(labelOpacity(duration: position.duration))
         }
@@ -107,9 +110,23 @@ struct SettingsPlaybackScrubBar: View {
         .accessibilityValue(shown.spokenValue + (isGrowing ? ", synthesized so far; duration growing" : ""))
     }
 
-    /// Equal teleprompter label slots keep the track centred on the panel's axis. Wide enough for
-    /// "0:36 so far" (NOTCH2), so the growing label never clips and the track never changes length.
-    static let teleprompterLabelWidth: CGFloat = 72
+    /// Equal teleprompter label slots keep the track centred on the panel's axis. NOTCH2: each slot fits the
+    /// widest "<total> so far" of its duration's clock format (under an hour, under ten hours, longer), so the
+    /// growing label never clips and the track keeps its length when the total turns final. A read that grows
+    /// past an hour widens the slots once, when its clock format changes.
+    static func teleprompterLabelWidth(for duration: TimeInterval) -> CGFloat {
+        let widestTotal = switch duration {
+        case ..<3600: "59:59"
+        case ..<36000: "9:59:59"
+        default: "99:59:59"
+        }
+        return ceil(teleprompterTextWidth(widestTotal, size: 10) + teleprompterTextWidth(" \(growingNote)", size: 9)) + 2
+    }
+
+    /// Matches `.system(size:design: .monospaced)`, the labels' font.
+    static func teleprompterTextWidth(_ text: String, size: CGFloat) -> CGFloat {
+        (text as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: size, weight: .regular)]).width
+    }
     /// Wider than the knob radius, so the knob at either extreme never touches a label.
     static let teleprompterLabelSpacing: CGFloat = 12
 

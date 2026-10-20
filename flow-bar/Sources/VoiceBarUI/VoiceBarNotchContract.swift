@@ -73,6 +73,24 @@ public struct VoiceBarNotchGeometry: Equatable, Sendable {
     public var topOriginX: CGFloat {
         coreOriginX - leadingWingWidth
     }
+
+    /// NOTCH2: a bodiless shell with its body extents flush with its wings. It renders identically at rest (no
+    /// lower surface, so no body is drawn and the core still sits after the leading wing). A body that grows out
+    /// of it (the note band, the teleprompter) then starts as wide as the top row instead of the core: from zero
+    /// extents the early frames centred the core under a narrower body, so the wider wing overhung the shell's
+    /// frame and was cut flat (the "other side" cut Etan saw).
+    public var bodyFlushWithWings: VoiceBarNotchGeometry {
+        guard lowerSurfaceHeight == 0 else { return self }
+        return VoiceBarNotchGeometry(
+            coreWidth: coreWidth,
+            topHeight: topHeight,
+            leadingWingWidth: leadingWingWidth,
+            trailingWingWidth: trailingWingWidth,
+            bodyLeadingExtent: leadingWingWidth,
+            bodyTrailingExtent: trailingWingWidth,
+            lowerSurfaceHeight: 0
+        )
+    }
 }
 
 public struct VoiceBarNotchMaterialContract: Equatable {
@@ -240,6 +258,20 @@ public struct VoiceBarNotchPresentation: Equatable {
         )
     }
 
+    /// NOTCH2: this presentation as SwiftUI draws it mid-morph, at an interpolated shell geometry. The AppKit hit
+    /// gate is tested against it.
+    func drawn(at geometry: VoiceBarNotchGeometry) -> VoiceBarNotchPresentation {
+        VoiceBarNotchPresentation(
+            visualState: visualState,
+            geometry: geometry,
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset,
+            virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
+            contentRoles: contentRoles,
+            accessibilityLabel: accessibilityLabel,
+            transientNoteWidth: transientNoteWidth
+        )
+    }
+
     public static func resolve(
         hasTeleprompter: Bool,
         isRecording: Bool,
@@ -311,8 +343,8 @@ public struct VoiceBarNotchPresentation: Equatable {
         return VoiceBarNotchPresentation(
             visualState: visualState,
             geometry: transientNoteWidth.map {
-                VoiceBarNotchContract.addingTransientNoteBand(to: geometry, noteWidth: $0)
-            } ?? geometry,
+                VoiceBarNotchContract.addingTransientNoteBand(to: geometry.bodyFlushWithWings, noteWidth: $0)
+            } ?? geometry.bodyFlushWithWings,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
             virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles(for: visualState),

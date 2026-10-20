@@ -57,6 +57,11 @@ final class NotchNoteMorphGeometryTests: XCTestCase {
             coreRect: CGRect(x: canvas.coreOriginX, y: 0, width: canvas.coreWidth, height: canvas.topHeight)
         )
         XCTAssertTrue(canvasRect.contains(shellRect), "\(label): shell \(shellRect) ⊄ window \(canvasRect)")
+        // The wings are drawn around the core; they must stay inside the shell's own frame, or the far wing
+        // overhangs it and is cut flat.
+        XCTAssertGreaterThanOrEqual(geometry.topOriginX, -0.001, "\(label): the leading wing overhangs the shell")
+        XCTAssertLessThanOrEqual(geometry.topOriginX + geometry.topWidth, geometry.totalWidth + 0.001,
+                                 "\(label): the trailing wing overhangs the shell")
         XCTAssertLessThanOrEqual(
             shellRect.maxY + VoiceBarNotchContract.transientNoteClearance, canvasRect.maxY + 0.001,
             "\(label): the shell's lower curve sits on the window edge"

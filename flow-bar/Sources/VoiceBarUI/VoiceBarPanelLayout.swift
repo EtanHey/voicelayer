@@ -154,6 +154,57 @@ public struct VoiceBarPanelLayout: Equatable {
     }
 }
 
+/// NOTCH2: the AppKit hit providers' view of the notch while the shell animates. SwiftUI draws an interpolated
+/// shell, but AppKit only knows the destination layout, so a note band that has not been drawn yet could claim
+/// clicks (and stop passing them to the app underneath). While a same-size change settles, a point counts only
+/// if both the previous and the destination layouts contain it. Every interpolated frame covers that overlap,
+/// so a claimed point is always drawn. A size change moves the window itself, so it applies the destination as
+/// before.
+public struct VoiceBarPanelHitGate: Equatable {
+    /// The shell spring settles well inside this (stiffness 310, overdamped), after the closing delay.
+    public static let settleDuration: TimeInterval = VoiceBarNotchContract.motion.contentExitDuration + 0.5
+
+    public private(set) var layout: VoiceBarPanelLayout
+    /// Layouts the shell may still be drawn between. A change mid-transition keeps them all, so the claim never
+    /// widens before the shell gets there.
+    public private(set) var settlingFrom: [VoiceBarPanelLayout] = []
+    public private(set) var settlesAt: TimeInterval = 0
+
+    public init(layout: VoiceBarPanelLayout) {
+        self.layout = layout
+    }
+
+    /// Returns true when the layout changed, so the caller can refresh the window's event gate.
+    @discardableResult
+    public mutating func update(to next: VoiceBarPanelLayout, now: TimeInterval) -> Bool {
+        guard next != layout else { return false }
+        if next.presentation.geometry == layout.presentation.geometry {
+            // Only the interaction configuration changed; nothing is animating.
+        } else if next.panelSize == layout.panelSize {
+            settlingFrom = (isSettling(now: now) ? settlingFrom : []) + [layout]
+            settlesAt = now + Self.settleDuration
+        } else {
+            settlingFrom = []
+        }
+        layout = next
+        return true
+    }
+
+    public func isSettling(now: TimeInterval) -> Bool {
+        !settlingFrom.isEmpty && now < settlesAt
+    }
+
+    public func containsVisibleSurface(_ point: CGPoint, now: TimeInterval) -> Bool {
+        layout.containsVisibleSurface(point) &&
+            (!isSettling(now: now) || settlingFrom.allSatisfy { $0.containsVisibleSurface(point) })
+    }
+
+    public func containsInteractiveContent(_ point: CGPoint, now: TimeInterval) -> Bool {
+        layout.containsInteractiveContent(point) &&
+            (!isSettling(now: now) || settlingFrom.allSatisfy { $0.containsInteractiveContent(point) })
+    }
+}
+
 public enum VoiceBarIsolatedCapturePlacement {
     public static let environmentVariable = "QA_VOICEBAR_CAPTURE_BOTTOM_LEFT"
     public static let topRightEnvironmentVariable = "QA_VOICEBAR_CAPTURE_TOP_RIGHT"
