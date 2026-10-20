@@ -39,6 +39,18 @@ export interface LongReadDependencies {
   dispose(chunk: LongReadChunk, index: number): void;
 }
 
+/** TELE1: the teleprompter shows one document; chunk boundaries stay audio-only. `chunk_word_starts`
+ * indexes each chunk's first whitespace token in `text`. Synthesis chunks drop the line breaks between
+ * sentences, so the display text keeps them whenever its tokens are exactly the chunks' tokens. */
+export function longReadDocument(displayText: string, texts: string[]): { text: string; chunk_word_starts: number[] } {
+  const tokens = (text: string) => text.match(/\S+/gu) ?? [];
+  const chunkTokens = texts.map(tokens), all = chunkTokens.flat(), display = tokens(displayText);
+  let next = 0;
+  const chunk_word_starts = chunkTokens.map((chunk) => { const at = next; next += chunk.length; return at; });
+  const same = display.length === all.length && display.every((token, i) => token === all[i]);
+  return { text: same ? displayText : texts.join(" "), chunk_word_starts };
+}
+
 type Synthesis = { chunk: LongReadChunk } | { error: unknown };
 
 /** One playing/preparing chunk plus bounded lookahead, with one synthesis in flight. */

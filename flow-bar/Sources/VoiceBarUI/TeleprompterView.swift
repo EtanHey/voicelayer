@@ -327,6 +327,19 @@ public enum TeleprompterContentModel {
         return assignStableIDs(to: textWords)
     }
 
+    /// TELE1: legacy (Edge) rows, one per whitespace token, keyed by token index. Nil unless the counts
+    /// match and the rows plausibly spell the text, the same test the per-chunk zip uses.
+    static func legacyTokenRows(text: String, boundaries: [TeleprompterBoundary]) -> [Int: TeleprompterBoundary]? {
+        let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let rows = boundaries.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !tokens.isEmpty, rows.count == tokens.count, boundariesPlausiblyBelong(
+            to: tokens.map { TeleprompterWord(id: 0, text: $0, offsetMs: nil, durationMs: nil) },
+            boundaryWords: rows.map { TeleprompterWord(id: 0, text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                                                       offsetMs: $0.offsetMs, durationMs: $0.durationMs) }
+        ) else { return nil }
+        return Dictionary(uniqueKeysWithValues: rows.enumerated().map { ($0.offset, $0.element) })
+    }
+
     private static func boundariesPlausiblyBelong(
         to displayWords: [TeleprompterWord],
         boundaryWords: [TeleprompterWord]
@@ -401,6 +414,11 @@ public enum TeleprompterContentModel {
                 hasInterpolatedTiming: word.hasInterpolatedTiming
             )
         }
+    }
+
+    /// How many display words `splitDisplayToken` makes of one whitespace token.
+    static func displayPieceCount(_ token: String) -> Int {
+        max(1, (token.count + maxDisplayTokenLength - 1) / maxDisplayTokenLength)
     }
 
     private static func splitDisplayToken(_ word: TeleprompterWord) -> [TeleprompterWord] {

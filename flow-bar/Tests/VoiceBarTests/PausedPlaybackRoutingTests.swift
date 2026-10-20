@@ -45,8 +45,12 @@ final class PausedPlaybackRoutingTests: XCTestCase {
         XCTAssertNil(sent().last?["playback_elapsed_ms"], "the stop is the capture's, not playback's")
         XCTAssertEqual(state.mode, .transcribing)
 
-        // The read identity survives: when the capture settles (transcribed and delivered), Play resumes playback-9.
+        // The read identity survives. A local idle alone is not settlement (P16b): Play stays hidden until the
+        // daemon's recording-idle, then resumes playback-9.
         state.mode = .idle
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertFalse(state.isPlaybackPaused)
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         XCTAssertTrue(state.isPlaybackPaused)
         state.togglePlaybackPause()

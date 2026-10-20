@@ -262,6 +262,43 @@ final class PlaybackPauseTests: XCTestCase {
         XCTAssertFalse(stopped.isPlaybackPaused)
     }
 
+    /// P16b (Sol R2-1 probe): Cancel's optimistic local idle is not capture settlement. Play stays hidden until
+    /// the daemon's recording-idle, which then restores the same park (TLA+ CaptureCancelOptimistic →
+    /// AuthoritativeCaptureSettleRestore; invariant CancelParkSurvivesAuthoritativeIdle).
+    func testCancelWaitsForCaptureIdleThenRestoresPlay() {
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
+            playbackAmplitudeClock: { [unowned self] in now }
+        )
+        state.isConnected = true
+        state.frontmostAppProvider = { nil }
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        state.handleEvent(speakingEvent(text: "Parked read", playbackID: "A", generation: 1))
+        state.handleEvent(pausedEvent(offset: 2500, playbackID: "A", generation: 2))
+        state.record(pressToTalk: true)
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        state.cancel()
+        drainMainQueue()
+        XCTAssertNil(VoiceBarPresentation.playbackPauseControl(
+            mode: state.mode, isPaused: state.isPlaybackPaused, isReadback: state.isTeleprompterReadback
+        ), "no daemon recording-idle yet: the playback control stays hidden")
+
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        drainMainQueue()
+        XCTAssertTrue(state.isPlaybackPaused, "capture settled: Play returns for the same park")
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 2500)
+        state.togglePlaybackPause()
+        XCTAssertEqual(sent.last?["cmd"] as? String, "resume")
+        XCTAssertEqual(sent.last?["playback_id"] as? String, "A")
+
+        // A second, late recording-idle never ends the restored paused read.
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        drainMainQueue()
+        XCTAssertTrue(state.isPlaybackPaused)
+    }
+
     func testRestoreWaitsForTheDictationsOwnFeedback() {
         let (state, _) = speakingState()
         state.handleEvent(pausedEvent())

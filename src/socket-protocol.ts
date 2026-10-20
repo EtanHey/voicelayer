@@ -56,6 +56,9 @@ export interface StateEvent {
     chunk_start_ms: number;
     /** Activates existing Stop/Escape UI before first audio; no audio clock yet. */
     preparing?: boolean;
+    /** TELE1, Preparing only: the whole display document, sent once, and each chunk's first token index in it. */
+    text?: string;
+    chunk_word_starts?: number[];
     /** Present once every chunk is synthesized: duration_ms is the read's final total. */
     estimated_total_ms?: number;
   };

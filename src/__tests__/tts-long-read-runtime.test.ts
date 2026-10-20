@@ -10,7 +10,8 @@ import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
-import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
+import { pausePlayback, isPlaybackPaused } from "../tts";
+import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForTTS, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
 import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
@@ -413,6 +414,21 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       } finally { admission?.release(); }
     });
 
+  it("TELE1 Preparing carries the whole display document and each chunk's first token, once", async () => {
+    const paragraphs = Array.from({ length: 12 }, (_, i) => `Paragraph ${i} keeps its own break and enough words to fill a chunk.`).join("\n\n");
+    const h = start("edge", paragraphs); await fixtureCheckpoint();
+    const preparing = events.find((event) => event.state === "speaking" && event.long_read?.preparing);
+    const texts = chunkTextForTTS(paragraphs);
+    expect(texts.length).toBeGreaterThan(1);
+    expect(preparing.long_read).toMatchObject({ id: h.id, chunk_count: texts.length, text: paragraphs });
+    let words = 0;
+    expect(preparing.long_read.chunk_word_starts).toEqual(texts.map((chunk) => { const at = words; words += chunk.split(/\s+/).length; return at; }));
+    await playerBarrier.at(0);
+    const played = events.find((event) => event.state === "speaking" && !event.long_read?.preparing);
+    expect(played.text).toBe(texts[0]); // synthesis chunking and per-chunk text are unchanged
+    expect(played.long_read.text).toBeUndefined();
+  });
+
   it("PLAYER0 new speakLongRead cannot stop another agent's active or queued job", async () => {
     const other = playAudioNonBlocking("foreign-current.mp3"); await playerBarrier.at(0);
     const pending = playAudioNonBlocking("foreign-pending.mp3");
@@ -674,6 +690,23 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     autoPlay = true;
     for (let i = 0; i < 22; i++) { const h = speakLongRead(`Read ${i}.`, { engine: "edge", voice: "fixture", rate: "+0%" }); handles.push(h); await h.done; }
     expect(loadHistory()).toHaveLength(20); expect(new Set(loadHistory().map((e) => e.id)).size).toBe(20);
+  });
+  // P16b (Sol R2-2 probe, verbatim intent): F5's capture Stop/Cancel over a parked long read acknowledges at once.
+  // The wait watchdog is compressed to 25 ms so a wait on the parked read fails fast instead of at 35 s.
+  for (const cmd of ["stop", "cancel"] as const) it(`P16b parked long read: capture ${cmd} acknowledges without waiting for the park`, async () => {
+    holdSynth = true;
+    start(); await playerBarrier.at(0); await synthBarrier.at(1);
+    clockMs += 250;
+    expect(pausePlayback()).toMatchObject({ outcome: "accept" });
+    await fixtureCheckpoint();
+    const capture = spyOn(input, "getRecordingState").mockReturnValue("recording");
+    const realTimer = globalThis.setTimeout;
+    const timer = spyOn(globalThis, "setTimeout").mockImplementation(((fn: any, ms: number, ...args: any[]) =>
+      realTimer(fn, ms === 35000 ? 25 : ms, ...args)) as any);
+    try {
+      expect(await handleSocketCommand({ cmd, id: `capture-${cmd}` })).toMatchObject({ command: cmd, outcome: "accept" });
+      expect(isPlaybackPaused()).toBe(true);
+    } finally { timer.mockRestore(); capture.mockRestore(); }
   });
 
   describe("QUEUE1 Option+F5 read queue on the real runner", () => {

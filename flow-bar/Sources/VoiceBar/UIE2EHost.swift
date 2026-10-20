@@ -89,7 +89,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }.padding(6)
             if Bundle.main.object(forInfoDictionaryKey: "UIE2EPasteFeedback") as? Bool == true {
                 HStack {
-                    ForEach(["paste-not-inserted", "paste-unverified", "paste-partial"], id: \.self) { name in
+                    ForEach(["paste-not-inserted", "paste-unverified", "paste-partial", "paste-typed"], id: \.self) { name in
                         Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
                     }
                 }.padding(6)
@@ -463,7 +463,7 @@ final class UIE2EModel {
     func fixture(_ name: String) {
         if holdsFixturePresentation { voice.endModalInteraction(); holdsFixturePresentation = false }
         voice.confirmationText = nil
-        if ["confirmation", "paste-failed", "paste-not-inserted", "paste-unverified", "paste-partial"].contains(name) {
+        if ["confirmation", "paste-failed", "paste-not-inserted", "paste-unverified", "paste-partial", "paste-typed"].contains(name) {
             // These are held visual fixtures, not a claim about note lifetime.
             // A real pointer exit must not collapse the fixture before its frame is measured.
             voice.beginModalInteraction()
@@ -514,6 +514,7 @@ final class UIE2EModel {
         case "paste-not-inserted": voice.mode = .idle; voice.confirmationText = "Not pasted\nIn History"
         case "paste-unverified": voice.mode = .idle; voice.confirmationText = "Unverified\nIn History"
         case "paste-partial": voice.mode = .idle; voice.confirmationText = "Part pasted\nHistory: full"
+        case "paste-typed": voice.mode = .idle; voice.confirmationText = "Typed"
         case "paste-failed": voice.mode = .idle; voice.confirmationText = "Paste failed — click input and press Shift+F5"
         case "error": voice.handleEvent(["type": "error", "message": "QA fixture failure", "recoverable": true])
         case "transcribing": voice.handleEvent(["type": "state", "state": "transcribing"])

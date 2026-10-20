@@ -245,6 +245,7 @@ private enum VoicePasteOutcome: Equatable {
     case pasted
     case notInserted
     case unverified
+    case typed
     case partial
     case failed(String)
 }
@@ -477,6 +478,10 @@ public final class VoiceState {
     public var playbackWordTimeline: [TeleprompterBoundary] {
         playbackTimelineChunks.sorted { $0.key < $1.key }.flatMap(\.value.words)
     }
+    /// TELE1: a long read's whole text, shown as one page while one of its chunks plays.
+    private var longReadDocument: TeleprompterLongReadDocument?
+    private var isShowingLongReadDocument = false
+    private var longReadDocumentChunkIndex: Int?
     private var playbackReadbackID: String?
     private var retainedReadbackID: String?
     /// The ended read's clock, frozen at idle so the readback scrubber shows real time without sampling.
@@ -497,6 +502,8 @@ public final class VoiceState {
         var longReadID: String?
         var readbackID: String?
         var readbackDurationMs: Int?
+        /// TELE1: a long read's continuous document, so Play after a capture shows the whole read again.
+        var document: LongReadDocumentSnapshot
     }
 
     private struct ParkedRead {
@@ -515,6 +522,9 @@ public final class VoiceState {
     private var currentPlayback: (id: String, generation: Int)?
     /// The read on screen when a capture took over, for a `paused` confirmation that lands mid-capture.
     private var departedRead: ReadSnapshot?
+    /// A capture began and the daemon has not yet sent its recording-idle. A local idle (Cancel's optimistic
+    /// one included) is not settlement: Play stays hidden until the authoritative idle arrives (P16b).
+    private var isCaptureSettlementPending = false
     /// A daemon whose speaking frame carries no identity: only this read's own Pause confirmation counts.
     private var pendingPauseEpoch: Int?
     private var pendingPlaybackPauseIDs: Set<String> = []
@@ -525,7 +535,7 @@ public final class VoiceState {
 
     public var teleprompterText: String? {
         if mode == .speaking, !statusText.isEmpty {
-            return statusText
+            return isShowingLongReadDocument ? longReadDocument?.text ?? statusText : statusText
         }
         if mode == .idle {
             return retainedTeleprompterText
@@ -534,7 +544,8 @@ public final class VoiceState {
     }
 
     public var teleprompterWordBoundaries: [TeleprompterBoundary] {
-        mode == .idle ? retainedTeleprompterWordBoundaries : wordBoundaries
+        if mode == .idle { return retainedTeleprompterWordBoundaries }
+        return isShowingLongReadDocument ? longReadDocument?.boundaries ?? wordBoundaries : wordBoundaries
     }
 
     public var isTeleprompterReadback: Bool {
@@ -937,6 +948,11 @@ public final class VoiceState {
 
     /// Completion-aware production seam. The completion must run on the main thread.
     public var asyncDictationInsertionHandlerProvider: () -> AsyncDictationInsertionHandler? = { nil }
+
+    /// Read only at delivery: Chromium/Electron/CEF hosts take the typed route, never AX.
+    public var chromiumFamilyAppDetector: (NSRunningApplication) -> Bool = {
+        ChromiumFamilyApps.contains(bundleURL: $0.bundleURL)
+    }
 
     /// Read only at delivery, never while starting capture or handling a hotkey.
     public var focusedTargetEligibilityProvider: () -> DictationFocusedTargetEligibility? = { nil }
@@ -1793,12 +1809,14 @@ public final class VoiceState {
             chunkStartMs: playbackChunkStartMilliseconds,
             longReadID: playbackLongReadID,
             readbackID: playbackReadbackID,
-            readbackDurationMs: playbackReadbackDurationMilliseconds
+            readbackDurationMs: playbackReadbackDurationMilliseconds,
+            document: longReadDocumentSnapshot()
         )
     }
 
     private func retireParkedRead() {
         parkedRead = nil
+        isCaptureSettlementPending = false
         departedRead = nil
         pendingPauseEpoch = nil
     }
@@ -1808,12 +1826,12 @@ public final class VoiceState {
     private func synchronizeParkedRead(from oldValue: VoiceMode) {
         // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
         if mode == .disconnected || (oldValue == .speaking && mode == .idle) { retireParkedRead(); return }
-        if oldValue == .speaking, mode == .recording || mode == .transcribing {
-            departedRead = currentReadSnapshot()
+        if mode == .recording || mode == .transcribing, oldValue != .recording, oldValue != .transcribing {
+            isCaptureSettlementPending = true
+            if oldValue == .speaking { departedRead = currentReadSnapshot() }
         }
-        if mode == .idle, parkedRead != nil, [.recording, .transcribing, .error].contains(oldValue) {
-            scheduleParkedReadRestore()
-        }
+        // A deferred final can reach idle after the recording-idle; restore then (still gated on settlement).
+        if mode == .idle, parkedRead != nil, !isCaptureSettlementPending { scheduleParkedReadRestore() }
     }
 
     private func scheduleParkedReadRestore() {
@@ -1822,11 +1840,13 @@ public final class VoiceState {
 
     /// Waits out a dictation's own feedback (Pasted, In History …) before taking the surface back.
     private func restoreParkedReadIfSettled() {
-        guard mode == .idle, let parked = parkedRead, confirmationText == nil, !keepsPasteFlowEnvelope
+        guard mode == .idle, let parked = parkedRead, !isCaptureSettlementPending,
+              confirmationText == nil, !keepsPasteFlowEnvelope
         else { return }
         let read = parked.read
         clearRetainedTeleprompter()
         statusText = read.text
+        restoreLongReadDocument(read.document)
         wordBoundaries = read.words
         playbackDurationMilliseconds = read.durationMs
         isPlaybackDurationGrowing = read.isDurationGrowing
@@ -2178,6 +2198,13 @@ public final class VoiceState {
                 // The daemon never sends a playback idle while a read is parked: one now means it is gone.
                 // (While speaking, the speaking → idle edge retires it once the readback froze its position.)
                 if idleSource == "playback", mode != .speaking { retireParkedRead() }
+                // The daemon's recording-idle is capture settlement (TLA+ AuthoritativeCaptureSettleRestore). It
+                // never ends a paused read: that is playback's Stop, outcome or replacement, not capture's idle.
+                if idleSource == "recording" {
+                    isCaptureSettlementPending = false
+                    if isPlaybackPaused { return }
+                    if parkedRead != nil { scheduleParkedReadRestore() }
+                }
                 if barInitiatedRecording, mode == .transcribing {
                     if idleSource == "recording", deferredFinalTranscriptionTask != nil {
                         pendingRecordingIdleAfterFinal = true
@@ -2297,7 +2324,12 @@ public final class VoiceState {
                 playbackLongReadID = longReadID
                 if longReadID == nil || longReadID != playbackTimelineReadID { playbackTimelineChunks = [:] }
                 playbackTimelineReadID = longReadID
-                playbackEpoch += 1
+                // TELE1: the next chunk of the document on screen continues the page from its first word.
+                // Only a seek, a new read or anything off the document restarts the teleprompter.
+                let advancesDocument = isShowingLongReadDocument && longReadID != nil && previousChunk?.read == longReadID &&
+                    (longRead?["chunk_index"] as? Int).map { $0 == (longReadDocumentChunkIndex ?? -2) + 1 } == true &&
+                    validOffset.map { Int($0.rounded()) == playbackChunkStartMilliseconds } == true
+                if !advancesDocument { playbackEpoch += 1 }
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
                 clearRetainedTeleprompter()
@@ -2310,6 +2342,7 @@ public final class VoiceState {
                     let stored = playbackTimelineChunks[playbackChunkStartMilliseconds]
                     wordBoundaries = stored?.text == event["text"] as? String ? stored?.words ?? [] : []
                 }
+                updateLongReadDocument(longRead, readbackID: playbackReadbackID, chunkText: event["text"] as? String ?? "")
                 mode = .speaking
                 isTeleprompterDismissed = false
                 // Every speaking edge is the daemon playing: the resumed read or its replacement.
@@ -2537,6 +2570,9 @@ public final class VoiceState {
                 endMs: chunkMs.map { chunkStart + $0 } ?? (playbackLongReadID == nil ? playbackDurationMilliseconds : nil))
             if TeleprompterContentModel.words(text: statusText, wordBoundaries: wordBoundaries).contains(where: { $0.offsetMs != nil }) {
                 playbackTimelineChunks[chunkStart] = (statusText, wordBoundaries)
+            }
+            if isShowingLongReadDocument, let start = longReadDocumentWordStart {
+                longReadDocument?.record(chunkText: statusText, boundaries: wordBoundaries, wordStart: start)
             }
 
         case "queue":
@@ -3180,8 +3216,8 @@ public final class VoiceState {
                 let readbackDuration = playbackReadbackDurationMilliseconds ?? playbackDurationMilliseconds
                 retainedPlaybackDurationMilliseconds = readbackDuration
                 retainedPlaybackPositionMilliseconds = min(playbackElapsedMilliseconds(), readbackDuration ?? 0)
-                retainedTeleprompterText = statusText
-                retainedTeleprompterWordBoundaries = wordBoundaries
+                retainedTeleprompterText = teleprompterText ?? statusText
+                retainedTeleprompterWordBoundaries = teleprompterWordBoundaries
                 notifyPanelLayoutChangedIfNeeded(true)
             }
         }
@@ -3231,6 +3267,51 @@ public final class VoiceState {
         hotkeyPhase = .idle
         isCollapsed = true
         onModeChange?(.idle)
+    }
+
+    private var longReadDocumentWordStart: Int?
+
+    /// TELE1 ↔ P16: the long-read page a parked read comes back to. A pause snapshot stores this beside
+    /// `statusText`/`wordBoundaries`, and the restore hands it back, so Play resumes the whole document.
+    public struct LongReadDocumentSnapshot {
+        fileprivate let document: TeleprompterLongReadDocument?
+        fileprivate let isShowing: Bool
+        fileprivate let wordStart: Int?
+        fileprivate let chunkIndex: Int?
+    }
+
+    public func longReadDocumentSnapshot() -> LongReadDocumentSnapshot {
+        LongReadDocumentSnapshot(document: longReadDocument, isShowing: isShowingLongReadDocument,
+                                 wordStart: longReadDocumentWordStart, chunkIndex: longReadDocumentChunkIndex)
+    }
+
+    public func restoreLongReadDocument(_ snapshot: LongReadDocumentSnapshot) {
+        longReadDocument = snapshot.document
+        isShowingLongReadDocument = snapshot.isShowing && snapshot.document != nil
+        longReadDocumentWordStart = snapshot.wordStart
+        longReadDocumentChunkIndex = snapshot.chunkIndex
+    }
+
+    /// Preparing brings the read's document; each chunk that is exactly its slice keeps that one page.
+    /// A readback replay of the same audio keeps it too. Anything else is today's per-chunk text.
+    private func updateLongReadDocument(_ longRead: [String: Any]?, readbackID: String?, chunkText: String) {
+        isShowingLongReadDocument = false
+        longReadDocumentWordStart = nil
+        longReadDocumentChunkIndex = nil
+        guard let longRead else { longReadDocument = nil; return }
+        if longRead["preparing"] as? Bool == true {
+            longReadDocument = TeleprompterLongReadDocument(longRead: longRead)
+            return
+        }
+        guard let document = longReadDocument,
+              longRead["id"] as? String == document.readID || (readbackID != nil && readbackID == document.readbackID),
+              let index = longRead["chunk_index"] as? Int, let count = longRead["chunk_count"] as? Int,
+              let start = document.wordStart(chunkIndex: index, chunkCount: count, text: chunkText)
+        else { longReadDocument = nil; return }
+        if longRead["id"] as? String == document.readID, let readbackID { longReadDocument?.readbackID = readbackID }
+        isShowingLongReadDocument = true
+        longReadDocumentWordStart = start
+        longReadDocumentChunkIndex = index
     }
 
     private func clearRetainedTeleprompter() {
@@ -3668,7 +3749,11 @@ public final class VoiceState {
                     let isTerminalTarget = TerminalPasteTargets.isTerminal(pasteTargetBundleID)
                     // Etan's ruling: delivery in these rich hosts uses the
                     // working Shift+F5 typing route, never a whole-document AX write.
-                    let usesRichHostTyping = ["com.t3tools.t3code", "net.imput.helium"].contains(pasteTargetBundleID)
+                    // PASTE2: Gemini.app (WebKit composer) and every Chromium/Electron/CEF host
+                    // join them; AX cannot certify their web composers, so an AX miss there
+                    // used to stop at "Not pasted". Unknown native apps still take AX only.
+                    let usesRichHostTyping = Self.richHostTypingBundleIdentifiers.contains(pasteTargetBundleID)
+                        || chromiumFamilyAppDetector(pasteTarget)
                     let skipsAX = isTerminalTarget || usesRichHostTyping
                     let typingEligibility = requiresEditableTarget && !skipsAX
                         ? focusedTargetEligibilityProvider() : nil
@@ -3957,12 +4042,16 @@ public final class VoiceState {
     private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"
     private static let pasteFailureRetryMessage = "Paste failed — click input and press Shift+F5"
 
+    private static let richHostTypingBundleIdentifiers: Set<String> = [
+        "com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS",
+    ]
+
     private static func pasteOutcome(
         pasted: Bool,
         plan: VoicePastePlan
     ) -> VoicePasteOutcome {
         guard pasted else { return .failed(genericPasteFailureMessage) }
-        return .unverified
+        return .typed
     }
 
     private static func sameApp(_ lhs: NSRunningApplication?, _ rhs: NSRunningApplication?) -> Bool {
@@ -3987,6 +4076,7 @@ public final class VoiceState {
             case .pasted: .pasted
             case .notInserted: .notInserted
             case .unverified, .partial: .unverified
+            case .typed: .typed
             case .failed: .failed
             }
         }
@@ -4007,6 +4097,13 @@ public final class VoiceState {
                 showsTerminalTranscript ? text : PasteRecoveryFeedback.unverified,
                 duration: 5.0
             )
+        case .typed:
+            // Terminal confirmation keeps the dictated words. Posted key events are not
+            // readback, so the pill says only what happened: "Typed".
+            showConfirmation(
+                showsTerminalTranscript ? text : PasteDeliveryFeedback.typed,
+                duration: 5.0
+            )
         case .partial:
             showConfirmation(PasteRecoveryFeedback.partial, duration: 5.0)
         case let .failed(message):
@@ -4017,7 +4114,7 @@ public final class VoiceState {
         if let notice = pendingMicDisconnectNotice, let operationID, operationID == latestDictationOperationID {
             pendingMicDisconnectNotice = nil
             switch outcome {
-            case .insertedAtCursor, .pasted, .unverified:
+            case .insertedAtCursor, .pasted, .unverified, .typed:
                 showConfirmation(notice, duration: Self.micDisconnectNoticeSeconds)
             case .notInserted, .partial, .failed:
                 break

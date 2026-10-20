@@ -128,11 +128,90 @@ final class PasteFeedbackLayoutTests: XCTestCase {
     }
 
     func testOrdinaryStatusAndTerminalPreviewRemainOneLine() {
-        for message in ["Copied", "Preparing speech…", "QA terminal transcript שלום 👋"] {
+        for message in ["Copied", "Preparing speech…", "QA terminal transcript שלום 👋", PasteDeliveryFeedback.typed] {
             let label = NSHostingView(rootView:
                 CompactStatusLabel(text: message, mode: .idle, confirmationText: message)
                     .frame(width: 68).fixedSize(horizontal: false, vertical: true))
             XCTAssertLessThanOrEqual(label.fittingSize.height, 15)
+        }
+    }
+
+    // PASTE2: the typed-delivery confirmation renders in the pill on one line, fully visible.
+    func testTypedConfirmationRendersFullyInThePillInBothAppearances() throws {
+        let message = PasteDeliveryFeedback.typed
+        for screenWidth in [800.0, 1728.0] {
+            for light in [false, true] {
+                let state = VoiceState()
+                state.mode = .idle
+                state.isCollapsed = false
+                state.confirmationText = message
+                state.sendCommand = { _ in XCTFail("Layout must send no commands") }
+                let presentation = VoiceBarPresentation.notchPresentation(from: .init(
+                    mode: .idle, confirmationText: message, queueDepth: 0, statusText: message
+                ))
+                XCTAssertEqual(presentation.visualState, .compactStatus)
+                let model = VoiceBarNotchPresentationModel()
+                model.updateOperationalEnvelope(
+                    hasTeleprompter: false, isRecording: false, hasCompactStatus: true,
+                    compactStatusLeadingWingWidth: presentation.geometry.leadingWingWidth,
+                    compactStatusTrailingWingWidth: presentation.geometry.trailingWingWidth
+                )
+                let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: model.presentation)
+                let layout = VoiceBarPanelLayout.make(presentation: model.presentation, canvasGeometry: canvas.canvasGeometry)
+                let screen = screenGeometry(width: screenWidth)
+                XCTAssertTrue(screen.screenFrame.contains(layout.windowFrame(anchoredTo: screen)))
+                let geometry = presentation.geometry
+                let slot = VoiceBarNotchContract.material.wingContentLayout(for: .trailing,
+                    state: .compactStatus, visibleCoreOcclusionInset: 0)
+                let availableWidth = geometry.trailingWingWidth - slot.coreInset - slot.outerInset
+                let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+                XCTAssertLessThanOrEqual(ceil((message as NSString).size(withAttributes: [.font: font]).width),
+                                         availableWidth, "Typed must fit without an ellipsis")
+                let label = NSHostingView(rootView:
+                    CompactStatusLabel(text: message, mode: .idle, confirmationText: message)
+                        .frame(width: availableWidth).fixedSize(horizontal: false, vertical: true))
+                XCTAssertLessThanOrEqual(label.fittingSize.height, 15, "One line")
+
+                let size = CGSize(width: canvas.canvasGeometry.totalWidth + 24, height: 49)
+                let host = NSHostingView(rootView:
+                    BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
+                            presentationModel: model, includesPanelOutsets: true)
+                        .environment(\.colorScheme, light ? .light : .dark)
+                )
+                host.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
+                let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                                      styleMask: .borderless, backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                defer { window.close() }
+                window.contentView = host
+                VLOrderTestWindow(window)
+                host.layoutSubtreeIfNeeded()
+                RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                let image = try XCTUnwrap(NSBitmapImageRep(data: png)?.cgImage)
+                let scale = CGFloat(image.height) / size.height
+                let textX = 12 + canvas.canvasGeometry.coreOriginX + geometry.coreWidth + slot.coreInset
+                // Hosted runners may hand back a smaller backing than the window asked for; clamp
+                // the text slot to the bitmap actually rendered rather than trusting its geometry.
+                let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+                let slotRect = CGRect(x: textX * scale, y: 0, width: availableWidth * scale, height: 32 * scale)
+                    .intersection(bounds).integral
+                let diagnostics = "image=\(image.width)x\(image.height) slot=\(slotRect) screen=\(screenWidth) light=\(light)"
+                let trailingThird = CGRect(x: bounds.width * 2 / 3, y: 0, width: bounds.width / 3, height: bounds.height)
+                let crop = try XCTUnwrap(image.cropping(to: slotRect.isEmpty ? trailingThird : slotRect), diagnostics)
+                if slotRect.isEmpty { print("PASTE2 typed render: text slot outside bitmap, using trailing third; \(diagnostics)") }
+                XCTAssertGreaterThanOrEqual(try cropInk(crop).luminanceRange, 1, "The label draws visible ink: \(diagnostics)")
+                if VisualArtifactTestPolicy.isRegenerationEnabled() {
+                    let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                        .appendingPathComponent("docs.local/PASTE2")
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try png.write(to: directory.appendingPathComponent(
+                        "typed-\(Int(screenWidth))-\(light ? "light" : "dark").png"))
+                }
+            }
         }
     }
 
@@ -378,7 +457,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
         for screenWidth in [800.0, 1024.0, 1728.0] {
             let screen = screenGeometry(width: screenWidth)
             var referenceMicFrame: CGRect?
-            for message in ["Copied"] + messages {
+            for message in ["Copied", PasteDeliveryFeedback.typed] + messages {
                 for queueDepth in [0, 12] {
                     let presentation = VoiceBarPresentation.notchPresentation(from: .init(
                         mode: .idle, confirmationText: message, queueDepth: queueDepth, statusText: message
