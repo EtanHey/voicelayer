@@ -219,6 +219,8 @@ export function handleSocketCommand(
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
       );
     case "cancel":
+      // Hide (QUEUE1b ruling): never leave reads to resume or auto-start later.
+      if (command.discard_read_queue === true) selectionReads.clear();
       if (recordingState === "idle" && playbackQueueDepth === 0 && !isPlaybackPaused()) {
         return buildAck(command, "noop", "already idle");
       }

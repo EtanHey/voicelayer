@@ -838,6 +838,20 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       await expectNextStartsB();
     });
 
+    it("QUEUE1b Q1B-SOL-1: Hide during the capture discards the retained queue; Next(A) is stale and a fresh D never runs into B", async () => {
+      await suspendedBehindA();
+      const capture = startCapture();
+      expect(await handleSocketCommand({ cmd: "cancel", discard_read_queue: true } as any)).toMatchObject({ outcome: "accept" });
+      capture.state.mockReturnValue("idle"); capture.done.resolve(""); await settle();
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+      expect(handleSocketCommand({ cmd: "read_next", request_id: "A" } as any)).toMatchObject({ outcome: "noop", reason: "stale" });
+      autoPlay = true;
+      select("D", "Delta after unhiding.");
+      await settle(); await settle();
+      expect(receipts("D").length).toBeGreaterThan(0);
+      expect(receipts("B")).toEqual([]);
+    });
+
     it("QUEUE1b: explicit Stop with no capture still clears the retained queue", async () => {
       await suspendedBehindA();
       expect(await handleSocketCommand({ cmd: "stop" } as any)).toMatchObject({ outcome: "noop" });

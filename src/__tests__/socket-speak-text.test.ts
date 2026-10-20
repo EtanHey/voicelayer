@@ -80,6 +80,8 @@ describe("QUEUE1 Option+F5 read queue over the socket", () => {
     expect(parseCommand(JSON.stringify({ cmd: "speak_text", text: "a", queue: "yes" }))).toBeNull();
     expect(parseCommand(JSON.stringify({ cmd: "stop", retain_read_queue: true }))).toEqual({ cmd: "stop", retain_read_queue: true });
     expect(parseCommand(JSON.stringify({ cmd: "stop", retain_read_queue: 1 }))).toBeNull();
+    expect(parseCommand(JSON.stringify({ cmd: "cancel", discard_read_queue: true }))).toEqual({ cmd: "cancel", discard_read_queue: true });
+    expect(parseCommand(JSON.stringify({ cmd: "cancel", discard_read_queue: "yes" }))).toBeNull();
     expect(parseCommand(JSON.stringify({ cmd: "read_next", request_id: "r1", id: "n1" }))).toEqual({ cmd: "read_next", request_id: "r1", id: "n1" });
     // SOL-3: an unscoped Next is not a command.
     expect(parseCommand(JSON.stringify({ cmd: "read_next" }))).toBeNull();

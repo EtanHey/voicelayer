@@ -1680,14 +1680,19 @@ public final class VoiceState {
     public func snooze(until: Date? = nil) {
         isHidden = true
         hiddenUntil = until
+        // QUEUE1b (lead ruling): Hide ends the user read chain on both sides; nothing resumes later.
+        let hasWaitingReads = readQueueCurrentRequestID != nil
         switch mode {
         case .recording, .transcribing:
-            sendIntent(command: .cancel, payload: ["cmd": "cancel"], trackPending: false)
+            var payload: [String: Any] = ["cmd": "cancel"]
+            if hasWaitingReads { payload["discard_read_queue"] = true }
+            sendIntent(command: .cancel, payload: payload, trackPending: false)
         case .speaking:
             sendIntent(command: .stop, payload: ["cmd": "stop"], trackPending: false)
         default:
-            break
+            if hasWaitingReads { sendIntent(command: .stop, payload: ["cmd": "stop"], trackPending: false) }
         }
+        clearReadQueue()
         barInitiatedRecording = false
         releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         barInitiatedTimeout?.cancel()
