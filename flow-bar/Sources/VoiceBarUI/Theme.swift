@@ -213,6 +213,8 @@ public enum Theme {
     public static let teleprompterViewportHeight: CGFloat = 78
     public static let teleprompterWrapWidth: CGFloat = 246
     public static let teleprompterContentInset: CGFloat = 4
+    /// TELE1: extra breathing room inside the wrap width, so line ends clear the shell curve.
+    public static let teleprompterShellInset: CGFloat = 6
 
     public static let speakingTeleprompterChromeWidth: CGFloat =
         14 + 14 + 6 + 46 + (pillActionButtonSize * 2) + pillActionButtonSpacing + (8 * 3)
