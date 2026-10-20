@@ -18,6 +18,7 @@ _Nothing yet._
 ### Fixed
 - A microphone lost mid-recording no longer cuts the recording short: every byte is kept, and History and the pill say when the mic was lost. Only the recorder actually stopping ends a capture; a CoreAudio device report alone is recorded as evidence (#467).
 - Replay keeps every word's timing, and a later chunk of a long read never wipes an earlier chunk's timeline (#472).
+- Soft speech after a pause is no longer cut from a push-to-talk transcript: the tail trimmer only removes tails that are truly silent (#474).
 
 The UI end-to-end runner restores the output mute state it found instead of leaving the Mac muted (#468).
 
