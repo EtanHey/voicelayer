@@ -24,6 +24,7 @@ _Nothing yet._
 ### Fixed
 - VoiceLayer no longer kills an unrelated app that reused the PID in a stale lock: the lock records the owner's exact start time and only a matching process is signalled (#479).
 - Cancelling a recording made over a paused read no longer brings Play back early, and stopping that recording no longer waits for the paused read (#480).
+- A Cancel while nothing is recording (`voicebar://cancel` or socket control) now ends the waiting Option+F5 reads in both VoiceBar and the daemon, so the +N count and the queue no longer disagree (#485).
 
 ## [2.2.48] - 2026-10-20
 
