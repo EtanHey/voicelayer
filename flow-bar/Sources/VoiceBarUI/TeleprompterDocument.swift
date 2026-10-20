@@ -7,9 +7,6 @@ import Foundation
 
 /// The whole display text of one long read, plus where each chunk's words start in it.
 public struct TeleprompterLongReadDocument: Equatable {
-    /// Every word is a laid-out view; past this the read pages per chunk as before.
-    static let maximumWords = 3000
-
     public let readID: String
     /// The read's retained-audio identity. A readback replay of the same audio arrives under a new read ID.
     public var readbackID: String?
@@ -25,7 +22,7 @@ public struct TeleprompterLongReadDocument: Equatable {
               let starts = longRead["chunk_word_starts"] as? [Int],
               starts.count == longRead["chunk_count"] as? Int, starts.first == 0 else { return nil }
         let tokens = text.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard tokens.count <= Self.maximumWords, let last = starts.last, last < tokens.count,
+        guard let last = starts.last, last < tokens.count,
               zip(starts, starts.dropFirst()).allSatisfy({ $0 < $1 }) else { return nil }
         self.readID = readID
         self.text = text
@@ -34,33 +31,40 @@ public struct TeleprompterLongReadDocument: Equatable {
     }
 
     /// The chunk's first word in the document, or nil when the chunk is not exactly that slice of it.
+    /// A readback replay of a stopped read carries only the retained prefix, so a count up to the
+    /// document's own is the same read; the slice check is what proves identity.
     public func wordStart(chunkIndex: Int, chunkCount: Int, text chunkText: String) -> Int? {
-        guard chunkCount == chunkWordStarts.count, chunkWordStarts.indices.contains(chunkIndex) else { return nil }
+        guard (1 ... chunkWordStarts.count).contains(chunkCount), chunkIndex < chunkCount,
+              chunkWordStarts.indices.contains(chunkIndex) else { return nil }
         let start = chunkWordStarts[chunkIndex]
         let end = chunkIndex + 1 < chunkWordStarts.count ? chunkWordStarts[chunkIndex + 1] : tokens.count
         let chunkTokens = chunkText.split(whereSeparator: \.isWhitespace).map(String.init)
         return tokens[start ..< end].elementsEqual(chunkTokens) ? start : nil
     }
 
-    /// Re-indexes one chunk's timings (already on the global clock) against the document. Estimated
-    /// legacy reschedules are not seek targets, so they stay untimed; an untimed chunk erases nothing.
+    /// Re-indexes one chunk's timings (already on the global clock) against the document, per whitespace
+    /// token and before any display split, so a long URL never turns measured rows into estimates.
+    /// Indexed rows must match their tokens; legacy rows must be one plausible row per token. Anything
+    /// else is an identity mismatch and records nothing. An untimed chunk erases nothing.
     public mutating func record(chunkText: String, boundaries: [TeleprompterBoundary], wordStart: Int) {
-        let words = TeleprompterContentModel.words(text: chunkText, wordBoundaries: boundaries)
         let chunkTokens = chunkText.split(whereSeparator: \.isWhitespace).map(String.init)
-        let pieces = chunkTokens.map(TeleprompterContentModel.displayPieceCount)
-        guard pieces.reduce(0, +) == words.count else { return }
-        var rows: [Int: TeleprompterBoundary] = [:]
-        var piece = 0
-        for (index, token) in chunkTokens.enumerated() {
-            let word = words[piece]
-            piece += pieces[index]
-            guard let offset = word.offsetMs, !word.hasEstimatedTiming else { continue }
-            rows[wordStart + index] = TeleprompterBoundary(offsetMs: offset, durationMs: word.durationMs, text: token,
-                                                           wordIndex: wordStart + index,
-                                                           isInterpolated: word.hasInterpolatedTiming)
+        let rows: [Int: TeleprompterBoundary]
+        if boundaries.contains(where: { $0.wordIndex != nil }) {
+            guard let indexed = TeleprompterBoundary.indexedRows(boundaries, tokens: chunkTokens) else { return }
+            rows = indexed
+        } else {
+            guard let legacy = TeleprompterContentModel.legacyTokenRows(text: chunkText, boundaries: boundaries)
+            else { return }
+            rows = legacy
         }
-        guard !rows.isEmpty else { return }
-        for index in wordStart ..< wordStart + chunkTokens.count { timings[index] = rows[index] }
+        let timed = rows.filter { $0.value.offsetMs != nil }
+        guard !timed.isEmpty else { return }
+        for index in chunkTokens.indices {
+            timings[wordStart + index] = timed[index].map {
+                TeleprompterBoundary(offsetMs: $0.offsetMs, durationMs: $0.durationMs, text: chunkTokens[index],
+                                     wordIndex: wordStart + index, isInterpolated: $0.isInterpolated)
+            }
+        }
     }
 
     public var boundaries: [TeleprompterBoundary] {
