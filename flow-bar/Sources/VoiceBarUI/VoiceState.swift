@@ -476,6 +476,10 @@ public final class VoiceState {
     public var playbackWordTimeline: [TeleprompterBoundary] {
         playbackTimelineChunks.sorted { $0.key < $1.key }.flatMap(\.value.words)
     }
+    /// TELE1: a long read's whole text, shown as one page while one of its chunks plays.
+    private var longReadDocument: TeleprompterLongReadDocument?
+    private var isShowingLongReadDocument = false
+    private var longReadDocumentChunkIndex: Int?
     private var playbackReadbackID: String?
     private var retainedReadbackID: String?
     /// The ended read's clock, frozen at idle so the readback scrubber shows real time without sampling.
@@ -524,7 +528,7 @@ public final class VoiceState {
 
     public var teleprompterText: String? {
         if mode == .speaking, !statusText.isEmpty {
-            return statusText
+            return isShowingLongReadDocument ? longReadDocument?.text ?? statusText : statusText
         }
         if mode == .idle {
             return retainedTeleprompterText
@@ -533,7 +537,8 @@ public final class VoiceState {
     }
 
     public var teleprompterWordBoundaries: [TeleprompterBoundary] {
-        mode == .idle ? retainedTeleprompterWordBoundaries : wordBoundaries
+        if mode == .idle { return retainedTeleprompterWordBoundaries }
+        return isShowingLongReadDocument ? longReadDocument?.boundaries ?? wordBoundaries : wordBoundaries
     }
 
     public var isTeleprompterReadback: Bool {
@@ -2235,7 +2240,12 @@ public final class VoiceState {
                 playbackLongReadID = longReadID
                 if longReadID == nil || longReadID != playbackTimelineReadID { playbackTimelineChunks = [:] }
                 playbackTimelineReadID = longReadID
-                playbackEpoch += 1
+                // TELE1: the next chunk of the document on screen continues the page from its first word.
+                // Only a seek, a new read or anything off the document restarts the teleprompter.
+                let advancesDocument = isShowingLongReadDocument && longReadID != nil && previousChunk?.read == longReadID &&
+                    (longRead?["chunk_index"] as? Int).map { $0 == (longReadDocumentChunkIndex ?? -2) + 1 } == true &&
+                    validOffset.map { Int($0.rounded()) == playbackChunkStartMilliseconds } == true
+                if !advancesDocument { playbackEpoch += 1 }
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
                 clearRetainedTeleprompter()
@@ -2248,6 +2258,7 @@ public final class VoiceState {
                     let stored = playbackTimelineChunks[playbackChunkStartMilliseconds]
                     wordBoundaries = stored?.text == event["text"] as? String ? stored?.words ?? [] : []
                 }
+                updateLongReadDocument(longRead, readbackID: playbackReadbackID, chunkText: event["text"] as? String ?? "")
                 mode = .speaking
                 isTeleprompterDismissed = false
                 // Every speaking edge is the daemon playing: the resumed read or its replacement.
@@ -2471,6 +2482,9 @@ public final class VoiceState {
                 endMs: chunkMs.map { chunkStart + $0 } ?? (playbackLongReadID == nil ? playbackDurationMilliseconds : nil))
             if TeleprompterContentModel.words(text: statusText, wordBoundaries: wordBoundaries).contains(where: { $0.offsetMs != nil }) {
                 playbackTimelineChunks[chunkStart] = (statusText, wordBoundaries)
+            }
+            if isShowingLongReadDocument, let start = longReadDocumentWordStart {
+                longReadDocument?.record(chunkText: statusText, boundaries: wordBoundaries, wordStart: start)
             }
 
         case "queue":
@@ -3114,8 +3128,8 @@ public final class VoiceState {
                 let readbackDuration = playbackReadbackDurationMilliseconds ?? playbackDurationMilliseconds
                 retainedPlaybackDurationMilliseconds = readbackDuration
                 retainedPlaybackPositionMilliseconds = min(playbackElapsedMilliseconds(), readbackDuration ?? 0)
-                retainedTeleprompterText = statusText
-                retainedTeleprompterWordBoundaries = wordBoundaries
+                retainedTeleprompterText = teleprompterText ?? statusText
+                retainedTeleprompterWordBoundaries = teleprompterWordBoundaries
                 notifyPanelLayoutChangedIfNeeded(true)
             }
         }
@@ -3165,6 +3179,51 @@ public final class VoiceState {
         hotkeyPhase = .idle
         isCollapsed = true
         onModeChange?(.idle)
+    }
+
+    private var longReadDocumentWordStart: Int?
+
+    /// TELE1 ↔ P16: the long-read page a parked read comes back to. A pause snapshot stores this beside
+    /// `statusText`/`wordBoundaries`, and the restore hands it back, so Play resumes the whole document.
+    public struct LongReadDocumentSnapshot {
+        fileprivate let document: TeleprompterLongReadDocument?
+        fileprivate let isShowing: Bool
+        fileprivate let wordStart: Int?
+        fileprivate let chunkIndex: Int?
+    }
+
+    public func longReadDocumentSnapshot() -> LongReadDocumentSnapshot {
+        LongReadDocumentSnapshot(document: longReadDocument, isShowing: isShowingLongReadDocument,
+                                 wordStart: longReadDocumentWordStart, chunkIndex: longReadDocumentChunkIndex)
+    }
+
+    public func restoreLongReadDocument(_ snapshot: LongReadDocumentSnapshot) {
+        longReadDocument = snapshot.document
+        isShowingLongReadDocument = snapshot.isShowing && snapshot.document != nil
+        longReadDocumentWordStart = snapshot.wordStart
+        longReadDocumentChunkIndex = snapshot.chunkIndex
+    }
+
+    /// Preparing brings the read's document; each chunk that is exactly its slice keeps that one page.
+    /// A readback replay of the same audio keeps it too. Anything else is today's per-chunk text.
+    private func updateLongReadDocument(_ longRead: [String: Any]?, readbackID: String?, chunkText: String) {
+        isShowingLongReadDocument = false
+        longReadDocumentWordStart = nil
+        longReadDocumentChunkIndex = nil
+        guard let longRead else { longReadDocument = nil; return }
+        if longRead["preparing"] as? Bool == true {
+            longReadDocument = TeleprompterLongReadDocument(longRead: longRead)
+            return
+        }
+        guard let document = longReadDocument,
+              longRead["id"] as? String == document.readID || (readbackID != nil && readbackID == document.readbackID),
+              let index = longRead["chunk_index"] as? Int, let count = longRead["chunk_count"] as? Int,
+              let start = document.wordStart(chunkIndex: index, chunkCount: count, text: chunkText)
+        else { longReadDocument = nil; return }
+        if longRead["id"] as? String == document.readID, let readbackID { longReadDocument?.readbackID = readbackID }
+        isShowingLongReadDocument = true
+        longReadDocumentWordStart = start
+        longReadDocumentChunkIndex = index
     }
 
     private func clearRetainedTeleprompter() {

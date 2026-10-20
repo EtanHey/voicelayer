@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "bun:test";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
-import { runLongRead, type LongReadChunk, type LongReadDependencies, type PlayedChunk } from "../tts/long-read";
+import { longReadDocument, runLongRead, type LongReadChunk, type LongReadDependencies, type PlayedChunk } from "../tts/long-read";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -233,5 +233,17 @@ describe("HISTDUP1 history is the whole utterance once, whatever was replayed, s
     const f = scrubbed(["Again.", "Again."]);
     await f.finish(0); await f.finish(1); await f.done;
     expect(f.saved()).toEqual({ text: "Again. Again.", audio: f.whole([0, 1]), missingChunks: [] });
+  });
+});
+
+describe("TELE1 longReadDocument", () => {
+  it("keeps the display text's line breaks when its tokens are exactly the chunks' tokens", () => {
+    expect(longReadDocument("One two.\n\n• Three\n• four.", ["One two.", "• Three • four."]))
+      .toEqual({ text: "One two.\n\n• Three\n• four.", chunk_word_starts: [0, 2] });
+  });
+  it("falls back to the joined chunks when synthesis re-tokenized the text", () => {
+    const long = "x".repeat(450);
+    expect(longReadDocument(`Start ${long}`, ["Start", "x".repeat(400), "x".repeat(50)]))
+      .toEqual({ text: `Start ${"x".repeat(400)} ${"x".repeat(50)}`, chunk_word_starts: [0, 1, 2] });
   });
 });
