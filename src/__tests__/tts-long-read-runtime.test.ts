@@ -852,6 +852,18 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(receipts("B")).toEqual([]);
     });
 
+    it("QUEUE1c: an idle Cancel (no capture) ends the retained chain; Next(A) is stale and a fresh D never runs into B", async () => {
+      await suspendedBehindA();
+      expect(await handleSocketCommand({ cmd: "cancel" } as any)).toMatchObject({ outcome: "noop" });
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+      expect(handleSocketCommand({ cmd: "read_next", request_id: "A" } as any)).toMatchObject({ outcome: "noop", reason: "stale" });
+      autoPlay = true;
+      select("D", "Delta after the idle cancel.");
+      await settle(); await settle();
+      expect(receipts("D").length).toBeGreaterThan(0);
+      expect(receipts("B")).toEqual([]);
+    });
+
     it("QUEUE1b: explicit Stop with no capture still clears the retained queue", async () => {
       await suspendedBehindA();
       expect(await handleSocketCommand({ cmd: "stop" } as any)).toMatchObject({ outcome: "noop" });
