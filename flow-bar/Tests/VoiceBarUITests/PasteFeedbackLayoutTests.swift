@@ -172,7 +172,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                         XCTAssertEqual(canvas.canvasGeometry.totalWidth, 465, "Keep the ordinary canvas")
                         XCTAssertEqual(geometry.leadingWingWidth, VoiceBarNotchContract.compactIndicatorLaneWidth)
                         XCTAssertEqual(geometry.topHeight, 32)
-                        let size = CGSize(width: canvas.canvasGeometry.totalWidth + 24, height: 49)
+                        let size = layout.panelSize
                         let host = NSHostingView(rootView:
                             BarView(state: state, commandRouter: Router(), onOpenSettings: {}, onOpenHistory: {},
                                     presentationModel: model, includesPanelOutsets: true)
@@ -396,7 +396,7 @@ final class PasteFeedbackLayoutTests: XCTestCase {
                     else { referenceMicFrame = micFrame }
                     XCTAssertEqual(frame.minX + layout.visibleContentRect.minX + geometry.coreMidX,
                                    screen.housingFrame.midX)
-                    XCTAssertEqual(layout.panelSize.height, 49)
+                    XCTAssertEqual(layout.panelSize.height, 49 + VoiceBarNotchContract.transientNoteCanvasReserve)
                     XCTAssertTrue(screen.screenFrame.contains(frame))
                     XCTAssertLessThanOrEqual(geometry.trailingWingWidth, VoiceBarNotchContract.morphCanvasWingCapacity)
                     XCTAssertEqual(canvas.canvasGeometry.totalWidth, 465)

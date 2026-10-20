@@ -103,6 +103,50 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
                        "the growing note must not widen one label slot")
     }
 
+    /// NOTCH2 (Etan: "Solid bar + 'so far'", no ellipsis): while the total grows, the track is the same solid
+    /// bar as a final one, with no dotted tail, and "so far" sits next to the total. Final drops the label.
+    func testGrowingTrackIsTheSolidFinalBarAndOnlyTheSoFarLabelDiffers() throws {
+        XCTAssertEqual(SettingsPlaybackScrubBar.growingNote, "so far")
+        func bitmap(growing: Bool) throws -> NSBitmapImageRep {
+            try render(SettingsPlaybackScrubBar(position: { SettingsAudioPlaybackPosition(currentTime: 50, duration: 100) },
+                seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: false, isGrowing: growing,
+                allowsSeeking: true, isTeleprompter: true).frame(width: 400, height: 24),
+                size: CGSize(width: 400, height: 24), appearance: NSAppearance(named: .darkAqua))
+        }
+        let growing = try bitmap(growing: true), final = try bitmap(growing: false)
+        let scale = CGFloat(final.pixelsWide) / 400
+        func color(_ image: NSBitmapImageRep, _ x: Int, _ y: Int) -> NSColor {
+            image.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) ?? .clear
+        }
+        // The whole track lane, between the two label slots: identical pixels, so no reserved or dashed tail.
+        let slot = SettingsPlaybackScrubBar.teleprompterLabelWidth + SettingsPlaybackScrubBar.teleprompterLabelSpacing
+        let laneStart = Int(slot * scale), laneEnd = Int((400 - slot) * scale)
+        for y in 0..<final.pixelsHigh {
+            for x in laneStart..<laneEnd {
+                XCTAssertLessThan(colorDistance(color(growing, x, y), color(final, x, y)), 0.02,
+                                  "track differs at (\(x), \(y)): the growing bar must be the solid final bar")
+            }
+        }
+        // "so far" is ink right of the total; a final total has none there.
+        func ink(_ image: NSBitmapImageRep) -> Int {
+            let noteStart = Int((400 - SettingsPlaybackScrubBar.teleprompterLabelWidth + 28) * scale)
+            var count = 0
+            for y in 0..<image.pixelsHigh {
+                for x in noteStart..<image.pixelsWide where color(image, x, y).brightnessComponent > 0.4 { count += 1 }
+            }
+            return count
+        }
+        XCTAssertGreaterThan(ink(growing), 0, "a growing total shows \"so far\" next to the time")
+        XCTAssertEqual(ink(final), 0, "a final total has no label")
+        // The whole label fits its slot: no ink reaches the bar's trailing edge, where it would clip.
+        let edge = growing.pixelsWide - Int(2 * scale)
+        for y in 0..<growing.pixelsHigh {
+            for x in edge..<growing.pixelsWide {
+                XCTAssertLessThan(color(growing, x, y).brightnessComponent, 0.4, "\"so far\" clips at (\(x), \(y))")
+            }
+        }
+    }
+
     func testTeleprompterDurationLabelNeverReadsZeroForARealRead() {
         XCTAssertEqual(SettingsPlaybackScrubBar.teleprompterDurationLabel(0.8), "0:01")
         XCTAssertEqual(SettingsPlaybackScrubBar.teleprompterDurationLabel(18.3), "0:18")

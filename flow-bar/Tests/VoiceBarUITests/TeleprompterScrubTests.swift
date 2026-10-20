@@ -329,6 +329,24 @@ final class TeleprompterScrubTests: XCTestCase {
         XCTAssertEqual(reads, 0, "an ended read has no level to show")
     }
 
+    /// NOTCH2: the teleprompter centres "Preparing speech…" only while the daemon prepares, then crossfades to
+    /// the read's text on the first chunk.
+    func testPreparingSpeechLastsUntilTheFirstChunkOrIdle() {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        XCTAssertFalse(state.isPreparingSpeech)
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
+                           "long_read": ["id": "r1", "chunk_start_ms": 0, "preparing": true]])
+        XCTAssertTrue(state.isPreparingSpeech)
+        state.handleEvent(["type": "state", "state": "speaking", "text": "First chunk", "duration_ms": 4000,
+                           "long_read": ["id": "r1", "chunk_index": 0, "chunk_count": 2, "chunk_start_ms": 0]])
+        XCTAssertFalse(state.isPreparingSpeech)
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
+                           "long_read": ["id": "r2", "chunk_start_ms": 0, "preparing": true]])
+        XCTAssertTrue(state.isPreparingSpeech)
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertFalse(state.isPreparingSpeech)
+    }
+
     func testPreparingIsStaticUntilDurationAndNotReadyAckDoesNotJumpClock() {
         let state = VoiceState(playbackAmplitudeClock: { 100 })
         state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",

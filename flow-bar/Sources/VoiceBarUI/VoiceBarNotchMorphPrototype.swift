@@ -114,12 +114,23 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
                 teleprompterGeometry.bodyTrailingExtent,
                 maximumCompactWingWidth
             ),
-            lowerSurfaceHeight: presentation.geometry.lowerSurfaceHeight
+            lowerSurfaceHeight: restingLowerSurfaceHeight(of: presentation) +
+                VoiceBarNotchContract.transientNoteCanvasReserve
         )
         return VoiceBarNotchMorphCanvasLayout(
             canvasGeometry: canvasGeometry,
             contentOffsetX: canvasGeometry.coreOriginX - presentation.geometry.coreOriginX
         )
+    }
+}
+
+extension VoiceBarNotchMorphCanvasLayout {
+    /// NOTCH2: the body's height without a transient note. The canvas always reserves the note band plus
+    /// clearance on top of it, so showing or clearing a note never resizes the panel: AppKit used to commit the
+    /// shorter window at once while the shell was still easing up, cutting its bottom flat.
+    static func restingLowerSurfaceHeight(of presentation: VoiceBarNotchPresentation) -> CGFloat {
+        presentation.geometry.lowerSurfaceHeight -
+            (presentation.transientNoteWidth == nil ? 0 : VoiceBarNotchContract.transientNoteBandHeight)
     }
 }
 

@@ -110,39 +110,23 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             surfaceRevealProgress = presentation.visualState == .idle ? 0 : 1
         }
         .onChange(of: presentation.geometry) { _, nextGeometry in
-            let closingGeometryDelay = renderedGeometry.lowerSurfaceHeight > 0
-                && nextGeometry.lowerSurfaceHeight == 0
-                ? VoiceBarNotchContract.motion.contentExitDuration
-                : 0
-            // The radii ride the same transaction as the geometry, so they interpolate together.
-            withAnimation(shellAnimation.delay(closingGeometryDelay)) {
+            let transition = VoiceBarNotchShellTransition.resolve(
+                from: renderedGeometry,
+                to: nextGeometry,
+                visualState: presentation.visualState
+            )
+            // The radii and the reveal mask ride the same transaction as the geometry, so they share one spring.
+            withAnimation(shellAnimation.delay(transition.delay)) {
                 renderedGeometry = nextGeometry
                 renderedOuterCornerRadius = compactOuterCornerRadius
                 renderedShoulderCornerRadius = bodyShoulderCornerRadius
+                surfaceRevealProgress = transition.revealProgress
             }
         }
         .onChange(of: compactOuterCornerRadius) { _, nextRadius in
             guard renderedGeometry == presentation.geometry else { return } // the geometry change carries it
             withAnimation(shellAnimation) {
                 renderedOuterCornerRadius = nextRadius
-            }
-        }
-        .task(id: presentation.visualState) {
-            guard presentation.visualState != .idle else {
-                withAnimation(shellAnimation) {
-                    surfaceRevealProgress = 0
-                }
-                return
-            }
-
-            // Visible-to-visible changes keep the shared surface mounted and
-            // interpolate its geometry directly. Only an actually collapsed
-            // surface needs to reveal outward from the fixed hardware core.
-            guard surfaceRevealProgress == 0 else { return }
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            withAnimation(shellAnimation) {
-                surfaceRevealProgress = 1
             }
         }
     }

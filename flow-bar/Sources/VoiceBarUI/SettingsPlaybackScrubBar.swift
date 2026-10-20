@@ -90,22 +90,14 @@ struct SettingsPlaybackScrubBar: View {
                 .frame(minWidth: 34, alignment: .trailing)
                 .opacity(labelOpacity(duration: position.duration))
             track(shown)
-            Text(durationLabel(shown.duration))
+            durationText(shown.duration)
                 .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                // "so far" fits inside this slot, which stays equal to the leading one, so the track stays on
+                // the panel's centre axis and keeps its length when the total turns final.
                 .frame(width: isTeleprompter ? Self.teleprompterLabelWidth : nil, alignment: .leading)
                 .frame(minWidth: 34, alignment: .leading)
-                // The growing note hangs under the total so both label slots stay equal and the
-                // track stays on the panel's centre axis.
-                .overlay(alignment: .bottomLeading) {
-                    if isTeleprompter && isGrowing {
-                        Text("so far…")
-                            .font(.system(size: 9, design: .monospaced))
-                            .fixedSize()
-                            .offset(y: 11)
-                    }
-                }
                 .opacity(labelOpacity(duration: position.duration))
         }
         .font(isTeleprompter ? .system(size: 10, design: .monospaced) : .caption.monospacedDigit())
@@ -115,8 +107,9 @@ struct SettingsPlaybackScrubBar: View {
         .accessibilityValue(shown.spokenValue + (isGrowing ? ", synthesized so far; duration growing" : ""))
     }
 
-    /// Equal teleprompter label slots keep the track centred on the panel's axis.
-    static let teleprompterLabelWidth: CGFloat = 46
+    /// Equal teleprompter label slots keep the track centred on the panel's axis. Wide enough for
+    /// "0:36 so far" (NOTCH2), so the growing label never clips and the track never changes length.
+    static let teleprompterLabelWidth: CGFloat = 72
     /// Wider than the knob radius, so the knob at either extreme never touches a label.
     static let teleprompterLabelSpacing: CGFloat = 12
 
@@ -132,16 +125,24 @@ struct SettingsPlaybackScrubBar: View {
         SettingsAudioPlaybackPosition.clockLabel(duration > 0 ? max(duration, 1) : 0)
     }
 
-    private func durationLabel(_ duration: TimeInterval) -> String {
-        if isTeleprompter { return Self.teleprompterDurationLabel(duration) }
-        return SettingsAudioPlaybackPosition.clockLabel(duration) + (isGrowing ? " so far…" : "")
+    /// The only growing affordance (Etan, NOTCH2: "Solid bar + 'so far'", and no ellipsis): "so far" next to
+    /// the total while synthesis is still adding audio. The track is the normal solid bar either way.
+    static let growingNote = "so far"
+
+    private func durationText(_ duration: TimeInterval) -> Text {
+        guard isTeleprompter else {
+            return Text(SettingsAudioPlaybackPosition.clockLabel(duration) + (isGrowing ? " \(Self.growingNote)" : ""))
+        }
+        let total = Text(Self.teleprompterDurationLabel(duration))
+        guard isGrowing else { return total }
+        return total + Text(" \(Self.growingNote)").font(.system(size: 9, design: .monospaced))
     }
 
     private func track(_ position: SettingsAudioPlaybackPosition) -> some View {
         GeometryReader { geometry in
-            let width = max(geometry.size.width, 1)
-            // Reserve a dashed, explicitly unknown tail. This is not an estimated total duration.
-            let availableWidth = isGrowing && allowsSeeking ? width * 0.75 : width
+            // One solid track for the audio synthesized so far; it is the whole bar whether or not the
+            // total is final. "so far" beside the total carries the growing state, never a dotted tail.
+            let availableWidth = max(geometry.size.width, 1)
             let knobX = CGFloat(position.fraction) * availableWidth
             let diameter = drag.fraction == nil ? Self.knobDiameter : 16
 
@@ -156,13 +157,6 @@ struct SettingsPlaybackScrubBar: View {
                             : AnyShapeStyle(Color.accentColor))
                         .frame(width: knobX, height: Self.trackHeight)
                 }
-                if isGrowing && allowsSeeking {
-                    Path { path in
-                        path.move(to: CGPoint(x: availableWidth + 4, y: 12))
-                        path.addLine(to: CGPoint(x: width, y: 12))
-                    }
-                    .stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [3, 3]))
-                }
                 if allowsSeeking {
                     Circle()
                         .fill(Color.white.opacity(isTeleprompter ? 0.75 : 1))
@@ -176,7 +170,7 @@ struct SettingsPlaybackScrubBar: View {
                         .font(.system(size: 10, design: .monospaced))
                         .padding(3)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
-                        .offset(x: min(max(knobX - 18, 0), width - 36), y: -19)
+                        .offset(x: min(max(knobX - 18, 0), availableWidth - 36), y: -19)
                         .allowsHitTesting(false)
                 }
             }

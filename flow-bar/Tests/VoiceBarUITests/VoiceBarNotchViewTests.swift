@@ -187,17 +187,21 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(source.contains("renderedGeometry = nextGeometry"))
     }
 
-    func testOnlyIdleToVisibleTransitionRearmsOneCoreAnchoredRevealForBothWings() throws {
+    /// NOTCH2: the reveal mask and the shell geometry share one spring. A separate `.task` that re-armed the
+    /// mask and yielded a render turn started it a frame late, which showed as a hard cut on the far wing.
+    func testTheRevealMaskRidesTheGeometryTransaction() throws {
         let source = try notchViewSource()
         let surface = try bracedScope(after: "private var notchSurface", in: source)
-        let revealTask = try bracedScope(after: ".task(id: presentation.visualState)", in: source)
+        let geometryChange = try bracedScope(after: ".onChange(of: presentation.geometry)", in: source)
+        let transaction = try bracedScope(after: "withAnimation(shellAnimation.delay(transition.delay))", in: geometryChange)
 
         XCTAssertTrue(source.contains("@State private var surfaceRevealProgress"))
-        XCTAssertTrue(source.contains(".task(id: presentation.visualState)"))
-        XCTAssertTrue(revealTask.contains("guard surfaceRevealProgress == 0 else { return }"))
-        XCTAssertEqual(revealTask.components(separatedBy: "surfaceRevealProgress = 0").count - 1, 1)
-        XCTAssertTrue(source.contains("await Task.yield()"))
-        XCTAssertTrue(source.contains("surfaceRevealProgress = 1"))
+        XCTAssertFalse(source.contains(".task(id: presentation.visualState)"))
+        XCTAssertFalse(source.contains("Task.yield()"))
+        XCTAssertTrue(transaction.contains("renderedGeometry = nextGeometry"))
+        XCTAssertTrue(transaction.contains("surfaceRevealProgress = transition.revealProgress"))
+        XCTAssertEqual(source.components(separatedBy: "surfaceRevealProgress =").count - 1, 3,
+                       "only init, onAppear and the geometry transaction set the mask")
         XCTAssertTrue(surface.contains("VoiceBarNotchCoreAnchoredRevealMask"))
         XCTAssertTrue(surface.contains(".mask"))
     }
@@ -273,7 +277,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(slots.contains("surfaceTransition("))
         XCTAssertTrue(source.contains("VoiceBarNotchContract.motion.panelDelay * 2"))
         XCTAssertTrue(source.contains("VoiceBarNotchContract.motion.contentExitDuration"))
-        XCTAssertTrue(source.contains("shellAnimation.delay(closingGeometryDelay"))
+        XCTAssertTrue(source.contains("shellAnimation.delay(transition.delay"))
         XCTAssertTrue(transition.contains(".opacity"))
         XCTAssertFalse(transition.contains(".scale"))
     }

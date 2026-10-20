@@ -406,6 +406,12 @@ public enum VoiceBarNotchContract {
     /// NOTCH1: the band a transient note adds under the top row: one 12 pt line with breathing room above
     /// and room below for the shell's rounded lower corners.
     public static let transientNoteBandHeight: CGFloat = 26
+    /// NOTCH2: room the morph canvas keeps under the note band, so the shell's lower curve and its edge
+    /// stroke never sit on the window edge while the note is up.
+    public static let transientNoteClearance: CGFloat = 6
+    /// NOTCH2: everything a visible notch's canvas holds below its resting body, so a note can arrive and
+    /// leave without resizing the window under the animating shell.
+    public static let transientNoteCanvasReserve: CGFloat = transientNoteBandHeight + transientNoteClearance
     public static let transientNoteHorizontalInset: CGFloat = 16
     /// Spec §4 / Etan: the History panel is the teleprompter's shell, "narrower and taller" (the teleprompter
     /// body is 465 × 196 pt).
