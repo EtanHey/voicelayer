@@ -232,7 +232,8 @@ final class NotchHistoryPanelTests: XCTestCase {
         ))
         XCTAssertEqual(canvas.canvasGeometry.totalWidth, teleprompterCanvas.canvasGeometry.totalWidth,
                        "one fixed canvas width, so the shell morphs instead of the window jumping")
-        XCTAssertEqual(canvas.canvasGeometry.totalHeight, resolve(history: true).geometry.totalHeight)
+        XCTAssertEqual(canvas.canvasGeometry.totalHeight,
+                       resolve(history: true).geometry.totalHeight + VoiceBarNotchContract.transientNoteCanvasReserve)
     }
 
     func testRowsShowFirstWordsOnOneFlattenedLine() {

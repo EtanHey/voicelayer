@@ -103,6 +103,123 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
                        "the growing note must not widen one label slot")
     }
 
+    private func scrubBitmap(time: Double, duration: Double, growing: Bool, isPlaying: Bool = false,
+                             allowsSeeking: Bool = true, teleprompter: Bool = true,
+                             width: CGFloat = 437) throws -> NSBitmapImageRep {
+        try render(SettingsPlaybackScrubBar(position: { SettingsAudioPlaybackPosition(currentTime: time, duration: duration) },
+            seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: isPlaying, isGrowing: growing,
+            allowsSeeking: allowsSeeking, isTeleprompter: teleprompter)
+            .frame(width: width, height: 24).background(Color(white: 0.13)),
+            size: CGSize(width: width, height: 24), appearance: NSAppearance(named: .darkAqua))
+    }
+
+    private func srgb(_ image: NSBitmapImageRep, _ x: Int, _ y: Int) -> NSColor {
+        image.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) ?? .clear
+    }
+
+    /// The minute and hour clock boundaries, growing and final.
+    private let boundaryDurations: [TimeInterval] = [36, 599, 600, 3599, 3600, 35999, 36000]
+
+    /// NOTCH2 (Etan: "Solid bar + 'so far'", no ellipsis): while the total grows, the track is the same solid
+    /// bar as a final one, with no dotted tail, and "so far" sits next to the total. Final drops the label.
+    func testGrowingTrackIsTheSolidFinalBarAndOnlyTheSoFarLabelDiffers() throws {
+        XCTAssertEqual(SettingsPlaybackScrubBar.growingNote, "so far")
+        let width: CGFloat = 437
+        for duration in boundaryDurations {
+            let label = "duration \(SettingsAudioPlaybackPosition.clockLabel(duration))"
+            let growing = try scrubBitmap(time: duration / 2, duration: duration, growing: true)
+            let final = try scrubBitmap(time: duration / 2, duration: duration, growing: false)
+            let scale = CGFloat(final.pixelsWide) / width
+            let slotWidth = SettingsPlaybackScrubBar.teleprompterLabelWidth(for: duration)
+            // The whole track lane, between the label slots: identical pixels, so no reserved or dashed tail and
+            // no change in track geometry when the total turns final.
+            let slot = slotWidth + SettingsPlaybackScrubBar.teleprompterLabelSpacing
+            let laneStart = Int(slot * scale), laneEnd = Int((width - slot) * scale)
+            var differing = 0
+            for y in 0..<final.pixelsHigh {
+                for x in laneStart..<laneEnd where colorDistance(srgb(growing, x, y), srgb(final, x, y)) >= 0.02 {
+                    differing += 1
+                }
+            }
+            XCTAssertEqual(differing, 0, "\(label): the growing bar must be the solid final bar")
+            // "so far" is ink right of the total; a final total has none there.
+            let totalWidth = SettingsPlaybackScrubBar.teleprompterTextWidth(
+                SettingsPlaybackScrubBar.teleprompterDurationLabel(duration), size: 10)
+            let noteStart = Int((width - slotWidth + totalWidth + 2) * scale)
+            func ink(_ image: NSBitmapImageRep, from start: Int) -> Int {
+                var count = 0
+                for y in 0..<image.pixelsHigh {
+                    for x in start..<image.pixelsWide where srgb(image, x, y).brightnessComponent > 0.4 { count += 1 }
+                }
+                return count
+            }
+            XCTAssertGreaterThan(ink(growing, from: noteStart), 0, "\(label): growing shows \"so far\"")
+            XCTAssertEqual(ink(final, from: noteStart), 0, "\(label): a final total has no label")
+            // The whole label fits its slot: no ink reaches the bar's trailing edge, where the shell would clip it.
+            XCTAssertEqual(ink(growing, from: growing.pixelsWide - Int(2 * scale)), 0, "\(label): \"so far\" clips")
+        }
+    }
+
+    func testEachLabelSlotHoldsTheWidestLabelOfItsClockFormat() {
+        for duration in boundaryDurations {
+            let slot = SettingsPlaybackScrubBar.teleprompterLabelWidth(for: duration)
+            let total = SettingsPlaybackScrubBar.teleprompterDurationLabel(duration)
+            let growing = SettingsPlaybackScrubBar.teleprompterTextWidth(total, size: 10) +
+                SettingsPlaybackScrubBar.teleprompterTextWidth(" so far", size: 9)
+            XCTAssertLessThanOrEqual(growing, slot, "\(total) so far")
+            // The leading slot shows the current time, never longer than the total.
+            XCTAssertLessThanOrEqual(SettingsPlaybackScrubBar.teleprompterTextWidth(total, size: 10), slot, total)
+        }
+        XCTAssertEqual(SettingsPlaybackScrubBar.teleprompterLabelWidth(for: 36),
+                       SettingsPlaybackScrubBar.teleprompterLabelWidth(for: 3599), "one width for every minute read")
+        XCTAssertGreaterThanOrEqual(SettingsPlaybackScrubBar.teleprompterLabelWidth(for: 3600), 82.22,
+                                    "Sol measured \"1:00:00 so far\" at 82.22 pt")
+    }
+
+    /// Etan (10-14, 10-20): "the dotted end of seek". No scrub state, teleprompter or Settings History, draws dots
+    /// or dashes: along every row the bar's ink is one unbroken run.
+    func testNoScrubStateDrawsADashOrDotPattern() throws {
+        let states: [(String, Double, Double, Bool, Bool, Bool, Bool)] = [
+            // name, time, duration, growing, playing, seekable, teleprompter
+            ("growing", 12, 36, true, true, true, true),
+            ("final", 12, 36, false, true, true, true),
+            ("paused", 12, 36, false, false, true, true),
+            ("ended", 36, 36, false, false, true, true),
+            ("replay", 0, 36, false, true, true, true),
+            ("untimed", 12, 36, false, true, false, true),
+            ("hour growing", 1800, 3600, true, true, true, true),
+            ("History", 12, 36, false, true, true, false),
+            ("History growing", 12, 36, true, true, true, false),
+        ]
+        let width: CGFloat = 437
+        for (name, time, duration, growing, playing, seekable, teleprompter) in states {
+            let image = try scrubBitmap(time: time, duration: duration, growing: growing, isPlaying: playing,
+                                        allowsSeeking: seekable, teleprompter: teleprompter, width: width)
+            let scale = CGFloat(image.pixelsWide) / width
+            let slot = teleprompter
+                ? SettingsPlaybackScrubBar.teleprompterLabelWidth(for: duration) + SettingsPlaybackScrubBar.teleprompterLabelSpacing
+                : 34 + 8
+            // Teleprompter slots are fixed; History's labels hug their text, so start past the widest of them.
+            let laneStart = Int((teleprompter ? slot : 60) * scale), laneEnd = Int((width - (teleprompter ? slot : 80)) * scale)
+            let background = srgb(image, 1, 1)
+            var inkRows = 0
+            for y in 0..<image.pixelsHigh {
+                let ink = (laneStart..<laneEnd).map { colorDistance(srgb(image, $0, y), background) > 0.01 }
+                guard let first = ink.firstIndex(of: true), let last = ink.lastIndex(of: true) else { continue }
+                inkRows += 1
+                // A dash or dot pattern leaves background gaps inside the bar; a knob's antialiased ring leaves at
+                // most one pixel. (The removed growing tail was 3 pt on, 3 pt off.)
+                var gap = 0, widestGap = 0
+                for index in first...last {
+                    gap = ink[index] ? 0 : gap + 1
+                    widestGap = max(widestGap, gap)
+                }
+                XCTAssertLessThan(widestGap, 2, "\(name): row \(y) has a \(widestGap) px gap, a dash or dot pattern")
+            }
+            XCTAssertGreaterThan(inkRows, 0, "\(name): no bar rendered")
+        }
+    }
+
     func testTeleprompterDurationLabelNeverReadsZeroForARealRead() {
         XCTAssertEqual(SettingsPlaybackScrubBar.teleprompterDurationLabel(0.8), "0:01")
         XCTAssertEqual(SettingsPlaybackScrubBar.teleprompterDurationLabel(18.3), "0:18")

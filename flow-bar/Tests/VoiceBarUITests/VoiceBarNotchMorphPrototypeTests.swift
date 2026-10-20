@@ -125,8 +125,9 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
 
         XCTAssertEqual(recordingCanvas.canvasGeometry.totalWidth, 465)
         XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalWidth, 465)
-        XCTAssertEqual(recordingCanvas.canvasGeometry.totalHeight, 32)
-        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalHeight, 228)
+        // NOTCH2: each canvas keeps the transient-note band plus clearance (26 + 6 pt) below its resting body.
+        XCTAssertEqual(recordingCanvas.canvasGeometry.totalHeight, 32 + 32)
+        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalHeight, 228 + 32)
         XCTAssertEqual(
             recording.geometry.coreOriginX + recordingCanvas.contentOffsetX,
             recordingCanvas.canvasGeometry.coreOriginX
@@ -157,7 +158,7 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         XCTAssertEqual(recording.geometry.totalWidth, 362.5)
         XCTAssertEqual(canvas.canvasGeometry.totalWidth, 465)
         XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalWidth, recording.geometry.totalWidth)
-        XCTAssertEqual(canvas.canvasGeometry.lowerSurfaceHeight, 0)
+        XCTAssertEqual(canvas.canvasGeometry.lowerSurfaceHeight, VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertTrue(panelBounds.contains(layout.interactiveHitRect))
     }
 
@@ -192,14 +193,15 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
             + teleprompterLayout.visibleContentRect.minX
             + teleprompter.geometry.coreMidX
 
-        XCTAssertEqual(recordingLayout.panelSize.height, 49)
-        XCTAssertEqual(teleprompterLayout.panelSize.height, 245)
+        XCTAssertEqual(recordingLayout.panelSize.height, 49 + VoiceBarNotchContract.transientNoteCanvasReserve)
+        XCTAssertEqual(teleprompterLayout.panelSize.height, 245 + VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertNotEqual(recordingFrame, teleprompterFrame)
         XCTAssertEqual(recordingFrame.maxY, teleprompterFrame.maxY)
         XCTAssertEqual(recordingCoreMidX, screen.housingFrame.midX)
         XCTAssertEqual(teleprompterCoreMidX, screen.housingFrame.midX)
-        XCTAssertFalse(recordingFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1060)))
-        XCTAssertTrue(teleprompterFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1060)))
+        // Below the recording window's note reserve (1117 - 81 = 1036) the teleprompter's body still reaches.
+        XCTAssertFalse(recordingFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1020)))
+        XCTAssertTrue(teleprompterFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1020)))
         XCTAssertFalse(
             recordingLayout.containsInteractiveContent(
                 CGPoint(

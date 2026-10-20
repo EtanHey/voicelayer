@@ -78,7 +78,8 @@ final class NotchMorphFrameShotsTests: XCTestCase {
             )
         ).canvasGeometry
         let tall = morph == "history-open" || morph == "teleprompter-open"
-        let size = CGSize(width: historyCanvas.totalWidth + 24, height: tall ? historyCanvas.totalHeight + 17 : 44)
+        let size = CGSize(width: historyCanvas.totalWidth + 24, height: tall ? historyCanvas.totalHeight + 17
+            : VoiceBarNotchContract.topHeight + VoiceBarNotchContract.transientNoteCanvasReserve + 17)
         let host = NSHostingView(rootView: BarView(
             state: state, commandRouter: NoopRouter(), onOpenSettings: {}, onOpenHistory: {},
             presentationModel: model, includesPanelOutsets: true

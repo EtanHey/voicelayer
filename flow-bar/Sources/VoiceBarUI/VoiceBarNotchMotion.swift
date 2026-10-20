@@ -28,6 +28,31 @@ public enum VoiceBarNotchPlaybackEdgeCommitPolicy {
     }
 }
 
+/// NOTCH2: one shell change, as the view animates it. The geometry, the corner radii and the core-anchored
+/// reveal mask all move in this single transaction, so they share one spring and one delay. The mask used to
+/// start a run-loop turn after the geometry, on its own transaction, and that lag showed as a hard vertical cut
+/// on the far wing while the shell opened.
+public struct VoiceBarNotchShellTransition: Equatable, Sendable {
+    /// Seconds the shell waits before it moves. A shrinking lower surface waits for its content (a transient
+    /// note, the teleprompter, History) to fade out first, so no frame shows text against a moving edge.
+    public let delay: TimeInterval
+    /// Where the reveal mask settles: 0 collapses it onto the hardware core, 1 opens it to the whole canvas.
+    public let revealProgress: CGFloat
+
+    public static func resolve(
+        from current: VoiceBarNotchGeometry,
+        to next: VoiceBarNotchGeometry,
+        visualState: VoiceBarNotchVisualState
+    ) -> VoiceBarNotchShellTransition {
+        VoiceBarNotchShellTransition(
+            delay: next.lowerSurfaceHeight < current.lowerSurfaceHeight
+                ? VoiceBarNotchContract.motion.contentExitDuration
+                : 0,
+            revealProgress: visualState == .idle ? 0 : 1
+        )
+    }
+}
+
 public struct VoiceBarNotchMotionStep: Equatable, Sendable {
     public let component: VoiceBarNotchMotionComponent
     public let targetVisible: Bool

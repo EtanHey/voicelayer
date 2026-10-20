@@ -281,8 +281,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(recordingCoreMidX, teleprompterCoreMidX)
         XCTAssertTrue(visibleFrame.contains(recordingFrame))
         XCTAssertTrue(visibleFrame.contains(teleprompterFrame))
-        XCTAssertEqual(recordingFrame.height, 49)
-        XCTAssertEqual(teleprompterFrame.height, 245)
+        XCTAssertEqual(recordingFrame.height, 49 + VoiceBarNotchContract.transientNoteCanvasReserve)
+        XCTAssertEqual(teleprompterFrame.height, 245 + VoiceBarNotchContract.transientNoteCanvasReserve)
         XCTAssertFalse(
             recordingFrame.contains(
                 CGPoint(x: recordingCoreMidX, y: teleprompterFrame.minY + 24)

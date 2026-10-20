@@ -611,7 +611,14 @@ public struct BarView: View {
             .frame(maxWidth: .infinity)
             .frame(height: VoiceBarNotchContract.transientNoteBandHeight)
             .allowsHitTesting(false)
-            .transition(.opacity)
+            // NOTCH2: in after the shell has started opening, out before it starts closing (the shell waits
+            // `contentExitDuration` for this fade, see `VoiceBarNotchShellTransition`).
+            .transition(.asymmetric(
+                insertion: .opacity.animation(
+                    .easeOut(duration: 0.18).delay(VoiceBarNotchContract.motion.panelDelay * 2)
+                ),
+                removal: .opacity.animation(.easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration))
+            ))
     }
 
     @ViewBuilder
@@ -651,6 +658,41 @@ public struct BarView: View {
         if let text = state.teleprompterText,
            TeleprompterVisibilityPolicy.keepsTimelineMounted(hasText: !text.isEmpty) {
             ZStack {
+                notchTeleprompterBody(text: text)
+                    .opacity(
+                        TeleprompterVisibilityPolicy.timelineOpacity(
+                            isDismissed: state.isTeleprompterDismissed
+                        )
+                    )
+                    .allowsHitTesting(!state.isTeleprompterDismissed)
+                    .accessibilityHidden(state.isTeleprompterDismissed)
+
+                Text("Teleprompter hidden")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(notchPalette.tertiary.color)
+                    .opacity(
+                        TeleprompterVisibilityPolicy.hiddenLabelOpacity(
+                            isDismissed: state.isTeleprompterDismissed
+                        )
+                    )
+                    .accessibilityHidden(!state.isTeleprompterDismissed)
+            }
+        }
+    }
+
+    /// NOTCH2: "Preparing speech…" is a status, not text being read, so it sits on the body's optical centre
+    /// instead of the reading flow's top-leading corner, then crossfades into the text on the first chunk.
+    @ViewBuilder
+    private func notchTeleprompterBody(text: String) -> some View {
+        ZStack {
+            if state.isPreparingSpeech {
+                Text(text)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(notchPalette.secondary.color)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .transition(.opacity)
+            } else {
                 TeleprompterView(
                     text: text,
                     wordBoundaries: state.teleprompterWordBoundaries,
@@ -665,25 +707,10 @@ public struct BarView: View {
                     ),
                     contentInset: VoiceBarNotchContract.material.teleprompterTextInnerInset
                 )
-                .opacity(
-                    TeleprompterVisibilityPolicy.timelineOpacity(
-                        isDismissed: state.isTeleprompterDismissed
-                    )
-                )
-                .allowsHitTesting(!state.isTeleprompterDismissed)
-                .accessibilityHidden(state.isTeleprompterDismissed)
-
-                Text("Teleprompter hidden")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(notchPalette.tertiary.color)
-                    .opacity(
-                        TeleprompterVisibilityPolicy.hiddenLabelOpacity(
-                            isDismissed: state.isTeleprompterDismissed
-                        )
-                    )
-                    .accessibilityHidden(!state.isTeleprompterDismissed)
+                .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: state.isPreparingSpeech)
     }
 
     private var notchTeleprompterControls: some View {

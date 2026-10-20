@@ -955,6 +955,8 @@ public final class VoiceState {
     private var selectionReadRequestID: String?
     private var selectionReadID: String?
     private var selectionReadIsPreparing = false
+    /// NOTCH2: the daemon is still synthesizing the first chunk; the teleprompter shows its status centred.
+    public var isPreparingSpeech: Bool { mode == .speaking && selectionReadIsPreparing }
     private var selectionSpeechEpoch = 0
     public private(set) var showsSelectionBusyNote = false {
         // NOTCH1: the note lives inside the notch, so showing or clearing it resizes the panel.
