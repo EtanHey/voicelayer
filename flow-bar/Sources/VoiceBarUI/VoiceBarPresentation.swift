@@ -86,12 +86,20 @@ public struct VoiceBarTranscriptPreviewLayout: Equatable {
     public var isMultiline: Bool
 }
 
+public struct VoiceBarPlaybackPauseControl: Equatable {
+    public let iconName: String
+    public let accessibilityLabel: String
+    public let accessibilityHint: String
+}
+
 public struct VoiceBarNotchOperationalInput: Equatable {
     public var mode: VoiceMode
     public var showsRecordingHold: Bool
     public var hasTeleprompterText: Bool
     public var isTeleprompterDismissed: Bool
     public var isTeleprompterReadback: Bool
+    /// P16: the read is parked by Pause; the teleprompter collapses until Resume.
+    public var isPlaybackPaused: Bool
     public var confirmationText: String?
     public var commandModeState: CommandModeState?
     public var activeClipMarker: ClipMarkerState?
@@ -115,6 +123,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         hasTeleprompterText: Bool = false,
         isTeleprompterDismissed: Bool = false,
         isTeleprompterReadback: Bool = false,
+        isPlaybackPaused: Bool = false,
         confirmationText: String? = nil,
         commandModeState: CommandModeState? = nil,
         activeClipMarker: ClipMarkerState? = nil,
@@ -134,6 +143,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.hasTeleprompterText = hasTeleprompterText
         self.isTeleprompterDismissed = isTeleprompterDismissed
         self.isTeleprompterReadback = isTeleprompterReadback
+        self.isPlaybackPaused = isPlaybackPaused
         self.confirmationText = confirmationText
         self.commandModeState = commandModeState
         self.activeClipMarker = activeClipMarker
@@ -197,7 +207,7 @@ public enum VoiceBarPresentation {
             hasText: input.hasTeleprompterText,
             isDismissed: input.isTeleprompterDismissed,
             isReadback: input.isTeleprompterReadback
-        ) && !(input.mode == .idle && hasCompactStatus)
+        ) && !(input.mode == .idle && hasCompactStatus) && !isPlaybackPaused(input)
         let keepsIdleExpanded = input.mode == .idle && !input.isCollapsed
 
         return VoiceBarNotchPresentation.resolve(
@@ -215,6 +225,9 @@ public enum VoiceBarPresentation {
             ),
             recordingTrailingWingWidth: input.mode == .recording
                 ? VoiceBarNotchContract.waveformWingWidth
+                : nil,
+            teleprompterLeadingWingWidth: input.mode == .speaking
+                ? VoiceBarNotchContract.compactIndicatorLaneWidth
                 : nil,
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
@@ -240,7 +253,7 @@ public enum VoiceBarPresentation {
             return insets + material.waveformSlotWidth +
                 material.compactControlSpacing + material.compactControlSize
         case .speaking:
-            let visibilityControl = input.isTeleprompterDismissed
+            let visibilityControl = input.isTeleprompterDismissed && !input.isPlaybackPaused
                 ? material.compactControlSpacing + material.compactControlSize
                 : 0
             return insets + material.waveformSlotWidth +
@@ -324,6 +337,31 @@ public enum VoiceBarPresentation {
                 : "Keep recording through silence",
             isSelected: isEngaged
         )
+    }
+
+    private static func isPlaybackPaused(_ input: VoiceBarNotchOperationalInput) -> Bool {
+        input.mode == .speaking && input.isPlaybackPaused
+    }
+
+    /// P16 (Etan, 2026-10-18): pause/play sits on the pill's left while VoiceBar speaks, never while
+    /// recording, transcribing or idle (an ended readback has nothing playing).
+    public static func playbackPauseControl(
+        mode: VoiceMode,
+        isPaused: Bool,
+        isReadback: Bool
+    ) -> VoiceBarPlaybackPauseControl? {
+        guard mode == .speaking, !isReadback else { return nil }
+        return isPaused
+            ? VoiceBarPlaybackPauseControl(
+                iconName: "play.fill",
+                accessibilityLabel: "Resume speech",
+                accessibilityHint: "Continue reading from the paused word"
+            )
+            : VoiceBarPlaybackPauseControl(
+                iconName: "pause.fill",
+                accessibilityLabel: "Pause speech",
+                accessibilityHint: "Pause reading and collapse the teleprompter"
+            )
     }
 
     public static func reservesTeleprompterEnvelope(

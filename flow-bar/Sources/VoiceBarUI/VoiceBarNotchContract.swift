@@ -149,23 +149,17 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         state: VoiceBarNotchVisualState,
         visibleCoreOcclusionInset _: CGFloat = 0
     ) -> VoiceBarNotchWingContentLayout {
-        let isTeleprompter = state == .teleprompter
+        // P16: every leading wing, the teleprompter's pause/play included, uses the idle-hover mic's lane
+        // (Etan: "centered like the idle hover state has the microphone").
         let isWaveformTrailing = side == .trailing && [
             VoiceBarNotchVisualState.recording,
             .compactStatus,
             .teleprompter,
         ].contains(state)
-        let coreInset = if isTeleprompter || isWaveformTrailing {
-            WaveformLayout.coreGap
-        } else {
-            VoiceBarNotchContract.compactCoreContentInset
-        }
         return VoiceBarNotchWingContentLayout(
             side: side,
-            coreInset: coreInset,
-            outerInset: isWaveformTrailing || isTeleprompter
-                ? WaveformLayout.outerInset
-                : compactContentInset,
+            coreInset: isWaveformTrailing ? WaveformLayout.coreGap : VoiceBarNotchContract.compactCoreContentInset,
+            outerInset: isWaveformTrailing ? WaveformLayout.outerInset : compactContentInset,
             alignment: .center
         )
     }
@@ -281,6 +275,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         compactStatusTrailingWingWidth: CGFloat? = nil,
         recordingLeadingWingWidth: CGFloat? = nil,
         recordingTrailingWingWidth: CGFloat? = nil,
+        teleprompterLeadingWingWidth: CGFloat? = nil,
         isHovered: Bool,
         isKeyboardFocused: Bool,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
@@ -332,6 +327,16 @@ public struct VoiceBarNotchPresentation: Equatable {
                 topHeight: baseGeometry.topHeight,
                 leadingWingWidth: recordingLeadingWingWidth ?? baseGeometry.leadingWingWidth,
                 trailingWingWidth: recordingTrailingWingWidth ?? baseGeometry.trailingWingWidth,
+                bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
+                bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
+                lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
+            )
+        } else if visualState == .teleprompter, let teleprompterLeadingWingWidth {
+            VoiceBarNotchGeometry(
+                coreWidth: baseGeometry.coreWidth,
+                topHeight: baseGeometry.topHeight,
+                leadingWingWidth: teleprompterLeadingWingWidth,
+                trailingWingWidth: baseGeometry.trailingWingWidth,
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
                 lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight

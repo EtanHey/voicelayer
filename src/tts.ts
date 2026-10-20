@@ -1587,6 +1587,8 @@ class PlaybackQueueManager {
         readback_id: readbackID,
         ...(readbackID ? { readback_duration_ms: retainedReadback.seekableMs(readbackID) } : {}),
         ...next.metadata.speechIdentity,
+        playback_id: next.id,
+        generation: next.lifecycle.generation,
         ...(next.metadata.longRead ? { long_read: next.metadata.longRead } : {}),
         ...(next.metadata.playbackOffsetMs !== undefined ? { playback_offset_ms: next.metadata.playbackOffsetMs } : {}),
         ...(utteranceMs !== undefined ? { duration_ms: utteranceMs } : {}),

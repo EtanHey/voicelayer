@@ -1849,8 +1849,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     trailingOuterInset: WaveformLayout.outerInset
                 )
             case .speaking:
+                // P16: pause/play on the left; a hidden-but-playing read adds its eye beside Stop.
                 return VoiceBarNotchInteractionConfiguration(
-                    trailingControlCountFromOuter: state.isTeleprompterDismissed ? 2 : 1,
+                    leadingControlCount: 1,
+                    trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
                     trailingOuterInset: WaveformLayout.outerInset
                 )
             case .error:
@@ -1876,6 +1878,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 lowerControlCount += 1
             }
             return VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: state.mode == .speaking ? 1 : 0,
                 lowerControlCount: lowerControlCount,
                 lowerSurfaceIsInteractive: state.mode == .speaking
             )
@@ -1927,6 +1930,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             recordingTrailingWingWidth: resolved.visualState == .recording
                 ? resolved.geometry.trailingWingWidth
                 : nil,
+            teleprompterLeadingWingWidth: resolved.visualState == .teleprompter
+                ? resolved.geometry.leadingWingWidth
+                : nil,
             keepsIdleExpanded: voiceState.mode == .idle && !voiceState.isCollapsed,
             coreWidth: coreWidth,
             visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0,
@@ -1949,6 +1955,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 hasTeleprompterText: state?.teleprompterText != nil,
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
+                isPlaybackPaused: state?.isPlaybackPaused ?? false,
                 confirmationText: state?.confirmationText,
                 commandModeState: state?.commandModeState,
                 activeClipMarker: state?.activeClipMarker,

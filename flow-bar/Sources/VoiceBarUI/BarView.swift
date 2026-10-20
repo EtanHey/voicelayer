@@ -413,6 +413,7 @@ public struct BarView: View {
             hasTeleprompterText: state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
+            isPlaybackPaused: state.isPlaybackPaused,
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker,
@@ -491,12 +492,36 @@ public struct BarView: View {
         case .compactStatus:
             if state.mode == .transcribing {
                 ProcessingSpinner()
+            } else if let playbackPauseControl {
+                playbackPauseButton(playbackPauseControl)
             } else {
                 statusIcon
             }
         case .teleprompter:
-            EmptyView()
+            if let playbackPauseControl {
+                playbackPauseButton(playbackPauseControl)
+            }
         }
+    }
+
+    private var playbackPauseControl: VoiceBarPlaybackPauseControl? {
+        VoiceBarPresentation.playbackPauseControl(
+            mode: state.mode,
+            isPaused: state.isPlaybackPaused,
+            isReadback: state.isTeleprompterReadback
+        )
+    }
+
+    /// P16: Pause collapses the teleprompter and Play expands it again; the shell's own morph animates both.
+    private func playbackPauseButton(_ control: VoiceBarPlaybackPauseControl) -> some View {
+        notchButton(
+            icon: control.iconName,
+            accessibilityLabel: control.accessibilityLabel,
+            accessibilityHint: control.accessibilityHint
+        ) {
+            state.togglePlaybackPause()
+        }
+        .contentTransition(.symbolEffect(.replace))
     }
 
     @ViewBuilder
@@ -533,7 +558,7 @@ public struct BarView: View {
         case .speaking:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
                 notchWaveform
-                if state.isTeleprompterDismissed {
+                if state.isTeleprompterDismissed, !state.isPlaybackPaused {
                     notchTeleprompterButton(
                         icon: "eye",
                         accessibilityLabel: "Show teleprompter"
@@ -578,7 +603,7 @@ public struct BarView: View {
             isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
             playbackLevel: { state.playbackAudioLevel() },
-            isPlaybackEnded: state.isTeleprompterReadback
+            isPlaybackEnded: state.isTeleprompterReadback || state.isPlaybackPaused
         )
         .help("Audio level")
     }
