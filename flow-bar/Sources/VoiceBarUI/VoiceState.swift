@@ -381,6 +381,7 @@ public final class VoiceState {
             } else if mode != .speaking {
                 clearCurrentSelectionReadIdentity(advanceEpoch: false)
             }
+            if mode != .speaking { setPlaybackPaused(false) }
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
@@ -478,6 +479,12 @@ public final class VoiceState {
     private var retainedTeleprompterText: String?
     private var retainedTeleprompterWordBoundaries: [TeleprompterBoundary] = []
     public private(set) var isTeleprompterDismissed = false
+    /// P16: the daemon parked this read (`playback_state` paused). The clock holds the paused offset until
+    /// Resume's speaking edge re-anchors it.
+    public private(set) var isPlaybackPaused = false
+    private var pausedPlaybackMilliseconds: Int?
+    private var pausedPlaybackIdentity: (id: String, generation: Int)?
+    private var pendingPlaybackPauseIDs: Set<String> = []
 
     public var teleprompterText: String? {
         if mode == .speaking, !statusText.isEmpty {
@@ -1656,12 +1663,79 @@ public final class VoiceState {
         sendCommand?(command)
     }
 
+    /// P16: the pill's pause/play control. Pause sends the teleprompter clock so the daemon freezes on the
+    /// word on screen; Resume echoes the parked identity so a newer read is never resumed by mistake.
+    public func togglePlaybackPause() {
+        guard mode == .speaking, let sendCommand else { return }
+        let id = UUID().uuidString
+        var command: [String: Any] = ["id": id]
+        if isPlaybackPaused {
+            command["cmd"] = "resume"
+            if let pausedPlaybackIdentity {
+                command["playback_id"] = pausedPlaybackIdentity.id
+                command["generation"] = pausedPlaybackIdentity.generation
+            }
+        } else {
+            command["cmd"] = "pause"
+            command["playback_elapsed_ms"] = playbackElapsedMilliseconds()
+        }
+        pendingPlaybackPauseIDs.insert(id)
+        sendCommand(command)
+    }
+
+    private func setPlaybackPaused(_ paused: Bool) {
+        if !paused {
+            pausedPlaybackMilliseconds = nil
+            pausedPlaybackIdentity = nil
+        }
+        guard isPlaybackPaused != paused else { return }
+        isPlaybackPaused = paused
+        notifyPanelLayoutChangedIfNeeded(true)
+    }
+
+    private func handlePlaybackStateEvent(_ event: [String: Any]) {
+        guard mode == .speaking else { return }
+        switch event["state"] as? String {
+        case "paused":
+            let offset = (event["offset_ms"] as? NSNumber)?.doubleValue
+            pausedPlaybackMilliseconds = offset.flatMap { $0.isFinite && $0 >= 0 ? Int($0.rounded()) : nil }
+                ?? playbackElapsedMilliseconds()
+            if let id = event["playback_id"] as? String,
+               let generation = (event["generation"] as? NSNumber)?.intValue {
+                pausedPlaybackIdentity = (id, generation)
+            }
+            setPlaybackPaused(true)
+        case "resumed":
+            // Resume's speaking edge (playback_offset_ms) has already re-anchored the clock at the paused word.
+            setPlaybackPaused(false)
+        default:
+            return
+        }
+    }
+
+    private func handlePlaybackPauseAck(_ event: [String: Any], command: String) {
+        guard let id = event["id"] as? String, pendingPlaybackPauseIDs.remove(id) != nil,
+              event["outcome"] as? String == "reject"
+        else { return }
+        switch event["reason"] as? String {
+        case "stale":
+            return // The read moved on; the next speaking edge already says so.
+        case "unsupported":
+            showConfirmation("This prompt can't be paused")
+        case "busy":
+            showConfirmation(command == "pause" ? "Busy. Can't pause now" : "Busy. Can't resume now")
+        default:
+            showConfirmation(command == "pause" ? "Pause unavailable" : "Resume unavailable")
+        }
+    }
+
     public func reportWordTimingUnavailable() {
         showConfirmation("Word timing unavailable")
     }
 
     public func playbackElapsedMilliseconds() -> Int {
         guard mode == .speaking, let playbackStartedAt else { return 0 }
+        if isPlaybackPaused, let pausedPlaybackMilliseconds { return pausedPlaybackMilliseconds }
         return max(
             0,
             Int(((playbackAmplitudeClock() - playbackStartedAt) * 1000).rounded())
@@ -1669,7 +1743,7 @@ public final class VoiceState {
     }
 
     func playbackAudioLevel(atSystemUptime systemUptime: TimeInterval) -> Double {
-        guard let envelope = playbackAmplitudeEnvelope,
+        guard !isPlaybackPaused, let envelope = playbackAmplitudeEnvelope,
               let startedAt = playbackAmplitudeStartedAt
         else { return 0 }
         let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000).rounded())
@@ -2060,6 +2134,7 @@ public final class VoiceState {
                 }
                 mode = .speaking
                 isTeleprompterDismissed = false
+                setPlaybackPaused(false)
                 statusText = event["text"] as? String ?? ""
                 canReplay = true
                 hotkeyPhase = .idle
@@ -2144,6 +2219,9 @@ public final class VoiceState {
 
         case "ack":
             handleAckEvent(event)
+
+        case "playback_state":
+            handlePlaybackStateEvent(event)
 
         case "transcription_status":
             guard mode == .transcribing else { return }
@@ -3932,6 +4010,10 @@ public final class VoiceState {
     }
 
     private func handleAckEvent(_ event: [String: Any]) {
+        if let command = event["command"] as? String, command == "pause" || command == "resume" {
+            handlePlaybackPauseAck(event, command: command)
+            return
+        }
         if event["command"] as? String == "seek" {
             guard let id = event["id"] as? String, pendingReadbackSeekIDs.remove(id) != nil else { return }
             if event["outcome"] as? String != "accept", isTeleprompterReadback {

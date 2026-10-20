@@ -310,6 +310,77 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertFalse(state.isTeleprompterDismissed)
     }
 
+    func testPauseControlLeftOfTheCoreSendsPauseThenResume() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Pause me on the left"])
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        let router = SpyCommandRouter()
+
+        // Teleprompter: the control sits in the new leading wing, inside the live hit region. (Any synthesized
+        // click into a mounted teleprompter makes the test app active, Stop and the eye included, so the click
+        // itself is exercised in the compact layouts below.)
+        let teleprompter = makeInteractivePanelHost(
+            state: state,
+            router: router,
+            configuration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                leadingCoreInset: WaveformLayout.coreGap,
+                lowerControlCount: 2,
+                lowerSurfaceIsInteractive: true
+            )
+        )
+        let leadingWing = teleprompter.layout.presentation.geometry.leadingWingWidth
+        XCTAssertEqual(leadingWing, VoiceBarNotchContract.teleprompterPauseWingWidth)
+        let pauseRect = teleprompter.controlRects[0]
+        let pausePoint = NSPoint(x: pauseRect.midX, y: pauseRect.midY)
+        XCTAssertLessThan(pauseRect.maxX, teleprompter.layout.visibleContentRect.minX
+            + teleprompter.layout.presentation.geometry.coreOriginX)
+        XCTAssertTrue(teleprompter.layout.containsInteractiveContent(pausePoint))
+        XCTAssertNotNil(teleprompter.host.hitTest(pausePoint))
+
+        // A hidden-but-playing read: pause on the left, the eye and Stop on the right.
+        state.dismissTeleprompter()
+        let speaking = makeInteractivePanelHost(
+            state: state,
+            router: router,
+            configuration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromOuter: 2,
+                trailingOuterInset: WaveformLayout.outerInset
+            )
+        )
+        XCTAssertEqual(speaking.layout.presentation.visualState, .compactStatus)
+        let compactPause = speaking.controlRects[0]
+        click(speaking.host, at: NSPoint(x: compactPause.midX, y: compactPause.midY))
+        XCTAssertEqual(sent.last?["cmd"] as? String, "pause")
+        XCTAssertNotNil(sent.last?["playback_elapsed_ms"] as? Int)
+        XCTAssertEqual(router.stopCount, 0)
+
+        state.handleEvent([
+            "type": "playback_state", "state": "paused", "playback_id": "p-1", "generation": 2,
+            "offset_ms": 900, "chunk_offset_ms": 900,
+        ])
+        let paused = makeInteractivePanelHost(
+            state: state,
+            router: router,
+            configuration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromOuter: 1,
+                trailingOuterInset: WaveformLayout.outerInset
+            )
+        )
+        XCTAssertEqual(paused.layout.presentation.visualState, .compactStatus)
+        let playRect = paused.controlRects[0]
+        click(paused.host, at: NSPoint(x: playRect.midX, y: playRect.midY))
+        XCTAssertEqual(sent.last?["cmd"] as? String, "resume")
+        XCTAssertEqual(sent.last?["playback_id"] as? String, "p-1")
+        XCTAssertEqual(sent.last?["generation"] as? Int, 2)
+        XCTAssertEqual(router.stopCount, 0)
+    }
+
     func testIdleMicButtonRoutesPrimaryAction() {
         let state = VoiceState()
         state.mode = .idle
@@ -552,7 +623,8 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertFalse(hover.contains("vocabularyButton"))
         XCTAssertFalse(active.contains("historyButton"))
         XCTAssertFalse(active.contains("settingsButton"))
-        XCTAssertTrue(teleprompterLeading.contains("EmptyView()"))
+        // P16: a speaking teleprompter's left holds pause/play, and nothing else.
+        XCTAssertTrue(teleprompterLeading.contains("playbackPauseButton"))
         XCTAssertFalse(teleprompterLeading.contains("settingsButton"))
         XCTAssertFalse(teleprompterLeading.contains("Dictionary"))
     }
@@ -738,8 +810,10 @@ final class BarViewClickabilityTests: XCTestCase {
             x: layout.visibleContentRect.midX,
             y: layout.visibleContentRect.minY + 120
         )
+        // Left of P16's pause wing, where the old Dictionary lane hung below the top row.
         let formerDictionaryLane = NSPoint(
-            x: layout.visibleContentRect.minX + 108,
+            x: layout.visibleContentRect.minX + layout.presentation.geometry.coreOriginX
+                - VoiceBarNotchContract.teleprompterPauseWingWidth - 20,
             y: layout.visibleContentRect.minY + 212
         )
 
@@ -848,6 +922,7 @@ final class BarViewClickabilityTests: XCTestCase {
                 hasTeleprompterText: state.teleprompterText != nil,
                 isTeleprompterDismissed: state.isTeleprompterDismissed,
                 isTeleprompterReadback: state.isTeleprompterReadback,
+                isPlaybackPaused: state.isPlaybackPaused,
                 isCollapsed: state.isCollapsed
             )
         )

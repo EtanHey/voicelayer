@@ -199,12 +199,44 @@ final class AppLifecycleTests: XCTestCase {
         )
 
         state.mode = .speaking
+        state.statusText = "Speaking read"
         state.canReplay = true
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
             VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                leadingCoreInset: WaveformLayout.coreGap,
                 lowerControlCount: 3,
                 lowerSurfaceIsInteractive: true
+            )
+        )
+
+        // P16: the pause control sits left of the core while speaking; the hidden read's eye joins Stop.
+        state.dismissTeleprompter()
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
+            VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromOuter: 2,
+                trailingOuterInset: WaveformLayout.outerInset
+            )
+        )
+    }
+
+    func testPausedSpeechKeepsPlayAndStopReachable() {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Paused read"])
+        state.dismissTeleprompter()
+        state.handleEvent([
+            "type": "playback_state", "state": "paused", "playback_id": "p", "generation": 2,
+            "offset_ms": 1200, "chunk_offset_ms": 1200,
+        ])
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
+            VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromOuter: 1,
+                trailingOuterInset: WaveformLayout.outerInset
             )
         )
     }

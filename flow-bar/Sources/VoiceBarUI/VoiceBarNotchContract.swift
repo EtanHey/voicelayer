@@ -249,6 +249,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         compactStatusTrailingWingWidth: CGFloat? = nil,
         recordingLeadingWingWidth: CGFloat? = nil,
         recordingTrailingWingWidth: CGFloat? = nil,
+        teleprompterLeadingWingWidth: CGFloat? = nil,
         isHovered: Bool,
         isKeyboardFocused: Bool,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
@@ -300,6 +301,16 @@ public struct VoiceBarNotchPresentation: Equatable {
                 topHeight: baseGeometry.topHeight,
                 leadingWingWidth: recordingLeadingWingWidth ?? baseGeometry.leadingWingWidth,
                 trailingWingWidth: recordingTrailingWingWidth ?? baseGeometry.trailingWingWidth,
+                bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
+                bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
+                lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
+            )
+        } else if visualState == .teleprompter, let teleprompterLeadingWingWidth {
+            VoiceBarNotchGeometry(
+                coreWidth: baseGeometry.coreWidth,
+                topHeight: baseGeometry.topHeight,
+                leadingWingWidth: teleprompterLeadingWingWidth,
+                trailingWingWidth: baseGeometry.trailingWingWidth,
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
                 lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
@@ -421,6 +432,11 @@ public enum VoiceBarNotchContract {
     public static let teleprompterTrailingWingWidth = teleprompterWaveformWingWidth(
         visibleCoreOcclusionInset: 0
     )
+
+    /// P16: a speaking teleprompter's leading wing holds the pause/play control, mirroring the waveform
+    /// wing's core gutter and outer inset.
+    public static let teleprompterPauseWingWidth = WaveformLayout.coreGap +
+        material.compactControlSize + WaveformLayout.outerInset
 
     public static let material = VoiceBarNotchMaterialContract(
         blackToGlassFadeWidth: 16,

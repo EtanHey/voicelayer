@@ -4,6 +4,7 @@ import * as amplitude from "../playback-amplitude";
 import * as socket from "../socket-client";
 import * as input from "../input";
 import { handleSocketCommand } from "../socket-handlers";
+import { parseCommand } from "../socket-protocol";
 import { TEST_TMP } from "./setup/test-tmp";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
@@ -260,5 +261,28 @@ describe("P10 socket pause/resume", () => {
     at(4200);
     expect(handleSocketCommand({ cmd: "pause", playback_elapsed_ms: 3950 } as any)).toMatchObject({ outcome: "accept", offset_ms: 3950 });
     expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "paused", offset_ms: 3950, word_index: 3 });
+  });
+  it("P16 e2e: VoiceBar's pause → resume wire continues the same utterance from the paused word", async () => {
+    const { handle } = await startTenSecondRead();
+    const firstSpeaking = events.filter(e => e.state === "speaking").at(-1);
+    at(4200);
+    // The exact lines VoiceBar writes: pause carries its teleprompter clock; resume echoes the paused identity.
+    const pause = parseCommand(JSON.stringify({ cmd: "pause", id: "vb-p", playback_elapsed_ms: 4100 }));
+    expect(handleSocketCommand(pause as any)).toMatchObject({ command: "pause", id: "vb-p", outcome: "accept", offset_ms: 4100 });
+    const paused = events.filter(e => e.type === "playback_state").at(-1);
+    expect(paused).toMatchObject({ state: "paused", playback_id: handle.id, offset_ms: 4100, word_index: 4, word_count: 10 });
+    (await trims.at(0)).exit.resolve(0); await fixtureCheckpoint();
+    at(60_000);
+    const resume = parseCommand(JSON.stringify({ cmd: "resume", id: "vb-r", playback_id: paused.playback_id, generation: paused.generation }));
+    expect(handleSocketCommand(resume as any)).toMatchObject({ command: "resume", id: "vb-r", outcome: "accept", offset_ms: 4100 });
+    const resumedPlayer = await players.at(1); await fixtureCheckpoint();
+    const speaking = events.filter(e => e.state === "speaking").at(-1);
+    // Same utterance: same text, same readback identity, clock anchored at the paused offset.
+    expect(speaking).toMatchObject({ text: firstSpeaking.text, readback_id: firstSpeaking.readback_id, playback_offset_ms: 4100 });
+    expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "resumed", playback_id: handle.id, offset_ms: 4100, word_index: 4 });
+    expect(events.filter(e => e.type === "playback_outcome")).toEqual([]);
+    resumedPlayer.exit.resolve(0);
+    expect(await handle.exited).toMatchObject({ status: "completed", playback_id: handle.id });
+    expect(players.values).toHaveLength(2);
   });
 });
