@@ -245,6 +245,7 @@ private enum VoicePasteOutcome: Equatable {
     case pasted
     case notInserted
     case unverified
+    case typed
     case partial
     case failed(String)
 }
@@ -941,6 +942,11 @@ public final class VoiceState {
 
     /// Completion-aware production seam. The completion must run on the main thread.
     public var asyncDictationInsertionHandlerProvider: () -> AsyncDictationInsertionHandler? = { nil }
+
+    /// Read only at delivery: Chromium/Electron/CEF hosts take the typed route, never AX.
+    public var chromiumFamilyAppDetector: (NSRunningApplication) -> Bool = {
+        ChromiumFamilyApps.contains(bundleURL: $0.bundleURL)
+    }
 
     /// Read only at delivery, never while starting capture or handling a hotkey.
     public var focusedTargetEligibilityProvider: () -> DictationFocusedTargetEligibility? = { nil }
@@ -3661,7 +3667,11 @@ public final class VoiceState {
                     let isTerminalTarget = TerminalPasteTargets.isTerminal(pasteTargetBundleID)
                     // Etan's ruling: delivery in these rich hosts uses the
                     // working Shift+F5 typing route, never a whole-document AX write.
-                    let usesRichHostTyping = ["com.t3tools.t3code", "net.imput.helium"].contains(pasteTargetBundleID)
+                    // PASTE2: Gemini.app (WebKit composer) and every Chromium/Electron/CEF host
+                    // join them; AX cannot certify their web composers, so an AX miss there
+                    // used to stop at "Not pasted". Unknown native apps still take AX only.
+                    let usesRichHostTyping = Self.richHostTypingBundleIdentifiers.contains(pasteTargetBundleID)
+                        || chromiumFamilyAppDetector(pasteTarget)
                     let skipsAX = isTerminalTarget || usesRichHostTyping
                     let typingEligibility = requiresEditableTarget && !skipsAX
                         ? focusedTargetEligibilityProvider() : nil
@@ -3950,12 +3960,16 @@ public final class VoiceState {
     private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"
     private static let pasteFailureRetryMessage = "Paste failed — click input and press Shift+F5"
 
+    private static let richHostTypingBundleIdentifiers: Set<String> = [
+        "com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS",
+    ]
+
     private static func pasteOutcome(
         pasted: Bool,
         plan: VoicePastePlan
     ) -> VoicePasteOutcome {
         guard pasted else { return .failed(genericPasteFailureMessage) }
-        return .unverified
+        return .typed
     }
 
     private static func sameApp(_ lhs: NSRunningApplication?, _ rhs: NSRunningApplication?) -> Bool {
@@ -3980,6 +3994,7 @@ public final class VoiceState {
             case .pasted: .pasted
             case .notInserted: .notInserted
             case .unverified, .partial: .unverified
+            case .typed: .typed
             case .failed: .failed
             }
         }
@@ -4000,6 +4015,13 @@ public final class VoiceState {
                 showsTerminalTranscript ? text : PasteRecoveryFeedback.unverified,
                 duration: 5.0
             )
+        case .typed:
+            // Terminal confirmation keeps the dictated words. Posted key events are not
+            // readback, so the pill says only what happened: "Typed".
+            showConfirmation(
+                showsTerminalTranscript ? text : PasteDeliveryFeedback.typed,
+                duration: 5.0
+            )
         case .partial:
             showConfirmation(PasteRecoveryFeedback.partial, duration: 5.0)
         case let .failed(message):
@@ -4010,7 +4032,7 @@ public final class VoiceState {
         if let notice = pendingMicDisconnectNotice, let operationID, operationID == latestDictationOperationID {
             pendingMicDisconnectNotice = nil
             switch outcome {
-            case .insertedAtCursor, .pasted, .unverified:
+            case .insertedAtCursor, .pasted, .unverified, .typed:
                 showConfirmation(notice, duration: Self.micDisconnectNoticeSeconds)
             case .notInserted, .partial, .failed:
                 break

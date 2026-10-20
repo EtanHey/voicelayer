@@ -168,7 +168,7 @@ public struct SetupTryItStep: Equatable {
         case .notInserted:
             // VoiceBar didn't try to type this dictation; say what to do, not why.
             return "It wasn't typed anywhere. Click into Notes or TextEdit, hold F5, and try again."
-        case .pending, .unverified:
+        case .pending, .unverified, .typed:
             return nil
         }
     }
@@ -177,7 +177,7 @@ public struct SetupTryItStep: Equatable {
         switch observation.insertion {
         case .insertedAtCursor, .pasted: .success
         case .failed, .notInserted: .attention
-        case .pending, .unverified: .neutral
+        case .pending, .unverified, .typed: .neutral
         }
     }
 

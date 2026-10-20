@@ -17,6 +17,8 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         var front: SelectionFocusAX.AppIdentity? = FakeAX.appA
         /// Apps whose bundle is Chromium/Electron. Only these can earn the unreadable-focus Copy exemption.
         var chromium: Set<pid_t> = [FakeAX.appA.pid]
+        /// When set, classify through the production detector against these bundles instead.
+        var bundles: [pid_t: URL]?
         var frontQueries = 0
         /// Runs before each frontmost query (1-based), so a test can switch apps at an exact point.
         var onFrontmostQuery: (Int) -> Void = { _ in }
@@ -43,7 +45,10 @@ final class SelectionFocusRecoveryTests: XCTestCase {
                     self.onFrontmostQuery(self.frontQueries)
                     return self.front
                 },
-                isChromiumFamily: { self.chromium.contains($0.pid) },
+                isChromiumFamily: { app in
+                    guard let bundles = self.bundles else { return self.chromium.contains(app.pid) }
+                    return ChromiumFamilyApps.contains(bundleURL: bundles[app.pid])
+                },
                 setManualAccessibility: { self.sets.append($0.pid); return self.setResult },
                 sleep: { self.sleeps.append($0); self.onSleep(self.sleeps.count) })
         }
@@ -172,6 +177,40 @@ final class SelectionFocusRecoveryTests: XCTestCase {
         XCTAssertEqual(result.blockReason?.outcome, .captureFailed)
         XCTAssertEqual(result.axEnable, .attempted)
         XCTAssertNil(result.copyExemptApp)
+    }
+
+    // PASTE2 R1 (Sol P2): the Copy exemption rests on Chromium's secure-input behaviour, so a
+    // native bundle with only an app.asar resource (or an app.asar directory) must not earn it.
+    func testUncorroboratedAsarBundleNeverGrantsTheCopyExemption() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pa2-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileManager = FileManager.default
+        let resourceOnly = root.appendingPathComponent("ResourceOnly.app/Contents/Resources")
+        try fileManager.createDirectory(at: resourceOnly, withIntermediateDirectories: true)
+        try Data("asar".utf8).write(to: resourceOnly.appendingPathComponent("app.asar"))
+        let asarDirectory = root.appendingPathComponent("AsarDirectory.app")
+        try fileManager.createDirectory(at: asarDirectory.appendingPathComponent("Contents/Resources/app.asar"),
+                                        withIntermediateDirectories: true)
+        let electronData = asarDirectory.appendingPathComponent("Contents/Frameworks/X Framework.framework/Resources")
+        try fileManager.createDirectory(at: electronData, withIntermediateDirectories: true)
+        for name in ["icudtl.dat", "resources.pak"] {
+            try Data("x".utf8).write(to: electronData.appendingPathComponent(name))
+        }
+        for bundle in [root.appendingPathComponent("ResourceOnly.app"), asarDirectory] {
+            let fake = FakeAX([.noValue])
+            fake.bundles = [FakeAX.appA.pid: bundle]
+            let result = SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil)
+            XCTAssertEqual(result.blockReason?.outcome, .captureFailed, bundle.lastPathComponent)
+            XCTAssertNil(result.copyExemptApp, bundle.lastPathComponent)
+        }
+
+        // Control: the same path grants it to a real Electron bundle.
+        let electron = root.appendingPathComponent("Claude.app/Contents/Frameworks/Electron Framework.framework")
+        try fileManager.createDirectory(at: electron, withIntermediateDirectories: true)
+        let fake = FakeAX([.noValue])
+        fake.bundles = [FakeAX.appA.pid: root.appendingPathComponent("Claude.app")]
+        XCTAssertEqual(SpeakSelectionCapture.preflight(fake.ax, recover: true, copyExemptApp: nil).copyExemptApp,
+                       FakeAX.appA)
     }
 
     func testRecoveredSecureFocusIsStillASecureField() {

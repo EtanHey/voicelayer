@@ -59,11 +59,7 @@ struct SelectionFocusAX {
             return AppIdentity(pid: pid, startTime: UInt64(start.tv_sec) * 1_000_000 + UInt64(start.tv_usec))
         },
         isChromiumFamily: { app in
-            guard let bundle = NSRunningApplication(processIdentifier: app.pid)?.bundleURL else { return false }
-            let frameworks = bundle.appendingPathComponent("Contents/Frameworks")
-            return SelectionFocusAX.chromiumFrameworks.contains {
-                FileManager.default.fileExists(atPath: frameworks.appendingPathComponent($0).path)
-            }
+            ChromiumFamilyApps.contains(bundleURL: NSRunningApplication(processIdentifier: app.pid)?.bundleURL)
         },
         setManualAccessibility: { app in
             let pid = app.pid
@@ -89,11 +85,6 @@ struct SelectionFocusAX {
                                 subrole: subroleStatus == .success ? subroleValue as? String : nil,
                                 failure: failure, roleStatus: status))
     }
-
-    static let chromiumFrameworks = [
-        "Electron Framework.framework", "Chromium Embedded Framework.framework", "Chromium Framework.framework",
-        "Google Chrome Framework.framework", "Microsoft Edge Framework.framework", "Brave Browser Framework.framework",
-    ]
 }
 
 struct SelectionFocusPreflight {

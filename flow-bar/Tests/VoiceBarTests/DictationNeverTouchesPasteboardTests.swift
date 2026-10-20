@@ -55,11 +55,11 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
             XCTAssertEqual(harness.typed.map(\.text), ["ADD שלום 👩‍💻\nsecond line"], bundle)
             XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED", bundle)
             XCTAssertEqual(harness.pasteboardWrites, [], bundle)
-            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .unverified, "Posted events are not readback")
+            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .typed, "Posted events are typed, not readback")
         }
     }
 
-    func testEveryTerminalKeepsTranscriptConfirmationAndUnverifiedStatus() {
+    func testEveryTerminalKeepsTranscriptConfirmationAndTypedStatus() {
         let text = "ADD שלום 👩‍💻\nsecond line"
         for bundle in TerminalPasteTargets.bundleIdentifiers.sorted() {
             let harness = PasteHarness(bundleIdentifier: bundle, pasteboard: "WHAT HE COPIED")
@@ -68,13 +68,13 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
             }
             harness.dictate(text)
             XCTAssertEqual(harness.state.confirmationText, text, "Automatic delivery: \(bundle)")
-            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .unverified, bundle)
+            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .typed, bundle)
             XCTAssertEqual(harness.typed.map(\.text), [text], "Exactly one automatic delivery: \(bundle)")
             XCTAssertEqual(harness.state.latestReusableTranscript, text, bundle)
 
             harness.state.repasteLastTranscript(source: "shift_f5")
             XCTAssertEqual(harness.state.confirmationText, text, "Explicit recovery: \(bundle)")
-            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .unverified, bundle)
+            XCTAssertEqual(harness.state.latestDictationInsertionStatus, .typed, bundle)
             XCTAssertEqual(harness.typed.map(\.text), [text, text], "One explicit recovery, no duplicate fallback: \(bundle)")
             XCTAssertEqual(harness.state.latestReusableTranscript, text, bundle)
             XCTAssertEqual(harness.pasteboardWrites, [], bundle)

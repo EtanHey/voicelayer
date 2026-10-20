@@ -79,7 +79,7 @@ final class CommandModeAXHelperTests: XCTestCase {
         state.repasteTranscript(text, source: "settings_history")
         XCTAssertEqual(typed, [text])
         XCTAssertEqual(completions, 0)
-        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
+        XCTAssertEqual(state.confirmationText, PasteDeliveryFeedback.typed)
     }
 
     private func localInsertion(
@@ -429,7 +429,7 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
         XCTAssertEqual(typed, [transcript], "the transcript is typed into cmux verbatim")
         XCTAssertEqual(state.confirmationText, transcript)
-        XCTAssertEqual(state.latestDictationInsertionStatus, .unverified)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .typed)
     }
 
     /// The regression the cmux test used to guard - a finished F5 transcript
