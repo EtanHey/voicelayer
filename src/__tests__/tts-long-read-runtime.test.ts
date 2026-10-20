@@ -10,7 +10,7 @@ import * as input from "../input";
 import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
-import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
+import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForTTS, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand } from "../socket-handlers";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
@@ -409,6 +409,21 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         if (guard === "clear") expect(states.at(-1)).toEqual({ type: "state", state: "idle", source: "playback" });
       } finally { admission?.release(); }
     });
+
+  it("TELE1 Preparing carries the whole display document and each chunk's first token, once", async () => {
+    const paragraphs = Array.from({ length: 12 }, (_, i) => `Paragraph ${i} keeps its own break and enough words to fill a chunk.`).join("\n\n");
+    const h = start("edge", paragraphs); await fixtureCheckpoint();
+    const preparing = events.find((event) => event.state === "speaking" && event.long_read?.preparing);
+    const texts = chunkTextForTTS(paragraphs);
+    expect(texts.length).toBeGreaterThan(1);
+    expect(preparing.long_read).toMatchObject({ id: h.id, chunk_count: texts.length, text: paragraphs });
+    let words = 0;
+    expect(preparing.long_read.chunk_word_starts).toEqual(texts.map((chunk) => { const at = words; words += chunk.split(/\s+/).length; return at; }));
+    await playerBarrier.at(0);
+    const played = events.find((event) => event.state === "speaking" && !event.long_read?.preparing);
+    expect(played.text).toBe(texts[0]); // synthesis chunking and per-chunk text are unchanged
+    expect(played.long_read.text).toBeUndefined();
+  });
 
   it("PLAYER0 new speakLongRead cannot stop another agent's active or queued job", async () => {
     const other = playAudioNonBlocking("foreign-current.mp3"); await playerBarrier.at(0);

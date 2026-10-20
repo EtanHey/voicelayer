@@ -66,7 +66,7 @@ import { RetainedReadback } from "./tts/retained-readback";
 import { prepareSeekSlice, disposeSeekSlice } from "./tts/seek-audio";
 import { PlaybackLifecycle, type PlaybackScope, type QueuedPlaybackHandle } from "./tts/playback-lifecycle";
 export type { PlaybackScope, QueuedPlaybackHandle } from "./tts/playback-lifecycle";
-import { runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read";
+import { longReadDocument, runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
@@ -2168,7 +2168,8 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   const chunkAlignedWords = new Map<string, AlignedWordBoundary[]>();
   // Swift routes Escape only in active modes. Actual playback resets this clock/text.
   broadcast({ type: "state", state: "speaking", text: "Preparing speech…", voice: profile.voice, ...speechIdentity,
-    long_read: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0, preparing: true } });
+    long_read: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0, preparing: true,
+      ...longReadDocument(displayText, texts) } });
   const run = async () => {
     if (signal.aborted) return;
     // A recording may have begun while the predecessor was settling.

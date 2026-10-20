@@ -403,6 +403,11 @@ public enum TeleprompterContentModel {
         }
     }
 
+    /// How many display words `splitDisplayToken` makes of one whitespace token.
+    static func displayPieceCount(_ token: String) -> Int {
+        max(1, (token.count + maxDisplayTokenLength - 1) / maxDisplayTokenLength)
+    }
+
     private static func splitDisplayToken(_ word: TeleprompterWord) -> [TeleprompterWord] {
         guard word.text.count > maxDisplayTokenLength else { return [word] }
         var chunks: [TeleprompterWord] = []
