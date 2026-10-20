@@ -84,8 +84,11 @@ final class TeleprompterScrubLiveCaseTests: XCTestCase {
             for column in 0 ..< image.width {
                 // A bitmap context's buffer stores the image's top row first.
                 let offset = (row * image.width + column) * 4
-                values[row * image.width + column] = UInt8(
-                    (54 * Int(bytes[offset]) + 183 * Int(bytes[offset + 1]) + 19 * Int(bytes[offset + 2])) / 256)
+                let red = Int(bytes[offset])
+                let green = Int(bytes[offset + 1])
+                let blue = Int(bytes[offset + 2])
+                let luminance = (54 * red + 183 * green + 19 * blue) / 256
+                values[row * image.width + column] = UInt8(luminance)
             }
         }
         return (image.width, image.height, values)
