@@ -500,18 +500,12 @@ public enum TeleprompterScrollPolicy {
         text
     }
 
-    /// Longest playback step that may glide into the next block: the rest of the step is already on screen.
-    public static let maximumGlideWords = 40
-
-    /// TELE1: the lazy stack builds only what is near the viewport, and adjacency does not prove a block is
-    /// built (a 320-word block can leave the next one far below). A move inside the current block glides; so
-    /// does a playback step (the clock reaching the next timed word) a short way into the next block. A
-    /// restart or timeline update, or any longer move, is a jump that is reached block-first.
+    /// TELE1: a move inside the current block glides, and so does playback reading on to the very next
+    /// word. Anything else is a jump, reached block-first. Neither is trusted to land: after layout the view
+    /// checks that the destination block is mounted (TELE1C).
     public static func scrollsSmoothly(from old: Int, to new: Int, blockOfWord: [Int], isPlaybackStep: Bool) -> Bool {
         guard blockOfWord.indices.contains(old), blockOfWord.indices.contains(new) else { return false }
-        let from = blockOfWord[old], to = blockOfWord[new]
-        if from == to { return true }
-        return isPlaybackStep && to == from + 1 && new > old && new - old <= maximumGlideWords
+        return blockOfWord[old] == blockOfWord[new] || isPlaybackStep && new == old + 1
     }
 }
 
@@ -684,6 +678,9 @@ public struct TeleprompterView: View {
     @State private var renderCache = TeleprompterRenderCache()
     /// True while the animation task is the one moving `currentIndex`; any restart clears it.
     @State private var isPlaybackStep = false
+    /// TELE1C: blocks the lazy stack has built, and a cross-block scroll still waiting for its block.
+    @State private var mountedBlocks: Set<Int> = []
+    @State private var pendingLanding: (word: Int, anchor: UnitPoint)?
 
     /// Words, formatting and blocks, computed once per text and timeline (a highlight tick reuses them).
     private var rendered: TeleprompterRenderedDocument {
@@ -711,7 +708,7 @@ public struct TeleprompterView: View {
                 )
             ) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    blockViews
+                    blockViews(proxy)
                 }
                 .padding(.horizontal, Theme.teleprompterShellInset)
                 .frame(width: wrapWidth, alignment: .leading)
@@ -766,7 +763,7 @@ public struct TeleprompterView: View {
 
     /// TELE1: one lazily laid-out flow per block, so a long read measures only what is on screen, and a
     /// highlight tick re-renders only the blocks whose inputs changed (the current one, and the one it left).
-    private var blockViews: some View {
+    private func blockViews(_ proxy: ScrollViewProxy) -> some View {
         let document = rendered
         let indexed = usesIndexedTiming
         let group = TeleprompterFormatting.groupRange(containing: currentIndex, layouts: document.layouts)
@@ -795,6 +792,12 @@ public struct TeleprompterView: View {
             .equatable()
             .padding(.top, index == 0 ? 0 : document.layouts[block.lowerBound].lineBreak == .paragraph ? 9 : 3)
             .id(blockID)
+            // TELE1C: the lazy stack says which blocks exist; a scroll that is waiting for one lands here.
+            .onAppear {
+                mountedBlocks.insert(index)
+                if let pending = pendingLanding, rendered.blockOfWord[pending.word] == index { land(pending, with: proxy) }
+            }
+            .onDisappear { mountedBlocks.remove(index) }
         }
     }
 
@@ -909,20 +912,38 @@ public struct TeleprompterView: View {
         case .top: .top
         case .center: .center
         }
-        if animated, currentIndex > 0 {
+        let target = currentIndex
+        if animated, target > 0 {
             withAnimation(Self.scrollAnimation) {
-                proxy.scrollTo(currentIndex, anchor: anchor)
+                proxy.scrollTo(target, anchor: anchor)
             }
         } else {
-            // A jump may land in a block the lazy stack has not built yet: reach the block, then the word.
             // A jump may land in a block the lazy stack has not built yet: reach the block, then the word
             // once that block is laid out (a second pass covers a block that needed one more layout).
-            let target = currentIndex
             proxy.scrollTo(TeleprompterBlockID(index: rendered.blockOfWord[target]), anchor: anchor)
             DispatchQueue.main.async {
                 proxy.scrollTo(target, anchor: anchor)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { proxy.scrollTo(target, anchor: anchor) }
             }
+        }
+        // TELE1C: never infer that a scroll landed. After layout, a destination whose block is still not
+        // built is reached again: its block, and the word once the block appears.
+        DispatchQueue.main.async {
+            guard currentIndex == target, rendered.blockOfWord.indices.contains(target) else { return }
+            let block = rendered.blockOfWord[target]
+            guard !mountedBlocks.contains(block) else { return }
+            pendingLanding = (target, anchor)
+            proxy.scrollTo(TeleprompterBlockID(index: block), anchor: anchor)
+        }
+    }
+
+    /// Scrolls to a waiting word once its block exists: the block again after layout, then the word.
+    private func land(_ pending: (word: Int, anchor: UnitPoint), with proxy: ScrollViewProxy) {
+        pendingLanding = nil
+        guard currentIndex == pending.word else { return }
+        DispatchQueue.main.async {
+            proxy.scrollTo(TeleprompterBlockID(index: rendered.blockOfWord[pending.word]), anchor: pending.anchor)
+            DispatchQueue.main.async { proxy.scrollTo(pending.word, anchor: pending.anchor) }
         }
     }
 

@@ -156,4 +156,51 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         jump(feed, to: 1000, host) // block 3, the block before 1300's block 4
         XCTAssertTrue(isOnScreen("word1000", host), "backward adjacent jump; OCR: \(onScreenText(host).prefix(120))")
     }
+
+    // TELE1C (Sol split-B R2): equal-timestamp pieces make one coalesced playback advance across the
+    // hard block boundary; the destination and the next ordinary word must both reach the viewport.
+    @Observable final class Clock {
+        var boundaries: [TeleprompterBoundary]
+        let base: Int
+        let started = Date()
+        init(boundaries: [TeleprompterBoundary], base: Int) { self.boundaries = boundaries; self.base = base }
+        var elapsed: Int { base + Int(Date().timeIntervalSince(started) * 1000) }
+    }
+
+    private struct ClockHost: View {
+        let text: String
+        let clock: Clock
+        var body: some View {
+            TeleprompterView(text: text, wordBoundaries: clock.boundaries,
+                             playbackElapsedMilliseconds: { [clock] in clock.elapsed })
+                .frame(width: 300, height: Theme.teleprompterViewportHeight)
+                .background(Color.black)
+                .environment(\.colorScheme, .dark)
+        }
+    }
+
+    func testACoalescedPlaybackAdvanceAcrossTheBlockBoundaryReachesTheWordAndTheNext() {
+        let token = String(repeating: "x", count: 960) // 40 display pieces, one timestamp
+        let raw = (0 ... 280).map { "word\($0)" } + [token] + (282 ..< 600).map { "word\($0)" }
+        let text = raw.joined(separator: " ")
+        let boundaries = (0 ... 282).map { index -> TeleprompterBoundary in
+            let offset = index <= 280 ? index * 380 : index == 281 ? 107_600 : 108_000
+            return TeleprompterBoundary(offsetMs: offset, durationMs: 340, text: raw[index], wordIndex: index)
+        }
+        let clock = Clock(boundaries: boundaries, base: 106_410)
+        let host = NSHostingView(rootView: ClockHost(text: text, clock: clock))
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: Theme.teleprompterViewportHeight)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        defer { window.contentView = nil }
+        settle(host, 0.5)
+        XCTAssertTrue(isOnScreen("word280", host), "the read starts on word 280; OCR: \(onScreenText(host).prefix(120))")
+        settle(host, 0.85) // the token's 40 pieces land at 107.6 s in one coalesced step (280 -> 320); now ~107.76 s
+        let destination = onScreenText(host)
+        XCTAssertNotNil(destination.range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]),
+                        "the token's last piece, in block 1, is on screen; OCR: \(destination.prefix(120))")
+        settle(host, 0.6) // word282 (display id 321) at 108.0 s
+        XCTAssertTrue(isOnScreen("word282", host), "the next ordinary word follows; OCR: \(onScreenText(host).prefix(120))")
+    }
 }
