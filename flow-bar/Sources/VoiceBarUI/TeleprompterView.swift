@@ -500,18 +500,12 @@ public enum TeleprompterScrollPolicy {
         text
     }
 
-    /// Longest playback step that may glide into the next block: the rest of the step is already on screen.
-    public static let maximumGlideWords = 40
-
-    /// TELE1: the lazy stack builds only what is near the viewport, and adjacency does not prove a block is
-    /// built (a 320-word block can leave the next one far below). A move inside the current block glides; so
-    /// does a playback step (the clock reaching the next timed word) a short way into the next block. A
-    /// restart or timeline update, or any longer move, is a jump that is reached block-first.
+    /// TELE1: a move inside the current block glides, and so does playback reading on to the very next
+    /// word. Anything else is a jump, reached block-first. Neither is trusted to land: after layout the view
+    /// checks that the destination block is mounted (TELE1C).
     public static func scrollsSmoothly(from old: Int, to new: Int, blockOfWord: [Int], isPlaybackStep: Bool) -> Bool {
         guard blockOfWord.indices.contains(old), blockOfWord.indices.contains(new) else { return false }
-        let from = blockOfWord[old], to = blockOfWord[new]
-        if from == to { return true }
-        return isPlaybackStep && to == from + 1 && new > old && new - old <= maximumGlideWords
+        return blockOfWord[old] == blockOfWord[new] || isPlaybackStep && new == old + 1
     }
 }
 
@@ -684,6 +678,21 @@ public struct TeleprompterView: View {
     @State private var renderCache = TeleprompterRenderCache()
     /// True while the animation task is the one moving `currentIndex`; any restart clears it.
     @State private var isPlaybackStep = false
+    /// TELE1C: blocks the lazy stack has built, and a cross-block scroll still waiting for its block.
+    @State private var mountedBlocks: Set<Int> = []
+    /// The text `mountedBlocks` belongs to: a replaced document starts an empty set.
+    @State private var mountedDocument = ""
+    @State private var pendingLanding: PendingLanding?
+    /// TELE1C R2: bumped by every restart, document change, readback and disappearance. A pending landing or a
+    /// deferred scroll pass from an older generation is void, so it never touches the new document.
+    @State private var landingGeneration = 0
+
+    private struct PendingLanding {
+        let word: Int
+        let block: Int
+        let anchor: UnitPoint
+        let generation: Int
+    }
 
     /// Words, formatting and blocks, computed once per text and timeline (a highlight tick reuses them).
     private var rendered: TeleprompterRenderedDocument {
@@ -711,7 +720,7 @@ public struct TeleprompterView: View {
                 )
             ) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    blockViews
+                    blockViews(proxy)
                 }
                 .padding(.horizontal, Theme.teleprompterShellInset)
                 .frame(width: wrapWidth, alignment: .leading)
@@ -733,6 +742,7 @@ public struct TeleprompterView: View {
             }
             .onDisappear {
                 stopAnimating()
+                invalidateLandings()
                 pointerState.reset(pop: { NSCursor.pop() })
                 hoveredWordID = nil
             }
@@ -741,8 +751,10 @@ public struct TeleprompterView: View {
                 scrollToCurrentWord(with: proxy, animated: false)
             }
             .onChange(of: wordBoundaries) { _, _ in
-                // New timings (a chunk's subtitle) re-arm the clock; a moved word scrolls via currentIndex.
-                restart()
+                // New timings (a chunk's subtitle) re-arm the clock; a moved word scrolls via currentIndex. A
+                // landing the restart voided for a word that did not move is re-armed under the new generation.
+                let before = currentIndex
+                if restart(), currentIndex == before { scrollToCurrentWord(with: proxy, animated: false) }
             }
             .onChange(of: playbackEpoch) { _, _ in
                 restart()
@@ -757,6 +769,7 @@ public struct TeleprompterView: View {
             .onChange(of: isReadback) { _, readback in
                 if readback {
                     stopAnimating()
+                    invalidateLandings()
                 } else {
                     restart()
                 }
@@ -766,7 +779,7 @@ public struct TeleprompterView: View {
 
     /// TELE1: one lazily laid-out flow per block, so a long read measures only what is on screen, and a
     /// highlight tick re-renders only the blocks whose inputs changed (the current one, and the one it left).
-    private var blockViews: some View {
+    private func blockViews(_ proxy: ScrollViewProxy) -> some View {
         let document = rendered
         let indexed = usesIndexedTiming
         let group = TeleprompterFormatting.groupRange(containing: currentIndex, layouts: document.layouts)
@@ -795,6 +808,15 @@ public struct TeleprompterView: View {
             .equatable()
             .padding(.top, index == 0 ? 0 : document.layouts[block.lowerBound].lineBreak == .paragraph ? 9 : 3)
             .id(blockID)
+            // TELE1C: the lazy stack says which blocks exist; a scroll that is waiting for one lands here.
+            .onAppear {
+                if mountedDocument != text { mountedBlocks = []; mountedDocument = text }
+                mountedBlocks.insert(index)
+                if let pending = pendingLanding, pending.generation == landingGeneration, pending.block == index {
+                    land(pending, with: proxy)
+                }
+            }
+            .onDisappear { if mountedDocument == text { mountedBlocks.remove(index) } }
         }
     }
 
@@ -903,37 +925,82 @@ public struct TeleprompterView: View {
         with proxy: ScrollViewProxy,
         animated: Bool = true
     ) {
-        guard teleprompterWords.indices.contains(currentIndex) else { return }
+        let blocks = rendered.blockOfWord, document = text, generation = landingGeneration
+        guard blocks.indices.contains(currentIndex) else { return }
 
         let anchor: UnitPoint = switch TeleprompterScrollPolicy.position(for: currentIndex) {
         case .top: .top
         case .center: .center
         }
-        if animated, currentIndex > 0 {
+        let target = currentIndex
+        if animated, target > 0 {
             withAnimation(Self.scrollAnimation) {
-                proxy.scrollTo(currentIndex, anchor: anchor)
+                proxy.scrollTo(target, anchor: anchor)
             }
         } else {
-            // A jump may land in a block the lazy stack has not built yet: reach the block, then the word.
             // A jump may land in a block the lazy stack has not built yet: reach the block, then the word
             // once that block is laid out (a second pass covers a block that needed one more layout).
-            let target = currentIndex
-            proxy.scrollTo(TeleprompterBlockID(index: rendered.blockOfWord[target]), anchor: anchor)
+            proxy.scrollTo(TeleprompterBlockID(index: blocks[target]), anchor: anchor)
+            // Each deferred pass drops if the highlight moved on (CodeRabbit, #481) or the generation did.
             DispatchQueue.main.async {
+                guard landingGeneration == generation, currentIndex == target else { return }
                 proxy.scrollTo(target, anchor: anchor)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { proxy.scrollTo(target, anchor: anchor) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard landingGeneration == generation, currentIndex == target else { return }
+                    proxy.scrollTo(target, anchor: anchor)
+                }
+            }
+        }
+        // TELE1C: never infer that a scroll landed. After layout, a destination whose block is still not
+        // built is reached again: its block, and the word once the block appears.
+        // Every index comes from this document's own block map, captured with its generation.
+        DispatchQueue.main.async {
+            guard landingGeneration == generation, currentIndex == target else { return }
+            let block = blocks[target]
+            guard mountedDocument != document || !mountedBlocks.contains(block) else { return }
+            pendingLanding = PendingLanding(word: target, block: block, anchor: anchor, generation: generation)
+            TeleprompterLandingProbe.didPend?()
+            proxy.scrollTo(TeleprompterBlockID(index: block), anchor: anchor)
+        }
+    }
+
+    /// Scrolls to a waiting word once its block exists: the block again after layout, then the word.
+    private func land(_ pending: PendingLanding, with proxy: ScrollViewProxy) {
+        pendingLanding = nil
+        func isCurrent() -> Bool { landingGeneration == pending.generation && currentIndex == pending.word }
+        guard isCurrent() else { return }
+        DispatchQueue.main.async {
+            guard isCurrent() else { return }
+            proxy.scrollTo(TeleprompterBlockID(index: pending.block), anchor: pending.anchor)
+            DispatchQueue.main.async {
+                guard isCurrent() else { return }
+                TeleprompterLandingProbe.didLand?(pending.word)
+                proxy.scrollTo(pending.word, anchor: pending.anchor)
             }
         }
     }
 
-    private func restart() {
+    /// Voids every pending landing and deferred scroll pass. Returns whether a landing was waiting.
+    @discardableResult
+    private func invalidateLandings() -> Bool {
+        let hadLanding = pendingLanding != nil
+        landingGeneration &+= 1
+        pendingLanding = nil
+        return hadLanding
+    }
+
+    /// Restarts the highlight from the clock. Returns whether it voided a pending landing.
+    @discardableResult
+    private func restart() -> Bool {
+        let hadLanding = invalidateLandings()
+        defer { startAnimating() }
         stopAnimating()
         isPlaybackStep = false
         currentIndex = TeleprompterPlaybackPolicy.restartWordIndex(
             in: teleprompterWords, elapsedMilliseconds: highlightElapsedMilliseconds,
             isReadback: isReadback || wordBoundaries.isEmpty
         )
-        startAnimating()
+        return hadLanding
     }
 }
 
@@ -1062,4 +1129,12 @@ private struct TeleprompterBlockView: View, Equatable {
     private var notchPalette: VoiceBarNotchContrastPalette {
         VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
+}
+
+/// Test seams: when a scroll starts waiting for its block (so a test can change the document inside that
+/// window), and when a waiting landing scrolls. Never set in production.
+@MainActor enum TeleprompterLandingProbe {
+    static var didPend: (() -> Void)?
+    /// Fires with the word when a waiting landing actually scrolls.
+    static var didLand: ((Int) -> Void)?
 }
