@@ -518,6 +518,9 @@ public final class VoiceState {
     private var currentPlayback: (id: String, generation: Int)?
     /// The read on screen when a capture took over, for a `paused` confirmation that lands mid-capture.
     private var departedRead: ReadSnapshot?
+    /// A capture began and the daemon has not yet sent its recording-idle. A local idle (Cancel's optimistic
+    /// one included) is not settlement: Play stays hidden until the authoritative idle arrives (P16b).
+    private var isCaptureSettlementPending = false
     /// A daemon whose speaking frame carries no identity: only this read's own Pause confirmation counts.
     private var pendingPauseEpoch: Int?
     private var pendingPlaybackPauseIDs: Set<String> = []
@@ -1742,6 +1745,7 @@ public final class VoiceState {
 
     private func retireParkedRead() {
         parkedRead = nil
+        isCaptureSettlementPending = false
         departedRead = nil
         pendingPauseEpoch = nil
     }
@@ -1751,12 +1755,12 @@ public final class VoiceState {
     private func synchronizeParkedRead(from oldValue: VoiceMode) {
         // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
         if mode == .disconnected || (oldValue == .speaking && mode == .idle) { retireParkedRead(); return }
-        if oldValue == .speaking, mode == .recording || mode == .transcribing {
-            departedRead = currentReadSnapshot()
+        if mode == .recording || mode == .transcribing, oldValue != .recording, oldValue != .transcribing {
+            isCaptureSettlementPending = true
+            if oldValue == .speaking { departedRead = currentReadSnapshot() }
         }
-        if mode == .idle, parkedRead != nil, [.recording, .transcribing, .error].contains(oldValue) {
-            scheduleParkedReadRestore()
-        }
+        // A deferred final can reach idle after the recording-idle; restore then (still gated on settlement).
+        if mode == .idle, parkedRead != nil, !isCaptureSettlementPending { scheduleParkedReadRestore() }
     }
 
     private func scheduleParkedReadRestore() {
@@ -1765,7 +1769,8 @@ public final class VoiceState {
 
     /// Waits out a dictation's own feedback (Pasted, In History …) before taking the surface back.
     private func restoreParkedReadIfSettled() {
-        guard mode == .idle, let parked = parkedRead, confirmationText == nil, !keepsPasteFlowEnvelope
+        guard mode == .idle, let parked = parkedRead, !isCaptureSettlementPending,
+              confirmationText == nil, !keepsPasteFlowEnvelope
         else { return }
         let read = parked.read
         clearRetainedTeleprompter()
@@ -2121,6 +2126,13 @@ public final class VoiceState {
                 // The daemon never sends a playback idle while a read is parked: one now means it is gone.
                 // (While speaking, the speaking → idle edge retires it once the readback froze its position.)
                 if idleSource == "playback", mode != .speaking { retireParkedRead() }
+                // The daemon's recording-idle is capture settlement (TLA+ AuthoritativeCaptureSettleRestore). It
+                // never ends a paused read: that is playback's Stop, outcome or replacement, not capture's idle.
+                if idleSource == "recording" {
+                    isCaptureSettlementPending = false
+                    if isPlaybackPaused { return }
+                    if parkedRead != nil { scheduleParkedReadRestore() }
+                }
                 if barInitiatedRecording, mode == .transcribing {
                     if idleSource == "recording", deferredFinalTranscriptionTask != nil {
                         pendingRecordingIdleAfterFinal = true
