@@ -511,22 +511,40 @@ final class VoiceStatePasteTests: XCTestCase {
     func testChromiumFamilyDetectorRecognisesFrameworksAndRenamedElectronBundles() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("pa2-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        func app(_ name: String, _ paths: [String]) throws -> URL {
-            let url = root.appendingPathComponent("\(name).app")
-            for path in paths {
-                try FileManager.default.createDirectory(at: url.appendingPathComponent(path),
-                                                        withIntermediateDirectories: true)
-            }
-            return url
+        let renamed = "Contents/Frameworks/Codex Framework.framework/Resources/"
+        let fixture = { (name: String, directories: [String], files: [String]) throws -> URL in
+            try ChromiumBundleFixture.make(root: root, name: name, directories: directories, files: files)
         }
-        XCTAssertTrue(ChromiumFamilyApps.contains(bundleURL: try app("Claude", ["Contents/Frameworks/Electron Framework.framework"])))
-        XCTAssertTrue(ChromiumFamilyApps.contains(bundleURL: try app("Cef", ["Contents/Frameworks/Chromium Embedded Framework.framework"])))
-        // ChatGPT.app (com.openai.codex) ships "Codex Framework.framework" plus Resources/app.asar.
-        XCTAssertTrue(ChromiumFamilyApps.contains(bundleURL: try app("ChatGPT", [
-            "Contents/Frameworks/Codex Framework.framework", "Contents/Resources/app.asar",
+        XCTAssertTrue(ChromiumFamilyApps.contains(bundleURL: try fixture("Claude",
+            ["Contents/Frameworks/Electron Framework.framework"], [])))
+        XCTAssertTrue(ChromiumFamilyApps.contains(bundleURL: try fixture("Cef",
+            ["Contents/Frameworks/Chromium Embedded Framework.framework"], [])))
+        // ChatGPT.app (com.openai.codex): "Codex Framework.framework" carries Chromium's runtime data.
+        XCTAssertTrue(ChromiumFamilyApps.contains(bundleURL: try fixture("ChatGPT", [], [
+            renamed + "icudtl.dat", renamed + "resources.pak", "Contents/Resources/app.asar",
         ])))
-        XCTAssertFalse(ChromiumFamilyApps.contains(bundleURL: try app("Finder", ["Contents/Frameworks/Sparkle.framework"])))
+        XCTAssertFalse(ChromiumFamilyApps.contains(bundleURL: try fixture("Finder",
+            ["Contents/Frameworks/Sparkle.framework"], [])))
         XCTAssertFalse(ChromiumFamilyApps.contains(bundleURL: nil))
+    }
+
+    // PASTE2 R1 (Sol P2): an archive resource is not evidence of Chromium.
+    func testChromiumFamilyDetectorRejectsUncorroboratedAsar() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pa2-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renamed = "Contents/Frameworks/Codex Framework.framework/Resources/"
+        let cases: [(String, [String], [String])] = [
+            ("ResourceOnlyNative", [], ["Contents/Resources/app.asar"]),
+            ("NativeWithOtherFramework", ["Contents/Frameworks/Sparkle.framework/Resources"],
+             ["Contents/Resources/app.asar", "Contents/Frameworks/Sparkle.framework/Resources/Info.plist"]),
+            ("AsarDirectory", ["Contents/Resources/app.asar"], [renamed + "icudtl.dat", renamed + "resources.pak"]),
+            ("HalfChromiumData", [], [renamed + "icudtl.dat", "Contents/Resources/app.asar"]),
+            ("ChromiumDataWithoutAsar", [], [renamed + "icudtl.dat", renamed + "resources.pak"]),
+        ]
+        for (name, directories, files) in cases {
+            let url = try ChromiumBundleFixture.make(root: root, name: name, directories: directories, files: files)
+            XCTAssertFalse(ChromiumFamilyApps.contains(bundleURL: url), name)
+        }
     }
 
     func testSettingsHistoryT3AndHeliumUsesOneTypedDeliveryWithoutAXOrClipboard() {
@@ -3128,5 +3146,22 @@ final class VoiceStatePasteTests: XCTestCase {
         if !items.isEmpty {
             pasteboard.writeObjects(items)
         }
+    }
+}
+
+enum ChromiumBundleFixture {
+    static func make(root: URL, name: String, directories: [String], files: [String]) throws -> URL {
+        let url = root.appendingPathComponent("\(name).app")
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: url.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        for path in directories {
+            try fileManager.createDirectory(at: url.appendingPathComponent(path), withIntermediateDirectories: true)
+        }
+        for path in files {
+            let file = url.appendingPathComponent(path)
+            try fileManager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("fixture".utf8).write(to: file)
+        }
+        return url
     }
 }
