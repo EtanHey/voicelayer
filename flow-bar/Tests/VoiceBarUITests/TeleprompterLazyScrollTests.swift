@@ -203,4 +203,56 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         settle(host, 0.6) // word282 (display id 321) at 108.0 s
         XCTAssertTrue(isOnScreen("word282", host), "the next ordinary word follows; OCR: \(onScreenText(host).prefix(120))")
     }
+
+    // TELE1C R2 (Sol, P1 crash): a landing waiting for word 320 must not outlive a document replacement.
+    @Observable final class ReplacingClock {
+        var text: String
+        var boundaries: [TeleprompterBoundary]
+        let started = Date()
+        init(text: String, boundaries: [TeleprompterBoundary]) { self.text = text; self.boundaries = boundaries }
+        var elapsed: Int { 106_410 + Int(Date().timeIntervalSince(started) * 1000) }
+    }
+
+    private struct ReplacingHost: View {
+        let clock: ReplacingClock
+        var body: some View {
+            TeleprompterView(text: clock.text, wordBoundaries: clock.boundaries,
+                             playbackElapsedMilliseconds: { [clock] in clock.elapsed })
+                .frame(width: 300, height: Theme.teleprompterViewportHeight)
+                .background(Color.black)
+                .environment(\.colorScheme, .dark)
+        }
+    }
+
+    func testReplacingTheDocumentWhileALandingIsPendingNeitherTrapsNorLandsStale() {
+        let token = String(repeating: "x", count: 960)
+        let raw = (0 ... 280).map { "word\($0)" } + [token] + (282 ..< 600).map { "word\($0)" }
+        let boundaries = (0 ... 282).map { index -> TeleprompterBoundary in
+            let offset = index <= 280 ? index * 380 : index == 281 ? 107_600 : 108_000
+            return TeleprompterBoundary(offsetMs: offset, durationMs: 340, text: raw[index], wordIndex: index)
+        }
+        let clock = ReplacingClock(text: raw.joined(separator: " "), boundaries: boundaries)
+        var replaced = false
+        TeleprompterLandingProbe.didPend = {
+            guard !replaced else { return }
+            replaced = true
+            clock.text = "Shorter replacement"
+            clock.boundaries = []
+        }
+        var staleLandings: [Int] = []
+        TeleprompterLandingProbe.didLand = { word in if replaced { staleLandings.append(word) } }
+        defer { TeleprompterLandingProbe.didPend = nil; TeleprompterLandingProbe.didLand = nil }
+        let host = NSHostingView(rootView: ReplacingHost(clock: clock))
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: Theme.teleprompterViewportHeight)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        defer { window.contentView = nil }
+        settle(host, 2.2) // the coalesced 280 -> 320 step pends at ~107.6 s; the probe swaps the document then
+        XCTAssertTrue(replaced, "the landing went pending, and the document was replaced inside that window")
+        settle(host, 0.6)
+        let text = onScreenText(host)
+        XCTAssertTrue(text.contains("Shorter") && text.contains("replacement"), "the short document renders; OCR: \(text)")
+        XCTAssertEqual(staleLandings, [], "the old document's landing never scrolls the new one")
+    }
 }
