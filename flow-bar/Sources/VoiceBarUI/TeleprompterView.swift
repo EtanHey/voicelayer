@@ -921,9 +921,14 @@ public struct TeleprompterView: View {
             // A jump may land in a block the lazy stack has not built yet: reach the block, then the word
             // once that block is laid out (a second pass covers a block that needed one more layout).
             proxy.scrollTo(TeleprompterBlockID(index: rendered.blockOfWord[target]), anchor: anchor)
+            // Each deferred pass drops if the highlight has moved on (CodeRabbit, #481).
             DispatchQueue.main.async {
+                guard currentIndex == target else { return }
                 proxy.scrollTo(target, anchor: anchor)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { proxy.scrollTo(target, anchor: anchor) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    guard currentIndex == target else { return }
+                    proxy.scrollTo(target, anchor: anchor)
+                }
             }
         }
         // TELE1C: never infer that a scroll landed. After layout, a destination whose block is still not
@@ -942,8 +947,12 @@ public struct TeleprompterView: View {
         pendingLanding = nil
         guard currentIndex == pending.word else { return }
         DispatchQueue.main.async {
+            guard currentIndex == pending.word else { return }
             proxy.scrollTo(TeleprompterBlockID(index: rendered.blockOfWord[pending.word]), anchor: pending.anchor)
-            DispatchQueue.main.async { proxy.scrollTo(pending.word, anchor: pending.anchor) }
+            DispatchQueue.main.async {
+                guard currentIndex == pending.word else { return }
+                proxy.scrollTo(pending.word, anchor: pending.anchor)
+            }
         }
     }
 
