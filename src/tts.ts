@@ -2093,8 +2093,16 @@ export function setLongReadSettledListener(listener: typeof longReadSettledListe
   longReadSettledListener = listener;
 }
 
-/** Preempt only a long read; ordinary short speech retains its existing queue policy. */
-export function preemptLongRead(): boolean {
+let externalSpeechListener: (() => void) | undefined;
+/** QUEUE1b: told when agent speech or Ask preempts, so the user's read chain ends even with no read live. */
+export function setExternalSpeechPreemptionListener(listener: typeof externalSpeechListener): void {
+  externalSpeechListener = listener;
+}
+
+/** Preempt only a long read; ordinary short speech retains its existing queue policy.
+ * `successor` is a user read replacing the current one; anything else (agent speech, Ask) is external. */
+export function preemptLongRead(by: "external" | "successor" = "external"): boolean {
+  if (by === "external") externalSpeechListener?.();
   // New accepted speech (and Ask) replaces a parked item so held speech cannot strand a waiter.
   playbackQueueManager.replaceParked();
   if (!cancelLongRead()) return false;
@@ -2152,7 +2160,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   if (isTTSDisabled()) throw new Error("TTS is disabled");
   const displayText = sanitizeTtsText(text);
   if (!displayText.trim()) throw new Error("Speech text is empty after sanitizing");
-  preemptLongRead();
+  preemptLongRead("successor");
   const predecessors = [...cancelledLongReadTeardowns];
   const controller = new AbortController();
   const id = `long-read-${process.pid}-${++longReadCounter}`;

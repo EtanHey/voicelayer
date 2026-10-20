@@ -434,6 +434,8 @@ export interface CancelCommand extends SocketCommandBase {
   cmd: "cancel";
   /** VoiceBar's teleprompter clock at the cancel edge. */
   playback_elapsed_ms?: number;
+  /** QUEUE1b: Hide ends the user read chain, including reads F5 left waiting for Next. */
+  discard_read_queue?: boolean;
 }
 
 export interface ReplayCommand extends SocketCommandBase {
@@ -792,9 +794,11 @@ export function parseCommand(line: string): SocketCommand | null {
           id,
         );
       case "cancel":
+        if (parsed.discard_read_queue !== undefined && typeof parsed.discard_read_queue !== "boolean") return null;
         return withCommandId<CancelCommand>(
           {
             cmd: "cancel",
+            ...(parsed.discard_read_queue !== undefined ? { discard_read_queue: parsed.discard_read_queue } : {}),
             ...(playbackElapsedMs !== undefined
               ? { playback_elapsed_ms: playbackElapsedMs }
               : {}),
