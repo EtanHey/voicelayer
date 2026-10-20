@@ -1,6 +1,11 @@
 import CoreGraphics
 import Foundation
 
+/// A typed delivery posted its key events; nothing read them back. One short, truthful line.
+enum PasteDeliveryFeedback {
+    static let typed = "Typed"
+}
+
 /// Recovery copy shares one identity between the producer and its two-line layout.
 enum PasteRecoveryFeedback {
     static let notInserted = "Not pasted\nIn History"

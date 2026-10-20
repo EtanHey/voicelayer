@@ -104,7 +104,7 @@ final class UIE2EFixtureCommandTests: XCTestCase {
         try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
         let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
         model.voice.setHoveringFromDebouncedPointer(false)
-        for name in ["paste-not-inserted", "paste-unverified", "paste-partial"] {
+        for name in ["paste-not-inserted", "paste-unverified", "paste-partial", "paste-typed"] {
             model.fixture(name)
             model.voice.setHoveringFromDebouncedPointer(false)
             XCTAssertEqual(UIE2EHost.panelLayout(for: model.voice).presentation.visualState, .compactStatus)

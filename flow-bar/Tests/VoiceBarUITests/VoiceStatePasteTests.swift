@@ -103,7 +103,7 @@ final class VoiceStatePasteTests: XCTestCase {
                 harness.deliver()
                 harness.assertOneTypedDelivery(context)
                 if source == "auto" {
-                    XCTAssertEqual(harness.state.latestDictationInsertionStatus, .unverified, context)
+                    XCTAssertEqual(harness.state.latestDictationInsertionStatus, .typed, context)
                 }
             }
         }
@@ -220,7 +220,7 @@ final class VoiceStatePasteTests: XCTestCase {
             XCTAssertEqual(guardedPIDs, ["auto", "settings_history"].contains(source) ? [51515] : [], context)
             XCTAssertEqual(typed, [Self.delivered], context)
             XCTAssertEqual(keystrokes, [[.text("ADD שלום 👩‍💻"), .newline, .text("second line")]], context)
-            XCTAssertEqual(outcomes, ["unverified"], context)
+            XCTAssertEqual(outcomes, ["typed"], context)
             XCTAssertEqual(state.confirmationText, Self.delivered, context)
             assertRetainedWithoutSideEffects(context)
         }
@@ -402,7 +402,7 @@ final class VoiceStatePasteTests: XCTestCase {
         state.pasteboardWriter = { _ in XCTFail("Shift+F5 must preserve the clipboard") }
         state.repasteTranscript(text, source: "shift_f5")
         XCTAssertEqual(typed, [text])
-        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
+        XCTAssertEqual(state.confirmationText, PasteDeliveryFeedback.typed)
         // Host menu consumption is NOT_PROVEN here; the booked native script checks it.
     }
 
@@ -422,7 +422,7 @@ final class VoiceStatePasteTests: XCTestCase {
             state.pasteboardWriter = { _ in XCTFail("Known rich hosts must never write the clipboard") }
             state.record()
             state.handleEvent(["type": "transcription", "text": text])
-            XCTAssertEqual(state.latestDictationInsertionStatus, .unverified, bundle)
+            XCTAssertEqual(state.latestDictationInsertionStatus, .typed, bundle)
             state.repasteLastTranscript(source: "shift_f5")
             XCTAssertEqual(typed, [text, text], "One auto delivery and one explicit recovery, no fallback duplicate: \(bundle)")
             let expected = SynthesizedTyping.keystrokes(for: text)
@@ -431,6 +431,102 @@ final class VoiceStatePasteTests: XCTestCase {
             XCTAssertEqual(axAttempts, 0, "Both fresh and captured AX handlers must be bypassed: \(bundle)")
             XCTAssertEqual(state.latestReusableTranscript, text, bundle)
         }
+    }
+
+    // PASTE2: Gemini.app, ChatGPT/Codex (Electron under a renamed framework) and Claude
+    // desktop failed auto F5 with "Not pasted" while Shift+F5 typed fine (qa 2026-10-20 08:14).
+    func testAutomaticChromiumFamilyAndGeminiDeliveryUsesTheShiftF5TypedPlanWithoutAXOrClipboard() {
+        let text = "ADD שלום 👩‍💻\nsecond line\nship it @main\n/plan"
+        let chromium: Set<String> = ["com.openai.codex", "com.anthropic.claudefordesktop", "com.example.Electron"]
+        for bundle in ["com.google.GeminiMacOS"] + chromium.sorted() {
+            let state = deliveryState(bundleIdentifier: bundle)
+            var axAttempts = 0
+            var eligibilityReads = 0
+            var typed: [String] = []
+            var plans: [[SynthesizedKeystroke]] = []
+            state.chromiumFamilyAppDetector = { chromium.contains($0.bundleIdentifier ?? "") }
+            state.asyncDictationInsertionHandlerProvider = { { _, _ in axAttempts += 1; return false } }
+            state.dictationInsertionHandlerProvider = { { _ in axAttempts += 1; return false } }
+            state.focusedTargetEligibilityProvider = { eligibilityReads += 1; return nil }
+            state.textTypingHandler = {
+                typed.append($0)
+                plans.append(SynthesizedTyping.keystrokes(for: $0))
+                return true
+            }
+            state.pasteboardWriter = { _ in XCTFail("Chromium hosts must never write the clipboard: \(bundle)") }
+            state.simulatedPasteHandler = { XCTFail("No Cmd+V: \(bundle)"); return false }
+            state.record()
+            state.handleEvent(["type": "transcription", "text": text])
+            XCTAssertEqual(typed, [text], "Exactly one typed auto delivery: \(bundle)")
+            XCTAssertEqual(plans, [SynthesizedTyping.keystrokes(for: text)], bundle)
+            XCTAssertEqual(axAttempts, 0, "Fresh and record-start AX must be bypassed: \(bundle)")
+            XCTAssertEqual(eligibilityReads, 0, bundle)
+            XCTAssertEqual(state.latestDictationInsertionStatus, .typed, bundle)
+            XCTAssertEqual(state.confirmationText, "Typed", bundle)
+            XCTAssertEqual(state.latestReusableTranscript, text, bundle)
+        }
+    }
+
+    func testAutomaticUnknownNativeAppStillTriesAXThenRetainsWithoutTyping() {
+        for bundle in ["com.example.NativeEditor", "com.apple.finder"] {
+            let state = deliveryState(bundleIdentifier: bundle)
+            var detectorReads = 0
+            var axAttempts = 0
+            var typed: [String] = []
+            state.chromiumFamilyAppDetector = { _ in detectorReads += 1; return false }
+            state.asyncDictationInsertionHandlerProvider = { { _, _ in axAttempts += 1; return false } }
+            state.textTypingHandler = { typed.append($0); return true }
+            state.pasteboardWriter = { _ in XCTFail("Keep the clipboard: \(bundle)") }
+            state.record()
+            state.handleEvent(["type": "transcription", "text": "ADD שלום 👩‍💻"])
+            XCTAssertGreaterThan(detectorReads, 0, "Delivery must consult the shared detector: \(bundle)")
+            XCTAssertGreaterThan(axAttempts, 0, "A native app still gets AX first: \(bundle)")
+            XCTAssertEqual(typed, [], "An AX miss is no licence to type: \(bundle)")
+            XCTAssertEqual(state.latestDictationInsertionStatus, .notInserted, bundle)
+            XCTAssertEqual(state.confirmationText, PasteRecoveryFeedback.notInserted, bundle)
+        }
+    }
+
+    func testTypedDeliveryCopyIsTypedAndAXUnverifiedCopyIsUnchanged() {
+        XCTAssertEqual(PasteDeliveryFeedback.typed, "Typed")
+        XCTAssertEqual(DictationInsertionStatus.typed.label, "Typed")
+        XCTAssertEqual(DictationInsertionStatus.unverified.label, "Insertion unverified")
+        XCTAssertFalse(TwoLineStatusFeedback.contains(PasteDeliveryFeedback.typed), "One short line")
+
+        let typedState = deliveryState(bundleIdentifier: "com.t3tools.t3code")
+        typedState.textTypingHandler = { _ in true }
+        typedState.record()
+        typedState.handleEvent(["type": "transcription", "text": "hello"])
+        XCTAssertEqual(typedState.confirmationText, "Typed")
+        XCTAssertEqual(typedState.latestDictationInsertionStatus, .typed)
+
+        let axState = deliveryState(bundleIdentifier: "com.example.Editor")
+        axState.asyncDictationInsertionHandlerProvider = { { _, completion in completion(.appliedUnverified); return true } }
+        axState.record()
+        axState.handleEvent(["type": "transcription", "text": "hello"])
+        XCTAssertEqual(axState.confirmationText, PasteRecoveryFeedback.unverified)
+        XCTAssertEqual(axState.latestDictationInsertionStatus, .unverified)
+    }
+
+    func testChromiumFamilyDetectorRecognisesFrameworksAndRenamedElectronBundles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pa2-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func app(_ name: String, _ paths: [String]) throws -> URL {
+            let url = root.appendingPathComponent("\(name).app")
+            for path in paths {
+                try FileManager.default.createDirectory(at: url.appendingPathComponent(path),
+                                                        withIntermediateDirectories: true)
+            }
+            return url
+        }
+        XCTAssertTrue(ChromiumFamilyApps.contains(bundleURL: try app("Claude", ["Contents/Frameworks/Electron Framework.framework"])))
+        XCTAssertTrue(ChromiumFamilyApps.contains(bundleURL: try app("Cef", ["Contents/Frameworks/Chromium Embedded Framework.framework"])))
+        // ChatGPT.app (com.openai.codex) ships "Codex Framework.framework" plus Resources/app.asar.
+        XCTAssertTrue(ChromiumFamilyApps.contains(bundleURL: try app("ChatGPT", [
+            "Contents/Frameworks/Codex Framework.framework", "Contents/Resources/app.asar",
+        ])))
+        XCTAssertFalse(ChromiumFamilyApps.contains(bundleURL: try app("Finder", ["Contents/Frameworks/Sparkle.framework"])))
+        XCTAssertFalse(ChromiumFamilyApps.contains(bundleURL: nil))
     }
 
     func testSettingsHistoryT3AndHeliumUsesOneTypedDeliveryWithoutAXOrClipboard() {
@@ -460,7 +556,7 @@ final class VoiceStatePasteTests: XCTestCase {
                 XCTAssertEqual(typed, [text], "Exactly one delivery, no fallback duplicate: \(context)")
                 XCTAssertEqual(axAttempts, 0, "Bypass both captured and fresh AX: \(context)")
                 XCTAssertEqual(clipboardWrites, [], context)
-                XCTAssertTrue(state.confirmationText?.contains("Unverified") == true, context)
+                XCTAssertEqual(state.confirmationText, PasteDeliveryFeedback.typed, context)
             }
         }
     }
@@ -488,7 +584,7 @@ final class VoiceStatePasteTests: XCTestCase {
                 }
                 XCTAssertEqual(typed, [text], "\(bundle), \(source)")
                 XCTAssertEqual(state.latestReusableTranscript, text)
-                XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
+                XCTAssertEqual(state.confirmationText, PasteDeliveryFeedback.typed)
             }
         }
     }
@@ -1968,7 +2064,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(typedTexts, ["typed transcript"])
         XCTAssertEqual(pasteShortcutCount, 0)
         XCTAssertNil(pasteboardString, "the pasteboard is never written")
-        XCTAssertTrue(state.confirmationText?.contains("Unverified") == true)
+        XCTAssertEqual(state.confirmationText, PasteDeliveryFeedback.typed)
     }
 
     func testSettingsHistoryCapturePreservesExternalTargetWhenVoiceBarIsFrontmost() {
@@ -2184,7 +2280,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
         XCTAssertEqual(typed, [Self.multiLineSpecimen])
         XCTAssertEqual(state.confirmationText, Self.multiLineSpecimen)
-        XCTAssertEqual(state.latestDictationInsertionStatus, .unverified)
+        XCTAssertEqual(state.latestDictationInsertionStatus, .typed)
     }
 
     // Transcription cleanup already trims trailing whitespace upstream; the terminal

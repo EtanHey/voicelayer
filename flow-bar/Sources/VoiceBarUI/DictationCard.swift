@@ -2,6 +2,8 @@ import SwiftUI
 
 public enum DictationInsertionStatus: Equatable {
     case unverified
+    /// Key events were posted (typed delivery); no readback claims more.
+    case typed
     case notInserted
     case pending
     case insertedAtCursor
@@ -11,6 +13,7 @@ public enum DictationInsertionStatus: Equatable {
     public var label: String {
         switch self {
         case .unverified: "Insertion unverified"
+        case .typed: "Typed"
         case .notInserted: "Not inserted"
         case .pending: "Insertion pending"
         case .insertedAtCursor: "Inserted at your cursor"
@@ -24,6 +27,7 @@ public enum DictationInsertionStatus: Equatable {
         case .insertedAtCursor, .pasted: "checkmark.circle"
         case .failed: "exclamationmark.circle"
         case .pending: "clock"
+        case .typed: "keyboard"
         case .notInserted, .unverified: "minus.circle"
         }
     }
