@@ -94,4 +94,22 @@ final class TeleprompterFormattingTests: XCTestCase {
         _ = cache.document(text: "a b c", wordBoundaries: boundaries)
         XCTAssertEqual(cache.computations, 2)
     }
+
+    func testEveryBlockIsBoundedEvenWithoutASentenceBreak() {
+        let text = (0 ..< 1000).map { "w\($0)" }.joined(separator: " ")
+        let words = TeleprompterContentModel.words(text: text, wordBoundaries: [])
+        let blocks = TeleprompterFormatting.blocks(layouts: TeleprompterFormatting.layout(text: text, words: words),
+                                                   words: words)
+        XCTAssertEqual(blocks.flatMap { $0 }, Array(words.indices), "blocks tile every word in order")
+        XCTAssertTrue(blocks.allSatisfy { $0.count <= 320 }, "an unpunctuated paragraph is still bounded")
+    }
+
+    func testAQuotedSentenceEndCountsAndGlueNeverSplits() {
+        let text = (["said \"done.\""] + (0 ..< 4).map { "w\($0)" } + ["end", ",", "tail"]).joined(separator: " ")
+        let words = TeleprompterContentModel.words(text: text, wordBoundaries: [])
+        let layouts = TeleprompterFormatting.layout(text: text, words: words)
+        XCTAssertEqual(TeleprompterFormatting.blocks(layouts: layouts, words: words, maximumWords: 2),
+                       [0 ..< 2, 2 ..< 6, 6 ..< 9],
+                       "a sentence ending in a quote splits after it; the hard bound waits past glued punctuation")
+    }
 }

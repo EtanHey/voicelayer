@@ -499,6 +499,13 @@ public enum TeleprompterScrollPolicy {
     public static func contentIdentity(for text: String) -> String {
         text
     }
+
+    /// TELE1: a highlight move within the block on screen or into the next one, which the lazy stack has
+    /// already built, scrolls smoothly. Anything farther is a jump.
+    public static func isNearby(from old: Int, to new: Int, blockOfWord: [Int]) -> Bool {
+        guard blockOfWord.indices.contains(old), blockOfWord.indices.contains(new) else { return false }
+        return abs(blockOfWord[new] - blockOfWord[old]) <= 1
+    }
 }
 
 public enum TeleprompterVisibilityPolicy {
@@ -732,8 +739,11 @@ public struct TeleprompterView: View {
                 restart()
                 scrollToCurrentWord(with: proxy, animated: false)
             }
-            .onChange(of: currentIndex) { _, _ in
-                scrollToCurrentWord(with: proxy)
+            .onChange(of: currentIndex) { old, new in
+                // A step into the same or the next block glides; a far jump (a seek's timings arriving, a
+                // timeline update) may target a block the lazy stack has not built, so it reaches it first.
+                scrollToCurrentWord(with: proxy, animated: TeleprompterScrollPolicy.isNearby(
+                    from: old, to: new, blockOfWord: rendered.blockOfWord))
             }
             .onChange(of: isReadback) { _, readback in
                 if readback {
@@ -750,7 +760,9 @@ public struct TeleprompterView: View {
     private var blockViews: some View {
         let document = rendered
         let indexed = usesIndexedTiming
-        return ForEach(Array(document.blocks.enumerated()), id: \.offset) { index, block in
+        // Block identity must not share the Int space of word ids, or scrollTo(word) lands on a block.
+        return ForEach(document.blocks.indices.map(TeleprompterBlockID.init), id: \.self) { blockID in
+            let index = blockID.index, block = document.blocks[index]
             TeleprompterBlockView(
                 words: Array(document.words[block]),
                 layouts: Array(document.layouts[block]),
@@ -767,7 +779,7 @@ public struct TeleprompterView: View {
             )
             .equatable()
             .padding(.top, index == 0 ? 0 : document.layouts[block.lowerBound].lineBreak == .paragraph ? 9 : 3)
-            .id(TeleprompterBlockID(index: index))
+            .id(blockID)
         }
     }
 
@@ -881,9 +893,14 @@ public struct TeleprompterView: View {
             }
         } else {
             // A jump may land in a block the lazy stack has not built yet: reach the block, then the word.
+            // A jump may land in a block the lazy stack has not built yet: reach the block, then the word
+            // once that block is laid out (a second pass covers a block that needed one more layout).
             let target = currentIndex
             proxy.scrollTo(TeleprompterBlockID(index: rendered.blockOfWord[target]), anchor: anchor)
-            DispatchQueue.main.async { proxy.scrollTo(target, anchor: anchor) }
+            DispatchQueue.main.async {
+                proxy.scrollTo(target, anchor: anchor)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { proxy.scrollTo(target, anchor: anchor) }
+            }
         }
     }
 

@@ -132,19 +132,25 @@ public enum TeleprompterFormatting {
 
 extension TeleprompterFormatting {
     /// Word ranges rendered as independent flows in a lazy stack, so a long read only lays out what is on
-    /// screen. A block starts where the text already starts a line; a paragraph longer than
-    /// `maximumWords` also splits after a sentence end, never before glued punctuation or inside a token.
+    /// screen. A block starts where the text already starts a line. A paragraph longer than `maximumWords`
+    /// also splits after a sentence end (closing quotes and brackets allowed), and at twice that length
+    /// anywhere, so no block is unbounded. Never before glued punctuation or inside a token.
     static func blocks(layouts: [TeleprompterWordLayout], words: [TeleprompterWord],
                        maximumWords: Int = 160) -> [Range<Int>] {
         guard layouts.count == words.count, !words.isEmpty else { return words.isEmpty ? [] : [0 ..< words.count] }
+        func endsSentence(_ text: String) -> Bool {
+            let trimmed = text.reversed().drop { "\"'”’)]»".contains($0) }
+            return trimmed.first.map { ".?!…".contains($0) } == true
+        }
         var blocks: [Range<Int>] = []
         var start = 0
         for index in 1 ..< words.count {
             let layout = layouts[index]
+            let length = index - start
             let startsGroup = layout.highlightGroup == words[index].id
-            let afterSentence = index - start >= maximumWords && startsGroup &&
-                words[index - 1].text.last.map { ".?!".contains($0) } == true
-            if layout.lineBreak != .none || afterSentence {
+            let split = startsGroup && (length >= 2 * maximumWords ||
+                length >= maximumWords && endsSentence(words[index - 1].text))
+            if layout.lineBreak != .none || split {
                 blocks.append(start ..< index)
                 start = index
             }
