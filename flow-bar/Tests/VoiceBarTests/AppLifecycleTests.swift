@@ -287,6 +287,23 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
+    func testReadQueueWidensTheLeadingWingForNextAndTheCount() {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Queued read", "request_id": "r-A"])
+        state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": "r-A"])
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 3)
+        state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": "r-A"])
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 2)
+        state.dismissTeleprompter()
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 2)
+        state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": NSNull()])
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 1)
+    }
+
     func testPausedSpeechKeepsPlayAndStopReachable() {
         let state = VoiceState()
         state.handleEvent(["type": "state", "state": "speaking", "text": "Paused read", "playback_id": "p", "generation": 1])

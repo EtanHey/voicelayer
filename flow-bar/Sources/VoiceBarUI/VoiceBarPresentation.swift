@@ -92,6 +92,17 @@ public struct VoiceBarPlaybackPauseControl: Equatable {
     public let accessibilityHint: String
 }
 
+/// QUEUE1: Next and the "+N" count beside P16's pause/play while queued Option+F5 reads wait.
+public struct VoiceBarReadQueueControl: Equatable {
+    public let iconName: String
+    /// "+N" while reads wait behind the current one; nil on the last item, where Next stops.
+    public let countLabel: String?
+    public let accessibilityLabel: String
+    public let accessibilityHint: String
+    /// Leading-wing slots: pause/play, Next and, with a count, the "+N" label.
+    public let leadingSlotCount: Int
+}
+
 public struct VoiceBarNotchOperationalInput: Equatable {
     public var mode: VoiceMode
     public var showsRecordingHold: Bool
@@ -100,6 +111,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var isTeleprompterReadback: Bool
     /// P16: the read is parked by Pause; the teleprompter collapses until Resume.
     public var isPlaybackPaused: Bool
+    /// QUEUE1: pause/play alone is 1 slot; Next and the "+N" count widen the leading wing.
+    public var readQueueLeadingSlotCount: Int
     public var confirmationText: String?
     public var commandModeState: CommandModeState?
     public var activeClipMarker: ClipMarkerState?
@@ -124,6 +137,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         isTeleprompterDismissed: Bool = false,
         isTeleprompterReadback: Bool = false,
         isPlaybackPaused: Bool = false,
+        readQueueLeadingSlotCount: Int = 1,
         confirmationText: String? = nil,
         commandModeState: CommandModeState? = nil,
         activeClipMarker: ClipMarkerState? = nil,
@@ -144,6 +158,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.isTeleprompterDismissed = isTeleprompterDismissed
         self.isTeleprompterReadback = isTeleprompterReadback
         self.isPlaybackPaused = isPlaybackPaused
+        self.readQueueLeadingSlotCount = readQueueLeadingSlotCount
         self.confirmationText = confirmationText
         self.commandModeState = commandModeState
         self.activeClipMarker = activeClipMarker
@@ -215,9 +230,7 @@ public enum VoiceBarPresentation {
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
             hasHistoryPanel: input.isHistoryPanelOpen,
-            compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(
-                mode: input.mode
-            ),
+            compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(input: input),
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
             recordingLeadingWingWidth: recordingLeadingWingWidth(
                 mode: input.mode,
@@ -227,7 +240,7 @@ public enum VoiceBarPresentation {
                 ? VoiceBarNotchContract.waveformWingWidth
                 : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
-                ? VoiceBarNotchContract.compactIndicatorLaneWidth
+                ? playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
                 : nil,
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
@@ -238,9 +251,50 @@ public enum VoiceBarPresentation {
     }
 
     private static func compactStatusLeadingWingWidth(
-        mode _: VoiceMode
+        input: VoiceBarNotchOperationalInput
     ) -> CGFloat? {
-        VoiceBarNotchContract.compactIndicatorLaneWidth
+        input.mode == .speaking
+            ? playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
+            : VoiceBarNotchContract.compactIndicatorLaneWidth
+    }
+
+    /// QUEUE1: the leading wing fits its control slots exactly, so the hit rects (from the core outward) match.
+    public static func playbackLeadingWingWidth(slotCount: Int) -> CGFloat {
+        let material = VoiceBarNotchContract.material
+        let slots = CGFloat(max(1, slotCount))
+        return VoiceBarNotchContract.compactContentFitWingWidth(
+            contentWidth: slots * material.compactControlSize + (slots - 1) * material.compactControlSpacing
+        )
+    }
+
+    /// QUEUE1 (Etan, 2026-10-20): Next shows once a read is queued behind the current one and stays through
+    /// the last item, where it stops. Never while recording, transcribing or on an ended readback.
+    public static func readQueueControl(
+        mode: VoiceMode,
+        isReadback: Bool,
+        currentRequestID: String?,
+        count: Int
+    ) -> VoiceBarReadQueueControl? {
+        guard mode == .speaking, !isReadback, currentRequestID != nil else { return nil }
+        let waiting = max(0, count)
+        return VoiceBarReadQueueControl(
+            iconName: "forward.fill",
+            countLabel: waiting > 0 ? "+\(waiting)" : nil,
+            accessibilityLabel: waiting > 0 ? "Next read" : "Stop reading",
+            accessibilityHint: waiting > 0
+                ? "Skip to the next queued selection; \(waiting) waiting"
+                : "This is the last queued selection; Next stops reading",
+            leadingSlotCount: waiting > 0 ? 3 : 2
+        )
+    }
+
+    public static func readQueueControl(for state: VoiceState) -> VoiceBarReadQueueControl? {
+        readQueueControl(
+            mode: state.mode,
+            isReadback: state.isTeleprompterReadback,
+            currentRequestID: state.readQueueCurrentRequestID,
+            count: state.readQueueCount
+        )
     }
 
     private static func compactStatusTrailingWingWidth(

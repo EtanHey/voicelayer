@@ -378,6 +378,7 @@ public final class VoiceState {
             }
             if mode == .disconnected {
                 invalidateSelectionSpeechIdentity()
+                clearReadQueue()
             } else if mode != .speaking {
                 clearCurrentSelectionReadIdentity(advanceEpoch: false)
             }
@@ -1088,7 +1089,37 @@ public final class VoiceState {
 
     private func stopSelectionRead() {
         invalidateSelectionSpeechIdentity()
+        clearReadQueue()
         sendCommand?(["cmd": "stop"])
+    }
+
+    /// QUEUE1: the daemon's Option+F5 read queue, mirrored from `read_queue` events (counts only).
+    public private(set) var readQueueCount = 0 {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != readQueueCount) }
+    }
+    /// The read Next acts on; nil until something is queued behind it.
+    public private(set) var readQueueCurrentRequestID: String? {
+        didSet { notifyPanelLayoutChangedIfNeeded((oldValue == nil) != (readQueueCurrentRequestID == nil)) }
+    }
+    public static let readQueueLimit = 10
+
+    private func clearReadQueue() {
+        readQueueCount = 0
+        readQueueCurrentRequestID = nil
+    }
+
+    /// QUEUE1: Next skips to the following queued read; on the last item it stops. Scoped to the read it was
+    /// shown for, so a double press or a press racing auto-advance is a daemon no-op.
+    public func skipToNextRead() {
+        guard mode == .speaking, let current = readQueueCurrentRequestID else { return }
+        if readQueueCount == 0 {
+            invalidateSelectionSpeechIdentity()
+            clearReadQueue()
+        } else if selectionReadRequestID == current {
+            // The skipped read's late receipts are stale from here on.
+            clearCurrentSelectionReadIdentity()
+        }
+        sendCommand?(["cmd": "read_next", "request_id": current])
     }
 
     public func speakSelection() {
@@ -1144,7 +1175,11 @@ public final class VoiceState {
             } else {
                 sameSelection = comparisonText.map { normalized == Self.normalizedSelection($0) } ?? false
             }
-            if replacing, normalized.isEmpty || sameSelection {
+            // QUEUE1: with a newer selection queued, the read playing now is still "the same selection".
+            let samePlaying = selectionSubmittedText != nil && (selectionReadHash.map {
+                Self.selectionHash(result.text ?? "") == $0
+            } ?? selectionReadText.map { normalized == Self.normalizedSelection($0) } ?? false)
+            if replacing, normalized.isEmpty || sameSelection || samePlaying {
                 stopSelectionRead()
                 return
             }
@@ -1163,6 +1198,10 @@ public final class VoiceState {
                 startCollapseTimer()
                 return
             }
+            if replacing, readQueueCount >= Self.readQueueLimit {
+                showSelectionBusyNote(message: "Queue full")
+                return
+            }
             let requestID = UUID().uuidString
             selectionSpeechRequestID = requestID
             selectionSubmittedText = text
@@ -1174,8 +1213,13 @@ public final class VoiceState {
                 selectionSubmissions.removeValue(forKey: oldest)
             }
             // speak_text preempts only the owned read and awaits its player teardown (PLAYER0/FX).
-            sendCommand?(["cmd": "speak_text", "id": requestID, "text": text, "profile": "auto",
-                          "format": "markdown", "source": "selection", "text_hash": Self.selectionHash(text)])
+            // QUEUE1 (Etan, 2026-10-20): a different selection while reading queues behind it; the daemon starts
+            // it at once when no Option+F5 read is live. speak_text otherwise preempts only the owned read.
+            var command: [String: Any] = ["cmd": "speak_text", "id": requestID, "text": text, "profile": "auto",
+                                          "format": "markdown", "source": "selection",
+                                          "text_hash": Self.selectionHash(text)]
+            if replacing { command["queue"] = true }
+            sendCommand?(command)
         }
     }
 
@@ -1451,6 +1495,8 @@ public final class VoiceState {
             setHovering(false)
             queueDepth = 0
             queueItems = []
+            // QUEUE1: Stop means stop; the daemon clears the whole read queue with it.
+            clearReadQueue()
             clearRetainedTeleprompter()
             enterIdleState(clearQueue: false)
         }
@@ -2339,6 +2385,10 @@ public final class VoiceState {
 
         case "ack":
             handleAckEvent(event)
+
+        case "read_queue":
+            readQueueCount = max(0, (event["count"] as? NSNumber)?.intValue ?? 0)
+            readQueueCurrentRequestID = event["current_request_id"] as? String
 
         case "playback_state":
             handlePlaybackStateEvent(event)
@@ -4155,8 +4205,9 @@ public final class VoiceState {
                     selectionSpeechRequestID = nil
                     selectionSubmittedText = nil
                 }
-                showSelectionBusyNote(message: event["reason"] as? String == "busy"
-                    ? "Busy. Selection not read" : "Selection not read. Try again")
+                let reason = event["reason"] as? String
+                showSelectionBusyNote(message: reason == "busy" ? "Busy. Selection not read"
+                    : reason == "queue full" ? "Queue full" : "Selection not read. Try again")
                 logDiagnostic("selection_rejected", details: ["outcome": "reject", "appKeyWindowTitle": "not_recorded"])
             }
             return

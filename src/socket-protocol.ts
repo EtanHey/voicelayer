@@ -305,6 +305,7 @@ export type AckCommand =
   | "pause"
   | "resume"
   | "speak_text"
+  | "read_next"
   | "stop"
   | "cancel"
   | "replay"
@@ -350,8 +351,17 @@ export interface HistoryPlaybackGateEvent {
   busy: boolean;
 }
 
+/** QUEUE1: the user's Option+F5 read queue. Counts only; queued text is never published. */
+export interface ReadQueueEvent {
+  type: "read_queue";
+  count: number;
+  /** The read Next acts on; null when no read has been queued in this chain. */
+  current_request_id: string | null;
+}
+
 export type SocketEvent =
   | HistoryPlaybackGateEvent
+  | ReadQueueEvent
   | StateEvent
   | SpeechEvent
   | TranscriptionEvent
@@ -387,6 +397,14 @@ export interface SpeakTextCommand extends SocketCommandBase {
   profile?: "auto" | "short" | "long";
   format?: "plain" | "markdown";
   source?: string;
+  /** QUEUE1: append behind the user's live Option+F5 read instead of replacing it. */
+  queue?: boolean;
+}
+
+/** QUEUE1: skip to the next queued read; `request_id` names the read the button was shown for. */
+export interface ReadNextCommand extends SocketCommandBase {
+  cmd: "read_next";
+  request_id?: string;
 }
 
 export interface StopCommand extends SocketCommandBase {
@@ -538,6 +556,7 @@ export type SocketCommand =
   | SeekCommand
   | PlaybackControlCommand
   | SpeakTextCommand
+  | ReadNextCommand
   | { cmd: "history_playback_ready"; id: string }
   | StopCommand
   | CancelCommand
@@ -737,14 +756,20 @@ export function parseCommand(line: string): SocketCommand | null {
         if (parsed.format !== undefined && !["plain", "markdown"].includes(parsed.format)) return null;
         if (parsed.source !== undefined && (typeof parsed.source !== "string" || parsed.source.length > 256)) return null;
         if (parsed.text_hash !== undefined && (typeof parsed.text_hash !== "string" || !/^[a-f0-9]{64}$/.test(parsed.text_hash))) return null;
+        if (parsed.queue !== undefined && typeof parsed.queue !== "boolean") return null;
         return withCommandId<SpeakTextCommand>({
           cmd: "speak_text", text: parsed.text,
           ...(parsed.text_hash !== undefined ? { text_hash: parsed.text_hash } : {}),
           ...(parsed.profile !== undefined ? { profile: parsed.profile } : {}),
           ...(parsed.format !== undefined ? { format: parsed.format } : {}),
           ...(parsed.source !== undefined ? { source: parsed.source } : {}),
+          ...(parsed.queue !== undefined ? { queue: parsed.queue } : {}),
         }, id);
       }
+      case "read_next":
+        if (parsed.request_id !== undefined && (typeof parsed.request_id !== "string" || !parsed.request_id || parsed.request_id.length > 256)) return null;
+        return withCommandId<ReadNextCommand>({ cmd: "read_next",
+          ...(parsed.request_id !== undefined ? { request_id: parsed.request_id } : {}) }, id);
       case "history_playback_ready":
         return id ? { cmd: "history_playback_ready", id } : null;
       case "stop":

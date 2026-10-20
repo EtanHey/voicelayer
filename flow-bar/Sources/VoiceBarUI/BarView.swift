@@ -414,6 +414,7 @@ public struct BarView: View {
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isTeleprompterReadback: state.isTeleprompterReadback,
             isPlaybackPaused: state.isPlaybackPaused,
+            readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker,
@@ -493,13 +494,13 @@ public struct BarView: View {
             if state.mode == .transcribing {
                 ProcessingSpinner()
             } else if let playbackPauseControl {
-                playbackPauseButton(playbackPauseControl)
+                playbackLeadingControls(playbackPauseControl)
             } else {
                 statusIcon
             }
         case .teleprompter:
             if let playbackPauseControl {
-                playbackPauseButton(playbackPauseControl)
+                playbackLeadingControls(playbackPauseControl)
             }
         }
     }
@@ -510,6 +511,27 @@ public struct BarView: View {
             isPaused: state.isPlaybackPaused,
             isReadback: state.isTeleprompterReadback
         )
+    }
+
+    /// QUEUE1: pause/play, then Next and the "+N" count toward the core; one control slot each so the hit rects match.
+    private func playbackLeadingControls(_ pause: VoiceBarPlaybackPauseControl) -> some View {
+        HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+            playbackPauseButton(pause)
+            if let readQueueControl = VoiceBarPresentation.readQueueControl(for: state) {
+                notchButton(
+                    icon: readQueueControl.iconName,
+                    accessibilityLabel: readQueueControl.accessibilityLabel,
+                    accessibilityHint: readQueueControl.accessibilityHint
+                ) {
+                    state.skipToNextRead()
+                }
+                if let countLabel = readQueueControl.countLabel {
+                    countBadge(countLabel, slotWidth: VoiceBarNotchContract.material.compactControlSize)
+                        .accessibilityLabel("\(state.readQueueCount) queued")
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: state.readQueueCount)
     }
 
     /// P16: Pause collapses the teleprompter and Play expands it again; the shell's own morph animates both.
@@ -821,13 +843,23 @@ public struct BarView: View {
     }
 
     private var queueBadge: some View {
-        Text("\(state.queueDepth)")
+        countBadge("\(state.queueDepth)")
+    }
+
+    /// The idle queue badge's capsule; QUEUE1's "+N" fits it into one control slot beside Next.
+    private func countBadge(_ label: String, slotWidth: CGFloat? = nil) -> some View {
+        Text(label)
             .font(.system(size: 10, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .lineLimit(1)
+            .fixedSize()
             .foregroundStyle(notchPrimaryLabelColor)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, slotWidth == nil ? 6 : 3)
             .padding(.vertical, 2)
             .background(Theme.speakingColor.opacity(0.22))
             .clipShape(Capsule())
+            // "+10" may overhang its slot into the core gap; the frame keeps Next and pause on their hit rects.
+            .frame(width: slotWidth, height: slotWidth)
             .contentTransition(.numericText())
     }
 

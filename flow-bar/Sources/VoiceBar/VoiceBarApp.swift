@@ -1825,6 +1825,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
+    static func playbackLeadingSlotCount(for state: VoiceState) -> Int {
+        VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1
+    }
+
     static func notchInteractionConfiguration(
         for state: VoiceState,
         visualState: VoiceBarNotchVisualState
@@ -1850,8 +1854,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 )
             case .speaking:
                 // P16: pause/play on the left; a hidden-but-playing read adds its eye beside Stop.
+                // QUEUE1: Next and the "+N" count share the left wing.
                 return VoiceBarNotchInteractionConfiguration(
-                    leadingControlCount: 1,
+                    leadingControlCount: playbackLeadingSlotCount(for: state),
                     trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
                     trailingOuterInset: WaveformLayout.outerInset
                 )
@@ -1878,7 +1883,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 lowerControlCount += 1
             }
             return VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: state.mode == .speaking ? 1 : 0,
+                leadingControlCount: state.mode == .speaking ? playbackLeadingSlotCount(for: state) : 0,
                 lowerControlCount: lowerControlCount,
                 lowerSurfaceIsInteractive: state.mode == .speaking
             )
@@ -1956,6 +1961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
                 isPlaybackPaused: state?.isPlaybackPaused ?? false,
+                readQueueLeadingSlotCount: state.flatMap { VoiceBarPresentation.readQueueControl(for: $0)?.leadingSlotCount } ?? 1,
                 confirmationText: state?.confirmationText,
                 commandModeState: state?.commandModeState,
                 activeClipMarker: state?.activeClipMarker,
