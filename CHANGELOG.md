@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.49] - 2026-10-20
+
+### Added
+- A pause/play button on the left of the pill while VoiceBar is speaking. Pause stops the read on the current word and folds the teleprompter away; Play reopens it and carries on from that word. F5 over a paused read still records, and the read waits for Play afterwards (#476, #480).
+- Option+F5 on a different selection while a read is playing, preparing or paused queues it instead of replacing the read. The pill shows +N with a Next button, a read that finishes starts the next one, Stop clears the queue, and more than 10 shows "Queue full". Option+F5 on the same selection or with no selection stops the read and clears the queue (#482). Waiting reads survive an F5 dictation and are cleared when an agent speaks, an Ask starts or VoiceBar is hidden (#484).
+
+### Changed
+- A long Option+F5 read is one continuous teleprompter document: the page no longer swaps at each ~400-character chunk, and the highlight, seeks and replay carry across chunks (#477).
+- Teleprompter formatting: bullets and numbered items start their own lines with a hanging indent, line and paragraph breaks are kept, a missing space after a full stop is shown (`unmuted. What`), and closing punctuation stays with its word. Long reads render lazily, and a scroll into a part of the document that is not built yet is checked and repeated until the word is on screen (#481, #483).
+- Normal F5 dictation types into Chromium and Electron apps (such as ChatGPT and Claude) and into Gemini, the way Shift+F5 already did. A successful typed delivery says "Typed"; "Unverified / In History" now appears only for an accessibility write that could not be confirmed (#478).
+- The busy note no longer clips while the notch animates, "Preparing speech…" is centred, and the seek bar is solid with "so far" while the total is still growing (#475).
+
+### Fixed
+- VoiceLayer no longer kills an unrelated app that reused the PID in a stale lock: the lock records the owner's exact start time and only a matching process is signalled (#479).
+- Cancelling a recording made over a paused read no longer brings Play back early, and stopping that recording no longer waits for the paused read (#480).
+- A Cancel while nothing is recording (`voicebar://cancel` or socket control) now ends the waiting Option+F5 reads in both VoiceBar and the daemon, so the +N count and the queue no longer disagree (#485).
+- Replacing the teleprompter text with a same-length text and matching timings no longer leaves the current word off screen (#486).
+
 ## [2.2.48] - 2026-10-20
 
 ### Changed
