@@ -686,6 +686,9 @@ public struct TeleprompterView: View {
     /// TELE1C R2: bumped by every restart, document change, readback and disappearance. A pending landing or a
     /// deferred scroll pass from an older generation is void, so it never touches the new document.
     @State private var landingGeneration = 0
+    /// TELE1D: the generation whose after-layout landing check is queued but has not run yet. Voiding it must
+    /// re-arm the scroll just like voiding a pending landing, or a second restart in one update loses it.
+    @State private var queuedRecovery: Int?
 
     private struct PendingLanding {
         let word: Int
@@ -954,8 +957,10 @@ public struct TeleprompterView: View {
         // TELE1C: never infer that a scroll landed. After layout, a destination whose block is still not
         // built is reached again: its block, and the word once the block appears.
         // Every index comes from this document's own block map, captured with its generation.
+        queuedRecovery = generation
         DispatchQueue.main.async {
             guard landingGeneration == generation, currentIndex == target else { return }
+            queuedRecovery = nil
             let block = blocks[target]
             guard mountedDocument != document || !mountedBlocks.contains(block) else { return }
             pendingLanding = PendingLanding(word: target, block: block, anchor: anchor, generation: generation)
@@ -980,16 +985,18 @@ public struct TeleprompterView: View {
         }
     }
 
-    /// Voids every pending landing and deferred scroll pass. Returns whether a landing was waiting.
+    /// Voids every pending landing and deferred scroll pass. Returns whether a recovery was outstanding: a
+    /// landing waiting for its block, or a queued after-layout check that had not run yet.
     @discardableResult
     private func invalidateLandings() -> Bool {
-        let hadLanding = pendingLanding != nil
+        let hadRecovery = pendingLanding != nil || queuedRecovery == landingGeneration
         landingGeneration &+= 1
         pendingLanding = nil
-        return hadLanding
+        queuedRecovery = nil
+        return hadRecovery
     }
 
-    /// Restarts the highlight from the clock. Returns whether it voided a pending landing.
+    /// Restarts the highlight from the clock. Returns whether it voided an outstanding recovery.
     @discardableResult
     private func restart() -> Bool {
         let hadLanding = invalidateLandings()

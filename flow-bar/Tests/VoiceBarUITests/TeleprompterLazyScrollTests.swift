@@ -259,4 +259,43 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         XCTAssertTrue(text.contains("Shorter") && text.contains("replacement"), "the short document renders; OCR: \(text)")
         XCTAssertEqual(staleLandings, [], "the old document's landing never scrolls the new one")
     }
+
+    // TELE1D (Sol TELE1C R2): a same-length text and matching timings arriving in one update run restart()
+    // twice; the second must not void the first's queued recovery without re-arming it.
+    func testASameLengthReplacementWithMatchingTimingsStillLandsTheWord() throws {
+        let token = String(repeating: "x", count: 960)
+        let raw = (0 ... 280).map { "word\($0)" } + [token] + (282 ..< 600).map { "word\($0)" }
+        func rows(_ prefix: String) -> [TeleprompterBoundary] {
+            (0 ... 282).map { index in
+                let offset = index <= 280 ? index * 380 : index == 281 ? 107_600 : 108_000
+                return TeleprompterBoundary(offsetMs: offset, durationMs: 340,
+                                            text: raw[index].replacingOccurrences(of: "word", with: prefix), wordIndex: index)
+            }
+        }
+        let clock = ReplacingClock(text: raw.joined(separator: " "), boundaries: rows("word"))
+        var replaced = false
+        TeleprompterLandingProbe.didPend = {
+            guard !replaced else { return }
+            replaced = true
+            clock.text = clock.text.replacingOccurrences(of: "word", with: "term") // same length, same tokens count
+            // Sol's shape: matching rows for the new text, without the last row, so no later playback change
+            // arrives to rescue the scroll; only the restart's own recovery can land it.
+            clock.boundaries = Array(rows("term").dropLast())
+        }
+        defer { TeleprompterLandingProbe.didPend = nil }
+        let host = NSHostingView(rootView: ReplacingHost(clock: clock))
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: Theme.teleprompterViewportHeight)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        defer { window.contentView = nil }
+        settle(host, 2.2) // pending at ~107.6 s; replaced inside that window
+        guard replaced else { // as in the TELE1C replacement test: a host that prebuilt block 1 never pends
+            throw XCTSkip("block 1 was already built on this host, so no landing went pending; scenario unreachable")
+        }
+        settle(host, 0.6)
+        let text = onScreenText(host)
+        XCTAssertNotNil(text.range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]),
+                        "the current word (the token, in block 1) is on screen; OCR: \(text.prefix(120))")
+    }
 }
