@@ -1128,6 +1128,12 @@ public final class VoiceState {
         body()
     }
 
+    /// QUEUE1b: a stop or cancel aimed at the dictation after F5 leaves the reads waiting for Next bindable;
+    /// the daemon keeps them too. Only an explicit Stop with nothing captured ends them.
+    private var keepsWaitingReadsThroughCapture: Bool {
+        readQueueCurrentRequestID != nil && (mode == .recording || mode == .transcribing)
+    }
+
     private func clearReadQueue() {
         readQueueCount = 0
         readQueueCurrentRequestID = nil
@@ -1516,7 +1522,8 @@ public final class VoiceState {
             // Retire the stopped read only; queued reads keep their identities so Next can start them.
             clearCurrentSelectionReadIdentity(advanceEpoch: true)
         }
-        sendIntent(command: .stop, payload: payload, retiresSelections: !retainsReadQueue)
+        sendIntent(command: .stop, payload: payload,
+                   retiresSelections: !retainsReadQueue && !keepsWaitingReadsThroughCapture)
         if shouldShowTranscribing {
             enterTranscribingMode()
         } else if shouldExitInterruptedPlayback {
@@ -1591,7 +1598,7 @@ public final class VoiceState {
         resetAudioLevels()
         hotkeyPhase = .idle
         statusText = ""
-        sendIntent(command: .cancel, payload: ["cmd": "cancel"])
+        sendIntent(command: .cancel, payload: ["cmd": "cancel"], retiresSelections: !keepsWaitingReadsThroughCapture)
         if mode == .recording || mode == .transcribing || mode == .speaking {
             mode = isConnected ? .idle : .disconnected
             onModeChange?(mode)

@@ -795,6 +795,80 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(lastQueue()).toEqual({ type: "read_queue", count: 1, current_request_id: "B" });
     });
 
+    // QUEUE1b: a queue F5 retained (suspended) survives the capture, and dies on agent speech or Ask.
+    async function suspendedBehindA() {
+      select("A", "Alpha interrupted by dictation.");
+      await playerBarrier.at(0);
+      select("B", "Bravo waits for Next."); select("C", "Charlie waits too.");
+      await handleSocketCommand({ cmd: "stop", retain_read_queue: true } as any);
+      await settle();
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+    }
+    /** The real record command; only the recorder child is stubbed, so the capture state is the daemon's own. */
+    function startCapture() {
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+      const done = deferred<string>();
+      spies.push(spyOn(input, "waitForInput").mockImplementation(() => done.promise));
+      expect(handleSocketCommand({ cmd: "record", id: "rec", press_to_talk: true } as any)).toMatchObject({ outcome: "accept" });
+      const state = spyOn(input, "getRecordingState").mockReturnValue("recording"); spies.push(state);
+      return { done, state };
+    }
+    async function expectNextStartsB() {
+      expect(receipts("B")).toEqual([]);
+      expect(players).toHaveLength(1);
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+      expect(handleSocketCommand({ cmd: "read_next", request_id: "A" } as any)).toMatchObject({ outcome: "accept" });
+      await playerBarrier.at(1);
+      expect(receipts("B").length).toBeGreaterThan(0);
+    }
+
+    for (const end of ["release", "cancel"] as const) it(`QUEUE1b SOL-R2-1: the capture's ${end} keeps the retained queue; Next(A) starts B`, async () => {
+      await suspendedBehindA();
+      const capture = startCapture();
+      const ack = await handleSocketCommand((end === "release" ? { cmd: "stop", physical_press: true } : { cmd: "cancel" }) as any);
+      expect(ack).toMatchObject({ outcome: "accept" });
+      capture.state.mockReturnValue("idle"); capture.done.resolve(""); await settle();
+      await expectNextStartsB();
+    });
+
+    it("QUEUE1b: a VAD or timeout end of the capture keeps the retained queue", async () => {
+      await suspendedBehindA();
+      const capture = startCapture();
+      capture.state.mockReturnValue("idle"); capture.done.resolve("dictated words"); await settle();
+      await expectNextStartsB();
+    });
+
+    it("QUEUE1b: explicit Stop with no capture still clears the retained queue", async () => {
+      await suspendedBehindA();
+      expect(await handleSocketCommand({ cmd: "stop" } as any)).toMatchObject({ outcome: "noop" });
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+    });
+
+    it("QUEUE1b SOL-R2-2: agent voice_speak after teardown ends the retained queue; a fresh D never runs into B", async () => {
+      await suspendedBehindA();
+      autoPlay = true;
+      await speak("Agent announcement.");
+      await settle();
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+      select("D", "Delta fresh selection.");
+      await settle(); await settle();
+      expect(receipts("D").length).toBeGreaterThan(0);
+      expect(receipts("B")).toEqual([]);
+    });
+
+    it("QUEUE1b SOL-R2-2: Ask after teardown ends the retained queue; a fresh D never runs into B", async () => {
+      await suspendedBehindA();
+      autoPlay = true;
+      spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+      spies.push(spyOn(input, "waitForInput").mockResolvedValue("an answer"));
+      await handleVoiceAsk({ message: "Question?", timeout_seconds: 5 });
+      await settle();
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+      select("D", "Delta fresh selection.");
+      await settle(); await settle();
+      expect(receipts("B")).toEqual([]);
+    });
+
     it("an agent voice_speak keeps its priority: it preempts the user's read as before and ends the user queue", async () => {
       select("A", "Alpha before the agent.");
       await playerBarrier.at(0);

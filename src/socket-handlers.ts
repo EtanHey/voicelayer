@@ -33,6 +33,7 @@ import {
   resumePlayback,
   isPlaybackPaused,
   setLongReadSettledListener,
+  setExternalSpeechPreemptionListener,
 } from "./tts";
 import {
   waitForInput,
@@ -113,16 +114,23 @@ function startSelectionRead(read: QueuedSelectionRead): void {
  * as before, preempt a user read; that ends this queue too (no surprise resumption after an agent). */
 let selectionReads = new SelectionReadQueue(startSelectionRead, (state) => broadcast({ type: "read_queue", ...state }));
 setLongReadSettledListener((requestId, outcome) => selectionReads.settled(requestId, outcome));
+// QUEUE1b: agent speech and Ask end the user chain, including reads F5 left waiting for Next.
+setExternalSpeechPreemptionListener(() => selectionReads.clear());
 
 export function resetSelectionReadQueueForTests(): void {
   selectionReads = new SelectionReadQueue(startSelectionRead, (state) => broadcast({ type: "read_queue", ...state }));
 }
 
-/** Stop means stop. F5 over a playing read (`retainQueue`) still stops it, but keeps the queued reads for Next. */
-function stopAll(playbackElapsedMs?: number, retainQueue = false): void {
-  if (retainQueue) selectionReads.suspend();
-  else selectionReads.clear();
+/** Stop means stop. F5 over a playing read (`suspend`) still stops it, but keeps the queued reads for Next;
+ * a stop or cancel aimed at the capture (`keep`) leaves those waiting reads alone (QUEUE1b). */
+function stopAll(playbackElapsedMs?: number, queue: "clear" | "suspend" | "keep" = "clear"): void {
+  if (queue === "suspend") selectionReads.suspend();
+  else if (queue === "clear") selectionReads.clear();
   stopPlayback(playbackElapsedMs);
+}
+
+function stopQueuePolicy(recordingState: string, retain: boolean): "clear" | "suspend" | "keep" {
+  return recordingState !== "idle" ? "keep" : retain ? "suspend" : "clear";
 }
 
 export function handleSocketCommand(
@@ -205,7 +213,7 @@ export function handleSocketCommand(
       // capture; the parked read stays parked for Play, and the ack never waits on it (P16b, TLA+
       // CaptureCmdAckWithoutAwait): a parked long read cannot finish, so awaiting it false-rejected at 35 s.
       if (recordingState !== "idle" && isPlaybackPaused()) return buildAck(command, "accept");
-      stopAll(command.playback_elapsed_ms, command.retain_read_queue === true);
+      stopAll(command.playback_elapsed_ms, stopQueuePolicy(recordingState, command.retain_read_queue === true));
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
@@ -227,7 +235,7 @@ export function handleSocketCommand(
       // capture; the parked read stays parked for Play, and the ack never waits on it (P16b, TLA+
       // CaptureCmdAckWithoutAwait): a parked long read cannot finish, so awaiting it false-rejected at 35 s.
       if (recordingState !== "idle" && isPlaybackPaused()) return buildAck(command, "accept");
-      stopAll(command.playback_elapsed_ms);
+      stopAll(command.playback_elapsed_ms, stopQueuePolicy(recordingState, false));
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
@@ -347,7 +355,7 @@ export function handleSocketCommand(
       }
       if (isSpeaking) {
         // F5 over a playing read stops it as today; queued Option+F5 reads wait for Next.
-        stopAll(undefined, true);
+        stopAll(undefined, "suspend");
       }
       const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
       const silenceMode = command.silence_mode ?? "standard";
