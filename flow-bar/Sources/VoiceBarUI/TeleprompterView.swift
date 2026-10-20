@@ -500,11 +500,18 @@ public enum TeleprompterScrollPolicy {
         text
     }
 
-    /// TELE1: a highlight move within the block on screen or into the next one, which the lazy stack has
-    /// already built, scrolls smoothly. Anything farther is a jump.
-    public static func isNearby(from old: Int, to new: Int, blockOfWord: [Int]) -> Bool {
+    /// Longest playback step that may glide into the next block: the rest of the step is already on screen.
+    public static let maximumGlideWords = 40
+
+    /// TELE1: the lazy stack builds only what is near the viewport, and adjacency does not prove a block is
+    /// built (a 320-word block can leave the next one far below). A move inside the current block glides; so
+    /// does a playback step (the clock reaching the next timed word) a short way into the next block. A
+    /// restart or timeline update, or any longer move, is a jump that is reached block-first.
+    public static func scrollsSmoothly(from old: Int, to new: Int, blockOfWord: [Int], isPlaybackStep: Bool) -> Bool {
         guard blockOfWord.indices.contains(old), blockOfWord.indices.contains(new) else { return false }
-        return abs(blockOfWord[new] - blockOfWord[old]) <= 1
+        let from = blockOfWord[old], to = blockOfWord[new]
+        if from == to { return true }
+        return isPlaybackStep && to == from + 1 && new > old && new - old <= maximumGlideWords
     }
 }
 
@@ -675,6 +682,8 @@ public struct TeleprompterView: View {
     @State private var currentIndex: Int
     @State private var animationTask: Task<Void, Never>?
     @State private var renderCache = TeleprompterRenderCache()
+    /// True while the animation task is the one moving `currentIndex`; any restart clears it.
+    @State private var isPlaybackStep = false
 
     /// Words, formatting and blocks, computed once per text and timeline (a highlight tick reuses them).
     private var rendered: TeleprompterRenderedDocument {
@@ -740,10 +749,10 @@ public struct TeleprompterView: View {
                 scrollToCurrentWord(with: proxy, animated: false)
             }
             .onChange(of: currentIndex) { old, new in
-                // A step into the same or the next block glides; a far jump (a seek's timings arriving, a
-                // timeline update) may target a block the lazy stack has not built, so it reaches it first.
-                scrollToCurrentWord(with: proxy, animated: TeleprompterScrollPolicy.isNearby(
-                    from: old, to: new, blockOfWord: rendered.blockOfWord))
+                // Playback glides; a jump (a seek's timings arriving, a timeline update) may target a block the
+                // lazy stack has not built, so it reaches that block first.
+                scrollToCurrentWord(with: proxy, animated: TeleprompterScrollPolicy.scrollsSmoothly(
+                    from: old, to: new, blockOfWord: rendered.blockOfWord, isPlaybackStep: isPlaybackStep))
             }
             .onChange(of: isReadback) { _, readback in
                 if readback {
@@ -760,6 +769,10 @@ public struct TeleprompterView: View {
     private var blockViews: some View {
         let document = rendered
         let indexed = usesIndexedTiming
+        let group = TeleprompterFormatting.groupRange(containing: currentIndex, layouts: document.layouts)
+        let groupID = document.layouts.indices.contains(currentIndex) ? document.layouts[currentIndex].highlightGroup : nil
+        let groupTimed = groupID.map { document.words.indices.contains($0) && canHighlight(document.words[$0], indexed) }
+            ?? false
         // Block identity must not share the Int space of word ids, or scrollTo(word) lands on a block.
         return ForEach(document.blocks.indices.map(TeleprompterBlockID.init), id: \.self) { blockID in
             let index = blockID.index, block = document.blocks[index]
@@ -767,6 +780,8 @@ public struct TeleprompterView: View {
                 words: Array(document.words[block]),
                 layouts: Array(document.layouts[block]),
                 highlightedIndex: blockHighlight(block),
+                highlightedGroup: block.overlaps(group) ? groupID : nil,
+                highlightedGroupIsTimed: block.overlaps(group) && groupTimed,
                 hoveredWordID: hoveredWordID.flatMap { block.contains($0) ? $0 : nil },
                 isReadback: isReadback,
                 usesIndexedTiming: indexed,
@@ -785,6 +800,10 @@ public struct TeleprompterView: View {
 
     /// The word a block styles against. Outside the block it saturates, so a far-away tick changes nothing:
     /// later blocks read as upcoming, earlier ones past the karaoke fade.
+    private func canHighlight(_ word: TeleprompterWord, _ indexed: Bool) -> Bool {
+        indexed ? word.offsetMs != nil : !wordBoundaries.isEmpty
+    }
+
     private func blockHighlight(_ block: Range<Int>) -> Int {
         if block.contains(currentIndex) { return currentIndex }
         return currentIndex < block.lowerBound ? -1 : min(currentIndex, block.upperBound + 64)
@@ -809,6 +828,7 @@ public struct TeleprompterView: View {
     private func startAnimating() {
         let hasTimeline = usesIndexedTiming ? !timedWords.isEmpty : !wordBoundaries.isEmpty
         guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback), hasTimeline else { return }
+        isPlaybackStep = false
         currentIndex = TeleprompterPlaybackPolicy.currentWordIndex(
             in: teleprompterWords,
             elapsedMilliseconds: highlightElapsedMilliseconds
@@ -843,6 +863,7 @@ public struct TeleprompterView: View {
                 }
 
                 if Task.isCancelled { break }
+                isPlaybackStep = true
                 currentIndex = word.id
             }
         }
@@ -867,6 +888,7 @@ public struct TeleprompterView: View {
                     try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
                 }
                 if Task.isCancelled { break }
+                isPlaybackStep = true
                 currentIndex = word.id
             }
         }
@@ -906,6 +928,7 @@ public struct TeleprompterView: View {
 
     private func restart() {
         stopAnimating()
+        isPlaybackStep = false
         currentIndex = TeleprompterPlaybackPolicy.restartWordIndex(
             in: teleprompterWords, elapsedMilliseconds: highlightElapsedMilliseconds,
             isReadback: isReadback || wordBoundaries.isEmpty
@@ -924,6 +947,9 @@ private struct TeleprompterBlockView: View, Equatable {
     let words: [TeleprompterWord]
     let layouts: [TeleprompterWordLayout]
     let highlightedIndex: Int
+    /// The current word's group when it reaches into this block (a long token or punctuation run may span blocks).
+    let highlightedGroup: Int?
+    let highlightedGroupIsTimed: Bool
     let hoveredWordID: Int?
     let isReadback: Bool
     let usesIndexedTiming: Bool
@@ -937,6 +963,7 @@ private struct TeleprompterBlockView: View, Equatable {
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.words == rhs.words && lhs.layouts == rhs.layouts && lhs.highlightedIndex == rhs.highlightedIndex &&
+            lhs.highlightedGroup == rhs.highlightedGroup && lhs.highlightedGroupIsTimed == rhs.highlightedGroupIsTimed &&
             lhs.hoveredWordID == rhs.hoveredWordID && lhs.isReadback == rhs.isReadback &&
             lhs.usesIndexedTiming == rhs.usesIndexedTiming && lhs.hasBoundaries == rhs.hasBoundaries &&
             lhs.wrapWidth == rhs.wrapWidth && lhs.flowWidth == rhs.flowWidth && (lhs.onSeek == nil) == (rhs.onSeek == nil)
@@ -952,15 +979,15 @@ private struct TeleprompterBlockView: View, Equatable {
 
     var body: some View {
         let first = words.first?.id ?? 0
-        let local = highlightedIndex - first
-        let currentGroup = layouts.indices.contains(local) ? layouts[local].highlightGroup : highlightedIndex
         FlowLayout(spacing: 5, maxWidth: flowWidth) {
             ForEach(Array(words.enumerated()), id: \.element.id) { position, word in
                 let layout = layouts[position]
                 let head = layout.highlightGroup - first
+                let isCurrent = layout.highlightGroup == highlightedGroup
                 let highlight = WordHighlight(
-                    isCurrent: layout.highlightGroup == currentGroup,
-                    isAvailable: canHighlight(word) || words.indices.contains(head) && canHighlight(words[head]),
+                    isCurrent: isCurrent,
+                    isAvailable: canHighlight(word) || words.indices.contains(head) && canHighlight(words[head]) ||
+                        isCurrent && highlightedGroupIsTimed,
                     joinsPrevious: layout.gluesToPrevious,
                     joinsNext: layouts.indices.contains(position + 1) && layouts[position + 1].gluesToPrevious
                 )

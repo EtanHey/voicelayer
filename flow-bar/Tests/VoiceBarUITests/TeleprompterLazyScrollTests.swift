@@ -99,4 +99,61 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         settle(host)
         XCTAssertTrue(isOnScreen("word3100", host), "a timeline jump reaches the far word too; OCR: \(onScreenText(host).prefix(120))")
     }
+
+    // Split B R2 (Sol): with 320-word unpunctuated blocks the adjacent block is not built either.
+    private struct PlainHost: View {
+        let text: String
+        let feed: Feed
+        var body: some View {
+            TeleprompterView(text: text, wordBoundaries: feed.boundaries, playbackEpoch: feed.epoch,
+                             playbackElapsedMilliseconds: { [feed] in feed.elapsed })
+                .frame(width: 300, height: Theme.teleprompterViewportHeight)
+                .background(Color.black)
+                .environment(\.colorScheme, .dark)
+        }
+    }
+
+    private let plainText = (0 ..< 4500).map { "word\($0)" }.joined(separator: " ")
+
+    private func plainTimed(_ range: Range<Int>) -> [TeleprompterBoundary] {
+        range.map { TeleprompterBoundary(offsetMs: $0 * 380, durationMs: 340, text: "word\($0)", wordIndex: $0) }
+    }
+
+    private func mountPlain(_ feed: Feed) -> (NSWindow, NSView) {
+        let host = NSHostingView(rootView: PlainHost(text: plainText, feed: feed))
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: Theme.teleprompterViewportHeight)
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        settle(host)
+        return (window, host)
+    }
+
+    private func jump(_ feed: Feed, to word: Int, _ host: NSView) {
+        feed.elapsed = word * 380 + 10
+        feed.boundaries = plainTimed(0 ..< 10) + plainTimed(word ..< word + 10)
+        settle(host)
+    }
+
+    func testASameEpochJumpIntoTheAdjacentUnpunctuatedBlockScrollsTheWordIntoView() {
+        let feed = Feed(boundaries: plainTimed(0 ..< 10))
+        let (window, host) = mountPlain(feed)
+        defer { window.contentView = nil }
+        XCTAssertTrue(isOnScreen("word0", host))
+        for target in [320, 640] {
+            jump(feed, to: target, host)
+            XCTAssertTrue(isOnScreen("word\(target)", host),
+                          "adjacent block \(target / 320) is reached; OCR: \(onScreenText(host).prefix(120))")
+        }
+    }
+
+    func testAJumpBackIntoTheAdjacentBlockScrollsTheWordIntoView() {
+        let feed = Feed(boundaries: plainTimed(0 ..< 10))
+        let (window, host) = mountPlain(feed)
+        defer { window.contentView = nil }
+        jump(feed, to: 1300, host)
+        XCTAssertTrue(isOnScreen("word1300", host))
+        jump(feed, to: 1000, host) // block 3, the block before 1300's block 4
+        XCTAssertTrue(isOnScreen("word1000", host), "backward adjacent jump; OCR: \(onScreenText(host).prefix(120))")
+    }
 }

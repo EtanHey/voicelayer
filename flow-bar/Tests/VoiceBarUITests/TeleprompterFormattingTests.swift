@@ -112,4 +112,31 @@ final class TeleprompterFormattingTests: XCTestCase {
                        [0 ..< 2, 2 ..< 6, 6 ..< 9],
                        "a sentence ending in a quote splits after it; the hard bound waits past glued punctuation")
     }
+
+    func testAHugeTokenOrPunctuationChainIsBoundedAndKeepsItsGroup() {
+        for text in ["start " + String(repeating: "x", count: 20_000) + " tail",
+                     "word " + Array(repeating: ",", count: 1000).joined(separator: " ") + " tail"] {
+            let words = TeleprompterContentModel.words(text: text, wordBoundaries: [])
+            let layouts = TeleprompterFormatting.layout(text: text, words: words)
+            let blocks = TeleprompterFormatting.blocks(layouts: layouts, words: words)
+            XCTAssertEqual(blocks.flatMap { $0 }, Array(words.indices))
+            XCTAssertTrue(blocks.allSatisfy { $0.count <= 320 }, "max block \(blocks.map(\.count).max() ?? 0)")
+            let group = TeleprompterFormatting.groupRange(containing: 500, layouts: layouts)
+            XCTAssertEqual(group, (text.hasPrefix("start") ? 1 : 0) ..< words.count - 1,
+                           "the group still spans every piece across blocks")
+        }
+    }
+
+    func testOnlyPlaybackStepsGlideAndAdjacencyIsNeverProofABlockIsBuilt() {
+        let blockOfWord = Array(repeating: 0, count: 320) + Array(repeating: 1, count: 320) + Array(repeating: 2, count: 320)
+        func glides(_ old: Int, _ new: Int, _ step: Bool) -> Bool {
+            TeleprompterScrollPolicy.scrollsSmoothly(from: old, to: new, blockOfWord: blockOfWord, isPlaybackStep: step)
+        }
+        XCTAssertTrue(glides(10, 300, false), "inside the block on screen, even a jump is laid out")
+        XCTAssertTrue(glides(319, 320, true), "playback reading on into the next block glides")
+        XCTAssertFalse(glides(9, 320, false), "a timeline jump into the adjacent block is reached block-first")
+        XCTAssertFalse(glides(9, 320, true), "a long playback step across blocks is a jump too")
+        XCTAssertFalse(glides(330, 300, false), "backwards into the previous block is a jump")
+        XCTAssertFalse(glides(10, 700, true))
+    }
 }

@@ -133,8 +133,8 @@ public enum TeleprompterFormatting {
 extension TeleprompterFormatting {
     /// Word ranges rendered as independent flows in a lazy stack, so a long read only lays out what is on
     /// screen. A block starts where the text already starts a line. A paragraph longer than `maximumWords`
-    /// also splits after a sentence end (closing quotes and brackets allowed), and at twice that length
-    /// anywhere, so no block is unbounded. Never before glued punctuation or inside a token.
+    /// also splits after a sentence end (closing quotes and brackets allowed), never before glued
+    /// punctuation or inside a token; and at twice that length anywhere, so no block is unbounded.
     static func blocks(layouts: [TeleprompterWordLayout], words: [TeleprompterWord],
                        maximumWords: Int = 160) -> [Range<Int>] {
         guard layouts.count == words.count, !words.isEmpty else { return words.isEmpty ? [] : [0 ..< words.count] }
@@ -148,8 +148,10 @@ extension TeleprompterFormatting {
             let layout = layouts[index]
             let length = index - start
             let startsGroup = layout.highlightGroup == words[index].id
-            let split = startsGroup && (length >= 2 * maximumWords ||
-                length >= maximumWords && endsSentence(words[index - 1].text))
+            // The hard bound holds even inside a 20,000-character token or a run of glued punctuation;
+            // the view lights a group across blocks, so splitting one never splits its highlight.
+            let split = length >= 2 * maximumWords ||
+                startsGroup && length >= maximumWords && endsSentence(words[index - 1].text)
             if layout.lineBreak != .none || split {
                 blocks.append(start ..< index)
                 start = index
@@ -157,6 +159,18 @@ extension TeleprompterFormatting {
         }
         blocks.append(start ..< words.count)
         return blocks
+    }
+}
+
+extension TeleprompterFormatting {
+    /// The contiguous words that light up with `index`: a token's pieces and its glued punctuation.
+    static func groupRange(containing index: Int, layouts: [TeleprompterWordLayout]) -> Range<Int> {
+        guard layouts.indices.contains(index) else { return index ..< index }
+        let group = layouts[index].highlightGroup
+        var lower = index, upper = index + 1
+        while lower > 0, layouts[lower - 1].highlightGroup == group { lower -= 1 }
+        while upper < layouts.count, layouts[upper].highlightGroup == group { upper += 1 }
+        return lower ..< upper
     }
 }
 
