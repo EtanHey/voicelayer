@@ -500,6 +500,8 @@ public final class VoiceState {
         var longReadID: String?
         var readbackID: String?
         var readbackDurationMs: Int?
+        /// TELE1: a long read's continuous document, so Play after a capture shows the whole read again.
+        var document: LongReadDocumentSnapshot
     }
 
     private struct ParkedRead {
@@ -1739,7 +1741,8 @@ public final class VoiceState {
             chunkStartMs: playbackChunkStartMilliseconds,
             longReadID: playbackLongReadID,
             readbackID: playbackReadbackID,
-            readbackDurationMs: playbackReadbackDurationMilliseconds
+            readbackDurationMs: playbackReadbackDurationMilliseconds,
+            document: longReadDocumentSnapshot()
         )
     }
 
@@ -1775,6 +1778,7 @@ public final class VoiceState {
         let read = parked.read
         clearRetainedTeleprompter()
         statusText = read.text
+        restoreLongReadDocument(read.document)
         wordBoundaries = read.words
         playbackDurationMilliseconds = read.durationMs
         isPlaybackDurationGrowing = read.isDurationGrowing
