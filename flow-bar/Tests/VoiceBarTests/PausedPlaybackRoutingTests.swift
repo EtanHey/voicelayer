@@ -92,4 +92,22 @@ final class PausedPlaybackRoutingTests: XCTestCase {
         router.handleHotkeyHoldEnd(holdDuration: 0.5)
         XCTAssertEqual(sent, ["stop"])
     }
+
+    /// QUEUE1 D2: the unchanged router, inside AppDelegate's F5 scope, stops a playing read but keeps the queue.
+    func testF5TapOverAPlayingQueuedReadSendsStopThatRetainsTheQueue() {
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in }
+        )
+        state.isConnected = true
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Queued read", "request_id": "r-A"])
+        state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": "r-A"])
+        let router = VoiceBarCommandRouter(voiceState: state, resetHotkeyState: {})
+        state.retainingReadQueueOnStop { router.handleHotkeySingleTap() }
+        XCTAssertEqual(sent.map { $0["cmd"] as? String }, ["stop"])
+        XCTAssertEqual(sent.last?["retain_read_queue"] as? Bool, true)
+        XCTAssertEqual(state.readQueueCount, 2)
+    }
 }

@@ -2087,6 +2087,12 @@ const longReads = new Map<string, OwnedLongRead>();
 const cancelledLongReadTeardowns = new Set<Promise<void>>();
 let longReadCounter = 0;
 
+let longReadSettledListener: ((requestId: string, outcome: "completed" | "stopped" | "failed") => void) | undefined;
+/** QUEUE1: told when a long read ends; only `completed` (every chunk played to its end) is a natural end. */
+export function setLongReadSettledListener(listener: typeof longReadSettledListener): void {
+  longReadSettledListener = listener;
+}
+
 /** Preempt only a long read; ordinary short speech retains its existing queue policy. */
 export function preemptLongRead(): boolean {
   // New accepted speech (and Ask) replaces a parked item so held speech cannot strand a waiter.
@@ -2155,6 +2161,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   const started = new Promise<{ error?: string }>((resolve) => { resolveStarted = resolve; });
   let failure: string | undefined;
   let audioStarted = false;
+  let playedToEnd = false;
   let generation = 1;
   const playerExits: Promise<void>[] = [];
   const handleStarted = () => resolveStarted({});
@@ -2268,6 +2275,8 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
           onCompleted: (outcome) => {
             if (!started) resolveStarted(false);
             if (outcome.status === "failed") failure = `Speech playback failed: ${outcome.reason ?? "player-error"}`;
+            // QUEUE1: only a chunk that played to its end counts toward a natural completion.
+            playedToEnd = outcome.status === "completed";
           },
         });
         playerExits.push(playback.playerExited); void playback.playerExited.catch(() => {});
@@ -2303,10 +2312,14 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   }).finally(() => {
     longReads.delete(id);
     if (!audioStarted) resolveStarted({ error: failure ?? "Speech stopped before playback" });
-    if (activeLongRead === handle) {
-      activeLongRead = undefined;
-      if (playbackQueueManager.getDepthForHealth() === 0) broadcastPlaybackIdleIfSpeakerClear();
+    const owned = activeLongRead === handle;
+    if (owned) activeLongRead = undefined;
+    // QUEUE1: a natural end may start the next queued read before the idle edge, so the pill never blinks idle.
+    const outcome = signal.aborted ? "stopped" : failure || !playedToEnd ? "failed" : "completed";
+    try { longReadSettledListener?.(speechIdentity.request_id, outcome); } catch (error) {
+      console.error(`[voicelayer] Read queue settle failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+    if (owned && !activeLongRead && playbackQueueManager.getDepthForHealth() === 0) broadcastPlaybackIdleIfSpeakerClear();
   });
   handle.completion = handle.done.then(() => failure ? { error: failure } : {});
   handle.playerExited = handle.done.then(async () => { await Promise.all(playerExits); });

@@ -380,6 +380,39 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.stopCount, 0)
     }
 
+    func testNextControlBesidePauseSendsReadNextForTheCurrentRead() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        state.handleEvent(["type": "state", "state": "speaking", "text": "First queued read", "request_id": "r-A"])
+        state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": "r-A"])
+        state.dismissTeleprompter()
+        var sent: [[String: Any]] = []
+        state.sendCommand = { sent.append($0) }
+        let router = SpyCommandRouter()
+        let speaking = makeInteractivePanelHost(
+            state: state,
+            router: router,
+            configuration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 3,
+                trailingControlCountFromOuter: 2,
+                trailingOuterInset: WaveformLayout.outerInset
+            )
+        )
+        XCTAssertEqual(speaking.layout.presentation.visualState, .compactStatus)
+        XCTAssertEqual(speaking.layout.presentation.geometry.leadingWingWidth,
+                       VoiceBarPresentation.playbackLeadingWingWidth(slotCount: 3))
+        // From the core outward: the "+2" count, Next, then pause.
+        let next = speaking.controlRects[1]
+        click(speaking.host, at: NSPoint(x: next.midX, y: next.midY))
+        XCTAssertEqual(sent.last?["cmd"] as? String, "read_next")
+        XCTAssertEqual(sent.last?["request_id"] as? String, "r-A")
+        let pause = speaking.controlRects[2]
+        click(speaking.host, at: NSPoint(x: pause.midX, y: pause.midY))
+        XCTAssertEqual(sent.last?["cmd"] as? String, "pause")
+        XCTAssertEqual(router.stopCount, 0)
+    }
+
     func testIdleMicButtonRoutesPrimaryAction() {
         let state = VoiceState()
         state.mode = .idle
@@ -922,6 +955,7 @@ final class BarViewClickabilityTests: XCTestCase {
                 isTeleprompterDismissed: state.isTeleprompterDismissed,
                 isTeleprompterReadback: state.isTeleprompterReadback,
                 isPlaybackPaused: state.isPlaybackPaused,
+                readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
                 isCollapsed: state.isCollapsed
             )
         )

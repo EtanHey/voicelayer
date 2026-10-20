@@ -1484,7 +1484,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Single/double tap are intentionally not assigned in the immediate PTT model.
         gestureStateMachine.onSingleTap = { [weak self] in
             NSLog("[VoiceBar] Hotkey single tap — checking active recording/transcription")
-            self?.commandRouter.handleHotkeySingleTap()
+            // QUEUE1 D2: the router is unchanged; an F5 stop over a playing read keeps queued reads for Next.
+            guard let self else { return }
+            voiceState.retainingReadQueueOnStop { self.commandRouter.handleHotkeySingleTap() }
         }
 
         gestureStateMachine.onDoubleTap = { [weak self] in
@@ -1825,6 +1827,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
+    static func playbackLeadingSlotCount(for state: VoiceState) -> Int {
+        VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1
+    }
+
     static func notchInteractionConfiguration(
         for state: VoiceState,
         visualState: VoiceBarNotchVisualState
@@ -1850,8 +1856,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 )
             case .speaking:
                 // P16: pause/play on the left; a hidden-but-playing read adds its eye beside Stop.
+                // QUEUE1: Next and the "+N" count share the left wing.
                 return VoiceBarNotchInteractionConfiguration(
-                    leadingControlCount: 1,
+                    leadingControlCount: playbackLeadingSlotCount(for: state),
                     trailingControlCountFromOuter: state.isTeleprompterDismissed && !state.isPlaybackPaused ? 2 : 1,
                     trailingOuterInset: WaveformLayout.outerInset
                 )
@@ -1862,7 +1869,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     trailingOuterInset: WaveformLayout.outerInset
                 )
             case .idle:
-                return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+                // D2: Next and "+N" wait in the left wing after F5 interrupted a queued read.
+                return VoiceBarNotchInteractionConfiguration(leadingControlCount: playbackLeadingSlotCount(for: state))
             case .disconnected, .recording:
                 return .none
             }
@@ -1878,7 +1886,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 lowerControlCount += 1
             }
             return VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: state.mode == .speaking ? 1 : 0,
+                leadingControlCount: state.mode == .speaking ? playbackLeadingSlotCount(for: state) : 0,
                 lowerControlCount: lowerControlCount,
                 lowerSurfaceIsInteractive: state.mode == .speaking
             )
@@ -1956,6 +1964,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
                 isPlaybackPaused: state?.isPlaybackPaused ?? false,
+                readQueueLeadingSlotCount: state.flatMap { VoiceBarPresentation.readQueueControl(for: $0)?.leadingSlotCount } ?? 1,
                 confirmationText: state?.confirmationText,
                 commandModeState: state?.commandModeState,
                 activeClipMarker: state?.activeClipMarker,
@@ -2104,11 +2113,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
-        if stoppingFromPhysicalPress {
-            commandRouter.handlePhysicalPressStop()
-            return
+        voiceState.retainingReadQueueOnStop {
+            if stoppingFromPhysicalPress {
+                commandRouter.handlePhysicalPressStop()
+                return
+            }
+            commandRouter.handleHotkeyHoldEnd(holdDuration: holdDuration)
         }
-        commandRouter.handleHotkeyHoldEnd(holdDuration: holdDuration)
     }
 
     func handleHotkeyDoubleTap() {

@@ -12,7 +12,8 @@ import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
 import { pausePlayback, isPlaybackPaused } from "../tts";
 import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForTTS, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
-import { handleSocketCommand } from "../socket-handlers";
+import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
+import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
 import { readTTSControlsStatus, recordFirstAudio } from "../tts-controls-status";
 import { fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
@@ -31,6 +32,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let historyInputs: string[][];
   let holdHistory: boolean, holdDecoder: boolean;
   let failHistory: boolean;
+  let failPlayerSpawn = false;
   type Child = { exit: ReturnType<typeof deferred<number>>; killed: boolean };
   let synthBarrier: ReturnType<typeof fixtureBarrier<typeof synths[number]>>;
   let playerBarrier: ReturnType<typeof fixtureBarrier<typeof players[number]>>;
@@ -43,7 +45,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   beforeEach(() => {
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
-    failHistory = false;
+    failHistory = false; failPlayerSpawn = false;
     clockMs = 100_000;
     releaseAlignments = [];
     spies.push(spyOn(Date, "now").mockImplementation(() => clockMs));
@@ -85,6 +87,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         return { pid: 72000 + decoders.length + histories.length, exited: exit.promise,
           stdout: new Blob([new Uint8Array(8)]).stream(), kill: () => { item.killed = true; exit.resolve(143); } };
       }
+      if (failPlayerSpawn) throw new Error("player launch failed");
       const exit = deferred<number>(); const item = { exit, killed: false, synthCount: synths.length, argv, signals: [] as string[] }; players.push(item); playerBarrier.push(item);
       if (autoPlay) exit.resolve(0);
       return { pid: 73000 + players.length, exited: exit.promise, kill: (signal: string) => { item.signals.push(signal); item.killed = true; if (!holdPlayerExit) exit.resolve(143); } };
@@ -704,5 +707,104 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(await handleSocketCommand({ cmd, id: `capture-${cmd}` })).toMatchObject({ command: cmd, outcome: "accept" });
       expect(isPlaybackPaused()).toBe(true);
     } finally { timer.mockRestore(); capture.mockRestore(); }
+  });
+
+  describe("QUEUE1 Option+F5 read queue on the real runner", () => {
+    const hash = "c".repeat(64);
+    // The real VoiceBar wire: A starts from idle without a queue flag; later different selections carry it.
+    const select = (id: string, words: string) => handleSocketCommand({ cmd: "speak_text", id, text: words, text_hash: hash, profile: "short", source: "selection", ...(id === "A" ? {} : { queue: true }) } as any);
+    const lastQueue = () => events.filter(e => e.type === "read_queue").at(-1);
+    const receipts = (id: string) => events.filter(e => e.type === "state" && e.state === "speaking" && e.request_id === id);
+    const settle = async () => { for (let i = 0; i < 20; i++) await fixtureCheckpoint(); };
+    afterEach(() => resetSelectionReadQueueForTests());
+
+    it("auto-advances at the natural end with no idle edge between reads, and records only reads that played", async () => {
+      expect(select("A", "Alpha first selection.")).toMatchObject({ outcome: "accept" });
+      await playerBarrier.at(0);
+      expect(select("B", "Bravo second selection.")).toMatchObject({ outcome: "accept", reason: "queued" });
+      expect(select("C", "Charlie third selection.")).toMatchObject({ outcome: "accept", reason: "queued" });
+      expect(receipts("B")).toEqual([]);
+      const beforeEnd = events.length;
+      players[0].exit.resolve(0);
+      await playerBarrier.at(1);
+      const between = events.slice(beforeEnd);
+      const firstB = between.findIndex(e => e.type === "state" && e.request_id === "B");
+      expect(firstB).toBeGreaterThanOrEqual(0);
+      expect(between.slice(0, firstB).some(e => e.type === "state" && e.state === "idle")).toBe(false);
+      expect(events.filter(e => e.type === "read_queue").at(-1)).toEqual({ type: "read_queue", count: 1, current_request_id: "B" });
+      // Stop clears the whole queue: Charlie never starts and never reaches history.
+      await handleSocketCommand({ cmd: "stop" } as any);
+      await settle();
+      expect(receipts("C")).toEqual([]);
+      expect(events.filter(e => e.type === "read_queue").at(-1)).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+      const texts = loadHistory().map(e => e.text).join(" | ");
+      expect(texts).toContain("Alpha");
+      expect(texts).not.toContain("Charlie");
+    });
+
+    it("a paused read stays paused when a new selection queues; Next replaces the park with the queued read", async () => {
+      select("A", "Alpha paused selection.");
+      await playerBarrier.at(0);
+      expect(handleSocketCommand({ cmd: "pause" } as any)).toMatchObject({ outcome: "accept" });
+      expect(select("B", "Bravo while paused.")).toMatchObject({ outcome: "accept", reason: "queued" });
+      await settle();
+      expect(receipts("B")).toEqual([]);
+      expect(tts.isPlaybackPaused()).toBe(true);
+      expect(handleSocketCommand({ cmd: "read_next", request_id: "A" } as any)).toMatchObject({ outcome: "accept" });
+      await playerBarrier.at(1);
+      expect(receipts("B").length).toBeGreaterThan(0);
+      expect(tts.isPlaybackPaused()).toBe(false);
+    });
+
+    it("SOL-2: a non-zero player exit settles as failed: queued B and C never start", async () => {
+      select("A", "Alpha fails to play.");
+      await playerBarrier.at(0);
+      select("B", "Bravo must not start."); select("C", "Charlie must not start.");
+      players[0].exit.resolve(1);
+      await settle();
+      expect(receipts("B")).toEqual([]);
+      expect(players).toHaveLength(1);
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+    });
+
+    it("SOL-2: a player launch failure settles as failed: queued B and C never start", async () => {
+      select("A", "Alpha cannot launch.");
+      await synthBarrier.at(0);
+      select("B", "Bravo must not start."); select("C", "Charlie must not start.");
+      failPlayerSpawn = true;
+      await settle(); await settle();
+      expect(receipts("B")).toEqual([]);
+      expect(players).toHaveLength(0);
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+    });
+
+    it("D2: F5 over the playing read stops it; after the capture nothing plays, count 2, and Next starts B", async () => {
+      select("A", "Alpha interrupted by dictation.");
+      await playerBarrier.at(0);
+      select("B", "Bravo waits for Next."); select("C", "Charlie waits too.");
+      await handleSocketCommand({ cmd: "stop", retain_read_queue: true } as any);
+      await settle();
+      expect(events.some(e => e.type === "state" && e.state === "idle")).toBe(true);
+      expect(receipts("B")).toEqual([]);
+      expect(players).toHaveLength(1);
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+      expect(handleSocketCommand({ cmd: "read_next", request_id: "A" } as any)).toMatchObject({ outcome: "accept" });
+      await playerBarrier.at(1);
+      expect(receipts("B").length).toBeGreaterThan(0);
+      expect(receipts("C")).toEqual([]);
+      expect(lastQueue()).toEqual({ type: "read_queue", count: 1, current_request_id: "B" });
+    });
+
+    it("an agent voice_speak keeps its priority: it preempts the user's read as before and ends the user queue", async () => {
+      select("A", "Alpha before the agent.");
+      await playerBarrier.at(0);
+      select("B", "Bravo never reached.");
+      autoPlay = true;
+      players[0].exit.resolve(143);
+      await speak("Agent announcement.");
+      await settle();
+      expect(receipts("B")).toEqual([]);
+      expect(events.filter(e => e.type === "read_queue").at(-1)).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+    });
   });
 });
