@@ -104,6 +104,19 @@ function expectStartInside(startUs: number, beforeMs: number, afterMs: number) {
   expect(startUs).toBeLessThan((afterMs + 1) * 1000);
 }
 
+/** The kernel start-time reader exists only on Darwin; elsewhere it is absent. */
+const nativeStart = process.platform === "darwin";
+
+/** A synthetic generation for decision tests that must not need the native reader. */
+const SYNTHETIC_START_US = 1_700_000_000_123_456;
+
+function writeSyntheticLock(pid: number) {
+  writeFileSync(
+    TEST_PID_FILE,
+    JSON.stringify({ pid, startedAt: new Date().toISOString(), processStartUs: SYNTHETIC_START_US }),
+  );
+}
+
 function sigtermsTo(kill: ReturnType<typeof spyOn>, pid: number): number {
   return kill.mock.calls.filter((call) => call[0] === pid && call[1] === "SIGTERM").length;
 }
@@ -245,7 +258,7 @@ describe("process lock", () => {
     expect(data.pid).toBe(1);
   });
 
-  it("persists its own exact kernel start time when it takes the lock", () => {
+  it.if(nativeStart)("persists its own exact kernel start time when it takes the lock", () => {
     acquireProcessLock(TEST_PID_FILE);
     const lock = JSON.parse(readFileSync(TEST_PID_FILE, "utf-8"));
     // Independent reference: this process started before the test ran.
@@ -257,7 +270,7 @@ describe("process lock", () => {
     expect(readProcessStartUs(process.pid)).toBe(lock.processStartUs);
   });
 
-  it("reads a fixture's start time inside its spawn bracket, null once it is gone", async () => {
+  it.if(nativeStart)("reads a fixture's start time inside its spawn bracket, null once it is gone", async () => {
     const { child, beforeMs, afterMs } = spawnSleeper();
     expectStartInside(readProcessStartUs(child.pid)!, beforeMs, afterMs);
     child.kill("SIGKILL");
@@ -328,33 +341,78 @@ describe("process lock", () => {
     expect(isProcessAlive(child.pid)).toBe(true);
   });
 
-  it("does not SIGTERM when the start time changes before the signal", async () => {
-    const { child, lock } = await spawnLockOwner({ relative: false });
+  it("reclaims a synthetic generation that matches on both reads (decision control)", async () => {
+    const { child } = spawnSleeper();
+    writeSyntheticLock(child.pid);
+    const result = acquireProcessLock(TEST_PID_FILE, {
+      readProcessStartUs: () => SYNTHETIC_START_US,
+    });
+    expect(result).toEqual({ acquired: true, killedStale: true, stalePid: child.pid });
+    await child.exited;
+    expect(child.signalCode).toBe("SIGTERM");
+  });
+
+  it("does not SIGTERM when the start time changes before the signal", () => {
+    const { child } = spawnSleeper();
+    writeSyntheticLock(child.pid);
     let reads = 0;
     const result = acquireProcessLock(TEST_PID_FILE, {
-      readProcessStartUs: (pid) => {
+      readProcessStartUs: () => {
         reads += 1;
-        const real = readProcessStartUs(pid);
-        return reads === 1 ? real : real! + 1;
+        return reads === 1 ? SYNTHETIC_START_US : SYNTHETIC_START_US + 1;
       },
     });
-    expect(lock.processStartUs).toBe(readProcessStartUs(child.pid));
     expect(reads).toBe(2);
     expect(result).toEqual({ acquired: true, killedStale: false, stalePid: child.pid });
     expect(isProcessAlive(child.pid)).toBe(true);
   });
 
-  it("does not SIGTERM when the identity observation is too old", async () => {
-    const { child } = await spawnLockOwner({ relative: false });
+  it("does not SIGTERM when the identity observation is too old", () => {
+    const { child } = spawnSleeper();
+    writeSyntheticLock(child.pid);
     const clock = [0, 251];
     const result = acquireProcessLock(TEST_PID_FILE, {
+      readProcessStartUs: () => SYNTHETIC_START_US,
       monotonicNowMs: () => clock.shift() ?? 251,
     });
+    expect(clock).toEqual([]);
     expect(result).toEqual({ acquired: true, killedStale: false, stalePid: child.pid });
     expect(isProcessAlive(child.pid)).toBe(true);
   });
 
-  it("reclaims a genuine orphan whose lock carries its exact start", async () => {
+  it("without a native reader (non-Darwin), persists no generation and never signals", async () => {
+    const { child } = spawnSleeper();
+    const dir = fixtureDir();
+    const shim = join(dir, "force-linux.ts");
+    writeFileSync(shim, `Object.defineProperty(process, "platform", { value: "linux" });\n`);
+    const own = join(dir, "own.pid");
+    const probe = join(dir, "probe.ts");
+    writeFileSync(
+      probe,
+      `import { acquireProcessLock, readProcessStartUs } from ${JSON.stringify(PROCESS_LOCK_MODULE)};\n` +
+        `import { readFileSync } from "fs";\n` +
+        `const [own, victimLock, victimPid] = process.argv.slice(2);\n` +
+        `acquireProcessLock(own);\n` +
+        `const reclaim = acquireProcessLock(victimLock);\n` +
+        `console.log(JSON.stringify({ platform: process.platform, reader: readProcessStartUs(process.pid),` +
+        ` ownLock: JSON.parse(readFileSync(own, "utf-8")), reclaim, victimPid: Number(victimPid) }));\n`,
+    );
+    writeSyntheticLock(child.pid);
+    const run = Bun.spawnSync(
+      ["bun", "--preload", shim, probe, own, TEST_PID_FILE, String(child.pid)],
+      { cwd: dir, env: process.env, stdout: "pipe", stderr: "pipe" },
+    );
+    expect(run.exitCode).toBe(0);
+    const out = JSON.parse(run.stdout.toString().trim().split("\n").pop()!);
+    expect(out.platform).toBe("linux");
+    expect(out.reader).toBeNull();
+    expect(Object.keys(out.ownLock).sort()).toEqual(["pid", "startedAt"]);
+    expect(out.reclaim).toEqual({ acquired: true, killedStale: false, stalePid: child.pid });
+    expect(isProcessAlive(child.pid)).toBe(true);
+    expect(child.exitCode).toBeNull();
+  });
+
+  it.if(nativeStart)("reclaims a genuine orphan whose lock carries its exact start", async () => {
     const { child, lock, beforeMs, afterMs } = await spawnLockOwner({ relative: false });
     expectStartInside(lock.processStartUs, beforeMs, afterMs);
     const result = acquireProcessLock(TEST_PID_FILE);
@@ -364,7 +422,7 @@ describe("process lock", () => {
     expect(JSON.parse(readFileSync(TEST_PID_FILE, "utf-8")).pid).toBe(process.pid);
   });
 
-  it("reclaims a genuine orphan launched by a relative entrypoint (bun daemon.ts)", async () => {
+  it.if(nativeStart)("reclaims a genuine orphan launched by a relative entrypoint (bun daemon.ts)", async () => {
     const { child, lock, beforeMs, afterMs } = await spawnLockOwner({ relative: true });
     expectStartInside(lock.processStartUs, beforeMs, afterMs);
     const result = acquireProcessLock(TEST_PID_FILE);
