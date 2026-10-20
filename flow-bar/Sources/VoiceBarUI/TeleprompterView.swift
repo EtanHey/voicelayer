@@ -40,24 +40,56 @@ public struct FlowLayout: Layout {
         proposal: ProposedViewSize,
         subviews: Subviews
     ) -> (size: CGSize, positions: [CGPoint]) {
-        let maxWidth = min(maxWidth, proposal.width ?? .infinity)
+        Self.arrange(
+            sizes: subviews.map { $0.sizeThatFits(.unspecified) },
+            items: subviews.map { $0[TeleprompterFlowItemKey.self] },
+            maxWidth: min(maxWidth, proposal.width ?? .infinity),
+            spacing: spacing
+        )
+    }
+
+    /// TELE1: explicit line and paragraph breaks, list items whose wrapped lines hang under their text,
+    /// and closing punctuation kept flush with its word. Default items wrap exactly as plain words.
+    static func arrange(
+        sizes: [CGSize], items: [TeleprompterFlowItem], maxWidth: CGFloat, spacing: CGFloat
+    ) -> (size: CGSize, positions: [CGPoint]) {
         var positions: [CGPoint] = []
         var x: CGFloat = 0
         var y: CGFloat = 0
         var lineHeight: CGFloat = 0
         var maxX: CGFloat = 0
+        var indent: CGFloat = 0
+        func item(_ index: Int) -> TeleprompterFlowItem {
+            items.indices.contains(index) ? items[index] : TeleprompterFlowItem()
+        }
 
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > maxWidth, x > 0 {
+        for (index, size) in sizes.enumerated() {
+            let current = item(index)
+            if index > 0, current.lineBreak != .none {
                 x = 0
-                y += lineHeight + spacing * 0.6
+                indent = 0
+                y += lineHeight + spacing * (current.lineBreak == .paragraph ? 1.8 : 0.6)
                 lineHeight = 0
+            } else if index > 0, current.gluesToPrevious {
+                x -= spacing
+            } else {
+                var width = size.width
+                var next = index + 1
+                while next < sizes.count, item(next).gluesToPrevious {
+                    width += sizes[next].width
+                    next += 1
+                }
+                if x + width > maxWidth, x > indent {
+                    x = indent
+                    y += lineHeight + spacing * 0.6
+                    lineHeight = 0
+                }
             }
             positions.append(CGPoint(x: x, y: y))
             x += size.width + spacing
             lineHeight = max(lineHeight, size.height)
             maxX = max(maxX, x)
+            if current.isListMarker { indent = min(x, maxWidth / 3) }
         }
 
         return (
@@ -660,9 +692,10 @@ public struct TeleprompterView: View {
                     isReadback: isReadback
                 )
             ) {
-                FlowLayout(spacing: 5, maxWidth: wrapWidth) {
+                FlowLayout(spacing: 5, maxWidth: wrapWidth - 2 * Theme.teleprompterShellInset) {
                     wordViews
                 }
+                .padding(.horizontal, Theme.teleprompterShellInset)
                 .frame(width: wrapWidth, alignment: .leading)
                 .padding(.horizontal, contentInset)
                 .padding(.vertical, contentInset)
@@ -711,15 +744,25 @@ public struct TeleprompterView: View {
     }
 
     private var wordViews: some View {
-        let highlightedIndex = currentIndex
-        return ForEach(teleprompterWords) { word in
+        let words = teleprompterWords
+        let layouts = TeleprompterFormatting.layout(text: text, words: words)
+        let currentGroup = layouts.indices.contains(currentIndex) ? layouts[currentIndex].highlightGroup : currentIndex
+        return ForEach(words) { word in
+            let layout = layouts[word.id]
+            let highlight = WordHighlight(
+                isCurrent: layout.highlightGroup == currentGroup,
+                isAvailable: canHighlight(word) || words.indices.contains(layout.highlightGroup) &&
+                    canHighlight(words[layout.highlightGroup]),
+                joinsPrevious: layout.gluesToPrevious,
+                joinsNext: layouts.indices.contains(word.id + 1) && layouts[word.id + 1].gluesToPrevious
+            )
             Group {
                 if let onSeek, isReadback || TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {
                     Button {
                         TeleprompterSeekPolicy.seek(word, isReadback: isReadback, seek: onSeek,
                                                     unavailable: { onSeekUnavailable?() })
                     } label: {
-                        wordLabel(word, highlightedIndex: highlightedIndex)
+                        wordLabel(word, text: layout.displayText, highlight: highlight)
                             .underline(hoveredWordID == word.id)
                     }
                     .buttonStyle(.plain)
@@ -728,10 +771,11 @@ public struct TeleprompterView: View {
                     .accessibilityHint("Seek to this word")
                     .help("Seek to this word")
                 } else {
-                    wordLabel(word, highlightedIndex: highlightedIndex)
+                    wordLabel(word, text: layout.displayText, highlight: highlight)
                 }
             }
             .id(word.id)
+            .layoutValue(key: TeleprompterFlowItemKey.self, value: layout.flowItem)
         }
     }
 
@@ -741,18 +785,28 @@ public struct TeleprompterView: View {
             push: { NSCursor.pointingHand.push() }, pop: { NSCursor.pop() })
     }
 
-    private func wordLabel(_ word: TeleprompterWord, highlightedIndex: Int) -> some View {
-        Text(word.text)
-            .font(.system(size: 16, weight: canHighlight(word) && word.id == highlightedIndex ? .semibold : .medium))
+    /// The pill is drawn per word; glued neighbours square off their shared edge so it reads as one.
+    private struct WordHighlight {
+        let isCurrent: Bool
+        let isAvailable: Bool
+        let joinsPrevious: Bool
+        let joinsNext: Bool
+    }
+
+    private func wordLabel(_ word: TeleprompterWord, text: String, highlight: WordHighlight) -> some View {
+        let isLit = highlight.isAvailable && highlight.isCurrent
+        let leading: CGFloat = highlight.joinsPrevious ? 0 : 3, trailing: CGFloat = highlight.joinsNext ? 0 : 3
+        return Text(text)
+            .font(.system(size: 16, weight: isLit ? .semibold : .medium))
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: wrapWidth, alignment: .leading)
-            .foregroundStyle(wordForeground(word, highlightedIndex: highlightedIndex))
+            .foregroundStyle(wordForeground(word, isCurrent: highlight.isCurrent))
             .background {
-                if !isReadback, canHighlight(word),
-                   word.id == highlightedIndex || hoveredWordID == word.id {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(red: 92/255, green: 124/255, blue: 1).opacity(word.id == highlightedIndex ? 0.30 : 0.12))
+                if !isReadback, highlight.isAvailable, highlight.isCurrent || hoveredWordID == word.id {
+                    UnevenRoundedRectangle(topLeadingRadius: leading, bottomLeadingRadius: leading,
+                                           bottomTrailingRadius: trailing, topTrailingRadius: trailing)
+                        .fill(Color(red: 92/255, green: 124/255, blue: 1).opacity(highlight.isCurrent ? 0.30 : 0.12))
                 }
             }
     }
@@ -761,12 +815,14 @@ public struct TeleprompterView: View {
         usesIndexedTiming ? word.offsetMs != nil : !wordBoundaries.isEmpty
     }
 
-    private func wordForeground(_ word: TeleprompterWord, highlightedIndex: Int) -> Color {
+    private func wordForeground(_ word: TeleprompterWord, isCurrent: Bool) -> Color {
         if !isReadback, usesIndexedTiming, word.offsetMs == nil { return notchPalette.primary.color.opacity(0.78) }
         if notchAppearance == .dark, !isReadback, !wordBoundaries.isEmpty {
-            return word.id == highlightedIndex ? .white : Color(red: 234/255, green: 234/255, blue: 240/255)
+            return isCurrent ? .white : Color(red: 234/255, green: 234/255, blue: 240/255)
         }
-        return notchPalette.primary.color.opacity(opacityFor(word.id, highlightedIndex: highlightedIndex))
+        return notchPalette.primary.color.opacity(
+            opacityFor(word.id, highlightedIndex: isCurrent ? word.id : currentIndex)
+        )
     }
 
     // MARK: - Word opacity
