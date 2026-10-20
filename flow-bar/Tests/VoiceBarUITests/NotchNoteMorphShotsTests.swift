@@ -28,16 +28,18 @@ final class NotchNoteMorphShotsTests: XCTestCase {
         for mode in [VoiceMode.recording, .transcribing] {
             try filmstrip(mode: mode, to: directory.appendingPathComponent("note-\(mode.rawValue).png"))
         }
-        for growing in [true, false] {
+        for (suffix, time, duration) in [("", 22.0, 36.0), ("-hour", 1800.0, 3600.0)] {
+          for growing in [true, false] {
             let bar = SettingsPlaybackScrubBar(
-                position: { SettingsAudioPlaybackPosition(currentTime: 22, duration: 36) },
+                position: { SettingsAudioPlaybackPosition(currentTime: time, duration: duration) },
                 seek: { _ in }, accessibilityNoun: "agent speech", isPlaying: false, isGrowing: growing,
                 allowsSeeking: true, isTeleprompter: true
             )
             .frame(width: 437, height: 40)
             .background(Color(white: 0.13))
             try write(bar, size: CGSize(width: 437, height: 40),
-                      to: directory.appendingPathComponent("scrub-\(growing ? "growing" : "final").png"))
+                      to: directory.appendingPathComponent("scrub\(suffix)-\(growing ? "growing" : "final").png"))
+          }
         }
         try writePreparing(to: directory.appendingPathComponent("preparing.png"))
     }
