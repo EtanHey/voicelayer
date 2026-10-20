@@ -65,8 +65,13 @@ class VoiceBarCommandRouter: BarCommandRouting {
         }
     }
 
+    /// P16: a parked read is silent, so it routes like idle: F5 records and the read stays parked.
+    private var canStartRecording: Bool {
+        voiceState.mode == .idle || voiceState.mode == .error || voiceState.isPlaybackPaused
+    }
+
     func handlePrimaryTap() {
-        guard voiceState.mode == .idle || voiceState.mode == .error else { return }
+        guard canStartRecording else { return }
         voiceState.record(pressToTalk: true)
     }
 
@@ -128,6 +133,10 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeyHoldStart() {
+        if voiceState.isPlaybackPaused {
+            voiceState.record(pressToTalk: true)
+            return
+        }
         switch voiceState.mode {
         case .idle, .error:
             voiceState.record(pressToTalk: true)
@@ -139,7 +148,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
-        guard holdDuration > 0 else { return }
+        guard holdDuration > 0, !voiceState.isPlaybackPaused else { return }
         handleStop()
     }
 
@@ -152,6 +161,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleHotkeySingleTap() {
+        guard !voiceState.isPlaybackPaused else { return }
         switch voiceState.mode {
         case .recording, .speaking:
             handleStop()
@@ -163,7 +173,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     private func handleToggle() {
-        if voiceState.mode == .idle || voiceState.mode == .error {
+        if canStartRecording {
             voiceState.record(pressToTalk: true)
         } else if voiceState.mode == .recording {
             handleStop()
@@ -173,7 +183,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     private func handleStartRecording() {
-        guard voiceState.mode == .idle || voiceState.mode == .error else { return }
+        guard canStartRecording else { return }
         voiceState.record(pressToTalk: true)
     }
 }

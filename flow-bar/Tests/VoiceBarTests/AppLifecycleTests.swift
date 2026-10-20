@@ -205,7 +205,6 @@ final class AppLifecycleTests: XCTestCase {
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
             VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 1,
-                leadingCoreInset: WaveformLayout.coreGap,
                 lowerControlCount: 3,
                 lowerSurfaceIsInteractive: true
             )
@@ -225,7 +224,7 @@ final class AppLifecycleTests: XCTestCase {
 
     func testPausedSpeechKeepsPlayAndStopReachable() {
         let state = VoiceState()
-        state.handleEvent(["type": "state", "state": "speaking", "text": "Paused read"])
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Paused read", "playback_id": "p", "generation": 1])
         state.dismissTeleprompter()
         state.handleEvent([
             "type": "playback_state", "state": "paused", "playback_id": "p", "generation": 2,

@@ -131,23 +131,17 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         state: VoiceBarNotchVisualState,
         visibleCoreOcclusionInset _: CGFloat = 0
     ) -> VoiceBarNotchWingContentLayout {
-        let isTeleprompter = state == .teleprompter
+        // P16: every leading wing, the teleprompter's pause/play included, uses the idle-hover mic's lane
+        // (Etan: "centered like the idle hover state has the microphone").
         let isWaveformTrailing = side == .trailing && [
             VoiceBarNotchVisualState.recording,
             .compactStatus,
             .teleprompter,
         ].contains(state)
-        let coreInset = if isTeleprompter || isWaveformTrailing {
-            WaveformLayout.coreGap
-        } else {
-            VoiceBarNotchContract.compactCoreContentInset
-        }
         return VoiceBarNotchWingContentLayout(
             side: side,
-            coreInset: coreInset,
-            outerInset: isWaveformTrailing || isTeleprompter
-                ? WaveformLayout.outerInset
-                : compactContentInset,
+            coreInset: isWaveformTrailing ? WaveformLayout.coreGap : VoiceBarNotchContract.compactCoreContentInset,
+            outerInset: isWaveformTrailing ? WaveformLayout.outerInset : compactContentInset,
             alignment: .center
         )
     }
@@ -432,11 +426,6 @@ public enum VoiceBarNotchContract {
     public static let teleprompterTrailingWingWidth = teleprompterWaveformWingWidth(
         visibleCoreOcclusionInset: 0
     )
-
-    /// P16: a speaking teleprompter's leading wing holds the pause/play control, mirroring the waveform
-    /// wing's core gutter and outer inset.
-    public static let teleprompterPauseWingWidth = WaveformLayout.coreGap +
-        material.compactControlSize + WaveformLayout.outerInset
 
     public static let material = VoiceBarNotchMaterialContract(
         blackToGlassFadeWidth: 16,

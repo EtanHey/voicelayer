@@ -1872,7 +1872,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: state.mode == .speaking ? 1 : 0,
-                leadingCoreInset: WaveformLayout.coreGap,
                 lowerControlCount: lowerControlCount,
                 lowerSurfaceIsInteractive: state.mode == .speaking
             )

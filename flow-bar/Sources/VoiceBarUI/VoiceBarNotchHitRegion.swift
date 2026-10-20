@@ -3,9 +3,6 @@ import SwiftUI
 
 public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
     public let leadingControlCount: Int
-    /// Gap between the core and the first leading control: the compact lanes' 13.5 pt, or the teleprompter's
-    /// waveform gutter for its pause control (P16).
-    public let leadingCoreInset: CGFloat
     public let trailingControlCountFromCore: Int
     public let trailingControlCountFromOuter: Int
     public let trailingOuterInset: CGFloat
@@ -15,7 +12,6 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
 
     public init(
         leadingControlCount: Int = 0,
-        leadingCoreInset: CGFloat = VoiceBarNotchContract.compactCoreContentInset,
         trailingControlCountFromCore: Int = 0,
         trailingControlCountFromOuter: Int = 0,
         trailingOuterInset: CGFloat = VoiceBarNotchContract.material.compactContentInset,
@@ -23,7 +19,6 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
         lowerSurfaceIsInteractive: Bool = false
     ) {
         self.leadingControlCount = max(0, leadingControlCount)
-        self.leadingCoreInset = max(0, leadingCoreInset)
         self.trailingControlCountFromCore = max(0, trailingControlCountFromCore)
         self.trailingControlCountFromOuter = max(0, trailingControlCountFromOuter)
         self.trailingOuterInset = max(0, trailingOuterInset)
@@ -85,7 +80,7 @@ public struct VoiceBarNotchHitRegion: Equatable {
             rects.append(
                 CGRect(
                     x: geometry.coreOriginX
-                        - configuration.leadingCoreInset
+                        - VoiceBarNotchContract.compactCoreContentInset
                         - size
                         - (CGFloat(index) * pitch),
                     y: topY,

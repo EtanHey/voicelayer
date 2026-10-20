@@ -41,6 +41,9 @@ export interface StateEvent {
   readback_id?: string;
   /** Global utterance position at player start (including normal chunk handoffs). */
   playback_offset_ms?: number;
+  /** The playing job and its control generation, so pause/resume and their events bind to this exact player (P16). */
+  playback_id?: string;
+  generation?: number;
   /** Synthesized duration available for seeking; grows during long reads. */
   duration_ms?: number;
   /** Retained span a readback-scope seek can reach once this read ends (≤ duration_ms when stopped early). */

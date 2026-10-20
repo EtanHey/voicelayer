@@ -227,7 +227,7 @@ public enum VoiceBarPresentation {
                 ? VoiceBarNotchContract.waveformWingWidth
                 : nil,
             teleprompterLeadingWingWidth: input.mode == .speaking
-                ? VoiceBarNotchContract.teleprompterPauseWingWidth
+                ? VoiceBarNotchContract.compactIndicatorLaneWidth
                 : nil,
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,

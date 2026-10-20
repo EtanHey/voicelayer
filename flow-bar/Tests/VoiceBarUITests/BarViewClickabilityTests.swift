@@ -327,13 +327,12 @@ final class BarViewClickabilityTests: XCTestCase {
             router: router,
             configuration: VoiceBarNotchInteractionConfiguration(
                 leadingControlCount: 1,
-                leadingCoreInset: WaveformLayout.coreGap,
                 lowerControlCount: 2,
                 lowerSurfaceIsInteractive: true
             )
         )
         let leadingWing = teleprompter.layout.presentation.geometry.leadingWingWidth
-        XCTAssertEqual(leadingWing, VoiceBarNotchContract.teleprompterPauseWingWidth)
+        XCTAssertEqual(leadingWing, VoiceBarNotchContract.compactIndicatorLaneWidth)
         let pauseRect = teleprompter.controlRects[0]
         let pausePoint = NSPoint(x: pauseRect.midX, y: pauseRect.midY)
         XCTAssertLessThan(pauseRect.maxX, teleprompter.layout.visibleContentRect.minX
@@ -813,7 +812,7 @@ final class BarViewClickabilityTests: XCTestCase {
         // Left of P16's pause wing, where the old Dictionary lane hung below the top row.
         let formerDictionaryLane = NSPoint(
             x: layout.visibleContentRect.minX + layout.presentation.geometry.coreOriginX
-                - VoiceBarNotchContract.teleprompterPauseWingWidth - 20,
+                - VoiceBarNotchContract.compactIndicatorLaneWidth - 20,
             y: layout.visibleContentRect.minY + 212
         )
 

@@ -156,7 +156,9 @@ export function handleSocketCommand(
       );
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
-      stopPlayback(command.playback_elapsed_ms);
+      // P16: a stop/cancel aimed at an active capture (F5 release over a paused read) ends only the
+      // capture; the parked read stays parked for Play.
+      if (!(recordingState !== "idle" && isPlaybackPaused())) stopPlayback(command.playback_elapsed_ms);
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
@@ -174,7 +176,9 @@ export function handleSocketCommand(
       );
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
-      stopPlayback(command.playback_elapsed_ms);
+      // P16: a stop/cancel aimed at an active capture (F5 release over a paused read) ends only the
+      // capture; the parked read stays parked for Play.
+      if (!(recordingState !== "idle" && isPlaybackPaused())) stopPlayback(command.playback_elapsed_ms);
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),

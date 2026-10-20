@@ -266,8 +266,12 @@ describe("P10 socket pause/resume", () => {
     const { handle } = await startTenSecondRead();
     const firstSpeaking = events.filter(e => e.state === "speaking").at(-1);
     at(4200);
-    // The exact lines VoiceBar writes: pause carries its teleprompter clock; resume echoes the paused identity.
-    const pause = parseCommand(JSON.stringify({ cmd: "pause", id: "vb-p", playback_elapsed_ms: 4100 }));
+    // The speaking frame names the player VoiceBar's controls bind to.
+    expect(firstSpeaking.playback_id).toBe(handle.id);
+    expect(Number.isSafeInteger(firstSpeaking.generation)).toBe(true);
+    // The exact lines VoiceBar writes: both commands are scoped to that player.
+    const pause = parseCommand(JSON.stringify({ cmd: "pause", id: "vb-p", playback_elapsed_ms: 4100,
+      playback_id: firstSpeaking.playback_id, generation: firstSpeaking.generation }));
     expect(handleSocketCommand(pause as any)).toMatchObject({ command: "pause", id: "vb-p", outcome: "accept", offset_ms: 4100 });
     const paused = events.filter(e => e.type === "playback_state").at(-1);
     expect(paused).toMatchObject({ state: "paused", playback_id: handle.id, offset_ms: 4100, word_index: 4, word_count: 10 });
@@ -279,10 +283,40 @@ describe("P10 socket pause/resume", () => {
     const speaking = events.filter(e => e.state === "speaking").at(-1);
     // Same utterance: same text, same readback identity, clock anchored at the paused offset.
     expect(speaking).toMatchObject({ text: firstSpeaking.text, readback_id: firstSpeaking.readback_id, playback_offset_ms: 4100 });
-    expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "resumed", playback_id: handle.id, offset_ms: 4100, word_index: 4 });
+    const resumedEvent = events.filter(e => e.type === "playback_state").at(-1);
+    expect(resumedEvent).toMatchObject({ state: "resumed", playback_id: handle.id, offset_ms: 4100, word_index: 4 });
+    // The resumed frame and its event agree on the new generation; the pre-pause scope is now stale.
+    expect(speaking).toMatchObject({ playback_id: handle.id, generation: resumedEvent.generation });
+    expect(handleSocketCommand(parseCommand(JSON.stringify({ cmd: "pause", playback_id: handle.id,
+      generation: firstSpeaking.generation })) as any)).toMatchObject({ outcome: "reject", reason: "stale" });
+    expect(handleSocketCommand(parseCommand(JSON.stringify({ cmd: "pause", playback_id: "playback-retired" })) as any))
+      .toMatchObject({ outcome: "reject", reason: "stale" });
+    expect(tts.isPlaybackPaused()).toBe(false);
     expect(events.filter(e => e.type === "playback_outcome")).toEqual([]);
     resumedPlayer.exit.resolve(0);
     expect(await handle.exited).toMatchObject({ status: "completed", playback_id: handle.id });
     expect(players.values).toHaveLength(2);
+  });
+  it("P16: F5's stop/cancel during a capture end the capture, never the parked read", async () => {
+    for (const [cmd, base] of [["stop", 0], ["cancel", 100_000]] as const) {
+      at(base);
+      const { handle } = await startTenSecondRead();
+      at(base + 4200);
+      const trim = trims.values.length;
+      expect(handleSocketCommand({ cmd: "pause" } as any)).toMatchObject({ outcome: "accept", offset_ms: 4200 });
+      (await trims.at(trim)).exit.resolve(0); await fixtureCheckpoint();
+      const recording = spyOn(input, "getRecordingState").mockReturnValue("recording" as any);
+      try {
+        expect(await handleSocketCommand({ cmd, id: `${cmd}-1` } as any)).toMatchObject({ command: cmd, outcome: "accept" });
+      } finally { recording.mockRestore(); }
+      expect(tts.isPlaybackPaused()).toBe(true);
+      expect(events.filter(e => e.type === "playback_outcome" && e.playback_id === handle.id)).toEqual([]);
+      // Capture over: Play continues the same read from the same word.
+      const next = players.values.length;
+      expect(handleSocketCommand({ cmd: "resume", playback_id: handle.id } as any)).toMatchObject({ outcome: "accept", offset_ms: 4200 });
+      const resumed = await players.at(next); await fixtureCheckpoint();
+      expect(events.filter(e => e.type === "playback_state").at(-1)).toMatchObject({ state: "resumed", playback_id: handle.id });
+      tts.stopPlayback(); resumed.exit.resolve(0); await handle.exited;
+    }
   });
 });

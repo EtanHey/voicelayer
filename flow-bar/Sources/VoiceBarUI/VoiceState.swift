@@ -381,7 +381,7 @@ public final class VoiceState {
             } else if mode != .speaking {
                 clearCurrentSelectionReadIdentity(advanceEpoch: false)
             }
-            if mode != .speaking { setPlaybackPaused(false) }
+            synchronizeParkedRead(from: oldValue)
             previousMode = oldValue
             synchronizeModelsSettingsState(from: oldValue, to: mode)
             if mode == .speaking, speechPending["preview"] != nil { speechNotice = nil }
@@ -419,13 +419,19 @@ public final class VoiceState {
 
     /// Brief confirmation text shown after paste (e.g., "Pasted!").
     public var confirmationText: String? {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != confirmationText) }
+        didSet {
+            notifyPanelLayoutChangedIfNeeded(oldValue != confirmationText)
+            if confirmationText == nil, parkedRead != nil, mode == .idle { scheduleParkedReadRestore() }
+        }
     }
 
     /// Keeps the post-record paste flow in one fixed panel envelope so loading,
     /// success, and failure substates crossfade instead of re-centering.
     public var keepsPasteFlowEnvelope: Bool = false {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != keepsPasteFlowEnvelope) }
+        didSet {
+            notifyPanelLayoutChangedIfNeeded(oldValue != keepsPasteFlowEnvelope)
+            if !keepsPasteFlowEnvelope, parkedRead != nil, mode == .idle { scheduleParkedReadRestore() }
+        }
     }
 
     /// Real-time audio level (0.0–1.0) from RMS events.
@@ -479,12 +485,42 @@ public final class VoiceState {
     private var retainedTeleprompterText: String?
     private var retainedTeleprompterWordBoundaries: [TeleprompterBoundary] = []
     public private(set) var isTeleprompterDismissed = false
-    /// P16: the daemon parked this read (`playback_state` paused). The clock holds the paused offset until
-    /// Resume's speaking edge re-anchors it.
-    public private(set) var isPlaybackPaused = false
-    private var pausedPlaybackMilliseconds: Int?
-    private var pausedPlaybackIdentity: (id: String, generation: Int)?
+    /// P16: what a parked read needs to come back on the same word: its player identity and the read's
+    /// text, timings and timeline at the moment it went quiet.
+    private struct ReadSnapshot {
+        var text: String
+        var words: [TeleprompterBoundary]
+        var durationMs: Int?
+        var isDurationGrowing: Bool
+        var chunkStartMs: Int
+        var longReadID: String?
+        var readbackID: String?
+        var readbackDurationMs: Int?
+    }
+
+    private struct ParkedRead {
+        let playbackID: String?
+        let generation: Int?
+        let offsetMs: Int
+        let read: ReadSnapshot
+    }
+
+    /// The daemon parked this read (`playback_state` paused). It outlives a capture: F5 records against the
+    /// silent park and Play returns afterwards. Only Stop, a new speaking edge or disconnect retire it.
+    private var parkedRead: ParkedRead? {
+        didSet { notifyPanelLayoutChangedIfNeeded((oldValue == nil) != (parkedRead == nil)) }
+    }
+    /// The player the latest speaking frame named. Pause/Resume are scoped to it and its events must match it.
+    private var currentPlayback: (id: String, generation: Int)?
+    /// The read on screen when a capture took over, for a `paused` confirmation that lands mid-capture.
+    private var departedRead: ReadSnapshot?
+    /// A daemon whose speaking frame carries no identity: only this read's own Pause confirmation counts.
+    private var pendingPauseEpoch: Int?
     private var pendingPlaybackPauseIDs: Set<String> = []
+
+    public var isPlaybackPaused: Bool {
+        mode == .speaking && parkedRead != nil
+    }
 
     public var teleprompterText: String? {
         if mode == .speaking, !statusText.isEmpty {
@@ -1663,51 +1699,126 @@ public final class VoiceState {
         sendCommand?(command)
     }
 
-    /// P16: the pill's pause/play control. Pause sends the teleprompter clock so the daemon freezes on the
-    /// word on screen; Resume echoes the parked identity so a newer read is never resumed by mistake.
+    /// P16: the pill's pause/play control. Both commands are scoped to the player on screen, so a click that
+    /// races a queue advance can never pause or resume a different read. Pause also sends the teleprompter
+    /// clock so the daemon freezes on the word on screen.
     public func togglePlaybackPause() {
         guard mode == .speaking, let sendCommand else { return }
         let id = UUID().uuidString
         var command: [String: Any] = ["id": id]
+        let scope = parkedRead.map { ($0.playbackID, $0.generation) } ?? (currentPlayback?.id, currentPlayback?.generation)
+        if let playbackID = scope.0 { command["playback_id"] = playbackID }
+        if let generation = scope.1 { command["generation"] = generation }
         if isPlaybackPaused {
             command["cmd"] = "resume"
-            if let pausedPlaybackIdentity {
-                command["playback_id"] = pausedPlaybackIdentity.id
-                command["generation"] = pausedPlaybackIdentity.generation
-            }
         } else {
             command["cmd"] = "pause"
             command["playback_elapsed_ms"] = playbackElapsedMilliseconds()
+            pendingPauseEpoch = playbackEpoch
         }
         pendingPlaybackPauseIDs.insert(id)
         sendCommand(command)
     }
 
-    private func setPlaybackPaused(_ paused: Bool) {
-        if !paused {
-            pausedPlaybackMilliseconds = nil
-            pausedPlaybackIdentity = nil
+    private func currentReadSnapshot() -> ReadSnapshot {
+        ReadSnapshot(
+            text: statusText,
+            words: wordBoundaries,
+            durationMs: playbackDurationMilliseconds,
+            isDurationGrowing: isPlaybackDurationGrowing,
+            chunkStartMs: playbackChunkStartMilliseconds,
+            longReadID: playbackLongReadID,
+            readbackID: playbackReadbackID,
+            readbackDurationMs: playbackReadbackDurationMilliseconds
+        )
+    }
+
+    private func retireParkedRead() {
+        parkedRead = nil
+        departedRead = nil
+        pendingPauseEpoch = nil
+    }
+
+    /// Capture hides the controls (they are speaking-only) but keeps the park; when capture settles to idle
+    /// the paused read comes back. Never resumes audio by itself.
+    private func synchronizeParkedRead(from oldValue: VoiceMode) {
+        // Disconnect, or speaking ending (Stop, completion): nothing is left to resume.
+        if mode == .disconnected || (oldValue == .speaking && mode == .idle) { retireParkedRead(); return }
+        if oldValue == .speaking, mode == .recording || mode == .transcribing {
+            departedRead = currentReadSnapshot()
         }
-        guard isPlaybackPaused != paused else { return }
-        isPlaybackPaused = paused
-        notifyPanelLayoutChangedIfNeeded(true)
+        if mode == .idle, parkedRead != nil, [.recording, .transcribing, .error].contains(oldValue) {
+            scheduleParkedReadRestore()
+        }
+    }
+
+    private func scheduleParkedReadRestore() {
+        DispatchQueue.main.async { [weak self] in self?.restoreParkedReadIfSettled() }
+    }
+
+    /// Waits out a dictation's own feedback (Pasted, In History …) before taking the surface back.
+    private func restoreParkedReadIfSettled() {
+        guard mode == .idle, let parked = parkedRead, confirmationText == nil, !keepsPasteFlowEnvelope
+        else { return }
+        let read = parked.read
+        clearRetainedTeleprompter()
+        statusText = read.text
+        wordBoundaries = read.words
+        playbackDurationMilliseconds = read.durationMs
+        isPlaybackDurationGrowing = read.isDurationGrowing
+        playbackChunkStartMilliseconds = read.chunkStartMs
+        playbackLongReadID = read.longReadID
+        playbackReadbackID = read.readbackID
+        playbackReadbackDurationMilliseconds = read.readbackDurationMs
+        playbackStartedAt = playbackAmplitudeClock() - Double(parked.offsetMs) / 1000
+        if let playbackID = parked.playbackID, let generation = parked.generation {
+            currentPlayback = (playbackID, generation)
+        }
+        departedRead = nil
+        canReplay = true
+        isTeleprompterDismissed = false
+        mode = .speaking
+        onModeChange?(.speaking)
+        expandFromCollapse()
+    }
+
+    /// Accepts a `playback_state` only for the player on screen (or, before speaking frames carried an
+    /// identity, only as the confirmation of this read's own Pause click).
+    private func ownsPlaybackEvent(_ event: [String: Any]) -> Bool {
+        let playbackID = event["playback_id"] as? String
+        let generation = (event["generation"] as? NSNumber)?.intValue
+        guard let currentPlayback else {
+            return event["state"] as? String == "paused" ? pendingPauseEpoch == playbackEpoch
+                : playbackID != nil && playbackID == parkedRead?.playbackID
+        }
+        guard playbackID == currentPlayback.id else { return false }
+        return generation.map { $0 >= currentPlayback.generation } ?? true
     }
 
     private func handlePlaybackStateEvent(_ event: [String: Any]) {
-        guard mode == .speaking else { return }
+        guard ownsPlaybackEvent(event) else { return }
+        let playbackID = event["playback_id"] as? String
+        let generation = (event["generation"] as? NSNumber)?.intValue
         switch event["state"] as? String {
         case "paused":
-            let offset = (event["offset_ms"] as? NSNumber)?.doubleValue
-            pausedPlaybackMilliseconds = offset.flatMap { $0.isFinite && $0 >= 0 ? Int($0.rounded()) : nil }
-                ?? playbackElapsedMilliseconds()
-            if let id = event["playback_id"] as? String,
-               let generation = (event["generation"] as? NSNumber)?.intValue {
-                pausedPlaybackIdentity = (id, generation)
+            // A confirmation that lands mid-capture still parks the read that was on screen.
+            let read: ReadSnapshot? = switch mode {
+            case .speaking: currentReadSnapshot()
+            case .recording, .transcribing: departedRead
+            default: nil
             }
-            setPlaybackPaused(true)
+            guard let read else { return }
+            let offset = (event["offset_ms"] as? NSNumber)?.doubleValue
+            let offsetMs = offset.flatMap { $0.isFinite && $0 >= 0 ? Int($0.rounded()) : nil }
+                ?? parkedRead?.offsetMs ?? (mode == .speaking ? playbackElapsedMilliseconds() : 0)
+            parkedRead = ParkedRead(playbackID: playbackID, generation: generation, offsetMs: offsetMs, read: read)
+            if let playbackID, let generation { currentPlayback = (playbackID, generation) }
+            pendingPauseEpoch = nil
         case "resumed":
             // Resume's speaking edge (playback_offset_ms) has already re-anchored the clock at the paused word.
-            setPlaybackPaused(false)
+            guard mode == .speaking else { return }
+            parkedRead = nil
+            if let playbackID, let generation { currentPlayback = (playbackID, generation) }
         default:
             return
         }
@@ -1735,7 +1846,7 @@ public final class VoiceState {
 
     public func playbackElapsedMilliseconds() -> Int {
         guard mode == .speaking, let playbackStartedAt else { return 0 }
-        if isPlaybackPaused, let pausedPlaybackMilliseconds { return pausedPlaybackMilliseconds }
+        if isPlaybackPaused, let parkedRead { return parkedRead.offsetMs }
         return max(
             0,
             Int(((playbackAmplitudeClock() - playbackStartedAt) * 1000).rounded())
@@ -1899,7 +2010,7 @@ public final class VoiceState {
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     public func record(pressToTalk: Bool = false) {
         guard !isHidden else { return }
-        guard mode == .idle || mode == .error else { return }
+        guard mode == .idle || mode == .error || isPlaybackPaused else { return }
         guard pendingIntent?.command != .record else { return }
         clearRetainedTeleprompter()
         let commandUptimeMs = currentRecordingUptimeMs()
@@ -2000,6 +2111,9 @@ public final class VoiceState {
             switch stateStr {
             case "idle":
                 let idleSource = event["source"] as? String
+                // The daemon never sends a playback idle while a read is parked: one now means it is gone.
+                // (While speaking, the speaking → idle edge retires it once the readback froze its position.)
+                if idleSource == "playback", mode != .speaking { retireParkedRead() }
                 if barInitiatedRecording, mode == .transcribing {
                     if idleSource == "recording", deferredFinalTranscriptionTask != nil {
                         pendingRecordingIdleAfterFinal = true
@@ -2134,7 +2248,11 @@ public final class VoiceState {
                 }
                 mode = .speaking
                 isTeleprompterDismissed = false
-                setPlaybackPaused(false)
+                // Every speaking edge is the daemon playing: the resumed read or its replacement.
+                retireParkedRead()
+                currentPlayback = (event["playback_id"] as? String).flatMap { id in
+                    (event["generation"] as? NSNumber).map { (id, $0.intValue) }
+                }
                 statusText = event["text"] as? String ?? ""
                 canReplay = true
                 hotkeyPhase = .idle
@@ -2222,6 +2340,10 @@ public final class VoiceState {
 
         case "playback_state":
             handlePlaybackStateEvent(event)
+
+        case "playback_outcome":
+            // Stop or replacement settled the parked job: there is nothing left to resume.
+            if let id = event["playback_id"] as? String, id == parkedRead?.playbackID { retireParkedRead() }
 
         case "transcription_status":
             guard mode == .transcribing else { return }

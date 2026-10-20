@@ -204,7 +204,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
             for: .leading,
             state: .teleprompter
         )
-        XCTAssertEqual(teleprompter.coreInset, 24)
+        // P16: the teleprompter's leading wing (pause/play) uses the idle-hover mic's lane.
+        XCTAssertEqual(teleprompter, material.wingContentLayout(for: .leading, state: .hoverLauncher))
         XCTAssertEqual(teleprompter.alignment, .center)
     }
 
