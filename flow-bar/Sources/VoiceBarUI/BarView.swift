@@ -495,6 +495,8 @@ public struct BarView: View {
                 ProcessingSpinner()
             } else if let playbackPauseControl {
                 playbackLeadingControls(playbackPauseControl)
+            } else if state.mode == .idle, VoiceBarPresentation.readQueueControl(for: state) != nil {
+                playbackLeadingControls(nil)
             } else {
                 statusIcon
             }
@@ -514,9 +516,9 @@ public struct BarView: View {
     }
 
     /// QUEUE1: pause/play, then Next and the "+N" count toward the core; one control slot each so the hit rects match.
-    private func playbackLeadingControls(_ pause: VoiceBarPlaybackPauseControl) -> some View {
+    private func playbackLeadingControls(_ pause: VoiceBarPlaybackPauseControl?) -> some View {
         HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-            playbackPauseButton(pause)
+            if let pause { playbackPauseButton(pause) }
             if let readQueueControl = VoiceBarPresentation.readQueueControl(for: state) {
                 notchButton(
                     icon: readQueueControl.iconName,

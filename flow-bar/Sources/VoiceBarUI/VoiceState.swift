@@ -1103,6 +1103,15 @@ public final class VoiceState {
     }
     public static let readQueueLimit = 10
 
+    /// QUEUE1 (lead ruling, D2): F5 over a playing read stops it exactly as today, but the queued reads
+    /// wait for Next. Only the F5 hotkey entry points run inside this scope; the Stop button does not.
+    private var stopRetainsReadQueue = false
+    public func retainingReadQueueOnStop(_ body: () -> Void) {
+        stopRetainsReadQueue = true
+        defer { stopRetainsReadQueue = false }
+        body()
+    }
+
     private func clearReadQueue() {
         readQueueCount = 0
         readQueueCurrentRequestID = nil
@@ -1111,7 +1120,7 @@ public final class VoiceState {
     /// QUEUE1: Next skips to the following queued read; on the last item it stops. Scoped to the read it was
     /// shown for, so a double press or a press racing auto-advance is a daemon no-op.
     public func skipToNextRead() {
-        guard mode == .speaking, let current = readQueueCurrentRequestID else { return }
+        guard mode == .speaking || mode == .idle, let current = readQueueCurrentRequestID else { return }
         if readQueueCount == 0 {
             invalidateSelectionSpeechIdentity()
             clearReadQueue()
@@ -1137,7 +1146,8 @@ public final class VoiceState {
             showConfirmation("VoiceLayer is disconnected")
             return
         }
-        let replacing = mode == .speaking || selectionSubmittedText != nil
+        // QUEUE1: reads F5 left waiting count as live, so an empty press clears them like Stop.
+        let replacing = mode == .speaking || selectionSubmittedText != nil || readQueueCurrentRequestID != nil
         let pressText = selectionSubmittedText ?? selectionReadText
             ?? (selectionReadIsPreparing || statusText.isEmpty ? nil : statusText)
         let pressHash = selectionSubmittedText == nil ? selectionReadHash : nil
@@ -1476,7 +1486,9 @@ public final class VoiceState {
         selectionSubmittedText = nil
         let shouldShowTranscribing = mode == .recording
         let shouldExitInterruptedPlayback = mode == .speaking
+        let retainsReadQueue = stopRetainsReadQueue && shouldExitInterruptedPlayback && readQueueCount > 0
         var payload: [String: Any] = ["cmd": "stop"]
+        if retainsReadQueue { payload["retain_read_queue"] = true }
         if physicalPress, shouldShowTranscribing, barInitiatedRecording,
            !remoteOwnedRecording, recordingMode == "ptt" {
             payload["physical_press"] = true
@@ -1484,7 +1496,11 @@ public final class VoiceState {
         if shouldExitInterruptedPlayback {
             payload["playback_elapsed_ms"] = playbackElapsedMilliseconds()
         }
-        sendIntent(command: .stop, payload: payload)
+        if retainsReadQueue {
+            // Retire the stopped read only; queued reads keep their identities so Next can start them.
+            clearCurrentSelectionReadIdentity(advanceEpoch: true)
+        }
+        sendIntent(command: .stop, payload: payload, retiresSelections: !retainsReadQueue)
         if shouldShowTranscribing {
             enterTranscribingMode()
         } else if shouldExitInterruptedPlayback {
@@ -1496,7 +1512,7 @@ public final class VoiceState {
             queueDepth = 0
             queueItems = []
             // QUEUE1: Stop means stop; the daemon clears the whole read queue with it.
-            clearReadQueue()
+            if !retainsReadQueue { clearReadQueue() }
             clearRetainedTeleprompter()
             enterIdleState(clearQueue: false)
         }
@@ -4040,10 +4056,11 @@ public final class VoiceState {
     private func sendIntent(
         command: IntentCommand,
         payload: [String: Any],
-        trackPending: Bool = true
+        trackPending: Bool = true,
+        retiresSelections: Bool = true
     ) {
         // Speech-only retirement; recorder intent payloads and stop/cancel bodies stay unchanged.
-        if command == .stop || command == .cancel { invalidateSelectionSpeechIdentity() }
+        if retiresSelections, command == .stop || command == .cancel { invalidateSelectionSpeechIdentity() }
         let id = UUID().uuidString
         var payloadWithID = payload
         payloadWithID["id"] = id

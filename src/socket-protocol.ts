@@ -404,7 +404,7 @@ export interface SpeakTextCommand extends SocketCommandBase {
 /** QUEUE1: skip to the next queued read; `request_id` names the read the button was shown for. */
 export interface ReadNextCommand extends SocketCommandBase {
   cmd: "read_next";
-  request_id?: string;
+  request_id: string;
 }
 
 export interface StopCommand extends SocketCommandBase {
@@ -413,6 +413,8 @@ export interface StopCommand extends SocketCommandBase {
   physical_press?: boolean;
   /** VoiceBar's teleprompter clock at the stop edge. */
   playback_elapsed_ms?: number;
+  /** QUEUE1: an F5 stop over a playing read keeps queued Option+F5 reads for Next. */
+  retain_read_queue?: boolean;
 }
 
 /** MICDROP2: VoiceBar's CoreAudio listener saw capture `capture_id`'s input device go away. */
@@ -767,17 +769,19 @@ export function parseCommand(line: string): SocketCommand | null {
         }, id);
       }
       case "read_next":
-        if (parsed.request_id !== undefined && (typeof parsed.request_id !== "string" || !parsed.request_id || parsed.request_id.length > 256)) return null;
-        return withCommandId<ReadNextCommand>({ cmd: "read_next",
-          ...(parsed.request_id !== undefined ? { request_id: parsed.request_id } : {}) }, id);
+        // Next is always scoped to the read it was shown for; an unscoped Next is not a command.
+        if (typeof parsed.request_id !== "string" || !parsed.request_id || parsed.request_id.length > 256) return null;
+        return withCommandId<ReadNextCommand>({ cmd: "read_next", request_id: parsed.request_id }, id);
       case "history_playback_ready":
         return id ? { cmd: "history_playback_ready", id } : null;
       case "stop":
         if (parsed.physical_press !== undefined && typeof parsed.physical_press !== "boolean") return null;
+        if (parsed.retain_read_queue !== undefined && typeof parsed.retain_read_queue !== "boolean") return null;
         return withCommandId<StopCommand>(
           {
             cmd: "stop",
             ...(parsed.physical_press !== undefined ? { physical_press: parsed.physical_press } : {}),
+            ...(parsed.retain_read_queue !== undefined ? { retain_read_queue: parsed.retain_read_queue } : {}),
             ...(playbackElapsedMs !== undefined
               ? { playback_elapsed_ms: playbackElapsedMs }
               : {}),

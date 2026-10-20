@@ -112,14 +112,16 @@ function startSelectionRead(read: QueuedSelectionRead): void {
 /** QUEUE1: the user's Option+F5 reads. Agent voice_speak/announce keep the tts.ts priority queue and,
  * as before, preempt a user read; that ends this queue too (no surprise resumption after an agent). */
 let selectionReads = new SelectionReadQueue(startSelectionRead, (state) => broadcast({ type: "read_queue", ...state }));
-setLongReadSettledListener((requestId, stopped) => selectionReads.settled(requestId, stopped));
+setLongReadSettledListener((requestId, outcome) => selectionReads.settled(requestId, outcome));
 
 export function resetSelectionReadQueueForTests(): void {
   selectionReads = new SelectionReadQueue(startSelectionRead, (state) => broadcast({ type: "read_queue", ...state }));
 }
 
-function stopAll(playbackElapsedMs?: number): void {
-  selectionReads.clear();
+/** Stop means stop. F5 over a playing read (`retainQueue`) still stops it, but keeps the queued reads for Next. */
+function stopAll(playbackElapsedMs?: number, retainQueue = false): void {
+  if (retainQueue) selectionReads.suspend();
+  else selectionReads.clear();
   stopPlayback(playbackElapsedMs);
 }
 
@@ -162,11 +164,14 @@ export function handleSocketCommand(
           if (outcome === "full") return buildAck(command, "reject", "queue full");
           return buildAck(command, "accept", outcome === "queued" ? "queued" : undefined);
         }
-        selectionReads.clear();
+        // The first Option+F5 selection owns the queue, so a different one queues behind it.
+        if (command.source === "selection" && command.id) selectionReads.own(command.id);
+        else selectionReads.clear();
         const read = speakText(text, command.profile ?? "auto", { request_id: command.id, text_hash: textHash });
         onSpeak?.(read);
         return buildAck(command, "accept");
       } catch (error) {
+        if (command.id) selectionReads.settled(command.id, "failed");
         return buildAck(command, "reject", error instanceof Error ? error.message : String(error));
       }
     }
@@ -181,6 +186,8 @@ export function handleSocketCommand(
     }
     case "stop":
       if (recordingState === "idle" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
+        // An explicit Stop also discards reads F5 left waiting for Next.
+        if (command.retain_read_queue !== true) selectionReads.clear();
         return buildAck(command, "noop", "already idle");
       }
       if (recordingState === "transcribing") {
@@ -196,7 +203,7 @@ export function handleSocketCommand(
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
       // P16: a stop/cancel aimed at an active capture (F5 release over a paused read) ends only the
       // capture; the parked read stays parked for Play.
-      if (!(recordingState !== "idle" && isPlaybackPaused())) stopAll(command.playback_elapsed_ms);
+      if (!(recordingState !== "idle" && isPlaybackPaused())) stopAll(command.playback_elapsed_ms, command.retain_read_queue === true);
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
@@ -335,7 +342,8 @@ export function handleSocketCommand(
         }
       }
       if (isSpeaking) {
-        stopAll();
+        // F5 over a playing read stops it as today; queued Option+F5 reads wait for Next.
+        stopAll(undefined, true);
       }
       const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
       const silenceMode = command.silence_mode ?? "standard";

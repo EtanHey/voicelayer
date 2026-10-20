@@ -200,8 +200,9 @@ public enum VoiceBarPresentation {
         from input: VoiceBarNotchOperationalInput
     ) -> VoiceBarNotchPresentation {
         let isRecording = input.mode == .recording
+        let hasWaitingReadQueue = input.mode == .idle && input.readQueueLeadingSlotCount > 1
         let isCollapsedIdle = input.mode == .idle && input.isCollapsed &&
-            !input.isHovered && !input.isKeyboardFocused
+            !input.isHovered && !input.isKeyboardFocused && !hasWaitingReadQueue
         let hasCompactStatus: Bool
         switch input.mode {
         case .recording:
@@ -209,7 +210,7 @@ public enum VoiceBarPresentation {
         case .idle:
             let confirmation = input.confirmationText?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            hasCompactStatus = !isCollapsedIdle && (!confirmation.isEmpty ||
+            hasCompactStatus = !isCollapsedIdle && (!confirmation.isEmpty || hasWaitingReadQueue ||
                 input.commandModeState != nil ||
                 input.activeClipMarker != nil ||
                 input.queueDepth > 0 ||
@@ -253,7 +254,7 @@ public enum VoiceBarPresentation {
     private static func compactStatusLeadingWingWidth(
         input: VoiceBarNotchOperationalInput
     ) -> CGFloat? {
-        input.mode == .speaking
+        input.mode == .speaking || input.mode == .idle
             ? playbackLeadingWingWidth(slotCount: input.readQueueLeadingSlotCount)
             : VoiceBarNotchContract.compactIndicatorLaneWidth
     }
@@ -275,8 +276,16 @@ public enum VoiceBarPresentation {
         currentRequestID: String?,
         count: Int
     ) -> VoiceBarReadQueueControl? {
-        guard mode == .speaking, !isReadback, currentRequestID != nil else { return nil }
         let waiting = max(0, count)
+        // D2: after F5 interrupted the owner, idle keeps Next and "+N" (no pause) until Next or Stop.
+        if mode == .idle, currentRequestID != nil, waiting > 0 {
+            return VoiceBarReadQueueControl(
+                iconName: "forward.fill", countLabel: "+\(waiting)", accessibilityLabel: "Next read",
+                accessibilityHint: "Resume the queue with the next selection; \(waiting) waiting",
+                leadingSlotCount: 2
+            )
+        }
+        guard mode == .speaking, !isReadback, currentRequestID != nil else { return nil }
         return VoiceBarReadQueueControl(
             iconName: "forward.fill",
             countLabel: waiting > 0 ? "+\(waiting)" : nil,

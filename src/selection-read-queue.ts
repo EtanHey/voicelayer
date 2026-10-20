@@ -12,6 +12,9 @@ export interface QueuedSelectionRead {
   profile: "auto" | "short" | "long";
 }
 
+/** How a read ended. Only `completed` advances; Stop, preemption and player failure never do. */
+export type SelectionReadOutcome = "completed" | "stopped" | "failed";
+
 export interface SelectionReadQueueState {
   count: number;
   /** The read the Next button acts on; null unless this chain has queued something. */
@@ -23,6 +26,8 @@ export class SelectionReadQueue {
   /** The user's read that owns playback (speaking, preparing or paused) and therefore the queue. */
   private current?: string;
   private session = false;
+  /** F5 interrupted the owner: its queued reads wait for Next, never auto-start. */
+  private suspended = false;
 
   constructor(
     /** Starts a read; throws when it cannot (recording, Ask, TTS off). */
@@ -33,8 +38,14 @@ export class SelectionReadQueue {
 
   get pendingCount(): number { return this.items.length; }
 
-  /** `append` reads queue behind the user's live read; anything else replaces it and forgets the queue. */
+  /** `append` reads queue behind the user's live read; anything else replaces it and forgets the queue.
+   * After an F5 interruption a new selection plays now and the retained reads stay queued behind it. */
   submit(read: QueuedSelectionRead, append: boolean): "started" | "queued" | "full" {
+    if (this.suspended) {
+      this.suspended = false;
+      this.launch(read);
+      return "started";
+    }
     if (append && this.current !== undefined) {
       if (this.items.length >= this.limit) return "full";
       this.items.push(read);
@@ -48,19 +59,35 @@ export class SelectionReadQueue {
   }
 
   /** Next acts only on the read it was shown for; on the last item it stops (the caller stops playback). */
-  next(requestId?: string): "advanced" | "stopped" | "stale" {
-    if (this.current === undefined || (requestId !== undefined && requestId !== this.current)) return "stale";
+  next(requestId: string): "advanced" | "stopped" | "stale" {
+    if (!requestId || requestId !== this.current) return "stale";
+    this.suspended = false;
     const following = this.items.shift();
     if (!following) { this.clear(); return "stopped"; }
     try { this.launch(following); } catch { this.clear(); return "stopped"; }
     return "advanced";
   }
 
+  /** A direct (non-queue) Option+F5 start owns the queue. It replaces the chain, except after F5, when the
+   * retained reads stay queued behind it. The caller starts the read itself. */
+  own(requestId: string): void {
+    if (this.suspended) this.suspended = false;
+    else this.clear();
+    this.current = requestId;
+    if (this.session) this.emit();
+  }
+
+  /** F5 over the playing owner: the caller stops it; queued reads are kept for an explicit Next. */
+  suspend(): void {
+    if (this.current === undefined || !this.items.length) { this.clear(); return; }
+    this.suspended = true;
+  }
+
   /** A read ended. A natural end advances; Stop, preemption or failure ends the whole queue. */
-  settled(requestId: string, stopped: boolean): void {
-    if (requestId !== this.current) return;
+  settled(requestId: string, outcome: SelectionReadOutcome): void {
+    if (requestId !== this.current || this.suspended) return;
     this.current = undefined;
-    const following = stopped ? undefined : this.items.shift();
+    const following = outcome === "completed" ? this.items.shift() : undefined;
     if (!following) { this.clear(); return; }
     try { this.launch(following); } catch { this.clear(); }
   }
@@ -71,6 +98,7 @@ export class SelectionReadQueue {
     this.items = [];
     this.current = undefined;
     this.session = false;
+    this.suspended = false;
     if (changed) this.emit();
   }
 

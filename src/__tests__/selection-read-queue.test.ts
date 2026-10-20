@@ -50,10 +50,10 @@ describe("QUEUE1 selection read queue (TLA3 QUEUE1 gates)", () => {
   it("gate 3: a natural end auto-advances; the last natural end closes the queue", () => {
     const h = harness();
     h.queue.submit(read("A"), true); h.queue.submit(read("B"), true);
-    h.queue.settled("A", false);
+    h.queue.settled("A", "completed");
     expect(h.started).toEqual(["A", "B"]);
     expect(h.last()).toEqual({ count: 0, current_request_id: "B" });
-    h.queue.settled("B", false);
+    h.queue.settled("B", "completed");
     expect(h.started).toEqual(["A", "B"]);
     expect(h.last()).toEqual({ count: 0, current_request_id: null });
   });
@@ -63,13 +63,13 @@ describe("QUEUE1 selection read queue (TLA3 QUEUE1 gates)", () => {
     h.queue.submit(read("A"), true); h.queue.submit(read("B"), true); h.queue.submit(read("C"), true);
     h.queue.clear();
     expect(h.last()).toEqual({ count: 0, current_request_id: null });
-    h.queue.settled("A", true);
+    h.queue.settled("A", "stopped");
     expect(h.started).toEqual(["A"]);
 
     // Agent speech, Ask or a dictation preempting the user's read ends it as stopped: the queue ends too.
     const g = harness();
     g.queue.submit(read("A"), true); g.queue.submit(read("B"), true);
-    g.queue.settled("A", true);
+    g.queue.settled("A", "stopped");
     expect(g.started).toEqual(["A"]);
     expect(g.last()).toEqual({ count: 0, current_request_id: null });
   });
@@ -80,12 +80,12 @@ describe("QUEUE1 selection read queue (TLA3 QUEUE1 gates)", () => {
     expect(h.queue.next("A")).toBe("advanced");
     // A double-clicked Next rendered for A, and A's late settle after Next, are both stale.
     expect(h.queue.next("A")).toBe("stale");
-    h.queue.settled("A", false);
+    h.queue.settled("A", "completed");
     expect(h.started).toEqual(["A", "B"]);
     expect(h.last()).toEqual({ count: 1, current_request_id: "B" });
     h.queue.clear();
     expect(h.queue.next("B")).toBe("stale");
-    h.queue.settled("B", false);
+    h.queue.settled("B", "completed");
     expect(h.started).toEqual(["A", "B"]);
   });
 
@@ -102,9 +102,66 @@ describe("QUEUE1 selection read queue (TLA3 QUEUE1 gates)", () => {
     const h = harness(() => fail);
     h.queue.submit(read("A"), true); h.queue.submit(read("B"), true); h.queue.submit(read("C"), true);
     fail = true;
-    h.queue.settled("A", false);
+    h.queue.settled("A", "completed");
     expect(h.started).toEqual(["A"]);
     expect(h.last()).toEqual({ count: 0, current_request_id: null });
+  });
+
+  it("SOL-2: a failed read never advances, whatever is queued", () => {
+    const h = harness();
+    h.queue.submit(read("A"), true); h.queue.submit(read("B"), true); h.queue.submit(read("C"), true);
+    h.queue.settled("A", "failed");
+    expect(h.started).toEqual(["A"]);
+    expect(h.last()).toEqual({ count: 0, current_request_id: null });
+  });
+
+  it("SOL-1: a direct selection start owns the queue, so the next different selection appends", () => {
+    const h = harness();
+    h.queue.own("A");
+    expect(h.queue.submit(read("B"), true)).toBe("queued");
+    expect(h.started).toEqual([]);
+    expect(h.last()).toEqual({ count: 1, current_request_id: "A" });
+  });
+
+  it("SOL-3: Next without the owner's identity is stale", () => {
+    const h = harness();
+    h.queue.submit(read("A"), true); h.queue.submit(read("B"), true);
+    expect(h.queue.next("" as string)).toBe("stale");
+    expect(h.queue.next(undefined as unknown as string)).toBe("stale");
+    expect(h.started).toEqual(["A"]);
+  });
+
+  it("D2: F5 suspends the queue; the stopped owner's settle keeps it, nothing auto-starts, Next starts the head", () => {
+    const h = harness();
+    h.queue.submit(read("A"), true); h.queue.submit(read("B"), true); h.queue.submit(read("C"), true);
+    h.queue.suspend();
+    h.queue.settled("A", "stopped");
+    expect(h.started).toEqual(["A"]);
+    expect(h.last()).toEqual({ count: 2, current_request_id: "A" });
+    expect(h.queue.next("A")).toBe("advanced");
+    expect(h.started).toEqual(["A", "B"]);
+    expect(h.last()).toEqual({ count: 1, current_request_id: "B" });
+    // From here a natural end advances again.
+    h.queue.settled("B", "completed");
+    expect(h.started).toEqual(["A", "B", "C"]);
+  });
+
+  it("D2: after F5 a new selection plays now with the retained reads behind it; explicit Stop clears them", () => {
+    const h = harness();
+    h.queue.submit(read("A"), true); h.queue.submit(read("B"), true);
+    h.queue.suspend();
+    h.queue.settled("A", "stopped");
+    expect(h.queue.submit(read("N"), true)).toBe("started");
+    expect(h.last()).toEqual({ count: 1, current_request_id: "N" });
+    h.queue.suspend();
+    h.queue.clear();
+    expect(h.last()).toEqual({ count: 0, current_request_id: null });
+    // Suspending with nothing waiting is just Stop.
+    const g = harness();
+    g.queue.submit(read("A"), true);
+    g.queue.suspend();
+    g.queue.settled("A", "stopped");
+    expect(g.queue.next("A")).toBe("stale");
   });
 
   it("publishes counts only, never queued text", () => {

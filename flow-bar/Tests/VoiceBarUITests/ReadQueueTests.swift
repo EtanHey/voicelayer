@@ -192,4 +192,63 @@ final class ReadQueueTests: XCTestCase {
         state.handleEvent(queueEvent(0, a))
         XCTAssertEqual(VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount, 2)
     }
+
+    // MARK: - R2 D2 (lead ruling a): F5 over a playing read keeps the queued reads for Next
+
+    func testF5StopOverAPlayingReadKeepsTheQueueAndNextResumesItAfterTheCapture() throws {
+        let (state, a) = readingA()
+        press(state, "Bravo selection")
+        let b = try XCTUnwrap(commands.last?["id"] as? String)
+        press(state, "Charlie selection")
+        state.handleEvent(queueEvent(2, a))
+        commands = []
+        state.retainingReadQueueOnStop { state.stop() }
+        XCTAssertEqual(cmds, ["stop"], "the read still stops exactly as today")
+        XCTAssertEqual(commands.last?["retain_read_queue"] as? Bool, true)
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        // The dictation runs and ends; nothing plays and the queue is still there.
+        state.handleEvent(["type": "state", "state": "recording", "bar_owned": true])
+        XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state), "no Next while recording")
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+        state.mode = .idle
+        XCTAssertEqual(state.readQueueCount, 2)
+        let control = try XCTUnwrap(VoiceBarPresentation.readQueueControl(for: state))
+        XCTAssertEqual(control.countLabel, "+2")
+        XCTAssertEqual(control.leadingSlotCount, 2, "Next and +2, no pause")
+        state.isCollapsed = true
+        let idle = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
+            mode: .idle, readQueueLeadingSlotCount: control.leadingSlotCount, isCollapsed: true))
+        XCTAssertEqual(idle.visualState, .compactStatus, "the waiting queue keeps the pill open")
+        XCTAssertEqual(idle.geometry.leadingWingWidth, VoiceBarPresentation.playbackLeadingWingWidth(slotCount: 2))
+        commands = []
+        state.skipToNextRead()
+        XCTAssertEqual(cmds, ["read_next"])
+        XCTAssertEqual(commands.last?["request_id"] as? String, a)
+        state.handleEvent(speaking(id: b, text: "Bravo selection", read: "read-B"))
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(state.statusText, "Bravo selection", "the queued read's identity survived the F5 stop")
+    }
+
+    func testStopButtonOutsideTheF5ScopeStillClearsEverything() {
+        let (state, a) = readingA()
+        press(state, "Bravo selection")
+        state.handleEvent(queueEvent(1, a))
+        commands = []
+        state.stop()
+        XCTAssertNil(commands.last?["retain_read_queue"])
+        XCTAssertEqual(state.readQueueCount, 0)
+    }
+
+    func testEmptyOptionF5WhileReadsWaitClearsThemLikeStop() {
+        let (state, a) = readingA()
+        press(state, "Bravo selection")
+        state.handleEvent(queueEvent(1, a))
+        state.retainingReadQueueOnStop { state.stop() }
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        commands = []
+        press(state, "")
+        XCTAssertEqual(cmds, ["stop"])
+        XCTAssertNil(commands.last?["retain_read_queue"])
+        XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
+    }
 }

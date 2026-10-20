@@ -58,7 +58,8 @@ describe("speak_text socket command", () => {
 
 describe("QUEUE1 Option+F5 read queue over the socket", () => {
   const hash = "b".repeat(64);
-  const speak = (id: string, queue = true) => handleSocketCommand({ cmd: "speak_text", id, text: `selection ${id}`, text_hash: hash, source: "selection", ...(queue ? { queue: true } : {}) } as any);
+  // The real VoiceBar wire: the first selection from idle has no queue flag; later different ones do.
+  const speak = (id: string, queue = id !== "A") => handleSocketCommand({ cmd: "speak_text", id, text: `selection ${id}`, text_hash: hash, source: "selection", ...(queue ? { queue: true } : {}) } as any);
   let events: any[];
   let started: string[];
   function idle() {
@@ -74,12 +75,60 @@ describe("QUEUE1 Option+F5 read queue over the socket", () => {
   afterEach(() => { resetSelectionReadQueueForTests(); });
   const queueEvents = () => events.filter(e => e.type === "read_queue");
 
-  it("parses queue on speak_text and read_next with an optional request id", () => {
+  it("parses queue on speak_text, retain_read_queue on stop, and read_next only with a request id", () => {
     expect(parseCommand(JSON.stringify({ cmd: "speak_text", text: "a", queue: true }))).toEqual({ cmd: "speak_text", text: "a", queue: true });
     expect(parseCommand(JSON.stringify({ cmd: "speak_text", text: "a", queue: "yes" }))).toBeNull();
+    expect(parseCommand(JSON.stringify({ cmd: "stop", retain_read_queue: true }))).toEqual({ cmd: "stop", retain_read_queue: true });
+    expect(parseCommand(JSON.stringify({ cmd: "stop", retain_read_queue: 1 }))).toBeNull();
     expect(parseCommand(JSON.stringify({ cmd: "read_next", request_id: "r1", id: "n1" }))).toEqual({ cmd: "read_next", request_id: "r1", id: "n1" });
-    expect(parseCommand(JSON.stringify({ cmd: "read_next" }))).toEqual({ cmd: "read_next" });
+    // SOL-3: an unscoped Next is not a command.
+    expect(parseCommand(JSON.stringify({ cmd: "read_next" }))).toBeNull();
+    expect(parseCommand(JSON.stringify({ cmd: "read_next", request_id: "" }))).toBeNull();
     expect(parseCommand(JSON.stringify({ cmd: "read_next", request_id: 4 }))).toBeNull();
+  });
+
+  it("SOL-1: the real Swift sequence (A without queue, then B with queue) queues B behind A", () => {
+    idle();
+    const spoken: unknown[] = [];
+    expect(handleSocketCommand({ cmd: "speak_text", id: "A", text: "selection A", text_hash: hash, source: "selection", profile: "auto", format: "markdown" } as any,
+      (read) => spoken.push(read))).toMatchObject({ outcome: "accept", id: "A" });
+    expect(spoken).toHaveLength(1);
+    expect(handleSocketCommand({ cmd: "speak_text", id: "B", text: "selection B", text_hash: hash, source: "selection", profile: "auto", format: "markdown", queue: true } as any))
+      .toMatchObject({ outcome: "accept", id: "B", reason: "queued" });
+    expect(started).toEqual(["A"]);
+    expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 1, current_request_id: "A" });
+  });
+
+  it("speech-control speak_text (no selection source) keeps its lifecycle callback and does not own the queue", () => {
+    idle();
+    const spoken: unknown[] = [];
+    handleSocketCommand({ cmd: "speak_text", id: "cli", text: "from the CLI" } as any, (read) => spoken.push(read));
+    expect(spoken).toHaveLength(1);
+    expect(speak("B")).toMatchObject({ outcome: "accept" });
+    expect(started).toEqual(["cli", "B"]);
+  });
+
+  it("SOL-3: a Next missing its request id is a noop and starts nothing", () => {
+    idle();
+    speak("A"); speak("B");
+    expect(handleSocketCommand({ cmd: "read_next" } as any)).toMatchObject({ outcome: "noop", reason: "stale" });
+    expect(started).toEqual(["A"]);
+    expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 1, current_request_id: "A" });
+  });
+
+  it("D2: an F5 stop over the playing read keeps B and C for Next; explicit Stop later clears them even when idle", async () => {
+    idle();
+    const stop = spyOn(tts, "stopPlayback").mockReturnValue(true); spies.push(stop);
+    const depth = spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(1); spies.push(depth);
+    speak("A"); speak("B"); speak("C");
+    await handleSocketCommand({ cmd: "stop", retain_read_queue: true } as any);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+    expect(started).toEqual(["A"]);
+    depth.mockReturnValue(0);
+    expect(handleSocketCommand({ cmd: "stop" } as any)).toMatchObject({ outcome: "noop" });
+    expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 0, current_request_id: null });
+    expect(handleSocketCommand({ cmd: "read_next", request_id: "A" } as any)).toMatchObject({ outcome: "noop", reason: "stale" });
   });
 
   it("a different selection while reading is queued (count 1), not started", () => {

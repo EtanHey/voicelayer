@@ -1484,7 +1484,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Single/double tap are intentionally not assigned in the immediate PTT model.
         gestureStateMachine.onSingleTap = { [weak self] in
             NSLog("[VoiceBar] Hotkey single tap — checking active recording/transcription")
-            self?.commandRouter.handleHotkeySingleTap()
+            // QUEUE1 D2: the router is unchanged; an F5 stop over a playing read keeps queued reads for Next.
+            guard let self else { return }
+            voiceState.retainingReadQueueOnStop { self.commandRouter.handleHotkeySingleTap() }
         }
 
         gestureStateMachine.onDoubleTap = { [weak self] in
@@ -1867,7 +1869,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     trailingOuterInset: WaveformLayout.outerInset
                 )
             case .idle:
-                return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+                // D2: Next and "+N" wait in the left wing after F5 interrupted a queued read.
+                return VoiceBarNotchInteractionConfiguration(leadingControlCount: playbackLeadingSlotCount(for: state))
             case .disconnected, .recording:
                 return .none
             }
@@ -2110,11 +2113,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
-        if stoppingFromPhysicalPress {
-            commandRouter.handlePhysicalPressStop()
-            return
+        voiceState.retainingReadQueueOnStop {
+            if stoppingFromPhysicalPress {
+                commandRouter.handlePhysicalPressStop()
+                return
+            }
+            commandRouter.handleHotkeyHoldEnd(holdDuration: holdDuration)
         }
-        commandRouter.handleHotkeyHoldEnd(holdDuration: holdDuration)
     }
 
     func handleHotkeyDoubleTap() {

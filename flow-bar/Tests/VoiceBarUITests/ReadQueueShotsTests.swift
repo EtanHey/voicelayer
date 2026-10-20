@@ -30,9 +30,11 @@ final class ReadQueueShotsTests: XCTestCase {
                 ("compact-plus1", 1, true, true, false),
                 ("paused-plus1", 1, true, true, true),
                 ("compact-plus10", 10, true, true, false),
+                ("idle-after-f5-plus2", 2, true, false, false),
             ] {
                 let filename = "queue1-\(name)-\(appearanceName).png"
                 try shot(count: count, queued: queued, dismissed: dismissed, paused: paused,
+                         idleAfterF5: name.hasPrefix("idle"),
                          appearance: appearance, to: directory.appendingPathComponent(filename))
                 lines.append("- [\(filename)](\(filename))")
             }
@@ -41,7 +43,7 @@ final class ReadQueueShotsTests: XCTestCase {
             to: directory.appendingPathComponent("index.md"), atomically: true, encoding: .utf8)
     }
 
-    private func shot(count: Int, queued: Bool, dismissed: Bool, paused: Bool,
+    private func shot(count: Int, queued: Bool, dismissed: Bool, paused: Bool, idleAfterF5: Bool,
                       appearance: NSAppearance.Name, to url: URL) throws {
         let state = VoiceState()
         state.isConnected = true
@@ -50,16 +52,25 @@ final class ReadQueueShotsTests: XCTestCase {
                            "generation": 1, "text": "A synthetic selection read aloud while more selections wait."])
         if queued { state.handleEvent(["type": "read_queue", "count": count, "current_request_id": "r-A"]) }
         if dismissed { state.dismissTeleprompter() }
+        if idleAfterF5 {
+            state.retainingReadQueueOnStop { state.stop() }
+            state.mode = .idle
+        }
         if paused {
             state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-A", "generation": 2,
                                "offset_ms": 900, "chunk_offset_ms": 900])
         }
         let resolved = VoiceBarPresentation.notchPresentation(from: VoiceBarNotchOperationalInput(
             mode: state.mode,
-            hasTeleprompterText: state.teleprompterText != nil,
+            hasTeleprompterText: state.mode == .speaking && state.teleprompterText != nil,
             isTeleprompterDismissed: state.isTeleprompterDismissed,
             isPlaybackPaused: state.isPlaybackPaused,
             readQueueLeadingSlotCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
+            statusText: VoiceBarPresentation.liveStatusText(
+                mode: state.mode, transcript: state.transcript, confirmationText: state.confirmationText,
+                hotkeyPhase: .idle, hotkeyEnabled: true, errorMessage: nil,
+                commandModeState: nil, activeClipMarker: nil
+            ),
             isCollapsed: false
         ))
         let isTeleprompter = resolved.visualState == .teleprompter
