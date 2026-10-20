@@ -127,3 +127,62 @@ public enum TeleprompterFormatting {
         return output
     }
 }
+
+// MARK: - Rendering blocks and cache
+
+extension TeleprompterFormatting {
+    /// Word ranges rendered as independent flows in a lazy stack, so a long read only lays out what is on
+    /// screen. A block starts where the text already starts a line; a paragraph longer than
+    /// `maximumWords` also splits after a sentence end, never before glued punctuation or inside a token.
+    static func blocks(layouts: [TeleprompterWordLayout], words: [TeleprompterWord],
+                       maximumWords: Int = 160) -> [Range<Int>] {
+        guard layouts.count == words.count, !words.isEmpty else { return words.isEmpty ? [] : [0 ..< words.count] }
+        var blocks: [Range<Int>] = []
+        var start = 0
+        for index in 1 ..< words.count {
+            let layout = layouts[index]
+            let startsGroup = layout.highlightGroup == words[index].id
+            let afterSentence = index - start >= maximumWords && startsGroup &&
+                words[index - 1].text.last.map { ".?!".contains($0) } == true
+            if layout.lineBreak != .none || afterSentence {
+                blocks.append(start ..< index)
+                start = index
+            }
+        }
+        blocks.append(start ..< words.count)
+        return blocks
+    }
+}
+
+/// Everything the teleprompter derives from its text and timeline, computed once per document.
+public struct TeleprompterRenderedDocument {
+    public let words: [TeleprompterWord]
+    public let layouts: [TeleprompterWordLayout]
+    public let blocks: [Range<Int>]
+    /// Block index of every word.
+    let blockOfWord: [Int]
+}
+
+/// A highlight tick re-renders the view, never the document: formatting reruns only for new text or timings.
+public final class TeleprompterRenderCache {
+    private var key: (text: String, wordBoundaries: [TeleprompterBoundary])?
+    private var cached: TeleprompterRenderedDocument?
+    private(set) var computations = 0
+
+    public init() {}
+
+    public func document(text: String, wordBoundaries: [TeleprompterBoundary]) -> TeleprompterRenderedDocument {
+        if let key, let cached, key.text == text, key.wordBoundaries == wordBoundaries { return cached }
+        computations += 1
+        let words = TeleprompterContentModel.words(text: text, wordBoundaries: wordBoundaries)
+        let layouts = TeleprompterFormatting.layout(text: text, words: words)
+        let blocks = TeleprompterFormatting.blocks(layouts: layouts, words: words)
+        var blockOfWord = Array(repeating: 0, count: words.count)
+        for (index, block) in blocks.enumerated() { for word in block { blockOfWord[word] = index } }
+        let document = TeleprompterRenderedDocument(words: words, layouts: layouts, blocks: blocks,
+                                                    blockOfWord: blockOfWord)
+        key = (text, wordBoundaries)
+        cached = document
+        return document
+    }
+}

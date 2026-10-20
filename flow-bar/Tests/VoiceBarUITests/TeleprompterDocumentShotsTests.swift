@@ -54,6 +54,25 @@ final class TeleprompterDocumentShotsTests: XCTestCase {
         }
         try render(longRead, to: directory.appendingPathComponent("tele1-long-read-mid-chunk-2.png"))
 
+        // Round 2: no word cap. A 4,500-word read in 3 chunks stays one lazily laid-out document.
+        let bigTokens = (0 ..< 4500).map { $0 % 40 == 39 ? "word\($0).\n\n" : "word\($0)" }
+        let bigText = bigTokens.joined(separator: " ")
+        let big = state()
+        big.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
+                         "long_read": ["id": "big-read", "chunk_index": 0, "chunk_count": 3, "chunk_start_ms": 0,
+                                       "preparing": true, "text": bigText, "chunk_word_starts": [0, 1500, 3000]]])
+        let bigChunk = bigText.split(whereSeparator: \.isWhitespace)[1500 ..< 3000].joined(separator: " ")
+        big.handleEvent(["type": "state", "state": "speaking", "text": bigChunk, "duration_ms": 1_800_000,
+                         "playback_offset_ms": 600_000 + 380 * 700,
+                         "long_read": ["id": "big-read", "chunk_index": 1, "chunk_count": 3, "chunk_start_ms": 600_000]])
+        big.handleEvent(["type": "subtitle", "words": [], "duration_ms": 600_000, "aligned_words":
+            bigChunk.split(separator: " ").enumerated().map { offset, token -> [String: Any] in
+                ["word_index": offset, "text": String(token), "offset_ms": offset * 380, "duration_ms": 340]
+            }])
+        let started = Date()
+        try render(big, to: directory.appendingPathComponent("tele1-long-read-4500-words.png"))
+        print("TELE1 4500-word render \(Int(Date().timeIntervalSince(started) * 1000)) ms (includes 800 ms settle)")
+
         let short = state()
         short.handleEvent(["type": "state", "state": "speaking", "duration_ms": 6000,
                            "text": "Shipped today:\n• unmuted.What changed , in short\n1. Open it\n2. Close it"])

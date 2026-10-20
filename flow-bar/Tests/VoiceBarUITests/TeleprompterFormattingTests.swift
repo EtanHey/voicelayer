@@ -73,4 +73,25 @@ final class TeleprompterFormattingTests: XCTestCase {
                                        maxWidth: 140, spacing: 5)
         XCTAssertEqual(plain.positions.map(\.x), [0, 45, 90, 0, 45], "unformatted text wraps exactly as before")
     }
+
+    func testBlocksBreakOnlyWhereTheTextAlreadyBreaksOrAfterALongSentence() {
+        let text = "Intro line.\n• item one , two\n\nA long one. Sentence two. Three."
+        let words = TeleprompterContentModel.words(text: text, wordBoundaries: [])
+        let layouts = TeleprompterFormatting.layout(text: text, words: words)
+        XCTAssertEqual(TeleprompterFormatting.blocks(layouts: layouts, words: words, maximumWords: 100),
+                       [0 ..< 2, 2 ..< 7, 7 ..< 13])
+        XCTAssertEqual(TeleprompterFormatting.blocks(layouts: layouts, words: words, maximumWords: 3),
+                       [0 ..< 2, 2 ..< 7, 7 ..< 10, 10 ..< 13],
+                       "an over-long paragraph splits only after a sentence end; a list item never splits mid-line")
+    }
+
+    func testTheRenderedDocumentIsCachedPerTextAndTimeline() {
+        let cache = TeleprompterRenderCache()
+        let boundaries = [TeleprompterBoundary(offsetMs: 0, durationMs: 100, text: "a", wordIndex: 0)]
+        let first = cache.document(text: "a b", wordBoundaries: boundaries)
+        XCTAssertEqual(cache.document(text: "a b", wordBoundaries: boundaries).words, first.words)
+        XCTAssertEqual(cache.computations, 1, "a highlight tick never reformats the document")
+        _ = cache.document(text: "a b c", wordBoundaries: boundaries)
+        XCTAssertEqual(cache.computations, 2)
+    }
 }

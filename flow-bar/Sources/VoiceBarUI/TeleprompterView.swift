@@ -667,13 +667,15 @@ public struct TeleprompterView: View {
     @State private var pointerState = TeleprompterPointerState()
     @State private var currentIndex: Int
     @State private var animationTask: Task<Void, Never>?
-    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
+    @State private var renderCache = TeleprompterRenderCache()
+
+    /// Words, formatting and blocks, computed once per text and timeline (a highlight tick reuses them).
+    private var rendered: TeleprompterRenderedDocument {
+        renderCache.document(text: text, wordBoundaries: wordBoundaries)
+    }
 
     private var teleprompterWords: [TeleprompterWord] {
-        TeleprompterContentModel.words(
-            text: text,
-            wordBoundaries: wordBoundaries
-        )
+        rendered.words
     }
 
     private var timedWords: [TeleprompterWord] {
@@ -692,8 +694,8 @@ public struct TeleprompterView: View {
                     isReadback: isReadback
                 )
             ) {
-                FlowLayout(spacing: 5, maxWidth: wrapWidth - 2 * Theme.teleprompterShellInset) {
-                    wordViews
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    blockViews
                 }
                 .padding(.horizontal, Theme.teleprompterShellInset)
                 .frame(width: wrapWidth, alignment: .leading)
@@ -723,8 +725,8 @@ public struct TeleprompterView: View {
                 scrollToCurrentWord(with: proxy, animated: false)
             }
             .onChange(of: wordBoundaries) { _, _ in
+                // New timings (a chunk's subtitle) re-arm the clock; a moved word scrolls via currentIndex.
                 restart()
-                scrollToCurrentWord(with: proxy, animated: false)
             }
             .onChange(of: playbackEpoch) { _, _ in
                 restart()
@@ -743,108 +745,43 @@ public struct TeleprompterView: View {
         }
     }
 
-    private var wordViews: some View {
-        let words = teleprompterWords
-        let layouts = TeleprompterFormatting.layout(text: text, words: words)
-        let currentGroup = layouts.indices.contains(currentIndex) ? layouts[currentIndex].highlightGroup : currentIndex
-        return ForEach(words) { word in
-            let layout = layouts[word.id]
-            let highlight = WordHighlight(
-                isCurrent: layout.highlightGroup == currentGroup,
-                isAvailable: canHighlight(word) || words.indices.contains(layout.highlightGroup) &&
-                    canHighlight(words[layout.highlightGroup]),
-                joinsPrevious: layout.gluesToPrevious,
-                joinsNext: layouts.indices.contains(word.id + 1) && layouts[word.id + 1].gluesToPrevious
+    /// TELE1: one lazily laid-out flow per block, so a long read measures only what is on screen, and a
+    /// highlight tick re-renders only the blocks whose inputs changed (the current one, and the one it left).
+    private var blockViews: some View {
+        let document = rendered
+        let indexed = usesIndexedTiming
+        return ForEach(Array(document.blocks.enumerated()), id: \.offset) { index, block in
+            TeleprompterBlockView(
+                words: Array(document.words[block]),
+                layouts: Array(document.layouts[block]),
+                highlightedIndex: blockHighlight(block),
+                hoveredWordID: hoveredWordID.flatMap { block.contains($0) ? $0 : nil },
+                isReadback: isReadback,
+                usesIndexedTiming: indexed,
+                hasBoundaries: !wordBoundaries.isEmpty,
+                wrapWidth: wrapWidth,
+                flowWidth: wrapWidth - 2 * Theme.teleprompterShellInset,
+                onSeek: onSeek,
+                onSeekUnavailable: onSeekUnavailable,
+                onHover: updateWordHover
             )
-            Group {
-                if let onSeek, isReadback || TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {
-                    Button {
-                        TeleprompterSeekPolicy.seek(word, isReadback: isReadback, seek: onSeek,
-                                                    unavailable: { onSeekUnavailable?() })
-                    } label: {
-                        wordLabel(word, text: layout.displayText, highlight: highlight)
-                            .underline(hoveredWordID == word.id)
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in updateWordHover(word.id, isInside: hovering) }
-                    .onDisappear { updateWordHover(word.id, isInside: false) }
-                    .accessibilityHint("Seek to this word")
-                    .help("Seek to this word")
-                } else {
-                    wordLabel(word, text: layout.displayText, highlight: highlight)
-                }
-            }
-            .id(word.id)
-            .layoutValue(key: TeleprompterFlowItemKey.self, value: layout.flowItem)
+            .equatable()
+            .padding(.top, index == 0 ? 0 : document.layouts[block.lowerBound].lineBreak == .paragraph ? 9 : 3)
+            .id(TeleprompterBlockID(index: index))
         }
+    }
+
+    /// The word a block styles against. Outside the block it saturates, so a far-away tick changes nothing:
+    /// later blocks read as upcoming, earlier ones past the karaoke fade.
+    private func blockHighlight(_ block: Range<Int>) -> Int {
+        if block.contains(currentIndex) { return currentIndex }
+        return currentIndex < block.lowerBound ? -1 : min(currentIndex, block.upperBound + 64)
     }
 
     private func updateWordHover(_ wordID: Int, isInside: Bool) {
         if isInside { hoveredWordID = wordID } else if hoveredWordID == wordID { hoveredWordID = nil }
         pointerState.hover(wordID: wordID, isInside: isInside,
             push: { NSCursor.pointingHand.push() }, pop: { NSCursor.pop() })
-    }
-
-    /// The pill is drawn per word; glued neighbours square off their shared edge so it reads as one.
-    private struct WordHighlight {
-        let isCurrent: Bool
-        let isAvailable: Bool
-        let joinsPrevious: Bool
-        let joinsNext: Bool
-    }
-
-    private func wordLabel(_ word: TeleprompterWord, text: String, highlight: WordHighlight) -> some View {
-        let isLit = highlight.isAvailable && highlight.isCurrent
-        let leading: CGFloat = highlight.joinsPrevious ? 0 : 3, trailing: CGFloat = highlight.joinsNext ? 0 : 3
-        return Text(text)
-            .font(.system(size: 16, weight: isLit ? .semibold : .medium))
-            .lineLimit(nil)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: wrapWidth, alignment: .leading)
-            .foregroundStyle(wordForeground(word, isCurrent: highlight.isCurrent))
-            .background {
-                if !isReadback, highlight.isAvailable, highlight.isCurrent || hoveredWordID == word.id {
-                    UnevenRoundedRectangle(topLeadingRadius: leading, bottomLeadingRadius: leading,
-                                           bottomTrailingRadius: trailing, topTrailingRadius: trailing)
-                        .fill(Color(red: 92/255, green: 124/255, blue: 1).opacity(highlight.isCurrent ? 0.30 : 0.12))
-                }
-            }
-    }
-
-    private func canHighlight(_ word: TeleprompterWord) -> Bool {
-        usesIndexedTiming ? word.offsetMs != nil : !wordBoundaries.isEmpty
-    }
-
-    private func wordForeground(_ word: TeleprompterWord, isCurrent: Bool) -> Color {
-        if !isReadback, usesIndexedTiming, word.offsetMs == nil { return notchPalette.primary.color.opacity(0.78) }
-        if notchAppearance == .dark, !isReadback, !wordBoundaries.isEmpty {
-            return isCurrent ? .white : Color(red: 234/255, green: 234/255, blue: 240/255)
-        }
-        return notchPalette.primary.color.opacity(
-            opacityFor(word.id, highlightedIndex: isCurrent ? word.id : currentIndex)
-        )
-    }
-
-    // MARK: - Word opacity
-
-    private func opacityFor(_ index: Int, highlightedIndex: Int) -> Double {
-        let minimumOpacity = VoiceBarNotchContrastPalette.minimumTeleprompterOpacity(
-            for: notchAppearance
-        )
-        if let readbackOpacity = TeleprompterPlaybackPolicy.wordOpacity(isReadback: isReadback) {
-            return readbackOpacity
-        }
-        if wordBoundaries.isEmpty { return 0.78 }
-        if index == highlightedIndex { return 1.0 }
-        if index < highlightedIndex {
-            let distance = highlightedIndex - index
-            return max(minimumOpacity, 0.90 - Double(distance) * 0.02)
-        }
-        return max(minimumOpacity, 0.9)
-    }
-
-    private var notchPalette: VoiceBarNotchContrastPalette {
-        VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
 
     // MARK: - Animation
@@ -943,7 +880,10 @@ public struct TeleprompterView: View {
                 proxy.scrollTo(currentIndex, anchor: anchor)
             }
         } else {
-            proxy.scrollTo(currentIndex, anchor: anchor)
+            // A jump may land in a block the lazy stack has not built yet: reach the block, then the word.
+            let target = currentIndex
+            proxy.scrollTo(TeleprompterBlockID(index: rendered.blockOfWord[target]), anchor: anchor)
+            DispatchQueue.main.async { proxy.scrollTo(target, anchor: anchor) }
         }
     }
 
@@ -954,5 +894,128 @@ public struct TeleprompterView: View {
             isReadback: isReadback || wordBoundaries.isEmpty
         )
         startAnimating()
+    }
+}
+
+struct TeleprompterBlockID: Hashable {
+    let index: Int
+}
+
+/// One block of the teleprompter: a flow of words with their formatting, karaoke styling and seek buttons.
+/// Equatable on its values (closures excluded), so SwiftUI skips every block a highlight tick did not touch.
+private struct TeleprompterBlockView: View, Equatable {
+    let words: [TeleprompterWord]
+    let layouts: [TeleprompterWordLayout]
+    let highlightedIndex: Int
+    let hoveredWordID: Int?
+    let isReadback: Bool
+    let usesIndexedTiming: Bool
+    let hasBoundaries: Bool
+    let wrapWidth: CGFloat
+    let flowWidth: CGFloat
+    let onSeek: ((Int) -> Void)?
+    let onSeekUnavailable: (() -> Void)?
+    let onHover: (Int, Bool) -> Void
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.words == rhs.words && lhs.layouts == rhs.layouts && lhs.highlightedIndex == rhs.highlightedIndex &&
+            lhs.hoveredWordID == rhs.hoveredWordID && lhs.isReadback == rhs.isReadback &&
+            lhs.usesIndexedTiming == rhs.usesIndexedTiming && lhs.hasBoundaries == rhs.hasBoundaries &&
+            lhs.wrapWidth == rhs.wrapWidth && lhs.flowWidth == rhs.flowWidth && (lhs.onSeek == nil) == (rhs.onSeek == nil)
+    }
+
+    /// The pill is drawn per word; glued neighbours square off their shared edge so it reads as one.
+    private struct WordHighlight {
+        let isCurrent: Bool
+        let isAvailable: Bool
+        let joinsPrevious: Bool
+        let joinsNext: Bool
+    }
+
+    var body: some View {
+        let first = words.first?.id ?? 0
+        let local = highlightedIndex - first
+        let currentGroup = layouts.indices.contains(local) ? layouts[local].highlightGroup : highlightedIndex
+        FlowLayout(spacing: 5, maxWidth: flowWidth) {
+            ForEach(Array(words.enumerated()), id: \.element.id) { position, word in
+                let layout = layouts[position]
+                let head = layout.highlightGroup - first
+                let highlight = WordHighlight(
+                    isCurrent: layout.highlightGroup == currentGroup,
+                    isAvailable: canHighlight(word) || words.indices.contains(head) && canHighlight(words[head]),
+                    joinsPrevious: layout.gluesToPrevious,
+                    joinsNext: layouts.indices.contains(position + 1) && layouts[position + 1].gluesToPrevious
+                )
+                Group {
+                    if let onSeek, isReadback || TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {
+                        Button {
+                            TeleprompterSeekPolicy.seek(word, isReadback: isReadback, seek: onSeek,
+                                                        unavailable: { onSeekUnavailable?() })
+                        } label: {
+                            wordLabel(word, text: layout.displayText, highlight: highlight)
+                                .underline(hoveredWordID == word.id)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hovering in onHover(word.id, hovering) }
+                        .onDisappear { onHover(word.id, false) }
+                        .accessibilityHint("Seek to this word")
+                        .help("Seek to this word")
+                    } else {
+                        wordLabel(word, text: layout.displayText, highlight: highlight)
+                    }
+                }
+                .id(word.id)
+                .layoutValue(key: TeleprompterFlowItemKey.self, value: layout.flowItem)
+            }
+        }
+    }
+
+    private func wordLabel(_ word: TeleprompterWord, text: String, highlight: WordHighlight) -> some View {
+        let isLit = highlight.isAvailable && highlight.isCurrent
+        let leading: CGFloat = highlight.joinsPrevious ? 0 : 3, trailing: CGFloat = highlight.joinsNext ? 0 : 3
+        return Text(text)
+            .font(.system(size: 16, weight: isLit ? .semibold : .medium))
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: wrapWidth, alignment: .leading)
+            .foregroundStyle(wordForeground(word, isCurrent: highlight.isCurrent))
+            .background {
+                if !isReadback, highlight.isAvailable, highlight.isCurrent || hoveredWordID == word.id {
+                    UnevenRoundedRectangle(topLeadingRadius: leading, bottomLeadingRadius: leading,
+                                           bottomTrailingRadius: trailing, topTrailingRadius: trailing)
+                        .fill(Color(red: 92/255, green: 124/255, blue: 1).opacity(highlight.isCurrent ? 0.30 : 0.12))
+                }
+            }
+    }
+
+    private func canHighlight(_ word: TeleprompterWord) -> Bool {
+        usesIndexedTiming ? word.offsetMs != nil : hasBoundaries
+    }
+
+    private func wordForeground(_ word: TeleprompterWord, isCurrent: Bool) -> Color {
+        if !isReadback, usesIndexedTiming, word.offsetMs == nil { return notchPalette.primary.color.opacity(0.78) }
+        if notchAppearance == .dark, !isReadback, hasBoundaries {
+            return isCurrent ? .white : Color(red: 234/255, green: 234/255, blue: 240/255)
+        }
+        return notchPalette.primary.color.opacity(opacityFor(word.id, highlightedIndex: isCurrent ? word.id : highlightedIndex))
+    }
+
+    private func opacityFor(_ index: Int, highlightedIndex: Int) -> Double {
+        let minimumOpacity = VoiceBarNotchContrastPalette.minimumTeleprompterOpacity(for: notchAppearance)
+        if let readbackOpacity = TeleprompterPlaybackPolicy.wordOpacity(isReadback: isReadback) {
+            return readbackOpacity
+        }
+        if !hasBoundaries { return 0.78 }
+        if index == highlightedIndex { return 1.0 }
+        if index < highlightedIndex {
+            let distance = highlightedIndex - index
+            return max(minimumOpacity, 0.90 - Double(distance) * 0.02)
+        }
+        return max(minimumOpacity, 0.9)
+    }
+
+    private var notchPalette: VoiceBarNotchContrastPalette {
+        VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
 }
