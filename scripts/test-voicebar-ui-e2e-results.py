@@ -65,7 +65,7 @@ class ReportTests(unittest.TestCase):
             results.report(self.root, [step], [dict(attachments=[attachment])])
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(suffix='.noindex')
         self.root = pathlib.Path(self.temp.name)
         self.addCleanup(self.temp.cleanup)
 

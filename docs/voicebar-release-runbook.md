@@ -30,8 +30,8 @@ cannot produce native proof, so CI is not gated on it.
    ```bash
    NPM_SHA="$(curl -fsSL https://registry.npmjs.org/voicelayer-mcp/-/voicelayer-mcp-X.Y.Z.tgz | shasum -a 256 | awk '{print $1}')"
    scripts/promote-voicebar-release.sh --version X.Y.Z \
-     --app dist/voicebar-release/X.Y.Z/VoiceBar.app \
-     --zip dist/voicebar-release/X.Y.Z/VoiceBar.zip \
+     --app dist/voicebar-release.noindex/X.Y.Z/VoiceBar.app \
+     --zip dist/voicebar-release.noindex/X.Y.Z/VoiceBar.zip \
      --tap-root ~/Gits/homebrew-layers \
      --formula-sha256 "$NPM_SHA" \
      --t3-proof docs.local/<release>/t3-optf5-proof.json

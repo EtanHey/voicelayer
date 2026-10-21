@@ -23,6 +23,7 @@ import {
   existsSync,
   lstatSync,
   mkdtempSync,
+  mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -500,8 +501,10 @@ export function bundleDigest(app: string): string {
 // verified app's, and neither side may have an entry the other lacks.
 export function zipMatchesApp(app: string, zip: string): void {
   if (!existsSync(zip)) fail(`VoiceBar.zip not found: ${zip}`);
-  const scratch = mkdtempSync(join(tmpdir(), "t3gate-zip-"));
+  const root = mkdtempSync(join(tmpdir(), "t3gate-zip-"));
+  const scratch = join(root, "artifacts.noindex");
   try {
+    mkdirSync(scratch);
     const extract =
       process.platform === "darwin"
         ? Bun.spawnSync(["ditto", "-x", "-k", zip, scratch], { stdout: "pipe", stderr: "pipe" })
@@ -522,7 +525,7 @@ export function zipMatchesApp(app: string, zip: string): void {
       if (!want.has(path)) fail(`VoiceBar.zip has VoiceBar.app/${path}, which the verified app lacks: the ZIP is not the proven build`);
     }
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 }
 

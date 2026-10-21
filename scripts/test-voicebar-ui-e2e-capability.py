@@ -36,7 +36,7 @@ class PasteFeedbackMetadataTests(unittest.TestCase):
 
     def metadata(self, state, presentation=''):
         block = RUNNER.read_text().split("<<'PYMETA'\n", 1)[1].split('\nPYMETA', 1)[0]
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory(suffix='.noindex') as temp:
             repo = pathlib.Path(temp)
             ui = repo / 'flow-bar/Sources/VoiceBarUI'
             ui.mkdir(parents=True)
@@ -94,7 +94,7 @@ class PasteFeedbackMetadataTests(unittest.TestCase):
 
 class CapabilityTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(suffix='.noindex')
         self.addCleanup(self.temp.cleanup)
         self.package = pathlib.Path(self.temp.name)
         self.ui = self.package / 'Sources/VoiceBarUI'

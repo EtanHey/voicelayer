@@ -28,7 +28,7 @@ fi
 if ! LC_ALL=C grep -aqF qa_context_menu_probe "$app_binary"; then
   printf 'error: %s was built without the QA probes; rebuild it with
 ' "$app_path" >&2
-  printf '  VOICEBAR_QA_BUILD=1 bash flow-bar/build-app.sh --install-path <temp>/VoiceBar.app --no-stop --no-relaunch
+  printf '  VOICEBAR_QA_BUILD=1 bash flow-bar/build-app.sh --install-path <temp>.noindex/VoiceBar.app --no-stop --no-relaunch
 ' >&2
   exit 2
 fi
@@ -188,20 +188,20 @@ if [[ ! -s "$context_menu_receipt" ]] ||
   printf 'error: supplied VoiceBar app did not pass its window and context-menu gates; see %s\n' "$app_log" >&2
   exit 1
 fi
-swift test --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
   --filter BarViewClickabilityTests/testPanelAppKitMouseEventsAdmitTheRenderedRecordingSurface
-swift test --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
   --filter BarViewClickabilityTests/testTeleprompterAppKitMouseEventsAdmitItsRenderedBodyForContextMenu
-swift test --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
   --filter BarViewClickabilityTests/testPanelRightMouseDownOpensContextMenuOnRenderedRecordingWing
-swift test --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
   --filter AppLifecycleTests/testEveryNotchStateAdmitsRenderedPixelsButRejectsTransparentMargins
-swift test --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
   --filter VoiceBarHoverHysteresisTests/testMouseMovedKeepsUnflippedWindowYForVisibleSurfaceAdmission
 env \
   VOICEBAR_REGENERATE_VISUAL_ARTIFACTS=1 \
   VOICEBAR_VISUAL_ARTIFACT_OUTPUT="$frame_dir" \
-  swift test --package-path "$repo_root/flow-bar" \
+  swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
     --filter BarViewSnapshotArtifactTests/testWritesOffscreenAppKitArtifactsForAllPrimaryVoiceModes
 
 for frame_name in idle recording transcribing speaking; do

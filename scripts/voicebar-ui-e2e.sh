@@ -22,13 +22,15 @@ case "$scenario" in
   *) echo "FAIL unknown scenario: $scenario (expected full or focused-338)" >&2; exit 2 ;;
 esac
 repo=$(cd "$(dirname "$0")/.." && pwd)
+source "$repo/scripts/lib/noindex-path.sh"
+require_noindex_path "$output"
 mkdir -p "$(dirname "$output")"
 mkdir "$output" # Refuse to overwrite a previous run or any of its evidence.
 output=$(cd "$output" && pwd)
 python3 "$repo/scripts/voicebar-ui-e2e-results.py" scenario "$output" --scenario "$scenario"
 for tool in xcodebuild xcrun swift python3 bun; do command -v "$tool" >/dev/null || { echo "FAIL prerequisite: $tool"; exit 1; }; done
 # /tmp is deliberately short: macOS sockaddr_un has a 104-byte limit.
-sandbox=$(mktemp -d /tmp/vl-ui-XXXXXX)
+sandbox=$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="vl-ui-", suffix=".noindex", dir="/tmp"))')
 printf '%s\n' voicebar-ui-e2e-v1 > "$sandbox/.uie2e-sandbox"
 mkdir "$sandbox/home"
 printf '%s\n' "$sandbox" > "$output/sandbox-path.txt"

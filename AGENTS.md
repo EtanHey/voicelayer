@@ -210,3 +210,12 @@ Use `brain_search` before reading files. VoiceLayer history is indexed.
 - Singleton daemon on `/tmp/voicelayer-mcp.sock` — replaces per-session `voicelayer-mcp` spawning.
 - `.mcp.json` config: `{ "command": "socat", "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] }`
 - Migration: `bash scripts/migrate-to-daemon.sh` (migrates all repos under ~/Gits).
+
+## Build artifacts and Spotlight
+
+Bundle writers reject output overrides outside `/Applications/` unless a resolved path
+component ends in `.noindex` (including symlink resolution). Use
+`docs.local/artifacts.noindex/` for QA output, `dist/voicebar-release.noindex/` for
+release bundles, and `$TMPDIR/VoiceBarQA.noindex/VoiceBarQA.app` for QA builds.
+Swift build caches use `flow-bar/.build.noindex`. Readers and promotion tools accept older artifact
+paths so an in-flight release can finish without moving its proven bundle.

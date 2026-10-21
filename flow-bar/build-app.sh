@@ -174,6 +174,7 @@ normalize_app_dir_path() {
         echo "[build-app] ERROR: resolved --install-path must name an .app bundle destination: $resolved_app_dir" >&2
         return 2
     fi
+    require_noindex_path "$resolved_app_dir" || return 2
     APP_DIR="$resolved_app_dir"
 }
 
@@ -221,7 +222,7 @@ refuse_brew_managed_install_path() {
 [build-app] with it. Nothing has been built or installed.
 [build-app]
 [build-app] Build somewhere else and test from there:
-[build-app]   bash flow-bar/build-app.sh --install-path "$HOME/Applications/VoiceBar-dev.app"
+[build-app]   bash flow-bar/build-app.sh --install-path "$HOME/Applications/VoiceBar-dev.noindex/VoiceBar-dev.app"
 [build-app]
 [build-app] To bring this Mac back to the canonical release instead:
 [build-app]   voicelayer update
@@ -1044,6 +1045,7 @@ fi
 parse_build_app_args "$@"
 # Validate before process inspection, stop, install-path mutation or any compiler invocation.
 configure_qa_swift_flags
+source "$REPO_ROOT/scripts/lib/noindex-path.sh"
 normalize_app_dir_path
 if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
     echo "[build-app] ERROR: UIE2E ad-hoc signing requires a marked scratch QA bundle and --no-stop --no-relaunch." >&2
@@ -1066,10 +1068,10 @@ fi
 # (Etan ruling 2, 2026-09-24). Debug builds define VOICEBAR_QA in Package.swift; a release
 # bundle gets it only by an explicit VOICEBAR_QA_BUILD=1, which a notarized release refuses.
 echo "[build-app] Building VoiceBar (release)..."
-swift build -c release --package-path "$PACKAGE_DIR" ${QA_SWIFT_FLAGS[@]+"${QA_SWIFT_FLAGS[@]}"}
+swift build --scratch-path "$REPO_ROOT/flow-bar/.build.noindex" -c release --package-path "$PACKAGE_DIR" ${QA_SWIFT_FLAGS[@]+"${QA_SWIFT_FLAGS[@]}"}
 
 # Find the built binary (reuses cached build, no rebuild)
-BIN_DIR="$(swift build -c release --package-path "$PACKAGE_DIR" --show-bin-path)"
+BIN_DIR="$(swift build --scratch-path "$REPO_ROOT/flow-bar/.build.noindex" -c release --package-path "$PACKAGE_DIR" --show-bin-path)"
 BINARY="$BIN_DIR/VoiceBar"
 if [ ! -f "$BINARY" ]; then
     echo "[build-app] ERROR: Binary not found at $BINARY"

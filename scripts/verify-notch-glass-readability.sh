@@ -53,11 +53,11 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-swift build -c release --package-path "$repo_root/flow-bar" \
+swift build --scratch-path "$repo_root/flow-bar/.build.noindex" -c release --package-path "$repo_root/flow-bar" \
   --product NotchGlassBackdropFixture
-swift build -c release --package-path "$repo_root/flow-bar" \
+swift build --scratch-path "$repo_root/flow-bar/.build.noindex" -c release --package-path "$repo_root/flow-bar" \
   --product NotchCaptureContrastVerifier
-bin_path=$(swift build -c release --package-path "$repo_root/flow-bar" --show-bin-path)
+bin_path=$(swift build --scratch-path "$repo_root/flow-bar/.build.noindex" -c release --package-path "$repo_root/flow-bar" --show-bin-path)
 fixture_binary="$bin_path/NotchGlassBackdropFixture"
 verifier="$bin_path/NotchCaptureContrastVerifier"
 

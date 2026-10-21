@@ -50,7 +50,7 @@ round-trips, microphone capture, corpus replay) and are skipped off-macOS.
 
 **Running the full suite locally**, note two things:
 1. `bun test` treats its arguments as path *substrings*, so a previous
-   `dist/voicebar-release/**/Resources/src/__tests__` build copy gets picked up and
+   `dist/voicebar-release.noindex/**/Resources/src/__tests__` build copy gets picked up and
    double-counted (even via `bun test src/`). Scope with an explicit file list:
    `bun test $(git ls-files 'src/__tests__/*.test.ts')`.
 2. Many local-only tests assert against **real machine and repo state**, so they
