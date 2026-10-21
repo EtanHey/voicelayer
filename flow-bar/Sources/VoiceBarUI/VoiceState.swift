@@ -553,7 +553,11 @@ public final class VoiceState {
     }
 
     public func dismissTeleprompter() {
-        guard teleprompterText != nil else { return }
+        guard teleprompterText != nil else {
+            logClick("teleprompter_hide", ["outcome": "noop", "dismissed": String(isTeleprompterDismissed)])
+            return
+        }
+        let wasDismissed = isTeleprompterDismissed
         let reservedBefore = VoiceBarPresentation.reservesTeleprompterEnvelope(
             hasText: true,
             isDismissed: isTeleprompterDismissed,
@@ -566,6 +570,10 @@ public final class VoiceState {
             isReadback: isTeleprompterReadback
         )
         notifyPanelLayoutChangedIfNeeded(reservedBefore != reservedAfter)
+        // Hide is local: no daemon command, so this record is its only trace.
+        logClick("teleprompter_hide", [
+            "outcome": "applied", "dismissed": String(isTeleprompterDismissed), "previous_dismissed": String(wasDismissed),
+        ])
     }
 
     public func showTeleprompter() {
@@ -1894,11 +1902,33 @@ public final class VoiceState {
         return generation.map { $0 >= currentPlayback.generation } ?? true
     }
 
+    /// CLICK2: why `ownsPlaybackEvent` refused an event, in allowlisted words.
+    private func playbackEventDropReason(_ event: [String: Any]) -> String {
+        guard let currentPlayback else {
+            return event["state"] as? String == "paused" ? "no-pending-pause" : "wrong-owner"
+        }
+        return event["playback_id"] as? String == currentPlayback.id ? "stale-generation" : "wrong-owner"
+    }
+
     private func handlePlaybackStateEvent(_ event: [String: Any]) {
-        guard ownsPlaybackEvent(event) else { return }
         let playbackID = event["playback_id"] as? String
         let generation = (event["generation"] as? NSNumber)?.intValue
-        switch event["state"] as? String {
+        let state = event["state"] as? String
+        let expected = currentPlayback?.generation
+        var telemetry = [
+            "state": state == "paused" || state == "resumed" ? state! : "other",
+            "generation": generation.map(String.init) ?? "null",
+            "expected_generation": expected.map(String.init) ?? "null",
+            "generation_match": expected.map { expected in generation.map { $0 >= expected } ?? true ? "match" : "mismatch" }
+                ?? "unknown",
+            "playback_id": ClickTelemetry.identifier(playbackID) ?? "null",
+        ]
+        let drop = { (reason: String) in
+            telemetry["reason"] = reason
+            self.logClick("playback_state_drop", telemetry)
+        }
+        guard ownsPlaybackEvent(event) else { drop(playbackEventDropReason(event)); return }
+        switch state {
         case "paused":
             // A confirmation that lands mid-capture still parks the read that was on screen.
             let read: ReadSnapshot? = switch mode {
@@ -1906,7 +1936,7 @@ public final class VoiceState {
             case .recording, .transcribing: departedRead
             default: nil
             }
-            guard let read else { return }
+            guard let read else { drop("no-read"); return }
             let offset = (event["offset_ms"] as? NSNumber)?.doubleValue
             let offsetMs = offset.flatMap { $0.isFinite && $0 >= 0 ? Int($0.rounded()) : nil }
                 ?? parkedRead?.offsetMs ?? (mode == .speaking ? playbackElapsedMilliseconds() : 0)
@@ -1915,18 +1945,24 @@ public final class VoiceState {
             pendingPauseEpoch = nil
         case "resumed":
             // Resume's speaking edge (playback_offset_ms) has already re-anchored the clock at the paused word.
-            guard mode == .speaking else { return }
+            guard mode == .speaking else { drop("not-speaking"); return }
             parkedRead = nil
             if let playbackID, let generation { currentPlayback = (playbackID, generation) }
         default:
+            drop("unknown-state")
             return
         }
+        logClick("playback_state_apply", telemetry)
     }
 
     private func handlePlaybackPauseAck(_ event: [String: Any], command: String) {
-        guard let id = event["id"] as? String, pendingPlaybackPauseIDs.remove(id) != nil,
-              event["outcome"] as? String == "reject"
-        else { return }
+        let id = event["id"] as? String
+        let owned = id.map { pendingPlaybackPauseIDs.remove($0) != nil } ?? false
+        logClick("playback_control_ack", [
+            "command": command, "command_id": ClickTelemetry.identifier(id) ?? "null", "owned": String(owned),
+            "outcome": ClickTelemetry.outcome(event["outcome"]), "reason": ClickTelemetry.reason(event["reason"]),
+        ])
+        guard owned, event["outcome"] as? String == "reject" else { return }
         switch event["reason"] as? String {
         case "stale":
             return // The read moved on; the next speaking edge already says so.
@@ -4253,6 +4289,12 @@ public final class VoiceState {
             frontmostAppOnRecordStart = nil
             recordStartInsertionHandler = nil
         }
+    }
+
+    /// CLICK2: allowlisted click records only; no layout notification and no control-layer mirror.
+    private func logClick(_ event: String, _ details: [String: String]) {
+        guard let diagnosticLogger else { return }
+        diagnosticLogger(event, details.merging(["timestamp": ClickTelemetry.timestamp()]) { _, new in new })
     }
 
     private func logDiagnostic(_ event: String, details: [String: String] = [:]) {

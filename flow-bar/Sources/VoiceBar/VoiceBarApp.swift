@@ -626,7 +626,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #endif
 
         // Wire the send-command closure so BarView buttons -> socket -> MCP clients
-        voiceState.sendCommand = { [weak server] cmd in
+        voiceState.sendCommand = { [weak server, weak self] cmd in
+            self?.logClickDispatch(cmd)
             server?.sendCommandToOwner(command: cmd)
         }
         voiceState.inputDeviceLossMonitor = InputDeviceLossMonitor { [weak voiceState] reason, captureID, deviceID in
@@ -649,7 +650,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.refreshSettingsWindowAnchorState()
         }
         voiceState.diagnosticLogger = { [weak self] event, details in
-            self?.logDiagnostic(event: event, details: details)
+            if ClickTelemetry.events.contains(event) {
+                self?.logClick(event: event, fields: details)
+            } else {
+                self?.logDiagnostic(event: event, details: details)
+            }
         }
         configurePillContextMenu()
 
@@ -2045,6 +2050,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         workspaceNotificationObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.logDiagnostic(event: "notch_active_space_changed") })
+    }
+
+    /// CLICK2: the click sink reads the app state at dispatch time. It never uses the generic diagnostic
+    /// enrichment below, which adds window titles, frames and app names.
+    private func logClickDispatch(_ command: [String: Any]) {
+        guard let fields = ClickTelemetry.dispatchFields(
+            command: command, appActive: NSApp.isActive, panelKey: panel?.isKeyWindow ?? false,
+            frontmostBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        ) else { return }
+        logClick(event: "command_dispatch", fields: fields)
+    }
+
+    private func logClick(event: String, fields: [String: String]) {
+        guard let line = ClickTelemetry.line(event: event, fields: fields) else { return }
+        NSLog("[VoiceBar][click] %@", line)
     }
 
     private func logDiagnostic(event: String, details: [String: String] = [:]) {
