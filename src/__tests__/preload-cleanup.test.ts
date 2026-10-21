@@ -236,3 +236,28 @@ test("stale fixture processes are swept before their dead run directory is delet
   expect(existsSync(join(indexed.base, "fixture-cleanup.done"))).toBe(true);
   expect(existsSync(indexed.dir)).toBe(false);
 }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+
+test("an unresolved fixture sweep keeps the dead run directory and index", () => {
+  const dir = sandbox();
+  mkdirSync(join(dir, "tests"));
+  mkdirSync(join(dir, "scripts"));
+  writeFileSync(join(dir, "tests/hook_fixture_registry.py"), readFileSync(resolve("tests/hook_fixture_registry.py")));
+  writeFileSync(join(dir, "scripts/supervise-test-daemon.py"), "def process_identity(pid): return None\n");
+  const [indexedPid, newer1, newer2] = deadPids(3);
+  const indexed = indexedRun(dir, indexedPid, 1000);
+  fixture(dir, newer1, 20);
+  fixture(dir, newer2, 10);
+  const started = Bun.spawnSync(["ps", "-p", String(process.pid), "-o", "lstart="], {
+    env: { ...process.env, LC_ALL: "C", TZ: "UTC" }, stdout: "pipe", stderr: "pipe",
+  });
+  expect(started.exitCode).toBe(0);
+  writeFileSync(join(indexed.base, `fixture-${process.pid}.json`), JSON.stringify({
+    pid: process.pid, started: started.stdout.toString().trim().split(/\s+/).join(" "),
+    token: "0123456789abcdef0123456789abcdef",
+  }));
+  expect(run(dir).exitCode).toBe(0);
+  expect(existsSync(join(indexed.base, "fixture-cleanup.done"))).toBe(false);
+  expect(existsSync(indexed.entry)).toBe(true);
+  expect(existsSync(join(indexed.dir, "evidence"))).toBe(true);
+}, SUBPROCESS_TEST_TIMEOUT_MS);

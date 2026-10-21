@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest.mock import patch
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests'))
@@ -193,6 +194,41 @@ class StaleSweepBoundary(unittest.TestCase):
         self.assertEqual(closed, (base / 'fixture-cleanup.done').exists())
         self.assertEqual(closed, not entry.exists(), 'index entry must outlive an unswept run')
         return closed
+
+    def unknown_fixture(self, missing):
+        base, entry = self.fabricate('Thu Jan  1 00:00:00 1970')
+        token = json.loads((base / 'fixture-registry.json').read_text())['token']
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+            env=dict(os.environ, HOOK_FIXTURE_RUN=str(base), HOOK_FIXTURE_TOKEN=token))
+        try:
+            started = registry.metadata(child.pid)
+            self.assertIsNotNone(started)
+            (base / f'fixture-{child.pid}.json').write_text(json.dumps(dict(pid=child.pid, started=started, token=token)))
+            target = 'identities' if missing == 'native' else 'metadata'
+            replacement = (lambda root: lambda pid: None) if missing == 'native' else (lambda pid: None)
+            with patch.object(registry, target, replacement), patch.object(registry.os, 'kill') as signals:
+                try:
+                    registry.cleanup(base, ROOT)
+                except RuntimeError:
+                    pass
+                self.assertFalse((base / 'fixture-cleanup.done').exists())
+                self.assertTrue(entry.exists())
+                signals.assert_not_called()
+                self.assertIsNone(child.poll())
+            registry.sweep_index(self.index, ROOT)
+            child.wait(timeout=5)
+            self.assertTrue((base / 'fixture-cleanup.done').exists())
+            self.assertFalse(entry.exists())
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+
+    def test_unknown_native_fixture_identity_retains_index(self):
+        self.unknown_fixture('native')
+
+    def test_unavailable_fixture_start_retains_index(self):
+        self.unknown_fixture('start')
 
     def test_live_owner_is_never_swept(self):
         self.assertFalse(self.swept(*self.fabricate(registry.metadata(os.getpid()))))

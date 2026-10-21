@@ -152,7 +152,12 @@ for point in ('KILL-supervisor', 'KILL-group', 'KILL-swift-build', 'KILL-group-s
         child.wait(timeout=5)
         assert wait(lambda: not survivors(base), 15), f'{point}: survivors {survivors(base)}'
         assert (base / 'fixture-registration.closed').exists()
-        assert (base / 'fixture-cleanup.done').exists()
+        # The guardian may retain an unreadable/re-exec identity that exits later.
+        # Recover this run after death is proven instead of assuming one pass settles it.
+        def settled():
+            registry.sweep_index(Path(json.loads((base / 'fixture-registry.json').read_text())['index']).parent, root)
+            return (base / 'fixture-cleanup.done').exists()
+        assert wait(settled), 'cleanup did not settle'
         print(f'PASS full-harness abort {point}: zero run-tagged survivors', flush=True)
     finally:
         if child.poll() is None:

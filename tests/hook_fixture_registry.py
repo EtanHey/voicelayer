@@ -157,28 +157,39 @@ def _cleanup_closed(base, root):
         reported.add(key)
         with (base / 'fixture-cleanup.jsonl').open('a') as stream:
             stream.write(json.dumps(dict(pid=pid, reason=reason)) + '\n')
-    def matches(row):
+    def fixture_state(row):
+        """Signal only alive identities; settle only positively dead identities."""
         pid = row.get('pid')
         if type(pid) is not int or pid <= 1 or not row.get('started') or row.get('token') != token:
             report(pid, 'unverifiable record; never signalled')
-            return False
+            return 'unknown'
+        status = liveness(pid, row['started'])
+        if status != 'alive':
+            return status
         started = metadata(pid)
         if started is None:
-            report(pid, 'exited or unverifiable start; never signalled')
-            return False
+            report(pid, 'unverifiable start; never signalled')
+            return 'unknown'
+        if started != row['started']:
+            return 'dead'
         observed = identity(pid)
-        owned = observed is not None and any(
+        if observed is None:
+            report(pid, 'unreadable identity; never signalled')
+            return 'unknown'
+        owned = any(
             observed[1].get(run_key) == str(base) and observed[1].get(token_key) == token
             for run_key, token_key in (('HOOK_FIXTURE_RUN', 'HOOK_FIXTURE_TOKEN'),
                                        ('HOOK_FIXTURE_BIRTH_RUN', 'HOOK_FIXTURE_BIRTH_TOKEN')))
-        if started != row['started'] or not owned:
+        if not owned:
             report(pid, 'identity mismatch or unreadable; never signalled')
-            return False
-        return True
+            return 'unknown'
+        return 'alive'
+    unreadable = False
     for path in base.glob('fixture-*.json'):
         if path.name == 'fixture-registry.json':
             continue
         if path.is_symlink():
+            unreadable = True
             report(None, 'symlink record; never read')
             continue
         try:
@@ -187,10 +198,11 @@ def _cleanup_closed(base, root):
                 raise ValueError('non-object record')
             rows.append(row)
         except (OSError, ValueError):
+            unreadable = True
             report(None, 'malformed record; never signalled')
     def send(row, signum):
         # Re-read start time AND the native environment before EACH individual signal.
-        if matches(row):
+        if fixture_state(row) == 'alive':
             try:
                 os.kill(row['pid'], signum)
                 report(row['pid'], f'sent {int(signum)} after identity verification')
@@ -199,17 +211,17 @@ def _cleanup_closed(base, root):
     for row in rows:
         send(row, signal.SIGTERM)
     deadline = time.monotonic() + .5
-    while time.monotonic() < deadline and any(matches(row) for row in rows):
+    while time.monotonic() < deadline and any(fixture_state(row) == 'alive' for row in rows):
         time.sleep(.025)
     for row in rows:
         send(row, signal.SIGKILL)
     deadline = time.monotonic() + 3
-    while time.monotonic() < deadline and any(matches(row) for row in rows):
+    while time.monotonic() < deadline and any(fixture_state(row) == 'alive' for row in rows):
         time.sleep(.025)
-    remaining = [row['pid'] for row in rows if matches(row)]
-    if remaining:
+    remaining = [row.get('pid') for row in rows if fixture_state(row) != 'dead']
+    if remaining or unreadable:
         # The index entry stays, so a later sweep retries with the same evidence.
-        raise RuntimeError(f'fixture teardown survivors: {remaining}')
+        raise RuntimeError(f'fixture teardown unresolved: {remaining}; unreadable={unreadable}')
     (base / 'fixture-cleanup.done').touch()
     entry = state.get('index')
     if entry and not Path(entry).is_symlink():
@@ -282,6 +294,8 @@ def sweep_index(index, root):
                 with (base / 'fixture-cleanup.lock').open('a') as serial:
                     fcntl.flock(serial, fcntl.LOCK_EX)
                     cleanup(base, root)
+        except RuntimeError as error:
+            print(f'UNRESOLVED fixture run {base or entry}: {error}; evidence retained', flush=True)
         except (OSError, ValueError, KeyError, TypeError) as error:
             print(f'UNVERIFIABLE fixture run {base or entry}: {type(error).__name__}; never signalled', flush=True)
 
