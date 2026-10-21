@@ -67,6 +67,7 @@ import { prepareSeekSlice, disposeSeekSlice } from "./tts/seek-audio";
 import { PlaybackLifecycle, type PlaybackScope, type QueuedPlaybackHandle } from "./tts/playback-lifecycle";
 export type { PlaybackScope, QueuedPlaybackHandle } from "./tts/playback-lifecycle";
 import { longReadDocument, runLongRead, type LongReadSeek, type SeekResult } from "./tts/long-read";
+import { PreparedReadStart, type PreparedChunk } from "./tts/selection-read-preparation";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
@@ -441,6 +442,7 @@ async function synthesizeEdgeChunk(
   audioFile: string,
   scriptPath: string,
   signal?: AbortSignal,
+  maxRetries = 1,
 ): Promise<SynthesizedChunk> {
   const result = await synthesizeWithRetry(
     text,
@@ -448,7 +450,7 @@ async function synthesizeEdgeChunk(
     rate,
     audioFile,
     scriptPath,
-    1,
+    maxRetries,
     signal,
   );
 
@@ -2080,7 +2082,9 @@ export interface LongReadHandle {
   started: Promise<{ error?: string }>;
   completion: Promise<{ error?: string }>;
 }
-type OwnedLongRead = LongReadHandle & { controller: AbortController; seek?: LongReadSeek };
+type OwnedLongRead = LongReadHandle & { controller: AbortController; seek?: LongReadSeek;
+  /** QPRE1: the read's request identity, and every chunk synthesized (only playing out from here). */
+  requestId?: string; synthesized?: Promise<void> };
 let activeLongRead: OwnedLongRead | undefined;
 // Retention registry is separate from the audible owner; P12 can detach a parked read.
 const longReads = new Map<string, OwnedLongRead>();
@@ -2145,21 +2149,129 @@ export function resolveLongReadProfile(kind: "auto" | "short" | "long", text: st
 
 type SpeechIdentity = Pick<StateEvent, "request_id" | "text_hash">;
 
-export function speakText(text: string, kind: "auto" | "short" | "long" = "auto", identity: SpeechIdentity = {}): LongReadHandle {
+/** One long-read chunk: pronunciation projection, engine fallback and rate adjustment. Owns the audio
+ * file until it resolves; no broadcast, history, playback queue or active-read state. */
+interface ChunkSynthesisPolicy { requireClone: boolean; edgeFallbackRate: string }
+const chunkSynthesisPolicy = (): ChunkSynthesisPolicy => ({ requireClone: requireClonedVoiceEnabled(), edgeFallbackRate: defaultRate() });
+
+async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadProfile, signal: AbortSignal,
+  { requireClone, edgeFallbackRate }: ChunkSynthesisPolicy, edgeRetries = 1, rules = pronunciationRules()): Promise<PreparedChunk> {
+  const audioFile = ttsFilePath(process.pid, ttsCounter++);
+  const projection = projectSpeakableText(displayChunk, rules, profile.engine);
+  const spoken = projection.speechText;
+  try {
+    const synthesizeEdge = async (voice: string, rate: string): Promise<PreparedChunk> => {
+      const edge = profile.engine === "edge" ? projection : projectSpeakableText(displayChunk, rules, "edge");
+      const chunk = await synthesizeEdgeChunk(edge.speechText, voice, rate, audioFile,
+        new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal, edgeRetries);
+      chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, edge.speechText, chunk.wordBoundaries, edge.ranges);
+      return { chunk, voice, engine: "edge-tts" };
+    };
+    if (profile.engine === "edge") {
+      return await synthesizeEdge(profile.voice, profile.rate);
+    }
+    const audio = await synthesizeCloned(spoken, profile.voice, signal);
+    throwIfAbortedSafe(signal);
+    if (!audio) {
+      if (requireClone) throw new VoiceProfileUnavailableError(profile.voice, "synthesis-failed");
+      const voice = resolveVoice(profile.fallbackVoice || loadProfile(profile.voice)?.fallback || defaultVoice(), "edge").voice;
+      console.error(`[voicelayer] Cloned voice "${profile.voice}" unavailable — falling back to edge-tts (${voice})`);
+      return await synthesizeEdge(voice, edgeFallbackRate);
+    }
+    writeFileSync(audioFile, audio);
+    const speed = Math.max(0.01, 1 + Number.parseFloat(profile.rate) / 100);
+    if (Number.isFinite(speed) && speed !== 1) {
+      const filters: string[] = [];
+      let remaining = speed;
+      while (remaining < 0.5) { filters.push("atempo=0.5"); remaining /= 0.5; }
+      while (remaining > 2) { filters.push("atempo=2"); remaining /= 2; }
+      filters.push(`atempo=${remaining}`);
+      const adjusted = audioFile.replace(".mp3", ".rate.mp3");
+      try {
+        await runAudioCommand(["ffmpeg", "-nostdin", "-y", "-i", audioFile, "-af", filters.join(","), adjusted], signal);
+        copyFileSync(adjusted, audioFile);
+      } finally { try { unlinkSync(adjusted); } catch {} }
+    }
+    throwIfAbortedSafe(signal);
+    const durationMs = probeAudioDurationMs(audioFile);
+    if (!durationMs || durationMs <= 0) throw new Error("Cloned audio has no readable duration");
+    return { chunk: { audioFile, durationMs, wordBoundaries: [] }, voice: profile.voice, engine: "qwen3-tts", projection };
+  } catch (error) {
+    disposeLongReadChunkFiles(audioFile);
+    throw error;
+  }
+}
+
+function disposeLongReadChunkFiles(audioFile: string): void {
+  try { unlinkSync(audioFile); } catch {}
+  try { unlinkSync(audioFile.replace(".mp3", ".meta.ndjson")); } catch {}
+}
+
+/** QPRE1: what chunk 0 of a read would synthesize; a prepared start transfers only on an exact match. */
+function preparedStartIdentity(displayChunk: string, profile: LongReadProfile, policy: ChunkSynthesisPolicy, rules = pronunciationRules()): string {
+  const { requestedClone, kind, engine, voice, rate, fallbackVoice } = profile;
+  return JSON.stringify([displayChunk, requestedClone, kind, engine, voice, rate, fallbackVoice ?? null,
+    policy.requireClone, policy.edgeFallbackRate, projectSpeakableText(displayChunk, rules, engine).speechText]);
+}
+
+function untilAborted(signal: AbortSignal): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    const abort = () => reject(new Error("Selection read preparation cancelled"));
+    if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+/** QPRE1: prepare a queued read's FIRST chunk in the background. It starts only once the playing owner's
+ * synthesis is complete (no contention with it, whatever the engine), and never touches playback,
+ * broadcasts, history or the active read. Rejects when the owner is gone or the signal aborts. */
+export async function prepareSelectionReadStart(
+  text: string, kind: "auto" | "short" | "long", ownerRequestId: string, signal: AbortSignal,
+): Promise<PreparedReadStart> {
+  const owner = [...longReads.values()].find((read) => read.requestId === ownerRequestId);
+  if (!owner?.synthesized) throw new Error("No playing read owns this queue");
+  const aborted = untilAborted(signal);
+  aborted.catch(() => {});
+  const synthesized = await Promise.race([
+    owner.synthesized.then(() => true), owner.done.then(() => false, () => false), aborted]);
+  if (!synthesized) throw new Error("The owning read ended before its synthesis completed");
+  throwIfAbortedSafe(signal);
+  if (isTTSDisabled()) throw new Error("TTS is disabled");
+  if (!text.trim() || text.length > SPEAK_TEXT_MAX_CHARS) throw new Error("Speech text must contain 1–200,000 characters");
+  const displayChunk = chunkTextForTTS(sanitizeTtsText(text))[0];
+  if (!displayChunk?.trim()) throw new Error("Speech text is empty after sanitizing");
+  const profile = resolveLongReadProfile(kind, text);
+  const policy = chunkSynthesisPolicy();
+  // No retry: the edge retry log quotes the text, and a failed prefetch just synthesizes at the start.
+  const rules = pronunciationRules();
+  const identity = preparedStartIdentity(displayChunk, profile, policy, rules);
+  const prepared = await synthesizeLongReadChunk(displayChunk, profile, signal, policy, 0, rules);
+  if (signal.aborted) { disposeLongReadChunkFiles(prepared.chunk.audioFile); throwIfAbortedSafe(signal); }
+  return new PreparedReadStart(identity, prepared,
+    (chunk) => disposeLongReadChunkFiles(chunk.audioFile));
+}
+
+export function speakText(text: string, kind: "auto" | "short" | "long" = "auto", identity: SpeechIdentity = {}, prepared?: PreparedReadStart): LongReadHandle {
   const receivedAt = Date.now();
-  return speakLongRead(text, resolveLongReadProfile(kind, text), receivedAt, identity);
+  let profile: LongReadProfile;
+  try { profile = resolveLongReadProfile(kind, text); } catch (error) { prepared?.dispose(); throw error; }
+  return speakLongRead(text, profile, receivedAt, identity, prepared);
 }
 
 /** Long reads bypass XTTS/F5 truncation and call the Qwen3 clone tier directly. */
-export function speakLongRead(text: string, profile: LongReadProfile, receivedAt = Date.now(), identity: SpeechIdentity = {}): LongReadHandle {
+export function speakLongRead(text: string, profile: LongReadProfile, receivedAt = Date.now(), identity: SpeechIdentity = {}, prepared?: PreparedReadStart): LongReadHandle {
   const speechIdentity = { request_id: identity.request_id ?? randomUUID(), text_hash: identity.text_hash ?? normalizedSpeechHash(text) };
   const chars = text.length;
   const requestedClone = profile.requestedClone ?? (profile.engine === "clone");
-  assertSpeakerClear();
-  if (!text.trim() || text.length > SPEAK_TEXT_MAX_CHARS) throw new Error("Speech text must contain 1–200,000 characters");
-  if (isTTSDisabled()) throw new Error("TTS is disabled");
-  const displayText = sanitizeTtsText(text);
-  if (!displayText.trim()) throw new Error("Speech text is empty after sanitizing");
+  let displayText: string;
+  try {
+    assertSpeakerClear();
+    if (!text.trim() || text.length > SPEAK_TEXT_MAX_CHARS) throw new Error("Speech text must contain 1–200,000 characters");
+    if (isTTSDisabled()) throw new Error("TTS is disabled");
+    displayText = sanitizeTtsText(text);
+    if (!displayText.trim()) throw new Error("Speech text is empty after sanitizing");
+  } catch (error) { prepared?.dispose(); throw error; }
+  /** QPRE1: a prepared chunk 0 is held until the chunk-0 synthesize callback takes it, or disposed at settle. */
+  let preparedStart = prepared;
   preemptLongRead("successor");
   const predecessors = [...cancelledLongReadTeardowns];
   const controller = new AbortController();
@@ -2173,12 +2285,14 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   let generation = 1;
   const playerExits: Promise<void>[] = [];
   const handleStarted = () => resolveStarted({});
-  const handle: OwnedLongRead = { id, get generation() { return generation; }, controller, started, done: Promise.resolve(), playerExited: Promise.resolve(), completion: Promise.resolve({} as { error?: string }) };
+  let resolveSynthesized!: () => void;
+  const synthesized = new Promise<void>((resolve) => { resolveSynthesized = resolve; });
+  const handle: OwnedLongRead = { id, get generation() { return generation; }, controller, started, done: Promise.resolve(), playerExited: Promise.resolve(), completion: Promise.resolve({} as { error?: string }),
+    requestId: speechIdentity.request_id, synthesized };
   activeLongRead = handle;
   longReads.set(id, handle);
   const signal = controller.signal;
-  const requireClone = requireClonedVoiceEnabled();
-  const edgeFallbackRate = defaultRate();
+  const policy = chunkSynthesisPolicy();
   const chunkVoices = new Map<string, string>();
   const chunkEngines = new Map<string, string>();
   const cloneProjections = new Map<string, ReturnType<typeof projectSpeakableText>>();
@@ -2201,59 +2315,21 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         ? prepareSeekSlice(chunk.audioFile, offset, seekSignal) : Promise.resolve(undefined),
       disposeSeek: disposeSeekSlice,
       seekFailed: (error) => broadcast({ type: "error", source: "seek", message: error instanceof Error ? error.message : String(error), recoverable: true }),
-      onDuration: (totalMs, final) => broadcast({ type: "playback_duration", long_read_id: id, duration_ms: totalMs, final }),
-      synthesize: async (displayChunk, _index, signal) => {
-        const audioFile = ttsFilePath(process.pid, ttsCounter++);
-        const rules = pronunciationRules();
-        const projection = projectSpeakableText(displayChunk, rules, profile.engine);
-        const spoken = projection.speechText;
-        try {
-          const synthesizeEdge = async (voice: string, rate: string) => {
-            const edge = profile.engine === "edge" ? projection : projectSpeakableText(displayChunk, rules, "edge");
-            const chunk = await synthesizeEdgeChunk(edge.speechText, voice, rate, audioFile,
-              new URL("../scripts/edge-tts-words.py", import.meta.url).pathname, signal);
-            chunk.wordBoundaries = alignWordBoundariesToDisplayText(displayChunk, edge.speechText, chunk.wordBoundaries, edge.ranges);
-            chunkVoices.set(audioFile, voice);
-            chunkEngines.set(audioFile, "edge-tts");
-            return chunk;
-          };
-          if (profile.engine === "edge") {
-            return await synthesizeEdge(profile.voice, profile.rate);
-          }
-          const audio = await synthesizeCloned(spoken, profile.voice, signal);
-          throwIfAbortedSafe(signal);
-          if (!audio) {
-            if (requireClone) throw new VoiceProfileUnavailableError(profile.voice, "synthesis-failed");
-            const voice = resolveVoice(profile.fallbackVoice || loadProfile(profile.voice)?.fallback || defaultVoice(), "edge").voice;
-            console.error(`[voicelayer] Cloned voice "${profile.voice}" unavailable — falling back to edge-tts (${voice})`);
-            return await synthesizeEdge(voice, edgeFallbackRate);
-          }
-          chunkVoices.set(audioFile, profile.voice);
-          chunkEngines.set(audioFile, "qwen3-tts");
-          writeFileSync(audioFile, audio);
-          const speed = Math.max(0.01, 1 + Number.parseFloat(profile.rate) / 100);
-          if (Number.isFinite(speed) && speed !== 1) {
-            const filters: string[] = [];
-            let remaining = speed;
-            while (remaining < 0.5) { filters.push("atempo=0.5"); remaining /= 0.5; }
-            while (remaining > 2) { filters.push("atempo=2"); remaining /= 2; }
-            filters.push(`atempo=${remaining}`);
-            const adjusted = audioFile.replace(".mp3", ".rate.mp3");
-            try {
-              await runAudioCommand(["ffmpeg", "-nostdin", "-y", "-i", audioFile, "-af", filters.join(","), adjusted], signal);
-              copyFileSync(adjusted, audioFile);
-            } finally { try { unlinkSync(adjusted); } catch {} }
-          }
-          throwIfAbortedSafe(signal);
-          const durationMs = probeAudioDurationMs(audioFile);
-          if (!durationMs || durationMs <= 0) throw new Error("Cloned audio has no readable duration");
-          cloneProjections.set(audioFile, projection);
-          return { audioFile, durationMs, wordBoundaries: [] };
-        } catch (error) {
-          try { unlinkSync(audioFile); } catch {}
-          try { unlinkSync(audioFile.replace(".mp3", ".meta.ndjson")); } catch {}
-          throw error;
-        }
+      onDuration: (totalMs, final) => {
+        if (final) resolveSynthesized();
+        broadcast({ type: "playback_duration", long_read_id: id, duration_ms: totalMs, final });
+      },
+      synthesize: async (displayChunk, index, signal) => {
+        // QPRE1: chunk 0 takes the prepared audio exactly once, revalidated; otherwise normal synthesis.
+        const lease = index === 0 ? preparedStart : undefined;
+        if (lease) preparedStart = undefined;
+        const result = lease?.take(preparedStartIdentity(displayChunk, profile, policy))
+          ?? await synthesizeLongReadChunk(displayChunk, profile, signal, policy);
+        const { audioFile } = result.chunk;
+        chunkVoices.set(audioFile, result.voice);
+        chunkEngines.set(audioFile, result.engine);
+        if (result.projection) cloneProjections.set(audioFile, result.projection);
+        return result.chunk;
       },
       play: (chunk, text, info, position) => {
         throwIfAbortedSafe(signal);
@@ -2319,6 +2395,8 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     }
   }).finally(() => {
     longReads.delete(id);
+    // A prepared start the read never reached (stopped first) is released here, exactly once.
+    preparedStart?.dispose(); preparedStart = undefined;
     if (!audioStarted) resolveStarted({ error: failure ?? "Speech stopped before playback" });
     const owned = activeLongRead === handle;
     if (owned) activeLongRead = undefined;

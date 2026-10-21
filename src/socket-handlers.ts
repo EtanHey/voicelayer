@@ -34,7 +34,9 @@ import {
   isPlaybackPaused,
   setLongReadSettledListener,
   setExternalSpeechPreemptionListener,
+  prepareSelectionReadStart,
 } from "./tts";
+import type { PreparedReadStart } from "./tts/selection-read-preparation";
 import {
   waitForInput,
   hasRetainedRecording,
@@ -49,7 +51,7 @@ import {
   setCancelSignal,
 } from "./session-booking";
 import { broadcast, isConnected } from "./socket-client";
-import { SelectionReadQueue, type QueuedSelectionRead } from "./selection-read-queue";
+import { SELECTION_READ_QUEUE_LIMIT, SelectionReadQueue, type QueuedSelectionRead } from "./selection-read-queue";
 import type {
   AckCommand,
   AckEvent,
@@ -105,20 +107,31 @@ function publishModelStatusEvent(): void {
 }
 onWhisperModelStateChange(publishModelStatusEvent);
 
-function startSelectionRead(read: QueuedSelectionRead): void {
+function startSelectionRead(read: QueuedSelectionRead, prepared?: PreparedReadStart): void {
   if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) throw new Error("busy");
-  speakText(read.text, read.profile, { request_id: read.requestId, text_hash: read.textHash });
+  const identity = { request_id: read.requestId, text_hash: read.textHash };
+  if (prepared) speakText(read.text, read.profile, identity, prepared);
+  else speakText(read.text, read.profile, identity);
 }
+
+/** QPRE1: the queue head's first chunk is prepared once the playing read's synthesis is complete. */
+const selectionReadPreparation = {
+  prepare: (read: QueuedSelectionRead, signal: AbortSignal, owner: string) =>
+    prepareSelectionReadStart(read.text, read.profile, owner, signal),
+};
+const newSelectionReadQueue = () => new SelectionReadQueue<PreparedReadStart>(startSelectionRead,
+  (state) => broadcast({ type: "read_queue", ...state }), SELECTION_READ_QUEUE_LIMIT, selectionReadPreparation);
 
 /** QUEUE1: the user's Option+F5 reads. Agent voice_speak/announce keep the tts.ts priority queue and,
  * as before, preempt a user read; that ends this queue too (no surprise resumption after an agent). */
-let selectionReads = new SelectionReadQueue(startSelectionRead, (state) => broadcast({ type: "read_queue", ...state }));
+let selectionReads = newSelectionReadQueue();
 setLongReadSettledListener((requestId, outcome) => selectionReads.settled(requestId, outcome));
 // QUEUE1b: agent speech and Ask end the user chain, including reads F5 left waiting for Next.
 setExternalSpeechPreemptionListener(() => selectionReads.clear());
 
 export function resetSelectionReadQueueForTests(): void {
-  selectionReads = new SelectionReadQueue(startSelectionRead, (state) => broadcast({ type: "read_queue", ...state }));
+  selectionReads.clear();
+  selectionReads = newSelectionReadQueue();
 }
 
 /** Stop means stop. F5 over a playing read (`suspend`) still stops it, but keeps the queued reads for Next;
