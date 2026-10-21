@@ -9,7 +9,7 @@ it("CLICK2 d: real command transport emits timestamped allowlisted receipt/outco
   const log = spyOn(console, "error").mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(" ")); });
   const connected = deferred<Bun.Socket<unknown>>();
   const ack = deferred<void>();
-  const selection = "CLICK2_SYNTHETIC_PRIVATE_SELECTION_payload_must_not_leak";
+  const selection = "CLICK2 SYNTHETIC PRIVATE SELECTION payload must not leak";
   const server = Bun.listen({ unix: testSocket("c2.sock"), socket: {
     open(peer) { connected.resolve(peer); },
     data(_peer, bytes) {
@@ -25,7 +25,7 @@ it("CLICK2 d: real command transport emits timestamped allowlisted receipt/outco
     client.connectToBar(testSocket("c2.sock"), { role: "mcp-daemon", acceptsCommands: true });
     const peer = await connected.promise;
     // Exercise a real content-bearing command through the parser/logger, with no speech I/O.
-    peer.write(JSON.stringify({ cmd: "speak_text", id: "click2-private", text: selection }) + "\n");
+    peer.write(JSON.stringify({ cmd: "speak_text", id: selection, text: selection }) + "\n");
     peer.write(JSON.stringify({ cmd: "pause", id: "click2-log" }) + "\n");
     await ack.promise;
     expect(lines.join("\n")).not.toContain(selection);

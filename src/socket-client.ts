@@ -274,7 +274,7 @@ function startConnection(): void {
           if (command) {
             console.error(
               // Allowlist metadata; never serialize a command or its user-content fields.
-              `[socket-client] Command from VoiceBar: ${JSON.stringify({ cmd: command.cmd, id: command.id })} bytes=${Buffer.byteLength(line, "utf8")}`,
+              `[socket-client] Command from VoiceBar: ${JSON.stringify({ cmd: command.cmd, id: telemetryID(command.id) })} bytes=${Buffer.byteLength(line, "utf8")}`,
             );
             logCommandTelemetry("command_receipt", command);
             if (commandHandler) {
