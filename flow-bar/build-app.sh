@@ -1068,10 +1068,10 @@ fi
 # (Etan ruling 2, 2026-09-24). Debug builds define VOICEBAR_QA in Package.swift; a release
 # bundle gets it only by an explicit VOICEBAR_QA_BUILD=1, which a notarized release refuses.
 echo "[build-app] Building VoiceBar (release)..."
-swift build --scratch-path "$REPO_ROOT/flow-bar/.build.noindex" -c release --package-path "$PACKAGE_DIR" ${QA_SWIFT_FLAGS[@]+"${QA_SWIFT_FLAGS[@]}"}
+swift build -c release --scratch-path "$REPO_ROOT/flow-bar/.build.noindex" --package-path "$PACKAGE_DIR" ${QA_SWIFT_FLAGS[@]+"${QA_SWIFT_FLAGS[@]}"}
 
 # Find the built binary (reuses cached build, no rebuild)
-BIN_DIR="$(swift build --scratch-path "$REPO_ROOT/flow-bar/.build.noindex" -c release --package-path "$PACKAGE_DIR" --show-bin-path)"
+BIN_DIR="$(swift build -c release --scratch-path "$REPO_ROOT/flow-bar/.build.noindex" --package-path "$PACKAGE_DIR" --show-bin-path)"
 BINARY="$BIN_DIR/VoiceBar"
 if [ ! -f "$BINARY" ]; then
     echo "[build-app] ERROR: Binary not found at $BINARY"
