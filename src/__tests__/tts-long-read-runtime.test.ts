@@ -1,3 +1,5 @@
+import * as pronunciation from "../pronunciation";
+import * as settings from "../tts-settings";
 import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from "bun:test";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import * as socket from "../socket-client";
@@ -722,6 +724,68 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     afterEach(() => resetSelectionReadQueueForTests());
 
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
+      it("SEAT-A pronunciation changes during preparation must reject stale audio", async () => {
+        let rules = [{ pattern: /\bBravo\b/gi, replacement: "oldword" }];
+        spies.push(spyOn(pronunciation, "pronunciationRules").mockImplementation(() => rules));
+        select("A", "Alpha single chunk.");
+        await playerBarrier.at(0);
+        holdSynth = true;
+        select("B", "Bravo queued selection.");
+        const prep = await synthBarrier.at(1);
+        expect(prep.argv).toContain("--text=oldword queued selection.");
+        rules = [{ pattern: /\bBravo\b/gi, replacement: "newword" }];
+        prep.exit.resolve(0);
+        await settle();
+        holdSynth = false;
+        handleSocketCommand({ cmd: "read_next", request_id: "A" } as any);
+        await playerBarrier.at(1);
+        expect(synths).toHaveLength(3);
+        expect(synths[2].argv).toContain("--text=newword queued selection.");
+        expect(existsSync(media(prep))).toBe(false);
+        expect(existsSync(media(prep).replace(".mp3", ".meta.ndjson"))).toBe(false);
+        expect(players[1].argv).not.toContain(media(prep));
+      });
+
+      for (const changedDuring of ["clone", "edge"] as const) it(`pronunciation changes during clone→Edge preparation (${changedDuring}) reject stale audio`, async () => {
+        let rules = [{ pattern: /\bBravo\b/gi, replacement: "oldword" }];
+        spies.push(spyOn(pronunciation, "pronunciationRules").mockImplementation(() => rules));
+        select("A", "Alpha single chunk.");
+        await playerBarrier.at(0);
+        spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
+          kind: "short", engine: "clone", voice: "fixture", rate: "+0%",
+          engineSource: "settings", rateSource: "settings",
+        }));
+        spies.push(spyOn(qwen, "loadProfile").mockReturnValue({
+          engine: "qwen3-tts", reference_clips: [], reference_clip: "", fallback: "jenny",
+        } as any));
+        const cloneEntered = fixtureBarrier<string>();
+        const cloneExit = deferred<Buffer | null>();
+        let cloneCalls = 0;
+        spies.push(spyOn(qwen, "synthesizeCloned").mockImplementation(part => {
+          cloneEntered.push(part);
+          return ++cloneCalls === 1 ? cloneExit.promise : Promise.resolve(null);
+        }));
+        holdSynth = true;
+        select("B", "Bravo queued selection.");
+        expect(await cloneEntered.at(0)).toBe("oldword queued selection.");
+        if (changedDuring === "clone") rules = [{ pattern: /\bBravo\b/gi, replacement: "newword" }];
+        cloneExit.resolve(null);
+        const prep = await synthBarrier.at(1);
+        expect(prep.argv).toContain("--text=oldword queued selection.");
+        rules = [{ pattern: /\bBravo\b/gi, replacement: "newword" }];
+        prep.exit.resolve(0);
+        await settle();
+        holdSynth = false;
+        handleSocketCommand({ cmd: "read_next", request_id: "A" } as any);
+        await playerBarrier.at(1);
+        expect(await cloneEntered.at(1)).toBe("newword queued selection.");
+        expect(synths).toHaveLength(3);
+        expect(synths[2].argv).toContain("--text=newword queued selection.");
+        expect(existsSync(media(prep))).toBe(false);
+        expect(existsSync(media(prep).replace(".mp3", ".meta.ndjson"))).toBe(false);
+        expect(players[1].argv).not.toContain(media(prep));
+      });
+
       const spoken = (needle: string) => synths.filter((s) => s.argv.some((a) => a.startsWith("--text=") && a.includes(needle)));
       const media = (s: typeof synths[number]) => s.argv.find((a) => a.startsWith("--write-media="))!.slice("--write-media=".length);
       const twoChunks = Array.from({ length: 9 }, (_, i) => `Alpha sentence ${i} has enough words to fill a chunk.`).join(" ");

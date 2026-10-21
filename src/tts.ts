@@ -2155,9 +2155,8 @@ interface ChunkSynthesisPolicy { requireClone: boolean; edgeFallbackRate: string
 const chunkSynthesisPolicy = (): ChunkSynthesisPolicy => ({ requireClone: requireClonedVoiceEnabled(), edgeFallbackRate: defaultRate() });
 
 async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadProfile, signal: AbortSignal,
-  { requireClone, edgeFallbackRate }: ChunkSynthesisPolicy, edgeRetries = 1): Promise<PreparedChunk> {
+  { requireClone, edgeFallbackRate }: ChunkSynthesisPolicy, edgeRetries = 1, rules = pronunciationRules()): Promise<PreparedChunk> {
   const audioFile = ttsFilePath(process.pid, ttsCounter++);
-  const rules = pronunciationRules();
   const projection = projectSpeakableText(displayChunk, rules, profile.engine);
   const spoken = projection.speechText;
   try {
@@ -2209,10 +2208,10 @@ function disposeLongReadChunkFiles(audioFile: string): void {
 }
 
 /** QPRE1: what chunk 0 of a read would synthesize; a prepared start transfers only on an exact match. */
-function preparedStartIdentity(displayChunk: string, profile: LongReadProfile, policy: ChunkSynthesisPolicy): string {
+function preparedStartIdentity(displayChunk: string, profile: LongReadProfile, policy: ChunkSynthesisPolicy, rules = pronunciationRules()): string {
   const { requestedClone, kind, engine, voice, rate, fallbackVoice } = profile;
   return JSON.stringify([displayChunk, requestedClone, kind, engine, voice, rate, fallbackVoice ?? null,
-    policy.requireClone, policy.edgeFallbackRate, projectSpeakableText(displayChunk, pronunciationRules(), engine).speechText]);
+    policy.requireClone, policy.edgeFallbackRate, projectSpeakableText(displayChunk, rules, engine).speechText]);
 }
 
 function untilAborted(signal: AbortSignal): Promise<never> {
@@ -2243,9 +2242,11 @@ export async function prepareSelectionReadStart(
   const profile = resolveLongReadProfile(kind, text);
   const policy = chunkSynthesisPolicy();
   // No retry: the edge retry log quotes the text, and a failed prefetch just synthesizes at the start.
-  const prepared = await synthesizeLongReadChunk(displayChunk, profile, signal, policy, 0);
+  const rules = pronunciationRules();
+  const identity = preparedStartIdentity(displayChunk, profile, policy, rules);
+  const prepared = await synthesizeLongReadChunk(displayChunk, profile, signal, policy, 0, rules);
   if (signal.aborted) { disposeLongReadChunkFiles(prepared.chunk.audioFile); throwIfAbortedSafe(signal); }
-  return new PreparedReadStart(preparedStartIdentity(displayChunk, profile, policy), prepared,
+  return new PreparedReadStart(identity, prepared,
     (chunk) => disposeLongReadChunkFiles(chunk.audioFile));
 }
 
