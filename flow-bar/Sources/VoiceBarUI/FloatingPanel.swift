@@ -80,6 +80,16 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
         VoiceBarBackingScaleSynchronizer.synchronize(self, to: scale)
     }
 
+    /// PILL1: accept the first mouse-down when hit testing returns this host itself (the glass
+    /// between controls, via the `self` fallback below), so it acts even while another app is
+    /// active. Controls answer for themselves: their hit view is the nested NSHostingView inside
+    /// the glass host, which already accepts the first mouse. The nonactivating panel can still
+    /// take keyboard focus without activating VoiceBar (`becomesKeyOnlyIfNeeded`); this override
+    /// changes neither that nor which points `hitTest` claims.
+    override public func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+        true
+    }
+
     override public func hitTest(_ point: NSPoint) -> NSView? {
         let containsRenderedSurface = renderedSurfaceHitTestProvider?(point)
             ?? activeHitTestProvider?(point)
@@ -207,6 +217,8 @@ public final class FloatingPillPanel: NSPanel {
         isMovableByWindowBackground = false
         ignoresMouseEvents = false // NOT click-through
         acceptsMouseMovedEvents = true
+        // PILL1: VoiceBar is usually not the active app, so the controls' `.help` tooltips need this.
+        allowsToolTipsWhenApplicationIsInactive = true
 
         contentView = content
     }

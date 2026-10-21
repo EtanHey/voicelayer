@@ -293,12 +293,14 @@ final class AppLifecycleTests: XCTestCase {
         state.handleEvent(["type": "read_queue", "count": 2, "current_request_id": "r-A"])
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 3)
+        // PILL1: the last item has nothing waiting, so Next and its slot go.
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 2)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter).leadingControlCount, 1)
         state.dismissTeleprompter()
+        state.handleEvent(["type": "read_queue", "count": 1, "current_request_id": "r-A"])
         XCTAssertEqual(
-            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 2)
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 3)
         state.handleEvent(["type": "read_queue", "count": 0, "current_request_id": NSNull()])
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus).leadingControlCount, 1)
