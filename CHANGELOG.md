@@ -15,7 +15,7 @@ _Nothing yet._
 - Click telemetry for the pill and teleprompter controls: one timestamped log line per command receipt, outcome, dispatch, playback-state apply or drop, control ack and teleprompter hide. The lines carry command names, IDs, phase, generation and app/panel state only, never text, selections, payloads, window titles or error messages (#490).
 
 ### Changed
-- While an Option+F5 read is playing out, the first chunk of the next queued read is prepared in the background, so the next read starts with almost no gap. Preparation starts only after every chunk of the current read is synthesized, covers only the next read's first chunk, and is discarded by Stop, Hide, agent speech, an Ask, Cancel or a replacement read (#488).
+- While an Option+F5 read is playing out, the first chunk of the next queued read can be prepared in the background. Preparation starts only after every chunk of the current read is synthesized and covers only the next read's first chunk. When that chunk is ready and still matches the read, the next read can start with a shorter gap; otherwise it is synthesized as before. Stop, Hide, agent speech, an Ask, an idle Cancel or a replacement read discards it; a Cancel during a recording keeps the waiting reads as before (#488).
 - Next shows on the pill only while a read is waiting in the queue (#489).
 
 ### Fixed
