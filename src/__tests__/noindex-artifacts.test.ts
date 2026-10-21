@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 
 const root = resolve(import.meta.dir, "../..");
 const buildRoot = join(root, ".build.noindex");
@@ -13,8 +14,10 @@ function violations(source: string): string[] {
   const checked = new Set<string>();
   for (const match of source.matchAll(/require_noindex_path\s+"\$\{?(\w+)\}?"/g)) checked.add(match[1]!);
   const safe = new Set(checked);
+  // Persistent rollback ZIPs are allowed outside Spotlight build roots.
+  if (source.includes('require_non_docslocal_path "$VOICEBAR_BACKUP_DIR"')) safe.add("VOICEBAR_BACKUP_DIR");
   const assignments = [...source.matchAll(/^\s*(?:local )?(\w+)=["']?([^\n]+)/gm)];
-  const valueSafe = (value: string) => !value.includes("docs.local/") && (/\/Applications\//.test(value) || /\.noindex(?:[\/"']|$)/.test(value)
+  const valueSafe = (value: string) => !/(?:^|\/)docs\.local\//i.test(value) && (/\/Applications\//.test(value) || /\.noindex(?:[\/"']|$)/.test(value)
     || [...safe].some(name => value === `$${name}` || value === `\${${name}}` || value.includes(`$${name}/`) || value.includes(`\${${name}}/`)));
   for (let pass = 0; pass < assignments.length; pass++) {
     for (const match of assignments) if (valueSafe(match[2]!)) safe.add(match[1]!);
@@ -37,7 +40,7 @@ function violations(source: string): string[] {
       if (!valueSafe(match[1]!)) errors.push(line.trim());
     }
   }
-  // App-shaped TypeScript fixtures must use the checkout-owned bundle root.
+  // App-shaped TypeScript fixtures must use the isolated noindex bundle root.
   if (/join\([^\n]*['"][^'"\n]*\.app['"]/.test(source) && /mkdirSync|writeFileSync/.test(source)) {
     for (const line of source.split("\n")) {
       if (/mkdtempSync\(join\((?:tmpdir\(\)|process\.env\.TMPDIR)/.test(line)) errors.push(line.trim());
@@ -94,7 +97,7 @@ test("output guard rejects unsafe overrides and symlink escapes before writing",
     { env: process.env, stdout: "pipe", stderr: "pipe" });
   try {
     for (const path of ["/Applications/VoiceBar.app", join(safe, "QA.app")]) expect(check(path).exitCode).toBe(0);
-    for (const path of [join(outside, "QA.app"), join(safe, "../QA.app"), join(safe, "escape/QA.app"), join(safe, "docs.local/QA.app")]) {
+    for (const path of [join(outside, "QA.app"), join(safe, "../QA.app"), join(safe, "escape/QA.app"), join(safe, "docs.local/QA.app"), join(safe, "docs.LOCAL/QA.app")]) {
       expect(check(path).exitCode).not.toBe(0);
     }
     const unsafe = join(temp, "not-created");
@@ -113,6 +116,23 @@ test("output guard rejects unsafe overrides and symlink escapes before writing",
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
 
+
+
+test("rollback backups allow persistent storage and reject docs.local", () => {
+  const guard = join(root, "scripts/lib/noindex-path.sh");
+  const check = (path: string) => Bun.spawnSync(["bash", "-c",
+    'source "$1"; require_non_docslocal_path "$2"', "test", guard, path],
+    { env: process.env, stdout: "pipe", stderr: "pipe" }).exitCode;
+  expect(check(join(process.env.HOME!, "Library/Application Support/VoiceBar/Backups"))).toBe(0);
+  for (const name of ["docs.local", "docs.LOCAL"]) expect(check(join(buildRoot, name, "backups"))).not.toBe(0);
+  expect(violations('require_non_docslocal_path "$VOICEBAR_BACKUP_DIR"\nbackup_path="$VOICEBAR_BACKUP_DIR/VoiceBar.app.zip"')).toEqual([]);
+  expect(violations('require_non_docslocal_path "$VOICEBAR_BACKUP_DIR"\nbackup_path="docs.LOCAL/VoiceBar.app.zip"')).toHaveLength(1);
+});
+
+test("bundle fixtures stay in the swept per-run noindex root", () => {
+  expect(bundleFixtureRoot()).toBe(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "fixtures.noindex"));
+  expect(violations('app="$run/fixtures.noindex/QA.app"')).toEqual([]);
+});
 
 test("docs.local hygiene and archive filter use synthetic fixtures", () => {
   const fixture = mkdtempSync(join(buildRoot, "receipt-fixture-"));

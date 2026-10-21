@@ -1,9 +1,11 @@
 import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { join } from "node:path";
 
-// App-shaped test fixtures belong to the checkout, just like real build output.
+// Keep fixtures inside the preload run so dead-run cleanup sweeps them.
 export function bundleFixtureRoot(): string {
-  const root = resolve(import.meta.dir, "../../../.build.noindex/test-bundles");
+  const runRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
+  if (!runRoot) throw new Error("Bundle fixtures require the isolated test preload");
+  const root = join(runRoot, "fixtures.noindex");
   mkdirSync(root, { recursive: true });
   return root;
 }

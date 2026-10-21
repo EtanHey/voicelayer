@@ -15,7 +15,7 @@ APP_DIR="/Applications/VoiceBar.app"
 VOICEBAR_REQUIRED_TEAM_ID="${VOICEBAR_REQUIRED_TEAM_ID:-PPN23G925Y}"
 VOICEBAR_REQUIRED_SIGNING_PREFIX="${VOICEBAR_REQUIRED_SIGNING_PREFIX:-Developer ID Application}"
 SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Developer ID Application: Etan Heyman (PPN23G925Y)}"
-VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$REPO_ROOT/.build.noindex/backups}"
+VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/VoiceBar/Backups}"
 VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
 PLIST_BUDDY="${VOICEBAR_PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
 VOICEBAR_ENTITLEMENTS="${VOICEBAR_ENTITLEMENTS:-$BUNDLE_DIR/VoiceBar.entitlements}"
@@ -1049,7 +1049,7 @@ parse_build_app_args "$@"
 configure_qa_swift_flags
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
 normalize_app_dir_path
-require_noindex_path "$VOICEBAR_BACKUP_DIR"
+require_non_docslocal_path "$VOICEBAR_BACKUP_DIR"
 if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then require_noindex_path "$VOICEBAR_RELEASE_ZIP"; fi
 if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
     echo "[build-app] ERROR: UIE2E ad-hoc signing requires a marked scratch QA bundle and --no-stop --no-relaunch." >&2

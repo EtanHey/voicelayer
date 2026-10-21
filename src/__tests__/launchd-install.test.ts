@@ -86,7 +86,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
       /\/Applications\/[^"\n]*VoiceBar\.backup-.*\.app/,
     );
     expect(buildScript).toContain(
-      'VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$REPO_ROOT/.build.noindex/backups}"',
+      'VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/VoiceBar/Backups}"',
     );
     expect(buildScript).toContain('mkdir -p "$VOICEBAR_BACKUP_DIR"');
     expect(buildScript).toContain('find "$VOICEBAR_BACKUP_DIR"');
