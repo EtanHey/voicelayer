@@ -273,8 +273,8 @@ public enum VoiceBarPresentation {
         )
     }
 
-    /// QUEUE1 (Etan, 2026-10-20): Next shows once a read is queued behind the current one and stays through
-    /// the last item, where it stops. Never while recording, transcribing or on an ended readback.
+    /// QUEUE1 (Etan, 2026-10-20): Next shows only while a read is queued behind the current one (PILL1).
+    /// Never while recording, transcribing or on an ended readback.
     public static func readQueueControl(
         mode: VoiceMode,
         isReadback: Bool,
@@ -290,15 +290,11 @@ public enum VoiceBarPresentation {
                 leadingSlotCount: 2
             )
         }
-        guard mode == .speaking, !isReadback, currentRequestID != nil else { return nil }
+        guard mode == .speaking, !isReadback, currentRequestID != nil, waiting > 0 else { return nil }
         return VoiceBarReadQueueControl(
-            iconName: "forward.fill",
-            countLabel: waiting > 0 ? "+\(waiting)" : nil,
-            accessibilityLabel: waiting > 0 ? "Next read" : "Stop reading",
-            accessibilityHint: waiting > 0
-                ? "Skip to the next queued selection; \(waiting) waiting"
-                : "This is the last queued selection; Next stops reading",
-            leadingSlotCount: waiting > 0 ? 3 : 2
+            iconName: "forward.fill", countLabel: "+\(waiting)", accessibilityLabel: "Next read",
+            accessibilityHint: "Skip to the next queued selection; \(waiting) waiting",
+            leadingSlotCount: 3
         )
     }
 

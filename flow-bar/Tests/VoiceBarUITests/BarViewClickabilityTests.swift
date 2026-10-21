@@ -413,6 +413,153 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.stopCount, 0)
     }
 
+    // MARK: - PILL1-a: the first click on a pill whose app is inactive reaches the control
+
+    /// The panel is never key while another app is frontmost, so AppKit asks the hit view whether the first
+    /// mouse-down may act. Each control's real SwiftUI hit target must accept it, and that click dispatches its
+    /// command exactly once without making the panel key or changing the frontmost app.
+    func testEveryPillControlAcceptsTheFirstClickWhileThePanelIsNotKey() {
+        // Pause on the left and Stop (outermost) on the right of a hidden-but-playing read.
+        var speaking = makeSpeakingPanel(count: 0)
+        firstClick(speaking.panel, control: 0)
+        XCTAssertEqual(speaking.sent.cmds, ["pause"])
+        firstClick(speaking.panel, control: 1)
+        XCTAssertEqual(speaking.router.stopCount, 1)
+
+        // Play on a paused read.
+        speaking = makeSpeakingPanel(count: 0, paused: true)
+        firstClick(speaking.panel, control: 0)
+        XCTAssertEqual(speaking.sent.cmds, ["resume"])
+        XCTAssertEqual(speaking.router.stopCount, 0)
+
+        // Next, from the core outward after the "+1" count.
+        speaking = makeSpeakingPanel(count: 1)
+        firstClick(speaking.panel, control: 1)
+        XCTAssertEqual(speaking.sent.cmds, ["read_next"])
+        XCTAssertEqual(speaking.sent.commands.last?["request_id"] as? String, "r-A")
+        XCTAssertEqual(speaking.router.stopCount, 0)
+
+        // Replay and Hide in a retained readback's teleprompter row. A click there makes the production panel key
+        // (becomesKeyOnlyIfNeeded, unchanged here), which HYG2's offscreen isolation forbids in tests, so the real
+        // panel proves their hit targets accept the first mouse-down and a non-key window proves one dispatch each.
+        let readback = makeReadbackPanel()
+        XCTAssertNotNil(acceptedFirstMousePoint(readback.panel, control: 0))
+        XCTAssertNotNil(acceptedFirstMousePoint(readback.panel, control: 1))
+        let host = makeHost(state: readback.state, router: readback.router)
+        click(host, at: readbackReplayButtonCenter(in: host))
+        XCTAssertEqual(readback.router.replayCount, 1)
+        click(host, at: readbackVisibilityButtonCenter(in: host))
+        XCTAssertTrue(readback.state.isTeleprompterDismissed)
+        XCTAssertEqual(readback.router.replayCount, 1)
+        XCTAssertEqual(readback.router.stopCount, 0)
+    }
+
+    private final class SentCommands {
+        var commands: [[String: Any]] = []
+        var cmds: [String] {
+            commands.compactMap { $0["cmd"] as? String }
+        }
+    }
+
+    private typealias InteractivePanelHost = (
+        host: PillHostingView<BarView>,
+        panel: FloatingPillPanel,
+        layout: VoiceBarPanelLayout,
+        controlRects: [CGRect]
+    )
+
+    /// A hidden-but-playing read in compact status: pause/play (and Next with "+N") on the left, Stop and,
+    /// while playing, the eye on the right — the configuration VoiceBarApp builds for this state.
+    private func makeSpeakingPanel(count: Int, paused: Bool = false) -> (
+        panel: InteractivePanelHost,
+        sent: SentCommands,
+        router: SpyCommandRouter
+    ) {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        state.handleEvent(["type": "state", "state": "speaking", "text": "First click read", "request_id": "r-A",
+                           "playback_id": "p-1", "generation": 1])
+        if count > 0 {
+            state.handleEvent(["type": "read_queue", "count": count, "current_request_id": "r-A"])
+        }
+        if paused {
+            state.handleEvent(["type": "playback_state", "state": "paused", "playback_id": "p-1", "generation": 2,
+                               "offset_ms": 900, "chunk_offset_ms": 900])
+        }
+        state.dismissTeleprompter()
+        let sent = SentCommands()
+        state.sendCommand = { sent.commands.append($0) }
+        let router = SpyCommandRouter()
+        let panel = makeInteractivePanelHost(
+            state: state,
+            router: router,
+            configuration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1,
+                trailingControlCountFromOuter: paused ? 1 : 2,
+                trailingOuterInset: WaveformLayout.outerInset
+            )
+        )
+        XCTAssertEqual(panel.layout.presentation.visualState, .compactStatus)
+        return (panel, sent, router)
+    }
+
+    private func makeReadbackPanel() -> (panel: InteractivePanelHost, state: VoiceState, router: SpyCommandRouter) {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Retained first-click readback"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        XCTAssertTrue(state.canReplay)
+        let router = SpyCommandRouter()
+        // Replay, Hide and Dismiss: the configuration VoiceBarApp builds for a retained readback.
+        let panel = makeInteractivePanelHost(
+            state: state,
+            router: router,
+            configuration: VoiceBarNotchInteractionConfiguration(lowerControlCount: 3)
+        )
+        XCTAssertEqual(panel.layout.presentation.visualState, .teleprompter)
+        return (panel, state, router)
+    }
+
+    /// Returns the control's center when the real SwiftUI hit target there accepts a first mouse-down on the
+    /// non-key panel; nil (after recording the failure) otherwise.
+    private func acceptedFirstMousePoint(
+        _ panelHost: InteractivePanelHost,
+        control index: Int,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> NSPoint? {
+        let rect = panelHost.controlRects[index]
+        let point = NSPoint(x: rect.midX, y: rect.midY)
+        XCTAssertFalse(panelHost.panel.isKeyWindow, "the pill is not key before its first click", file: file, line: line)
+        guard let target = panelHost.host.hitTest(point),
+              let down = mouseEvent(type: .leftMouseDown, at: point, windowNumber: panelHost.panel.windowNumber)
+        else {
+            XCTFail("Expected a hit target at \(point)", file: file, line: line)
+            return nil
+        }
+        guard target.acceptsFirstMouse(for: down) else {
+            XCTFail("\(type(of: target)) must accept the first mouse-down", file: file, line: line)
+            return nil
+        }
+        return point
+    }
+
+    private func firstClick(
+        _ panelHost: InteractivePanelHost,
+        control index: Int,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard let point = acceptedFirstMousePoint(panelHost, control: index, file: file, line: line) else { return }
+        click(panelHost.host, at: point)
+        XCTAssertFalse(panelHost.panel.isKeyWindow, "a first click does not make the pill key", file: file, line: line)
+        XCTAssertEqual(NSWorkspace.shared.frontmostApplication?.processIdentifier, frontmost,
+                       "a first click leaves the frontmost app unchanged", file: file, line: line)
+    }
+
     func testIdleMicButtonRoutesPrimaryAction() {
         let state = VoiceState()
         state.mode = .idle

@@ -80,6 +80,13 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
         VoiceBarBackingScaleSynchronizer.synchronize(self, to: scale)
     }
 
+    /// PILL1: VoiceBar's nonactivating panel is never key while another app is frontmost,
+    /// so the first click on a pill control must be delivered, not swallowed as activation.
+    /// `hitTest` still decides which points belong to the pill.
+    override public func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+        true
+    }
+
     override public func hitTest(_ point: NSPoint) -> NSView? {
         let containsRenderedSurface = renderedSurfaceHitTestProvider?(point)
             ?? activeHitTestProvider?(point)
@@ -207,6 +214,8 @@ public final class FloatingPillPanel: NSPanel {
         isMovableByWindowBackground = false
         ignoresMouseEvents = false // NOT click-through
         acceptsMouseMovedEvents = true
+        // PILL1: VoiceBar is never the active app, so the controls' `.help` tooltips need this.
+        allowsToolTipsWhenApplicationIsInactive = true
 
         contentView = content
     }
