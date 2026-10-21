@@ -64,3 +64,19 @@ test.skipIf(!hasCompiler || !!process.env.HOOK_CROSS_RUN_CHILD)("aborted fixture
     expect(result.stdout).toContain(`PASS full-harness abort ${point}: zero run-tagged survivors`);
   }
 }, 185_000);
+
+test.skipIf(!hasCompiler || !!process.env.HOOK_CROSS_RUN_CHILD)("a killed launcher or dead copied checkout leaves no fixtures; stale sweeps need proven owner death", () => {
+  const result = spawnSync("python3", [resolve(import.meta.dir, "hook_fixture_abort_test.py")], {
+    env: process.env,
+    encoding: "utf8", timeout: 240_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect({ status: result.status, output: result.stdout + result.stderr }).toEqual({
+    status: 0, output: expect.stringContaining("OK"),
+  });
+  for (const mode of ["TERM", "INT", "KILL"]) {
+    expect(result.stdout).toContain(`${mode}: survivors after 8s=0`);
+    expect(result.stdout).toContain(`PASS ${mode}: concurrent live peer unchanged`);
+  }
+  expect(result.stdout).toContain("copied-root stale sweep: fixture_survives=False");
+}, 245_000);

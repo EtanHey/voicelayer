@@ -45,6 +45,22 @@ function fixture(cwd: string, pid: number | string, age: number) {
   utimesSync(dir, date, date);
   return dir;
 }
+// A dead run whose hook-fixture index names a registry with a dead owner.
+function indexedRun(cwd: string, pid: number, age: number) {
+  const dir = fixture(cwd, pid, age);
+  const base = mkdtempSync(join(cwd, "vlho-"));
+  const token = "0123456789abcdef0123456789abcdef";
+  const entry = join(dir, "hook-fixtures", `${token}.json`);
+  const owner = { pid, started: "Thu Jan  1 00:00:00 1970" };
+  mkdirSync(join(dir, "hook-fixtures"));
+  writeFileSync(join(base, "fixture-registry.json"), JSON.stringify({
+    family: "voicelayer-hook-fixture/1", base, index: entry, token, owner }));
+  writeFileSync(join(base, "fixture-owner.lock"), "");
+  writeFileSync(entry, JSON.stringify({ family: "voicelayer-hook-fixture/1", token, base, owner }));
+  const date = new Date(Date.now() - age * 1000);
+  utimesSync(dir, date, date);
+  return { dir, base, entry };
+}
 afterEach(() => { for (const dir of fixtures.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 test("startup removes older dead PID directories and keeps the newest two", () => {
@@ -190,4 +206,33 @@ test("a nonce collision fails without adopting the existing directory", () => {
   expect(result.stderr.toString()).toContain("EEXIST");
   const root = result.stdout.toString().trim();
   expect(readFileSync(join(root, "evidence"), "utf8")).toBe("original");
+}, SUBPROCESS_TEST_TIMEOUT_MS);
+
+test("a dead run with an unsettled fixture index is retained, not deleted", () => {
+  const dir = sandbox();
+  const [indexedPid, plainPid, newer1, newer2] = deadPids(4);
+  // No registry sweeper in this checkout: the index cannot be settled.
+  const indexed = indexedRun(dir, indexedPid, 1000);
+  const plain = fixture(dir, plainPid, 900);
+  fixture(dir, newer1, 20);
+  fixture(dir, newer2, 10);
+  expect(run(dir).exitCode).toBe(0);
+  expect(existsSync(indexed.entry)).toBe(true);
+  expect(existsSync(plain)).toBe(false);
+}, SUBPROCESS_TEST_TIMEOUT_MS);
+
+test("stale fixture processes are swept before their dead run directory is deleted", () => {
+  const dir = sandbox();
+  for (const file of ["tests/hook_fixture_registry.py", "scripts/supervise-test-daemon.py"]) {
+    mkdirSync(join(dir, file, ".."), { recursive: true });
+    writeFileSync(join(dir, file), readFileSync(resolve(file)));
+  }
+  const [indexedPid, newer1, newer2] = deadPids(3);
+  const indexed = indexedRun(dir, indexedPid, 1000);
+  fixture(dir, newer1, 20);
+  fixture(dir, newer2, 10);
+  expect(run(dir).exitCode).toBe(0);
+  expect(existsSync(join(indexed.base, "fixture-registration.closed"))).toBe(true);
+  expect(existsSync(join(indexed.base, "fixture-cleanup.done"))).toBe(true);
+  expect(existsSync(indexed.dir)).toBe(false);
 }, SUBPROCESS_TEST_TIMEOUT_MS);
