@@ -30,7 +30,9 @@ output=$(cd "$output" && pwd)
 python3 "$repo/scripts/voicebar-ui-e2e-results.py" scenario "$output" --scenario "$scenario"
 for tool in xcodebuild xcrun swift python3 bun; do command -v "$tool" >/dev/null || { echo "FAIL prerequisite: $tool"; exit 1; }; done
 # /tmp is deliberately short: macOS sockaddr_un has a 104-byte limit.
-sandbox=$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="vl-ui-", suffix=".noindex", dir="/tmp"))')
+sandbox=$(mktemp -d /tmp/vl-ui-XXXXXX)
+sandbox="$sandbox/vl-ui-artifacts.noindex"
+mkdir "$sandbox"
 printf '%s\n' voicebar-ui-e2e-v1 > "$sandbox/.uie2e-sandbox"
 mkdir "$sandbox/home"
 printf '%s\n' "$sandbox" > "$output/sandbox-path.txt"
