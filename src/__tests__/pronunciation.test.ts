@@ -13,15 +13,21 @@ const TEST_FILE = join(TEST_DIR, "pronunciation.yaml");
 const originalHome = process.env.HOME;
 
 describe("pronunciation", () => {
+  // TESTISO2: each case gets its own HOME, so the module's path+mtime cache never serves a previous case's
+  // dictionary. Deleting the module from the shared registry instead split it: modules already loaded
+  // (tts.ts) kept the old instance while later importers got a new one, so later spies missed tts.ts.
+  let caseDir = TEST_DIR;
+  let caseIndex = 0;
   beforeEach(() => {
-    mkdirSync(join(TEST_DIR, ".voicelayer"), { recursive: true });
-    process.env.HOME = TEST_DIR;
+    caseDir = `${TEST_DIR}-${++caseIndex}`;
+    mkdirSync(join(caseDir, ".voicelayer"), { recursive: true });
+    process.env.HOME = caseDir;
   });
 
   afterEach(() => {
     process.env.HOME = originalHome;
     try {
-      unlinkSync(join(TEST_DIR, ".voicelayer", "pronunciation.yaml"));
+      unlinkSync(join(caseDir, ".voicelayer", "pronunciation.yaml"));
     } catch {}
   });
 
@@ -33,7 +39,7 @@ describe("pronunciation", () => {
 
   it("applies tech term replacements", async () => {
     writeFileSync(
-      join(TEST_DIR, ".voicelayer", "pronunciation.yaml"),
+      join(caseDir, ".voicelayer", "pronunciation.yaml"),
       `tech:
   TypeScript: "Type Script"
   Supabase: "Soopa base"
@@ -41,9 +47,6 @@ describe("pronunciation", () => {
 `,
     );
 
-    // Need to bust the module cache for hot-reload testing
-    // Since we changed HOME, re-import
-    delete require.cache[require.resolve("../pronunciation")];
     const mod = await import("../pronunciation");
 
     const result = mod.applyPronunciation(
@@ -54,7 +57,7 @@ describe("pronunciation", () => {
 
   it("applies acronym replacements", async () => {
     writeFileSync(
-      join(TEST_DIR, ".voicelayer", "pronunciation.yaml"),
+      join(caseDir, ".voicelayer", "pronunciation.yaml"),
       `acronyms:
   SQL: "S Q L"
   API: "A P I"
@@ -62,7 +65,6 @@ describe("pronunciation", () => {
 `,
     );
 
-    delete require.cache[require.resolve("../pronunciation")];
     const mod = await import("../pronunciation");
 
     expect(mod.applyPronunciation("Use the SQL API via CLI")).toBe(
@@ -72,13 +74,12 @@ describe("pronunciation", () => {
 
   it("is case-insensitive", async () => {
     writeFileSync(
-      join(TEST_DIR, ".voicelayer", "pronunciation.yaml"),
+      join(caseDir, ".voicelayer", "pronunciation.yaml"),
       `tech:
   Vite: "Veet"
 `,
     );
 
-    delete require.cache[require.resolve("../pronunciation")];
     const mod = await import("../pronunciation");
 
     expect(mod.applyPronunciation("vite is fast, VITE is great")).toBe(
@@ -88,13 +89,12 @@ describe("pronunciation", () => {
 
   it("only replaces whole words", async () => {
     writeFileSync(
-      join(TEST_DIR, ".voicelayer", "pronunciation.yaml"),
+      join(caseDir, ".voicelayer", "pronunciation.yaml"),
       `tech:
   SQL: "S Q L"
 `,
     );
 
-    delete require.cache[require.resolve("../pronunciation")];
     const mod = await import("../pronunciation");
 
     // "MySQL" should NOT have SQL replaced inside it
@@ -103,14 +103,13 @@ describe("pronunciation", () => {
 
   it("handles hebrew names", async () => {
     writeFileSync(
-      join(TEST_DIR, ".voicelayer", "pronunciation.yaml"),
+      join(caseDir, ".voicelayer", "pronunciation.yaml"),
       `hebrew:
   Nora: "Nor ah"
   SampleWord: "Sam pull word"
 `,
     );
 
-    delete require.cache[require.resolve("../pronunciation")];
     const mod = await import("../pronunciation");
 
     expect(mod.applyPronunciation("Nora built SampleWord")).toBe(

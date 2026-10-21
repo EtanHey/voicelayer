@@ -39,7 +39,7 @@ const ALLOWED: Record<string, Array<[string, number]>> = {
   // Saves, redirects and restores HOME for temporary fixtures.
   "src/__tests__/pronunciation.test.ts": [
     ["const originalHome = process.env.HOME;", 1],
-    ["process.env.HOME = TEST_DIR;", 1],
+    ["process.env.HOME = caseDir;", 1],
     ["process.env.HOME = originalHome;", 1],
   ],
   // Synthetic profile text, expanded under a temporary HOME.
