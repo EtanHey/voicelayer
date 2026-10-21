@@ -89,15 +89,15 @@ final class ReadQueueTests: XCTestCase {
         XCTAssertEqual(VoiceBarPresentation.readQueueControl(for: state)?.countLabel, "+1")
     }
 
-    func testNextOnTheLastItemStopsAndRetiresEveryIdentity() throws {
+    func testTheLastItemHidesNextAndAStaleNextStillStopsAndRetiresEveryIdentity() throws {
         let (state, a) = readingA()
         press(state, "Bravo selection")
         let b = try XCTUnwrap(commands.last?["id"] as? String)
         state.handleEvent(speaking(id: b, text: "Bravo selection", read: "read-B"))
         state.handleEvent(queueEvent(0, b))
-        let control = try XCTUnwrap(VoiceBarPresentation.readQueueControl(for: state))
-        XCTAssertNil(control.countLabel, "the last item shows Next without a count")
-        XCTAssertEqual(control.accessibilityLabel, "Stop reading")
+        // PILL1: nothing waits behind the last item, so the pill offers no Next.
+        XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state), "the last item shows no Next")
+        // The command API stays defensive: a Next that still arrives stops and retires the identities.
         commands = []
         state.skipToNextRead()
         XCTAssertEqual(cmds, ["read_next"])
@@ -190,7 +190,40 @@ final class ReadQueueTests: XCTestCase {
                                                   readQueueLeadingSlotCount: control.leadingSlotCount)
         XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.leadingWingWidth, wing)
         state.handleEvent(queueEvent(0, a))
-        XCTAssertEqual(VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount, 2)
+        XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state), "count 0 removes Next and its slot")
+    }
+
+    /// PILL1: one waiting read shows Next with "+1" in three slots; when it drains to zero, Next and its slot go
+    /// and the wing returns to the single pause lane. An F5-suspended idle queue keeps Next reachable.
+    func testNextAppearsOnlyWhileAReadWaitsAndTheSuspendedQueueStaysReachable() throws {
+        let (state, a) = readingA()
+        state.handleEvent(queueEvent(1, a))
+        let one = try XCTUnwrap(VoiceBarPresentation.readQueueControl(for: state))
+        XCTAssertEqual(one.countLabel, "+1")
+        XCTAssertEqual(one.accessibilityLabel, "Next read")
+        XCTAssertEqual(one.leadingSlotCount, 3)
+
+        state.handleEvent(queueEvent(0, a))
+        XCTAssertNil(VoiceBarPresentation.readQueueControl(for: state))
+        let slots = VoiceBarPresentation.readQueueControl(for: state)?.leadingSlotCount ?? 1
+        let input = VoiceBarNotchOperationalInput(mode: .speaking, hasTeleprompterText: true,
+                                                  readQueueLeadingSlotCount: slots)
+        XCTAssertEqual(VoiceBarPresentation.notchPresentation(from: input).geometry.leadingWingWidth,
+                       VoiceBarNotchContract.compactIndicatorLaneWidth, "no empty Next slot remains")
+        XCTAssertNil(VoiceBarPresentation.readQueueControl(
+            mode: .speaking, isReadback: false, currentRequestID: a, count: -1), "negative counts are zero")
+
+        press(state, "Bravo selection")
+        state.handleEvent(queueEvent(1, a))
+        state.retainingReadQueueOnStop { state.stop() }
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        state.mode = .idle
+        let suspended = try XCTUnwrap(VoiceBarPresentation.readQueueControl(for: state))
+        XCTAssertEqual(suspended.countLabel, "+1")
+        XCTAssertEqual(suspended.leadingSlotCount, 2, "Next and +1, no pause")
+        commands = []
+        state.skipToNextRead()
+        XCTAssertEqual(cmds, ["read_next"])
     }
 
     // MARK: - R2 D2 (lead ruling a): F5 over a playing read keeps the queued reads for Next
