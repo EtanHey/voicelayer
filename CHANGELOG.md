@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.50] - 2026-10-21
+
+### Added
+- Click telemetry for the pill and teleprompter controls: one timestamped log line per command receipt, outcome, dispatch, playback-state apply or drop, control ack and teleprompter hide. The lines carry command names, IDs, phase, generation and app/panel state only, never text, selections, payloads, window titles or error messages (#490).
+
+### Changed
+- While an Option+F5 read is playing out, the first chunk of the next queued read is prepared in the background, so the next read starts with almost no gap. Preparation starts only after every chunk of the current read is synthesized, covers only the next read's first chunk, and is discarded by Stop, Hide, agent speech, an Ask, Cancel or a replacement read (#488).
+- Next shows on the pill only while a read is waiting in the queue (#489).
+
+### Fixed
+- The pill takes a first click on its background between controls while VoiceBar is not the active app, and the controls' tooltips are allowed while VoiceBar is inactive (#489).
+- Pause while a read is still preparing now pauses it: the read starts paused, not a frame plays, and Play carries on from the start (#490).
+- Replay while a read is paused restarts the whole read from 0:00 and plays it, instead of being refused. Replay is still refused while a recording is active (#490).
+
+### Internal
+- Tests: the pronunciation tests no longer split the shared module registry, which had made later text-to-speech tests see a stale module depending on file order (#491).
+
 ## [2.2.49] - 2026-10-20
 
 ### Added
