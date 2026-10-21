@@ -123,7 +123,7 @@ test("rollback backups allow persistent storage and reject docs.local", () => {
   const check = (path: string) => Bun.spawnSync(["bash", "-c",
     'source "$1"; require_non_docslocal_path "$2"', "test", guard, path],
     { env: process.env, stdout: "pipe", stderr: "pipe" }).exitCode;
-  expect(check(join(process.env.HOME!, "Library/Application Support/VoiceBar/Backups"))).toBe(0);
+  expect(check(join(buildRoot, "synthetic-home/Library/Application Support/VoiceBar/Backups"))).toBe(0);
   for (const name of ["docs.local", "docs.LOCAL"]) expect(check(join(buildRoot, name, "backups"))).not.toBe(0);
   expect(violations('require_non_docslocal_path "$VOICEBAR_BACKUP_DIR"\nbackup_path="$VOICEBAR_BACKUP_DIR/VoiceBar.app.zip"')).toEqual([]);
   expect(violations('require_non_docslocal_path "$VOICEBAR_BACKUP_DIR"\nbackup_path="docs.LOCAL/VoiceBar.app.zip"')).toHaveLength(1);
