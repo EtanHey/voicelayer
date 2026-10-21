@@ -8,7 +8,7 @@ VERSION=""
 SKIP_TAP_CHECK=0
 NOTARY_PROFILE="${VOICEBAR_NOTARY_PROFILE:-notary-layers}"
 ENTITLEMENTS_PLIST="${VOICEBAR_ENTITLEMENTS:-$PACKAGE_ROOT/flow-bar/bundle/VoiceBar.entitlements}"
-ARTIFACT_ROOT="${VOICEBAR_RELEASE_ROOT:-$PACKAGE_ROOT/dist/voicebar-release.noindex}"
+ARTIFACT_ROOT="${VOICEBAR_RELEASE_ROOT:-$PACKAGE_ROOT/.build.noindex/voicebar-release}"
 TAP_ROOT="${VOICEBAR_HOMEBREW_TAP_ROOT:-}"
 T3_PROOF=""
 
@@ -21,7 +21,7 @@ release and prints the EtanHey/homebrew-layers formula and cask bump inputs.
 
 Options:
   --version VERSION        Release version. Defaults to package.json version.
-  --output-dir DIR         Artifact root. Defaults to dist/voicebar-release.noindex.
+  --output-dir DIR         Artifact root. Defaults to .build.noindex/voicebar-release.
   --notary-profile NAME    notarytool keychain profile. Defaults to notary-layers.
   --tap-root DIR           Homebrew tap checkout. Required unless --skip-tap-check is used.
   --t3-proof PROOF.json    Installed-candidate T3 Option+F5 PASS proof. Required by the

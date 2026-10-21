@@ -1,3 +1,4 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
@@ -8,7 +9,6 @@ import {
   rmSync,
   writeFileSync,
 } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
 
 // Real subprocesses: standalone p95 <= 1117 ms; 4x rounded up, with a 5 s scheduling floor.
@@ -40,7 +40,7 @@ const voicebarAutostartScriptPath = join(
 const fixtureRoots = new Set<string>();
 
 function fixtureHome(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
+  const root = mkdtempSync(join(bundleFixtureRoot(), prefix));
   fixtureRoots.add(root);
   return root;
 }
@@ -86,7 +86,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
       /\/Applications\/[^"\n]*VoiceBar\.backup-.*\.app/,
     );
     expect(buildScript).toContain(
-      'VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/VoiceBar/Backups}"',
+      'VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$REPO_ROOT/.build.noindex/backups}"',
     );
     expect(buildScript).toContain('mkdir -p "$VOICEBAR_BACKUP_DIR"');
     expect(buildScript).toContain('find "$VOICEBAR_BACKUP_DIR"');

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # UI-only runner. --build-only is the only mode permitted on an occupied Mac.
 set -euo pipefail
-usage() { echo "usage: $0 --output NEW_DIRECTORY [--build-only] [--scenario full|focused-338]"; }
+usage() { echo "usage: $0 [--output NEW_DIRECTORY] [--build-only] [--scenario full|focused-338]"; }
 build_only=0
 scenario=full
 focused_338=0
@@ -15,23 +15,25 @@ while [[ $# -gt 0 ]]; do
     *) usage >&2; exit 2 ;;
   esac
 done
-[[ -n "$output" ]] || { usage >&2; exit 2; }
+
 case "$scenario" in
   full) ;;
   focused-338) focused_338=1 ;;
   *) echo "FAIL unknown scenario: $scenario (expected full or focused-338)" >&2; exit 2 ;;
 esac
 repo=$(cd "$(dirname "$0")/.." && pwd)
+output=${output:-"$repo/.build.noindex/ui-e2e/$(date -u +%Y%m%dT%H%M%S)-$$"}
 source "$repo/scripts/lib/noindex-path.sh"
 require_noindex_path "$output"
 mkdir -p "$(dirname "$output")"
 mkdir "$output" # Refuse to overwrite a previous run or any of its evidence.
 output=$(cd "$output" && pwd)
+derived_data="$repo/.build.noindex/DerivedData/$(basename "$output")-$$"
+printf '%s\n' "$derived_data" > "$output/derived-data-path.txt"
 python3 "$repo/scripts/voicebar-ui-e2e-results.py" scenario "$output" --scenario "$scenario"
 for tool in xcodebuild xcrun swift python3 bun; do command -v "$tool" >/dev/null || { echo "FAIL prerequisite: $tool"; exit 1; }; done
-# /tmp is deliberately short: macOS sockaddr_un has a 104-byte limit.
-sandbox=$(mktemp -d /tmp/vl-ui-XXXXXX)
-sandbox="$sandbox/vl-ui-artifacts.noindex"
+# The display-only UIE2E app does not start socket servers; keep its bundle in the worktree.
+sandbox="$output/vl-ui-artifacts.noindex"
 mkdir "$sandbox"
 printf '%s\n' voicebar-ui-e2e-v1 > "$sandbox/.uie2e-sandbox"
 mkdir "$sandbox/home"
@@ -79,7 +81,7 @@ xcrun swiftc -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macos
   "$repo/scripts/voicebar-ui-e2e-visibility.swift" -o "$output/voicebar-ui-e2e-visibility" \
   > "$output/visibility-build.log" 2>&1 || { echo 'FAIL visibility helper build'; exit 1; }
 xcodebuild build-for-testing -project "$repo/flow-bar/UIE2E/VoiceBarUIE2E.xcodeproj" -scheme VoiceBarUIE2E \
-  -destination 'platform=macOS' -derivedDataPath "$output/DerivedData" > "$output/build-for-testing.log" 2>&1 || {
+  -destination 'platform=macOS' -derivedDataPath "$derived_data" > "$output/build-for-testing.log" 2>&1 || {
     echo "FAIL build-for-testing (see $output/build-for-testing.log)"; exit 1;
   }
 echo 'PASS build-for-testing (UI execution NOT_PROVEN)'

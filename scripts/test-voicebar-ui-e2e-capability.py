@@ -8,6 +8,9 @@ import sys
 import tempfile
 import unittest
 
+BUILD_ROOT = pathlib.Path(__file__).resolve().parents[1] / ".build.noindex"
+BUILD_ROOT.mkdir(exist_ok=True)
+
 
 BUILD = pathlib.Path(__file__).resolve().parent.parent / 'flow-bar/build-app.sh'
 RUNNER = BUILD.parent.parent / 'scripts/voicebar-ui-e2e.sh'
@@ -36,7 +39,7 @@ class PasteFeedbackMetadataTests(unittest.TestCase):
 
     def metadata(self, state, presentation=''):
         block = RUNNER.read_text().split("<<'PYMETA'\n", 1)[1].split('\nPYMETA', 1)[0]
-        with tempfile.TemporaryDirectory(suffix='.noindex') as temp:
+        with tempfile.TemporaryDirectory(suffix='.noindex', dir=BUILD_ROOT) as temp:
             repo = pathlib.Path(temp)
             ui = repo / 'flow-bar/Sources/VoiceBarUI'
             ui.mkdir(parents=True)
@@ -94,7 +97,7 @@ class PasteFeedbackMetadataTests(unittest.TestCase):
 
 class CapabilityTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(suffix='.noindex')
+        self.temp = tempfile.TemporaryDirectory(suffix='.noindex', dir=BUILD_ROOT)
         self.addCleanup(self.temp.cleanup)
         self.package = pathlib.Path(self.temp.name)
         self.ui = self.package / 'Sources/VoiceBarUI'

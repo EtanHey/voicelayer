@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build VoiceBar as a proper macOS .app bundle.
 #
-# Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app] [--no-stop] [--no-relaunch] [--zip-path VoiceBar.zip]
+# Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app] [--no-stop] [--no-relaunch] [--zip-path .build.noindex/VoiceBar.zip]
 #
 # Output: /Applications/VoiceBar.app by default
 
@@ -15,7 +15,7 @@ APP_DIR="/Applications/VoiceBar.app"
 VOICEBAR_REQUIRED_TEAM_ID="${VOICEBAR_REQUIRED_TEAM_ID:-PPN23G925Y}"
 VOICEBAR_REQUIRED_SIGNING_PREFIX="${VOICEBAR_REQUIRED_SIGNING_PREFIX:-Developer ID Application}"
 SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Developer ID Application: Etan Heyman (PPN23G925Y)}"
-VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/VoiceBar/Backups}"
+VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$REPO_ROOT/.build.noindex/backups}"
 VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
 PLIST_BUDDY="${VOICEBAR_PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
 VOICEBAR_ENTITLEMENTS="${VOICEBAR_ENTITLEMENTS:-$BUNDLE_DIR/VoiceBar.entitlements}"
@@ -42,7 +42,7 @@ LEAVE_RUNNING_INSTANCE_ALONE=0
 
 usage() {
     cat <<'EOF'
-Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app] [--no-stop] [--no-relaunch] [--zip-path VoiceBar.zip]
+Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app] [--no-stop] [--no-relaunch] [--zip-path .build.noindex/VoiceBar.zip]
 
 Options:
   --install-path PATH  Install the built app at PATH; a VoiceBar running from
@@ -222,7 +222,7 @@ refuse_brew_managed_install_path() {
 [build-app] with it. Nothing has been built or installed.
 [build-app]
 [build-app] Build somewhere else and test from there:
-[build-app]   bash flow-bar/build-app.sh --install-path "$HOME/Applications/VoiceBar-dev.noindex/VoiceBar-dev.app"
+[build-app]   bash flow-bar/build-app.sh --install-path "$REPO_ROOT/.build.noindex/VoiceBar-dev.app"
 [build-app]
 [build-app] To bring this Mac back to the canonical release instead:
 [build-app]   voicelayer update
@@ -921,9 +921,11 @@ notarize_and_staple() {
     local notary_zip_base
     local notary_zip
     local tmp_parent
-    tmp_parent="${TMPDIR:-/tmp}"
+    tmp_parent="$REPO_ROOT/.build.noindex/notary"
+    mkdir -p "$tmp_parent"
     notary_zip_base="$(mktemp "${tmp_parent%/}/voicebar-notary.XXXXXX")"
     notary_zip="$notary_zip_base.zip"
+    require_noindex_path "$notary_zip"
     rm -f "$notary_zip_base"
     ditto -c -k --keepParent "$APP_DIR" "$notary_zip"
 
@@ -1047,6 +1049,8 @@ parse_build_app_args "$@"
 configure_qa_swift_flags
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
 normalize_app_dir_path
+require_noindex_path "$VOICEBAR_BACKUP_DIR"
+if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then require_noindex_path "$VOICEBAR_RELEASE_ZIP"; fi
 if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
     echo "[build-app] ERROR: UIE2E ad-hoc signing requires a marked scratch QA bundle and --no-stop --no-relaunch." >&2
     exit 1
@@ -1068,10 +1072,10 @@ fi
 # (Etan ruling 2, 2026-09-24). Debug builds define VOICEBAR_QA in Package.swift; a release
 # bundle gets it only by an explicit VOICEBAR_QA_BUILD=1, which a notarized release refuses.
 echo "[build-app] Building VoiceBar (release)..."
-swift build -c release --scratch-path "$REPO_ROOT/flow-bar/.build.noindex" --package-path "$PACKAGE_DIR" ${QA_SWIFT_FLAGS[@]+"${QA_SWIFT_FLAGS[@]}"}
+swift build -c release --scratch-path "$REPO_ROOT/.build.noindex/swift" --package-path "$PACKAGE_DIR" ${QA_SWIFT_FLAGS[@]+"${QA_SWIFT_FLAGS[@]}"}
 
 # Find the built binary (reuses cached build, no rebuild)
-BIN_DIR="$(swift build -c release --scratch-path "$REPO_ROOT/flow-bar/.build.noindex" --package-path "$PACKAGE_DIR" --show-bin-path)"
+BIN_DIR="$(swift build -c release --scratch-path "$REPO_ROOT/.build.noindex/swift" --package-path "$PACKAGE_DIR" --show-bin-path)"
 BINARY="$BIN_DIR/VoiceBar"
 if [ ! -f "$BINARY" ]; then
     echo "[build-app] ERROR: Binary not found at $BINARY"

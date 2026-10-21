@@ -5,6 +5,9 @@ import pathlib
 import plistlib
 import tempfile
 import unittest
+
+BUILD_ROOT = pathlib.Path(__file__).resolve().parents[1] / ".build.noindex"
+BUILD_ROOT.mkdir(exist_ok=True)
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('results', pathlib.Path(__file__).with_name('voicebar-ui-e2e-results.py'))
@@ -65,7 +68,7 @@ class ReportTests(unittest.TestCase):
             results.report(self.root, [step], [dict(attachments=[attachment])])
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(suffix='.noindex')
+        self.temp = tempfile.TemporaryDirectory(suffix='.noindex', dir=BUILD_ROOT)
         self.root = pathlib.Path(self.temp.name)
         self.addCleanup(self.temp.cleanup)
 

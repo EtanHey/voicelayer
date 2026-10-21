@@ -35,7 +35,7 @@ import {
   writeFileSync,
 } from "fs";
 import { homedir, tmpdir } from "os";
-import { join } from "path";
+import { join, resolve } from "path";
 
 export const PROOF_SCHEMA = "voicelayer.t3-optf5-proof.v2";
 const T3_BUNDLE_ID = "com.t3tools.t3code";
@@ -501,8 +501,10 @@ export function bundleDigest(app: string): string {
 // verified app's, and neither side may have an entry the other lacks.
 export function zipMatchesApp(app: string, zip: string): void {
   if (!existsSync(zip)) fail(`VoiceBar.zip not found: ${zip}`);
-  const root = mkdtempSync(join(tmpdir(), "t3gate-zip-"));
-  const scratch = join(root, "artifacts.noindex");
+  const buildRoot = resolve(import.meta.dir, "../.build.noindex");
+  mkdirSync(buildRoot, { recursive: true });
+  const root = mkdtempSync(join(buildRoot, "t3gate-zip-"));
+  const scratch = join(root, "extract");
   try {
     mkdirSync(scratch);
     const extract =

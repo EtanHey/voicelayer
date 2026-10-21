@@ -52,9 +52,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-swift build --scratch-path "$repo_root/flow-bar/.build.noindex" -c release --package-path "$repo_root/flow-bar" \
+swift build --scratch-path "$repo_root/.build.noindex/swift" -c release --package-path "$repo_root/flow-bar" \
   --product NotchGlassBackdropFixture
-bin_path=$(swift build --scratch-path "$repo_root/flow-bar/.build.noindex" -c release --package-path "$repo_root/flow-bar" --show-bin-path)
+bin_path=$(swift build --scratch-path "$repo_root/.build.noindex/swift" -c release --package-path "$repo_root/flow-bar" --show-bin-path)
 fixture_binary="$bin_path/NotchGlassBackdropFixture"
 fixture_receipt="$runtime_dir/fixture-busy.json"
 "$fixture_binary" \
@@ -134,7 +134,7 @@ wait "$event_pid"
 
 verifier="$bin_path/NotchCaptureContrastVerifier"
 if [[ ! -x "$verifier" ]]; then
-  swift build --scratch-path "$repo_root/flow-bar/.build.noindex" -c release --package-path "$repo_root/flow-bar" --product NotchCaptureContrastVerifier
+  swift build --scratch-path "$repo_root/.build.noindex/swift" -c release --package-path "$repo_root/flow-bar" --product NotchCaptureContrastVerifier
 fi
 
 "$verifier" \

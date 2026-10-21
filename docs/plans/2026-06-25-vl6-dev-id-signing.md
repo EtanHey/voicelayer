@@ -54,7 +54,7 @@
 - Add: `scripts/release-voicebar.sh`
 
 **Steps:**
-1. Build to `dist/voicebar-release.noindex/<version>/VoiceBar.app`.
+1. Build to `.build.noindex/voicebar-release/<version>/VoiceBar.app`.
 2. Pass `--no-stop --no-relaunch` so the resident `/Applications/VoiceBar.app` is untouched.
 3. Default to the known local notary profile `notary-layers`.
 4. Produce `VoiceBar.zip`, print its sha256, and print the matching `gh release upload` plus `EtanHey/homebrew-layers/Casks/voicebar.rb` bump instructions.

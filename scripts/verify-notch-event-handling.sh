@@ -188,20 +188,20 @@ if [[ ! -s "$context_menu_receipt" ]] ||
   printf 'error: supplied VoiceBar app did not pass its window and context-menu gates; see %s\n' "$app_log" >&2
   exit 1
 fi
-swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/.build.noindex/swift" --package-path "$repo_root/flow-bar" \
   --filter BarViewClickabilityTests/testPanelAppKitMouseEventsAdmitTheRenderedRecordingSurface
-swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/.build.noindex/swift" --package-path "$repo_root/flow-bar" \
   --filter BarViewClickabilityTests/testTeleprompterAppKitMouseEventsAdmitItsRenderedBodyForContextMenu
-swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/.build.noindex/swift" --package-path "$repo_root/flow-bar" \
   --filter BarViewClickabilityTests/testPanelRightMouseDownOpensContextMenuOnRenderedRecordingWing
-swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/.build.noindex/swift" --package-path "$repo_root/flow-bar" \
   --filter AppLifecycleTests/testEveryNotchStateAdmitsRenderedPixelsButRejectsTransparentMargins
-swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
+swift test --scratch-path "$repo_root/.build.noindex/swift" --package-path "$repo_root/flow-bar" \
   --filter VoiceBarHoverHysteresisTests/testMouseMovedKeepsUnflippedWindowYForVisibleSurfaceAdmission
 env \
   VOICEBAR_REGENERATE_VISUAL_ARTIFACTS=1 \
   VOICEBAR_VISUAL_ARTIFACT_OUTPUT="$frame_dir" \
-  swift test --scratch-path "$repo_root/flow-bar/.build.noindex" --package-path "$repo_root/flow-bar" \
+  swift test --scratch-path "$repo_root/.build.noindex/swift" --package-path "$repo_root/flow-bar" \
     --filter BarViewSnapshotArtifactTests/testWritesOffscreenAppKitArtifactsForAllPrimaryVoiceModes
 
 for frame_name in idle recording transcribing speaking; do

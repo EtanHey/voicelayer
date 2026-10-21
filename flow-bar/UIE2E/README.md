@@ -8,13 +8,13 @@ pass the result exporter.
 On an **unoccupied Mac** with macOS 14+, Xcode 16+, Bun, Python 3.9+ and ffprobe:
 
 ```sh
-bash scripts/voicebar-ui-e2e.sh --output /tmp/voicebar-ui-results-$(date +%s)
+bash scripts/voicebar-ui-e2e.sh --output $PWD/.build.noindex/voicebar-ui-results-$(date +%s)
 ```
 
 On an occupied Mac, compilation only:
 
 ```sh
-bash scripts/voicebar-ui-e2e.sh --output /tmp/voicebar-ui-build-$(date +%s) --build-only
+bash scripts/voicebar-ui-e2e.sh --output $PWD/.build.noindex/voicebar-ui-build-$(date +%s) --build-only
 ```
 
 The output path must be new. The runner mutes output for the run and restores the prior mute state on exit, failure or interrupt, retains the QA app and sandbox
@@ -210,7 +210,7 @@ without assuming the link-style control has Button role.
 
 ## Focused #338 state gallery
 
-`bash scripts/voicebar-ui-e2e.sh --output <new-directory> --scenario focused-338`
+`bash scripts/voicebar-ui-e2e.sh --output "$PWD/.build.noindex/<new-directory>" --scenario focused-338`
 selects only `VoiceBarFlowTests/testFocused338StateGallery`; `--build-only` compiles
 without launching. The explicit focused QA define requires the actual #338 product
 APIs. Default `full` still compiles on main without them. No focused build may enter

@@ -170,7 +170,7 @@ mv /opt/homebrew/Caskroom/voicebar ~/voicebar-caskroom-backup
 `voicebar` cask is registered. Build somewhere else instead:
 
 ```bash
-bash flow-bar/build-app.sh --install-path "$HOME/Applications/VoiceBar-dev.noindex/VoiceBar-dev.app"
+bash flow-bar/build-app.sh --install-path "$PWD/.build.noindex/VoiceBar-dev.app"
 ```
 
 Deliberately swapping the resident app to test a branch build (the lifecycle in `AGENTS.md`) is
