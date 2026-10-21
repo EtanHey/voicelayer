@@ -105,6 +105,47 @@ let commandHandler:
     ) => void | SocketResponse | Promise<void | SocketResponse>)
   | null = null;
 
+// --- CLICK2 command telemetry: one allowlisted JSON line per receipt and outcome ---
+export interface CommandTelemetrySnapshot {
+  phase: "preparing" | "playing" | "paused" | "none";
+  generation: number | null;
+}
+let commandTelemetrySnapshot: () => CommandTelemetrySnapshot = () => ({ phase: "none", generation: null });
+
+/** The playback owner registers its read-only phase/generation snapshot (avoids an import cycle). */
+export function setCommandTelemetrySnapshot(source: () => CommandTelemetrySnapshot): void {
+  commandTelemetrySnapshot = source;
+}
+
+// Reasons are fixed daemon strings; anything else (an error message) is never logged.
+const COMMAND_TELEMETRY_REASONS = new Set([
+  "already idle", "already paused", "already recording", "already transcribing", "busy", "duration unavailable",
+  "invalid offset", "mic disabled", "not paused", "not ready", "not recording", "nothing playing",
+  "nothing to replay", "nothing to retranscribe", "parked", "paused", "queue full", "queued",
+  "Replay position unavailable", "Replay prefix audio unavailable", "resuming", "stale", "unsupported",
+]);
+const COMMAND_TELEMETRY_OUTCOMES = new Set(["accept", "noop", "reject", "loading"]);
+
+function telemetryID(id: unknown): string | null {
+  return typeof id === "string" && /^[\w.:-]{1,128}$/.test(id) ? id : null;
+}
+
+function logCommandTelemetry(event: "command_receipt" | "command_outcome", command: SocketCommand,
+  result?: { outcome: string; reason: string | null }): void {
+  let snapshot: CommandTelemetrySnapshot;
+  try { snapshot = commandTelemetrySnapshot(); } catch { snapshot = { phase: "none", generation: null }; }
+  console.error(`[socket-client] ${JSON.stringify({ event, timestamp: new Date().toISOString(), command: command.cmd,
+    command_id: telemetryID(command.id), phase: snapshot.phase, generation: snapshot.generation, ...result })}`);
+}
+
+function commandOutcome(response: void | SocketResponse): { outcome: string; reason: string | null } {
+  if (!response) return { outcome: "none", reason: null };
+  if (response.type !== "ack") return { outcome: "response", reason: null };
+  const reason = typeof response.reason === "string"
+    ? COMMAND_TELEMETRY_REASONS.has(response.reason) ? response.reason : "unlisted" : null;
+  return { outcome: COMMAND_TELEMETRY_OUTCOMES.has(response.outcome) ? response.outcome : "other", reason };
+}
+
 // --- Target socket path (overridable for tests) ---
 let targetPath: string = SOCKET_PATH;
 
@@ -233,10 +274,13 @@ function startConnection(): void {
           if (command) {
             console.error(
               // Allowlist metadata; never serialize a command or its user-content fields.
-              `[socket-client] Command from VoiceBar: ${JSON.stringify({ cmd: command.cmd, id: command.id })} bytes=${Buffer.byteLength(line, "utf8")}`,
+              `[socket-client] Command from VoiceBar: ${JSON.stringify({ cmd: command.cmd, id: telemetryID(command.id) })} bytes=${Buffer.byteLength(line, "utf8")}`,
             );
+            logCommandTelemetry("command_receipt", command);
             if (commandHandler) {
-              const responsePromise = commandHandler(command);
+              let responsePromise: ReturnType<NonNullable<typeof commandHandler>>;
+              try { responsePromise = commandHandler(command); }
+              catch (error) { responsePromise = Promise.reject(error); }
               const reloadsModel =
                 (command.cmd === "set_whisper_residency" && command.action === "load") ||
                 command.cmd === "set_whisper_effort";
@@ -253,6 +297,8 @@ function startConnection(): void {
               }
               const pending = Promise.resolve(responsePromise)
                 .then((response) => {
+                  // The outcome is the handler's, logged before a disconnect can drop the reply.
+                  logCommandTelemetry("command_outcome", command, commandOutcome(response));
                   if (!response || !connection || !connected) {
                     if (command.cmd === "set_whisper_residency") {
                       console.error(`[socket-client] Residency response ${command.id} dropped: disconnected`);
@@ -276,6 +322,7 @@ function startConnection(): void {
                   console.error(
                     "[socket-client] Command handler failed (details redacted)",
                   );
+                  logCommandTelemetry("command_outcome", command, { outcome: "failed", reason: "handler-failed" });
                 })
                 .finally(() => socket.data.pendingResponses.delete(pending));
               socket.data.pendingResponses.add(pending);

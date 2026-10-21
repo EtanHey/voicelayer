@@ -32,6 +32,7 @@ import {
   pausePlayback,
   resumePlayback,
   isPlaybackPaused,
+  isCaptureAdmissionReserved,
   setLongReadSettledListener,
   setExternalSpeechPreemptionListener,
   prepareSelectionReadStart,
@@ -260,8 +261,12 @@ export function handleSocketCommand(
       if (recordingState === "recording" || recordingState === "transcribing") {
         return buildAck(command, "reject", "busy");
       }
-      if (isPlaybackPaused()) return buildAck(command, "reject", "paused");
-      if (isSpeaking) {
+      // CLICK2: Replay while paused restarts the paused read from 0:00 and plays it. Only a capture refuses it.
+      const paused = isPlaybackPaused();
+      if (paused && (getEffectiveRecordingState() !== "idle" || isCaptureAdmissionReserved())) {
+        return buildAck(command, "reject", "busy");
+      }
+      if (isSpeaking || paused) {
         if (restartPlayback()) {
           return buildAck(command, "accept");
         }
