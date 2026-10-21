@@ -21,19 +21,41 @@ export interface SelectionReadQueueState {
   current_request_id: string | null;
 }
 
-export class SelectionReadQueue {
+/** QPRE1: a prepared start (the queue head's first chunk). It is disposed exactly once unless it was
+ * transferred into the read's start, which then owns it. */
+export interface PreparedSelectionRead { dispose(): void }
+
+/** QPRE1: optional background preparation of the queue head. Speculative only: no playback, no events. */
+export interface SelectionReadPreparation<L extends PreparedSelectionRead> {
+  /** `owner` is the read now playing; preparation must not compete with its synthesis. */
+  prepare(read: QueuedSelectionRead, signal: AbortSignal, owner: string): Promise<L>;
+}
+
+interface HeadPreparation<L> {
+  requestId: string;
+  generation: number;
+  controller: AbortController;
+  state: "preparing" | "ready" | "failed";
+  lease?: L;
+}
+
+export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelectionRead> {
   private items: QueuedSelectionRead[] = [];
   /** The user's read that owns playback (speaking, preparing or paused) and therefore the queue. */
   private current?: string;
   private session = false;
   /** F5 interrupted the owner: its queued reads wait for Next, never auto-start. */
   private suspended = false;
+  /** QPRE1: only items[0] may own a preparation; the generation fences late results. */
+  private preparation?: HeadPreparation<L>;
+  private preparationGeneration = 0;
 
   constructor(
-    /** Starts a read; throws when it cannot (recording, Ask, TTS off). */
-    private readonly start: (read: QueuedSelectionRead) => void,
+    /** Starts a read, taking over a ready prepared start; throws when it cannot (recording, Ask, TTS off). */
+    private readonly start: (read: QueuedSelectionRead, prepared?: L) => void,
     private readonly publish: (state: SelectionReadQueueState) => void,
     private readonly limit = SELECTION_READ_QUEUE_LIMIT,
+    private readonly preparer?: SelectionReadPreparation<L>,
   ) {}
 
   get pendingCount(): number { return this.items.length; }
@@ -51,6 +73,7 @@ export class SelectionReadQueue {
       this.items.push(read);
       this.session = true;
       this.emit();
+      this.prepareHead();
       return "queued";
     }
     this.clear();
@@ -75,12 +98,16 @@ export class SelectionReadQueue {
     else this.clear();
     this.current = requestId;
     if (this.session) this.emit();
+    // Deferred: the caller starts this read right after own() returns.
+    this.prepareHead();
   }
 
-  /** F5 over the playing owner: the caller stops it; queued reads are kept for an explicit Next. */
+  /** F5 over the playing owner: the caller stops it; queued reads are kept for an explicit Next.
+   * Speculative preparation is dropped (the text stays) and resumes only with a user read. */
   suspend(): void {
     if (this.current === undefined || !this.items.length) { this.clear(); return; }
     this.suspended = true;
+    this.discardPreparation();
   }
 
   /** A read ended. A natural end advances; Stop, preemption or failure ends the whole queue. */
@@ -95,6 +122,7 @@ export class SelectionReadQueue {
   /** Stop means stop: forget every queued read and the current owner. */
   clear(): void {
     const changed = this.session || this.items.length > 0;
+    this.discardPreparation();
     this.items = [];
     this.current = undefined;
     this.session = false;
@@ -105,8 +133,61 @@ export class SelectionReadQueue {
   private launch(read: QueuedSelectionRead): void {
     // Own the queue before starting: the start preempts the old read, whose settle is then stale.
     this.current = read.requestId;
-    try { this.start(read); } catch (error) { this.current = undefined; throw error; }
+    const prepared = this.takePrepared(read);
+    try { prepared ? this.start(read, prepared) : this.start(read); } catch (error) {
+      prepared?.dispose();
+      this.current = undefined;
+      throw error;
+    }
     if (this.session) this.emit();
+    this.prepareHead();
+  }
+
+  /** Transfer a READY preparation for exactly this read; anything else is aborted and disposed.
+   * A start never waits on preparation still in flight: it synthesizes normally. */
+  private takePrepared(read: QueuedSelectionRead): L | undefined {
+    const preparation = this.preparation;
+    if (preparation?.requestId === read.requestId && preparation.state === "ready" && preparation.lease) {
+      this.preparation = undefined;
+      return preparation.lease;
+    }
+    this.discardPreparation();
+    return undefined;
+  }
+
+  private discardPreparation(): void {
+    const preparation = this.preparation;
+    this.preparation = undefined;
+    if (!preparation) return;
+    preparation.controller.abort();
+    preparation.lease?.dispose();
+  }
+
+  /** Prepare items[0] only (never C), once the current owner is established and not suspended. */
+  private prepareHead(): void {
+    const head = this.items[0];
+    const owner = this.current;
+    if (!this.preparer || !head || owner === undefined || this.suspended) return;
+    if (this.preparation?.requestId === head.requestId) return;
+    this.discardPreparation();
+    const preparation: HeadPreparation<L> = { requestId: head.requestId, generation: ++this.preparationGeneration,
+      controller: new AbortController(), state: "preparing" };
+    this.preparation = preparation;
+    const { signal } = preparation.controller;
+    const live = () => this.preparation === preparation && preparation.generation === this.preparationGeneration && !signal.aborted;
+    void (async () => {
+      await Promise.resolve(); // Never inside submit/own/launch: the owner's start happens first.
+      if (!live()) return;
+      try {
+        const lease = await this.preparer!.prepare(head, signal, owner);
+        // Generation fence: a result after clear/suspend/replacement is disposed, never transferred.
+        if (!live()) { lease.dispose(); return; }
+        preparation.lease = lease;
+        preparation.state = "ready";
+      } catch {
+        if (this.preparation === preparation) preparation.state = "failed";
+      }
+    })();
   }
 
   private emit(): void {
