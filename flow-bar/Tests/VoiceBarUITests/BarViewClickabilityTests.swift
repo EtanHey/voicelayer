@@ -415,9 +415,10 @@ final class BarViewClickabilityTests: XCTestCase {
 
     // MARK: - PILL1-a: the first click on a pill whose app is inactive reaches the control
 
-    /// The panel is never key while another app is frontmost, so AppKit asks the hit view whether the first
-    /// mouse-down may act. Each control's real SwiftUI hit target must accept it, and that click dispatches its
-    /// command exactly once without making the panel key or changing the frontmost app.
+    /// While the panel is not key, AppKit asks the hit view whether the first mouse-down may act. Every control's
+    /// real SwiftUI hit target must accept it. On the compact panel (Pause, Play, Next, Stop) that click dispatches
+    /// its command exactly once, leaves the panel non-key and keeps the frontmost app; the readback row (Replay,
+    /// Hide) proves hit acceptance on the panel and its one dispatch on a plain non-key window (see below).
     func testEveryPillControlAcceptsTheFirstClickWhileThePanelIsNotKey() {
         // Pause on the left and Stop (outermost) on the right of a hidden-but-playing read.
         var speaking = makeSpeakingPanel(count: 0)
