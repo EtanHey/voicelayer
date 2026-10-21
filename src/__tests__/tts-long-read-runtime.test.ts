@@ -33,6 +33,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   let holdHistory: boolean, holdDecoder: boolean;
   let failHistory: boolean;
   let failPlayerSpawn = false;
+  let synthLatencyMs = 0;
   type Child = { exit: ReturnType<typeof deferred<number>>; killed: boolean };
   let synthBarrier: ReturnType<typeof fixtureBarrier<typeof synths[number]>>;
   let playerBarrier: ReturnType<typeof fixtureBarrier<typeof players[number]>>;
@@ -45,7 +46,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   beforeEach(() => {
     synths = []; players = []; events = []; handles = []; historyInputs = []; spies = [];
     holdSynth = false; autoPlay = false; holdPlayerExit = false; holdHistory = false; holdDecoder = false;
-    failHistory = false; failPlayerSpawn = false;
+    failHistory = false; failPlayerSpawn = false; synthLatencyMs = 0;
     clockMs = 100_000;
     releaseAlignments = [];
     spies.push(spyOn(Date, "now").mockImplementation(() => clockMs));
@@ -69,7 +70,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         const spoken = argv.find(a => a.startsWith("--text="))!.slice(7);
         writeFileSync(media, "fake audio"); writeFileSync(metadata, spoken.split(/\s+/).map((text, i) => JSON.stringify({text, offset: i * 120000, duration: 100000})).join("\n"));
         const exit = deferred<number>(); const item = { argv, exit, killed: false }; synths.push(item); synthBarrier.push(item);
-        if (!holdSynth || synths.length === 1) exit.resolve(0);
+        if (!holdSynth || synths.length === 1) {
+          if (synthLatencyMs > 0) setTimeout(() => exit.resolve(0), synthLatencyMs); else exit.resolve(0);
+        }
         return { pid: 71000 + synths.length, exited: exit.promise, kill: () => { item.killed = true; exit.resolve(143); } };
       }
       if (argv[0] === "ffmpeg") {
@@ -717,6 +720,96 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const receipts = (id: string) => events.filter(e => e.type === "state" && e.state === "speaking" && e.request_id === id);
     const settle = async () => { for (let i = 0; i < 20; i++) await fixtureCheckpoint(); };
     afterEach(() => resetSelectionReadQueueForTests());
+
+    describe("QPRE1 prepares the next read's first chunk in the background", () => {
+      const spoken = (needle: string) => synths.filter((s) => s.argv.some((a) => a.startsWith("--text=") && a.includes(needle)));
+      const media = (s: typeof synths[number]) => s.argv.find((a) => a.startsWith("--write-media="))!.slice("--write-media=".length);
+      const twoChunks = Array.from({ length: 9 }, (_, i) => `Alpha sentence ${i} has enough words to fill a chunk.`).join(" ");
+
+      it("never prepares while A still has chunks to synthesize; then only B's first chunk, never C", async () => {
+        expect(chunkTextForTTS(twoChunks)).toHaveLength(2);
+        holdSynth = true;
+        select("A", twoChunks);
+        await playerBarrier.at(0);
+        await synthBarrier.at(1); // A's last chunk, held in synthesis.
+        select("B", "Bravo queued selection."); select("C", "Charlie queued selection.");
+        await settle();
+        expect(spoken("Bravo")).toHaveLength(0);
+        synths[1].exit.resolve(0);
+        await synthBarrier.at(2);
+        expect(spoken("Bravo")).toHaveLength(1);
+        expect(spoken("Charlie")).toHaveLength(0);
+        expect(players).toHaveLength(1);
+        expect(receipts("B")).toEqual([]);
+        expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
+      });
+
+      /** One A→B advance; returns A's end to B's player spawn, and syntheses after A ended. */
+      async function advance(first: string, second: string) {
+        const p = players.length, s = synths.length;
+        select(first, `${first} opening selection.`);
+        await playerBarrier.at(p);
+        select(second, `${second} queued selection.`);
+        await settle();
+        const prefetch = synths[s + 1];
+        if (prefetch) { await prefetch.exit.promise; await settle(); }
+        const before = synths.length, t0 = performance.now();
+        players[p].exit.resolve(0);
+        await playerBarrier.at(p + 1);
+        const ms = performance.now() - t0;
+        expect(receipts(second).length).toBeGreaterThan(0);
+        return { ms, resynthesized: synths.length - before, prefetch, player: players[p + 1] };
+      }
+
+      it("consumes the prepared chunk without resynthesis: B's first audio after A ends is ≈0 vs the synth latency", async () => {
+        synthLatencyMs = 150;
+        const off = spyOn(tts, "prepareSelectionReadStart").mockRejectedValue(new Error("prefetch off"));
+        const without = await advance("A", "B");
+        off.mockRestore();
+        players.at(-1)!.exit.resolve(0); await settle();
+        const withPrefetch = await advance("D", "E");
+        console.error(`[QPRE1 measure] synth latency ${synthLatencyMs} ms; A end -> B player spawn: `
+          + `${withPrefetch.ms.toFixed(1)} ms with prefetch, ${without.ms.toFixed(1)} ms without`);
+        expect(without.prefetch).toBeUndefined();
+        expect(without.resynthesized).toBe(1);
+        expect(withPrefetch.resynthesized).toBe(0);
+        expect(withPrefetch.player.argv.join(" ")).toContain(media(withPrefetch.prefetch!));
+        expect(without.ms).toBeGreaterThanOrEqual(synthLatencyMs * 0.9);
+        expect(withPrefetch.ms).toBeLessThan(synthLatencyMs / 3);
+      });
+
+      for (const ready of [false, true]) it(`Stop ${ready ? "after B's chunk is ready" : "while it is synthesizing"} deletes the prepared audio; B never plays or reaches history`, async () => {
+        select("A", "Alpha single chunk.");
+        await playerBarrier.at(0);
+        holdSynth = !ready;
+        select("B", "Bravo stopped before its turn.");
+        const prefetch = await synthBarrier.at(1);
+        if (ready) { await prefetch.exit.promise; await settle(); }
+        const file = media(prefetch);
+        await handleSocketCommand({ cmd: "stop" } as any);
+        await settle();
+        expect(prefetch.killed).toBe(!ready);
+        expect(existsSync(file)).toBe(false);
+        expect(receipts("B")).toEqual([]);
+        expect(players).toHaveLength(1);
+        expect(loadHistory().map((e) => e.text).join(" ")).not.toContain("Bravo");
+      });
+
+      it("a failed prefetch is not retried in the background; B synthesizes normally when A ends", async () => {
+        select("A", "Alpha single chunk.");
+        await playerBarrier.at(0);
+        holdSynth = true;
+        select("B", "Bravo prefetch fails.");
+        (await synthBarrier.at(1)).exit.resolve(1);
+        await settle();
+        expect(spoken("Bravo")).toHaveLength(1);
+        holdSynth = false;
+        players[0].exit.resolve(0);
+        await playerBarrier.at(1);
+        expect(spoken("Bravo")).toHaveLength(2);
+        expect(receipts("B").length).toBeGreaterThan(0);
+      });
+    });
 
     it("auto-advances at the natural end with no idle edge between reads, and records only reads that played", async () => {
       expect(select("A", "Alpha first selection.")).toMatchObject({ outcome: "accept" });
