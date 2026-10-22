@@ -80,6 +80,9 @@ try:
         assert 'sent 15 after identity verification' in receipt, receipt
         assert 'sent 9 after identity verification' in receipt, receipt
         assert 'identity mismatch or unreadable; never signalled' in receipt, receipt
+        # This case has proved refusal. Retire its injected unknown row so later
+        # startup sweeps do not accumulate a full settle deadline per prior case.
+        (base / f'fixture-{sentinel.pid}.json').unlink()
         print(f'PASS {mode}: escape fixture reaped; forged identity and unrelated PID refused', flush=True)
 finally:
     sentinel.stdin.close()

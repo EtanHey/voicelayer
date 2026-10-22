@@ -216,7 +216,7 @@ def _cleanup_closed(base, root):
     for row in rows:
         send(row, signal.SIGKILL)
     deadline = time.monotonic() + 3
-    while time.monotonic() < deadline and any(fixture_state(row) == 'alive' for row in rows):
+    while time.monotonic() < deadline and any(fixture_state(row) != 'dead' for row in rows):
         time.sleep(.025)
     remaining = [row.get('pid') for row in rows if fixture_state(row) != 'dead']
     if remaining or unreadable:

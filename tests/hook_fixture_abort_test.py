@@ -224,6 +224,69 @@ class StaleSweepBoundary(unittest.TestCase):
                 child.kill()
             child.wait(timeout=5)
 
+    def post_kill_unknown(self, transient):
+        base, entry = self.fabricate('old owner')
+        token = json.loads((base / 'fixture-registry.json').read_text())['token']
+        (base / 'fixture-1234567.json').write_text(json.dumps(dict(
+            pid=1234567, started='fixture start', token=token)))
+        # A separate cleanup process exercises its actual exit status. Its clock and
+        # signals are controlled: no real PID is ever inspected or signalled.
+        code = """
+import json, pathlib, signal, sys
+from unittest.mock import patch
+sys.path.insert(0, str(pathlib.Path.cwd() / 'tests'))
+import hook_fixture_registry as registry
+base, transient = pathlib.Path(sys.argv[1]), sys.argv[2] == 'True'
+token = json.loads((base / 'fixture-registry.json').read_text())['token']
+clock = [0.0]
+killed_at = [None]
+signals = []
+def sleep(seconds):
+    clock[0] += seconds
+def liveness(pid, started):
+    if killed_at[0] is None:
+        return 'alive'
+    return 'dead' if transient and clock[0] - killed_at[0] >= .1 else 'unknown'
+def kill(pid, signum):
+    assert liveness(pid, '') == 'alive', 'unknown identity was signalled'
+    signals.append(int(signum))
+    if signum == signal.SIGKILL:
+        killed_at[0] = clock[0]
+observed = ([], dict(HOOK_FIXTURE_RUN=str(base), HOOK_FIXTURE_TOKEN=token))
+try:
+    with patch.object(registry.time, 'monotonic', lambda: clock[0]), \
+         patch.object(registry.time, 'sleep', sleep), \
+         patch.object(registry, 'liveness', liveness), \
+         patch.object(registry, 'metadata', lambda pid: 'fixture start'), \
+         patch.object(registry, 'identities', lambda root: lambda pid: observed), \
+         patch.object(registry.os, 'kill', kill):
+        registry.cleanup(base, pathlib.Path.cwd())
+finally:
+    (base / 'settle-observation.json').write_text(json.dumps(dict(
+        elapsed=clock[0] - killed_at[0], signals=signals)))
+"""
+        result = subprocess.run([sys.executable, '-B', '-c', code, str(base), str(transient)],
+                                env=dict(os.environ), capture_output=True, text=True)
+        observation = json.loads((base / 'settle-observation.json').read_text())
+        self.assertEqual(observation['signals'], [int(signal.SIGTERM), int(signal.SIGKILL)])
+        if transient:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertGreaterEqual(observation['elapsed'], .1)
+            self.assertTrue((base / 'fixture-cleanup.done').exists())
+            self.assertFalse(entry.exists())
+        else:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('fixture teardown unresolved', result.stderr)
+            self.assertGreaterEqual(observation['elapsed'], 3)
+            self.assertFalse((base / 'fixture-cleanup.done').exists())
+            self.assertTrue(entry.exists())
+
+    def test_post_kill_transient_unknown_settles_before_deadline(self):
+        self.post_kill_unknown(True)
+
+    def test_post_kill_persistent_unknown_retains_evidence_after_deadline(self):
+        self.post_kill_unknown(False)
+
     def test_unknown_native_fixture_identity_retains_index(self):
         self.unknown_fixture('native')
 
