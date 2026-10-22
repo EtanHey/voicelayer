@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import pathlib
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,82 @@ from types import SimpleNamespace
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 class SupervisorTests(unittest.TestCase):
+    def hotkey_table(self, parameters, enabled=True):
+        return plistlib.dumps({'AppleSymbolicHotKeys': {
+            '200': dict(enabled=enabled, value=dict(type='standard', parameters=parameters))}})
+
+    def test_enabled_hotkey_domains_refuse_before_matching(self):
+        module = self.module()
+        cmd = module.HOTKEY_MODIFIERS['command']
+        sentinel = module.HOTKEY_SENTINEL
+        # Each field is invalid independently, even when the other field would
+        # collide or is a sentinel. No modifier combination makes it unassigned.
+        invalid_pairs = [(1114112, 99999)]
+        for character in [-1, 0xD800, 0xDBFF, 0xDC00, 0xDFFF, 0x110000, 1 << 32]:
+            invalid_pairs.extend([(character, 0), (character, sentinel)])
+        for keycode in [-1, 0x10000, 99999, 1 << 32]:
+            invalid_pairs.extend([(ord('a'), keycode), (sentinel, keycode)])
+        for character, keycode in invalid_pairs:
+            for mask in [0, cmd, module.HOTKEY_CAPS_LOCK, cmd | module.HOTKEY_CAPS_LOCK]:
+                with self.subTest(character=character, keycode=keycode, mask=mask):
+                    with self.assertRaisesRegex(module.HotkeyCollision, '200.*NOT_PROVEN'):
+                        module.symbolic_hotkey_collisions(
+                            self.hotkey_table([character, keycode, mask]), [('a', 0, ('command',))])
+
+    def test_valid_hotkey_domains_sentinels_and_modifiers_are_retained(self):
+        module = self.module()
+        cmd = module.HOTKEY_MODIFIERS['command']
+        caps = module.HOTKEY_CAPS_LOCK
+        sentinel = module.HOTKEY_SENTINEL
+        cases = [([ord('a'), 0, cmd], [200]), ([ord('A'), 0, cmd | caps], [200]),
+                 ([sentinel, 0, cmd], [200]), ([ord('a'), sentinel, cmd], [200]),
+                 ([ord('a'), sentinel, cmd | caps], [200]),
+                 ([ord('b'), 11, cmd], []), ([sentinel, sentinel, 0], []),
+                 ([sentinel, sentinel, caps], [])]
+        for modifier in module.HOTKEY_MODIFIERS.values():
+            if modifier != cmd:
+                cases.append(([ord('a'), 0, cmd | modifier], []))
+            with self.subTest(unassigned_modifier=modifier):
+                with self.assertRaisesRegex(module.HotkeyCollision, 'NOT_PROVEN'):
+                    module.symbolic_hotkey_collisions(
+                        self.hotkey_table([sentinel, sentinel, modifier | caps]), [('a', 0, ('command',))])
+        for parameters, expected in cases:
+            with self.subTest(parameters=parameters):
+                self.assertEqual(module.symbolic_hotkey_collisions(
+                    self.hotkey_table(parameters), [('a', 0, ('command',))]), expected)
+        # Scalar and uint16 edges remain evaluable, including codes above 127.
+        for character in [0, 0xD7FF, 0xE000, 0xFFFE, 0x10000, 0x10FFFF]:
+            for keycode in [0, 128, 0xFFFE, sentinel]:
+                with self.subTest(character=character, keycode=keycode):
+                    self.assertEqual(module.symbolic_hotkey_collisions(
+                        self.hotkey_table([character, keycode, cmd]), [('b', 11, ('command',))]), [])
+        for parameters, expected in [([sentinel, 12, 0], [200]),
+                                     ([ord('a'), sentinel, caps], [200]),
+                                     ([ord('a'), sentinel, cmd], [])]:
+            with self.subTest(text_entry=parameters):
+                self.assertEqual(module.symbolic_hotkey_collisions(
+                    self.hotkey_table(parameters), [module.TEXT_ENTRY]), expected)
+        self.assertEqual(module.symbolic_hotkey_collisions(
+            self.hotkey_table([1114112, 99999, cmd], enabled=False), [('a', 0, ('command',))]), [])
+        self.assertEqual(module.symbolic_hotkey_collisions(
+            self.hotkey_table([0x10400, sentinel, cmd]), [(chr(0x10428), None, ('command',))]), [200])
+        for character, keycode in [(sentinel, sentinel), (sentinel, 0), (ord('a'), sentinel)]:
+            for mask in [-1, cmd | (1 << 30)]:
+                with self.subTest(character=character, keycode=keycode, mask=mask):
+                    with self.assertRaisesRegex(module.HotkeyCollision, 'NOT_PROVEN'):
+                        module.symbolic_hotkey_collisions(
+                            self.hotkey_table([character, keycode, mask]), [('a', 0, ('command',))])
+
+    def test_native_hotkey_preflight_propagates_invalid_domain_refusal(self):
+        module = self.module()
+        host = module.NativeHost.__new__(module.NativeHost)
+        host.scenario, host.preflight = 'full', {}
+        host.symbolic_hotkeys = lambda: SimpleNamespace(returncode=0, stdout=self.hotkey_table(
+            [1114112, 99999, module.HOTKEY_MODIFIERS['command']]))
+        with self.assertRaisesRegex(module.HotkeyCollision, 'NOT_PROVEN'):
+            host.refuse_hotkey_collisions()
+        self.assertNotIn('symbolicHotkeyCollisions', host.preflight, 'invalid table must not record safe []')
+
     def test_redaction_uses_one_memory_only_32_byte_hmac_key_per_run(self):
         import secrets
         key = secrets.token_bytes(32)
@@ -1902,7 +1979,7 @@ class SupervisorTests(unittest.TestCase):
             self.assertTrue(any(row['pid'] == 303 for row in host.ownership_races))
             # Exercise the actual modal-proof writer, with only its native helper stubbed.
             with patch('subprocess.run', return_value=SimpleNamespace(
-                    returncode=0, stdout=json.dumps(dict(axTrusted=True, prompts=[], modals=[])))):
+                    returncode=0, stdout=json.dumps(dict(axTrusted=True, prompts=[], modals=[], inventoryErrors=[])))):
                 type(host).permissions(host)
             proof = json.loads((output / 'modal-run-proof.json').read_text())
             self.assertEqual(proof['owned'], [dict(pid=302, birth=[20, 1], path=xr)])

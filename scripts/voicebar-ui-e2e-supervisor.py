@@ -302,6 +302,15 @@ def symbolic_hotkey_collisions(exported, keystrokes):
             ascii_code, keycode, mask = (int(x) for x in parameters)
             if len(parameters) != 3 or mask & ~known or mask < 0:
                 raise ValueError
+            # Preserve the existing Unicode character contract, excluding lone
+            # surrogates (unicode.org/glossary/#unicode_scalar_value). U+FFFF is
+            # reserved below as this table's no-character sentinel.
+            if not 0 <= ascii_code <= 0x10FFFF or 0xD800 <= ascii_code <= 0xDFFF:
+                raise ValueError
+            # Public macOS SDK: CGRemoteOperation.h declares CGKeyCode uint16_t.
+            # Do not infer a 127-key ceiling from today's ANSI key constants.
+            if not 0 <= keycode <= 0xFFFF:
+                raise ValueError
         except Exception:
             unproven.append(str(number)); continue
         if ascii_code == HOTKEY_SENTINEL and keycode == HOTKEY_SENTINEL:
@@ -309,7 +318,7 @@ def symbolic_hotkey_collisions(exported, keystrokes):
                 unproven.append(str(number))  # Modifiers with no key: applicability unknown.
             continue  # An explicitly unassigned record binds nothing.
         mods = mask & ~HOTKEY_CAPS_LOCK
-        char = chr(ascii_code).lower() if ascii_code != HOTKEY_SENTINEL and 0 <= ascii_code < 0x110000 else None
+        char = chr(ascii_code).lower() if ascii_code != HOTKEY_SENTINEL else None
         for key, code, want in wanted:
             if (key, code) == TEXT_ENTRY[:2]:
                 printable = keycode in PRINTABLE_KEYCODES or (keycode == HOTKEY_SENTINEL and char is not None and char.isprintable())
