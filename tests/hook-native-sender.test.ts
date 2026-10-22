@@ -14,6 +14,7 @@ test.skipIf(!cc)("native sender compiles through the Linux branch", () => {
   expect({ status: result.status, error: result.stderr }).toEqual({ status: 0, error: "" });
 });
 
+// NOINDEX1/HOOK-AB.md: 5005.68 ms hit the old 5 s cap; 4x that observed floor.
 test("only a missing compiler skips; policy runs without any compiler", () => {
   const bin = mkdtempSync(join(tmpdir(), "ho3-build-"));
   try {
@@ -27,7 +28,7 @@ test("only a missing compiler skips; policy runs without any compiler", () => {
     expect(failed.stdout + failed.stderr).toContain("intentional-source-error");
     expect(run("--policy-check").status).toBe(0);
   } finally { rmSync(bin, { recursive: true, force: true }); }
-});
+}, 20_000);
 
 test.skipIf(!cc)("interpreter parser never records combined-flag or IFS command canaries", () => {
   const dir = mkdtempSync(join(tmpdir(), "ho3-argv-"));
