@@ -79,7 +79,7 @@ for (const suite of ["brew-cask-sync", "deploy-check"]) {
         config: readFileSync(join(root, ".git/config"), "utf8"),
         index: readFileSync(join(root, ".git/index")).toString("hex") });
       const before = snapshot();
-      const result = withChildFixtureEnv({ VOICELAYER_STATE_DIR: join(root, "state") }, () => spawnSync(process.execPath, ["test", `src/__tests__/${suite}.test.ts`], {
+      const result = withChildFixtureEnv({ VOICELAYER_STATE_DIR: join(root, "state") }, () => spawnSync(process.execPath, ["test", `./src/__tests__/${suite}.test.ts`], {
         cwd: join(import.meta.dir, ".."), encoding: "utf8", timeout: 30000,
         env: { ...cleanEnv, VOICELAYER_STATE_DIR: join(root, "state"), GIT_DIR: join(root, ".git"), GIT_INDEX_FILE: join(root, ".git/index") },
       }));
