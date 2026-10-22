@@ -89,6 +89,38 @@ class GuardProofTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'exactly one UI test executable'):
                 guard.verify(repo, output)
 
+    def test_dangling_metadata_refuses_legacy_resolver_proof_and_consumers(self):
+        with tempfile.TemporaryDirectory(suffix='.noindex') as tmp:
+            root = pathlib.Path(tmp)
+            repo, output, derived, _, _ = self.products_fixture(root, legacy=True)
+            products = derived / 'Build/Products'
+            products.mkdir(parents=True, exist_ok=True)
+            (products / 'test.xctestrun').write_bytes(plistlib.dumps({'VoiceBarUIE2ETests': {}}))
+            self.write_synthetic_proof(repo, output)
+            self.assertEqual(guard.verify(repo, output), output / 'device-guard.dylib')
+
+            metadata = output / 'derived-data-path.txt'
+            metadata.symlink_to(root / 'missing-metadata-target.txt')
+            with self.assertRaises(FileNotFoundError):
+                guard.derived_data_path(output)
+            with self.assertRaises(FileNotFoundError):
+                guard.verify(repo, output)
+
+            results_spec = importlib.util.spec_from_file_location(
+                'uie2e_results', pathlib.Path(__file__).with_name('voicebar-ui-e2e-results.py'))
+            results = importlib.util.module_from_spec(results_spec)
+            results_spec.loader.exec_module(results)
+            with self.assertRaises(FileNotFoundError):
+                results.configure(output, output / 'QA.app', output / 'sandbox')
+            self.assertFalse((output / 'UIE2E.xctestrun').exists())
+
+            supervisor_spec = importlib.util.spec_from_file_location(
+                'uie2e_supervisor', pathlib.Path(__file__).with_name('voicebar-ui-e2e-supervisor.py'))
+            supervisor = importlib.util.module_from_spec(supervisor_spec)
+            supervisor_spec.loader.exec_module(supervisor)
+            with self.assertRaises(FileNotFoundError):
+                supervisor.NativeHost(output, 'full')
+
     def test_duplicate_relocated_test_executables_refuse_proof(self):
         with tempfile.TemporaryDirectory(suffix='.noindex') as tmp:
             repo, output, derived, _, test = self.products_fixture(pathlib.Path(tmp))

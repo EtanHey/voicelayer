@@ -36,10 +36,19 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def metadata_entry_exists(metadata):
+    """Distinguish a missing directory entry from an unreadable present entry."""
+    try:
+        metadata.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def derived_data_path(output):
     """Use the shell's recorded location; only pre-metadata runs use the legacy layout."""
     metadata = output / 'derived-data-path.txt'
-    if not metadata.exists():
+    if not metadata_entry_exists(metadata):
         return (output / 'DerivedData').resolve()
     recorded = metadata.read_text().strip()
     if not recorded or not pathlib.Path(recorded).is_absolute():
@@ -71,7 +80,7 @@ def identities(repo, output):
         raise ValueError('Expected exactly one UI test executable')
     files += binaries + [xctest_runner_path(derived)]
     metadata = output / 'derived-data-path.txt'
-    if metadata.exists():
+    if metadata_entry_exists(metadata):
         files.append(metadata)
     return {str(path.resolve()): digest(path) for path in files}
 
