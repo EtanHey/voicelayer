@@ -10,7 +10,10 @@ import {
   cancelPlayback,
   VoiceLayerTextToSpeechBackend,
 } from "../tts";
-import { SileroVoiceActivityDetector } from "../vad";
+import {
+  IsolatedSileroVoiceActivityDetector,
+  SileroVoiceActivityDetector,
+} from "../vad";
 import { createOwnedBargeInMonitor } from "./barge-in";
 import type {
   BargeInController,
@@ -42,11 +45,11 @@ class VoiceLayerTranscriptEventSink implements TranscriptEventSink {
 }
 
 class VoiceLayerBargeInController implements BargeInController {
-  constructor(private readonly soundLayer: Pick<SoundLayer, "vad" | "clock">) {}
+  constructor(private readonly soundLayer: Pick<SoundLayer, "clock">) {}
 
   monitorDuringPlayback(options: BargeInMonitorOptions): BargeInMonitor {
     return createOwnedBargeInMonitor(
-      this.soundLayer.vad, options, startMicChunkStream,
+      new IsolatedSileroVoiceActivityDetector(), options, startMicChunkStream,
       () => this.soundLayer.clock?.nowMs() ?? Date.now(),
     );
   }
