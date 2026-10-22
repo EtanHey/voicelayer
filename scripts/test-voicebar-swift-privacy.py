@@ -137,7 +137,9 @@ class SwiftPrivacy(unittest.TestCase):
             root = run / mode
             record = json.loads((root / 'foreign-modal-stop.json').read_text())
             field = 'errors' if mode == 'errors' else 'modals'
-            self.assertEqual(set(record), {'status', field})
+            self.assertEqual(set(record), {'status', 'modals', 'errors'})
+            inactive_field = 'modals' if field == 'errors' else 'errors'
+            self.assertEqual(record[inactive_field], [])
             self.assertEqual(record['status'], 'not-proven' if mode == 'errors' else 'stop')
             self.assertEqual(len(record[field]), 1)
             entry = record[field][0]
