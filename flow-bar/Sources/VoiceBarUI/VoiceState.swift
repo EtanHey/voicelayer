@@ -1030,7 +1030,7 @@ public final class VoiceState {
         // NOTCH1: the note lives inside the notch, so showing or clearing it resizes the panel.
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != showsSelectionBusyNote) }
     }
-    @ObservationIgnored var selectionBusyNoteSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    @ObservationIgnored var selectionBusyNoteSleep: (Duration) async throws -> Void
     @ObservationIgnored private var selectionBusyNoteTask: Task<Void, Never>?
 
     private var selectionRejectionMessage: String?
@@ -1310,6 +1310,9 @@ public final class VoiceState {
         playbackAmplitudeClock: @escaping () -> TimeInterval = {
             ProcessInfo.processInfo.systemUptime
         },
+        selectionBusyNoteExpiry: @escaping () async -> Void = {
+            try? await Task.sleep(for: .seconds(2))
+        },
         keepsExpandedInDevState: Bool = VoiceBarDevState.shouldKeepExpanded()
     ) {
         self.recentTranscriptionsSaver = recentTranscriptionsSaver
@@ -1317,6 +1320,7 @@ public final class VoiceState {
         self.transcriptionVocabularyLoader = transcriptionVocabularyLoader
         self.transcriptionVocabularyAliasLoader = transcriptionVocabularyAliasLoader
         self.playbackAmplitudeClock = playbackAmplitudeClock
+        self.selectionBusyNoteSleep = { _ in await selectionBusyNoteExpiry() }
         self.keepsExpandedInDevState = keepsExpandedInDevState
         recentTranscriptionEntries = Self.normalizeRecentTranscriptionEntries(
             recentTranscriptionEntriesLoader(),
