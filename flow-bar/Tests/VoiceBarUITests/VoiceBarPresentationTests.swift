@@ -2,6 +2,8 @@
 import XCTest
 import AppKit
 import SwiftUI
+import QuartzCore
+import Vision
 import OffscreenTestSupport
 
 final class VoiceBarPresentationTests: XCTestCase {
@@ -11,6 +13,11 @@ final class VoiceBarPresentationTests: XCTestCase {
         for light in [false, true] {
             for white in [false, true] {
                 let state = VoiceState()
+                let heldTimer = AsyncStream<Void>.makeStream()
+                state.selectionBusyNoteSleep = { _ in
+                    for await _ in heldTimer.stream { break }
+                }
+                defer { heldTimer.continuation.finish() }
                 state.mode = .recording
                 state.hotkeyEnabled = true
                 state.isConnected = true
@@ -88,6 +95,11 @@ final class VoiceBarPresentationTests: XCTestCase {
                                         (.idle, .awaitingSecondTap, "preview-second-tap")] {
                 let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
                                        recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in })
+                let heldTimer = AsyncStream<Void>.makeStream()
+                state.selectionBusyNoteSleep = { _ in
+                    for await _ in heldTimer.stream { break }
+                }
+                defer { heldTimer.continuation.finish() }
                 state.mode = mode
                 state.hotkeyPhase = phase
                 state.hotkeyEnabled = true
@@ -122,10 +134,22 @@ final class VoiceBarPresentationTests: XCTestCase {
         state.recordingMode = "ptt"
         state.sendCommand = { _ in XCTFail("expiry must not send commands") }
         state.selectionTextCaptureHandler = { _ in XCTFail("expiry must not capture") }
+        let timerStarted = expectation(description: "busy note timer armed")
+        let ticks = AsyncStream<Void>.makeStream()
+        state.selectionBusyNoteSleep = { duration in
+            XCTAssertEqual(duration, .seconds(2))
+            timerStarted.fulfill()
+            for await _ in ticks.stream { break }
+        }
+        defer { ticks.continuation.finish() }
         let before = try renderSelectionFooter(state, name: "expiry-before")
         let busy = try renderSelectionFooter(state, name: "expiry-busy", afterMount: { state.speakSelection() })
         XCTAssertNotEqual(before.pixels, busy.pixels)
-        try await Task.sleep(for: .milliseconds(2100))
+        await fulfillment(of: [timerStarted], timeout: 5)
+        XCTAssertTrue(state.showsSelectionBusyNote, "expiry is controlled by the injected timer")
+        ticks.continuation.yield(())
+        let expired = await settle { !state.showsSelectionBusyNote }
+        XCTAssertTrue(expired, "the timer completion clears the observable note")
         let cleared = try renderSelectionFooter(state, name: "expiry-cleared")
         XCTAssertEqual(before.pixels, cleared.pixels)
         XCTAssertEqual(before.presentation, cleared.presentation)
@@ -173,7 +197,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             backdrop ?? (light ? Color(red: 0.88, green: 0.89, blue: 0.91) : Color(red: 0.16, green: 0.17, blue: 0.19))
             BarView(state: state, commandRouter: SelectionFixtureRouter(), onOpenSettings: {}, onOpenHistory: {},
                     includesPanelOutsets: true)
-        }.frame(width: size.width, height: size.height).transaction { $0.disablesAnimations = true })
+        }.frame(width: size.width, height: size.height).transaction { $0.disablesAnimations = true; $0.animation = nil })
         host.frame = NSRect(origin: .zero, size: size)
         host.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
         let panel = SelectionFixturePanel(contentRect: NSRect(x: -20000, y: -20000, width: size.width, height: size.height),
@@ -190,15 +214,40 @@ final class VoiceBarPresentationTests: XCTestCase {
         XCTAssertLessThan(panel.frame.maxX, 0)
         XCTAssertFalse(panel.isKeyWindow)
         XCTAssertFalse(panel.isMainWindow)
-        host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        host.layoutSubtreeIfNeeded()
+        // AppKit layout alone does not drain SwiftUI's scheduled observation update. Cross a
+        // main RunLoop barrier before flushing drawing, with both animation systems disabled.
+        func flushRender() throws {
+            var reachedBarrier = false
+            RunLoop.main.perform {
+                reachedBarrier = true
+                // run(mode:before:) need not return while SwiftUI keeps scheduling work.
+                // Stop this nested run as soon as its observation barrier is delivered.
+                CFRunLoopStop(CFRunLoopGetMain())
+            }
+            let barrierDeadline = ProcessInfo.processInfo.systemUptime + 5
+            while !reachedBarrier {
+                guard ProcessInfo.processInfo.systemUptime < barrierDeadline else {
+                    XCTFail("Footer render barrier was not delivered within 5 seconds: \(name)")
+                    throw NSError(domain: "SelectionFooterRenderBarrierTimeout", code: 1)
+                }
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                context.allowsImplicitAnimation = false
+                host.layoutSubtreeIfNeeded()
+                panel.update()
+                host.display()
+            }
+            CATransaction.flush()
+        }
+        try flushRender()
         let initialFrame = panel.frame
         if let afterMount {
-            afterMount()
-            // The shell grows on the notch spring and the note fades in after it, as the teleprompter does.
-            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-            host.layoutSubtreeIfNeeded()
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { afterMount() }
+            try flushRender()
         }
         XCTAssertEqual(panel.frame, initialFrame)
         // The note band, inside the black pill directly under the top row.
@@ -206,8 +255,46 @@ final class VoiceBarPresentationTests: XCTestCase {
         let bandTop = band.minY
         let footer = NSRect(x: 0, y: host.isFlipped ? bandTop : host.bounds.height - bandTop - band.height,
                             width: host.bounds.width, height: band.height)
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: footer))
-        host.cacheDisplay(in: footer, to: bitmap)
+        // A shell geometry change can alter pixels before the delayed note fades in.
+        // Observe the actual copy, rather than accepting layout/display as text readiness.
+        func normalizedOCR(_ text: String) -> String {
+            text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        // Hosted AppKit text may be unreadable. Keep pixel stability here and leave
+        // the existing hosted readability skip to the contrast assertion above.
+        let hostedRunner = ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true"
+        let expectedNote = state.selectionFeedbackNote
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        var bitmap: NSBitmapImageRep
+        var previousPixels: Data?
+        var previousCaptureTime: TimeInterval?
+        while true {
+            try flushRender()
+            bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: footer))
+            host.cacheDisplay(in: footer, to: bitmap)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            if !hostedRunner {
+                try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([request])
+            }
+            let renderedText = (request.results ?? [])
+                .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            let capturedAt = ProcessInfo.processInfo.systemUptime
+            let pixels = Data(bytes: try XCTUnwrap(bitmap.bitmapData), count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+            if (hostedRunner || normalizedOCR(renderedText) == normalizedOCR(expectedNote ?? "")),
+               state.selectionFeedbackNote == expectedNote, pixels == previousPixels,
+               let previousCaptureTime, capturedAt - previousCaptureTime >= 0.05 { break }
+            previousPixels = pixels
+            previousCaptureTime = capturedAt
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                XCTFail("Footer did not stably render \(expectedNote ?? "an empty note band"); OCR: \(renderedText)")
+                throw NSError(domain: "SelectionFooterRenderTimeout", code: 1)
+            }
+            // Poll at least 50 ms apart; elapsed time alone never establishes readiness.
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
         let bytes = try XCTUnwrap(bitmap.bitmapData)
         if let output = ProcessInfo.processInfo.environment["VOICEBAR_P2B_SHOTS_DIR"] {
             let directory = URL(fileURLWithPath: output, isDirectory: true)

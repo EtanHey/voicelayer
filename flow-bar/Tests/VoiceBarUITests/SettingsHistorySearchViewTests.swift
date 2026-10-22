@@ -90,6 +90,12 @@ final class SettingsHistorySearchViewTests: XCTestCase {
     /// Lead add-on: the search text is warmed after the pages land, and the warm-up stops when History goes away.
     func testTheSearchPrewarmStartsAfterTheAskPageAndStopsWhenHistoryCloses() async {
         let log = QueryLog()
+        let started = expectation(description: "prewarm started after pages applied")
+        let cancelled = expectation(description: "prewarm cancelled on close")
+        started.assertForOverFulfill = false
+        cancelled.assertForOverFulfill = false
+        let lifetime = AsyncStream<Void>.makeStream()
+        defer { lifetime.continuation.finish() }
         let view = SettingsView(
             hotkeyEnabled: true,
             missingPermissions: [],
@@ -108,23 +114,24 @@ final class SettingsHistorySearchViewTests: XCTestCase {
             },
             searchPrewarm: {
                 log.append("prewarm-start")
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(10))
-                }
+                started.fulfill()
+                for await _ in lifetime.stream {}
+                XCTAssertTrue(Task.isCancelled)
                 log.append("prewarm-cancelled")
+                cancelled.fulfill()
             },
             initialTab: .history
         )
         let host = hostSettings(view)
 
-        let started = await settle { log.events.contains("prewarm-start") }
-        XCTAssertTrue(started, "events: \(log.events)")
+        await fulfillment(of: [started], timeout: 10)
         XCTAssertEqual(Array(log.events.prefix(3)), ["dictations-page", "ask-page", "prewarm-start"])
         XCTAssertEqual(log.events.filter { $0 == "prewarm-start" }.count, 1)
 
         host.contentViewController = nil
-        let cancelled = await settle { log.events.contains("prewarm-cancelled") }
-        XCTAssertTrue(cancelled, "closing History stops the warm-up: \(log.events)")
+        await fulfillment(of: [cancelled], timeout: 10)
+        XCTAssertEqual(log.events.filter { $0 == "prewarm-start" }.count, 1)
+        XCTAssertEqual(log.events.filter { $0 == "prewarm-cancelled" }.count, 1)
     }
 
     func testABlankQueryLoadsTheUnfilteredPage() async {
