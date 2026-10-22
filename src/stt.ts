@@ -1593,7 +1593,55 @@ function timedWordsForChunk(
 }
 
 /**
- * Merge chunk text without changing the shipped merge rules, while carrying
+ * A near-identical overlap can miss the text anchor when one token decodes
+ * differently. Only whole segments may establish this additional match: the
+ * later prefix must have no attributed support beyond the shared WAV region,
+ * and the earlier suffix must cover that same interval. Keep the earlier words
+ * intact. Missing/stale timings and distinct repetitions retain both readings.
+ */
+function findTimedNearSeam(merged: TimedChunkWord[], next: TimedChunkWord[]): number {
+  const chronological = (words: TimedChunkWord[]) => words.every((word, i) => {
+    const previous = words[i - 1];
+    return !previous || word.source === previous.source || word.startS >= previous.endS;
+  });
+  for (let size = Math.min(24, merged.length, next.length); size >= 9; size--) {
+    const left = merged.slice(-size);
+    const right = next.slice(0, size);
+    const first = left[0]!;
+    const last = left.at(-1)!;
+    const head = right[0]!;
+    const tail = right.at(-1)!;
+    // Do not cut a segment or guess where a word inside one was spoken.
+    if (merged[merged.length - size - 1]?.source === first.source ||
+        next[size]?.source === tail.source) continue;
+    if (!chronological(left) || !chronological(right) ||
+        left.some(w => w.chunkIndex !== head.chunkIndex - 1) ||
+        head.startS < head.seamStartS || tail.endS > head.seamEndS ||
+        first.startS > head.startS || first.startS < head.startS - 0.5 ||
+        last.endS < tail.endS || last.endS > head.seamEndS) continue;
+    if ([...left, ...right].some(w => /(?:…|\.{3}|[-—])$/u.test(w.text))) continue;
+    let differences = 0;
+    for (let i = 0; i < size; i++) {
+      if (normalizeChunkWordForOverlap(left[i]!.text) !==
+          normalizeChunkWordForOverlap(right[i]!.text)) {
+        if (![left[i]!.text, right[i]!.text].every(w =>
+          /^[\p{L}'’]+$/u.test(normalizeChunkWordForOverlap(w)))) {
+          differences = 2;
+          break;
+        }
+        differences++;
+      }
+    }
+    // Eight or more exact words surround one internal decoder substitution.
+    if (differences === 1 &&
+        normalizeChunkWordForOverlap(first.text) === normalizeChunkWordForOverlap(head.text) &&
+        normalizeChunkWordForOverlap(last.text) === normalizeChunkWordForOverlap(tail.text)) return size;
+  }
+  return 0;
+}
+
+/**
+ * Merge chunk text with conservative timestamp-supported near-seam matching, carrying
  * the segment that actually supplied every kept word onto the full recording
  * timeline.
  *
@@ -1608,7 +1656,7 @@ export function mergeChunkTranscriptsWithSegments(
   /** `seams[i]` describes the seam BEFORE `chunks[i]`; `seams[0]` is unused. */
   seams: ChunkSeamKind[] = [],
 ): { text: string; segments: TranscriptSegment[] } {
-  const text = mergeChunkTranscripts(
+  let text = mergeChunkTranscripts(
     chunks.map((chunk) => chunk.text),
     seams,
   );
@@ -1617,6 +1665,7 @@ export function mergeChunkTranscriptsWithSegments(
   }
 
   const merged: TimedChunkWord[] = [];
+  let timedSeamChanged = false;
   for (const [chunkIndex, chunk] of chunks.entries()) {
     const nextWords = timedWordsForChunk(
       chunk,
@@ -1628,6 +1677,22 @@ export function mergeChunkTranscriptsWithSegments(
 
     if (merged.length === 0 || seams[chunkIndex] === "silence") {
       merged.push(...nextWords);
+      continue;
+    }
+
+    const timedOverlap = findTimedNearSeam(merged, nextWords);
+    if (timedOverlap > 0) {
+      console.error(`[voicelayer] timed seam ${JSON.stringify({
+        removedWords: timedOverlap,
+        overlapStartS: nextWords[0]!.seamStartS,
+        overlapEndS: nextWords[0]!.seamEndS,
+        removedStartS: nextWords[0]!.startS,
+        removedEndS: nextWords[timedOverlap - 1]!.endS,
+        retainedStartS: merged[merged.length - timedOverlap]!.startS,
+        retainedEndS: merged.at(-1)!.endS,
+      })}`);
+      merged.push(...nextWords.slice(timedOverlap));
+      timedSeamChanged = true;
       continue;
     }
 
@@ -1664,7 +1729,8 @@ export function mergeChunkTranscriptsWithSegments(
   const reconstructed = normalizeProseQuoteSpacing(
     merged.map((word) => word.text).join(" ").trim(),
   );
-  if (reconstructed !== text) return { text, segments: [] };
+  if (!timedSeamChanged && reconstructed !== text) return { text, segments: [] };
+  text = reconstructed;
 
   const segments: Array<
     TranscriptSegment & { source: string; chunkIndex: number; sourceEndS: number; seamChunkIndex?: number }
