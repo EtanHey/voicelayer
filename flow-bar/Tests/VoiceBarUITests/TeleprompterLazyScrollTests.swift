@@ -203,11 +203,17 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         defer { window.contentView = nil }
         waitForPaint(host) { self.isOnScreen("word280", host) }
         XCTAssertTrue(isOnScreen("word280", host), "the read starts on word 280; OCR: \(onScreenText(host).prefix(120))")
+        let preAdvanceFrame = onScreenText(host)
         clock.elapsed = 107_760 // all 40 pieces advance together (280 -> 320)
         waitForPaint(host) {
-            self.onScreenText(host).range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]) != nil
+            let frame = self.onScreenText(host)
+            return frame != preAdvanceFrame
+                && !self.isOnScreen("word280", host)
+                && frame.range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]) != nil
         }
         let destination = onScreenText(host)
+        XCTAssertNotEqual(destination, preAdvanceFrame, "clock advance must produce a new frame")
+        XCTAssertFalse(isOnScreen("word280", host), "the earlier word must have scrolled away")
         XCTAssertNotNil(destination.range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]),
                         "the token's last piece, in block 1, is on screen; OCR: \(destination.prefix(120))")
         clock.elapsed = 108_010 // word282 (display id 321)

@@ -92,6 +92,8 @@ final class SettingsHistorySearchViewTests: XCTestCase {
         let log = QueryLog()
         let started = expectation(description: "prewarm started after pages applied")
         let cancelled = expectation(description: "prewarm cancelled on close")
+        started.assertForOverFulfill = false
+        cancelled.assertForOverFulfill = false
         let lifetime = AsyncStream<Void>.makeStream()
         defer { lifetime.continuation.finish() }
         let view = SettingsView(
@@ -128,6 +130,8 @@ final class SettingsHistorySearchViewTests: XCTestCase {
 
         host.contentViewController = nil
         await fulfillment(of: [cancelled], timeout: 10)
+        XCTAssertEqual(log.events.filter { $0 == "prewarm-start" }.count, 1)
+        XCTAssertEqual(log.events.filter { $0 == "prewarm-cancelled" }.count, 1)
     }
 
     func testABlankQueryLoadsTheUnfilteredPage() async {
