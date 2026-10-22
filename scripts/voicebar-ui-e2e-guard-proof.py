@@ -36,6 +36,22 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def derived_data_path(output):
+    """Use the shell's recorded location; only pre-metadata runs use the legacy layout."""
+    metadata = output / 'derived-data-path.txt'
+    if not metadata.exists():
+        return (output / 'DerivedData').resolve()
+    recorded = metadata.read_text().strip()
+    if not recorded or not pathlib.Path(recorded).is_absolute():
+        raise ValueError('Expected an absolute recorded DerivedData path')
+    return pathlib.Path(recorded).resolve()
+
+
+def xctest_runner_path(derived):
+    return (derived / 'Build/Products/Debug/VoiceBarUIE2ETests-Runner.app'
+            '/Contents/MacOS/VoiceBarUIE2ETests-Runner').resolve()
+
+
 def identities(repo, output):
     sandbox = pathlib.Path((output / 'sandbox-path.txt').read_text().strip())
     files = [repo / path for path in SOURCES]
@@ -48,11 +64,15 @@ def identities(repo, output):
     if b'voicebar_no_device_guard_version' not in binary.read_bytes():
         raise ValueError('QA binary lacks the mandatory runtime guard check')
     # Include the actual UI test executable, not just its source.
-    binaries = list((output / 'DerivedData/Build/Products').glob(
+    derived = derived_data_path(output)
+    binaries = list((derived / 'Build/Products').glob(
         '**/VoiceBarUIE2ETests.xctest/Contents/MacOS/VoiceBarUIE2ETests'))
     if len(binaries) != 1:
         raise ValueError('Expected exactly one UI test executable')
-    files += binaries
+    files += binaries + [xctest_runner_path(derived)]
+    metadata = output / 'derived-data-path.txt'
+    if metadata.exists():
+        files.append(metadata)
     return {str(path.resolve()): digest(path) for path in files}
 
 

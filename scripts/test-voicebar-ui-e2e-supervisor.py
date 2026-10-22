@@ -1870,6 +1870,53 @@ class SupervisorTests(unittest.TestCase):
             host.collect_owned()
             self.assertEqual(set(host.owned), {302})  # QA born before launch is not ours.
 
+    def test_relocated_launchd_runner_adoption_and_modal_proof_stay_lifetime_bound(self):
+        with tempfile.TemporaryDirectory(suffix='.noindex') as tmp:
+            root = pathlib.Path(tmp)
+            output = root / 'output'
+            output.mkdir()
+            derived = root / 'relocated.noindex/DerivedData'
+            metadata = output / 'derived-data-path.txt'
+            metadata.write_text(str(derived) + '\n')
+            runner = (derived / 'Build/Products/Debug/VoiceBarUIE2ETests-Runner.app/Contents'
+                      '/MacOS/VoiceBarUIE2ETests-Runner')
+            runner.parent.mkdir(parents=True)
+            runner.write_bytes(b'synthetic runner, never executed')
+            host = self.host(output)
+            self.assertFalse((output / 'DerivedData').exists())
+            xr = str(runner.resolve())
+            foreign = str((root / 'foreign.noindex' / runner.relative_to(derived)).resolve())
+            legacy = str((output / 'DerivedData' / runner.relative_to(derived)).resolve())
+            live = {302: dict(started='20.000001', cmd=xr, parent=1, state='S'),
+                    303: dict(started='5.000000', cmd=xr, parent=1, state='S'),
+                    304: dict(started='20.000001', cmd=foreign, parent=1, state='S'),
+                    305: dict(started='20.000001', cmd=legacy, parent=1, state='S')}
+            host.process_state = lambda pid: dict(live[pid]) if pid in live else None
+            host.process_rows = lambda: {pid: (s['parent'], s['cmd']) for pid, s in live.items()}
+            host.launch_birth = (10, 0)
+            host.collect_owned()
+            self.assertEqual(set(host.owned), {302})
+            self.assertEqual(host.owned[302]['kind'], 'xctest-runner')
+            self.assertEqual(host.owned[302]['cmd'], xr)
+            self.assertEqual(host.owned[302]['started'], '20.000001')
+            self.assertTrue(any(row['pid'] == 303 for row in host.ownership_races))
+            # Exercise the actual modal-proof writer, with only its native helper stubbed.
+            with patch('subprocess.run', return_value=SimpleNamespace(
+                    returncode=0, stdout=json.dumps(dict(axTrusted=True, prompts=[], modals=[])))):
+                type(host).permissions(host)
+            proof = json.loads((output / 'modal-run-proof.json').read_text())
+            self.assertEqual(proof['owned'], [dict(pid=302, birth=[20, 1], path=xr)])
+            # A later metadata edit cannot grant this host authority over a new product path.
+            metadata.write_text(str(root / 'foreign.noindex'))
+            host.collect_owned()
+            self.assertEqual(set(host.owned), {302})
+            live[302]['started'] = '30.000002'  # PID reused at the same exact path.
+            self.assertFalse(host.owned_alive(302))
+            with patch('os.kill') as kill:
+                host.terminate_owned(302)
+                kill.assert_not_called()
+            self.assertEqual(host.owned[302]['retired']['reason'], 'pid-reused')
+
     def test_r3_mute_guard_failure_never_blocks_termination(self):
         with tempfile.TemporaryDirectory() as tmp:
             live = {200: dict(started='r', cmd='runner', parent=99, state='S'),

@@ -52,8 +52,8 @@ def expected_packet(step):
 
 def configure(output, app, sandbox, scenario=None):
     scenario = selected_scenario(output, scenario)
-    metadata = output / 'derived-data-path.txt'
-    derived = pathlib.Path(metadata.read_text().strip()) if metadata.exists() else output / 'DerivedData'
+    guard = load_guard()
+    derived = guard.derived_data_path(output)
     candidates = list((derived / 'Build/Products').glob('*.xctestrun'))
     if len(candidates) != 1:
         raise ValueError('Expected exactly one built xctestrun')
@@ -85,7 +85,6 @@ def configure(output, app, sandbox, scenario=None):
     env = target.setdefault('EnvironmentVariables', {})
     env.update(VOICEBAR_UIE2E_APP=str(app), VOICEBAR_UIE2E_ROOT=str(sandbox),
                VOICEBAR_UIE2E_SCENARIO=scenario)
-    guard = load_guard()
     if guard.required(scenario, app / 'Contents/Info.plist'):
         env['VOICEBAR_UIE2E_DEVICE_GUARD'] = str(guard.verify(pathlib.Path(__file__).resolve().parent.parent, output))
     # Moving the plist changes __TESTROOT__. Resolve it before writing the configured copy.

@@ -134,6 +134,17 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(target['EnvironmentVariables']['VOICEBAR_UIE2E_APP'], str(self.root / 'QA.app'))
         self.assertEqual(target['TestBundlePath'], str(products / 'Debug/Test.xctest'))
 
+    def test_configure_uses_only_recorded_relocated_products(self):
+        products = self.root / 'relocated.noindex/DerivedData/Build/Products'
+        products.mkdir(parents=True)
+        (self.root / 'derived-data-path.txt').write_text(str(products.parents[1]) + '\n')
+        (products / 'test.xctestrun').write_bytes(plistlib.dumps({'VoiceBarUIE2ETests': {
+            'TestBundlePath': '__TESTROOT__/Debug/Test.xctest'}}))
+        self.assertFalse((self.root / 'DerivedData').exists())
+        results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox')
+        target = plistlib.loads((self.root / 'UIE2E.xctestrun').read_bytes())['VoiceBarUIE2ETests']
+        self.assertEqual(target['TestBundlePath'], str(products / 'Debug/Test.xctest'))
+
     def test_configure_replaces_combined_selection_in_both_plist_formats(self):
         products = self.root / 'DerivedData/Build/Products'
         products.mkdir(parents=True)
@@ -166,6 +177,7 @@ class ReportTests(unittest.TestCase):
                     results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox', scenario)
                 self.assertFalse((self.root / 'UIE2E.xctestrun').exists())
                 with patch.object(results, 'load_guard') as load:
+                    load.return_value.derived_data_path.return_value = self.root / 'DerivedData'
                     load.return_value.required.return_value = True
                     load.return_value.verify.return_value = self.root / 'device-guard.dylib'
                     results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox', scenario)

@@ -22,6 +22,12 @@ import sys
 import time
 
 
+_guard_spec = importlib.util.spec_from_file_location(
+    'device_guard', pathlib.Path(__file__).with_name('voicebar-ui-e2e-guard-proof.py'))
+device_guard = importlib.util.module_from_spec(_guard_spec)
+_guard_spec.loader.exec_module(device_guard)
+
+
 # Full PASS recorded 1488.545 s (earlier run 1504 s); keep 40 min for both broad suites.
 # gate2246 run-01 reached 250 s of recording, before xcodebuild/recorder overhead.
 SCENARIO_BUDGET_SECONDS = {'full': 2400, 'focused-338': 2400, 'gate2246': 600, 'hide1': 300}
@@ -508,6 +514,8 @@ class NativeHost:
         self.output, self.scenario = output, scenario
         self.repo = pathlib.Path(__file__).resolve().parent.parent
         self.sandbox = pathlib.Path((output / 'sandbox-path.txt').read_text().strip())
+        # Freeze this run's exact product path; metadata edits must never expand adoption.
+        self.xctest_runner = str(device_guard.xctest_runner_path(device_guard.derived_data_path(output)))
         self.child = None
         self.resident = {}
         self.preflight = {}
@@ -1117,8 +1125,7 @@ class NativeHost:
         # Unique run-local executables, never a name match. XCTest launches its runner app
         # through launchd, so no PPID chain from our runner reaches it (run-03 PID 47300).
         unique = {str((self.sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar').resolve()): 'qa',
-                  str((self.output / 'DerivedData/Build/Products/Debug/VoiceBarUIE2ETests-Runner.app/Contents'
-                       '/MacOS/VoiceBarUIE2ETests-Runner').resolve()): 'xctest-runner'}
+                  self.xctest_runner: 'xctest-runner'}
         found = {}
         complete = False
         try:

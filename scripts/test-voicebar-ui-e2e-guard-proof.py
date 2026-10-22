@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import pathlib
 import plistlib
@@ -12,6 +13,91 @@ spec.loader.exec_module(guard)
 
 
 class GuardProofTests(unittest.TestCase):
+    def products_fixture(self, root, legacy=False):
+        repo, output, sandbox = root / 'repo', root / 'output', root / 'sandbox'
+        output.mkdir()
+        for source in guard.SOURCES:
+            path = repo / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('synthetic source: ' + source)
+        binary = sandbox / 'VoiceBarQA.app/Contents/MacOS/VoiceBar'
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b'synthetic voicebar_no_device_guard_version')
+        (binary.parents[1] / 'Info.plist').write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
+        (output / 'sandbox-path.txt').write_text(str(sandbox))
+        for name in ['device-guard.dylib', 'device-guard-probe', 'voicebar-ui-e2e-resident',
+                     'voicebar-ui-e2e-permissions']:
+            (output / name).write_bytes(('synthetic ' + name).encode())
+        derived = output / 'DerivedData' if legacy else root / 'relocated.noindex/DerivedData'
+        if not legacy:
+            (output / 'derived-data-path.txt').write_text(str(derived) + '\n')
+        runner = (derived / 'Build/Products/Debug/VoiceBarUIE2ETests-Runner.app/Contents'
+                  '/MacOS/VoiceBarUIE2ETests-Runner')
+        test = runner.parents[1] / 'PlugIns/VoiceBarUIE2ETests.xctest/Contents/MacOS/VoiceBarUIE2ETests'
+        for path in [runner, test]:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(('synthetic ' + path.name).encode())
+        return repo, output, derived, runner, test
+
+    def write_synthetic_proof(self, repo, output):
+        # Synthetic probe records exercise verification only; never claim blocked real APIs.
+        proof = dict(version=1, paths=guard.PATHS, identities=guard.identities(repo, output), tests=[
+            dict(path=p, passed=True, exit=86, events=['voicebar-no-device-guard-v1:installed',
+                 'posix_spawn' if p == 'NSTask' else p]) for p in guard.PATHS])
+        (output / 'device-guard-proof.json').write_text(json.dumps(proof))
+        return proof
+
+    def test_relocated_products_are_hashed_and_changed_bytes_refuse_authorization(self):
+        for changed in ['test', 'runner']:
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory(suffix='.noindex') as tmp:
+                repo, output, derived, runner, test = self.products_fixture(pathlib.Path(tmp))
+                self.assertFalse((output / 'DerivedData').exists())
+                self.assertEqual(guard.derived_data_path(output), derived.resolve())
+                proof = self.write_synthetic_proof(repo, output)
+                for product in [runner, test]:
+                    self.assertEqual(proof['identities'][str(product.resolve())],
+                                     hashlib.sha256(product.read_bytes()).hexdigest())
+                self.assertEqual(guard.authorize(repo, output, 'hide1'), output / 'device-guard.dylib')
+                (test if changed == 'test' else runner).write_bytes(b'changed product')
+                with self.assertRaisesRegex(ValueError, 'stale or invalid'):
+                    guard.authorize(repo, output, 'hide1')
+
+    def test_recorded_path_change_refuses_even_with_identical_product_bytes(self):
+        import shutil
+        with tempfile.TemporaryDirectory(suffix='.noindex') as tmp:
+            root = pathlib.Path(tmp)
+            repo, output, derived, _, _ = self.products_fixture(root)
+            self.write_synthetic_proof(repo, output)
+            foreign = root / 'foreign.noindex/DerivedData'
+            shutil.copytree(derived, foreign)
+            (output / 'derived-data-path.txt').write_text(str(foreign))
+            with self.assertRaisesRegex(ValueError, 'stale or invalid'):
+                guard.authorize(repo, output, 'hide1')
+
+    def test_legacy_fallback_only_without_metadata(self):
+        with tempfile.TemporaryDirectory(suffix='.noindex') as tmp:
+            repo, output, derived, _, _ = self.products_fixture(pathlib.Path(tmp), legacy=True)
+            self.assertEqual(guard.derived_data_path(output), derived.resolve())
+            self.write_synthetic_proof(repo, output)
+            self.assertEqual(guard.verify(repo, output), output / 'device-guard.dylib')
+            metadata = output / 'derived-data-path.txt'
+            for invalid in ['', 'relative/DerivedData']:
+                metadata.write_text(invalid)
+                with self.assertRaisesRegex(ValueError, 'absolute recorded'):
+                    guard.verify(repo, output)
+            metadata.write_text(str(pathlib.Path(tmp) / 'missing.noindex/DerivedData'))
+            with self.assertRaisesRegex(ValueError, 'exactly one UI test executable'):
+                guard.verify(repo, output)
+
+    def test_duplicate_relocated_test_executables_refuse_proof(self):
+        with tempfile.TemporaryDirectory(suffix='.noindex') as tmp:
+            repo, output, derived, _, test = self.products_fixture(pathlib.Path(tmp))
+            duplicate = derived / 'Build/Products/Other/VoiceBarUIE2ETests.xctest/Contents/MacOS/VoiceBarUIE2ETests'
+            duplicate.parent.mkdir(parents=True)
+            duplicate.write_bytes(test.read_bytes())
+            with self.assertRaisesRegex(ValueError, 'exactly one UI test executable'):
+                guard.identities(repo, output)
+
     def test_missing_proof_refuses(self):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaises(FileNotFoundError):
