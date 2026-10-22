@@ -118,6 +118,45 @@ test("output guard rejects unsafe overrides and symlink escapes before writing",
 
 
 
+for (const scenario of ["version", "app", "zip", "docs.local", "dot-segments"]) test(`release rejects ${scenario} destination before deleting artifacts`, () => {
+  const fixture = mkdtempSync(join(tmpdir(), "release-guard-"));
+  const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+  try {
+    {
+      const base = join(fixture, scenario);
+      const safe = join(base, "artifacts.noindex");
+      const outside = join(base, "indexed");
+      const target = scenario === "docs.local" ? join(safe, "docs.local") : outside;
+      mkdirSync(target, { recursive: true });
+      mkdirSync(safe, { recursive: true });
+      const app = join(target, "VoiceBar.app");
+      const zip = join(target, "VoiceBar.zip");
+      mkdirSync(app);
+      writeFileSync(join(app, "marker"), "keep app");
+      writeFileSync(zip, "keep zip");
+      const versionDir = join(safe, version);
+      if (scenario === "version" || scenario === "docs.local") {
+        symlinkSync(target, versionDir);
+      } else {
+        mkdirSync(versionDir);
+        if (scenario === "app") symlinkSync(app, join(versionDir, "VoiceBar.app"));
+        if (scenario === "zip") symlinkSync(zip, join(versionDir, "VoiceBar.zip"));
+        // A safe sibling must also survive when another final destination fails.
+        if (scenario === "zip") writeFileSync(join(versionDir, "VoiceBar.app"), "keep sibling");
+      }
+      const output = scenario === "dot-segments" ? `${safe}/../indexed` : safe;
+      const result = Bun.spawnSync(["bash", "scripts/release-voicebar.sh", "--output-dir", output, "--skip-tap-check"],
+        { cwd: root, env: process.env, stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr.toString()).toContain(scenario === "docs.local" ? "docs.local holds only" : "*.noindex");
+      expect(result.stdout.toString()).not.toContain("Building notarized");
+      expect(readFileSync(join(app, "marker"), "utf8")).toBe("keep app");
+      expect(readFileSync(zip, "utf8")).toBe("keep zip");
+      if (scenario === "zip") expect(readFileSync(join(versionDir, "VoiceBar.app"), "utf8")).toBe("keep sibling");
+    }
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test("rollback backups allow persistent storage and reject docs.local", () => {
   const guard = join(root, "scripts/lib/noindex-path.sh");
   const check = (path: string) => Bun.spawnSync(["bash", "-c",
@@ -142,13 +181,13 @@ test("docs.local hygiene and archive filter use synthetic fixtures", () => {
   try {
     writeFileSync(join(source, "receipt.log"), "small receipt");
     expect(run("check-docslocal-hygiene.py", source).exitCode).toBe(0);
-    for (const name of ["QA.app", "DerivedData", ".build.noindex"]) {
+    for (const name of ["QA.app", "derivedData", ".build.noindex", "Mixed.APP", ".BUILD-cache"]) {
       mkdirSync(join(source, name));
       expect(run("check-docslocal-hygiene.py", source).exitCode).not.toBe(0);
       rmSync(join(source, name), { recursive: true });
     }
-    for (const name of ["QA.app", "DerivedData", ".build.noindex"]) mkdirSync(join(source, name));
-    for (const name of ["app.zip", "app.dmg", "app.tgz"]) writeFileSync(join(source, name), "binary");
+    for (const name of ["QA.app", "derivedData", ".build.noindex", "Mixed.APP", ".BUILD-cache"]) mkdirSync(join(source, name));
+    for (const name of ["app.zip", "app.dmg", "app.tgz", "mixed.Zip", "mixed.DMG", "mixed.TgZ"]) writeFileSync(join(source, name), "binary");
     writeFileSync(join(source, "large.log"), Buffer.alloc(5 * 1024 * 1024 + 1));
     writeFileSync(join(source, "executable"), Buffer.from("cffaedfe00000000", "hex"));
     symlinkSync(source, join(source, "cycle"));

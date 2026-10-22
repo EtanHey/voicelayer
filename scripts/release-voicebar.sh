@@ -123,6 +123,14 @@ ARTIFACT_DIR="$ARTIFACT_ROOT/$VERSION"
 APP_PATH="$ARTIFACT_DIR/VoiceBar.app"
 ZIP_PATH="$ARTIFACT_DIR/VoiceBar.zip"
 
+# Resolve every final destination before cleanup, including existing child symlinks.
+ARTIFACT_DIR="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$ARTIFACT_DIR")"
+APP_PATH="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$APP_PATH")"
+ZIP_PATH="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$ZIP_PATH")"
+require_noindex_path "$ARTIFACT_DIR"
+require_noindex_path "$APP_PATH"
+require_noindex_path "$ZIP_PATH"
+
 mkdir -p "$ARTIFACT_DIR"
 rm -rf "$APP_PATH" "$ZIP_PATH"
 

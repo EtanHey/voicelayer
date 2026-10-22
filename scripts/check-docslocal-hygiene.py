@@ -11,7 +11,8 @@ MACHO = {bytes.fromhex(x) for x in ('feedface', 'cefaedfe', 'feedfacf', 'cffaedf
 def excluded(path):
     if path.is_symlink():
         return True
-    if path.name.endswith(('.app', '.zip', '.dmg', '.tgz')) or path.name == 'DerivedData' or path.name.startswith('.build'):
+    name = path.name.casefold()
+    if name.endswith(('.app', '.zip', '.dmg', '.tgz')) or name == 'deriveddata' or name.startswith('.build'):
         return True
     if path.is_file():
         if path.stat().st_size > MAX_BYTES:
