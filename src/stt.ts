@@ -1622,23 +1622,28 @@ function findTimedNearSeam(merged: TimedChunkWord[], next: TimedChunkWord[]): nu
     // Do not cut a segment or guess where a word inside one was spoken.
     if (merged[merged.length - size - 1]?.source === first.source ||
         next[size]?.source === tail.source) continue;
-    if (!chronological(left) || !chronological(right) ||
+    if ([...left, ...right].some(w => !Number.isFinite(w.startS) || !Number.isFinite(w.endS)) ||
+        !chronological(left) || !chronological(right) ||
         left.some(w => w.chunkIndex !== head.chunkIndex - 1) ||
         head.startS < head.seamStartS || tail.endS > head.seamEndS ||
         first.startS > head.startS || first.startS < head.startS - 0.5 ||
         last.endS < tail.endS || last.endS > head.seamEndS) continue;
-    // Union whole retained spans without filling any gap, however small.
-    const coverage: { startS: number; endS: number }[] = [];
-    for (const word of left.flatMap(w => w.retainedSpans).sort((a, b) => a.startS - b.startS)) {
-      const component = coverage.at(-1);
-      if (component && word.startS <= component.endS) {
-        component.endS = Math.max(component.endS, word.endS);
-      } else {
-        coverage.push({ startS: word.startS, endS: word.endS });
+    // Require ONE original component around the whole run on each side.
+    // Presentation widening must not conceal a retained or later-reading gap.
+    const coversRun = (words: TimedChunkWord[]) => {
+      const coverage: { startS: number; endS: number }[] = [];
+      for (const span of words.flatMap(w => w.retainedSpans).sort((a, b) => a.startS - b.startS)) {
+        const component = coverage.at(-1);
+        if (component && span.startS <= component.endS) {
+          component.endS = Math.max(component.endS, span.endS);
+        } else {
+          coverage.push({ startS: span.startS, endS: span.endS });
+        }
       }
-    }
-    if (right.some(word => !coverage.some(component =>
-      component.startS <= word.startS && word.endS <= component.endS))) continue;
+      return coverage.some(component =>
+        component.startS <= head.startS && tail.endS <= component.endS);
+    };
+    if (!coversRun(left) || !coversRun(right)) continue;
     if ([...left, ...right].some(w => /…|\.{3}|[-—][\p{P}\p{S}]*$/u.test(w.text))) continue;
     let differences = 0;
     for (let i = 0; i < size; i++) {

@@ -49,6 +49,78 @@ describe("timestamp-supported near-repeat seams", () => {
     expect(result.segments.map(s => s.text).join(" ")).toBe(result.text);
   });
 
+  test.each([2, 3])("keeps the entire later reading split into %s segments across retained components", count => {
+    const chunks = fixture();
+    chunks[0]!.segments[1]!.endS = 25.2;
+    chunks[0]!.segments[2]!.startS = 29;
+    chunks[1]!.text = `Several violet robots near the orchard never build a wooden bridge. ${continuation}`;
+    chunks[1]!.segments = [
+      { text: "Several violet robots near the orchard", startS: 0, endS: 0.2 },
+      ...(count === 2
+        ? [{ text: "never build a wooden bridge.", startS: 4, endS: 4.96 }]
+        : [
+          { text: "never build", startS: 4, endS: 4.4 },
+          { text: "a wooden bridge.", startS: 4.4, endS: 4.96 },
+        ]),
+      { text: continuation, startS: 6, endS: 8 },
+    ];
+    const result = mergeChunkTranscriptsWithSegments(chunks);
+    expect(result.text).toBe(`${chunks[0]!.text} ${chunks[1]!.text}`);
+    expect(result.segments.map(s => s.text).join(" ")).toBe(result.text);
+  });
+
+  test("keeps all two- and three-segment partitions across retained components", () => {
+    const words = later.replace("we'll", "never").split(" ");
+    for (let firstCut = 1; firstCut < words.length; firstCut++) {
+      for (let secondCut = firstCut; secondCut < words.length; secondCut++) {
+        const chunks = fixture();
+        chunks[0]!.segments[1]!.endS = 25.2;
+        chunks[0]!.segments[2]!.startS = 29;
+        const cuts = secondCut === firstCut ? [firstCut] : [firstCut, secondCut];
+        const boundaries = [0, ...cuts, words.length];
+        chunks[1]!.text = `${words.join(" ")} ${continuation}`;
+        chunks[1]!.segments = boundaries.slice(1).map((end, index) => ({
+          text: words.slice(boundaries[index]!, end).join(" "),
+          startS: index === 0 ? 0 : index === 1 ? 4 : 4.4,
+          endS: index === 0 ? 0.2 : index === boundaries.length - 2 ? 4.96 : 4.4,
+        }));
+        chunks[1]!.segments.push({ text: continuation, startS: 6, endS: 8 });
+        expect(mergeChunkTranscriptsWithSegments(chunks).text).toBe(`${chunks[0]!.text} ${chunks[1]!.text}`);
+      }
+    }
+  });
+
+  test.each([1, 0.000001])("keeps a later gap of %s seconds even inside one retained component", gap => {
+    const chunks = fixture();
+    chunks[1]!.segments = [
+      { text: "Several violet robots near the orchard", startS: 0, endS: 1 },
+      { text: "we'll build a wooden bridge.", startS: 1 + gap, endS: 4.96 },
+      { text: continuation, startS: 6, endS: 8 },
+    ];
+    expect(mergeChunkTranscriptsWithSegments(chunks).text).toBe(`${chunks[0]!.text} ${chunks[1]!.text}`);
+  });
+
+  test("keeps a later gap concealed by instantaneous-segment widening", () => {
+    const chunks = fixture();
+    chunks[1]!.segments = [
+      { text: "Several violet robots near the orchard", startS: 0, endS: 0.2 },
+      { text: "we'll", startS: 4, endS: 4 },
+      { text: "build a wooden bridge.", startS: 4, endS: 4.96 },
+      { text: continuation, startS: 6, endS: 8 },
+    ];
+    expect(mergeChunkTranscriptsWithSegments(chunks).text).toBe(`${chunks[0]!.text} ${chunks[1]!.text}`);
+  });
+
+  test("folds a later reading split at touching segment boundaries", () => {
+    const chunks = fixture();
+    chunks[1]!.segments = [
+      { text: "Several violet robots near the orchard", startS: 0, endS: 2 },
+      { text: "we'll build a wooden bridge.", startS: 2, endS: 4.96 },
+      { text: continuation, startS: 6, endS: 8 },
+    ];
+    expect(mergeChunkTranscriptsWithSegments(chunks).text).toBe(`We agreed. ${earlier} ${continuation}`);
+  });
+
   test("does not fill a retained gap by widening an instantaneous segment", () => {
     const chunks = fixture();
     chunks[0]!.segments = [
@@ -61,8 +133,13 @@ describe("timestamp-supported near-repeat seams", () => {
   });
 
   test.each([4.88, 4.80, 4.88])("retains target removal with recorded relative segment timings ending at %s", end => {
-    expect(mergeChunkTranscriptsWithSegments(fixture(0, end)).text)
-      .toBe(`We agreed. ${earlier} ${continuation}`);
+    const chunks = fixture(0, end);
+    // Recorded requests 6/7 start at 75/100: retained union [99.72,105).
+    chunks[0]!.startSeconds = 75;
+    chunks[1]!.startSeconds = 100;
+    const result = mergeChunkTranscriptsWithSegments(chunks);
+    expect(result.text).toBe(`We agreed. ${earlier} ${continuation}`);
+    expect(chunks.map(c => c.text).join(" ").split(/\s+/).length - result.text.split(/\s+/).length).toBe(11);
   });
 
   test("keeps the untimed merge unchanged", () => {
@@ -77,6 +154,13 @@ describe("timestamp-supported near-repeat seams", () => {
     chunks[1]!.text = chunks[1]!.text.replace("we'll", fragment);
     chunks[1]!.segments[0]!.text = chunks[1]!.segments[0]!.text.replace("we'll", fragment);
     expect(mergeChunkTranscriptsWithSegments(chunks).text).toContain(fragment);
+  });
+
+  test.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])("keeps both readings with non-finite chunk offsets: %s", offset => {
+    const chunks = fixture();
+    chunks[0]!.startSeconds = offset;
+    chunks[1]!.startSeconds = offset;
+    expect(mergeChunkTranscriptsWithSegments(chunks).text).toBe(`${chunks[0]!.text} ${chunks[1]!.text}`);
   });
 
   test("keeps stale segment text", () => {
