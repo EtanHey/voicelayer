@@ -136,6 +136,8 @@ export interface BargeInDecision {
 }
 
 export interface BargeInMonitorOptions {
+  /** Request owner cancellation, including disconnect. No capture transfer implied. */
+  signal?: AbortSignal;
   playbackStartedAtMs: number;
   settleMs?: number;
   minSpeechChunks?: number;
@@ -143,11 +145,13 @@ export interface BargeInMonitorOptions {
 }
 
 export interface BargeInMonitor {
+  /** Owned adapters settle after stream exit and in-flight work; reject on failure/abort. */
   exited: Promise<void>;
   pushAudioChunk(
     pcmChunk: Uint8Array,
     capturedAtMs?: number,
   ): Promise<BargeInDecision>;
+  /** Terminal, idempotent stop request. Await exited before releasing capture ownership. */
   stop(): void;
   getMetrics(): BargeInMonitorMetrics;
 }

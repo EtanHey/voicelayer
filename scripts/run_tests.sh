@@ -120,12 +120,12 @@ done
 record_status "fixture inventory" "$missing_fixture"
 
 printf '\n== Swift build ==\n'
-swift build --package-path "$FLOW_BAR_DIR"
+swift build --scratch-path "$ROOT_DIR/.build.noindex/swift" --package-path "$FLOW_BAR_DIR"
 swift_build_status=$?
 record_status "swift build" "$swift_build_status"
 
 printf '\n== XCTest ==\n'
-VOICEBAR_SNAPSHOTS=1 VOICEBAR_SNAPSHOTS_RECORD=0 swift test --package-path "$FLOW_BAR_DIR"
+VOICEBAR_SNAPSHOTS=1 VOICEBAR_SNAPSHOTS_RECORD=0 swift test --scratch-path "$ROOT_DIR/.build.noindex/swift" --package-path "$FLOW_BAR_DIR"
 swift_test_status=$?
 
 if [ "${VOICELAYER_RUN_TESTS_FORCE_SWIFT_FAIL:-0}" = "1" ]; then

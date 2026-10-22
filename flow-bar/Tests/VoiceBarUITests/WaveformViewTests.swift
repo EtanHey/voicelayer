@@ -88,7 +88,13 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertEqual(barSource.components(separatedBy: "VoiceBarNotchWaveform(").count - 1, 1)
         XCTAssertFalse(barSource.contains("Color.clear\n                    .frame"))
         XCTAssertFalse(barSource.contains("horizontalPadding:"))
-        XCTAssertTrue(barSource.contains("case .speaking:\n            HStack"))
+        let compact = try XCTUnwrap(barSource.components(separatedBy: "private var notchCompactStatusContent").dropFirst().first)
+            .components(separatedBy: "private var notchSpeakingTrailingContent")[0]
+        let speaking = try XCTUnwrap(barSource.components(separatedBy: "private var notchSpeakingTrailingContent").dropFirst().first)
+            .components(separatedBy: "private var notchWaveform")[0]
+        XCTAssertTrue(compact.contains("case .speaking:\n            notchSpeakingTrailingContent"))
+        XCTAssertTrue(speaking.contains("return HStack("))
+        XCTAssertEqual(speaking.components(separatedBy: "\n            notchWaveform\n").count - 1, 1)
     }
 
     @MainActor
@@ -403,25 +409,24 @@ final class WaveformViewTests: XCTestCase {
 
     func testTranscribingKeepsOneGoldWaveformInTheRecordingWingAndMorphsTheIndicator() throws {
         let source = try barViewSource()
-        let leadingCompactStatusBranch = source
-            .components(separatedBy: "case .compactStatus:")
-            .dropFirst()
-            .first?
-            .components(separatedBy: "case .teleprompter:")
-            .first?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let trailingBranch = source
-            .components(separatedBy: "private var notchTrailingContent")
-            .dropFirst()
-            .first?
-            .components(separatedBy: "private var notchCompactStatusContent")
-            .first
+        let leading = try XCTUnwrap(source.components(separatedBy: "private var notchLeadingContent").dropFirst().first)
+            .components(separatedBy: "private var playbackPauseControl")[0]
+        let leadingCompactStatusBranch = try XCTUnwrap(
+            leading.components(separatedBy: "case .compactStatus, .teleprompter:").dropFirst().first
+        )
+        let trailingBranch = try XCTUnwrap(source.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
+            .components(separatedBy: "private var notchCompactStatusContent")[0]
+        let compact = try XCTUnwrap(source.components(separatedBy: "private var notchCompactStatusContent").dropFirst().first)
+            .components(separatedBy: "private var notchSpeakingTrailingContent")[0]
 
-        XCTAssertTrue(leadingCompactStatusBranch?.contains("if state.mode == .transcribing") == true)
-        XCTAssertTrue(leadingCompactStatusBranch?.contains("ProcessingSpinner()") == true)
-        XCTAssertFalse(leadingCompactStatusBranch?.contains("statusLabel") == true)
-        XCTAssertFalse(leadingCompactStatusBranch?.contains("WaveformView(") == true)
-        XCTAssertTrue(trailingBranch?.contains("notchWaveform") == true)
+        XCTAssertTrue(leadingCompactStatusBranch.contains("if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {\n                ProcessingSpinner()"))
+        XCTAssertTrue(leadingCompactStatusBranch.contains("ProcessingSpinner()"))
+        XCTAssertFalse(leadingCompactStatusBranch.contains("statusLabel"))
+        XCTAssertFalse(leadingCompactStatusBranch.contains("WaveformView("))
+        XCTAssertTrue(trailingBranch.contains("notchWaveform"))
+        XCTAssertTrue(trailingBranch.contains("case .recording:\n            notchWaveform"))
+        XCTAssertTrue(trailingBranch.contains("} else if notchPresentation.visualState == .compactStatus {\n                notchCompactStatusContent"))
+        XCTAssertTrue(compact.contains("case .transcribing:\n            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {\n                notchWaveform"))
         XCTAssertTrue(source.contains("private var notchWaveform"))
         XCTAssertTrue(source.contains("VoiceBarNotchWaveform("))
     }

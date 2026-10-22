@@ -303,3 +303,18 @@ export class SileroVoiceActivityDetector implements VoiceActivityDetector {
     return resetVAD();
   }
 }
+
+/** One monitor's recurrence and context; the legacy recording VAD stays separate. */
+export class IsolatedSileroVoiceActivityDetector extends SileroVoiceActivityDetector {
+  private session: Promise<IsolatedVADSession> | undefined;
+
+  override async processChunk(pcmChunk: Uint8Array): Promise<number> {
+    this.session ??= createVADSession();
+    return (await this.session).process(pcmChunk);
+  }
+
+  override async reset(): Promise<void> {
+    // Detach even an in-flight inference: it cannot update the next session.
+    this.session = undefined;
+  }
+}

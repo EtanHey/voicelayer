@@ -360,8 +360,8 @@ final class SpeakSelectionCaptureTests: XCTestCase {
                              postCopy: @escaping () -> Bool = { false }, readCopiedString: (() -> String?)? = nil,
                              schedule: ((TimeInterval, @escaping () -> Void) -> Void)? = nil,
                              now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) -> SpeakSelectionCapture {
-        let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".build/debug/VoiceBar")
+        let executable = Bundle(for: Self.self).bundleURL.deletingLastPathComponent()
+            .appendingPathComponent("VoiceBar")
         let pasteboardName = pasteboard.name.rawValue
         return SpeakSelectionCapture(canCapture: canCapture, snapshotReader: snapshotReader ?? {
             SelectionPasteboardSnapshot.readInHelper(name: pasteboardName, executable: executable)
