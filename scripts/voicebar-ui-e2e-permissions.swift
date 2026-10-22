@@ -240,9 +240,12 @@ func compositeOnBlack(_ shots: [(image: CGImage, frame: CGRect)]) -> CGImage? {
     }
     return context.makeImage()
 }
+// One independent key per helper/broker process; never exported or serialized.
+private let redactionKey = SymmetricKey(size: .bits256)
 func redact(_ text: String) -> String {
-    let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
-    return "<redacted len=\(text.count) sha256=\(digest.prefix(8))>"
+    let digest = HMAC<SHA256>.authenticationCode(for: Data(text.utf8), using: redactionKey)
+        .map { String(format: "%02x", $0) }.joined()
+    return "<redacted len=\(text.count) hmac-sha256=\(digest.prefix(32))>"
 }
 /// Persisted form: owner kept only if it is a plain identifier, every title redacted.
 func redactedEntries(_ entries: [[String: Any]]) -> [[String: Any]] {
@@ -426,6 +429,7 @@ func captureStill(binding: inout QARunBinding, executable: String, to path: URL)
 /// Long-lived boundary broker. The sandboxed XCTest runner posts a name-only distributed
 /// notification before each fixture command, UI action and still; the broker answers with a
 /// fresh synchronous modal decision (and, for stills, a window-ID capture) in an ack file.
+// BEGIN BOUNDARY BROKER
 final class Broker {
     let token: String, boundary: URL, executable: String, latchPath: URL
     var latch = BoundaryLatch(), count = 0
@@ -474,6 +478,7 @@ final class Broker {
         try? json(ack).write(to: boundary.appendingPathComponent("ack.json"), options: .atomic)
     }
 }
+// END BOUNDARY BROKER
 
 let arguments = CommandLine.arguments
 if arguments.count == 6, arguments[1] == "--broker" {
