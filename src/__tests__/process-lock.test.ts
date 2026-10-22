@@ -259,15 +259,18 @@ describe("process lock", () => {
   });
 
   it.if(nativeStart)("persists its own exact kernel start time when it takes the lock", () => {
-    acquireProcessLock(TEST_PID_FILE);
-    const lock = JSON.parse(readFileSync(TEST_PID_FILE, "utf-8"));
-    // Independent reference: this process started before the test ran.
-    const nowUs = Date.now() * 1000;
-    const uptimeUs = Math.ceil(process.uptime() * 1e6);
-    expect(Number.isSafeInteger(lock.processStartUs)).toBe(true);
-    expect(lock.processStartUs).toBeLessThanOrEqual(nowUs);
-    expect(Math.abs(nowUs - uptimeUs - lock.processStartUs)).toBeLessThan(1_000_000);
-    expect(readProcessStartUs(process.pid)).toBe(lock.processStartUs);
+    const uptime = spyOn(process, "uptime").mockReturnValue(process.uptime() + 60);
+    try {
+      const beforeUs = Date.now() * 1000;
+      acquireProcessLock(TEST_PID_FILE);
+      const lock = JSON.parse(readFileSync(TEST_PID_FILE, "utf-8"));
+      // Kernel birth precedes this test; Bun uptime starts later during runtime
+      // initialization. The separate spawn-bracket tests prove epoch accuracy.
+      expect(Number.isSafeInteger(lock.processStartUs)).toBe(true);
+      expect(lock.processStartUs).toBeLessThanOrEqual(beforeUs);
+      expect(lock.processStartUs).toBeGreaterThan(0);
+      expect(readProcessStartUs(process.pid)).toBe(lock.processStartUs);
+    } finally { uptime.mockRestore(); }
   });
 
   it.if(nativeStart)("reads a fixture's start time inside its spawn bracket, null once it is gone", async () => {
