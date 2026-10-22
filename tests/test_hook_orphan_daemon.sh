@@ -245,6 +245,10 @@ def executable(name, body):
 executable("swift", "#!" + sys.executable + "\n" + '''
 import os, pathlib, sys, time
 case = os.environ["HOOK_CASE"]
+# Regression: cold setup can exceed the old eight seconds from runner launch.
+if case == "KILL-supervisor" and sys.argv[1] == "build":
+    time.sleep(9)
+    print("PASS delayed KILL-supervisor setup: 9 seconds", flush=True)
 if case in ("KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test"):
     phase = "test" if case == "KILL-swift-test" else "build"
     if sys.argv[1] == phase:
@@ -683,13 +687,23 @@ with path.open("w+") as lock:
                                           stdout=output, stderr=output, start_new_session=True)
                 audit("runner-start", case=case, runner_pid=runner.pid)
                 run_dir = lane / f"voicelayer-run-tests.{runner.pid}"
+                # Sweep/interpreter/Swift setup is not daemon startup. First observe
+                # the detached owner's readiness, then give PID publication its own
+                # bounded budget. A fast runner may already have published and exited.
+                ready = run_dir / "supervisor-ready"
+                assert wait_until(lambda: ready.exists() or record.exists() or runner.poll() is not None, 60), "supervisor never became ready"
+                def fixture_started(path):
+                    return path.exists() and path.stat().st_size > 0
+                def await_fixture(path):
+                    assert wait_until(lambda: fixture_started(path) or runner.poll() is not None, 60), "fixture startup deadline expired"
+                    assert fixture_started(path), "runner exited before fixture readiness"
                 if "swift" in case:
                     swift_record = Path(str(record) + ".swift")
-                    assert wait_until(lambda: swift_record.exists() and swift_record.stat().st_size > 0), "Swift never started"
+                    await_fixture(swift_record)
                     pids = [int(swift_record.read_text())]
                     assert run_dir.exists() and not record.exists(), "early test must precede daemon start"
                 else:
-                    assert wait_until(lambda: record.exists() and record.stat().st_size > 0), "daemon never started"
+                    await_fixture(record)
                     pids = [int(p) for p in record.read_text().split()]
                 if case in ("KILL-group", "KILL-supervisor"):
                     daemon_group = os.getpgid(pids[0])
@@ -739,6 +753,8 @@ with path.open("w+") as lock:
                 assert str(run_dir) not in processes, "process with RUN_DIR remains"
                 output.seek(0)
                 text = output.read()
+                if case == "KILL-supervisor":
+                    assert "PASS delayed KILL-supervisor setup: 9 seconds" in text
                 if case in ("success", "debug", "real", "stubborn"):
                     assert "[pass] bun MCP daemon boot" in text
                     assert "[pass] swift test" in text and "[pass] bun test" in text
