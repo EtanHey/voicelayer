@@ -175,20 +175,13 @@ function* files(dir: string): Generator<string> {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory() && entry.name !== "__pycache__") yield* files(path);
-    else if (entry.isFile() && !entry.name.endsWith(".pyc")) yield path;
+    else if (entry.isFile() && !/\.py[co]$/.test(entry.name)) yield path;
   }
 }
 
-function sourceText(path: string): string | undefined {
-  const bytes = readFileSync(path);
-  // Reject binary input without replacing invalid bytes with Unicode placeholders.
-  if (bytes.includes(0)) return undefined;
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch (error) {
-    if (error instanceof TypeError) return undefined;
-    throw error;
-  }
+function sourceText(path: string): string {
+  // Malformed bytes must not hide home paths in otherwise scanned files.
+  return readFileSync(path, "utf8");
 }
 
 test("private corpus home paths stay in the opt-in helper or reviewed exceptions", () => {
@@ -202,7 +195,6 @@ test("private corpus home paths stay in the opt-in helper or reviewed exceptions
       if (file === "src/__tests__/setup/private-specimens.ts" ||
           file === "src/__tests__/private-corpus-guard.test.ts") continue;
       const source = sourceText(path);
-      if (source === undefined) continue;
       for (const line of unexpected(file, source)) {
         failures.push(`${file}: ${line}`);
       }
@@ -264,26 +256,28 @@ test("allowlist budgets reject duplicate and modified exceptions", () => {
 });
 
 
-test("source scanning skips bytecode and binaries but keeps all text file types", () => {
+test("source scanning excludes only Python cache paths, regardless of bytes", () => {
   const root = mkdtempSync(join(tmpdir(), "private-corpus-guard-"));
   const homePath = '"/Users/private/archive"';
+  const expected: string[] = [];
   try {
     mkdirSync(join(root, "__pycache__"));
     writeFileSync(join(root, "__pycache__", "cached.py"), homePath);
-    writeFileSync(join(root, "cached.pyc"), homePath);
-    writeFileSync(join(root, "invalid-utf8.bin"), Buffer.concat([Buffer.from([0xff]), Buffer.from(homePath)]));
-    writeFileSync(join(root, "nul.bin"), Buffer.concat([Buffer.from([0]), Buffer.from(homePath)]));
-    for (const name of ["source.py", "source.ts", "source.sh", "source.unknown", "extensionless"]) {
-      writeFileSync(join(root, name), homePath);
+    for (const name of ["cached.pyc", "cached.pyo"]) {
+      writeFileSync(join(root, name), Buffer.concat([Buffer.from([0, 0xff]), Buffer.from(homePath)]));
+    }
+    for (const extension of [".ts", ".js", ".py", ".sh", ".swift", ".json", ".md", ".unknown", ".bin", ""]) {
+      for (const [kind, prefix] of [["text", []], ["nul", [0]], ["invalid-utf8", [0xff]]] as const) {
+        const name = `${kind}${extension}`;
+        writeFileSync(join(root, name), Buffer.concat([Buffer.from(prefix), Buffer.from(homePath)]));
+        expected.push(name);
+      }
     }
     const scanned = [...files(root)].map(path => relative(root, path));
-    expect(scanned).not.toContain("cached.pyc");
-    expect(scanned).not.toContain(join("__pycache__", "cached.py"));
-    const failures = [...files(root)].flatMap(path => {
-      const source = sourceText(path);
-      return source === undefined ? [] : unexpected(relative(root, path), source).map(() => relative(root, path));
-    });
-    expect(failures.sort()).toEqual(["extensionless", "source.py", "source.sh", "source.ts", "source.unknown"]);
+    expect(scanned.sort()).toEqual(expected.sort());
+    const failures = [...files(root)].flatMap(path =>
+      unexpected(relative(root, path), sourceText(path)).map(() => relative(root, path)));
+    expect(failures.sort()).toEqual(expected.sort());
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
