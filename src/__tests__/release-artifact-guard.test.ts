@@ -190,9 +190,12 @@ for (const mode of ["relative", "symlink-parent", "direct-noindex"]) {
     // Exercise the actual entrypoint and supervisor; replace only compilation.
     writeFileSync(hook, `
 if [[ "\${VOICEBAR_RELEASE_STAGED:-0}" == 1 ]]; then
-  mkdir VoiceBar.app
-  printf built > VoiceBar.app/marker
-  printf zip > VoiceBar.zip
+  source "${root}/scripts/lib/noindex-path.sh"
+  fixture_stage="$(pwd -P)"
+  require_noindex_path "$fixture_stage" || exit 1
+  mkdir "$fixture_stage/VoiceBar.app"
+  printf built > "$fixture_stage/VoiceBar.app/marker"
+  printf zip > "$fixture_stage/VoiceBar.zip"
   exit 0
 fi
 `);
