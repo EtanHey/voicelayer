@@ -118,7 +118,7 @@ if [[ "$SKIP_TAP_CHECK" -ne 1 && -z "$TAP_ROOT" ]]; then
 fi
 
 source "$SCRIPT_DIR/lib/noindex-path.sh"
-require_noindex_path "$ARTIFACT_ROOT"
+require_release_artifact_path "$ARTIFACT_ROOT"
 ARTIFACT_DIR="$ARTIFACT_ROOT/$VERSION"
 APP_PATH="$ARTIFACT_DIR/VoiceBar.app"
 ZIP_PATH="$ARTIFACT_DIR/VoiceBar.zip"
@@ -127,9 +127,9 @@ ZIP_PATH="$ARTIFACT_DIR/VoiceBar.zip"
 ARTIFACT_DIR="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$ARTIFACT_DIR")"
 APP_PATH="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$APP_PATH")"
 ZIP_PATH="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$ZIP_PATH")"
-require_noindex_path "$ARTIFACT_DIR"
-require_noindex_path "$APP_PATH"
-require_noindex_path "$ZIP_PATH"
+require_release_artifact_path "$ARTIFACT_DIR"
+require_release_artifact_path "$APP_PATH" "$ARTIFACT_DIR"
+require_release_artifact_path "$ZIP_PATH" "$ARTIFACT_DIR"
 
 mkdir -p "$ARTIFACT_DIR"
 rm -rf "$APP_PATH" "$ZIP_PATH"
