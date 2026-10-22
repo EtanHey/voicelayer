@@ -82,6 +82,9 @@ final class GestureStateMachine {
     // 150 ms covers relay bounce while staying below the 160 ms deliberate hold threshold.
     static let stopReleaseDebounceMs = 150
     var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    var schedule: (Int, DispatchWorkItem) -> Void = { milliseconds, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(milliseconds), execute: work)
+    }
     private var stoppedOnKeyDown = false
     private var lastStopRelease: TimeInterval?
     private var ignoringStopBounce = false
@@ -237,10 +240,7 @@ final class GestureStateMachine {
             onHoldStart()
         }
         holdTimer = timer
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Self.holdThresholdMs),
-            execute: timer
-        )
+        schedule(Self.holdThresholdMs, timer)
     }
 
     private func startDoubleTapWindow(expiryBehavior: DoubleTapExpiryBehavior) {
@@ -256,10 +256,7 @@ final class GestureStateMachine {
             expireDoubleTapWindow()
         }
         doubleTapTimer = timer
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + .milliseconds(Self.doubleTapWindowMs),
-            execute: timer
-        )
+        schedule(Self.doubleTapWindowMs, timer)
     }
 
     private func isDoubleTapWindowExpired(now: TimeInterval) -> Bool {

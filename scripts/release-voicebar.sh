@@ -8,7 +8,7 @@ VERSION=""
 SKIP_TAP_CHECK=0
 NOTARY_PROFILE="${VOICEBAR_NOTARY_PROFILE:-notary-layers}"
 ENTITLEMENTS_PLIST="${VOICEBAR_ENTITLEMENTS:-$PACKAGE_ROOT/flow-bar/bundle/VoiceBar.entitlements}"
-ARTIFACT_ROOT="${VOICEBAR_RELEASE_ROOT:-$PACKAGE_ROOT/dist/voicebar-release}"
+ARTIFACT_ROOT="${VOICEBAR_RELEASE_ROOT:-$PACKAGE_ROOT/.build.noindex/voicebar-release}"
 TAP_ROOT="${VOICEBAR_HOMEBREW_TAP_ROOT:-}"
 T3_PROOF=""
 
@@ -21,7 +21,7 @@ release and prints the EtanHey/homebrew-layers formula and cask bump inputs.
 
 Options:
   --version VERSION        Release version. Defaults to package.json version.
-  --output-dir DIR         Artifact root. Defaults to dist/voicebar-release.
+  --output-dir DIR         Artifact root. Defaults to .build.noindex/voicebar-release.
   --notary-profile NAME    notarytool keychain profile. Defaults to notary-layers.
   --tap-root DIR           Homebrew tap checkout. Required unless --skip-tap-check is used.
   --t3-proof PROOF.json    Installed-candidate T3 Option+F5 PASS proof. Required by the
@@ -117,12 +117,22 @@ if [[ "$SKIP_TAP_CHECK" -ne 1 && -z "$TAP_ROOT" ]]; then
     exit 2
 fi
 
+source "$SCRIPT_DIR/lib/noindex-path.sh"
+require_release_artifact_path "$ARTIFACT_ROOT"
 ARTIFACT_DIR="$ARTIFACT_ROOT/$VERSION"
 APP_PATH="$ARTIFACT_DIR/VoiceBar.app"
 ZIP_PATH="$ARTIFACT_DIR/VoiceBar.zip"
 
+# Resolve every final destination before cleanup, including existing child symlinks.
+ARTIFACT_DIR="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$ARTIFACT_DIR")"
+APP_PATH="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$APP_PATH")"
+ZIP_PATH="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve())' "$ZIP_PATH")"
+require_release_artifact_path "$ARTIFACT_DIR"
+require_release_artifact_path "$APP_PATH" "$ARTIFACT_DIR"
+require_release_artifact_path "$ZIP_PATH" "$ARTIFACT_DIR"
+
 mkdir -p "$ARTIFACT_DIR"
-rm -rf "$APP_PATH" "$ZIP_PATH"
+"$(release_artifact_python)" "$SCRIPT_DIR/lib/cleanup-release-artifacts.py" "$ARTIFACT_DIR" "$APP_PATH" "$ZIP_PATH"
 
 echo "[release-voicebar] Building notarized VoiceBar $VERSION at $APP_PATH"
 (

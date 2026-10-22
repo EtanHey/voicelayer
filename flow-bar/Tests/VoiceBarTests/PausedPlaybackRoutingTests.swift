@@ -28,18 +28,25 @@ final class PausedPlaybackRoutingTests: XCTestCase {
     func testPauseThenF5HoldRecordsAndReleaseStopsOnlyTheCapture() {
         let (state, sent) = pausedState()
         let gesture = GestureStateMachine()
+        var now: TimeInterval = 100
+        var scheduled: [(Int, DispatchWorkItem)] = []
+        gesture.clock = { now }
+        gesture.schedule = { scheduled.append(($0, $1)) }
         let router = VoiceBarCommandRouter(voiceState: state, resetHotkeyState: { gesture.reset() })
         gesture.onHoldStart = { router.handleHotkeyHoldStart() }
         gesture.onHoldEnd = { router.handleHotkeyHoldEnd(holdDuration: 1.2) }
         gesture.onSingleTap = { router.handleHotkeySingleTap() }
 
         gesture.handleKeyDown()
-        RunLoop.main.run(until: Date().addingTimeInterval(Double(GestureStateMachine.holdThresholdMs + 120) / 1000))
+        XCTAssertEqual(scheduled.map { $0.0 }, [GestureStateMachine.holdThresholdMs])
+        XCTAssertTrue(sent().isEmpty, "recording waits for the hold threshold")
+        now += Double(GestureStateMachine.holdThresholdMs) / 1000
+        scheduled.removeFirst().1.perform()
         XCTAssertEqual(sent().map { $0["cmd"] as? String }, ["record"], "F5 hold over a paused read records")
         XCTAssertEqual(state.mode, .recording)
 
         gesture.handleKeyUp()
-        RunLoop.main.run(until: Date().addingTimeInterval(Double(GestureStateMachine.doubleTapWindowMs + 120) / 1000))
+        XCTAssertTrue(scheduled.isEmpty, "hold release does not arm a double-tap timer")
         // Release stops the capture (the daemon keeps the parked read, tts-pause "F5's stop/cancel").
         XCTAssertEqual(sent().map { $0["cmd"] as? String }, ["record", "stop"])
         XCTAssertNil(sent().last?["playback_elapsed_ms"], "the stop is the capture's, not playback's")
@@ -48,15 +55,21 @@ final class PausedPlaybackRoutingTests: XCTestCase {
         // The read identity survives. A local idle alone is not settlement (P16b): Play stays hidden until the
         // daemon's recording-idle, then resumes playback-9.
         state.mode = .idle
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        drainMainQueue()
         XCTAssertFalse(state.isPlaybackPaused)
         state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        drainMainQueue()
         XCTAssertTrue(state.isPlaybackPaused)
         state.togglePlaybackPause()
         XCTAssertEqual(sent().last?["cmd"] as? String, "resume")
         XCTAssertEqual(sent().last?["playback_id"] as? String, "playback-9")
         gesture.reset()
+    }
+
+    private func drainMainQueue() {
+        let drained = expectation(description: "queued parked-read restoration completed")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 5)
     }
 
     func testPausedReadRoutesLikeIdleForTapToggleAndStart() {

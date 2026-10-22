@@ -41,6 +41,15 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
     }
 
+    private func waitForPaint(_ host: NSView, until visible: () -> Bool) {
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        repeat {
+            host.layoutSubtreeIfNeeded()
+            if visible() { return }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        } while ProcessInfo.processInfo.systemUptime < deadline
+    }
+
     /// What is actually painted inside the viewport, read back with OCR.
     private func onScreenText(_ host: NSView) -> String {
         guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return "" }
@@ -161,10 +170,8 @@ final class TeleprompterLazyScrollTests: XCTestCase {
     // hard block boundary; the destination and the next ordinary word must both reach the viewport.
     @Observable final class Clock {
         var boundaries: [TeleprompterBoundary]
-        let base: Int
-        let started = Date()
-        init(boundaries: [TeleprompterBoundary], base: Int) { self.boundaries = boundaries; self.base = base }
-        var elapsed: Int { base + Int(Date().timeIntervalSince(started) * 1000) }
+        var elapsed: Int
+        init(boundaries: [TeleprompterBoundary], base: Int) { self.boundaries = boundaries; elapsed = base }
     }
 
     private struct ClockHost: View {
@@ -194,13 +201,23 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         defer { window.contentView = nil }
-        settle(host, 0.5)
+        waitForPaint(host) { self.isOnScreen("word280", host) }
         XCTAssertTrue(isOnScreen("word280", host), "the read starts on word 280; OCR: \(onScreenText(host).prefix(120))")
-        settle(host, 0.85) // the token's 40 pieces land at 107.6 s in one coalesced step (280 -> 320); now ~107.76 s
+        let preAdvanceFrame = onScreenText(host)
+        clock.elapsed = 107_760 // all 40 pieces advance together (280 -> 320)
+        waitForPaint(host) {
+            let frame = self.onScreenText(host)
+            return frame != preAdvanceFrame
+                && !self.isOnScreen("word280", host)
+                && frame.range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]) != nil
+        }
         let destination = onScreenText(host)
+        XCTAssertNotEqual(destination, preAdvanceFrame, "clock advance must produce a new frame")
+        XCTAssertFalse(isOnScreen("word280", host), "the earlier word must have scrolled away")
         XCTAssertNotNil(destination.range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]),
                         "the token's last piece, in block 1, is on screen; OCR: \(destination.prefix(120))")
-        settle(host, 0.6) // word282 (display id 321) at 108.0 s
+        clock.elapsed = 108_010 // word282 (display id 321)
+        waitForPaint(host) { self.isOnScreen("word282", host) }
         XCTAssertTrue(isOnScreen("word282", host), "the next ordinary word follows; OCR: \(onScreenText(host).prefix(120))")
     }
 

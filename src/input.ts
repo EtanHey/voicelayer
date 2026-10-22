@@ -2267,15 +2267,23 @@ export function startMicChunkStream(options: {
     }
   };
 
-  const exited = Promise.all([
-    drainStderr(),
-    pipeReader(),
-    chunkProcessor(),
-    recorder.exited.then(
-      () => undefined,
-      () => undefined,
-    ),
-  ]).then(() => undefined);
+  // A processing/read failure requests termination, but is not an exit receipt.
+  // Wait for every monitor task and the recorder before surfacing the error.
+  const ownedTask = async (task: Promise<void>) => {
+    try { await task; }
+    catch (error) { stop(); throw error; }
+  };
+  const exited = Promise.allSettled([
+    ownedTask(drainStderr()),
+    ownedTask(pipeReader()),
+    ownedTask(chunkProcessor()),
+    ownedTask(recorder.exited.then(code => {
+      if (!stopped && code !== 0) throw new Error(`Barge-in recorder exited with code ${code}`);
+    })),
+  ]).then(results => {
+    const failure = results.find(result => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+  });
 
   return { exited, stop };
 }
