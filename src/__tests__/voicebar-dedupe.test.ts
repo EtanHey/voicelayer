@@ -12,9 +12,12 @@ test("dedupe preserves the exact TTS label but backs up a duplicate VoiceBar age
     const bin = join(dir, "bin"), agents = join(dir, "Library/LaunchAgents");
     mkdirSync(bin); mkdirSync(agents, { recursive: true });
     const app = join(dir, "VoiceBar.app"); mkdirSync(app);
+    mkdirSync(join(app, "Contents"));
+    writeFileSync(join(app, "Contents/Info.plist"), '<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.voicelayer.voicebar</string></dict></plist>');
     const stub = (name: string, body: string) => writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, {mode: 0o700});
     stub("codesign", "echo 'Authority=Developer ID Application: Fixture' >&2; echo 'TeamIdentifier=PPN23G925Y' >&2");
     for (const name of ["mdfind", "find", "pgrep", "osascript"]) stub(name, "exit 0");
+    stub("plutil", '/usr/bin/python3 -c \'import plistlib,sys; plistlib.load(open(sys.argv[-1], "rb"))\' "$@"');
     // plistlib keeps the LaunchAgent fixture test runnable on Linux CI too.
     writeFileSync(join(bin, "PlistBuddy"), `#!/usr/bin/python3
 import plistlib, sys
@@ -38,6 +41,7 @@ print(value)
     }
     mkdirSync(join(dir, "lib"));
     writeFileSync(join(dir, "lib/voicebar-launchagent.sh"), readFileSync(new URL("../../scripts/lib/voicebar-launchagent.sh", import.meta.url), "utf8"));
+    writeFileSync(join(dir, "lib/voicebar-bundle-identity.sh"), readFileSync(new URL("../../scripts/lib/voicebar-bundle-identity.sh", import.meta.url), "utf8"));
     const script = join(dir, "dedupe.sh");
     writeFileSync(script, readFileSync(new URL("../../scripts/voicelayer-dedupe-voicebar.sh", import.meta.url), "utf8")
       .replaceAll("/usr/libexec/PlistBuddy", join(bin, "PlistBuddy"))

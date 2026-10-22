@@ -272,6 +272,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     // Program takes precedence over argv[0] in both directions.
     writeAgent("resource-helper.plist", "com.example.helper", "/usr/bin/python3", `${appDir}/Contents/MacOS/VoiceBar`);
     const stubs: Record<string, string> = {
+      plutil: '#!/bin/bash\n/usr/bin/python3 -c \'import plistlib,sys; plistlib.load(open(sys.argv[-1], "rb"))\' "$@"\n',
       codesign: [
         "#!/usr/bin/env bash",
         'if [[ "$1" == "-dvvv" ]]; then',

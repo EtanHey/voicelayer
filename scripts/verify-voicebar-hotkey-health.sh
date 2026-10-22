@@ -3,6 +3,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/voicebar-launchagent.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/voicebar-bundle-identity.sh"
 
 CANONICAL_APP="${VOICEBAR_CANONICAL_APP:-/Applications/VoiceBar.app}"
 BUNDLE_ID="com.voicelayer.voicebar"
@@ -204,7 +205,12 @@ if [[ -n "${TMPDIR:-}" && -d "$TMPDIR" ]]; then
 fi
 while IFS= read -r bundle; do
     [[ -d "$bundle" ]] || continue
-    bundles+=("$bundle")
+    if voicebar_bundle_identity "$bundle"; then
+        bundles+=("$bundle")
+    else
+        identity_status=$?
+        [[ "$identity_status" -eq 1 ]] || fail "cannot determine bundle identity: $bundle"
+    fi
 done < <(
     {
         mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null || true
