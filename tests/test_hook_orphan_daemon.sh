@@ -244,11 +244,13 @@ def executable(name, body):
 
 executable("swift", "#!" + sys.executable + "\n" + '''
 import os, pathlib, sys, time
+sys.path.insert(0, os.environ["HOOK_FIXTURE_HELPER"])
+import hook_fixture_registry as registry
 case = os.environ["HOOK_CASE"]
 if case in ("KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test"):
     phase = "test" if case == "KILL-swift-test" else "build"
     if sys.argv[1] == phase:
-        pathlib.Path(os.environ["HOOK_RECORD"] + ".swift").write_text(str(os.getpid()))
+        registry.publish(pathlib.Path(os.environ["HOOK_RECORD"] + ".swift"), str(os.getpid()))
         time.sleep(60)
 ''')
 executable("plutil", "#!/bin/sh\nexit 0\n")
@@ -258,14 +260,14 @@ sys.path.insert(0, os.environ["HOOK_FIXTURE_HELPER"])
 import hook_fixture_registry as registry
 if sys.argv[1] == "test":
     if os.environ["HOOK_CASE"] == "KILL-late":
-        pathlib.Path(os.environ["HOOK_RECORD"] + ".suite").write_text(str(os.getpid()))
+        registry.publish(pathlib.Path(os.environ["HOOK_RECORD"] + ".suite"), str(os.getpid()))
         time.sleep(10)
     raise SystemExit(0)
 case = os.environ["HOOK_CASE"]
 run_dir = os.environ["VOICELAYER_TMP_ROOT"]
 record = pathlib.Path(os.environ["HOOK_RECORD"])
 if case == "real":
-    record.write_text(str(os.getpid()))
+    registry.publish(record, str(os.getpid()))
     # Keep the real child's PID lock inside the Bun preload's per-run boundary.
     # Its socket/supervisor fixtures still use this script's short private root.
     test_root = os.environ.get("VOICELAYER_TEST_RUN_ROOT")
@@ -276,9 +278,9 @@ if case in ("stubborn", "KILL-supervisor"):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     child = registry.spawn([sys.executable, "-c",
         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)", run_dir])
-    record.write_text(f"{os.getpid()} {child.pid}")
+    registry.publish(record, f"{os.getpid()} {child.pid}")
 else:
-    record.write_text(str(os.getpid()))
+    registry.publish(record, str(os.getpid()))
 if case == "failure":
     raise SystemExit(7)
 if case in ("success", "debug", "stubborn", "suite-failure", "KILL-late", "KILL-supervisor"):
@@ -305,9 +307,8 @@ def wait_until(predicate, seconds=8):
     return False
 
 def snapshot(label, pids):
-    states = subprocess.run(["ps", "-p", ",".join(map(str, pids)),
-                             "-o", "pid=,ppid=,pgid=,stat=,lstart="],
-                            text=True, capture_output=True).stdout
+    states = registry.diagnostic_output(["ps", "-p", ",".join(map(str, pids)),
+                             "-o", "pid=,ppid=,pgid=,stat=,lstart="])
     audit("snapshot", label=label, states=states,
           term_markers=[p.name for p in base.glob("*.term")])
 
@@ -405,13 +406,14 @@ sys.path.insert(0, os.environ["HOOK_FIXTURE_HELPER"])
 import hook_fixture_registry as registry
 if sys.argv[3] == "child":
     registry.spawn([sys.executable, "-c",
-        "import os,pathlib,signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)", sys.argv[1] + ".child"])
+        "import os,pathlib,signal,sys,time; sys.path.insert(0, os.environ['HOOK_FIXTURE_HELPER']); "
+        "import hook_fixture_registry as registry; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "registry.publish(pathlib.Path(sys.argv[1]), str(os.getpid())); time.sleep(60)", sys.argv[1] + ".child"])
 library = ctypes.CDLL(sys.argv[4])
 library.hook_term_sender.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
 assert library.hook_term_sender(os.fsencode(sys.argv[1] + ".term"),
     int(os.environ["HOOK_TREE_PID"]), os.fsencode(os.environ["HOOK_TREE_TOKEN"]), sys.argv[3] == "child") == 0
-pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+registry.publish(pathlib.Path(sys.argv[1]), str(os.getpid()))
 while True: time.sleep(.05)
 '''
         env["HOOK_FIXTURE_HELPER"] = str(root / "tests")
@@ -814,9 +816,9 @@ except ProtectedTerm as error:
     failures.append(str(error))
 finally:
     # Snapshot before cleanup so a failed predicate is distinguishable from our teardown.
-    audit("final-snapshot", failures=failures, processes=subprocess.run(
+    audit("final-snapshot", failures=failures, processes=registry.diagnostic_output(
         ["ps", "-p", ",".join(map(str, orphan_pids)) or str(os.getpid()),
-         "-o", "pid=,ppid=,pgid=,stat=,lstart=,command="], text=True, capture_output=True).stdout.splitlines()
+         "-o", "pid=,ppid=,pgid=,stat=,lstart=,command="]).splitlines()
         if not succeeded else [], term_markers=[p.name for p in base.glob("*.term")])
     signal_reason = "final fixture teardown"
     registry.finish(guardian, fixture_fd)

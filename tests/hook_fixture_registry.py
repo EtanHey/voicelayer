@@ -16,6 +16,18 @@ import time
 import uuid
 
 
+def diagnostic_output(command):
+    """Keep arbitrary process bytes from interrupting diagnostic teardown."""
+    return subprocess.run(command, capture_output=True).stdout.decode("utf-8", errors="replace")
+
+
+def publish(path, value):
+    """Publish a complete fixture readiness receipt."""
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(value)
+    temporary.replace(path)
+
+
 def metadata(pid):
     result = subprocess.run(['ps', '-p', str(pid), '-o', 'uid=,stat=,lstart='],
                             text=True, capture_output=True, env=dict(os.environ, LC_ALL='C', TZ='UTC'))
