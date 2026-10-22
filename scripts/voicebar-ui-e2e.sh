@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # UI-only runner. --build-only is the only mode permitted on an occupied Mac.
 set -euo pipefail
-usage() { echo "usage: $0 [--output NEW_DIRECTORY] [--build-only] [--scenario full|focused-338]"; }
+usage() { echo "usage: $0 [--output NEW_DIRECTORY] [--build-only] [--scenario full|focused-338|hide1|gate2246]"; }
 build_only=0
 scenario=full
 focused_338=0
@@ -19,7 +19,9 @@ done
 case "$scenario" in
   full) ;;
   focused-338) focused_338=1 ;;
-  *) echo "FAIL unknown scenario: $scenario (expected full or focused-338)" >&2; exit 2 ;;
+  hide1) export VOICEBAR_UIE2E_GATE2245=1 VOICEBAR_UIE2E_GATE2246_CAPTURE=0 ;;
+  gate2246) export VOICEBAR_UIE2E_GATE2245=1 VOICEBAR_UIE2E_GATE2246_CAPTURE=1 ;;
+  *) echo "FAIL unknown scenario: $scenario (expected full, focused-338, hide1 or gate2246)" >&2; exit 2 ;;
 esac
 repo=$(cd "$(dirname "$0")/.." && pwd)
 output=${output:-"$repo/.build.noindex/ui-e2e/$(date -u +%Y%m%dT%H%M%S)-$$"}
@@ -33,7 +35,8 @@ printf '%s\n' "$derived_data" > "$output/derived-data-path.txt"
 python3 "$repo/scripts/voicebar-ui-e2e-results.py" scenario "$output" --scenario "$scenario"
 for tool in xcodebuild xcrun swift python3 bun; do command -v "$tool" >/dev/null || { echo "FAIL prerequisite: $tool"; exit 1; }; done
 # The display-only UIE2E app does not start socket servers; keep its bundle in the worktree.
-sandbox="$output/vl-ui-artifacts.noindex"
+# The basename also namespaces distributed fixture/boundary notifications and defaults.
+sandbox="$output/vl-ui-$(python3 -c 'import uuid; print(uuid.uuid4().hex)').noindex"
 mkdir "$sandbox"
 printf '%s\n' voicebar-ui-e2e-v1 > "$sandbox/.uie2e-sandbox"
 mkdir "$sandbox/home"
@@ -69,6 +72,8 @@ data['UIE2EPasteFeedback'] = bool(outcomes and all(
     re.search(r'\bcase\s+' + name + r'\b', outcomes.group(1))
     for name in ('notInserted', 'unverified', 'partial')
 ))
+import os
+data['UIE2EGate2245'] = os.environ.get('VOICEBAR_UIE2E_GATE2245') == '1'
 p.write_bytes(plistlib.dumps(data))
 PYMETA
 /usr/bin/codesign --force --sign - "$app" > "$output/qa-sign.log" 2>&1
@@ -84,15 +89,16 @@ xcodebuild build-for-testing -project "$repo/flow-bar/UIE2E/VoiceBarUIE2E.xcodep
   -destination 'platform=macOS' -derivedDataPath "$derived_data" > "$output/build-for-testing.log" 2>&1 || {
     echo "FAIL build-for-testing (see $output/build-for-testing.log)"; exit 1;
   }
+for helper in resident permissions; do
+  xcrun swiftc "$repo/scripts/voicebar-ui-e2e-$helper.swift" -o "$output/voicebar-ui-e2e-$helper" \
+    > "$output/$helper-build.log" 2>&1 || { echo "FAIL $helper helper build"; exit 1; }
+done
 echo 'PASS build-for-testing (UI execution NOT_PROVEN)'
+# Every GATE2245 build constructs the real AppDelegate, so every one needs the tripwire.
+if [[ ${VOICEBAR_UIE2E_GATE2245:-0} == 1 ]]; then
+  python3 "$repo/scripts/voicebar-ui-e2e-guard-proof.py" build "$output"
+fi
 [[ $build_only == 0 ]] || exit 0
-python3 "$repo/scripts/voicebar-ui-e2e-results.py" configure "$output" "$app" "$sandbox" --scenario "$scenario"
-# Reconfirm immediately before XCUITest takes the screen. The guard restores the prior state on exit.
+# The shell guard owns host mute restoration; the supervisor owns run safety and cleanup.
 output_mute_guard_confirm || { echo 'FAIL output mute changed'; exit 1; }
-status=0
-# Default recording is part of the run, not an optional adapter. Build-only exits above.
-python3 "$repo/scripts/voicebar-ui-e2e-run.py" "$output" --scenario "$scenario" || status=$?
-export_status=0
-python3 "$repo/scripts/voicebar-ui-e2e-results.py" export "$output" "$sandbox" --scenario "$scenario" || export_status=$?
-[[ $status == 0 && $export_status == 0 ]] || { echo "FAIL UIE2E: xcodebuild=$status export=$export_status"; exit 1; }
-echo "PASS UIE2E scenario=$scenario: $output/screenshots/index.html"
+python3 "$repo/scripts/voicebar-ui-e2e-supervisor.py" "$output" --scenario "$scenario"

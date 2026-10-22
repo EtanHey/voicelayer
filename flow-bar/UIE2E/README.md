@@ -31,9 +31,13 @@ unfinished runs, failed teardown, or unexercised controls cannot pass. An aborte
 with individual receipts still gets a contact sheet marked incomplete. QA-app fixture
 sinks (events/settings/dictionary) remain in its scratch directory. No entitlements change.
 
-Every UI run records the main screen by default before XCTest launches. The runner
-compiles `voicebar-ui-e2e-capture.swift`, a standalone ScreenCaptureKit helper whose
-filter accepts only the main `SCDisplay`. It registers only a `.screen` stream output,
+Every UI run records a movie before XCTest launches, of this run's QA process only (GATECAP1):
+the full desktop is never recorded. The runner compiles `voicebar-ui-e2e-capture.swift`, a
+standalone ScreenCaptureKit helper that requires `--include-bundle` and `--include-executable`.
+Its filter includes only the applications whose bundle ID AND exact executable path match this
+run's sandboxed QA app; other apps, the desktop and system dialogs are never composited (black
+until the QA process appears). It prints `source=` lines; a movie that never observed the
+proven QA process, or names any other source, is rejected. It registers only a `.screen` stream output,
 disables system audio and microphone capture, and writes a single H.264 video track
 through AVAssetWriter with one-second MOV fragments. There is no camera lookup or
 AVFoundation device-name selection, so a camera named `Capture screen 0` cannot be
@@ -61,7 +65,41 @@ If macOS blocks screen capture/UI Automation, stop without granting access and h
 the lead arrange a human-present retry. Recording lifecycle unit tests use stub processes; recorded native UI receipts are
 linked from `docs.local/UIE2E.2/DONE.md`. Silent fixtures never prove audio playback.
 
-Capture uses Apple's [ScreenCaptureKit display filter](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
+Step frames (GATECAP1): there is no desktop screenshot or crop. Before each step's UI action,
+each fixture command and each still, the sandboxed runner posts a name-only distributed
+notification to the owned boundary broker (`voicebar-ui-e2e-permissions --broker`), which takes
+a fresh synchronous foreign-modal decision. A still is a ScreenCaptureKit desktop-independent
+window capture (the equivalent of `screencapture -l<id> -o`) of each visible window owned by the
+one process running this run's QA executable, composited on black; with no proven QA window
+the step's frame is `NOT_PROVEN` and no image exists (`qa-report.json` `visualNotProven`).
+
+XCTest's own automatic capture is disabled in the scheme and emitted run configuration:
+`SystemAttachmentLifetime=keepNever`, with `PreferredScreenCaptureFormat=screenshots` instead
+of video. Explicit user attachments remain `keepAlways`. Before exporting any payload, the
+exporter inspects all test-summary attachment metadata, including failed runs, and rejects
+unexpected system images/videos with `FAIL unexpected-system-capture`. Only `UIE2E-*`
+attachments are exported; the separate QA-only movie remains unchanged.
+Other QA JSON evidence (`GATE2246-*`, `HIDE1VIS-*`, `GATE2245-*`, `GEO0-*`) stays inside
+the xcresult for inspection. A rejected report names that bundle in `resultBundle`; it is
+retained for the owner's quarantine/deletion decision, with no media exported.
+
+Every step receipt declares `visible`, `hidden-alive`, or `terminated`. Hidden-alive proof
+requires the live QA PID and its kernel microsecond birth, a successful CG inventory with zero
+QA windows, and successful process identity reads for every CG row. Post-exit steps instead
+require the recorded lifetime to have ended (kernel ESRCH or a different birth), no CG window
+owned by that PID, and every visible row's path to resolve to a non-QA executable. Any failed
+read or missing declaration fails the step. A later QA launch can bind a new lifetime only
+after the prior lifetime has a positive termination proof.
+
+Foreign modals (GATECAP1): any visible system-agent window (CoreServicesUIAgent, SecurityAgent,
+UserNotificationCenter, coreautha), any window at the modal-panel level, or any app's AX modal
+window or sheet, on any display, refuses the run before Hide Others and STOPs it at every
+boundary (exit 2: `PREFLIGHT_REFUSED` / `FOREIGN_MODAL_STOP`). An unreadable CG/AX inventory is
+`NOT_PROVEN` and refused the same way. Any detection latches STOP; nothing is ever pressed or
+dismissed. Fixture commands are notifications, never keystrokes; remaining injected keystrokes are
+checked against enabled `com.apple.symbolichotkeys` by keycode and full modifier set.
+
+Movie capture uses Apple's [ScreenCaptureKit application filter](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
 and [AVAssetWriter movie fragments](https://developer.apple.com/documentation/avfoundation/avassetwriter/moviefragmentinterval).
 
 The Xcode project contains only a UI-test target. Xcode supplies its XCTest runner;
@@ -95,9 +133,9 @@ date, then hides their windows without quitting/closing. The supervisor restores
 snapshot after recorder flush, including failed preparation/tests and cancellation. Initially
 hidden apps stay hidden; terminated apps are never relaunched and reused PIDs are never adopted.
 `visibility.json` retains the before/restore result; a failed hide or restore fails the run.
-Each tab sweep activates QA and verifies foreground/on-screen/hittable state. The XCTest
-interruption monitor only reactivates QA for known T3/Screenshot overlays; it never clicks a
-foreign control. Permission or unknown/persistent interruptions produce a clear BLOCKED failure.
+Each tab sweep activates QA and verifies foreground/on-screen/hittable state. Any XCTest
+interruption latches a foreign-modal STOP (logged redacted); it never reactivates QA to continue
+and never clicks a foreign control.
 
 The QA floating panel now follows the synthetic hidden flag. Its native AX role is Dialog;
 queries and Hide preconditions use that role, so a missing Window cannot vacuously pass Hide. Settings' navigation footer
@@ -256,3 +294,158 @@ The acceptance receipts use an outer `operator-run.py` beside each result, which
 also verifies the exact QA bundle/head and cleans only that run's QA executable
 paths. The supervisor itself restores the recorded hide-others snapshot. No
 resident app or unrelated process is killed, closed, relaunched or installed.
+
+## Batched GATE2245 candidate
+
+`VOICEBAR_UIE2E_GATE2245=1 bash scripts/voicebar-ui-e2e.sh --output <new-directory>`
+adds HIDE1/SEL1/CLN1b probes to the full recorded flow. Integrate #366, #372,
+#397 and #398 first. The explicit define requires a QA build and its product APIs;
+a normal release cannot enable it. The QA bundle records `UIE2EGate2245=true`.
+
+HIDE1 constructs an unlaunched product AppDelegate using its existing panel and
+wizard test seams: no applicationDidFinishLaunching, services, socket, hotkey,
+permission request or audio. A real FloatingPillPanel/BarView receives each event
+while snoozed; native visibility plus AX absence and post-Show state are asserted.
+The automatic wizard is a real QA wizard with silent dependencies. SEL1 uses real
+selection routing and exact silent commands; its gate assertion permits no XFAIL.
+Partial/untimed/legacy subtitle events exercise the real decoder and teleprompter.
+Movie audits separately judge styling/highlights; AX alone does not prove pixels.
+This remains isolated native UI evidence, with no clone synthesis/installed-app claim.
+
+## Focused HIDE1 visual proof
+
+On an explicitly authorized free-screen Mac, integrate the pinned product candidate,
+then run `bash scripts/voicebar-ui-e2e.sh --scenario hide1 --build-only --output <new-directory>`.
+Run `python3 scripts/voicebar-hide1-visual-run.py <new-directory>` from that same tree.
+The operator monitors output mute, restores its initial value, and uses the existing
+recorded Hide Others/restore supervisor. Never use an installed-app swap for this gate.
+
+Only `testHide1VisualFlow` runs. Settings and the QA status item are hidden; app-local
+Command+0–9 menu commands drive the fixture without bringing Settings into frame.
+Seven independent cases capture before/hidden/Show states, each with a lossless full
+screen and crop from the same sample. The panel is placed below the menu bar at screen
+center; the crop covers x=center−500, y=60, width=min(1000,screen width), height=540 in
+screen points from the top left, scaled to screenshot pixels. This proves isolated
+visibility, not notch placement. The final wizard uses production SetupWizardView with
+synthetic dependencies, triggered by the product's deferred setup presentation seam.
+Empty AppKit status-item frames are excluded from the visible-window inventory.
+Pixel acceptance requires inspecting every exported original PNG, independently of the
+native receipts; the Python scenario result alone is not visual acceptance.
+
+Hide Others also snapshots the installed accessory VoiceBar owner. If macOS refuses
+its hide request, preparation fails closed and restores the snapshot before any QA
+launch. A resident notch strip must not be mistaken for the isolated product panel.
+Capture receipts include on-screen window owner/PID/bounds for this distinction.
+The QA panel move/resize observer preserves capture placement after product layout
+callbacks without changing panel ordering. A failed preparation is not a product failure.
+
+HIDE1-VIS run05 authorization (RULINGS.md, 2026-10-16): the installed resident may
+be hidden only through its own AX “Hide for 1 hour” control, after immediately
+checking no sox/rec descendant of its daemon, no `/tmp/voicelayer-session-*.lock`
+under five minutes old, and a non-recording resident state. A failed condition
+requires a two-minute wait and recheck. No app/daemon stop, relaunch, replacement,
+or socket access is part of this flow. Restore through AX “Show VoiceBar” and
+verify the original notch window and both process identities. If its own hide
+fails, stop without a workaround.
+
+The operator records these actions in a reversible `resident-visibility.json`.
+Pass its absolute path as `VOICEBAR_UIE2E_RESIDENT_SNAPSHOT` to the prepared-run
+operator. `visibility.json` links that snapshot; its `restored` flag covers the
+regular apps hidden by the helper, while resident restoration is confirmed in
+the linked snapshot. The helper never calls application hide/unhide on the
+resident and fails closed if any resident-owned screen window remains. Close
+only operator-opened Settings before capture and return it to its initial state.
+
+## GATE2246 focused harness
+
+`--scenario gate2246 --build-only` compiles the focused HIDE1.1 / SEL1.x scenario.
+Run-01 stopped on an OS microphone permission prompt; nothing was granted. GATE2246B
+uses the lead-approved QA-only engine setter before installing the real mode observer.
+The device-free engine has no AVAudioEngine or device node. A separate injected QA
+library aborts on device access and child launches (only the exact output-mute read
+is permitted). Native execution requires all tripwire probes to pass, with proof
+bound to the exact app, test executable, library and fixture sources. The QA host
+also refuses fixture startup unless the library is active. The runner atomically
+claims the single authorized retry in its fresh output directory. Do not create a
+second run without a new lead ruling. Stop on any OS permission prompt; never grant it.
+
+### The no-device guard covers every GATE2245 build
+
+hide1, gate2246 and any build with `VOICEBAR_UIE2E_GATE2245=1` (including the batched
+full candidate) construct the real AppDelegate, so all of them get the same stack:
+`voicebar-ui-e2e.sh` builds and self-tests the tripwire, `run.py` and `results.py`
+verify its proof before launch, XCUI inserts it with its receipt, the QA host refuses
+startup without it (and `UIE2EGate2245` checks again before constructing AppDelegate),
+and the exported report requires the guard receipts. A missing guard fails the run
+closed. The single-retry claim stays gate2246-only.
+
+The tripwire appends one install marker per process start, and the full flow quits and
+relaunches the QA app (Popover, Context menu). So every launch gets its own receipt:
+launch 1 writes `no-device-guard.log` (the path the supervisor watches), and relaunch
+`n` writes a fresh `no-device-guard-launch-<n>.log`. XCUI records `GUARD launch <n>
+installed` after each launch and `GUARD launch <n> no tripwire` once that process has
+stopped. Each scenario also records before/after steps around its gate fixtures (prefix
+`HIDE1VIS`, `GATE2246`, or `GATE2245` for a full GATE2245 run). The export requires all
+of them for every guarded run, including a full GATE2245 run. It also requires each
+launch log to be exactly one install marker, with contiguous launch numbers. Any other
+line is reported as a tripwire hit on that launch. The supervisor's live check still
+covers launch 1 only; relaunch logs are checked by XCUI and by the export.
+
+### Merge order and the QA compile check
+
+`UIE2EGate2245.swift`'s gate2246 capture-failure cases call #410's APIs
+(`VoiceBarDaemonController(restartScheduler:microphonePromptDisabled:)`,
+`configureCaptureFailurePresentation(_:controller:)`,
+`handleCaptureFailure(type:userInitiated:)`). **#410 must merge before #416.**
+Those cases compile only under `VOICEBAR_UIE2E_GATE2246_CAPTURE=1`, which
+`--scenario gate2246` sets and `--scenario hide1` does not, so hide1 builds on main
+without #410. CI runs `scripts/check-voicebar-qa-compile.sh`, which compiles both
+configurations with the flags `build-app.sh` itself derives. Until #410 is on main,
+the gate2246 configuration fails there by design.
+
+## Committed native safety supervisor
+
+All native runner entry points use `voicebar-ui-e2e-supervisor.py`; direct native
+launch refuses without the live parent supervisor's per-run authority. Build-only
+compiles its AX helpers without running them. The supervisor reads process/lock
+state and positive recording state through AX (the resident Settings footer when
+the pill is collapsed), waits two minutes and rechecks on unknown/unsafe state,
+and never accesses resident sockets or interrupts capture. Only the resident's
+own Hide for 1 hour and Show VoiceBar controls change visibility. It records its
+restore intent before Hide, supervises mute/disk/permissions continuously, and
+restores own visibility on ordinary exits, errors and catchable signals. The shell
+runner owns mute writes and restores the pre-run state through its MUTE1 guard.
+The native supervisor only confirms mute; direct invocation while unmuted refuses. A user-opened Settings window aborts preparation.
+Failed restoration is retained as a failed gate, never silently accepted.
+
+### Scenario deadlines and exit status
+
+The supervised runner has a per-scenario budget, starting immediately before
+runner launch (including recorder startup and xcodebuild boot):
+
+| Scenario | Budget | Basis |
+| --- | --- | --- |
+| `full` | 2400 s (40 min) | Last full PASS recorded 1488.545 s; an earlier run took 1504 s. |
+| `focused-338` | 2400 s (40 min) | Conservatively shares the measured full-suite allowance. |
+| `gate2246` | 600 s (10 min) | Run-01 reached 250 s of recording; allows another 350 s for startup and margin. |
+| `hide1` | 300 s (5 min) | Keeps the narrow visibility gate bounded. |
+
+Configure and export retain their separate 120 s and 300 s timeouts. The
+supervisor prints a final `verdict=... exit=... mute=... receipt=...` line to
+stdout and saves `verdict` and `exitCode` in `operator-state.json`:
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | PASS; cleanup proven and initial mute state restored, nothing retained. |
+| `3` | Scenario/export passed; launch completeness is NOT_PROVEN. Shell mute restoration still runs. |
+| `1` | Failure, including suite/export errors or any actual cleanup/restoration error. |
+| `2` | Preflight refused before runner launch, with successful cleanup. |
+
+The shell runner and the hide1 compatibility entry propagate these statuses.
+Callers must distinguish `0` and `3`; a shell using `set -e` must capture status
+explicitly to handle `3`. Exit `3` does not prove owned termination. The supervisor's
+`initialMuted`, `muteRestored`, `muteRetained` and `muteRetentionReason` describe
+its inner check while the shell guard is active, not the final host state. The
+shell restores its original state on every exit, including `3`, per MUTE1; its
+restoration readback is written to stderr. Any additional cleanup error still
+produces `1`. Neither exit `3` nor shell restoration proves native acceptance.

@@ -2,6 +2,42 @@
 import AppKit
 import SwiftUI
 import VoiceBarUI
+import AVFoundation
+import Darwin
+
+/// No engine/input node is constructed; the product monitor lifecycle remains exercised.
+final class UIE2ENoDeviceLevelEngine: AudioLevelMonitoringEngine, AudioLevelMonitoringInputNode {
+    private(set) var starts = 0
+    var monitoringInputNode: AudioLevelMonitoringInputNode { self }
+    func inputFormat() -> AVAudioFormat? { nil }
+    func installTap(bufferSize: AVAudioFrameCount, format: AVAudioFormat?,
+                    block: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void) {}
+    func removeTap() {}
+    func prepare() {}
+    func start() throws { starts += 1 }
+    func stop() {}
+}
+
+enum UIE2ENoDeviceGuard {
+    /// Every scenario whose fixture constructs the real AppDelegate (UIE2EGate2245).
+    static let guardedScenarios: Set<String> = ["hide1", "gate2246"]
+#if VOICEBAR_UIE2E_GATE2245
+    static let gateBuild = true
+#else
+    static let gateBuild = false
+#endif
+
+    /// A GATE2245 build can construct the real AppDelegate under any scenario name: fail closed.
+    static func isRequired(scenario: String?, gateBuild: Bool = gateBuild) -> Bool {
+        gateBuild || guardedScenarios.contains(scenario ?? "")
+    }
+
+    static func requireInstalled() {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "voicebar_no_device_guard_version"),
+              unsafeBitCast(symbol, to: (@convention(c) () -> Int32).self)() == 1
+        else { fatalError("GATE2245 fixtures refuse startup without the device tripwire library") }
+    }
+}
 
 /// The real Settings/BarView/menu with fixture dependencies. This entry point intentionally
 /// precedes AppDelegate construction: no daemon, global hotkeys, audio engine or live sockets.
@@ -17,6 +53,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var popoverPresenter: MenuBarPopoverPresenter?
     var wizard: NSWindow?
     var contextMenuTracking = false
+#if VOICEBAR_UIE2E_GATE2245
+    var gate2245: UIE2EGate2245?
+#endif
 #if VOICEBAR_UIE2E_FOCUSED_338
     var stateGallery: UIE2EStateGallery?
 #endif
@@ -33,6 +72,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 marker: Bundle.main.object(forInfoDictionaryKey: UIE2ELaunchPolicy.markerKey),
                 environment: environment, confirmMute: confirmedMute)
             guard mode == .fixture else { return false }
+            if UIE2ENoDeviceGuard.isRequired(scenario: environment["VOICEBAR_UIE2E_SCENARIO"]) {
+                UIE2ENoDeviceGuard.requireInstalled()
+            }
             let sandbox = try UIE2ESandbox(environment: environment)
             let app = NSApplication.shared
             let host = UIE2EHost(sandbox: sandbox)
@@ -87,6 +129,9 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     Button(name) { self.model.fixture(name) }.accessibilityIdentifier("qa-fixture-\(name)")
                 }
             }.padding(6)
+#if VOICEBAR_UIE2E_GATE2245
+            gate2245Controls
+#endif
             if Bundle.main.object(forInfoDictionaryKey: "UIE2EPasteFeedback") as? Bool == true {
                 HStack {
                     ForEach(["paste-not-inserted", "paste-unverified", "paste-partial", "paste-typed"], id: \.self) { name in
@@ -147,6 +192,12 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         configureStatusItem()
+#if VOICEBAR_UIE2E_GATE2245
+        if ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "hide1" || ProcessInfo.processInfo.environment["VOICEBAR_UIE2E_SCENARIO"] == "gate2246" {
+            installHide1VisualMenu()
+        }
+#endif
+
         model.onRunSetup = { [weak self] in self?.openWizard() }
         model.receipt("launch")
     }
@@ -241,7 +292,7 @@ final class UIE2EHost: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.receipt("qa-menu-close")
     }
 
-    private func openWizard() {
+    func openWizard() {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: SetupWizardView.contentSize),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "VoiceBar QA Setup"
@@ -429,7 +480,9 @@ final class UIE2EModel {
         case "speak_text":
             // Real VoiceState selection routing ends here, never at a daemon or AX capture.
             voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
-                "text": message["text"] as? String ?? ""])
+                "text": message["text"] as? String ?? "",
+                "long_read": ["id": message["id"] as? String ?? "qa-selection",
+                              "chunk_start_ms": 0, "estimated_total_ms": 600_000]])
             return
         case "replay", "stop":
             // Synthetic daemon responses only, for native layout transitions. This
@@ -479,7 +532,7 @@ final class UIE2EModel {
             voice.speakSelection()
             voice.isHovering = true
             voice.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
-                "long_read": ["id": "qa-prepare", "chunk_index": 0, "chunk_count": 1,
+                "long_read": ["id": commands.last?["id"] as? String ?? "qa-selection", "chunk_index": 0, "chunk_count": 1,
                               "chunk_start_ms": 0, "preparing": true]])
             sandbox.writeObject(["mode": voice.mode.rawValue, "statusText": voice.statusText,
                 "durationGrowing": voice.isPlaybackDurationGrowing,
