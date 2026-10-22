@@ -5,6 +5,10 @@ The stacked coverage layer supplies the full flow tests, now enabled in this bra
 The infrastructure base alone is buildable with `--build-only`; an empty run cannot
 pass the result exporter.
 
+These commands document entry points, not permission to start a native run. A native
+operator needs a separate current authorization and must honor any open source,
+review, host-slot and acceptance gates. Historical run approvals do not renew it.
+
 On an **unoccupied Mac** with macOS 14+, Xcode 16+, Bun, Python 3.9+ and ffprobe:
 
 ```sh
@@ -289,15 +293,17 @@ receipts into stronger UI guarantees. Generic Open Settings correctly raises the
 currently selected Settings tab and need not select General.
 
 The shell runner restores the mute state it found (`scripts/lib/output-mute-guard.sh`, EXIT/INT/TERM
-traps). Recorded gate operators must still capture the initial state and restore it in a finally/trap.
-The acceptance receipts use an outer `operator-run.py` beside each result, which
-also verifies the exact QA bundle/head and cleans only that run's QA executable
-paths. The supervisor itself restores the recorded hide-others snapshot. No
+traps). Historical acceptance receipts may reference an outer `operator-run.py`;
+those files are evidence of their original runs, not current execution authority.
+The shell entry point owns current mute writes/restoration. The direct Python
+supervisor and hide1 compatibility entry have no mute guard of their own and must
+not be substituted for the shell entry without a separately reviewed outer guard.
+The supervisor itself restores the recorded hide-others snapshot. No
 resident app or unrelated process is killed, closed, relaunched or installed.
 
 ## Batched GATE2245 candidate
 
-`VOICEBAR_UIE2E_GATE2245=1 bash scripts/voicebar-ui-e2e.sh --output <new-directory>`
+`VOICEBAR_UIE2E_GATE2245=1 bash scripts/voicebar-ui-e2e.sh --output "$PWD/.build.noindex/<new-directory>"`
 adds HIDE1/SEL1/CLN1b probes to the full recorded flow. Integrate #366, #372,
 #397 and #398 first. The explicit define requires a QA build and its product APIs;
 a normal release cannot enable it. The QA bundle records `UIE2EGate2245=true`.
@@ -314,47 +320,46 @@ This remains isolated native UI evidence, with no clone synthesis/installed-app 
 
 ## Focused HIDE1 visual proof
 
-On an explicitly authorized free-screen Mac, integrate the pinned product candidate,
-then run `bash scripts/voicebar-ui-e2e.sh --scenario hide1 --build-only --output <new-directory>`.
-Run `python3 scripts/voicebar-hide1-visual-run.py <new-directory>` from that same tree.
-The operator monitors output mute, restores its initial value, and uses the existing
-recorded Hide Others/restore supervisor. Never use an installed-app swap for this gate.
+For screenless preparation, integrate the pinned product candidate, then use
+`bash scripts/voicebar-ui-e2e.sh --scenario hide1 --build-only --output "$PWD/.build.noindex/<new-directory>"`.
+Build-only supplies no native acceptance. A separately authorized native run uses
+the shell entry with `--scenario hide1` and a fresh output directory; its MUTE1 guard
+owns mute restoration. The direct Python compatibility entry is not a replacement
+for that guard. Never use an installed-app swap for this gate.
 
-Only `testHide1VisualFlow` runs. Settings and the QA status item are hidden; app-local
-Command+0–9 menu commands drive the fixture without bringing Settings into frame.
-Seven independent cases capture before/hidden/Show states, each with a lossless full
-screen and crop from the same sample. The panel is placed below the menu bar at screen
-center; the crop covers x=center−500, y=60, width=min(1000,screen width), height=540 in
-screen points from the top left, scaled to screenshot pixels. This proves isolated
-visibility, not notch placement. The final wizard uses production SetupWizardView with
+Only `testHide1VisualFlow` is selected. Settings and the QA status item are hidden;
+run-specific distributed notifications drive fixtures and acknowledge delivery
+without menu keystrokes. Seven cases request before/hidden/Show evidence through
+the boundary broker. Stills capture only proven QA-owned windows on black; there
+is no full-screen capture or desktop crop. Hidden/terminated frames require the
+corresponding lifetime/absence proof and may contain no image. The panel is placed
+below the menu bar at screen center; this does not establish notch placement.
+The final wizard uses production SetupWizardView with
 synthetic dependencies, triggered by the product's deferred setup presentation seam.
 Empty AppKit status-item frames are excluded from the visible-window inventory.
 Pixel acceptance requires inspecting every exported original PNG, independently of the
 native receipts; the Python scenario result alone is not visual acceptance.
 
-Hide Others also snapshots the installed accessory VoiceBar owner. If macOS refuses
-its hide request, preparation fails closed and restores the snapshot before any QA
-launch. A resident notch strip must not be mistaken for the isolated product panel.
-Capture receipts include on-screen window owner/PID/bounds for this distinction.
+Hide Others excludes the installed VoiceBar resident. Its current shown surface and
+process identities are recorded and must remain unchanged; they do not become QA
+capture targets. A resident notch strip must not be mistaken for the isolated product
+panel. Capture receipts include on-screen window owner/PID/bounds for this distinction.
 The QA panel move/resize observer preserves capture placement after product layout
 callbacks without changing panel ordering. A failed preparation is not a product failure.
 
-HIDE1-VIS run05 authorization (RULINGS.md, 2026-10-16): the installed resident may
-be hidden only through its own AX “Hide for 1 hour” control, after immediately
-checking no sox/rec descendant of its daemon, no `/tmp/voicelayer-session-*.lock`
-under five minutes old, and a non-recording resident state. A failed condition
-requires a two-minute wait and recheck. No app/daemon stop, relaunch, replacement,
-or socket access is part of this flow. Restore through AX “Show VoiceBar” and
-verify the original notch window and both process identities. If its own hide
-fails, stop without a workaround.
+The older HIDE1-VIS run05 Hide/Show authorization is historical, not an available
+path in this source. Resident Settings open/close and Hide/Show mutations are
+refused before dispatch because causal/lifecycle ownership is not proven. A
+user-opened Settings window is preserved and causes refusal; do not close it or
+open Settings to obtain an idle footer. The current path requires positive
+structural idle evidence from the existing resident AX tree, stable identities,
+no busy daemon children and no fresh session locks. Unknown/unsafe state waits
+two minutes before a bounded recheck, then refuses. A hidden/empty/unreadable
+resident tree does not authorize a Settings or visibility workaround.
 
-The operator records these actions in a reversible `resident-visibility.json`.
-Pass its absolute path as `VOICEBAR_UIE2E_RESIDENT_SNAPSHOT` to the prepared-run
-operator. `visibility.json` links that snapshot; its `restored` flag covers the
-regular apps hidden by the helper, while resident restoration is confirmed in
-the linked snapshot. The helper never calls application hide/unhide on the
-resident and fails closed if any resident-owned screen window remains. Close
-only operator-opened Settings before capture and return it to its initial state.
+`resident-visibility.json` records the leave-shown policy and unchanged surface;
+`visibility.json` links it and records restoration of regular apps hidden by the
+helper. Neither receipt grants new native authority or proves pixel acceptance.
 
 ## GATE2246 focused harness
 
@@ -366,8 +371,10 @@ library aborts on device access and child launches (only the exact output-mute r
 is permitted). Native execution requires all tripwire probes to pass, with proof
 bound to the exact app, test executable, library and fixture sources. The QA host
 also refuses fixture startup unless the library is active. The runner atomically
-claims the single authorized retry in its fresh output directory. Do not create a
-second run without a new lead ruling. Stop on any OS permission prompt; never grant it.
+records an attempt in its fresh output directory; that per-output claim neither
+authorizes a run nor enforces an attempt budget across directories. The historical
+run06 authorization was cancelled. A future native operator needs a current lead
+ruling. Stop on any OS permission prompt; never grant it.
 
 ### The no-device guard covers every GATE2245 build
 
@@ -408,14 +415,16 @@ the gate2246 configuration fails there by design.
 All native runner entry points use `voicebar-ui-e2e-supervisor.py`; direct native
 launch refuses without the live parent supervisor's per-run authority. Build-only
 compiles its AX helpers without running them. The supervisor reads process/lock
-state and positive recording state through AX (the resident Settings footer when
-the pill is collapsed), waits two minutes and rechecks on unknown/unsafe state,
-and never accesses resident sockets or interrupts capture. Only the resident's
-own Hide for 1 hour and Show VoiceBar controls change visibility. It records its
-restore intent before Hide, supervises mute/disk/permissions continuously, and
-restores own visibility on ordinary exits, errors and catchable signals. The shell
+state and requires positive structural idle evidence from the existing resident
+AX tree, waits two minutes and rechecks on unknown/unsafe state, and never accesses
+resident sockets or interrupts capture. The installed resident stays shown with
+its recorded surface and identities unchanged. Settings/Hide/Show mutations are
+refused before dispatch; no Settings-footer fallback is available. The supervisor
+checks mute/disk/permissions and restores its regular-app Hide Others snapshot
+on ordinary exits, errors and catchable signals. The shell
 runner owns mute writes and restores the pre-run state through its MUTE1 guard.
-The native supervisor only confirms mute; direct invocation while unmuted refuses. A user-opened Settings window aborts preparation.
+The native supervisor only confirms mute; direct invocation while unmuted refuses.
+A user-opened Settings window aborts preparation.
 Failed restoration is retained as a failed gate, never silently accepted.
 
 ### Scenario deadlines and exit status
@@ -436,7 +445,7 @@ stdout and saves `verdict` and `exitCode` in `operator-state.json`:
 
 | Exit | Meaning |
 | --- | --- |
-| `0` | PASS; cleanup proven and initial mute state restored, nothing retained. |
+| `0` | PASS for the inner supervisor interval; owned cleanup proven and inner mute check satisfied. Shell restoration follows. |
 | `3` | Scenario/export passed; launch completeness is NOT_PROVEN. Shell mute restoration still runs. |
 | `1` | Failure, including suite/export errors or any actual cleanup/restoration error. |
 | `2` | Preflight refused before runner launch, with successful cleanup. |

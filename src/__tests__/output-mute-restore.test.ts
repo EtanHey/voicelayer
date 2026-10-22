@@ -283,7 +283,16 @@ describe("auto-f5-verify.sh restores the volume and mute it found", () => {
 
 // The real runner, copied into a fake repo whose build/test tools are stubs.
 describe("voicebar-ui-e2e.sh restores the mute it found", () => {
-  function fakeRepo(prior: "true" | "false", build: string) {
+  const supervisorExits = [0, 1, 2, 3] as const;
+  const supervisorVerdicts = {
+    0: "verdict=PASS exit=0 mute=restored",
+    1: "verdict=FAIL exit=1 mute=retained",
+    2: "verdict=PREFLIGHT_REFUSED exit=2 mute=restored",
+    3: "verdict=PASS exit=3 mute=retained-by-design",
+  };
+
+  function fakeRepo(prior: "true" | "false", build: string,
+    supervisorExit: (typeof supervisorExits)[number] = 0) {
     const s = sandbox(prior);
     const root = join(s.dir, "repo");
     for (const d of ["scripts/lib", "flow-bar"]) mkdirSync(join(root, d), { recursive: true });
@@ -291,9 +300,23 @@ describe("voicebar-ui-e2e.sh restores the mute it found", () => {
       writeFileSync(join(root, f), readFileSync(join(repo, f), "utf8"));
     }
     writeFileSync(join(root, "flow-bar/build-app.sh"), build);
-    for (const tool of ["python3", "xcodebuild", "xcrun", "swift", "bun"]) {
+    for (const tool of ["xcodebuild", "xcrun", "swift", "bun"]) {
       writeFileSync(join(s.bin, tool), "#!/bin/bash\nexit 0\n", { mode: 0o700 });
     }
+    // Only the supervisor fixture produces a verdict; unrelated Python steps stay silent.
+    // Its mute field is the inner supervisor state, before the shell's EXIT restoration.
+    const supervisorLine = `${supervisorVerdicts[supervisorExit]} receipt=${join(s.dir, "out.noindex/operator-state.json")}`;
+    const pythonLog = join(s.dir, "python-calls");
+    writeFileSync(join(s.bin, "python3"), `#!/bin/bash
+printf '%s\\n' "$*" >> '${pythonLog}'
+case "$1" in
+  */voicebar-ui-e2e-supervisor.py)
+    printf '%s\\n' '${supervisorLine}'
+    exit ${supervisorExit} ;;
+  */voicebar-ui-e2e-run.py) exit 91 ;;
+esac
+exit 0
+`, { mode: 0o700 });
     const cmd = ["/bin/bash", join(root, "scripts/voicebar-ui-e2e.sh"), "--output", join(s.dir, "out.noindex")];
     const cleanup = () => {
       const pathFile = join(s.dir, "out.noindex/sandbox-path.txt");
@@ -303,27 +326,38 @@ describe("voicebar-ui-e2e.sh restores the mute it found", () => {
       }
       rmSync(s.dir, { recursive: true, force: true });
     };
-    return { ...s, root, cmd, cleanup };
+    return { ...s, root, cmd, cleanup, supervisorLine, pythonLog };
   }
 
   // Ad-hoc signing a copied binary needs the real macOS codesign.
-  test.skipIf(process.platform !== "darwin")("exit 0 restores muted=false", () => {
-    const build = `#!/bin/bash
+  for (const prior of ["false", "true"] as const) {
+    for (const supervisorExit of supervisorExits) {
+      test.skipIf(process.platform !== "darwin")(`exit ${supervisorExit} restores muted=${prior}`, () => {
+        const build = `#!/bin/bash
 for a; do [[ $prev == --install-path ]] && app=$a; prev=$a; done
 mkdir -p "$app/Contents/MacOS" && cp /usr/bin/true "$app/Contents/MacOS/VoiceBar"
 /usr/bin/plutil -create xml1 "$app/Contents/Info.plist"
 /usr/bin/plutil -insert CFBundleExecutable -string VoiceBar "$app/Contents/Info.plist"
 /usr/bin/plutil -insert CFBundleIdentifier -string com.voicelayer.voicebar.uie2e "$app/Contents/Info.plist"
 `;
-    const r0 = fakeRepo("false", build);
-    try {
-      const r = Bun.spawnSync(r0.cmd, { env: { ...process.env, PATH: r0.path } });
-      expect(r.stdout.toString()).toContain("PASS UIE2E");
-      expect(r.exitCode).toBe(0);
-      expect(r0.calls()).toContain("set volume output muted true");
-      expect(r0.read()).toBe("false");
-    } finally { r0.cleanup(); }
-  }, SUBPROCESS_TEST_TIMEOUT_MS);
+        const r0 = fakeRepo(prior, build, supervisorExit);
+        try {
+          const r = Bun.spawnSync(r0.cmd, { env: { ...process.env, PATH: r0.path } });
+          expect(r.stdout.toString().split("\n")).toContain(r0.supervisorLine);
+          expect(r.stdout.toString()).not.toContain("PASS UIE2E");
+          const supervisorCalls = readFileSync(r0.pythonLog, "utf8").trim().split("\n")
+            .filter((line) => line.startsWith(join(r0.root, "scripts/voicebar-ui-e2e-supervisor.py")));
+          expect(supervisorCalls).toEqual([
+            `${join(r0.root, "scripts/voicebar-ui-e2e-supervisor.py")} ${join(r0.dir, "out.noindex")} --scenario full`,
+          ]);
+          expect(r.exitCode).toBe(supervisorExit);
+          expect(r0.calls()).toContain("set volume output muted true");
+          expect(r.stderr.toString()).toContain(`output mute restored to ${prior}`);
+          expect(r0.read()).toBe(prior);
+        } finally { r0.cleanup(); }
+      }, SUBPROCESS_TEST_TIMEOUT_MS);
+    }
+  }
 
   test("exit 1 (build fails) restores muted=false", () => {
     const r0 = fakeRepo("false", "#!/bin/bash\nexit 1\n");
