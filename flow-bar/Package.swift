@@ -42,7 +42,8 @@ let package = Package(
         .testTarget(
             name: "VoiceBarUITests",
             dependencies: ["VoiceBarUI", "OffscreenTestSupport"],
-            path: "Tests/VoiceBarUITests"
+            path: "Tests/VoiceBarUITests",
+            exclude: ["Snapshots"]
         ),
     ]
 )

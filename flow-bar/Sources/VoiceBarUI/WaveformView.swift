@@ -113,7 +113,19 @@ public enum WaveformBarGeometry {
     }
 }
 
+// A fixture may freeze decorative animation without changing capture or playback clocks.
+private struct VisualRenderTimeKey: EnvironmentKey {
+    static let defaultValue: Double? = nil
+}
+extension EnvironmentValues {
+    var visualRenderTime: Double? {
+        get { self[VisualRenderTimeKey.self] }
+        set { self[VisualRenderTimeKey.self] = newValue }
+    }
+}
+
 public struct WaveformView: View {
+    @Environment(\.visualRenderTime) private var renderTime
     public let color: Color
     private let currentLevel: () -> Double?
     private let isListening: Bool
@@ -159,8 +171,8 @@ public struct WaveformView: View {
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: isPaused)) { timeline in
-            let now = timeline.date.timeIntervalSinceReferenceDate
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: isPaused || renderTime != nil)) { timeline in
+            let now = renderTime ?? timeline.date.timeIntervalSinceReferenceDate
             let envelopeLevel = mode == .audioDriven && !isPaused
                 ? envelopeStore.sample(rawLevel: currentLevel(), at: now)
                 : 0

@@ -55,6 +55,6 @@ site/what-is-voicelayer/
 # Per-run test isolation tree (see bunfig.toml / R-014)
 .test-tmp/
 
-# Spotlight-excluded build and QA artifacts
+# Spotlight-excluded build, QA artifacts and local snapshot galleries
 *.noindex/
 .build.noindex/
