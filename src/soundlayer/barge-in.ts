@@ -46,6 +46,9 @@ export function createBargeInMonitor(
 
     metrics.processed_chunks += 1;
     const probability = await vad.processChunk(pcmChunk);
+    if (stopped || triggered) {
+      return { speechStarted: false, rejectedReason: "not-speech" };
+    }
     if (!vad.isSpeech(probability)) {
       consecutiveSpeechChunks = 0;
       firstSpeechCapturedAtMs = null;
