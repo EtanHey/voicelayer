@@ -207,7 +207,12 @@ final class VoiceBarPresentationTests: XCTestCase {
         // main RunLoop barrier before flushing drawing, with both animation systems disabled.
         func flushRender() {
             var reachedBarrier = false
-            RunLoop.main.perform { reachedBarrier = true }
+            RunLoop.main.perform {
+                reachedBarrier = true
+                // run(mode:before:) need not return while SwiftUI keeps scheduling work.
+                // Stop this nested run as soon as its observation barrier is delivered.
+                CFRunLoopStop(CFRunLoopGetMain())
+            }
             while !reachedBarrier {
                 RunLoop.main.run(mode: .default, before: .distantFuture)
             }
