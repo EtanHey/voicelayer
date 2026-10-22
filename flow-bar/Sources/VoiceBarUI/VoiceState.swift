@@ -1030,6 +1030,7 @@ public final class VoiceState {
         // NOTCH1: the note lives inside the notch, so showing or clearing it resizes the panel.
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != showsSelectionBusyNote) }
     }
+    @ObservationIgnored var selectionBusyNoteSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     @ObservationIgnored private var selectionBusyNoteTask: Task<Void, Never>?
 
     private var selectionRejectionMessage: String?
@@ -1051,8 +1052,9 @@ public final class VoiceState {
         selectionRejectionMessage = message
         showsSelectionBusyNote = true
         selectionBusyNoteTask?.cancel()
+        let sleep = selectionBusyNoteSleep
         selectionBusyNoteTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(2))
+            try? await sleep(.seconds(2))
             guard !Task.isCancelled else { return }
             self?.showsSelectionBusyNote = false
             self?.selectionBusyNoteTask = nil

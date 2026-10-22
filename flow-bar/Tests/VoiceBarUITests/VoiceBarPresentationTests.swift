@@ -122,10 +122,22 @@ final class VoiceBarPresentationTests: XCTestCase {
         state.recordingMode = "ptt"
         state.sendCommand = { _ in XCTFail("expiry must not send commands") }
         state.selectionTextCaptureHandler = { _ in XCTFail("expiry must not capture") }
+        let timerStarted = expectation(description: "busy note timer armed")
+        let ticks = AsyncStream<Void>.makeStream()
+        state.selectionBusyNoteSleep = { duration in
+            XCTAssertEqual(duration, .seconds(2))
+            timerStarted.fulfill()
+            for await _ in ticks.stream { break }
+        }
+        defer { ticks.continuation.finish() }
         let before = try renderSelectionFooter(state, name: "expiry-before")
         let busy = try renderSelectionFooter(state, name: "expiry-busy", afterMount: { state.speakSelection() })
         XCTAssertNotEqual(before.pixels, busy.pixels)
-        try await Task.sleep(for: .milliseconds(2100))
+        await fulfillment(of: [timerStarted], timeout: 5)
+        XCTAssertTrue(state.showsSelectionBusyNote, "expiry is controlled by the injected timer")
+        ticks.continuation.yield(())
+        let expired = await settle { !state.showsSelectionBusyNote }
+        XCTAssertTrue(expired, "the timer completion clears the observable note")
         let cleared = try renderSelectionFooter(state, name: "expiry-cleared")
         XCTAssertEqual(before.pixels, cleared.pixels)
         XCTAssertEqual(before.presentation, cleared.presentation)

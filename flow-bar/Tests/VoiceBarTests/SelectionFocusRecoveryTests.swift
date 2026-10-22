@@ -551,13 +551,14 @@ final class SelectionFocusRecoveryTests: XCTestCase {
     private func makeCapture(_ fake: FakeAX, readAXSelection: @escaping () -> String?, pasteboard: NSPasteboard,
                              postCopy: @escaping () -> Bool = { false },
                              beforeSnapshot: @escaping () -> Void = {}) -> SpeakSelectionCapture {
-        let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".build/debug/VoiceBar")
-        let pasteboardName = pasteboard.name.rawValue
+        // These focus-routing tests own an eager, private pasteboard. Snapshot it on main,
+        // without depending on a separately built app or the helper's provider deadline.
+        let snapshot = SelectionPasteboardSnapshot.readOnMain(name: pasteboard.name.rawValue)
+        XCTAssertNotNil(snapshot, "the focus fixture must reach Copy with a valid snapshot")
         let ax = fake.ax
         return SpeakSelectionCapture(focusAX: ax, snapshotReader: {
             beforeSnapshot()
-            return SelectionPasteboardSnapshot.readInHelper(name: pasteboardName, executable: executable)
+            return snapshot
         }, readAXSelection: readAXSelection, pasteboard: pasteboard, postCopy: postCopy, schedule: {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + $0, execute: $1)
         })
