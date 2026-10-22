@@ -1048,7 +1048,21 @@ parse_build_app_args "$@"
 # Validate before process inspection, stop, install-path mutation or any compiler invocation.
 configure_qa_swift_flags
 source "$REPO_ROOT/scripts/lib/noindex-path.sh"
-normalize_app_dir_path
+if [[ "${VOICEBAR_RELEASE_STAGED:-0}" == 1 ]]; then
+    # Supervisor owns this private working directory; preserve relative writes.
+    APP_DIR="./VoiceBar.app"
+    require_noindex_path "$APP_DIR"
+    if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then VOICEBAR_RELEASE_ZIP="./VoiceBar.zip"; fi
+    STOP_RUNNING=0
+    RELAUNCH_APP=0
+elif [[ "$VOICEBAR_REQUIRE_NOTARIZATION" == 1 || -n "$VOICEBAR_RELEASE_ZIP" ]]; then
+    require_release_artifact_path "$APP_DIR"
+    if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then require_release_artifact_path "$VOICEBAR_RELEASE_ZIP"; fi
+    exec "$(release_artifact_python)" "$REPO_ROOT/scripts/lib/build-release-artifacts.py" \
+        "$APP_DIR" "$VOICEBAR_RELEASE_ZIP" "$SCRIPT_DIR/build-app.sh"
+else
+    normalize_app_dir_path
+fi
 require_non_docslocal_path "$VOICEBAR_BACKUP_DIR"
 if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then require_noindex_path "$VOICEBAR_RELEASE_ZIP"; fi
 if [[ "${VOICEBAR_UIE2E_ADHOC:-0}" == 1 ]] && ! allows_uie2e_adhoc_signing; then
