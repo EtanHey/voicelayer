@@ -551,8 +551,8 @@ final class SelectionFocusRecoveryTests: XCTestCase {
     private func makeCapture(_ fake: FakeAX, readAXSelection: @escaping () -> String?, pasteboard: NSPasteboard,
                              postCopy: @escaping () -> Bool = { false },
                              beforeSnapshot: @escaping () -> Void = {}) -> SpeakSelectionCapture {
-        let executable = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".build/debug/VoiceBar")
+        let executable = Bundle(for: Self.self).bundleURL.deletingLastPathComponent()
+            .appendingPathComponent("VoiceBar")
         let pasteboardName = pasteboard.name.rawValue
         let ax = fake.ax
         return SpeakSelectionCapture(focusAX: ax, snapshotReader: {

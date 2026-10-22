@@ -215,10 +215,10 @@ Confirm every event-handling, dictionary, waveform, sacred-material/morph, isola
 swift test --package-path flow-bar
 bun test
 bun run typecheck
-bash flow-bar/build-app.sh --install-path "$isolated_root/VoiceBar.app" --no-stop --no-relaunch
-bash scripts/verify-notch-event-handling.sh "$isolated_root/VoiceBar.app"
-bash scripts/verify-notch-glass-readability.sh "$isolated_root/VoiceBar.app"
-bash scripts/verify-notch-teleprompter-dismissal.sh "$isolated_root/VoiceBar.app"
+bash flow-bar/build-app.sh --install-path "$PWD/.build.noindex/VoiceBar.app" --no-stop --no-relaunch
+bash scripts/verify-notch-event-handling.sh "$PWD/.build.noindex/VoiceBar.app"
+bash scripts/verify-notch-glass-readability.sh "$PWD/.build.noindex/VoiceBar.app"
+bash scripts/verify-notch-teleprompter-dismissal.sh "$PWD/.build.noindex/VoiceBar.app"
 ```
 
 All app invocations must remain isolated/offscreen; if either legacy visual script only supports visible bottom-left placement, update it or record it as inadmissible rather than violating the brief.

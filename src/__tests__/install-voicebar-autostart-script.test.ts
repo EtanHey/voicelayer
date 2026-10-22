@@ -1,3 +1,4 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "child_process";
 import {
@@ -11,7 +12,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
 
 // Real subprocesses: standalone p95 <= 1018 ms; 4x rounded up, with a 5 s scheduling floor.
@@ -84,7 +84,7 @@ function writeStub(path: string, body: string) {
 }
 
 function makeWorkspace(options: StubOptions): Workspace {
-  const root = mkdtempSync(join(tmpdir(), "voicebar-autostart-"));
+  const root = mkdtempSync(join(bundleFixtureRoot(), "voicebar-autostart-"));
   workspaces.push(root);
 
   const home = join(root, "home");
@@ -357,9 +357,7 @@ describe("install-voicebar-autostart.sh log paths", () => {
     });
   }
 
-  // The property is "inside the user's own home", not "not literally /tmp":
-  // on the Linux CI box tmpdir() IS /tmp, so this workspace's own $HOME sits
-  // under /tmp and a literal /tmp check would fail on correct installer output.
+  // Assert ownership relative to fixture HOME, regardless of checkout location.
   test("keeps the log paths inside the user's home, not a shared directory", async () => {
     const workspace = makeWorkspace({ printLoaded: 0 });
 

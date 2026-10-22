@@ -1,3 +1,4 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
@@ -11,7 +12,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "fs";
-import { tmpdir } from "os";
 import { basename, dirname, join } from "path";
 
 // Real subprocesses: standalone p95 <= 762 ms; 4x rounded up, with a 5 s scheduling floor.
@@ -24,7 +24,7 @@ const cliScript = join(repoRoot, "src", "cli", "voicelayer.sh");
 const fixtureRoots = new Set<string>();
 
 function fixtureRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
+  const root = mkdtempSync(join(bundleFixtureRoot(), prefix));
   fixtureRoots.add(root);
   return root;
 }
