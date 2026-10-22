@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 
@@ -11,6 +11,8 @@ function fixture() {
   const root = mkdtempSync(join(bundleFixtureRoot(), "bundle-discovery-"));
   const bin = join(root, "bin"), candidates = join(root, "candidates");
   const app = join(candidates, "Applications/VoiceBar.app");
+  const effects = join(root, "effects.log");
+  writeFileSync(effects, "");
   mkdirSync(bin); mkdirSync(join(root, "lib"));
   mkdirSync(join(root, "Library/LaunchAgents"), { recursive: true });
   const plist = (path: string, id: string | null) => {
@@ -54,11 +56,11 @@ print(value)
   stub("defaults", "exit 1");
   stub("grep", 'if [[ "$1" == -rlE ]]; then /usr/bin/grep "$1" "$2" "$HOME/Library/LaunchAgents"; else /usr/bin/grep "$@"; fi');
   stub("hidutil", "echo '({ HIDKeyboardModifierMappingSrc = 30064771134;\nHIDKeyboardModifierMappingDst = 30064771181;\n},{ HIDKeyboardModifierMappingSrc = 51539607759;\nHIDKeyboardModifierMappingDst = 30064771181; })'");
-  stub("launchctl", "exit 1");
+  stub("launchctl", '[[ "$1" == print ]] && exit 1; echo "$0 $*" >> "$VB_TEST_EFFECTS"; exit 90');
   stub("pgrep", "exit 1");
-  stub("osascript", '[[ "$*" == *"get the name of every login item"* ]] && exit 0; echo forbidden >&2; exit 90');
-  for (const name of ["mv", "cp", "rm", "pkill", "open", "ps", "ioreg"]) {
-    stub(name, 'echo "forbidden OS effect: $0" >&2; exit 90');
+  stub("osascript", '[[ "$*" == *"get the name of every login item"* ]] && exit 0; echo "$0 $*" >> "$VB_TEST_EFFECTS"; exit 90');
+  for (const name of ["mv", "cp", "rm", "mkdir", "pkill", "open", "ps", "ioreg"]) {
+    stub(name, 'echo "$0 $*" >> "$VB_TEST_EFFECTS"; echo "forbidden OS effect: $0" >&2; exit 90');
   }
   for (const lib of ["voicebar-launchagent.sh", "voicebar-bundle-identity.sh"]) {
     writeFileSync(join(root, "lib", lib), readFileSync(new URL(`lib/${lib}`, scriptsRoot)));
@@ -68,14 +70,14 @@ print(value)
     writeFileSync(join(root, name), readFileSync(new URL(name, scriptsRoot), "utf8")
       .replaceAll("/Applications/VoiceBar.app", app));
   }
-  const run = (name: string, overrides: Record<string, string> = {}) => Bun.spawnSync(
-    ["/bin/bash", join(root, name), name === scriptNames[0] ? "--allow-stopped" : "--dry-run"],
+  const run = (name: string, overrides: Record<string, string> = {}, mode = "--dry-run") => Bun.spawnSync(
+    ["/bin/bash", join(root, name), name === scriptNames[0] ? "--allow-stopped" : mode],
     { env: { ...process.env, HOME: root, PATH: `${bin}:/usr/bin:/bin`, TMPDIR: candidates,
       PLIST_BUDDY: join(bin, "PlistBuddy"), VOICEBAR_PLIST_BUDDY: join(bin, "PlistBuddy"),
       VOICEBAR_CANONICAL_APP: app, VB_TEST_CANDIDATES: candidates, VB_TEST_SPOTLIGHT: app,
-      ...overrides } },
+      VB_TEST_EFFECTS: effects, ...overrides } },
   );
-  return { root, app, candidates, plist, run };
+  return { root, app, candidates, plist, run, stub, effects };
 }
 
 test("both discovery paths preserve inert directories and valid missing/other IDs", () => {
@@ -97,6 +99,79 @@ test("both discovery paths preserve inert directories and valid missing/other ID
       }
     }
     expect(existsSync(join(f.root, ".voicelayer"))).toBe(false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+}, 16_000);
+
+for (const prefix of [false, true]) {
+  test(`dedupe refuses failed inventory before effects (canonical prefix=${prefix})`, () => {
+    const f = fixture();
+    try {
+      const omitted = join(f.candidates, "unknown/VoiceBar.app");
+      f.plist(omitted, bundleId);
+      writeFileSync(join(omitted, "Contents/Info.plist"), "malformed metadata");
+      f.stub("sort", `/bin/cat >/dev/null\n${prefix ? 'printf "%s\\n" "$VOICEBAR_CANONICAL_APP"' : ""}\nexit 76`);
+      for (const mode of ["--dry-run", "--apply"]) {
+        const result = f.run(scriptNames[1], {}, mode);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr.toString()).toContain("bundle inventory failed");
+        expect(result.stdout.toString()).not.toContain("6. Plan / Apply");
+        expect(readFileSync(f.effects, "utf8")).toBe("");
+        expect(readFileSync(join(omitted, "Contents/Info.plist"), "utf8")).toBe("malformed metadata");
+      }
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }, 16_000);
+}
+
+for (const occupant of ["regular-file", "dangling-link", "file-link"]) {
+  test(`dedupe refuses occupied canonical ${occupant} before plans/effects`, () => {
+    const f = fixture();
+    try {
+      rmSync(f.app, { recursive: true });
+      const target = join(f.root, "unrelated-target");
+      if (occupant === "regular-file") writeFileSync(f.app, "preserve canonical file");
+      else {
+        if (occupant === "file-link") writeFileSync(target, "preserve unrelated target");
+        symlinkSync(target, f.app);
+      }
+      const renamed = join(f.candidates, "build.noindex/Renamed.app");
+      f.plist(renamed, bundleId);
+      const entryInode = lstatSync(f.app).ino;
+      const targetInode = existsSync(target) ? lstatSync(target).ino : null;
+      for (const mode of ["--dry-run", "--apply"]) {
+        const result = f.run(scriptNames[1], { VB_TEST_SPOTLIGHT: renamed }, mode);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr.toString()).toContain("occupied canonical path");
+        expect(result.stdout.toString()).not.toContain("6. Plan / Apply");
+        expect(result.stdout.toString()).not.toMatch(/would run:.*(quit|pkill|bootout|mv|cp)/);
+        expect(readFileSync(f.effects, "utf8")).toBe("");
+        expect(lstatSync(f.app).ino).toBe(entryInode);
+        if (targetInode !== null) expect(lstatSync(target).ino).toBe(targetInode);
+        if (occupant === "regular-file") expect(readFileSync(f.app, "utf8")).toBe("preserve canonical file");
+        else {
+          expect(lstatSync(f.app).isSymbolicLink()).toBe(true);
+          expect(readlinkSync(f.app)).toBe(target);
+          if (occupant === "file-link") expect(readFileSync(target, "utf8")).toBe("preserve unrelated target");
+          else expect(existsSync(target)).toBe(false);
+        }
+      }
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }, 16_000);
+}
+
+test("canonical directory symlink follows target identity and retains signature gates", () => {
+  const f = fixture();
+  try {
+    rmSync(f.app, { recursive: true });
+    const target = join(f.root, "target/Renamed.app");
+    f.plist(target, bundleId); symlinkSync(target, f.app);
+    const result = f.run(scriptNames[1]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain(`Canonical already in place and Developer-ID: ${f.app}`);
+    expect(f.run(scriptNames[1], { VB_TEST_TEAM: "OTHER" }).exitCode).toBe(1);
+    f.plist(target, "com.example.other");
+    expect(f.run(scriptNames[1]).exitCode).toBe(1);
+    expect(readlinkSync(f.app)).toBe(target);
+    expect(readFileSync(f.effects, "utf8")).toBe("");
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 }, 16_000);
 
