@@ -464,7 +464,7 @@ final class WaveformViewTests: XCTestCase {
         let source = try waveformViewSource()
         let timeline = try XCTUnwrap(
             source
-                .components(separatedBy: "TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: isPaused))")
+                .components(separatedBy: "TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: isPaused || renderTime != nil))")
                 .dropFirst()
                 .first?
                 .components(separatedBy: ".frame(width: WaveformLayout.viewportWidth")
