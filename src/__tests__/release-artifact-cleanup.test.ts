@@ -51,7 +51,7 @@ bash() { printf 'build\\n' >> "$NOINDEX1B_TRACE"; return 73; }
   } finally { rmSync(base, { recursive: true, force: true }); }
 });
 
-for (const mode of ["ordinary", "inode-swap", "after-open", "unsafe-python"] as const) {
+for (const mode of ["ordinary", "direct-noindex", "inode-swap", "after-open", "unsafe-python"] as const) {
   test(`descriptor cleanup: ${mode}`, () => {
     const runRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
     if (!runRoot) throw new Error("Release cleanup fixtures require the isolated preload");
@@ -62,7 +62,9 @@ import os, pathlib, runpy, shutil, sys
 module = runpy.run_path(sys.argv[1])
 base = pathlib.Path(sys.argv[2])
 mode = sys.argv[3]
-version = base / 'artifacts.noindex' / 'version'
+version = base / 'artifacts.noindex'
+if mode != 'direct-noindex':
+    version /= 'version'
 outside = base / 'outside'
 for directory in (version, outside):
     (directory / 'VoiceBar.app').mkdir(parents=True)
@@ -95,7 +97,7 @@ except ValueError as error:
     assert mode in ('inode-swap', 'unsafe-python'), error
     assert ('changed during validation' if mode == 'inode-swap' else 'lacks symlink-safe') in str(error)
 else:
-    assert mode in ('ordinary', 'after-open'), 'unsafe cleanup was admitted'
+    assert mode in ('ordinary', 'direct-noindex', 'after-open'), 'unsafe cleanup was admitted'
     cleaned = version.with_name('validated') if swapped else version
     assert not (cleaned / 'VoiceBar.app').exists()
     assert not (cleaned / 'VoiceBar.zip').exists()

@@ -167,6 +167,15 @@ canonical_app_dir_path() {
     lexically_normalize_absolute_path "$path"
 }
 
+resolve_release_artifact_destination() {
+    python3 - "$1" <<'PYDESTINATION'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+print(path.parent.resolve() / path.name)
+PYDESTINATION
+}
+
 normalize_app_dir_path() {
     local resolved_app_dir
     resolved_app_dir="$(canonical_app_dir_path "$APP_DIR")"
@@ -1058,6 +1067,10 @@ if [[ "${VOICEBAR_RELEASE_STAGED:-0}" == 1 ]]; then
 elif [[ "$VOICEBAR_REQUIRE_NOTARIZATION" == 1 || -n "$VOICEBAR_RELEASE_ZIP" ]]; then
     require_release_artifact_path "$APP_DIR"
     if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then require_release_artifact_path "$VOICEBAR_RELEASE_ZIP"; fi
+    APP_DIR="$(resolve_release_artifact_destination "$APP_DIR")"
+    if [[ -n "$VOICEBAR_RELEASE_ZIP" ]]; then
+        VOICEBAR_RELEASE_ZIP="$(resolve_release_artifact_destination "$VOICEBAR_RELEASE_ZIP")"
+    fi
     exec "$(release_artifact_python)" "$REPO_ROOT/scripts/lib/build-release-artifacts.py" \
         "$APP_DIR" "$VOICEBAR_RELEASE_ZIP" "$SCRIPT_DIR/build-app.sh"
 else
