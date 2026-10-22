@@ -6,6 +6,7 @@ import XCTest
 // The sandboxed runner asks the owned boundary broker (voicebar-ui-e2e-permissions --broker) for a
 // fresh, synchronous foreign-modal decision before each fixture command, UI action and still.
 let uie2eBoundaryPrefix = "com.voicelayer.voicebar.uie2e.boundary."
+enum UIE2EStopCategory: String { case runnerObserved = "runner-observed" }
 func uie2eBoundaryName(token: String, kind: String) -> String { uie2eBoundaryPrefix + token + "." + kind }
 func uie2eBoundaryAck(_ data: Data?) -> [String: Any]? {
     guard let data, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -434,12 +435,13 @@ extension VoiceBarFlowTests {
         return element.value as? String
     }
     /// Posts one boundary request and waits for the broker's answer to exactly it.
-    func boundary(_ kind: String) -> (count: Int, ack: [String: Any]?) {
+    // BEGIN UIE2E BOUNDARY TRANSPORT
+    func boundary(_ kind: String, stop: UIE2EStopCategory? = nil) -> (count: Int, ack: [String: Any]?) {
         let ackURL = root.appendingPathComponent("boundary/ack.json")
         let count = (uie2eBoundaryAck(try? Data(contentsOf: ackURL))?["count"] as? Int ?? 0) + 1
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(uie2eBoundaryName(token: root.lastPathComponent, kind: kind)),
-            object: nil, userInfo: nil, deliverImmediately: true)
+            object: nil, userInfo: stop.map { ["category": $0.rawValue] }, deliverImmediately: true)
         let deadline = ProcessInfo.processInfo.systemUptime + 10
         while ProcessInfo.processInfo.systemUptime < deadline {
             if let ack = uie2eBoundaryAck(try? Data(contentsOf: ackURL)), ack["count"] as? Int == count {
@@ -449,6 +451,7 @@ extension VoiceBarFlowTests {
         }
         return (count, nil)
     }
+    // END UIE2E BOUNDARY TRANSPORT
 
     /// True only on a fresh clear decision; anything else latches STOP for the rest of the run.
     // BEGIN UIE2E BOUNDARY CLEAR
@@ -474,7 +477,7 @@ extension VoiceBarFlowTests {
         guard foreignModalStop == nil else { return }
         foreignModalStop = reason
         XCTFail("Foreign modal STOP latched (" + reason + "); no further action, command or capture")
-        _ = boundary("action")  // Lets the broker take its own fresh decision and latch the supervisor STOP.
+        _ = boundary("stop", stop: .runnerObserved)
     }
     // END UIE2E FOREIGN STOP
 

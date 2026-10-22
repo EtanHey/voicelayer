@@ -64,7 +64,16 @@ final class FailureRecorder: NSObject, XCTestObservation {
 final class StopProbe: XCTestCase {
     var foreignModalStop: String?
     var calls = 0
-    func boundary(_ kind: String) { precondition(kind == "action"); calls += 1 }
+    func boundary(_ kind: String, stop: UIE2EStopCategory? = nil) {
+        precondition(kind == "stop" && stop == .runnerObserved)
+        calls += 1
+        let root = output.appendingPathComponent("runner-stop")
+        try! FileManager.default.createDirectory(at: root.appendingPathComponent("boundary"), withIntermediateDirectories: true)
+        supplied = ModalInventory() // Runner-only interruption; broker inventory is now clear.
+        let broker = Broker(token: "synthetic", root: root, executable: "/synthetic/QA",
+                            latchPath: root.appendingPathComponent("foreign-modal-stop.json"))
+        broker.answer(kind, payload: stop.map { ["category": $0.rawValue] })
+    }
     // INSERT ACTUAL FOREIGN STOP
     @objc func testPrivacy() {
         continueAfterFailure = true
@@ -183,6 +192,12 @@ class SwiftPrivacy(unittest.TestCase):
         return self.token(match.group(1), TITLE)
 
     def test_actual_broker_and_xctest_persistence_key_lifetimes(self):
+        for run in self.runs:
+            record = json.loads((run / 'runner-stop/foreign-modal-stop.json').read_text())
+            self.assertEqual(record, dict(status='not-proven', modals=[], errors=[
+                dict(kind='runner-stop', owner='unknown', reason='runner-observed')]))
+            ack = json.loads((run / 'runner-stop/boundary/ack.json').read_text())
+            self.assertEqual(ack, dict(count=1, kind='stop', status='not-proven', latch=record))
         broker = [self.broker_tokens(run) for run in self.runs]
         runner = [self.diagnostic_token(run) for run in self.runs]
         for left, right in zip(*broker):

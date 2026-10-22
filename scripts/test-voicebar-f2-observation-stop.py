@@ -62,10 +62,10 @@ func XCTFail(_ reason: String) { diagnostics.append(reason) }
 final class Runner {
     var foreignModalStop: String?
     var requests: [String] = []
-    var answer: (String) -> [String: Any] = { ["count": 1, "kind": $0, "status": "clear"] }
-    func boundary(_ kind: String) -> (count: Int, ack: [String: Any]?) {
+    var answer: (String, UIE2EStopCategory?) -> [String: Any] = { kind, _ in ["count": 1, "kind": kind, "status": "clear"] }
+    func boundary(_ kind: String, stop: UIE2EStopCategory? = nil) -> (count: Int, ack: [String: Any]?) {
         requests.append(kind)
-        let ack = answer(kind)
+        let ack = answer(kind, stop)
         return (ack["count"] as! Int, ack)
     }
     // INSERT RUNNER METHODS
@@ -150,7 +150,10 @@ let persisted = try! Data(contentsOf: latchPath)
 precondition(readJSON(latchPath)["status"] as? String == "not-proven")
 precondition(json(ack["latch"]!) == persisted, "latch exists when the ack is published")
 let runner = Runner()
-runner.answer = { kind in broker.answer(kind); return readJSON(root.appendingPathComponent("boundary/ack.json")) }
+runner.answer = { kind, stop in
+    broker.answer(kind, payload: stop.map { ["category": $0.rawValue] })
+    return readJSON(root.appendingPathComponent("boundary/ack.json"))
+}
 runner.requireFrame(uie2eStillReceipt(ack, count: 1), contract: "hidden-alive")
 precondition(runner.foreignModalStop != nil && diagnostics.count == 1)
 let requests = runner.requests.count

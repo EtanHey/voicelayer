@@ -357,10 +357,17 @@ print("PASS")
         self.assertIn(latch_guard, foreign_stop)
         self.assertIn(latch_assignment, foreign_stop)
         self.assertIn('XCTFail("Foreign modal STOP latched (" + reason', foreign_stop)
-        self.assertIn('_ = boundary("action")', foreign_stop)
+        transport = '_ = boundary("stop", stop: .runnerObserved)'
+        self.assertIn(transport, foreign_stop)
         self.assertLess(foreign_stop.index(latch_guard), foreign_stop.index(latch_assignment))
         self.assertLess(foreign_stop.index(latch_assignment), foreign_stop.index('XCTFail('))
-        self.assertLess(foreign_stop.index('XCTFail('), foreign_stop.index('_ = boundary("action")'))
+        self.assertLess(foreign_stop.index('XCTFail('), foreign_stop.index(transport))
+        boundary_transport = block(FLOW_TESTS, 'UIE2E BOUNDARY TRANSPORT')
+        self.assertIn('userInfo: stop.map { ["category": $0.rawValue] }', boundary_transport)
+        broker = block(PERMISSIONS, 'BOUNDARY BROKER')
+        self.assertIn('"still", "stop"', broker)
+        self.assertIn('self.answer(kind, payload: note.userInfo)', broker)
+        self.assertLess(broker.index('runnerStopInventory(payload)'), broker.index('latch.decide(inventory)'))
         probe = r'''
 let hidden = [("HIDE1VIS speaking hidden", "hide1"), ("GATE2246 HIDE background failure", "gate2246"),
               ("GATE2246 HIDE recovered failure", "gate2246"), ("GATE2246 HIDE user-f5 dismiss Later", "gate2246"),

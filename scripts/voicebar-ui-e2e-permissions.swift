@@ -444,6 +444,14 @@ func captureStill(binding: inout QARunBinding, executable: String, to path: URL)
 /// notification before each fixture command, UI action and still; the broker answers with a
 /// fresh synchronous modal decision (and, for stills, a window-ID capture) in an ack file.
 // BEGIN BOUNDARY BROKER
+/// STOP accepts only a closed synthetic category, never the runner's diagnostic/title.
+func runnerStopInventory(_ payload: [AnyHashable: Any]?) -> ModalInventory {
+    let valid = payload?.count == 1 && payload?["category"] as? String == "runner-observed"
+    var inventory = ModalInventory()
+    inventory.errors = [["kind": "runner-stop", "owner": "unknown",
+                         "reason": valid ? "runner-observed" : "invalid-stop-payload"]]
+    return inventory
+}
 final class Broker {
     let token: String, boundary: URL, executable: String, latchPath: URL
     var latch = BoundaryLatch(), count = 0
@@ -454,17 +462,19 @@ final class Broker {
     }
     func start() {
         try! FileManager.default.createDirectory(at: boundary, withIntermediateDirectories: true)
-        for kind in ["command", "action", "still"] {
+        for kind in ["command", "action", "still", "stop"] {
             DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.voicelayer.voicebar.uie2e.boundary.\(token).\(kind)"),
-                object: nil, queue: .main, using: { [unowned self] _ in self.answer(kind) })
+                object: nil, queue: .main, using: { [unowned self] note in self.answer(kind, payload: note.userInfo) })
         }
         try! json(["ready": true, "pid": Int(getpid())]).write(to: boundary.appendingPathComponent("ready.json"), options: .atomic)
     }
-    func answer(_ kind: String) {
+    func answer(_ kind: String, payload: [AnyHashable: Any]? = nil) {
         count += 1
         // Establish the QA lifetime before the first fixture command, even without an alert.
-        let inventory = runInventory(output: latchPath.deletingLastPathComponent(), executable: executable,
-                                     binding: &binding, requireQA: kind == "command")
+        // A runner observation cannot be erased by a later clear native inventory.
+        let inventory = kind == "stop" ? runnerStopInventory(payload)
+            : runInventory(output: latchPath.deletingLastPathComponent(), executable: executable,
+                           binding: &binding, requireQA: kind == "command")
         var status = latch.decide(inventory)
         var ack: [String: Any] = ["count": count, "kind": kind, "status": status]
         if kind == "still" {
@@ -492,7 +502,11 @@ final class Broker {
             var record = stopped
             record["modals"] = redactedEntries(stopped["modals"] as? [[String: Any]] ?? [])
             record["errors"] = redactedEntries(stopped["errors"] as? [[String: Any]] ?? [])
-            if !FileManager.default.fileExists(atPath: latchPath.path) { try? json(record).write(to: latchPath, options: .atomic) }
+            if !FileManager.default.fileExists(atPath: latchPath.path) {
+                // Never acknowledge STOP before its supervisor-visible record exists.
+                do { try json(record).write(to: latchPath, options: .atomic) }
+                catch { return } // Sticky memory latch remains; no fresh ack authorizes work.
+            }
             ack["latch"] = record
         }
         try? json(ack).write(to: boundary.appendingPathComponent("ack.json"), options: .atomic)
