@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.51] - 2026-10-22
+
+### Fixed
+- Keep tooltip hosts mounted for the paused pill's Play, Next and Stop controls across pause/resume (#495).
+- Fold a near-identical sentence repeated at a roughly 30-second chunk seam in long recordings when timestamp coverage supports the full shared-audio interval. Disputed words use distance from the chunk edge to choose a variant; ambiguous coverage retains the previous merge. Seam disagreements are logged as hashes only to `~/.local/state/voicelayer/seam-audit.jsonl`. This stride policy is an orc ruling pending ratification (#507).
+
+### Developer / build
+- Put generated build, QA and release artifacts in Spotlight-excluded `.noindex` directories. Release cleanup uses pinned directory handles so replaced ancestors cannot redirect it into `/Applications`; release path handoff supports relative paths, symlinked parents and direct `.noindex` layouts (#494, #498, #504).
+
+### Internal
+- Harden barge-in plumbing against stale onset events, isolate each monitor's VAD state and await owned teardown. Barge-in is still not wired into `voice_ask` (#496, #497, #499).
+- Reap verified hook fixtures after launcher abort, preserving recovery evidence for unknown process identities (#493).
+- Make Bun deadline/PID fixtures and host measurements more deterministic, require explicit network-test opt-in, publish PID receipts atomically and exclude Python caches from the private-corpus source guard (#500, #503, #505).
+- Add deterministic synthetic VoiceBar snapshot baselines and causal readiness controls for Swift timing fixtures (#501, #502).
+- Wait for hook supervisor readiness before timing fixture startup (#506).
+
 ## [2.2.50] - 2026-10-21
 
 ### Added
