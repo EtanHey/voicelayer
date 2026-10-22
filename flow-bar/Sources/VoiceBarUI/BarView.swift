@@ -72,6 +72,7 @@ public struct PulsingStatusLabel: View {
 }
 
 public struct ProcessingSpinner: View {
+    @Environment(\.visualRenderTime) private var renderTime
     public static let defaultDiameter: CGFloat = 14
 
     private let size: CGFloat
@@ -87,9 +88,9 @@ public struct ProcessingSpinner: View {
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: renderTime != nil)) { timeline in
             ProcessingSpinnerFrame(
-                angle: timeline.date.timeIntervalSinceReferenceDate * 360,
+                angle: (renderTime ?? timeline.date.timeIntervalSinceReferenceDate) * 360,
                 diameter: size,
                 showsTrack: showsTrack
             )

@@ -52,7 +52,9 @@ def expected_packet(step):
 
 def configure(output, app, sandbox, scenario=None):
     scenario = selected_scenario(output, scenario)
-    candidates = list((output / 'DerivedData/Build/Products').glob('*.xctestrun'))
+    metadata = output / 'derived-data-path.txt'
+    derived = pathlib.Path(metadata.read_text().strip()) if metadata.exists() else output / 'DerivedData'
+    candidates = list((derived / 'Build/Products').glob('*.xctestrun'))
     if len(candidates) != 1:
         raise ValueError('Expected exactly one built xctestrun')
     data = plistlib.loads(candidates[0].read_bytes())

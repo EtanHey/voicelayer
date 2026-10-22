@@ -1,13 +1,13 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
 
 // Real subprocesses: standalone p95 <= 2787 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 12_000;
 
 test("dedupe preserves the exact TTS label but backs up a duplicate VoiceBar agent", () => {
-  const dir = mkdtempSync(join(tmpdir(), "vb-dedupe-"));
+  const dir = mkdtempSync(join(bundleFixtureRoot(), "vb-dedupe-"));
   try {
     const bin = join(dir, "bin"), agents = join(dir, "Library/LaunchAgents");
     mkdirSync(bin); mkdirSync(agents, { recursive: true });

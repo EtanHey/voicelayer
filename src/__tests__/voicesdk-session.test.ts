@@ -157,7 +157,7 @@ function captureDeadline(budget: number) {
   return { get fire() { return fire; }, restore: () => spy.mockRestore() };
 }
 
-function ownedPromptFixture(playerExited = Promise.resolve()) {
+function ownedPromptFixture(playerExited = Promise.resolve(), monitorExited = Promise.resolve()) {
   const layer = fakeSoundLayer();
   const monitors: BargeInMonitorOptions[] = [];
   const scopes: PlaybackScope[] = [];
@@ -169,7 +169,7 @@ function ownedPromptFixture(playerExited = Promise.resolve()) {
   layer.cancellation.cancelPlayback = scope => { scopes.push(scope); return cancelAccepted; };
   layer.bargeIn = { monitorDuringPlayback(options) {
     monitors.push(options);
-    return { exited: Promise.resolve(), stop() { monitorStops++; },
+    return { exited: monitorExited, stop() { monitorStops++; },
       pushAudioChunk: async () => ({ speechStarted: false }),
       getMetrics: () => ({ processed_chunks: 0, false_interrupts: 0, confirmed_interrupts: 0, false_interrupt_rate: 0 }) };
   } };
@@ -431,6 +431,37 @@ describe("VoiceSDK session manager", () => {
     } finally { physical.resolve(); await task; }
     expect(manager.replay(session.session_id).at(-1)).toMatchObject({ type: "speak.stopped", reason: "completed" });
   });
+
+  for (const failure of [false, true]) {
+    it(`BARGEIN-PR3 SDK awaits monitor teardown and reports ${failure ? "failure" : "completion"}`, async () => {
+      tempDir = mkdtempSync(join(tmpdir(), "voicesdk-monitor-exit-"));
+      const physical = Promise.withResolvers<void>();
+      const cause = new Error("monitor cleanup failed");
+      const diagnostic = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        void physical.promise.catch(() => {});
+        const fixture = ownedPromptFixture(Promise.resolve(), physical.promise);
+        const manager = createVoiceSdkSessionManager({ soundLayer: fixture.layer, logDir: tempDir });
+        const session = await manager.startSession({ product: "Fixture" });
+        const task = manager.speak(session.session_id, { text: "Prompt" });
+        try {
+          await Bun.sleep(0);
+          expect(fixture.monitorStops).toBe(1);
+          expect(manager.replay(session.session_id).some(event => event.type === "speak.stopped")).toBe(false);
+        } finally {
+          if (failure) physical.reject(cause);
+          else physical.resolve();
+          await task;
+        }
+        expect(manager.replay(session.session_id).at(-1)).toMatchObject({
+          type: "speak.stopped", reason: failure ? "error" : "completed",
+        });
+        if (failure) expect(diagnostic).toHaveBeenCalledWith("[voicelayer] barge-in monitor teardown:", cause);
+        else expect(diagnostic).not.toHaveBeenCalled();
+        expect(fixture.globalStops).toBe(0);
+      } finally { diagnostic.mockRestore(); }
+    });
+  }
 
   it("PLAYER0b failed physical cleanup reports error even after an accepted interruption", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "voicesdk-exit-error-"));
