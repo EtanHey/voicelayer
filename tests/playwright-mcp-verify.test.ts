@@ -13,7 +13,7 @@ import { existsSync } from "fs";
 // Pre-check for conditional skips
 const npxAvailable = Bun.spawnSync(["which", "npx"], { env: process.env }).exitCode === 0;
 const networkOptIn = process.env.VOICELAYER_TEST_NETWORK === "1";
-if (!networkOptIn) console.warn("SKIP Playwright npx download: set VOICELAYER_TEST_NETWORK=1 to opt in");
+if (!networkOptIn) console.warn("INTENTIONAL SKIP Playwright npx download: manual opt-in requires VOICELAYER_TEST_NETWORK=1");
 const mcpJsonExists = existsSync(".mcp.json");
 const mcpConfig =
   mcpJsonExists ? await Bun.file(".mcp.json").json().catch(() => null) : null;
@@ -22,7 +22,7 @@ const playwrightConfig = mcpConfig?.mcpServers?.playwright;
 describe("Playwright MCP setup", () => {
   test.skipIf(!npxAvailable || !networkOptIn)(
     "npx @playwright/mcp@latest is available",
-    { timeout: 15000 },
+    { timeout: 60_000 }, // Allow an opted-in cold npx download.
     () => {
       const result = Bun.spawnSync([
         "npx",
