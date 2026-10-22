@@ -132,7 +132,7 @@ require_release_artifact_path "$APP_PATH" "$ARTIFACT_DIR"
 require_release_artifact_path "$ZIP_PATH" "$ARTIFACT_DIR"
 
 mkdir -p "$ARTIFACT_DIR"
-python3 "$SCRIPT_DIR/lib/cleanup-release-artifacts.py" "$ARTIFACT_DIR" "$APP_PATH" "$ZIP_PATH"
+"$(release_artifact_python)" "$SCRIPT_DIR/lib/cleanup-release-artifacts.py" "$ARTIFACT_DIR" "$APP_PATH" "$ZIP_PATH"
 
 echo "[release-voicebar] Building notarized VoiceBar $VERSION at $APP_PATH"
 (

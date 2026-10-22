@@ -19,7 +19,16 @@ require_release_artifact_path() {
     python3 - "$@" <<'PYRELEASE'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1]).resolve()
-if tuple(part.casefold() for part in path.parts[:2]) == ('/', 'applications'):
+def identity(p):
+    try:
+        info = p.stat()
+        return info.st_dev, info.st_ino
+    except FileNotFoundError:
+        return None
+applications = identity(pathlib.Path('/Applications'))
+if (tuple(part.casefold() for part in path.parts[:2]) == ('/', 'applications')
+        or tuple(part.casefold() for part in path.parts[:5]) == ('/', 'system', 'volumes', 'data', 'applications')
+        or (applications is not None and any(identity(p) == applications for p in (path, *path.parents)))):
     sys.exit('ERROR: release artifacts must not be under /Applications: ' + str(path))
 if len(sys.argv) > 2:
     parent = pathlib.Path(sys.argv[2]).resolve()
@@ -36,4 +45,18 @@ path = pathlib.Path(sys.argv[1]).resolve()
 if any(part.casefold() == 'docs.local' for part in path.parts):
     sys.exit('ERROR: docs.local holds only small receipts, never rollback backups: ' + str(path))
 PYBACKUP
+}
+
+
+# Apple's system Python can be too old for descriptor-relative rmtree.
+release_artifact_python() {
+    local candidate
+    for candidate in "$(command -v python3)" /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+        if [[ -x "$candidate" ]] && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    echo 'ERROR: release artifacts require Python 3.11 or newer' >&2
+    return 1
 }

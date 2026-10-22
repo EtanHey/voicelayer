@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "../..");
@@ -31,16 +31,24 @@ record_operation() {
 }
 mkdir() { record_operation mkdir "$@"; }
 rm() { record_operation rm "$@"; }
-python3() {
-  if [[ "$1" == */cleanup-release-artifacts.py ]]; then
-    shift
-    record_operation cleanup "$@"
-  else
-    command python3 "$@"
-  fi
-}
 bash() { record_operation build "$@"; return 73; }
 `);
+  const bin = join(base, "bin");
+  mkdirSync(bin);
+  const realPython = Bun.which("python3");
+  if (!realPython) throw new Error("Python required for guard fixtures");
+  const python = join(bin, "python3");
+  writeFileSync(python, `#!/bin/bash
+if [[ "$1" == */cleanup-release-artifacts.py ]]; then
+  shift
+  printf 'cleanup' >> "$NOINDEX1B_TRACE"
+  printf '\\t%s' "$@" >> "$NOINDEX1B_TRACE"
+  printf '\\n' >> "$NOINDEX1B_TRACE"
+else
+  exec "${realPython}" "$@"
+fi
+`);
+  chmodSync(python, 0o755);
   const markers = new Map<string, string>();
   const keep = (path: string) => {
     mkdirSync(resolve(path, ".."), { recursive: true });
@@ -50,7 +58,7 @@ bash() { record_operation build "$@"; return 73; }
   };
   const run = (output = safe) => {
     const result = Bun.spawnSync(["/bin/bash", "scripts/release-voicebar.sh", "--output-dir", output, "--skip-tap-check"], {
-      cwd: root, env: { ...process.env, BASH_ENV: shellEnv, NOINDEX1B_TRACE: trace },
+      cwd: root, env: { ...process.env, BASH_ENV: shellEnv, NOINDEX1B_TRACE: trace, PATH: `${bin}:${process.env.PATH}` },
       stdout: "pipe", stderr: "pipe",
     });
     for (const [path, content] of markers) expect(readFileSync(path, "utf8")).toBe(content);

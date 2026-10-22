@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const repo = resolve(import.meta.dir, "../..");
@@ -116,3 +116,161 @@ print('verified')
     } finally { rmSync(base, { recursive: true, force: true }); }
   });
 }
+
+test("release build refuses a version swap during swift without touching outside artifacts", () => {
+  const runRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
+  if (!runRoot) throw new Error("Requires isolated preload");
+  const base = realpathSync(mkdtempSync(join(runRoot, "build-race-")));
+  try {
+    const selected = join(base, "artifacts.noindex/version");
+    const outside = join(base, "outside");
+    mkdirSync(selected, { recursive: true });
+    mkdirSync(join(outside, "VoiceBar.app"), { recursive: true });
+    writeFileSync(join(outside, "VoiceBar.app/marker"), "keep");
+    writeFileSync(join(outside, "VoiceBar.zip"), "keep zip");
+    writeFileSync(join(base, "VoiceBar"), "fake binary");
+    const hook = join(base, "hook.sh");
+    writeFileSync(hook, `
+swift() {
+  if [[ "$*" == *--show-bin-path* ]]; then printf '%s\\n' "$TEST_BASE"; return; fi
+  command mv "$TEST_SELECTED" "$TEST_SELECTED-held"
+  command ln -s "$TEST_OUTSIDE" "$TEST_SELECTED"
+  printf swapped > "$TEST_BASE/injected"
+}
+bash() { return 0; }
+mkdir() { if [[ "$*" == *Contents/MacOS* ]]; then exit 77; fi; command mkdir "$@"; }
+`);
+    const result = Bun.spawnSync(["/bin/bash", "flow-bar/build-app.sh", "--install-path", join(selected, "VoiceBar.app"), "--no-stop", "--no-relaunch"], {
+      cwd: repo, env: { ...process.env, BASH_ENV: hook, TEST_BASE: base,
+        TEST_SELECTED: selected, TEST_OUTSIDE: outside,
+        VOICEBAR_REQUIRE_NOTARIZATION: "1", VOICEBAR_RELEASE_ZIP: join(selected, "VoiceBar.zip") },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(existsSync(join(base, "injected"))).toBe(true);
+    expect(existsSync(join(outside, "VoiceBar.app/marker"))).toBe(true);
+    expect(readFileSync(join(outside, "VoiceBar.zip"), "utf8")).toBe("keep zip");
+    expect(result.exitCode).not.toBe(0);
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
+
+for (const mode of ["old-python", "applications-inode", "partial-delete", "publish", "publish-existing", "publish-existing-zip", "publish-swap"]) {
+  test(`release helper contract: ${mode}`, () => {
+    const runRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
+    if (!runRoot) throw new Error("Requires isolated preload");
+    const base = realpathSync(mkdtempSync(join(runRoot, "release-contract-")));
+    try {
+      const result = Bun.spawnSync(["python3", "-c", `
+import os, pathlib, runpy, shutil, subprocess, sys
+base = pathlib.Path(sys.argv[2])
+mode = sys.argv[3]
+version = base / 'artifacts.noindex' / 'version'
+version.mkdir(parents=True)
+app = version / 'VoiceBar.app'
+zip_path = version / 'VoiceBar.zip'
+module = runpy.run_path(sys.argv[1])
+if mode.startswith('publish'):
+    builder = runpy.run_path(str(pathlib.Path(sys.argv[1]).with_name('build-release-artifacts.py')))
+    outside = base / 'outside'
+    outside.mkdir()
+    (outside / 'VoiceBar.app').mkdir()
+    (outside / 'VoiceBar.app' / 'marker').write_text('outside')
+    (outside / 'VoiceBar.zip').write_text('outside zip')
+    def fake_build(*args, **kwargs):
+        pathlib.Path('VoiceBar.app').mkdir()
+        pathlib.Path('VoiceBar.app/marker').write_text('built')
+        pathlib.Path('VoiceBar.zip').write_text('zip')
+        if mode == 'publish-swap':
+            version.rename(version.with_name('held'))
+            version.symlink_to(outside, target_is_directory=True)
+        elif mode == 'publish-existing':
+            app.mkdir()
+        elif mode == 'publish-existing-zip':
+            zip_path.write_text('existing zip')
+    subprocess.run = fake_build
+    try:
+        builder['build'](str(app), str(zip_path), 'unused')
+    except (OSError, ValueError):
+        assert mode != 'publish'
+    else:
+        assert mode == 'publish'
+        assert (app / 'marker').read_text() == 'built'
+        assert zip_path.read_text() == 'zip'
+    if mode == 'publish-existing':
+        assert app.is_dir() and not list(app.iterdir())
+    if mode == 'publish-existing-zip':
+        assert zip_path.read_text() == 'existing zip'
+    assert (outside / 'VoiceBar.app' / 'marker').read_text() == 'outside'
+    assert (outside / 'VoiceBar.zip').read_text() == 'outside zip'
+else:
+    app.mkdir()
+    (app / 'marker').write_text('keep')
+    zip_path.write_text('keep zip')
+    if mode == 'old-python':
+        sys.version_info = (3, 9, 6)
+        expected = 'Python 3.11 or newer'
+    elif mode == 'applications-inode':
+        real_stat = os.stat
+        def fixture_stat(path, *args, **kwargs):
+            return real_stat(version.parent if str(path) == '/Applications' else path, *args, **kwargs)
+        os.stat = fixture_stat
+        expected = 'must not be under /Applications'
+    else:
+        real_rmtree = shutil.rmtree
+        def partial(path, *, dir_fd):
+            child = os.open(path, os.O_RDONLY | os.O_DIRECTORY, dir_fd=dir_fd)
+            try:
+                os.unlink('marker', dir_fd=child)
+            finally:
+                os.close(child)
+            raise PermissionError('fixture interruption')
+        partial.avoids_symlink_attacks = True
+        shutil.rmtree = partial
+        expected = 'partially deleted, then failed'
+    try:
+        module['cleanup'](str(version), [str(app), str(zip_path)])
+    except (ValueError, OSError) as error:
+        assert expected in str(error), error
+    else:
+        raise AssertionError('unsafe operation admitted')
+    assert zip_path.read_text() == 'keep zip'
+    assert (app / 'marker').exists() == (mode != 'partial-delete')
+print('verified')
+`, join(repo, "scripts/lib/cleanup-release-artifacts.py"), base, mode], {
+        cwd: repo, env: process.env, stdout: "pipe", stderr: "pipe",
+      });
+      expect(result.stderr.toString()).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString().trim()).toBe("verified");
+    } finally { rmSync(base, { recursive: true, force: true }); }
+  });
+}
+
+test("release guard rejects the Applications firmlink alias by string only", () => {
+  const result = Bun.spawnSync(["/bin/bash", "-c",
+    'source scripts/lib/noindex-path.sh; require_release_artifact_path /System/Volumes/Data/Applications/example.noindex/version/VoiceBar.app'], {
+    cwd: repo, env: process.env, stdout: "pipe", stderr: "pipe",
+  });
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stderr.toString()).toContain("must not be under /Applications");
+});
+
+test("release selects a supported Python when PATH contains an old interpreter", () => {
+  const runRoot = process.env.VOICELAYER_TEST_RUN_ROOT;
+  if (!runRoot) throw new Error("Requires isolated preload");
+  const base = realpathSync(mkdtempSync(join(runRoot, "python-select-")));
+  try {
+    const python = join(base, "python3");
+    writeFileSync(python, "#!/bin/sh\nexit 1\n");
+    chmodSync(python, 0o755);
+    const result = Bun.spawnSync(["/bin/bash", "-c",
+      'source scripts/lib/noindex-path.sh; selected="$(release_artifact_python)" || exit; "$selected" -c "import sys; assert sys.version_info >= (3, 11)"'], {
+      cwd: repo, env: { ...process.env, PATH: base }, stdout: "pipe", stderr: "pipe",
+    });
+    // A host without a known-good fallback must fail closed with an explanation.
+    if (result.exitCode !== 0) {
+      expect(result.stderr.toString()).toContain("require Python 3.11 or newer");
+    } else {
+      expect(result.stderr.toString()).toBe("");
+    }
+  } finally { rmSync(base, { recursive: true, force: true }); }
+});
