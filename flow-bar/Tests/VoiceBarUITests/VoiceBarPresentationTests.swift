@@ -2,6 +2,7 @@
 import XCTest
 import AppKit
 import SwiftUI
+import Vision
 import OffscreenTestSupport
 
 final class VoiceBarPresentationTests: XCTestCase {
@@ -202,15 +203,15 @@ final class VoiceBarPresentationTests: XCTestCase {
         XCTAssertLessThan(panel.frame.maxX, 0)
         XCTAssertFalse(panel.isKeyWindow)
         XCTAssertFalse(panel.isMainWindow)
+        // Flush SwiftUI layout and AppKit drawing synchronously before taking pixels.
         host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
         let initialFrame = panel.frame
         if let afterMount {
             afterMount()
-            // The shell grows on the notch spring and the note fades in after it, as the teleprompter does.
-            RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+            // Animations are disabled above; commit the updated presentation before capture.
             host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
         }
         XCTAssertEqual(panel.frame, initialFrame)
         // The note band, inside the black pill directly under the top row.
@@ -218,8 +219,32 @@ final class VoiceBarPresentationTests: XCTestCase {
         let bandTop = band.minY
         let footer = NSRect(x: 0, y: host.isFlipped ? bandTop : host.bounds.height - bandTop - band.height,
                             width: host.bounds.width, height: band.height)
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: footer))
-        host.cacheDisplay(in: footer, to: bitmap)
+        let expectedNote = state.selectionFeedbackNote
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        var bitmap: NSBitmapImageRep
+        while true {
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+            bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: footer))
+            host.cacheDisplay(in: footer, to: bitmap)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([request])
+            let renderedText = (request.results ?? [])
+                .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            if let expectedNote {
+                if renderedText == expectedNote { break }
+            } else if renderedText.isEmpty {
+                break
+            }
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                XCTFail("Footer did not render \(expectedNote ?? "an empty note band"); OCR: \(renderedText)")
+                throw NSError(domain: "SelectionFooterRenderTimeout", code: 1)
+            }
+            // Yield for SwiftUI invalidation; only the observed pixels end the wait.
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
         let bytes = try XCTUnwrap(bitmap.bitmapData)
         if let output = ProcessInfo.processInfo.environment["VOICEBAR_P2B_SHOTS_DIR"] {
             let directory = URL(fileURLWithPath: output, isDirectory: true)
