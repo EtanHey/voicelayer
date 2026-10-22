@@ -11,7 +11,7 @@ import {
   VoiceLayerTextToSpeechBackend,
 } from "../tts";
 import { SileroVoiceActivityDetector } from "../vad";
-import { createBargeInMonitor } from "./barge-in";
+import { createOwnedBargeInMonitor } from "./barge-in";
 import type {
   BargeInController,
   BargeInMonitor,
@@ -45,34 +45,10 @@ class VoiceLayerBargeInController implements BargeInController {
   constructor(private readonly soundLayer: Pick<SoundLayer, "vad" | "clock">) {}
 
   monitorDuringPlayback(options: BargeInMonitorOptions): BargeInMonitor {
-    const monitor = createBargeInMonitor(
-      this.soundLayer.vad,
-      options,
+    return createOwnedBargeInMonitor(
+      this.soundLayer.vad, options, startMicChunkStream,
       () => this.soundLayer.clock?.nowMs() ?? Date.now(),
     );
-    try {
-      const stream = startMicChunkStream({
-        onChunk: async (chunk, capturedAtMs) => {
-          const decision = await monitor.pushAudioChunk(chunk, capturedAtMs);
-          return decision.speechStarted;
-        },
-      });
-      return {
-        ...monitor,
-        exited: stream.exited,
-        stop() {
-          monitor.stop();
-          stream.stop();
-        },
-      };
-    } catch (error) {
-      console.error(
-        `[voicelayer] Barge-in mic monitor unavailable: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return monitor;
-    }
   }
 }
 

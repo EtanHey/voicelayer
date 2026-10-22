@@ -234,6 +234,8 @@ export function createVoiceSdkSessionManager(
     } finally {
       finished = true;
       bargeInMonitor.current?.stop();
+      try { await bargeInMonitor.current?.exited; }
+      catch { reason = "error"; cancelOwned(); }
       try { await waitForPlayerExit(playbacks); }
       catch { reason = "error"; cancelOwned(); }
     }
