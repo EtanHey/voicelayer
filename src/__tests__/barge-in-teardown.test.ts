@@ -31,11 +31,11 @@ it("stop is terminal and idempotent; exit waits for stream and pending inference
   let exited = false;
   void f.monitor.exited.then(() => { exited = true; });
   f.monitor.stop(); f.monitor.stop();
-  await Promise.resolve();
+  await Bun.sleep(0);
   expect(f.stops).toBe(1);
   expect(exited).toBe(false);
   f.exit.resolve();
-  await Promise.resolve();
+  await Bun.sleep(0);
   expect(exited).toBe(false);
   inference.resolve(0.9);
   expect((await chunk).speechStarted).toBe(false);
@@ -46,8 +46,11 @@ it("abort waits for owned exit and surfaces the abort reason", async () => {
   const controller = new AbortController();
   const f = fixture(controller.signal);
   const failure = new Error("request disconnected");
+  let exited = false;
+  const result = f.monitor.exited.catch(error => error).finally(() => { exited = true; });
   controller.abort(failure);
-  const result = f.monitor.exited.catch(error => error);
+  await Bun.sleep(0);
+  expect(exited).toBe(false);
   expect(f.stops).toBe(1);
   f.exit.resolve();
   expect(await result).toBe(failure);
@@ -106,4 +109,21 @@ it("monitor recorder stub exits after a chunk callback failure", async () => {
   const stream = startMicChunkStream({ onChunk: async () => { throw failure; } });
   try { await expect(stream.exited).rejects.toBe(failure); }
   finally { stream.stop(); await stream.exited.catch(() => {}); }
+});
+
+it("monitor recorder non-zero exit surfaces its exit code", async () => {
+  expect(process.env.VOICELAYER_TEST_FAKE_REC).toBe("1");
+  expect(process.env.VOICELAYER_TEST_REAL_MIC).not.toBe("1");
+  const { startMicChunkStream } = await import("../input");
+  const previous = process.env.VOICELAYER_TEST_FAKE_REC_BIN;
+  // false ignores recorder arguments and exits 1 without opening any device.
+  process.env.VOICELAYER_TEST_FAKE_REC_BIN = "/usr/bin/false";
+  try {
+    const stream = startMicChunkStream({ onChunk: async () => {} });
+    try { await expect(stream.exited).rejects.toThrow("Barge-in recorder exited with code 1"); }
+    finally { stream.stop(); await stream.exited.catch(() => {}); }
+  } finally {
+    if (previous === undefined) delete process.env.VOICELAYER_TEST_FAKE_REC_BIN;
+    else process.env.VOICELAYER_TEST_FAKE_REC_BIN = previous;
+  }
 });

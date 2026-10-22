@@ -436,24 +436,30 @@ describe("VoiceSDK session manager", () => {
     it(`BARGEIN-PR3 SDK awaits monitor teardown and reports ${failure ? "failure" : "completion"}`, async () => {
       tempDir = mkdtempSync(join(tmpdir(), "voicesdk-monitor-exit-"));
       const physical = Promise.withResolvers<void>();
-      void physical.promise.catch(() => {});
-      const fixture = ownedPromptFixture(Promise.resolve(), physical.promise);
-      const manager = createVoiceSdkSessionManager({ soundLayer: fixture.layer, logDir: tempDir });
-      const session = await manager.startSession({ product: "Fixture" });
-      const task = manager.speak(session.session_id, { text: "Prompt" });
+      const cause = new Error("monitor cleanup failed");
+      const diagnostic = spyOn(console, "error").mockImplementation(() => {});
       try {
-        await Bun.sleep(0);
-        expect(fixture.monitorStops).toBe(1);
-        expect(manager.replay(session.session_id).some(event => event.type === "speak.stopped")).toBe(false);
-      } finally {
-        if (failure) physical.reject(new Error("monitor cleanup failed"));
-        else physical.resolve();
-        await task;
-      }
-      expect(manager.replay(session.session_id).at(-1)).toMatchObject({
-        type: "speak.stopped", reason: failure ? "error" : "completed",
-      });
-      expect(fixture.globalStops).toBe(0);
+        void physical.promise.catch(() => {});
+        const fixture = ownedPromptFixture(Promise.resolve(), physical.promise);
+        const manager = createVoiceSdkSessionManager({ soundLayer: fixture.layer, logDir: tempDir });
+        const session = await manager.startSession({ product: "Fixture" });
+        const task = manager.speak(session.session_id, { text: "Prompt" });
+        try {
+          await Bun.sleep(0);
+          expect(fixture.monitorStops).toBe(1);
+          expect(manager.replay(session.session_id).some(event => event.type === "speak.stopped")).toBe(false);
+        } finally {
+          if (failure) physical.reject(cause);
+          else physical.resolve();
+          await task;
+        }
+        expect(manager.replay(session.session_id).at(-1)).toMatchObject({
+          type: "speak.stopped", reason: failure ? "error" : "completed",
+        });
+        if (failure) expect(diagnostic).toHaveBeenCalledWith("[voicelayer] barge-in monitor teardown:", cause);
+        else expect(diagnostic).not.toHaveBeenCalled();
+        expect(fixture.globalStops).toBe(0);
+      } finally { diagnostic.mockRestore(); }
     });
   }
 
