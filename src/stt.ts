@@ -1606,6 +1606,8 @@ function timedWordsForChunk(
  * later prefix must have no attributed support beyond the shared WAV region,
  * and the earlier suffix must cover that same interval. Keep the earlier words
  * intact. Missing/stale timings and distinct repetitions retain both readings.
+ * Requires verbose segments: the outro gate requests them when enabled (default).
+ * Disabling that gate also disables this fallback; it does not change text anchors.
  */
 function findTimedNearSeam(merged: TimedChunkWord[], next: TimedChunkWord[]): number {
   const chronological = (words: TimedChunkWord[]) => words.every((word, i) => {
@@ -1685,8 +1687,9 @@ export function mergeChunkTranscriptsWithSegments(
     chunks.map((chunk) => chunk.text),
     seams,
   );
+  const untimedText = text;
   if (!text || chunks.some((chunk) => chunk.segments.length === 0)) {
-    return { text, segments: [] };
+    return { text: untimedText, segments: [] };
   }
 
   const merged: TimedChunkWord[] = [];
@@ -1697,7 +1700,7 @@ export function mergeChunkTranscriptsWithSegments(
       chunkIndex,
       seams[chunkIndex] ?? "anchor",
     );
-    if (!nextWords) return { text, segments: [] };
+    if (!nextWords) return { text: untimedText, segments: [] };
     if (nextWords.length === 0) continue;
 
     if (merged.length === 0 || seams[chunkIndex] === "silence") {
@@ -1713,8 +1716,25 @@ export function mergeChunkTranscriptsWithSegments(
       ? findTimedNearSeam(merged, nextWords)
       : 0;
     if (timedOverlap > 0) {
+      const disagreements: { position: number; earlierTokenHash: string; laterTokenHash: string }[] = [];
+      for (let position = 0; position < timedOverlap; position++) {
+        const retained = merged[merged.length - timedOverlap + position]!;
+        const later = nextWords[position]!;
+        if (normalizeChunkWordForOverlap(retained.text) === normalizeChunkWordForOverlap(later.text)) {
+          // Prefer the later terminal punctuation, keeping the earlier timing.
+          retained.text = preferOverlapWord(later.text, retained.text, false);
+        } else {
+          // Zero-based position within the removed run; never log either token.
+          disagreements.push({
+            position,
+            earlierTokenHash: createHash("sha256").update(retained.text).digest("hex"),
+            laterTokenHash: createHash("sha256").update(later.text).digest("hex"),
+          });
+        }
+      }
       console.error(`[voicelayer] timed seam ${JSON.stringify({
         removedWords: timedOverlap,
+        disagreements,
         overlapStartS: nextWords[0]!.seamStartS,
         overlapEndS: nextWords[0]!.seamEndS,
         removedStartS: nextWords[0]!.startS,
@@ -1756,7 +1776,7 @@ export function mergeChunkTranscriptsWithSegments(
   const reconstructed = normalizeProseQuoteSpacing(
     merged.map((word) => word.text).join(" ").trim(),
   );
-  if (!timedSeamChanged && reconstructed !== text) return { text, segments: [] };
+  if (!timedSeamChanged && reconstructed !== text) return { text: untimedText, segments: [] };
   text = reconstructed;
 
   const segments: Array<
@@ -1772,7 +1792,7 @@ export function mergeChunkTranscriptsWithSegments(
     if (
       !Number.isFinite(word.startS) || word.endS <= word.startS
     ) {
-      return { text, segments: [] };
+      return { text: untimedText, segments: [] };
     }
     if (previous && word.startS < previous.endS) {
       // Whisper segments tile each sliced chunk, while the text merge cuts the
@@ -1786,7 +1806,7 @@ export function mergeChunkTranscriptsWithSegments(
           (previous.seamChunkIndex === word.chunkIndex && word.startS >= previous.sourceEndS)) &&
         word.startS >= word.seamStartS &&
         previous.endS <= word.seamEndS;
-      if (!isBoundedSeamOverlap) return { text, segments: [] };
+      if (!isBoundedSeamOverlap) return { text: untimedText, segments: [] };
       previous.text += ` ${word.text}`;
       previous.endS = Math.max(previous.endS, word.endS);
       previous.source = word.source;

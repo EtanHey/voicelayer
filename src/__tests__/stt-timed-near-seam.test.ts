@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { createHash } from "crypto";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mergeChunkTranscripts, mergeChunkTranscriptsWithSegments, type TimedChunkTranscript } from "../stt";
 
 const earlier = "Several violet robots near the orchard will build a wooden bridge.";
@@ -25,6 +26,48 @@ describe("timestamp-supported near-repeat seams", () => {
     expect(result.text).toBe(`We agreed. ${earlier} ${continuation}`);
     expect(result.segments.map(s => s.text).join(" ")).toBe(result.text);
     expect(result.segments.at(-1)).toEqual({ text: continuation, startS: 31, endS: 33 });
+  });
+
+  test("logs only hashes and the zero-based disagreement position", () => {
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mergeChunkTranscriptsWithSegments(fixture());
+      expect(log).toHaveBeenCalledTimes(1);
+      const line = String(log.mock.calls[0]![0]);
+      const diagnostic = JSON.parse(line.slice(line.indexOf("{")));
+      expect(diagnostic.disagreements).toEqual([{
+        position: 6,
+        earlierTokenHash: createHash("sha256").update("will").digest("hex"),
+        laterTokenHash: createHash("sha256").update("we'll").digest("hex"),
+      }]);
+      expect(line).not.toContain("will");
+      expect(line).not.toContain("we'll");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test.each(["earlier", "later"])("restores the untimed merge when %s segments invert outside the seam", side => {
+    const chunks = fixture();
+    if (side === "earlier") {
+      chunks[0]!.text = `Before that. ${chunks[0]!.text}`;
+      chunks[0]!.segments.unshift({ text: "Before that.", startS: 15, endS: 16 });
+    } else {
+      chunks[1]!.text += " Another thought.";
+      chunks[1]!.segments.push({ text: "Another thought.", startS: 4, endS: 5 });
+    }
+    expect(mergeChunkTranscriptsWithSegments(chunks)).toEqual({
+      text: mergeChunkTranscripts(chunks.map(c => c.text)), segments: [],
+    });
+  });
+
+  test("keeps the later terminal question mark on matched words", () => {
+    const chunks = fixture();
+    chunks[1]!.text = chunks[1]!.text.replace("bridge.", "bridge?");
+    chunks[1]!.segments[0]!.text = chunks[1]!.segments[0]!.text.replace("bridge.", "bridge?");
+    const result = mergeChunkTranscriptsWithSegments(chunks);
+    expect(result.text).toBe(`We agreed. ${earlier.replace("bridge.", "bridge?")} ${continuation}`);
+    expect(result.segments.map(s => s.text).join(" ")).toBe(result.text);
   });
 
   test.each([[5, 9.96], [0, 5.01], [3, 4.96]])("keeps a copy with separate or crossing acoustic support (%s,%s)", (start, end) => {
