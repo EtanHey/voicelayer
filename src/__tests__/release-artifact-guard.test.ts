@@ -60,6 +60,33 @@ for (const output of ["/Applications/NOINDEX1B-synthetic", "/Applications/NOINDE
   }));
 }
 
+for (const applicationsRoot of ["/applications", "/aPpLiCaTiOnS"]) {
+  test(`release rejects case-alias artifact root ${applicationsRoot} before mkdir or cleanup`, () => withReleaseFixture(f => {
+    const result = f.run(join(applicationsRoot, "NOINDEX1B-synthetic.noindex"));
+    expect(result.operations).toBe("");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("release artifacts must not be under /Applications");
+  }));
+
+  for (const entry of ["version", "app", "zip"]) {
+    test(`release rejects ${entry} symlink into ${applicationsRoot}/*.noindex before mkdir or cleanup`, () => withReleaseFixture(f => {
+      const name = entry === "app" ? "VoiceBar.app" : entry === "zip" ? "VoiceBar.zip" : version;
+      const target = join(applicationsRoot, "NOINDEX1B-synthetic.noindex", name);
+      if (entry === "version") {
+        symlinkSync(target, f.versionDir);
+      } else {
+        mkdirSync(f.versionDir);
+        symlinkSync(target, join(f.versionDir, name));
+        f.keep(join(f.versionDir, entry === "app" ? "VoiceBar.zip" : "VoiceBar.app/marker"));
+      }
+      const result = f.run();
+      expect(result.operations).toBe("");
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr.toString()).toContain("release artifacts must not be under /Applications");
+    }));
+  }
+}
+
 for (const entry of ["version", "app", "zip"] as const) {
   for (const destination of ["indexed", "applications", "applications-noindex"] as const) {
     test(`release rejects ${entry} symlink into ${destination} before mkdir or cleanup`, () => withReleaseFixture(f => {

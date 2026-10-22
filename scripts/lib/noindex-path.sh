@@ -19,7 +19,7 @@ require_release_artifact_path() {
     python3 - "$@" <<'PYRELEASE'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1]).resolve()
-if path.parts[:2] == ('/', 'Applications'):
+if tuple(part.casefold() for part in path.parts[:2]) == ('/', 'applications'):
     sys.exit('ERROR: release artifacts must not be under /Applications: ' + str(path))
 if len(sys.argv) > 2:
     parent = pathlib.Path(sys.argv[2]).resolve()
