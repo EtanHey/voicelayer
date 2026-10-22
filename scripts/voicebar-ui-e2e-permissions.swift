@@ -261,17 +261,21 @@ func redactedEntries(_ entries: [[String: Any]]) -> [[String: Any]] {
 // END FOREIGN MODALS
 
 func bundle(_ pid: Int32) -> String { NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? "unknown" }
-func axRead(_ element: AXUIElement, _ key: String) -> AXRead<CFTypeRef> {
+// BEGIN AX READ ADAPTER
+func axRead(_ element: AXUIElement, _ key: String,
+    copy: (AXUIElement, CFString, UnsafeMutablePointer<CFTypeRef?>) -> AXError = AXUIElementCopyAttributeValue) -> AXRead<CFTypeRef> {
     var value: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, key as CFString, &value)
+    let error = copy(element, key as CFString, &value)
     switch error {
     case .success: return value.map { .value($0) } ?? .absent
-    case .noValue, .attributeUnsupported, .invalidUIElement: return .absent   // explicitly not there / element gone
+    case .noValue, .attributeUnsupported: return .absent
+    case .invalidUIElement: return .failed("invalid-ui-element") // No fresh disappearance proof.
     case .cannotComplete: return .failed("cannot-complete")
     case .apiDisabled: return .failed("api-disabled")
     default: return .failed("ax-error-\(error.rawValue)")
     }
 }
+// END AX READ ADAPTER
 struct LiveModalSource: ModalSource {
     func windows() -> [CGRow]? {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
@@ -382,23 +386,33 @@ func runInventory(output: URL?, executable: String?, binding: inout QARunBinding
 // END RUN MODAL PROOF
 func json(_ object: Any) -> Data { try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) }
 
-/// Window-ID capture of the proven QA process only (ScreenCaptureKit desktop-independent window,
-/// the equivalent of `screencapture -l<id> -o`), composited on black. nil reason = captured.
-func captureStill(binding: inout QARunBinding, executable: String, to path: URL) -> (windows: [UInt32], reason: String?, proof: [String: Any]?) {
-    let candidates = qaCandidatePids()
-    let before = binding.prove(executable: executable, candidates: candidates, rows: [], read: qaIdentityRead)
-    let rows = LiveModalSource().windows()   // one fresh CG read at this step, for capture and proof
-    let identity = before == nil ? nil : binding.prove(executable: executable, candidates: candidates, rows: rows, read: qaIdentityRead)
-    let proof = expectedAbsentProof(rows, identity: identity)
+// BEGIN STILL OBSERVATION
+enum StillObservation { case windows(QAIdentity, [CGRow]), notProven(String, [String: Any]?) }
+/// One fresh required inventory. Injected reads keep the observation path testable without CG/AX.
+func observeStill(binding: inout QARunBinding, executable: String, candidates: [Int32],
+    windows: () -> [CGRow]?, read: (Int32) -> QAIdentityRead, birth: (Int32) -> BirthRead,
+    readPath: (Int32) -> String?) -> StillObservation {
+    let before = binding.prove(executable: executable, candidates: candidates, rows: [], read: read)
+    guard let rows = windows() else { return .notProven("cg-enumeration", nil) }
+    let identity = before == nil ? nil : binding.prove(executable: executable, candidates: candidates, rows: rows, read: read)
     guard let identity else {
-        let birth = binding.identity.map { qaBirth($0.pid) } ?? .failed
-        let ended = binding.proveTermination(rows, birth: birth, readPath: { qaIdentity($0)?.path })
-        return ([], "no-proven-qa-process", ended)
+        let ended = binding.proveTermination(rows, birth: binding.identity.map { birth($0.pid) } ?? .failed, readPath: readPath)
+        return .notProven("no-proven-qa-process", ended)
+    }
+    let targets = provenQAWindows(rows, qaPid: identity.pid)
+    guard !targets.isEmpty else { return .notProven("no-proven-qa-window", expectedAbsentProof(rows, identity: identity)) }
+    return .windows(identity, targets)
+}
+// END STILL OBSERVATION
+/// Window-ID capture of the proven QA process only, composited on black. nil reason = captured.
+func captureStill(binding: inout QARunBinding, executable: String, to path: URL) -> (windows: [UInt32], reason: String?, proof: [String: Any]?) {
+    let identity: QAIdentity, targets: [CGRow]
+    switch observeStill(binding: &binding, executable: executable, candidates: qaCandidatePids(),
+        windows: { LiveModalSource().windows() }, read: qaIdentityRead, birth: qaBirth, readPath: { qaIdentity($0)?.path }) {
+    case .notProven(let reason, let proof): return ([], reason, proof)
+    case .windows(let proven, let rows): identity = proven; targets = rows
     }
     let qaPid = identity.pid
-    guard let rows else { return ([], "cg-enumeration", nil) }
-    let targets = provenQAWindows(rows, qaPid: qaPid)
-    guard !targets.isEmpty else { return ([], "no-proven-qa-window", proof) }
     func failed(_ reason: String) -> (windows: [UInt32], reason: String?, proof: [String: Any]?) { ([], reason, nil) }
     let done = DispatchSemaphore(value: 0)
     var content: SCShareableContent?
@@ -451,15 +465,8 @@ final class Broker {
         // Establish the QA lifetime before the first fixture command, even without an alert.
         let inventory = runInventory(output: latchPath.deletingLastPathComponent(), executable: executable,
                                      binding: &binding, requireQA: kind == "command")
-        let status = latch.decide(inventory)
+        var status = latch.decide(inventory)
         var ack: [String: Any] = ["count": count, "kind": kind, "status": status]
-        if let stopped = latch.stopped {
-            var record = stopped
-            record["modals"] = redactedEntries(stopped["modals"] as? [[String: Any]] ?? [])
-            record["errors"] = redactedEntries(stopped["errors"] as? [[String: Any]] ?? [])
-            if !FileManager.default.fileExists(atPath: latchPath.path) { try? json(record).write(to: latchPath, options: .atomic) }
-            ack["latch"] = record
-        }
         if kind == "still" {
             if status == "clear" {
                 let path = boundary.appendingPathComponent("still-\(count).png")
@@ -470,10 +477,23 @@ final class Broker {
                     var capture: [String: Any] = ["status": "NOT_PROVEN", "reason": still.reason!]
                     if let proof = still.proof {
                         capture[proof["pidLifetime"] as? String == "ended" ? "terminationProof" : "absenceProof"] = proof
+                    } else {
+                        var failed = ModalInventory()
+                        failed.errors = [["kind": "still-observation", "owner": qaBundle, "reason": still.reason!]]
+                        status = latch.decide(failed)
+                        ack["status"] = status
                     }
                     ack["capture"] = capture
                 }
             } else { ack["capture"] = ["status": "NOT_PROVEN", "reason": "foreign-modal-stop"] }
+        }
+        // Capture performs a separate required read; persist its failure before publishing the ack.
+        if let stopped = latch.stopped {
+            var record = stopped
+            record["modals"] = redactedEntries(stopped["modals"] as? [[String: Any]] ?? [])
+            record["errors"] = redactedEntries(stopped["errors"] as? [[String: Any]] ?? [])
+            if !FileManager.default.fileExists(atPath: latchPath.path) { try? json(record).write(to: latchPath, options: .atomic) }
+            ack["latch"] = record
         }
         try? json(ack).write(to: boundary.appendingPathComponent("ack.json"), options: .atomic)
     }

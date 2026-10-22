@@ -245,7 +245,7 @@ final class VoiceBarFlowTests: XCTestCase {
                         activity.add(screenshot)
                     } else { capture = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "still-unreadable"] }
                 }
-                if let failure = uie2eFrameFailure(capture, contract: evidenceContract) { XCTFail(failure) }
+                requireFrame(capture, contract: evidenceContract)
             }
         }
         let passed = (testRun?.failureCount ?? 0) == before
@@ -451,6 +451,7 @@ extension VoiceBarFlowTests {
     }
 
     /// True only on a fresh clear decision; anything else latches STOP for the rest of the run.
+    // BEGIN UIE2E BOUNDARY CLEAR
     func boundaryClear(_ kind: String) -> Bool {
         guard foreignModalStop == nil else { return false }
         let request = boundary(kind)
@@ -458,6 +459,15 @@ extension VoiceBarFlowTests {
         latchForeignStop("before " + kind + ": " + (request.ack?["status"] as? String ?? "no-broker-answer"))
         return false
     }
+    // END UIE2E BOUNDARY CLEAR
+
+    // BEGIN UIE2E REQUIRED FRAME
+    func requireFrame(_ capture: [String: Any], contract: String?) {
+        if let failure = uie2eFrameFailure(capture, contract: contract) {
+            latchForeignStop("required frame: " + uie2eRedacted(failure))
+        }
+    }
+    // END UIE2E REQUIRED FRAME
 
     // BEGIN UIE2E FOREIGN STOP
     func latchForeignStop(_ reason: String) {
