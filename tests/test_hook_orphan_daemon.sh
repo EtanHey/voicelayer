@@ -45,6 +45,11 @@ def build_native(destination):
         raise SystemExit(1)
     return True
 
+# Scratch, X/Y checkouts and the fixture index live in the isolated run root.
+# The evidence base alone stays short in /tmp: run_tests.sh binds
+# <base>/<case>/voicelayer-run-tests.<pid>/voicelayer-mcp.sock (sun_path is 104
+# bytes). The index under the run root is what makes it recoverable.
+run_root = registry.run_root(root)
 base = Path(tempfile.mkdtemp(prefix="vlho-", dir="/tmp"))
 bin_dir = base / "bin"
 bin_dir.mkdir()
@@ -65,7 +70,7 @@ owner_lock.flush()
 os.environ["VOICELAYER_HOOK_TEST_OWNER"] = str(owner_path)
 os.environ["VOICELAYER_HOOK_AUDIT_LOG"] = str(base / "decisions.jsonl")
 os.environ["HOOK_FIXTURE_HELPER"] = str(root / "tests")
-guardian, fixture_fd = registry.start(base, root)
+guardian, fixture_fd = registry.start(base, root, upstream=harness_parent)
 print("HOOK evidence: " + str(base), flush=True)
 
 def finish_wrapper(success):
@@ -76,13 +81,13 @@ def finish_wrapper(success):
 
 
 if "--native-check" in sys.argv[2:]:
-    with tempfile.TemporaryDirectory(prefix="vlho-cc-", dir="/tmp") as scratch:
+    with tempfile.TemporaryDirectory(prefix="vlho-cc-", dir=run_root) as scratch:
         available = build_native(Path(scratch) / "sender.so")
         finish_wrapper(available)
         raise SystemExit(0 if available else 77)
 if "--cross-run" in sys.argv[2:]:
     # Separate Bun processes, preloads and repository roots, as in two worktrees.
-    with tempfile.TemporaryDirectory(prefix="vlho-runs-", dir="/tmp") as runs:
+    with tempfile.TemporaryDirectory(prefix="vlho-runs-", dir=run_root) as runs:
         children = []
         for run in ("X", "Y"):
             checkout = Path(runs) / run
@@ -115,7 +120,7 @@ if "--cross-run" in sys.argv[2:]:
         finish_wrapper(not failed)
         raise SystemExit(int(failed))
 if "--concurrent" in sys.argv[2:]:
-    with tempfile.TemporaryDirectory(prefix="vlho-pair-", dir="/tmp") as pair:
+    with tempfile.TemporaryDirectory(prefix="vlho-pair-", dir=run_root) as pair:
         children = []
         for lane in ("A", "B"):
             env = dict(os.environ, HOOK_PAIR_DIR=pair, HOOK_PAIR_LANE=lane)
