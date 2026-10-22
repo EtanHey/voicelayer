@@ -96,7 +96,7 @@ Expected: all non-artifact tests pass; artifact/runtime-only tests may retain th
 
 **Step 2: Build the release app without replacing the installed app**
 
-Run: `bash flow-bar/build-app.sh --install-path /tmp/VoiceBar-dev-expanded.app --no-stop --no-relaunch`
+Run: `bash flow-bar/build-app.sh --install-path $PWD/.build.noindex/VoiceBar-dev-expanded.app --no-stop --no-relaunch`
 
 Expected: release build and signing complete with exit 0.
 

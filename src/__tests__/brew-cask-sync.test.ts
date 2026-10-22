@@ -1,3 +1,4 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { fixtureGitEnv } from "./setup/git-env";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
@@ -10,7 +11,6 @@ import {
   rmSync,
   writeFileSync,
 } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
 
 // Real subprocesses: standalone p95 <= 350 ms; 4x rounded up, with a 5 s scheduling floor.
@@ -67,7 +67,7 @@ function sandbox(options: {
   savedUninstall?: string;
 }): Sandbox {
   const offeredVersion = options.offeredVersion ?? "2.2.6";
-  const root = mkdtempSync(join(tmpdir(), "brew-cask-sync-"));
+  const root = mkdtempSync(join(bundleFixtureRoot(), "brew-cask-sync-"));
   fixtureRoots.push(root);
   pendingFixtureRoots.push(root);
   const prefix = join(root, "prefix");

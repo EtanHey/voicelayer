@@ -1,3 +1,4 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -31,7 +32,7 @@ const UUID = "73C05ACC-9C3D-432A-BEE4-A6F6B662954F";
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "t3gate-"));
+  dir = mkdtempSync(join(bundleFixtureRoot(), "t3gate-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
@@ -603,7 +604,7 @@ const sleepSync = (ms: number) => Bun.sleepSync(ms);
 // runs through a `bun` symlink to it.
 let fixtureBunDir: string | undefined;
 function fixtureBun(): string {
-  fixtureBunDir ??= mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "t3bun-"));
+  fixtureBunDir ??= mkdtempSync(join(bundleFixtureRoot(), "t3bun-"));
   const bun = join(fixtureBunDir, "bun");
   if (!existsSync(bun)) symlinkSync(process.execPath, bun);
   return bun;
@@ -678,7 +679,7 @@ async function launchAfterInstall(app: string) {
 }
 
 beforeAll(async () => {
-  runtimeRoot = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "t3rt-"));
+  runtimeRoot = mkdtempSync(join(bundleFixtureRoot(), "t3rt-"));
   installedApp = makeApp(join(runtimeRoot, "installed"));
   voiceBar = await launchAfterInstall(installedApp);
 }, SUBPROCESS_TEST_TIMEOUT_MS);

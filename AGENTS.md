@@ -210,3 +210,20 @@ Use `brain_search` before reading files. VoiceLayer history is indexed.
 - Singleton daemon on `/tmp/voicelayer-mcp.sock` — replaces per-session `voicelayer-mcp` spawning.
 - `.mcp.json` config: `{ "command": "socat", "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] }`
 - Migration: `bash scripts/migrate-to-daemon.sh` (migrates all repos under ~/Gits).
+
+## Build artifacts and Spotlight
+
+Bundle writers reject output overrides outside `/Applications/` unless a resolved path
+component ends in `.noindex` (including symlink resolution). Use
+`.build.noindex/qa/` for QA output, `.build.noindex/voicebar-release/` for
+release bundles, and `$PWD/.build.noindex/VoiceBarQA.app` for QA builds.
+Swift build caches use `.build.noindex/swift`. Readers and promotion tools accept older artifact
+paths so an in-flight release can finish without moving its proven bundle.
+
+Bulky output defaults to this worktree's `.build.noindex/` so worktree removal
+removes it too. `docs.local` keeps only small text receipts, logs and PNG/JPG
+screenshots, never apps, archives, DerivedData or Mach-O files. Check receipts
+with `python3 scripts/check-docslocal-hygiene.py docs.local`. Archive worktree
+receipts with `python3 scripts/archive-worktree-docs.py SOURCE DESTINATION`;
+it excludes apps, archives, DerivedData, `.build*`, symlinks, Mach-O and files
+over 5 MB. Never copy a worktree's docs.local wholesale.

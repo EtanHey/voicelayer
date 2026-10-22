@@ -348,7 +348,7 @@ Expected: all runnable Swift tests pass with 0 failures.
 
 **Step 3: Build an isolated release app copy**
 
-Run: `bash flow-bar/build-app.sh --install-path /tmp/VoiceBar-notch-w2.app --no-stop --no-relaunch`
+Run: `bash flow-bar/build-app.sh --install-path $PWD/.build.noindex/VoiceBar-notch-w2.app --no-stop --no-relaunch`
 
 Expected: release build/signing succeeds without touching `/Applications/VoiceBar.app`.
 
@@ -372,7 +372,7 @@ metadata, install path, launchd state, or resident process was changed.
 
 **Step 1: Launch only the isolated app and daemon/socket**
 
-Use `/tmp/VoiceBar-notch-w2.app`, unique socket paths, and release configuration.
+Use `$PWD/.build.noindex/VoiceBar-notch-w2.app`, unique socket paths, and release configuration.
 Never signal, replace, stop, or relaunch the resident app/daemon; never use
 `pkill`.
 

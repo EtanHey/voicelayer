@@ -1,6 +1,6 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Real subprocesses: standalone p95 <= 60 ms; 4x rounded up, with a 5 s scheduling floor.
@@ -9,7 +9,7 @@ const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
 // Exercise the build script's actual policy without building/signing/launching anything.
 describe("UI E2E ad-hoc signing boundary", () => {
   test("requires a marked throwaway QA bundle and disabled lifecycle", () => {
-    const root = mkdtempSync(join(tmpdir(), "vl-ui-"));
+    const root = mkdtempSync(join(bundleFixtureRoot(), "vl-ui-"));
     writeFileSync(join(root, ".uie2e-sandbox"), "voicebar-ui-e2e-v1\n");
     try {
       for (const [app, qa, stop, relaunch, expected] of [

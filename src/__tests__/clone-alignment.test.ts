@@ -1,18 +1,48 @@
-import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, expect, onTestFinished, spyOn, test as bunTest } from "bun:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { alignCloneAudio, type CloneAlignmentRequest } from "../tts/clone-alignment";
+import { alignCloneAudio as alignWithClock, type CloneAlignmentRequest } from "../tts/clone-alignment";
+import { ManualClock } from "./setup/manual-clock";
+import { publishPidFile, waitForPidFile } from "./setup/pid-readiness";
+import { systemDeadlineClock, type DeadlineClock } from "../deadline-clock";
 import { projectSpeakableText } from "../speakable-text";
 
-// Real subprocesses: standalone p95 <= 1108 ms; 4x rounded up, with a 5 s scheduling floor.
-const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
-// Real subprocesses: standalone p95 <= 1723 ms; 4x rounded up, with a 5 s scheduling floor.
-const BATCH_SUBPROCESS_TEST_TIMEOUT_MS = 7_000;
-// Real subprocesses: standalone p95 <= 2176 ms; 4x rounded up, with a 5 s scheduling floor.
-const SLOW_SUBPROCESS_TEST_TIMEOUT_MS = 9_000;
+// Four-burner M1 proof at a5ae17fa hit 5002 ms in the SPK/JSON and
+// apostrophe fixtures (docs.local/SURGE/FLAKE-BUN/DONE.md). Like the native
+// compiler's 20 s budget, this allows real subprocess scheduling, not a longer
+// production alignment deadline; linguistic fixtures still use a manual clock.
+const SUBPROCESS_TEST_TIMEOUT_MS = 20_000;
+
+const fixtureFinished = new Error("alignment fixture test finished");
+function test(name: string, body: () => Promise<void>, timeout?: number) {
+  bunTest(name, async () => {
+    try { await body(); }
+    catch (error) {
+      // Bun has already reported the timeout. Stop the abandoned body before
+      // its next assertion, without hiding any assertion or product error.
+      if (error !== fixtureFinished) throw error;
+    }
+  }, timeout);
+}
+
+function alignCloneAudio(input: CloneAlignmentRequest, clock: DeadlineClock = new ManualClock()) {
+  const controller = new AbortController();
+  const signal = input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal;
+  const pending = alignWithClock({ ...input, signal }, clock);
+  // Runs even when Bun times out the body. Cancellation uses the production
+  // ownership path and waits for child reaping and snapshot cleanup.
+  onTestFinished(async () => {
+    controller.abort();
+    await pending;
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+  return pending.then(result => {
+    if (controller.signal.aborted) throw fixtureFinished;
+    return result;
+  });
+}
 
 // Frozen June 6 Edge harness audio, not synthesized by these tests. Generated
 // base64 and its recorded decoder response are appended below; benchmark receipt
@@ -29,10 +59,11 @@ async function request(text: string, response = payload(projectSpeakableText(tex
   // The unit converter copies bytes; actual ffmpeg/decoder evidence is separate.
   const ffmpeg = prefix + ".converter";
   await writeFile(ffmpeg, '#!/bin/sh\nwhile [ "$1" != "-i" ]; do shift; done\nshift\nsource_file="$1"\nfor target_file do :; done\nexec /bin/cp "$source_file" "$target_file"\n', { mode: 0o700 });
-  await writeFile(binary, `#!${process.execPath}\nimport {writeFileSync,readFileSync} from 'node:fs';
+  await writeFile(binary, `#!${process.execPath}\nimport {writeFileSync,readFileSync,renameSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 const args=process.argv.slice(2), out=args[args.indexOf('-of')+1], audio=args[args.indexOf('-f')+1];
-writeFileSync(${JSON.stringify(prefix + ".pid")},String(process.pid));
+writeFileSync(${JSON.stringify(prefix + ".pid.tmp")},String(process.pid));
+renameSync(${JSON.stringify(prefix + ".pid.tmp")},${JSON.stringify(prefix + ".pid")});
 setTimeout(()=>{writeFileSync(out+'.json',JSON.stringify(${JSON.stringify(response)}));
 writeFileSync(${JSON.stringify(prefix + ".hash")},createHash('sha256').update(readFileSync(audio)).digest('hex'));},${delay});
 `, { mode: 0o700 });
@@ -42,25 +73,20 @@ writeFileSync(${JSON.stringify(prefix + ".hash")},createHash('sha256').update(re
   return { input, prefix };
 }
 const offsets = (result: Awaited<ReturnType<typeof alignCloneAudio>>) => result.words.map(w => w.offset_ms);
-async function started(prefix: string) {
-  for (let i = 0; i < 200; i++) {
-    try {
-      const pid = Number(await readFile(prefix + ".pid", "utf8"));
-      // An empty create-before-write read becomes 0, which probes our process
-      // group instead of the decoder and falsely reports it is still alive.
-      if (Number.isSafeInteger(pid) && pid > 0) return pid;
-    } catch {}
-    await Bun.sleep(5);
-  }
-  throw new Error("decoder did not start");
-}
+const started = (prefix: string) => waitForPidFile(prefix + ".pid");
 function reaped(pid: number) { expect(() => process.kill(pid, 0)).toThrow(); }
 
-test("R2 PID readiness rejects empty and nonpositive or fractional readbacks", async () => {
+test("PID readiness rejects empty and nonpositive or fractional readbacks", async () => {
   for (const invalid of ["", "0", "-1", "1.5", "not-a-pid"]) {
-    const read = spyOn(fsPromises, "readFile").mockResolvedValueOnce(invalid).mockResolvedValueOnce(String(process.pid));
-    try { expect(await started("pid-readback-fixture")).toBe(process.pid); expect(read).toHaveBeenCalledTimes(2); }
-    finally { read.mockRestore(); }
+    const prefix = join(root, String(++serial));
+    await writeFile(prefix + ".pid", invalid);
+    const pending = started(prefix);
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await Bun.sleep(0);
+    expect(settled).toBe(false);
+    await publishPidFile(prefix + ".pid", process.pid);
+    expect(await pending).toBe(process.pid);
   }
 });
 
@@ -70,10 +96,18 @@ test("decoder PID observation waits for the marker contents", async () => {
   await writeFile(prefix + ".pid", "");
   const pending = started(prefix);
   await Bun.sleep(20);
-  await writeFile(prefix + ".pid", String(process.pid));
+  await publishPidFile(prefix + ".pid", process.pid);
   expect(await pending).toBe(process.pid);
 });
 
+test("fixture clock survives host delay beyond the playback-rate deadline", async () => {
+  const { input } = await request("hello world", payload(["hello", "world"]), 1_200);
+  input.playbackRate = 2;
+  const clock = new ManualClock();
+  expect(offsets(await alignCloneAudio(input, clock))).toEqual([50, 150]);
+  expect(clock.scheduledDelays).toEqual([1086]);
+  expect(clock.pendingTimers).toBe(0);
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("frozen Edge audio retains only spans corroborated by the same token's DTW anchor", async () => {
   const { input } = await request("Should the company and the project merge, or stay separate?", EDGE_DECODE);
   const result = await alignCloneAudio(input);
@@ -119,7 +153,7 @@ test("JSON escape ranges preserve the exact original display token", async () =>
 test("omitted decorations stay untimed", async () => {
   const { input } = await request("# Hello");
   expect(offsets(await alignCloneAudio(input))).toEqual([null, 100]);
-}, BATCH_SUBPROCESS_TEST_TIMEOUT_MS);
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("playback rate scales file-relative timestamps exactly once", async () => {
   const { input } = await request("hello world"); input.playbackRate = 2;
   const result = await alignCloneAudio(input);
@@ -162,9 +196,27 @@ test("the half-duration deadline kills and reaps a slow decoder", async () => {
   const { input, prefix } = await request("hello", payload(["hello"]), 5000);
   // Hold open the create-before-write window in the decoder's PID marker.
   await writeFile(prefix + ".pid", "");
-  const pending = alignCloneAudio(input), pid = await started(prefix);
+  const clock = new ManualClock();
+  const pending = alignCloneAudio(input, clock), pid = await started(prefix);
+  let settled = false;
+  void pending.then(
+    () => { settled = true; },
+    () => { settled = true; },
+  );
+  clock.advance(input.durationMs / input.playbackRate * .5 - 1);
+  await Bun.sleep(0);
+  expect(settled).toBe(false);
+  expect(clock.pendingTimers).toBe(1);
+  expect(() => process.kill(pid, 0)).not.toThrow();
+  clock.advance(1);
   expect((await pending).reason).toBe("deadline"); reaped(pid);
-}, SLOW_SUBPROCESS_TEST_TIMEOUT_MS);
+  expect(clock.pendingTimers).toBe(0);
+}, SUBPROCESS_TEST_TIMEOUT_MS);
+test("the default clock enforces an elapsed production deadline", async () => {
+  const { input } = await request("hello", payload(["hello"]), 100);
+  input.durationMs = 1;
+  expect((await alignCloneAudio(input, systemDeadlineClock)).reason).toBe("deadline");
+}, SUBPROCESS_TEST_TIMEOUT_MS);
 test("missing local decoder is a truthful untimed result", async () => {
   const { input } = await request("hello"); input.decoder.binary = join(root, "absent");
   expect((await alignCloneAudio(input)).reason).toBe("unavailable");
@@ -210,7 +262,8 @@ for (const [reason, earlyClockCheck] of [["cancelled", false], ["deadline", fals
   test(`cleanup stop failure preserves ${reason}${earlyClockCheck ? " before the final clock deadline" : ""} and still awaits exit and removes its snapshot`, async () => {
     const { input } = await request("hello"), controller = new AbortController();
     input.signal = controller.signal;
-    let directory = "", kills = 0, exitReads = 0, timer: ReturnType<typeof setTimeout> | undefined;
+    const deadlineClock = new ManualClock();
+    let directory = "", kills = 0, exitReads = 0;
     let clock: ReturnType<typeof spyOn> | undefined;
     const spawn = spyOn(Bun, "spawn").mockImplementation(((argv: string[]) => {
       directory = dirname(argv[argv.indexOf("-i") + 1]);
@@ -218,25 +271,25 @@ for (const [reason, earlyClockCheck] of [["cancelled", false], ["deadline", fals
       const exited = new Promise<number>((_, reject) => {
         rejectExit = reject;
       });
-      // Exercise the real deadline; external cancellation happens after spawn returns.
-      if (reason === "cancelled") timer = setTimeout(() => controller.abort(), 0);
+      // Release only after spawn has returned its owned child handle.
+      queueMicrotask(() => reason === "cancelled" ? controller.abort() : deadlineClock.advance(input.durationMs * .5));
       return { exitCode: null, get exited() { exitReads++; return exited; },
         kill() {
           kills++;
           // Timer delivery can precede the fractional performance.now() deadline.
-          if (earlyClockCheck && !clock) clock = spyOn(performance, "now").mockReturnValue(0);
+          if (earlyClockCheck && !clock) clock = spyOn(deadlineClock, "now").mockReturnValue(0);
           queueMicrotask(() => rejectExit(new Error("injected wait failure")));
           throw new Error("injected kill failure");
         } };
     }) as typeof Bun.spawn);
     try {
-      const result = await alignCloneAudio(input);
+      const result = await alignCloneAudio(input, deadlineClock);
       expect(result).toMatchObject({ status: "untimed", reason });
       expect(offsets(result)).toEqual([null]);
       expect(kills).toBe(2); expect(exitReads).toBe(2);
       expect(directory).not.toBe(""); expect(existsSync(directory)).toBe(false);
     } finally {
-      clock?.mockRestore(); clearTimeout(timer); spawn.mockRestore();
+      clock?.mockRestore(); spawn.mockRestore();
       if (directory) await rm(directory, { recursive: true, force: true });
     }
   });
@@ -268,8 +321,9 @@ for (const fault of ["exited", "kill", "rm"]) {
 }
 test("cancellation also kills and reaps preparation before decoding starts", async () => {
   const { input, prefix } = await request("hello"), controller = new AbortController(), prep = prefix + ".prep";
-  await writeFile(input.decoder.ffmpeg, `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';
-writeFileSync(${JSON.stringify(prep + ".pid")}, String(process.pid)); setInterval(()=>{},5000);\n`, { mode: 0o700 });
+  await writeFile(input.decoder.ffmpeg, `#!${process.execPath}\nimport {writeFileSync,renameSync} from 'node:fs';
+writeFileSync(${JSON.stringify(prep + ".pid.tmp")}, String(process.pid));
+renameSync(${JSON.stringify(prep + ".pid.tmp")}, ${JSON.stringify(prep + ".pid")}); setInterval(()=>{},5000);\n`, { mode: 0o700 });
   input.signal = controller.signal; const pending = alignCloneAudio(input), pid = await started(prep);
   controller.abort(); expect((await pending).reason).toBe("cancelled"); reaped(pid);
   expect(await Bun.file(prefix + ".pid").exists()).toBe(false);

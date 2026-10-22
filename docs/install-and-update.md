@@ -22,7 +22,7 @@ osascript -e 'tell application "System Events" to make login item at end with pr
 `build-app.sh` never destroys a working resident app:
 - **Refuses to replace** `/Applications/VoiceBar.app` while VoiceBar is **running** (quit first, or set `VOICEBAR_FORCE_APP_REPLACE=1` only after an explicit go).
 - The old bundle is **moved to a backup** (`~/Library/Application Support/VoiceBar/Backups/VoiceBar.backup-<ts>.app`), not `rm`'d — and backups are **pruned to the single most recent** one (no `/Applications` clutter).
-- Dev bundles (`--install-path <other>`, e.g. `VoiceBarDev.app`) are exempt from the guard.
+- Dev bundles (`--install-path "$PWD/.build.noindex/VoiceBarDev.app"`, e.g. `VoiceBarDev.app`) are exempt from the guard.
 
 Restore a backup if a build goes wrong:
 ```bash

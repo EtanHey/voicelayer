@@ -251,7 +251,7 @@ Read complete output and record exact pass/fail/skip counts.
 
 ```bash
 bash flow-bar/build-app.sh \
-  --install-path /tmp/VoiceBar-dev-notch-w1.app \
+  --install-path $PWD/.build.noindex/VoiceBar-dev-notch-w1.app \
   --no-stop --no-relaunch
 ```
 

@@ -104,3 +104,75 @@ export function createBargeInMonitor(
     },
   };
 }
+
+/** Owns one monitor stream; the caller must await exited before reusing capture. */
+export function createOwnedBargeInMonitor(
+  vad: VoiceActivityDetector,
+  options: BargeInMonitorOptions,
+  startStream: (options: {
+    onChunk: (chunk: Uint8Array, at: number) => Promise<boolean | void>;
+  }) => { exited: Promise<void>; stop(): void },
+  nowMs?: () => number,
+): BargeInMonitor {
+  const monitor = createBargeInMonitor(vad, options, nowMs);
+  let terminal = false;
+  let failed = false;
+  let failure: unknown;
+  let stream: ReturnType<typeof startStream> | undefined;
+  const pending = new Set<Promise<BargeInDecision>>();
+  let finish!: () => void;
+  const ended = new Promise<void>(resolve => { finish = resolve; });
+
+  function stop(): void {
+    if (terminal) return;
+    terminal = true;
+    monitor.stop();
+    options.signal?.removeEventListener("abort", abort);
+    try { stream?.stop(); }
+    catch (error) { fail(error); }
+  }
+  function fail(error: unknown): void {
+    if (!failed) { failed = true; failure = error; }
+    stop();
+  }
+  function abort(): void {
+    fail(options.signal?.reason ?? new Error("Barge-in owner aborted"));
+  }
+  function pushAudioChunk(chunk: Uint8Array, at?: number): Promise<BargeInDecision> {
+    if (terminal) return Promise.resolve({ speechStarted: false, rejectedReason: "not-speech" });
+    const work = monitor.pushAudioChunk(chunk, at);
+    pending.add(work);
+    void work.then(() => { pending.delete(work); }, error => {
+      fail(error);
+      pending.delete(work);
+    });
+    return work;
+  }
+
+  const exited = ended.then(async () => {
+    await Promise.allSettled([...pending]);
+    if (failed) throw failure;
+  });
+  // The owner may await later, after playback exits. Keep early failures observed.
+  void exited.catch(() => {});
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted) { abort(); finish(); }
+  if (!terminal) {
+    try {
+      stream = startStream({ onChunk: async (chunk, at) => {
+        const decision = await pushAudioChunk(chunk, at);
+        if (decision.speechStarted) stop();
+        return decision.speechStarted;
+      } });
+    } catch (error) { fail(error); finish(); }
+    if (stream) {
+      void stream.exited.then(() => { stop(); finish(); }, error => {
+        fail(error); finish();
+      });
+      if (terminal) {
+        try { stream.stop(); } catch (error) { fail(error); }
+      }
+    }
+  }
+  return { exited, pushAudioChunk, stop, getMetrics: monitor.getMetrics };
+}
