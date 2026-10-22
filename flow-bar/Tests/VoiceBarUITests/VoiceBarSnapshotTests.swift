@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import OffscreenTestSupport
 import SwiftUI
 @testable import VoiceBarUI
@@ -41,6 +42,9 @@ final class VoiceBarSnapshotTests: XCTestCase {
                          "speaking", "paused", "teleprompter-expanded", "teleprompter-collapsed",
                          "queue-1", "queue-10", "last-item", "paused-controls", "hidden", "snoozed",
                          "busy-note", "typed"]
+    private let aliases = ["last-item": "speaking", "teleprompter-collapsed": "speaking", "snoozed": "hidden"]
+    private var referenceEnvironment: [String: String]?
+    private var recordedEnvironment: [String: String]?
     private var root: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -54,13 +58,23 @@ final class VoiceBarSnapshotTests: XCTestCase {
         let record = env["VOICEBAR_SNAPSHOTS_RECORD"] == "1"
         let output = root.appendingPathComponent(".build.noindex/snapshots")
         let references = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Snapshots")
+        let metadata = references.appendingPathComponent("environment.json")
+        if !record {
+            guard let data = try? Data(contentsOf: metadata),
+                  let value = try? JSONDecoder().decode([String: String].self, from: data) else {
+                throw XCTSkip("SKIP: missing renderer metadata; review environment and use repo script --record")
+            }
+            referenceEnvironment = value
+        }
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         var rows: [String] = []
         for light in [false, true] {
-            for name in names {
+            var images: [String: [UInt8]] = [:]
+            var distinctImages: [String: [UInt8]] = [:]
+            for name in names.filter({ aliases[$0] == nil }) {
                 let id = name + (light ? "-light" : "-dark")
                 let actual = try render(name, light: light)
                 let actualPNG = try XCTUnwrap(actual.representation(using: .png, properties: [:]))
@@ -77,6 +91,14 @@ final class VoiceBarSnapshotTests: XCTestCase {
                 try expectedPNG.write(to: output.appendingPathComponent(id + "-expected.png"))
                 let expected = try XCTUnwrap(NSBitmapImageRep(data: expectedPNG))
                 let a = try rgba(actual), e = try rgba(expected)
+                // A common canvas prevents fixture-selected height alone from
+                // disguising a fallback to the default visual state.
+                let distinct = try rgba(render(name, light: light, canvasHeight: 270))
+                for (other, pixels) in distinctImages {
+                    XCTAssertFalse(distinct == pixels, "Distinct fixtures silently render identically: \(name), \(other)")
+                }
+                images[name] = a
+                distinctImages[name] = distinct
                 if name != "hidden" && name != "snoozed" {
                     XCTAssertGreaterThan(Set(a).count, 20, "Blank/dim fixture: \(id)")
                 }
@@ -94,6 +116,16 @@ final class VoiceBarSnapshotTests: XCTestCase {
                     "<figure><img src='\(id)-actual.png'><figcaption>Actual</figcaption></figure>" +
                     (matches ? "" : "<figure><img src='\(id)-diff.png'><figcaption>Changed pixels</figcaption></figure>") + "</section>")
             }
+            // Aliases share references, but still construct and assert their own behavioral states.
+            for (alias, canonical) in aliases {
+                XCTAssertTrue(try rgba(render(alias, light: light)) == images[canonical],
+                               "Documented visual alias drifted: \(alias) -> \(canonical)")
+            }
+        }
+        if record {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(try XCTUnwrap(recordedEnvironment)).write(to: metadata)
         }
         let html = "<!doctype html><meta charset='utf-8'><title>VoiceBar snapshots</title><style>body{font:14px system-ui;background:#ddd}figure{display:inline-block;margin:8px}img{max-width:100%;border:1px solid #888}section{border-bottom:1px solid #888}</style><h1>VoiceBar synthetic state catalog</h1><p>Channel threshold: 16/255; maximum changed pixels: 0.1%. References require explicit --record and review. Native click, focus and audio gates remain separate.</p>" + rows.joined(separator: "\n")
         try html.write(to: output.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
@@ -115,7 +147,8 @@ final class VoiceBarSnapshotTests: XCTestCase {
         case "hidden", "snoozed": state.snooze(until: name == "snoozed" ? Date(timeIntervalSince1970: 2_000_000_000) : nil)
         case "typed": state.confirmationText = "Typed"
         case "idle": break
-        default:
+        case "speaking", "paused", "teleprompter-expanded", "teleprompter-collapsed",
+             "queue-1", "queue-10", "last-item", "paused-controls":
             state.handleEvent(["type": "state", "state": "speaking", "text": "A synthetic sentence for the VoiceBar visual catalog. Every word stays visible.",
                                "request_id": "snapshot-read", "playback_id": "snapshot-player", "generation": 1])
             if name == "queue-1" || name == "queue-10" {
@@ -128,6 +161,7 @@ final class VoiceBarSnapshotTests: XCTestCase {
                 XCTAssertTrue(state.isPlaybackPaused)
             }
             if name != "teleprompter-expanded" && name != "paused" { state.dismissTeleprompter() }
+        default: XCTFail("Unknown snapshot fixture: \(name)")
         }
         if name == "queue-1" || name == "queue-10" {
             XCTAssertNotNil(VoiceBarPresentation.readQueueControl(for: state))
@@ -136,16 +170,18 @@ final class VoiceBarSnapshotTests: XCTestCase {
         return state
     }
 
-    private func render(_ name: String, light: Bool) throws -> NSBitmapImageRep {
+    private func render(_ name: String, light: Bool, canvasHeight: CGFloat? = nil) throws -> NSBitmapImageRep {
         let state = state(name)
         let app = NSApplication.shared
         let old = app.appearance
         app.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
         defer { app.appearance = old }
-        let height: CGFloat = ["teleprompter-expanded", "paused"].contains(name) ? 270 : (name == "busy-note" ? 90 : 64)
+        let height: CGFloat = canvasHeight ?? (["teleprompter-expanded", "paused"].contains(name) ? 270 : (name == "busy-note" ? 90 : 64))
         let size = CGSize(width: 540, height: height)
         // The real app orders its panel out while snoozed. Model that visibility boundary;
         // BarView alone intentionally does not implement window lifecycle.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let host = NSHostingView(rootView: ZStack(alignment: .top) {
             (light ? Color(red: 0.88, green: 0.89, blue: 0.91) : Color(red: 0.16, green: 0.17, blue: 0.19))
             if !state.isHidden {
@@ -154,6 +190,12 @@ final class VoiceBarSnapshotTests: XCTestCase {
         }.frame(width: size.width, height: size.height)
             .environment(\.colorScheme, light ? .light : .dark)
             .environment(\.visualRenderTime, 0)
+            .environment(\.dynamicTypeSize, .large)
+            .environment(\.locale, Locale(identifier: "en_US_POSIX"))
+            .environment(\.layoutDirection, .leftToRight)
+            .environment(\.calendar, calendar)
+            .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
+            .font(.system(size: 13, weight: .regular, design: .default))
             .transaction { $0.animation = nil; $0.disablesAnimations = true })
         host.frame = NSRect(origin: .zero, size: size)
         host.appearance = app.appearance
@@ -164,11 +206,53 @@ final class VoiceBarSnapshotTests: XCTestCase {
         XCTAssertTrue(VLOffscreenPolicyInstalled())
         VLOrderTestWindow(panel)
         defer { panel.contentView = nil; panel.close() }
-        host.layoutSubtreeIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        host.layoutSubtreeIfNeeded()
-        let image = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: image)
+        let font = NSFont.systemFont(ofSize: 13)
+        let environment = [
+            "macOS": ProcessInfo.processInfo.operatingSystemVersionString,
+            "sourceBackingScale": String(Double(panel.backingScaleFactor)),
+            "fontSmoothing": String(describing: UserDefaults.standard.object(forKey: "AppleFontSmoothing")),
+            "antialiasingThreshold": String(describing: UserDefaults.standard.object(forKey: "AppleAntiAliasingThreshold")),
+            "fontIdentity": "\(font.fontName)|\(font.familyName ?? "unknown")|\(font.pointSize)",
+            "textContract": "system-default-13-regular; product absolute system sizes; DynamicType=large; en_US_POSIX; LTR; gregorian; UTC",
+            "output": "540pt-wide; 1x RGBA; aqua/darkAqua; visualRenderTime=0"
+        ]
+        if let referenceEnvironment, referenceEnvironment != environment {
+            throw XCTSkip("SKIP: unsupported renderer. Expected \(referenceEnvironment), actual \(environment). Restore reference environment or review and re-record via repo script.")
+        }
+        if let recordedEnvironment {
+            XCTAssertEqual(recordedEnvironment, environment, "Renderer changed during catalog")
+        } else { recordedEnvironment = environment }
+        // Explicit layout/display flush with animations disabled, then require three
+        // consecutive identical source bitmaps. Deadline failure is never a pass.
+        let deadline = Date().addingTimeInterval(5)
+        var previous: [UInt8]?
+        var stable = 0
+        var captured: NSBitmapImageRep?
+        repeat {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                host.layoutSubtreeIfNeeded()
+                host.displayIfNeeded()
+            }
+            CATransaction.flush()
+            let frame = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            guard frame.pixelsWide == Int(size.width * panel.backingScaleFactor),
+                  frame.pixelsHigh == Int(size.height * panel.backingScaleFactor) else {
+                throw XCTSkip("SKIP: cache bitmap scale differs from recorded window backing scale")
+            }
+            host.cacheDisplay(in: host.bounds, to: frame)
+            let pixels = try rgba(frame)
+            stable = previous == pixels ? stable + 1 : 0
+            previous = pixels
+            captured = frame
+            if stable >= 2 { break }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+        guard stable >= 2 else {
+            XCTFail("Rendered bitmap never stabilized within 5s: \(name)")
+            throw NSError(domain: "SnapshotStability", code: 1)
+        }
+        let image = try XCTUnwrap(captured)
         // Normalize to 1x RGBA so backing-scale metadata cannot change comparison dimensions.
         let normalized = try bitmap(width: Int(size.width), height: Int(size.height))
         NSGraphicsContext.saveGraphicsState()
