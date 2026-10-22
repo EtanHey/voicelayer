@@ -31,6 +31,14 @@ record_operation() {
 }
 mkdir() { record_operation mkdir "$@"; }
 rm() { record_operation rm "$@"; }
+python3() {
+  if [[ "$1" == */cleanup-release-artifacts.py ]]; then
+    shift
+    record_operation cleanup "$@"
+  else
+    command python3 "$@"
+  fi
+}
 bash() { record_operation build "$@"; return 73; }
 `);
   const markers = new Map<string, string>();
@@ -146,7 +154,7 @@ for (const mode of ["ordinary", "version-symlink", "contained-child-symlinks"] a
     expect(result.exitCode).toBe(73); // Only the intercepted build stops a valid release.
     expect(result.stderr.toString()).toBe("");
     expect(result.operations.split("\n").slice(0, 2)).toEqual([
-      `mkdir\t-p\t${selectedDir}`, `rm\t-rf\t${app}\t${zip}`,
+      `mkdir\t-p\t${selectedDir}`, `cleanup\t${selectedDir}\t${app}\t${zip}`,
     ]);
     expect(result.operations).toContain(`build\tflow-bar/build-app.sh\t--install-path\t${app}\t--no-stop\t--no-relaunch\n`);
   }));
