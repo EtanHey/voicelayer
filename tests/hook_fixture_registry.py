@@ -3,6 +3,7 @@ import atexit
 import fcntl
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -215,7 +216,10 @@ def _cleanup_closed(base, root):
         time.sleep(.025)
     for row in rows:
         send(row, signal.SIGKILL)
-    deadline = time.monotonic() + 3
+    settle_seconds = float(os.environ.get("HOOK_FIXTURE_SETTLE_DEADLINE_S", "3"))
+    if not math.isfinite(settle_seconds) or settle_seconds <= 0:
+        raise ValueError("HOOK_FIXTURE_SETTLE_DEADLINE_S must be finite and positive")
+    deadline = time.monotonic() + settle_seconds
     while time.monotonic() < deadline and any(fixture_state(row) != 'dead' for row in rows):
         time.sleep(.025)
     remaining = [row.get('pid') for row in rows if fixture_state(row) != 'dead']

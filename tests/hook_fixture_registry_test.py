@@ -10,6 +10,8 @@ import time
 root = Path(sys.argv[1])
 sys.dont_write_bytecode = True
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+# These cases assert teardown/refusal, not the duration of unresolved settling.
+os.environ["HOOK_FIXTURE_SETTLE_DEADLINE_S"] = "0.5"
 sys.path.insert(0, str(root / 'tests'))
 import hook_fixture_registry as registry
 

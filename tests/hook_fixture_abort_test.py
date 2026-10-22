@@ -16,6 +16,8 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests'))
 import hook_fixture_registry as registry
+# Integration cases assert ownership and cleanup, not the settle wait.
+os.environ["HOOK_FIXTURE_SETTLE_DEADLINE_S"] = "0.5"
 identity = registry.identities(ROOT)
 
 
@@ -265,8 +267,11 @@ finally:
     (base / 'settle-observation.json').write_text(json.dumps(dict(
         elapsed=clock[0] - killed_at[0], signals=signals)))
 """
+        # Both controlled-clock regressions exercise the real default deadline.
+        settle_env = dict(os.environ)
+        settle_env.pop("HOOK_FIXTURE_SETTLE_DEADLINE_S", None)
         result = subprocess.run([sys.executable, '-B', '-c', code, str(base), str(transient)],
-                                env=dict(os.environ), capture_output=True, text=True)
+                                env=settle_env, capture_output=True, text=True)
         observation = json.loads((base / 'settle-observation.json').read_text())
         self.assertEqual(observation['signals'], [int(signal.SIGTERM), int(signal.SIGKILL)])
         if transient:
