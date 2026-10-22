@@ -21,9 +21,9 @@ function fixture(startS = 0, endS = 4.96): TimedChunkTranscript[] {
 }
 
 describe("timestamp-supported near-repeat seams", () => {
-  test("folds a near-repeat fully covered by the shared audio, retaining the earlier reading", () => {
+  test("folds a near-repeat fully covered by the shared audio, selecting stride context", () => {
     const result = mergeChunkTranscriptsWithSegments(fixture());
-    expect(result.text).toBe(`We agreed. ${earlier} ${continuation}`);
+    expect(result.text).toBe(`We agreed. ${later} ${continuation}`);
     expect(result.segments.map(s => s.text).join(" ")).toBe(result.text);
     expect(result.segments.at(-1)).toEqual({ text: continuation, startS: 31, endS: 33 });
   });
@@ -66,7 +66,7 @@ describe("timestamp-supported near-repeat seams", () => {
     chunks[1]!.text = chunks[1]!.text.replace("bridge.", "bridge?");
     chunks[1]!.segments[0]!.text = chunks[1]!.segments[0]!.text.replace("bridge.", "bridge?");
     const result = mergeChunkTranscriptsWithSegments(chunks);
-    expect(result.text).toBe(`We agreed. ${earlier.replace("bridge.", "bridge?")} ${continuation}`);
+    expect(result.text).toBe(`We agreed. ${later.replace("bridge.", "bridge?")} ${continuation}`);
     expect(result.segments.map(s => s.text).join(" ")).toBe(result.text);
   });
 
@@ -161,7 +161,7 @@ describe("timestamp-supported near-repeat seams", () => {
       { text: "we'll build a wooden bridge.", startS: 2, endS: 4.96 },
       { text: continuation, startS: 6, endS: 8 },
     ];
-    expect(mergeChunkTranscriptsWithSegments(chunks).text).toBe(`We agreed. ${earlier} ${continuation}`);
+    expect(mergeChunkTranscriptsWithSegments(chunks).text).toBe(`We agreed. ${later} ${continuation}`);
   });
 
   test("does not fill a retained gap by widening an instantaneous segment", () => {
@@ -181,7 +181,7 @@ describe("timestamp-supported near-repeat seams", () => {
     chunks[0]!.startSeconds = 75;
     chunks[1]!.startSeconds = 100;
     const result = mergeChunkTranscriptsWithSegments(chunks);
-    expect(result.text).toBe(`We agreed. ${earlier} ${continuation}`);
+    expect(result.text).toBe(`We agreed. ${later} ${continuation}`);
     expect(chunks.map(c => c.text).join(" ").split(/\s+/).length - result.text.split(/\s+/).length).toBe(11);
   });
 

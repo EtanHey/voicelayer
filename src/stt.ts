@@ -12,7 +12,9 @@
  */
 
 import { processingEnv } from "./processing-settings";
-import { existsSync, readdirSync } from "fs";
+import { existsSync, readdirSync, appendFileSync, mkdirSync } from "fs";
+import { getStateDir, SESSION_TOKEN } from "./paths";
+import { chooseSeamVariant } from "./stt-seam-stride";
 import { homedir } from "os";
 import { join } from "path";
 import { calculateRMS } from "./audio-utils";
@@ -1604,8 +1606,9 @@ function timedWordsForChunk(
  * A near-identical overlap can miss the text anchor when one token decodes
  * differently. Only whole segments may establish this additional match: the
  * later prefix must have no attributed support beyond the shared WAV region,
- * and the earlier suffix must cover that same interval. Keep the earlier words
- * intact. Missing/stale timings and distinct repetitions retain both readings.
+ * and the earlier suffix must cover that same interval. Resolve substitutions
+ * using stride context distance; retain conservative acoustic coverage.
+ * Missing/stale timings and distinct repetitions retain both readings.
  * Requires verbose segments: the outro gate requests them when enabled (default).
  * Disabling that gate also disables this fallback; it does not change text anchors.
  */
@@ -1669,12 +1672,11 @@ function findTimedNearSeam(merged: TimedChunkWord[], next: TimedChunkWord[]): nu
 
 /**
  * Merge chunk text with conservative timestamp-supported near-seam matching, carrying
- * the segment that actually supplied every kept word onto the full recording
- * timeline.
+ * conservative acoustic coverage onto the full recording timeline.
  *
- * Overlap words always retain the earlier chunk's timing, even when the later
- * chunk contributes preferred punctuation. If a response's segment stream no
- * longer describes its text, or its absolute times cannot be made monotonic,
+ * Overlap words retain conservative earlier acoustic coverage, even when the
+ * later chunk contributes a stride-selected variant or preferred punctuation.
+ * If a response's segment stream no longer describes its text, or its absolute times cannot be made monotonic,
  * the function fails closed with no segments rather than handing a gate a
  * guessed span.
  */
@@ -1694,6 +1696,7 @@ export function mergeChunkTranscriptsWithSegments(
 
   const merged: TimedChunkWord[] = [];
   let timedSeamChanged = false;
+  const auditRecords: string[] = [];
   for (const [chunkIndex, chunk] of chunks.entries()) {
     const nextWords = timedWordsForChunk(
       chunk,
@@ -1716,7 +1719,7 @@ export function mergeChunkTranscriptsWithSegments(
       ? findTimedNearSeam(merged, nextWords)
       : 0;
     if (timedOverlap > 0) {
-      const disagreements: { position: number; earlierTokenHash: string; laterTokenHash: string }[] = [];
+      const disagreements = [];
       for (let position = 0; position < timedOverlap; position++) {
         const retained = merged[merged.length - timedOverlap + position]!;
         const later = nextWords[position]!;
@@ -1725,11 +1728,26 @@ export function mergeChunkTranscriptsWithSegments(
           retained.text = preferOverlapWord(later.text, retained.text, false);
         } else {
           // Zero-based position within the removed run; never log either token.
-          disagreements.push({
+          const choice = chooseSeamVariant(retained, later, later.seamStartS, later.seamEndS);
+          const record = {
+            ts: new Date().toISOString(),
+            sessionId: SESSION_TOKEN,
+            earlierChunkIndex: retained.chunkIndex,
+            laterChunkIndex: later.chunkIndex,
+            earlierStartS: retained.startS,
+            earlierEndS: retained.endS,
+            laterStartS: later.startS,
+            laterEndS: later.endS,
+            overlapStartS: later.seamStartS,
+            overlapEndS: later.seamEndS,
+            ...choice,
             position,
             earlierTokenHash: createHash("sha256").update(retained.text).digest("hex"),
             laterTokenHash: createHash("sha256").update(later.text).digest("hex"),
-          });
+          };
+          auditRecords.push(JSON.stringify(record));
+          disagreements.push({ position, earlierTokenHash: record.earlierTokenHash, laterTokenHash: record.laterTokenHash });
+          if (choice.winner === "later") retained.text = later.text;
         }
       }
       console.error(`[voicelayer] timed seam ${JSON.stringify({
@@ -1824,6 +1842,19 @@ export function mergeChunkTranscriptsWithSegments(
       chunkIndex: word.chunkIndex,
       sourceEndS: word.endS,
     });
+  }
+
+  if (auditRecords.length > 0) {
+    // Resolve the isolated root before any write. Persist only completed folds:
+    // a later fail-closed exit has retained both untimed readings instead.
+    const stateDir = getStateDir();
+    try {
+      mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+      appendFileSync(join(stateDir, "seam-audit.jsonl"), auditRecords.join("\n") + "\n", { mode: 0o600 });
+    } catch {
+      console.error("[voicelayer] seam audit unavailable; retaining untimed merge");
+      return { text: untimedText, segments: [] };
+    }
   }
 
   return {
