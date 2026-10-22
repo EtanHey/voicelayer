@@ -61,8 +61,8 @@ func modalInventory<S: ModalSource>(_ source: S, qaPids: Set<Int32>) -> ModalInv
         if bounds.isEmpty { continue }
         if isSystemModalOwner(row.owner) { modal(row.owner, row.pid, row.title, "system-owner"); continue }
         if row.layer == modalPanelLayer { modal(row.owner, row.pid, row.title, "modal-level") }
-        // Apps with only menu-bar/Dock/overlay windows cannot host a modal window or sheet.
-        if (0..<20).contains(row.layer) { inspect.insert(row.pid) }
+        // Window level cannot prove AX modal/sheet absence, including for overlay-only owners.
+        inspect.insert(row.pid)
     }
     for pid in inspect.sorted() {
         let owner = rows.first { $0.pid == pid }?.owner ?? "unknown"

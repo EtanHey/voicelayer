@@ -81,11 +81,12 @@ final class Fake: ModalSource {
     var modal: [String: AXRead<Bool>] = [:]
     var kids: [String: AXRead<[String]>] = [:]
     var roles: [String: AXRead<String>] = [:]
+    var reads: [String] = []
     func windows() -> [CGRow]? { rows }
-    func axWindows(_ pid: Int32) -> AXRead<[String]> { windowsByPid[pid] ?? .value([]) }
-    func isModal(_ w: String) -> AXRead<Bool> { modal[w] ?? .value(false) }
-    func children(_ w: String) -> AXRead<[String]> { kids[w] ?? .value([]) }
-    func role(_ e: String) -> AXRead<String> { roles[e] ?? .value("AXButton") }
+    func axWindows(_ pid: Int32) -> AXRead<[String]> { reads.append("windows:\(pid)"); return windowsByPid[pid] ?? .value([]) }
+    func isModal(_ w: String) -> AXRead<Bool> { reads.append("modal:\(w)"); return modal[w] ?? .value(false) }
+    func children(_ w: String) -> AXRead<[String]> { reads.append("children:\(w)"); return kids[w] ?? .value([]) }
+    func role(_ e: String) -> AXRead<String> { reads.append("role:\(e)"); return roles[e] ?? .value("AXButton") }
     func title(_ e: String) -> String { e }
 }
 func row(_ id: UInt32, _ pid: Int32, _ owner: String, layer: Int = 0, _ frame: CGRect? = CGRect(x: 0, y: 0, width: 300, height: 200), alpha: Double = 1) -> CGRow {
@@ -466,6 +467,70 @@ class ForeignModals(unittest.TestCase):
         probe = FAKE_SOURCE + '\nlet f = Fake()\n' + setup + '\nprint(summary(modalInventory(f, qaPids: [42])))\n'
         return run_swift(self, MODALS_PRELUDE + block(PERMISSIONS, 'FOREIGN MODALS') + probe).strip()
 
+    def high_layer(self, assertions):
+        # Non-system, non-QA, alpha-1, nonempty window at the previously excluded layer.
+        # Explicit AX values below supply the absence evidence; no native adapter is invoked.
+        probe = FAKE_SOURCE + r'''
+let f = Fake()
+f.rows = [row(1, 70, "com.example.overlay", layer: 25, CGRect(x: 3000, y: 100, width: 300, height: 200))]
+f.windowsByPid = [70: .value(["w"])]
+f.modal = ["w": .value(false)]
+f.kids = ["w": .value([])]
+''' + assertions + '\nprint("PASS")\n'
+        self.assertEqual(run_swift(self, MODALS_PRELUDE + block(PERMISSIONS, 'FOREIGN MODALS') + probe).strip(), 'PASS')
+
+    def test_r2_high_layer_modal_stops_and_never_unlatches(self):
+        self.high_layer(r'''
+f.modal = ["w": .value(true)]
+let inventory = modalInventory(f, qaPids: [])
+precondition(summary(inventory) == "com.example.overlay|modal")
+precondition(f.reads == ["windows:70", "modal:w", "children:w"])
+var latch = BoundaryLatch()
+precondition(latch.decide(inventory) == "stop")
+f.modal = ["w": .value(false)]
+let absent = modalInventory(f, qaPids: [])
+precondition(absent.modals.isEmpty && absent.errors.isEmpty)
+precondition(latch.decide(absent) == "stop", "later absence cannot undo STOP")
+''')
+
+    def test_r2_high_layer_sheet_stops(self):
+        self.high_layer(r'''
+f.kids = ["w": .value(["sheet"])]
+f.roles = ["sheet": .value("AXSheet")]
+let inventory = modalInventory(f, qaPids: [])
+precondition(summary(inventory) == "com.example.overlay|sheet")
+precondition(f.reads == ["windows:70", "modal:w", "children:w", "role:sheet"])
+var latch = BoundaryLatch()
+precondition(latch.decide(inventory) == "stop")
+''')
+
+    def test_r2_unreadable_high_layer_owner_refuses(self):
+        self.high_layer(r'''
+f.windowsByPid = [70: .failed("cannot-complete")]
+let inventory = modalInventory(f, qaPids: [])
+precondition(summary(inventory) == "ERR ax-windows")
+precondition(f.reads == ["windows:70"], "high-layer owner must be queried")
+var latch = BoundaryLatch()
+precondition(latch.decide(inventory) == "not-proven")
+f.windowsByPid = [70: .value([])]
+precondition(latch.decide(modalInventory(f, qaPids: [])) == "stop")
+''')
+
+    def test_r2_high_layer_clear_requires_observed_absence(self):
+        self.high_layer(r'''
+let inventory = modalInventory(f, qaPids: [])
+precondition(inventory.modals.isEmpty && inventory.errors.isEmpty)
+precondition(f.reads == ["windows:70", "modal:w", "children:w"], "clear needs AX evidence")
+var latch = BoundaryLatch()
+precondition(latch.decide(inventory) == "clear")
+f.reads = []
+f.windowsByPid = [70: .value([])]
+let empty = modalInventory(f, qaPids: [])
+precondition(empty.modals.isEmpty && empty.errors.isEmpty)
+precondition(f.reads == ["windows:70"], "an empty AXWindows result must still be read")
+precondition(latch.decide(empty) == "clear")
+''')
+
     def test_r2_any_visible_modal_on_any_display_regardless_of_overlap(self):
         out = self.inventory(r'''
 f.rows = [row(1, 611, "com.apple.coreservices.uiagent", layer: 8, CGRect(x: 734, y: 236, width: 260, height: 274)),
@@ -474,8 +539,8 @@ f.rows = [row(1, 611, "com.apple.coreservices.uiagent", layer: 8, CGRect(x: 734,
           row(4, 71, "com.apple.dt.Xcode", CGRect(x: 3000, y: 100, width: 800, height: 600)), // second display
           row(5, 72, "com.example.panel", layer: 8, CGRect(x: 3100, y: 50, width: 200, height: 100)),
           row(6, 73, "com.apple.TextEdit"),                                             // ordinary window
-          row(7, 74, "com.apple.menuextra", layer: 25)]                                 // menu-bar only
-f.windowsByPid = [70: .value(["Print"]), 71: .value(["Main"]), 73: .value(["vapi.env"]), 72: .value([])]
+          row(7, 74, "com.apple.menuextra", layer: 25)]                                 // AX confirms no windows
+f.windowsByPid = [70: .value(["Print"]), 71: .value(["Main"]), 73: .value(["vapi.env"]), 72: .value([]), 74: .value([])]
 f.kids = ["Print": .value(["sheet"]), "Main": .value(["button"])]
 f.roles = ["sheet": .value("AXSheet")]
 f.modal = ["Main": .value(true)]
