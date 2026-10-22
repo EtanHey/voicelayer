@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { ManualClock } from "./setup/manual-clock";
+import { waitForPidFile } from "./setup/pid-readiness";
 import { createHash } from "node:crypto";
 import {
   mkdirSync,
@@ -29,6 +31,7 @@ import { normalizeOutroKey } from "../stt-outro-gate";
 
 // Real subprocesses: standalone p95 <= 1113 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+const INTERACTION_SUBPROCESS_TEST_TIMEOUT_MS = 20_000;
 
 test("private caption expectation detects a deliberate over-cut without exposing text", () => {
   const kept = "Keep every spoken word at the end.";
@@ -709,7 +712,8 @@ describe("corpus replay verification", () => {
         "#!/bin/sh",
         "set -eu",
         "nohup /bin/sh -c 'trap \"\" TERM HUP; exec /bin/sleep 300' >/dev/null 2>&1 &",
-        'printf "%s" "$!" > "$VERIFY_CHILD_PID"',
+        'printf "%s" "$!" > "$VERIFY_CHILD_PID.tmp"',
+        'mv "$VERIFY_CHILD_PID.tmp" "$VERIFY_CHILD_PID"',
         "exit 0",
         "",
       ].join("\n"),
@@ -731,11 +735,7 @@ describe("corpus replay verification", () => {
     let childPid = 0;
     let childRunning = false;
     try {
-      const receiptDeadline = Date.now() + 1_000;
-      while (!(await Bun.file(childPidPath).exists()) && Date.now() < receiptDeadline) {
-        await Bun.sleep(10);
-      }
-      childPid = Number((await Bun.file(childPidPath).text()).trim());
+      childPid = await waitForPidFile(childPidPath);
       await expect(
         waitForInteractionRunner(interactionRunner, 5_000, () => Bun.sleep(100)),
       ).rejects.toThrow("process group");
@@ -771,13 +771,14 @@ describe("corpus replay verification", () => {
       runner,
       [
         "#!/usr/bin/env bun",
-        'import { writeFileSync } from "fs";',
+        'import { writeFileSync, renameSync } from "fs";',
         'const child = Bun.spawn(["/bin/sh", "-c", \'trap "" TERM; exec /bin/sleep 300\'], { env: process.env,',
         '  stdin: "ignore",',
         '  stdout: "ignore",',
         '  stderr: "ignore",',
         "});",
-        'writeFileSync(process.env.VERIFY_CHILD_PID!, String(child.pid));',
+        'writeFileSync(process.env.VERIFY_CHILD_PID! + ".tmp", String(child.pid));',
+        'renameSync(process.env.VERIFY_CHILD_PID! + ".tmp", process.env.VERIFY_CHILD_PID!);',
         "await child.exited;",
         "",
       ].join("\n"),
@@ -794,25 +795,39 @@ describe("corpus replay verification", () => {
     process.env.VERIFY_CHILD_PID = childPidPath;
     let childPid = 0;
     let childRunning = false;
-    const startedAt = Date.now();
+    const clock = new ManualClock();
+    let pending: Promise<void> | undefined;
     try {
-      await expect(
-        runSwiftRuntimeInteractionLeg({
-          repoRoot: root,
-          workDir,
-          voiceBarSocketPath: join(workDir, "voicebar.sock"),
-          mcpSocketPath: join(workDir, "mcp.sock"),
-          daemonPid: process.pid,
-          audioFixture: join(workDir, "audio.wav"),
-        }),
-      ).rejects.toThrow("runtime interaction leg timed out after 1000ms");
-      childPid = Number((await Bun.file(childPidPath).text()).trim());
+      pending = runSwiftRuntimeInteractionLeg({
+        clock,
+        repoRoot: root,
+        workDir,
+        voiceBarSocketPath: join(workDir, "voicebar.sock"),
+        mcpSocketPath: join(workDir, "mcp.sock"),
+        daemonPid: process.pid,
+        audioFixture: join(workDir, "audio.wav"),
+      });
+      // Observe rejection immediately, including if startup/readiness fails.
+      void pending.catch(() => {});
+      childPid = await waitForPidFile(childPidPath);
+      expect(isProcessRunning(childPid)).toBe(true);
+      clock.advance(1_000);
+      await Bun.sleep(0);
+      expect(clock.scheduledDelays).toEqual([1000, 100]);
+      expect(clock.pendingDelays).toEqual([100]);
+      clock.advance(100);
+      await expect(pending).rejects.toThrow("runtime interaction leg timed out after 1000ms");
+      expect(clock.pendingTimers).toBe(0);
       const deadline = Date.now() + 1000;
       do {
         childRunning = isProcessRunning(childPid);
         if (childRunning) await Bun.sleep(25);
       } while (childRunning && Date.now() < deadline);
     } finally {
+      clock.advance(1_000);
+      await Bun.sleep(0);
+      clock.advance(Number.MAX_SAFE_INTEGER);
+      await pending?.catch(() => {});
       if (childRunning && childPid > 1) {
         try {
           process.kill(childPid, "SIGKILL");
@@ -842,8 +857,7 @@ describe("corpus replay verification", () => {
 
     expect(childPid).toBeGreaterThan(1);
     expect(childRunning).toBe(false);
-    expect(Date.now() - startedAt).toBeLessThan(2_500);
-  }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }, INTERACTION_SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("production Swift handoff propagates the isolated runtime environment", async () => {
     const root = makeTempRoot();

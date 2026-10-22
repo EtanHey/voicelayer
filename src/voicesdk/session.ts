@@ -234,6 +234,12 @@ export function createVoiceSdkSessionManager(
     } finally {
       finished = true;
       bargeInMonitor.current?.stop();
+      try { await bargeInMonitor.current?.exited; }
+      catch (error) {
+        console.error("[voicelayer] barge-in monitor teardown:", error);
+        reason = "error";
+        cancelOwned();
+      }
       try { await waitForPlayerExit(playbacks); }
       catch { reason = "error"; cancelOwned(); }
     }
