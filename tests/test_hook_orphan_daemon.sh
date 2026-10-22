@@ -2,6 +2,7 @@
 # Exercise the actual hook runner with cheap Swift/Bun-suite shims, no live audio.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export PYTHONDONTWRITEBYTECODE=1
 exec python3 - "$ROOT" "$@" <<'PY'
 import fcntl
 import importlib.util
