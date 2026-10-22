@@ -90,12 +90,14 @@ test("clone symbol safety also applies to dictionary output", () => {
   partitions(input, result);
 });
 
-test("clone JSON/code scan stays bounded at 2,000 characters", () => {
+test("clone JSON/code scan uses less than 50 ms CPU at 2,000 characters", () => {
   const inputs = ['{"tickets":[]}'.repeat(140), "[".repeat(999) + "1" + "]".repeat(999), "{".repeat(2000)];
   for (const input of inputs) {
-    const start = performance.now();
+    const start = process.cpuUsage();
     const result = projectSpeakableText(input);
-    expect(performance.now() - start).toBeLessThan(50);
+    // Keep the work budget; descheduled wall time is outside this scanner.
+    const cpu = process.cpuUsage(start);
+    expect(cpu.user + cpu.system).toBeLessThan(50_000);
     expect(result.speechText).not.toMatch(/[{}\[\]"]/);
     partitions(input, result);
   }

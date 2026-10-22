@@ -12,14 +12,15 @@ import { existsSync } from "fs";
 
 // Pre-check for conditional skips
 const npxAvailable = Bun.spawnSync(["which", "npx"], { env: process.env }).exitCode === 0;
-const runningInCI = process.env.CI === "true";
+const networkOptIn = process.env.VOICELAYER_TEST_NETWORK === "1";
+if (!networkOptIn) console.warn("SKIP Playwright npx download: set VOICELAYER_TEST_NETWORK=1 to opt in");
 const mcpJsonExists = existsSync(".mcp.json");
 const mcpConfig =
   mcpJsonExists ? await Bun.file(".mcp.json").json().catch(() => null) : null;
 const playwrightConfig = mcpConfig?.mcpServers?.playwright;
 
 describe("Playwright MCP setup", () => {
-  test.skipIf(!npxAvailable || runningInCI)(
+  test.skipIf(!npxAvailable || !networkOptIn)(
     "npx @playwright/mcp@latest is available",
     { timeout: 15000 },
     () => {
@@ -28,7 +29,7 @@ describe("Playwright MCP setup", () => {
         "@playwright/mcp@latest",
         "--version",
       ], { env: process.env });
-      if (result.exitCode !== 0) return; // Offline — graceful skip
+      expect(result.exitCode).toBe(0);
       const stdout = result.stdout.toString().trim();
       expect(stdout).toMatch(/\d+\.\d+/);
     },
