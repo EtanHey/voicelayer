@@ -619,9 +619,9 @@ print("PASS")
     def test_r4_every_command_action_and_still_waits_for_a_fresh_decision(self):
         flow = FLOW_TESTS.read_text()
         step = flow.split('    func step(', 1)[1].split('    @discardableResult', 1)[0]
-        self.assertLess(step.index('boundaryClear("action")'), step.index('body()'), 'decision precedes the UI action')
+        self.assertLess(step.index('boundaryClear("action")'), step.index('runStepBody(body)'), 'decision precedes the UI action')
         command = GATE_TESTS.read_text().split('    func fixtureCommand(', 1)[1].split('    func gateRead(', 1)[0]
-        self.assertLess(command.index('boundaryClear("command")'), command.index('postNotificationName('))
+        self.assertLess(command.index('try mutate("command")'), command.index('postNotificationName('))
         monitor = flow.split('addUIInterruptionMonitor(', 1)[1].split('step("launch isolated QA app"', 1)[0]
         self.assertNotIn('activate()', monitor, 'never recover focus and continue around a foreign window')
         self.assertIn('latchForeignStop(', monitor)

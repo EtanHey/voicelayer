@@ -84,10 +84,11 @@ extension VoiceBarFlowTests {
             let appeared = gate2246Alert(app).waitForExistence(timeout: expected ? 3 : 1)
             XCTAssertEqual(appeared, expected)
         }
-        func dismissAlert() {
+        func dismissAlert() throws {
             let buttons = gate2246LaterButtons(app)
             guard buttons.count == 1 else { XCTFail("Expected one Later in product alert"); return }
-            buttons.firstMatch.click()
+            let button = buttons.firstMatch
+            try mutate { button.click() }
             XCTAssertTrue(gate2246Alert(app).waitForNonExistence(timeout: 3))
         }
         for name in ["user-f5", "user-ask", "unknown", "background", "recovered", "visible"] {
@@ -106,7 +107,7 @@ extension VoiceBarFlowTests {
                 if immediate { XCTAssertEqual(observation["laterButtonCount"] as? Int, 1) }
                 attachJSON("GATE2246-" + name + "-failure-AX", observation)
             }
-            if immediate { step("GATE2246 HIDE " + name + " dismiss Later", evidenceContract: name == "visible" ? "visible" : "hidden-alive") { dismissAlert() } }
+            if immediate { step("GATE2246 HIDE " + name + " dismiss Later", evidenceContract: name == "visible" ? "visible" : "hidden-alive") { try dismissAlert() } }
             command("show")
             step("GATE2246 HIDE " + name + " shown") {
                 waitForAlert(name == "background")
@@ -115,7 +116,7 @@ extension VoiceBarFlowTests {
                 XCTAssertTrue(app.dialogs["VoiceBar GATE2245 Product Pill"].waitForExistence(timeout: 3))
                 attachJSON("GATE2246-" + name + "-shown-AX", observation)
             }
-            if name == "background" { step("GATE2246 HIDE background dismiss Later") { dismissAlert() } }
+            if name == "background" { step("GATE2246 HIDE background dismiss Later") { try dismissAlert() } }
         }
         ledger.verifiedSurfaces.insert("gate:HIDE1.1")
         command("selection")
@@ -224,10 +225,11 @@ extension VoiceBarFlowTests {
         let ack = root.appendingPathComponent("fixture-command-ack.json")
         let before = uie2eFixtureAck(try? Data(contentsOf: ack))?.count ?? 0
         // Fresh synchronous foreign-modal decision before delivery; a STOP never sends the command.
-        guard boundaryClear("command") else { XCTFail("Fixture command withheld under foreign modal STOP: " + name); return before + 1 }
-        DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name(uie2eFixtureCommandName(token: root.lastPathComponent, command: name)),
-            object: nil, userInfo: nil, deliverImmediately: true)
+        let notification = Notification.Name(uie2eFixtureCommandName(token: root.lastPathComponent, command: name))
+        do { try mutate("command") {
+            DistributedNotificationCenter.default().postNotificationName(
+                notification, object: nil, userInfo: nil, deliverImmediately: true)
+        } } catch { XCTFail("Fixture command withheld under foreign modal STOP: " + name); return before + 1 }
         let deadline = ProcessInfo.processInfo.systemUptime + 5
         while ProcessInfo.processInfo.systemUptime < deadline {
             if let observed = uie2eFixtureAck(try? Data(contentsOf: ack)), observed.count == before + 1 {
@@ -308,7 +310,8 @@ extension VoiceBarFlowTests {
             }
         }
         step("SEL1 busy note visible in real BarView") {
-            app.buttons["qa-fixture-gate-state-busy"].click()
+            let button = app.buttons["qa-fixture-gate-state-busy"]
+            try mutate { button.click() }
             let note = app.dialogs["VoiceBar QA Pill"].staticTexts["Busy transcribing. Selection not read"]
             XCTAssertTrue(note.waitForExistence(timeout: 1))
             if note.exists { XCTAssertGreaterThan(note.frame.height, 0) }
@@ -334,7 +337,8 @@ extension VoiceBarFlowTests {
             if kind == "partial" {
                 step("CLN1b timed Charlie dispatches exact 2000ms seek") {
                     let before = fixtureEvents().count
-                    app.dialogs["VoiceBar QA Pill"].buttons["Charlie"].click()
+                    let button = app.dialogs["VoiceBar QA Pill"].buttons["Charlie"]
+                    try mutate { button.click() }
                     waitUntil { self.fixtureEvents().dropFirst(before).contains("command:seek") }
                     let messages = gateRead("commands.json")["messages"] as? [[String: Any]]
                     XCTAssertEqual(messages?.last?["offset_ms"] as? Int, 2000)

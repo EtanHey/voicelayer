@@ -36,8 +36,9 @@ extension VoiceBarFlowTests {
         return states
     }
 
+    // BEGIN UIE2E GALLERY CLICK
     func galleryClick(_ identifier: String) throws {
-        app.activate()
+        try mutate { app.activate() }
         let window = app.windows["VoiceBar QA Settings"]
         guard window.waitForExistence(timeout: 3), window.isHittable, !window.frame.isEmpty else {
             throw NSError(domain: "QA gallery controls are not foreground/on-screen", code: 1)
@@ -46,9 +47,12 @@ extension VoiceBarFlowTests {
         guard element.waitForExistence(timeout: 3), element.isEnabled, element.isHittable else {
             throw NSError(domain: "Missing/unreachable focused control: " + identifier, code: 1)
         }
-        element.click()
+        try mutate { element.click() }
     }
 
+    // END UIE2E GALLERY CLICK
+
+    // BEGIN UIE2E GALLERY OBSERVE
     func galleryObserve() throws -> [String: Any] {
         let before = try gallerySnapshot()["observationGeneration"] as? Int ?? -1
         try galleryClick("qa-gallery-observe")
@@ -60,6 +64,8 @@ extension VoiceBarFlowTests {
         XCTAssertEqual(XCTWaiter.wait(for: [fresh], timeout: 3), .completed, "Fresh observation required")
         return try gallerySnapshot()
     }
+
+    // END UIE2E GALLERY OBSERVE
 
     func galleryPanel(_ title: String) -> XCUIElement {
         let dialog = app.dialogs[title]
@@ -80,7 +86,7 @@ extension VoiceBarFlowTests {
     }
 
     func focusedStep(_ name: String, _ body: () throws -> Void) {
-        step(name) { do { try body() } catch { XCTFail(String(describing: error)) } }
+        step(name, body)
     }
 
     func verifyGalleryFrames(ids: [String], snapshot: [String: Any], family: Bool = false) throws {
@@ -168,7 +174,7 @@ extension VoiceBarFlowTests {
             let index = try XCTUnwrap(page["index"] as? Int)
             let ids = try XCTUnwrap(page["states"] as? [String])
             focusedStep("#338 gallery page \(index): feedback fits, terminal preview has full card, panels separate") {
-                app.activate()
+                try mutate { app.activate() }
                 try galleryClick("qa-gallery-page-\(index)")
                 let snapshot = try galleryObserve()
                 XCTAssertEqual(snapshot["page"] as? Int, index)
@@ -198,9 +204,9 @@ extension VoiceBarFlowTests {
             let label = try XCTUnwrap(snapshot["copyControlLabel"] as? String)
             let button = galleryPanel("VoiceBar QA Gallery " + stateID).buttons[label].firstMatch
             XCTAssertTrue(button.exists && button.isHittable)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString("UIE2E focused sentinel", forType: .string)
-            if button.exists && button.isHittable { button.click() }
+            try mutate { NSPasteboard.general.clearContents() }
+            try mutate { NSPasteboard.general.setString("UIE2E focused sentinel", forType: .string) }
+            if button.exists && button.isHittable { try mutate { button.click() } }
             XCTAssertEqual(NSPasteboard.general.string(forType: .string), expected)
         }
         if (testRun?.failureCount ?? 0) == beforeCopy { ledger.verifiedSurfaces.insert("338:copy") }

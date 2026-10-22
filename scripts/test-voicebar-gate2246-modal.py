@@ -115,7 +115,7 @@ print(gate2245HasOwnedScreenWindows([unnamed], pid: 200))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.splitlines(), ['false', 'true', 'true'])
 
-    def test_pid_validation_compiles_in_real_nonthrowing_step_contract(self):
+    def test_pid_validation_compiles_in_real_step_contract(self):
         source = SOURCE.read_text()
         contract = (ROOT / 'flow-bar/UIE2E/VoiceBarUIE2ETests/VoiceBarFlowTests.swift').read_text()
         signature = contract.split('    func step(', 1)[1].split('{', 1)[0]
@@ -147,11 +147,11 @@ for pid: Any? in [nil, 0, -1, "200", 200] {
 failures = 0
 validate(["pid": 200, "screenWindows": [["pid": 200]]])
 precondition(failures == 1, "QA-owned windows must still fail")
-print("PASS nonthrowing step, invalid PID refusal, resident exclusion, QA surface failure")
+print("PASS real step contract, invalid PID refusal, resident exclusion, QA surface failure")
 '''
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp)
-            shim = 'import Foundation\n' + helper + 'func step(_ body: ' + body_type + ') { body() }\n'
+            shim = 'import Foundation\n' + helper + 'func step(_ body: ' + body_type + ') { do { try body() } catch { XCTFail(String(describing: error)) } }\n'
             (path / 'main.swift').write_text(shim + fixture)
             build = subprocess.run(['xcrun', 'swiftc', str(path / 'main.swift'), '-o', str(path / 'probe')], capture_output=True, text=True)
             self.assertEqual(build.returncode, 0, build.stderr)
