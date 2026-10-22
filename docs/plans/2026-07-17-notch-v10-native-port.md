@@ -258,7 +258,7 @@ Record exact pass/fail/skip counts from fresh output.
 
 ```bash
 bash flow-bar/build-app.sh \
-  --install-path /tmp/VoiceBar-notch-v10-native.app \
+  --install-path $PWD/.build.noindex/VoiceBar-notch-v10-native.app \
   --no-stop --no-relaunch
 ```
 
@@ -272,7 +272,7 @@ Compare geometry and material side-by-side with the approved React mock. Record 
 
 **Step 4: Exact cleanup**
 
-Terminate only the captured isolated PID and remove only `/tmp/VoiceBar-notch-v10-native.app` plus its explicitly named isolated paths. Verify no isolated process/socket remains.
+Terminate only the captured isolated PID and remove only `$PWD/.build.noindex/VoiceBar-notch-v10-native.app` plus its explicitly named isolated paths. Verify no isolated process/socket remains.
 
 ### Task 10: Release gate and handoff
 

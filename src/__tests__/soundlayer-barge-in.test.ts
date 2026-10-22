@@ -18,6 +18,42 @@ function scriptedVad(probabilities: number[]): VoiceActivityDetector {
 }
 
 describe("SoundLayer barge-in monitor", () => {
+  for (const minSpeechChunks of [1, 2]) {
+    it(`suppresses onset when stopped during inference (${minSpeechChunks} speech chunks)`, async () => {
+      const pending = Promise.withResolvers<number>();
+      const entered = Promise.withResolvers<void>();
+      let calls = 0;
+      const vad: VoiceActivityDetector = {
+        ...scriptedVad([]),
+        async processChunk() {
+          calls += 1;
+          if (calls < minSpeechChunks) return 0.9;
+          entered.resolve();
+          return pending.promise;
+        },
+      };
+      const onsets: number[] = [];
+      const monitor = createBargeInMonitor(vad, {
+        playbackStartedAtMs: 1_000,
+        minSpeechChunks,
+        onSpeechStart: (onset) => onsets.push(onset.onset_ms),
+      });
+      if (minSpeechChunks === 2) {
+        await monitor.pushAudioChunk(new Uint8Array(1024), 1_160);
+      }
+      const decision = monitor.pushAudioChunk(new Uint8Array(1024), 1_192);
+      await entered.promise;
+      monitor.stop();
+      pending.resolve(0.95);
+
+      expect((await decision).speechStarted).toBe(false);
+      expect(onsets).toEqual([]);
+      expect(monitor.getMetrics().confirmed_interrupts).toBe(0);
+      expect((await monitor.pushAudioChunk(new Uint8Array(1024), 1_224)).speechStarted).toBe(false);
+      expect(calls).toBe(minSpeechChunks);
+    });
+  }
+
   it("rejects echo-like speech during the playback settle window", async () => {
     const onsets: number[] = [];
     const monitor = createBargeInMonitor(scriptedVad([0.92]), {
