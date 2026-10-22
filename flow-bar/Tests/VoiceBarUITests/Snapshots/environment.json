@@ -2,6 +2,7 @@
   "antialiasingThreshold" : "Optional(4)",
   "fontIdentity" : ".AppleSystemUIFont|.AppleSystemUIFont|13.0",
   "fontSmoothing" : "nil",
+  "hostModel" : "Mac16,5",
   "macOS" : "Version 27.0 (Build 26A428)",
   "output" : "540pt-wide; 1x RGBA; aqua\/darkAqua; visualRenderTime=0",
   "sourceBackingScale" : "2.0",

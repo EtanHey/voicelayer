@@ -6,13 +6,14 @@ gallery to `.build.noindex/snapshots/index.html`. Only `--record` replaces refer
 Review the gallery and reference diff before accepting an update; recording a frame
 does not constitute approval.
 
-References were generated on the MBP (Apple M4 Max). The script and pre-push gate
-select that renderer; the M1 and hosted CI are excluded because their rendering is
-not comparable. The XCTest catalog additionally requires `VOICEBAR_SNAPSHOTS=1`
-and skips on GitHub Actions. Ordinary test runs still exercise the diff tolerance.
-The local pre-push hook invokes comparison after its existing regression gate.
+References were generated on the MBP (Apple M4 Max, Mac16,5). OS build,
+host model and backing scale are recorded in environment.json. Any renderer
+mismatch emits a specific expected/actual XCTSkip, without blocking a push.
+The catalog runs inside the existing scripts/run_tests.sh Swift test phase,
+under its heavy-suite gate and sharing its build. There is no extra hook step.
+Standalone comparison uses the same default Swift build directory.
 
-Each RGBA channel tolerates 16/255; at most 0.1% of pixels may exceed that threshold.
+Each RGBA channel tolerates 16/255; at most 25 pixels may exceed that threshold.
 Dimensions must match exactly. Decorative waveform and spinner time is frozen via
 a SwiftUI environment value whose production default uses the ordinary clock.
 Rendering uses offscreen nonactivating fixture panels, synthetic text, empty

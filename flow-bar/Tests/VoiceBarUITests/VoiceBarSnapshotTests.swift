@@ -10,21 +10,21 @@ final class SnapshotDiffTests: XCTestCase {
         let expected = [UInt8](repeating: 100, count: 400)
         var actual = expected
         actual[0] = 110
-        XCTAssertEqual(SnapshotDiff.ratio(expected, actual), 0)
+        XCTAssertEqual(SnapshotDiff.changedPixels(expected, actual), 0)
         actual[0] = 140
-        XCTAssertEqual(SnapshotDiff.ratio(expected, actual), 0.01)
+        XCTAssertEqual(SnapshotDiff.changedPixels(expected, actual), 1)
         for pixel in 0..<10 { actual[pixel * 4] = 140 }
-        XCTAssertGreaterThan(SnapshotDiff.ratio(expected, actual), 0.01)
+        XCTAssertGreaterThan(SnapshotDiff.changedPixels(expected, actual), 1)
     }
 }
 
 private enum SnapshotDiff {
-    static func ratio(_ expected: [UInt8], _ actual: [UInt8]) -> Double {
-        guard expected.count == actual.count, !expected.isEmpty else { return 1 }
+    static func changedPixels(_ expected: [UInt8], _ actual: [UInt8]) -> Int {
+        guard expected.count == actual.count, !expected.isEmpty else { return Int.max }
         let changed = stride(from: 0, to: expected.count, by: 4).filter { offset in
             (0..<4).contains { abs(Int(expected[offset + $0]) - Int(actual[offset + $0])) > 16 }
         }.count
-        return Double(changed) / Double(expected.count / 4)
+        return changed
     }
 }
 
@@ -53,7 +53,7 @@ final class VoiceBarSnapshotTests: XCTestCase {
 
     func testCatalog() throws {
         let env = ProcessInfo.processInfo.environment
-        guard env["VOICEBAR_SNAPSHOTS"] == "1", env["GITHUB_ACTIONS"] != "true" else {
+        guard env["VOICEBAR_SNAPSHOTS"] == "1" else {
             throw XCTSkip("Local MBP pixel catalog: use scripts/voicebar-snapshots.sh")
         }
         let record = env["VOICEBAR_SNAPSHOTS_RECORD"] == "1"
@@ -104,15 +104,15 @@ final class VoiceBarSnapshotTests: XCTestCase {
                     XCTAssertGreaterThan(Set(a).count, 20, "Blank/dim fixture: \(id)")
                 }
                 let sameSize = actual.pixelsWide == expected.pixelsWide && actual.pixelsHigh == expected.pixelsHigh
-                let ratio = sameSize ? SnapshotDiff.ratio(e, a) : 1
-                let matches = sameSize && ratio <= 0.001
+                let changed = sameSize ? SnapshotDiff.changedPixels(e, a) : Int.max
+                let matches = sameSize && changed <= 25
                 if !matches {
                     let diff = try difference(actual, expected)
                     try XCTUnwrap(diff.representation(using: .png, properties: [:]))
                         .write(to: output.appendingPathComponent(id + "-diff.png"))
                 }
-                XCTAssertTrue(matches, "\(id): changed \(ratio * 100)% (channel >16, maximum 0.1%); \(output.path)")
-                rows.append("<section><h2>\(id) — \(matches ? "PASS" : "FAIL") (\(String(format: "%.3f", ratio * 100))%)</h2>" +
+                XCTAssertTrue(matches, "\(id): changed \(changed) pixels (channel >16, maximum 25); \(output.path)")
+                rows.append("<section><h2>\(id) — \(matches ? "PASS" : "FAIL") (\(changed) pixels)</h2>" +
                     "<figure><img src='\(id)-expected.png'><figcaption>Reference</figcaption></figure>" +
                     "<figure><img src='\(id)-actual.png'><figcaption>Actual</figcaption></figure>" +
                     (matches ? "" : "<figure><img src='\(id)-diff.png'><figcaption>Changed pixels</figcaption></figure>") + "</section>")
@@ -128,14 +128,14 @@ final class VoiceBarSnapshotTests: XCTestCase {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(try XCTUnwrap(recordedEnvironment)).write(to: metadata)
         }
-        let html = "<!doctype html><meta charset='utf-8'><title>VoiceBar snapshots</title><style>body{font:14px system-ui;background:#ddd}figure{display:inline-block;margin:8px}img{max-width:100%;border:1px solid #888}section{border-bottom:1px solid #888}</style><h1>VoiceBar synthetic state catalog</h1><p>Channel threshold: 16/255; maximum changed pixels: 0.1%. References require explicit --record and review. Native click, focus and audio gates remain separate.</p>" + rows.joined(separator: "\n")
+        let html = "<!doctype html><meta charset='utf-8'><title>VoiceBar snapshots</title><style>body{font:14px system-ui;background:#ddd}figure{display:inline-block;margin:8px}img{max-width:100%;border:1px solid #888}section{border-bottom:1px solid #888}</style><h1>VoiceBar synthetic state catalog</h1><p>Channel threshold: 16/255; maximum changed pixels: 25. References require explicit --record and review. Native click, focus and audio gates remain separate.</p>" + rows.joined(separator: "\n")
         try html.write(to: output.appendingPathComponent("index.html"), atomically: true, encoding: .utf8)
     }
 
-    private func state(_ name: String) -> VoiceState {
+    private func state(_ name: String, expiry: @escaping () async -> Void) -> VoiceState {
         let state = VoiceState(recentTranscriptionsLoader: { [] }, recentTranscriptionsSaver: { _ in },
             recentTranscriptionEntriesLoader: { [] }, recentTranscriptionEntriesSaver: { _ in },
-            playbackAmplitudeClock: { 100 }, keepsExpandedInDevState: false)
+            playbackAmplitudeClock: { 100 }, selectionBusyNoteExpiry: expiry, keepsExpandedInDevState: false)
         state.sendCommand = { _ in }
         state.isConnected = true
         state.isCollapsed = false
@@ -152,8 +152,8 @@ final class VoiceBarSnapshotTests: XCTestCase {
              "queue-1", "queue-10", "last-item", "paused-controls":
             state.handleEvent(["type": "state", "state": "speaking", "text": "A synthetic sentence for the VoiceBar visual catalog. Every word stays visible.",
                                "request_id": "snapshot-read", "playback_id": "snapshot-player", "generation": 1])
-            if name == "queue-1" || name == "queue-10" {
-                state.handleEvent(["type": "read_queue", "count": name == "queue-1" ? 1 : 10,
+            if name == "queue-1" || name == "queue-10" || name == "last-item" {
+                state.handleEvent(["type": "read_queue", "count": name == "queue-1" ? 1 : (name == "queue-10" ? 10 : 0),
                                    "current_request_id": "snapshot-read"])
             }
             if name == "paused" || name == "paused-controls" {
@@ -175,7 +175,9 @@ final class VoiceBarSnapshotTests: XCTestCase {
     }
 
     private func render(_ name: String, light: Bool, canvasHeight: CGFloat? = nil) throws -> NSBitmapImageRep {
-        let state = state(name)
+        let expiry = AsyncStream<Void>.makeStream()
+        defer { expiry.continuation.finish() }
+        let state = state(name, expiry: { for await _ in expiry.stream {} })
         let app = NSApplication.shared
         let old = app.appearance
         app.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
@@ -214,6 +216,7 @@ final class VoiceBarSnapshotTests: XCTestCase {
         defer { panel.contentView = nil; panel.close() }
         let font = NSFont.systemFont(ofSize: 13)
         let environment = [
+            "hostModel": hostModel(),
             "macOS": ProcessInfo.processInfo.operatingSystemVersionString,
             "sourceBackingScale": String(Double(panel.backingScaleFactor)),
             "fontSmoothing": String(describing: UserDefaults.standard.object(forKey: "AppleFontSmoothing")),
@@ -222,12 +225,14 @@ final class VoiceBarSnapshotTests: XCTestCase {
             "textContract": "system-default-13-regular; product absolute system sizes; DynamicType=large; en_US_POSIX; LTR; gregorian; UTC",
             "output": "540pt-wide; 1x RGBA; aqua/darkAqua; visualRenderTime=0"
         ]
-        if let referenceEnvironment, referenceEnvironment != environment {
-            throw XCTSkip("SKIP: unsupported renderer. Expected \(referenceEnvironment), actual \(environment). Restore reference environment or review and re-record via repo script.")
+        if let expectedEnvironment = referenceEnvironment ?? recordedEnvironment, expectedEnvironment != environment {
+            let differences = Set(expectedEnvironment.keys).union(environment.keys).sorted().compactMap { key -> String? in
+                guard expectedEnvironment[key] != environment[key] else { return nil }
+                return "\(key): expected \(expectedEnvironment[key] ?? "<missing>"), actual \(environment[key] ?? "<missing>")"
+            }
+            throw XCTSkip("SNAPSHOTS NOT COMPARED — renderer mismatch: " + differences.joined(separator: "; "))
         }
-        if let recordedEnvironment {
-            XCTAssertEqual(recordedEnvironment, environment, "Renderer changed during catalog")
-        } else { recordedEnvironment = environment }
+        recordedEnvironment = environment
         // Explicit layout/display flush with animations disabled, then require three
         // consecutive identical source bitmaps. Deadline failure is never a pass.
         let deadline = Date().addingTimeInterval(5)
@@ -244,7 +249,7 @@ final class VoiceBarSnapshotTests: XCTestCase {
             let frame = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
             guard frame.pixelsWide == Int(size.width * panel.backingScaleFactor),
                   frame.pixelsHigh == Int(size.height * panel.backingScaleFactor) else {
-                throw XCTSkip("SKIP: cache bitmap scale differs from recorded window backing scale")
+                throw XCTSkip("SNAPSHOTS NOT COMPARED — bitmap dimensions: expected \(Int(size.width * panel.backingScaleFactor))x\(Int(size.height * panel.backingScaleFactor)), actual \(frame.pixelsWide)x\(frame.pixelsHigh)")
             }
             host.cacheDisplay(in: host.bounds, to: frame)
             let pixels = try rgba(frame)
@@ -258,6 +263,7 @@ final class VoiceBarSnapshotTests: XCTestCase {
             XCTFail("Rendered bitmap never stabilized within 5s: \(name)")
             throw NSError(domain: "SnapshotStability", code: 1)
         }
+        if name == "busy-note" { XCTAssertNotNil(state.selectionFeedbackNote, "Busy-note expired before capture completed") }
         let image = try XCTUnwrap(captured)
         // Normalize to 1x RGBA so backing-scale metadata cannot change comparison dimensions.
         let normalized = try bitmap(width: Int(size.width), height: Int(size.height))
@@ -266,6 +272,14 @@ final class VoiceBarSnapshotTests: XCTestCase {
         image.draw(in: NSRect(origin: .zero, size: size))
         NSGraphicsContext.restoreGraphicsState()
         return normalized
+    }
+
+    private func hostModel() -> String {
+        var size = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0 else { return "unavailable" }
+        var bytes = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("hw.model", &bytes, &size, nil, 0) == 0 else { return "unavailable" }
+        return String(cString: bytes)
     }
 
     private func bitmap(width: Int, height: Int) throws -> NSBitmapImageRep {

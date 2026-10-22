@@ -53,9 +53,4 @@ BANNER
   exit $exit_status
 fi
 
-# Local pixel baselines use the MBP renderer; hosted/M1 renderers are not comparable.
-if [ "$(uname -s)" = Darwin ] && system_profiler SPHardwareDataType | /usr/bin/grep -q 'Chip: Apple M4 Max'; then
-  bash scripts/voicebar-snapshots.sh || exit $?
-fi
-
 exit 0
