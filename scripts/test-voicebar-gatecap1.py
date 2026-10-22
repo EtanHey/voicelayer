@@ -330,9 +330,37 @@ print("PASS")
         self.assertEqual(run_swift(self, MODALS_PRELUDE + block(PERMISSIONS, 'FOREIGN MODALS') + probe).strip(), 'PASS')
 
     def test_hidden_expectation_is_declared_only_on_hidden_state_steps(self):
-        step = FLOW_TESTS.read_text().split('    func step(', 1)[1].split('    @discardableResult', 1)[0]
-        self.assertIn('uie2eFrameFailure(capture, contract: evidenceContract)', step)
+        flow = FLOW_TESTS.read_text()
+        step = flow.split('    func step(', 1)[1].split('    @discardableResult', 1)[0]
+        # Follow the actual runner path: each step obtains a still receipt, validates it through
+        # requireFrame, then the helper turns a contract failure into the sticky local STOP.
+        self.assertIn('let request = boundary("still")', step)
+        self.assertIn('capture = uie2eStillReceipt(request.ack, count: request.count)', step)
+        self.assertIn('requireFrame(capture, contract: evidenceContract)', step)
+        self.assertLess(step.index('let request = boundary("still")'),
+                        step.index('capture = uie2eStillReceipt(request.ack, count: request.count)'))
+        self.assertLess(step.index('capture = uie2eStillReceipt(request.ack, count: request.count)'),
+                        step.index('requireFrame(capture, contract: evidenceContract)'))
         self.assertIn('"evidenceContract": evidenceContract', step)
+
+        required_frame = block(FLOW_TESTS, 'UIE2E REQUIRED FRAME')
+        failure_check = 'uie2eFrameFailure(capture, contract: contract)'
+        self.assertIn(failure_check, required_frame)
+        self.assertIn('if let failure = ' + failure_check, required_frame)
+        self.assertIn('latchForeignStop("required frame: " + uie2eRedacted(failure))', required_frame)
+        self.assertLess(required_frame.index('if let failure = ' + failure_check),
+                        required_frame.index('latchForeignStop("required frame: " + uie2eRedacted(failure))'))
+
+        foreign_stop = block(FLOW_TESTS, 'UIE2E FOREIGN STOP')
+        latch_guard = 'guard foreignModalStop == nil else { return }'
+        latch_assignment = 'foreignModalStop = reason'
+        self.assertIn(latch_guard, foreign_stop)
+        self.assertIn(latch_assignment, foreign_stop)
+        self.assertIn('XCTFail("Foreign modal STOP latched (" + reason', foreign_stop)
+        self.assertIn('_ = boundary("action")', foreign_stop)
+        self.assertLess(foreign_stop.index(latch_guard), foreign_stop.index(latch_assignment))
+        self.assertLess(foreign_stop.index(latch_assignment), foreign_stop.index('XCTFail('))
+        self.assertLess(foreign_stop.index('XCTFail('), foreign_stop.index('_ = boundary("action")'))
         probe = r'''
 let hidden = [("HIDE1VIS speaking hidden", "hide1"), ("GATE2246 HIDE background failure", "gate2246"),
               ("GATE2246 HIDE recovered failure", "gate2246"), ("GATE2246 HIDE user-f5 dismiss Later", "gate2246"),
