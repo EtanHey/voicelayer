@@ -38,6 +38,33 @@ describe("timestamp-supported near-repeat seams", () => {
     expect(mergeChunkTranscriptsWithSegments(chunks).text).toContain(later);
   });
 
+  test.each([3.8, 0.000001])("keeps both readings across a retained coverage gap of %s seconds", gap => {
+    const chunks = fixture();
+    chunks[0]!.segments[1]!.endS = 25.2;
+    chunks[0]!.segments[2]!.startS = 25.2 + gap;
+    chunks[1]!.text = chunks[1]!.text.replace("we'll", "never");
+    chunks[1]!.segments[0]!.text = chunks[1]!.segments[0]!.text.replace("we'll", "never");
+    const result = mergeChunkTranscriptsWithSegments(chunks);
+    expect(result.text).toBe(`${chunks[0]!.text} ${chunks[1]!.text}`);
+    expect(result.segments.map(s => s.text).join(" ")).toBe(result.text);
+  });
+
+  test("does not fill a retained gap by widening an instantaneous segment", () => {
+    const chunks = fixture();
+    chunks[0]!.segments = [
+      { text: "We agreed.", startS: 10, endS: 11 },
+      { text: "Several violet robots near the orchard", startS: 24.72, endS: 25.2 },
+      { text: "will", startS: 29, endS: 29 },
+      { text: "build a wooden bridge.", startS: 29, endS: 30 },
+    ];
+    expect(mergeChunkTranscriptsWithSegments(chunks).text).toBe(`${chunks[0]!.text} ${chunks[1]!.text}`);
+  });
+
+  test.each([4.88, 4.80, 4.88])("retains target removal with recorded relative segment timings ending at %s", end => {
+    expect(mergeChunkTranscriptsWithSegments(fixture(0, end)).text)
+      .toBe(`We agreed. ${earlier} ${continuation}`);
+  });
+
   test("keeps the untimed merge unchanged", () => {
     const chunks = fixture();
     expect(mergeChunkTranscripts(chunks.map(c => c.text))).toContain(later);

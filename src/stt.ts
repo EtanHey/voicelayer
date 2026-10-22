@@ -1500,6 +1500,7 @@ export interface TimedChunkTranscript {
 interface TimedChunkWord {
   text: string;
   source: string;
+  retainedSpans: { startS: number; endS: number }[];
   chunkIndex: number;
   seamStartS: number;
   seamEndS: number;
@@ -1566,6 +1567,13 @@ function timedWordsForChunk(
       timedWords.push({
         text: word,
         source: `${chunkIndex}:${segmentIndex}`,
+        // Preserve original coverage even when instantaneous segments are widened.
+        retainedSpans: chunk.segments.filter(s =>
+          s.startS >= segment.startS && s.endS <= segment.endS && s.endS > s.startS
+        ).map(s => ({
+          startS: chunk.startSeconds + s.startS,
+          endS: chunk.startSeconds + s.endS,
+        })),
         chunkIndex,
         seamStartS,
         seamEndS,
@@ -1619,6 +1627,18 @@ function findTimedNearSeam(merged: TimedChunkWord[], next: TimedChunkWord[]): nu
         head.startS < head.seamStartS || tail.endS > head.seamEndS ||
         first.startS > head.startS || first.startS < head.startS - 0.5 ||
         last.endS < tail.endS || last.endS > head.seamEndS) continue;
+    // Union whole retained spans without filling any gap, however small.
+    const coverage: { startS: number; endS: number }[] = [];
+    for (const word of left.flatMap(w => w.retainedSpans).sort((a, b) => a.startS - b.startS)) {
+      const component = coverage.at(-1);
+      if (component && word.startS <= component.endS) {
+        component.endS = Math.max(component.endS, word.endS);
+      } else {
+        coverage.push({ startS: word.startS, endS: word.endS });
+      }
+    }
+    if (right.some(word => !coverage.some(component =>
+      component.startS <= word.startS && word.endS <= component.endS))) continue;
     if ([...left, ...right].some(w => /…|\.{3}|[-—][\p{P}\p{S}]*$/u.test(w.text))) continue;
     let differences = 0;
     for (let i = 0; i < size; i++) {
