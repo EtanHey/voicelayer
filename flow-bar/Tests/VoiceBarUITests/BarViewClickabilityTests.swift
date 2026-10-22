@@ -590,15 +590,13 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(VoiceBarNotchControlOptics.legacyCompact(for: "bolt.horizontal.circle.fill").pointSize, 10)
 
         let source = try barViewSource()
-        let compactStart = try XCTUnwrap(source.range(of: "private var notchCompactStatusContent"))
-        let compact = String(source[compactStart.lowerBound...])
-        let speaking = try XCTUnwrap(
-            compact.components(separatedBy: "case .speaking:").dropFirst().first?
-                .components(separatedBy: "case .error:").first
-        )
+        let speakingStart = try XCTUnwrap(source.range(of: "private var notchSpeakingTrailingContent"))
+        let waveformStart = try XCTUnwrap(source.range(of: "private var notchWaveform"))
+        let speaking = String(source[speakingStart.lowerBound..<waveformStart.lowerBound])
         XCTAssertFalse(speaking.contains("notchButton("))
-        XCTAssertTrue(speaking.contains("notchTeleprompterButton(\n                        icon: \"eye\""))
-        XCTAssertTrue(speaking.contains("notchTeleprompterButton(\n                    icon: \"stop.fill\""))
+        XCTAssertEqual(speaking.components(separatedBy: "notchTeleprompterButton(").count - 1, 2)
+        XCTAssertTrue(speaking.contains("icon: \"eye\""))
+        XCTAssertTrue(speaking.contains("icon: \"stop.fill\""))
 
         let teleprompterStart = try XCTUnwrap(source.range(of: "private func notchTeleprompterButton"))
         XCTAssertTrue(source[teleprompterStart.lowerBound...]
@@ -667,7 +665,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let trailing = source[trailingStart.lowerBound ..< compactStart.lowerBound]
         let recordingStart = try XCTUnwrap(trailing.range(of: "case .recording:"))
         let statusStart = try XCTUnwrap(
-            trailing.range(of: "case .compactStatus:", range: recordingStart.upperBound ..< trailing.endIndex)
+            trailing.range(of: "case .compactStatus, .teleprompter:", range: recordingStart.upperBound ..< trailing.endIndex)
         )
         let recording = trailing[recordingStart.lowerBound ..< statusStart.lowerBound]
 

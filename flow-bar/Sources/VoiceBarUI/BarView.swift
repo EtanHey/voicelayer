@@ -276,9 +276,23 @@ struct VoiceBarPillControlButton: View {
     }
 }
 
+// Test instrumentation attaches to the production compact Stop, never to a shell stand-in.
+struct PlaybackStopHostProbeKey: EnvironmentKey {
+    static let defaultValue: AnyView = AnyView(EmptyView())
+}
+
+extension EnvironmentValues {
+    var playbackStopHostProbe: AnyView {
+        get { self[PlaybackStopHostProbeKey.self] }
+        set { self[PlaybackStopHostProbeKey.self] = newValue }
+    }
+}
+
 // MARK: - Bar View
 
 public struct BarView: View {
+    @Environment(\.playbackStopHostProbe) private var playbackStopHostProbe
+
     public var state: VoiceState
     public var commandRouter: BarCommandRouting
     public var onOpenSettings: () -> Void
@@ -557,10 +571,12 @@ public struct BarView: View {
             }
         case .recording:
             notchWaveform
-        case .compactStatus:
-            notchCompactStatusContent
-        case .teleprompter:
-            if state.mode == .speaking || state.isTeleprompterReadback {
+        case .compactStatus, .teleprompter:
+            if state.mode == .speaking {
+                notchSpeakingTrailingContent
+            } else if notchPresentation.visualState == .compactStatus {
+                notchCompactStatusContent
+            } else if state.isTeleprompterReadback {
                 notchWaveform
             }
         }
@@ -577,24 +593,7 @@ public struct BarView: View {
                 }
             }
         case .speaking:
-            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-                notchWaveform
-                if state.isTeleprompterDismissed, !state.isPlaybackPaused {
-                    notchTeleprompterButton(
-                        icon: "eye",
-                        accessibilityLabel: "Show teleprompter"
-                    ) {
-                        state.showTeleprompter()
-                    }
-                }
-                notchTeleprompterButton(
-                    icon: "stop.fill",
-                    isDestructive: true,
-                    accessibilityLabel: "Stop speaking"
-                ) {
-                    commandRouter.handleStop()
-                }
-            }
+            notchSpeakingTrailingContent
         case .error:
             HStack(spacing: 3) {
                 statusLabel
@@ -614,6 +613,34 @@ public struct BarView: View {
             statusLabel
         case .recording:
             EmptyView()
+        }
+    }
+
+    private var notchSpeakingTrailingContent: some View {
+        let isCompact = notchPresentation.visualState == .compactStatus
+        return HStack(spacing: isCompact ? VoiceBarNotchContract.material.compactControlSpacing : 0) {
+            notchWaveform
+            if isCompact, state.isTeleprompterDismissed, !state.isPlaybackPaused {
+                notchTeleprompterButton(
+                    icon: "eye",
+                    accessibilityLabel: "Show teleprompter"
+                ) {
+                    state.showTeleprompter()
+                }
+            }
+            notchTeleprompterButton(
+                icon: "stop.fill",
+                isDestructive: true,
+                accessibilityLabel: "Stop speaking"
+            ) {
+                commandRouter.handleStop()
+            }
+            .background(playbackStopHostProbe)
+            // Keep the compact Stop mounted while the lower teleprompter Stop is visible.
+            .opacity(isCompact ? 1 : 0)
+            .frame(width: isCompact ? nil : 0)
+            .allowsHitTesting(isCompact)
+            .accessibilityHidden(!isCompact)
         }
     }
 

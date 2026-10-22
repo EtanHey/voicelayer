@@ -20,33 +20,71 @@ final class Tip2PausedTooltipTests: XCTestCase {
             let ready = expectation(for: NSPredicate { [self] _, _ in
                 host.layoutSubtreeIfNeeded()
                 let views = descendants(host)
-                return ["pause": pauseLabel, "next": "Next read", "stop": "Stop speaking"].allSatisfy { id, label in
+                return ["pause": pauseLabel, "next": "Next read", "shell": "Shell continuity"].allSatisfy { id, label in
                     views.contains { $0.identifier?.rawValue == id && $0.toolTip == label }
                 }
             }, evaluatedWith: nil)
             wait(for: [ready], timeout: 3)
             host.layoutSubtreeIfNeeded()
-            return try ["pause", "next", "stop"].map { id in
+            return try ["pause", "next", "shell"].map { id in
                 try XCTUnwrap(descendants(host).first { $0.identifier?.rawValue == id })
             }
         }
 
         let playing = try mounted(pauseLabel: "Pause speech")
-        XCTAssertEqual(playing.map(\.toolTip), ["Pause speech", "Next read", "Stop speaking"])
+        XCTAssertEqual(playing.map(\.toolTip), ["Pause speech", "Next read", "Shell continuity"])
         state.paused = true
         let paused = try mounted(pauseLabel: "Resume speech")
         for (before, after) in zip(playing, paused) {
             XCTAssertTrue(before === after, "Pause must preserve mounted wing identity: \(before.identifier!)")
         }
-        XCTAssertEqual(paused.map(\.toolTip), ["Resume speech", "Next read", "Stop speaking"])
+        XCTAssertEqual(paused.map(\.toolTip), ["Resume speech", "Next read", "Shell continuity"])
         state.paused = false
         let resumed = try mounted(pauseLabel: "Pause speech")
         for (before, after) in zip(playing, resumed) {
             XCTAssertTrue(before === after, "Resume must preserve mounted wing identity")
         }
-        XCTAssertEqual(resumed.map(\.toolTip), ["Pause speech", "Next read", "Stop speaking"])
+        XCTAssertEqual(resumed.map(\.toolTip), ["Pause speech", "Next read", "Shell continuity"])
         XCTAssertTrue(panel.allowsToolTipsWhenApplicationIsInactive)
         XCTAssertFalse(panel.isKeyWindow)
+    }
+
+    func testRealStopHostSurvivesPauseAndResume() throws {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Tooltip identity", "playback_id": "tip2", "generation": 1])
+        let host = PillHostingView(rootView: BarView(
+            state: state, commandRouter: BarViewClickabilityTests.SpyCommandRouter(),
+            onOpenSettings: {}, onOpenHistory: {}
+        ).environment(\.playbackStopHostProbe, AnyView(TooltipProbe(id: "real-stop", text: "Stop speaking"))))
+        host.frame = NSRect(x: 0, y: 0, width: 700, height: 300)
+        let panel = FloatingPillPanel(content: host)
+        defer { panel.close() }
+        panel.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
+        panel.orderBack(nil)
+        func stopHost() throws -> NSView {
+            let ready = expectation(for: NSPredicate { _, _ in
+                host.layoutSubtreeIfNeeded()
+                return self.descendants(host).contains { $0.toolTip == "Stop speaking" }
+            }, evaluatedWith: nil)
+            wait(for: [ready], timeout: 3)
+            return try XCTUnwrap(descendants(host).first { $0.toolTip == "Stop speaking" })
+        }
+        state.handleEvent(["type": "playback_state", "state": "paused", "offset_ms": 0, "playback_id": "tip2", "generation": 2])
+        XCTAssertTrue(state.isPlaybackPaused)
+        let paused = try stopHost()
+        state.handleEvent(["type": "playback_state", "state": "resumed", "offset_ms": 0, "playback_id": "tip2", "generation": 3])
+        XCTAssertFalse(state.isPlaybackPaused)
+        // Drain the actual expanded layout before pausing again.
+        let expanded = expectation(for: NSPredicate { _, _ in
+            host.layoutSubtreeIfNeeded()
+            return host.fittingSize.height > 100
+        }, evaluatedWith: nil)
+        wait(for: [expanded], timeout: 3)
+        state.handleEvent(["type": "playback_state", "state": "paused", "offset_ms": 0, "playback_id": "tip2", "generation": 4])
+        let pausedAgain = try stopHost()
+        XCTAssertTrue(paused === pausedAgain, "The real compact Stop host must survive resume and pause")
     }
 
     func testPlaybackWingUsesOneBranchAcrossPauseCollapse() throws {
@@ -85,7 +123,7 @@ final class Tip2PausedTooltipTests: XCTestCase {
                     TooltipProbe(id: "next", text: "Next read")
                 }
             } trailingContent: {
-                TooltipProbe(id: "stop", text: "Stop speaking")
+                TooltipProbe(id: "shell", text: "Shell continuity")
             } lowerContent: {
                 Text("Speech text")
             }
