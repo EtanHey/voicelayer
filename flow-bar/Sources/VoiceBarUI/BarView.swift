@@ -490,19 +490,16 @@ public struct BarView: View {
                     }
                 }
             }
-        case .compactStatus:
-            if state.mode == .transcribing {
+        case .compactStatus, .teleprompter:
+            if notchPresentation.visualState == .compactStatus, state.mode == .transcribing {
                 ProcessingSpinner()
             } else if let playbackPauseControl {
                 playbackLeadingControls(playbackPauseControl)
-            } else if state.mode == .idle, VoiceBarPresentation.readQueueControl(for: state) != nil {
+            } else if notchPresentation.visualState == .compactStatus,
+                      state.mode == .idle, VoiceBarPresentation.readQueueControl(for: state) != nil {
                 playbackLeadingControls(nil)
-            } else {
+            } else if notchPresentation.visualState == .compactStatus {
                 statusIcon
-            }
-        case .teleprompter:
-            if let playbackPauseControl {
-                playbackLeadingControls(playbackPauseControl)
             }
         }
     }

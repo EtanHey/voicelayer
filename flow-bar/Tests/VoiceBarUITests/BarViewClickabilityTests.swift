@@ -640,7 +640,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
         let recordingStart = try XCTUnwrap(leading.range(of: "case .recording:"))
         let statusStart = try XCTUnwrap(
-            leading.range(of: "case .compactStatus:", range: recordingStart.upperBound ..< leading.endIndex)
+            leading.range(of: "case .compactStatus, .teleprompter:", range: recordingStart.upperBound ..< leading.endIndex)
         )
         let recording = leading[recordingStart.lowerBound ..< statusStart.lowerBound]
 
@@ -725,7 +725,7 @@ final class BarViewClickabilityTests: XCTestCase {
         )
         let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
 
-        XCTAssertTrue(leading.contains("if state.mode == .transcribing"))
+        XCTAssertTrue(leading.contains("if notchPresentation.visualState == .compactStatus, state.mode == .transcribing"))
         XCTAssertTrue(leading.contains("ProcessingSpinner()"))
         XCTAssertFalse(leading.contains("statusLabel"))
     }
@@ -795,7 +795,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let active = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
         let leading = String(source[leadingStart.lowerBound ..< trailingStart.lowerBound])
         let teleprompterLeading = try XCTUnwrap(
-            leading.components(separatedBy: "case .teleprompter:").dropFirst().first
+            leading.components(separatedBy: "case .compactStatus, .teleprompter:").dropFirst().first
         )
 
         XCTAssertTrue(hover.contains("historyButton"))
