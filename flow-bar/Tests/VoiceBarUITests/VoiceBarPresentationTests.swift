@@ -3,6 +3,7 @@ import XCTest
 import AppKit
 import SwiftUI
 import QuartzCore
+import Vision
 import OffscreenTestSupport
 
 final class VoiceBarPresentationTests: XCTestCase {
@@ -239,8 +240,29 @@ final class VoiceBarPresentationTests: XCTestCase {
         let bandTop = band.minY
         let footer = NSRect(x: 0, y: host.isFlipped ? bandTop : host.bounds.height - bandTop - band.height,
                             width: host.bounds.width, height: band.height)
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: footer))
-        host.cacheDisplay(in: footer, to: bitmap)
+        // A shell geometry change can alter pixels before the delayed note fades in.
+        // Observe the actual copy, rather than accepting layout/display as text readiness.
+        let expectedNote = state.selectionFeedbackNote
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        var bitmap: NSBitmapImageRep
+        while true {
+            flushRender()
+            bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: footer))
+            host.cacheDisplay(in: footer, to: bitmap)
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([request])
+            let renderedText = (request.results ?? [])
+                .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            if renderedText == (expectedNote ?? "") { break }
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                XCTFail("Footer did not render \(expectedNote ?? "an empty note band"); OCR: \(renderedText)")
+                throw NSError(domain: "SelectionFooterRenderTimeout", code: 1)
+            }
+            // Polling cadence only: success requires exact text in the rendered bitmap.
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
         let bytes = try XCTUnwrap(bitmap.bitmapData)
         if let output = ProcessInfo.processInfo.environment["VOICEBAR_P2B_SHOTS_DIR"] {
             let directory = URL(fileURLWithPath: output, isDirectory: true)
