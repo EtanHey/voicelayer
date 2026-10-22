@@ -78,4 +78,13 @@ describe("timestamp-supported near-repeat seams", () => {
     chunks[1]!.segments = [{ text: chunks[1]!.text, startS: 0, endS: 8 }];
     expect(mergeChunkTranscriptsWithSegments(chunks).text).toContain(later);
   });
+
+  test("preserves the existing merge's token preference when its anchor succeeds", () => {
+    const chunks = fixture();
+    chunks[0]!.text = chunks[0]!.text.replace("will", "record");
+    chunks[0]!.segments[2]!.text = chunks[0]!.segments[2]!.text.replace("will", "record");
+    chunks[1]!.text = chunks[1]!.text.replace("we'll", "records");
+    chunks[1]!.segments[0]!.text = chunks[1]!.segments[0]!.text.replace("we'll", "records");
+    expect(mergeChunkTranscriptsWithSegments(chunks).text).toBe(mergeChunkTranscripts(chunks.map(c => c.text)));
+  });
 });

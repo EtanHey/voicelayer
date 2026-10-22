@@ -1680,7 +1680,13 @@ export function mergeChunkTranscriptsWithSegments(
       continue;
     }
 
-    const timedOverlap = findTimedNearSeam(merged, nextWords);
+    const seam = findChunkSeam(
+      merged.map((word) => word.text),
+      nextWords.map((word) => word.text),
+    );
+    const timedOverlap = seam.kind === "exact" && seam.overlap === 0
+      ? findTimedNearSeam(merged, nextWords)
+      : 0;
     if (timedOverlap > 0) {
       console.error(`[voicelayer] timed seam ${JSON.stringify({
         removedWords: timedOverlap,
@@ -1696,10 +1702,6 @@ export function mergeChunkTranscriptsWithSegments(
       continue;
     }
 
-    const seam = findChunkSeam(
-      merged.map((word) => word.text),
-      nextWords.map((word) => word.text),
-    );
     if (seam.kind === "compact") {
       merged.splice(merged.length - seam.dropMerged);
       const last = merged[merged.length - 1]!;
