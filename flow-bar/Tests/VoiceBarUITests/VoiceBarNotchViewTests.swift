@@ -171,13 +171,13 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(source.contains(".zIndex(10)"))
     }
 
-    func testHeroBranchesShareOneMatchedGeometryShellWithoutStateIDs() throws {
+    func testHeroKeepsOneMountedMatchedGeometryShellWithoutStateIDs() throws {
         let source = try notchViewSource()
         let hero = try bracedScope(after: "private var morphingNotchSurface", in: source)
 
-        XCTAssertTrue(hero.contains("presentation.visualState == .teleprompter"))
-        XCTAssertEqual(hero.components(separatedBy: ".matchedGeometryEffect(").count - 1, 2)
-        XCTAssertEqual(hero.components(separatedBy: "VoiceBarNotchMorphVariant.sharedShellID").count - 1, 2)
+        XCTAssertFalse(hero.contains("if presentation.visualState"))
+        XCTAssertEqual(hero.components(separatedBy: ".matchedGeometryEffect(").count - 1, 1)
+        XCTAssertEqual(hero.components(separatedBy: "VoiceBarNotchMorphVariant.sharedShellID").count - 1, 1)
         XCTAssertTrue(hero.contains("properties: .frame"))
         XCTAssertTrue(hero.contains("anchor: .top"))
         XCTAssertFalse(hero.contains("anchor: .topLeading"))

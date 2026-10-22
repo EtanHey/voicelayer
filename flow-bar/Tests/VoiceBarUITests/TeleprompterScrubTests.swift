@@ -303,7 +303,10 @@ final class TeleprompterScrubTests: XCTestCase {
         let bar = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"))
         XCTAssertTrue(bar.contains(".frame(height: state.showsTeleprompterScrubber ? Theme.teleprompterViewportHeight : nil)"))
         XCTAssertTrue(bar.contains("if state.showsTeleprompterScrubber { Spacer(minLength: 0) }"))
-        XCTAssertTrue(bar.contains("case .teleprompter:\n            if state.mode == .speaking || state.isTeleprompterReadback {\n                notchWaveform"),
+        let trailing = try XCTUnwrap(bar.components(separatedBy: "private var notchTrailingContent").dropFirst().first)
+            .components(separatedBy: "private var notchCompactStatusContent")[0]
+        XCTAssertTrue(trailing.contains("case .compactStatus, .teleprompter:"))
+        XCTAssertTrue(trailing.contains("} else if notchPresentation.visualState == .compactStatus {\n                notchCompactStatusContent\n            } else if state.isTeleprompterReadback {\n                notchWaveform"),
                       "the reserved trailing wing is never left empty in readback")
         XCTAssertTrue(bar.contains("isPlaybackEnded: state.isTeleprompterReadback"))
         XCTAssertTrue(bar.contains("accessibilityLabel: \"Dismiss teleprompter\""), "readback keeps its dismiss control")
