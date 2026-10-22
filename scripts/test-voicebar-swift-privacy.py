@@ -106,8 +106,13 @@ class SwiftPrivacy(unittest.TestCase):
                                   capture_output=True, text=True, timeout=30, check=True).stdout.strip()
         frameworks = str(pathlib.Path(platform) / 'Developer/Library/Frameworks')
         private_frameworks = str(pathlib.Path(platform) / 'Developer/Library/PrivateFrameworks')
+        # XCTest's Swift overlay (including XCTFail) and its autolinked support library
+        # live outside XCTest.framework in the selected platform's Developer/usr/lib.
+        swift_libraries = str(pathlib.Path(platform) / 'Developer/usr/lib')
         build = subprocess.run(['xcrun', 'swiftc', str(main), '-F', frameworks, '-framework', 'XCTest',
+                                '-I', swift_libraries, '-L', swift_libraries,
                                 '-module-cache-path', str(cls.root / 'module-cache.noindex'),
+                                '-Xlinker', '-rpath', '-Xlinker', swift_libraries,
                                 '-Xlinker', '-rpath', '-Xlinker', frameworks,
                                 '-Xlinker', '-rpath', '-Xlinker', private_frameworks, '-o', str(cls.root / 'probe')],
                                capture_output=True, text=True, timeout=120)
