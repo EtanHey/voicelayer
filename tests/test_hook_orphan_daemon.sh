@@ -104,7 +104,7 @@ if "--cross-run" in sys.argv[2:]:
             env = dict(os.environ, HOOK_CROSS_RUN_CHILD="1", HOOK_CROSS_RUN_DIR=runs,
                        HOOK_CROSS_RUN_LANE=run)
             output = open(Path(runs) / (run + ".log"), "w+")
-            child = registry.spawn([shutil.which("bun"), "test", "tests/hook-orphan-daemon.test.ts"],
+            child = registry.spawn([shutil.which("bun"), "test", "./tests/hook-orphan-daemon.test.ts"],
                                      cwd=checkout, env=env, stdout=output, stderr=subprocess.STDOUT)
             children.append((child, output))
         failed = False
