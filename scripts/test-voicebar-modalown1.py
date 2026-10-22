@@ -35,8 +35,14 @@ f.rows = [CGRow(id: 7, pid: qa.pid, owner: qaBundle, layer: 8,
     bounds: CGRect(x: 0, y: 0, width: 300, height: 200), alpha: 1, title: "")]
 f.windowsByPid = [qa.pid: .value([""])]; f.modal = ["": .value(true)]
 let receipt = try! JSONSerialization.jsonObject(with: Data(#"RC57_FIXTURE"#.utf8)) as! NSDictionary
-let reproduced = ["status": "stop", "errors": [], "modals": redactedEntries(modalInventory(f, qaPids: []).modals)] as NSDictionary
-precondition(receipt == reproduced, "must reproduce RC57 exactly before applying ownership proof")
+let current = redactedEntries(modalInventory(f, qaPids: []).modals)
+let historical = receipt["modals"] as! [[String: Any]]
+precondition(current.count == historical.count)
+for (now, old) in zip(current, historical) {
+    precondition(now["title"] as? String == redact(""), "current receipts use this process's keyed digest")
+    var shape = now; shape["title"] = old["title"]
+    precondition(shape as NSDictionary == old as NSDictionary, "preserve RC57 ownership/duplicate shape")
+}
 var identities: [Int32: QAIdentityRead] = [qa.pid: .live(qa), 60: .live(runner), 61: .live(xctest)]
 var binding = QARunBinding()
 func inventory(_ required: Bool = false, registered: [QAIdentity] = []) -> ModalInventory {

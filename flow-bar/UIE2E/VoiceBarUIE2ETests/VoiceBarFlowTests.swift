@@ -69,9 +69,12 @@ func uie2eFrameFailure(_ capture: [String: Any], contract: String?) -> String? {
         : contract == "terminated" && uie2eTerminationProven(capture["terminationProof"] as? [String: Any])
     return proven ? nil : "visual NOT_PROVEN for " + contract + " (" + reason + ")"
 }
+// Independent of the broker: this runner process owns its memory-only key for its lifetime.
+private let uie2eRedactionKey = SymmetricKey(size: .bits256)
 func uie2eRedacted(_ text: String) -> String {
-    let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
-    return "<redacted len=\(text.count) sha256=\(digest.prefix(8))>"
+    let digest = HMAC<SHA256>.authenticationCode(for: Data(text.utf8), using: uie2eRedactionKey)
+        .map { String(format: "%02x", $0) }.joined()
+    return "<redacted len=\(text.count) hmac-sha256=\(digest.prefix(32))>"
 }
 // END UIE2E BOUNDARY
 
@@ -155,7 +158,9 @@ final class VoiceBarFlowTests: XCTestCase {
             case .knownBenignForeign: kind = "known-foreign"
             case .unknown: kind = "unknown"
             }
+            // BEGIN UIE2E INTERRUPTION STOP
             self.latchForeignStop("interruption " + kind + " " + uie2eRedacted(alert.debugDescription))
+            // END UIE2E INTERRUPTION STOP
             return true
         }
         step("launch isolated QA app", evidenceContract: launchEvidenceContract) {
@@ -454,12 +459,14 @@ extension VoiceBarFlowTests {
         return false
     }
 
+    // BEGIN UIE2E FOREIGN STOP
     func latchForeignStop(_ reason: String) {
         guard foreignModalStop == nil else { return }
         foreignModalStop = reason
         XCTFail("Foreign modal STOP latched (" + reason + "); no further action, command or capture")
         _ = boundary("action")  // Lets the broker take its own fresh decision and latch the supervisor STOP.
     }
+    // END UIE2E FOREIGN STOP
 
     func waitUntil(_ predicate: @escaping () -> Bool, timeout: TimeInterval = 3) {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(

@@ -402,7 +402,7 @@ precondition(!uie2eBoundaryClear(["count": 3, "kind": "action", "status": "clear
 precondition(!uie2eBoundaryClear(["count": 2, "kind": "command", "status": "clear"], count: 3, kind: "command"))
 precondition(!uie2eBoundaryClear(["count": 3, "kind": "command", "status": "stop"], count: 3, kind: "command"))
 precondition(!uie2eBoundaryClear(nil, count: 3, kind: "command"))
-precondition(uie2eRedacted("BrainBar dialog").hasPrefix("<redacted len=15 sha256="))
+precondition(uie2eRedacted("BrainBar dialog").hasPrefix("<redacted len=15 hmac-sha256="))
 // Lead ruling on NOT_PROVEN frames.
 let proof: [String: Any] = ["cgInventory": "ok", "qaPid": 42, "qaBirth": [100, 20], "pidLifetime": "alive", "onScreenQAWindows": 0]
 var absent = good; absent["capture"] = ["status": "NOT_PROVEN", "reason": "no-proven-qa-window", "absenceProof": proof]
