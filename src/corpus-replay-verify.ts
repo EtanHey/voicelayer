@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { systemDeadlineClock, type DeadlineClock } from "./deadline-clock";
 
 import { createHash } from "node:crypto";
 import {
@@ -707,18 +708,19 @@ export async function waitForInteractionRunner(
   runner: VerifyDaemonProcess,
   timeoutMs = DEFAULT_INTERACTION_TIMEOUT_MS,
   waitForTerminationGracePeriod?: () => Promise<unknown>,
+  clock: DeadlineClock = systemDeadlineClock,
 ): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let cancelTimeout: (() => void) | undefined;
   const outcome = await Promise.race([
     runner.exited.then(
       (exitCode) => ({ kind: "exit" as const, exitCode }),
       (error: unknown) => ({ kind: "exit-error" as const, error }),
     ),
     new Promise<{ kind: "timeout" }>((resolveTimeout) => {
-      timeout = setTimeout(() => resolveTimeout({ kind: "timeout" }), timeoutMs);
+      cancelTimeout = clock.schedule(() => resolveTimeout({ kind: "timeout" }), timeoutMs);
     }),
   ]);
-  if (timeout) clearTimeout(timeout);
+  cancelTimeout?.();
   if (outcome.kind === "exit-error") {
     await terminateVerifyDaemon(runner, waitForTerminationGracePeriod);
     throw outcome.error;
@@ -733,6 +735,7 @@ export async function waitForInteractionRunner(
 }
 
 export async function runSwiftRuntimeInteractionLeg(options: {
+  clock?: DeadlineClock;
   repoRoot: string;
   workDir: string;
   voiceBarSocketPath: string;
@@ -799,6 +802,7 @@ export async function runSwiftRuntimeInteractionLeg(options: {
     interactionRunner,
     timeoutMs,
     () => Bun.sleep(terminationGraceMs),
+    options.clock,
   );
 }
 
