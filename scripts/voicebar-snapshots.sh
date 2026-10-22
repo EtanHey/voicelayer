@@ -24,7 +24,7 @@ if /usr/bin/grep -Eq 'VoiceBarSnapshotTests.*skipped|SKIP:|Test Suite.*skipped' 
 fi
 if [ "$record" = 1 ]; then
   # These states intentionally have identical pixels; behavioral assertions remain.
-  for alias in last-item teleprompter-collapsed snoozed; do
+  for alias in last-item teleprompter-collapsed snoozed paused-controls; do
     rm -f "$root/flow-bar/Tests/VoiceBarUITests/Snapshots/$alias-dark.png" \
       "$root/flow-bar/Tests/VoiceBarUITests/Snapshots/$alias-light.png"
   done

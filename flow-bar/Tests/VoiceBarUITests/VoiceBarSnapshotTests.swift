@@ -42,7 +42,8 @@ final class VoiceBarSnapshotTests: XCTestCase {
                          "speaking", "paused", "teleprompter-expanded", "teleprompter-collapsed",
                          "queue-1", "queue-10", "last-item", "paused-controls", "hidden", "snoozed",
                          "busy-note", "typed"]
-    private let aliases = ["last-item": "speaking", "teleprompter-collapsed": "speaking", "snoozed": "hidden"]
+    private let aliases = ["last-item": "speaking", "teleprompter-collapsed": "speaking", "snoozed": "hidden",
+                           "paused-controls": "paused"]
     private var referenceEnvironment: [String: String]?
     private var recordedEnvironment: [String: String]?
     private var root: URL {
@@ -161,6 +162,9 @@ final class VoiceBarSnapshotTests: XCTestCase {
                 XCTAssertTrue(state.isPlaybackPaused)
             }
             if name != "teleprompter-expanded" && name != "paused" { state.dismissTeleprompter() }
+            if name == "paused" || name == "paused-controls" {
+                XCTAssertEqual(state.isTeleprompterDismissed, name == "paused-controls")
+            }
         default: XCTFail("Unknown snapshot fixture: \(name)")
         }
         if name == "queue-1" || name == "queue-10" {
@@ -176,7 +180,9 @@ final class VoiceBarSnapshotTests: XCTestCase {
         let old = app.appearance
         app.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
         defer { app.appearance = old }
-        let height: CGFloat = canvasHeight ?? (["teleprompter-expanded", "paused"].contains(name) ? 270 : (name == "busy-note" ? 90 : 64))
+        // Paused playback intentionally collapses the teleprompter, including when
+        // its dismissal flag is false. Both pause fixtures share the compact canvas.
+        let height: CGFloat = canvasHeight ?? (name == "teleprompter-expanded" ? 270 : (name == "busy-note" ? 90 : 64))
         let size = CGSize(width: 540, height: height)
         // The real app orders its panel out while snoozed. Model that visibility boundary;
         // BarView alone intentionally does not implement window lifecycle.
