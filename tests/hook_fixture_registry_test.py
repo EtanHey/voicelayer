@@ -10,6 +10,8 @@ import time
 root = Path(sys.argv[1])
 sys.dont_write_bytecode = True
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+# These cases assert teardown/refusal, not the duration of unresolved settling.
+os.environ["HOOK_FIXTURE_SETTLE_DEADLINE_S"] = "0.5"
 sys.path.insert(0, str(root / 'tests'))
 import hook_fixture_registry as registry
 
@@ -80,6 +82,9 @@ try:
         assert 'sent 15 after identity verification' in receipt, receipt
         assert 'sent 9 after identity verification' in receipt, receipt
         assert 'identity mismatch or unreadable; never signalled' in receipt, receipt
+        # This case has proved refusal. Retire its injected unknown row so later
+        # startup sweeps do not accumulate a full settle deadline per prior case.
+        (base / f'fixture-{sentinel.pid}.json').unlink()
         print(f'PASS {mode}: escape fixture reaped; forged identity and unrelated PID refused', flush=True)
 finally:
     sentinel.stdin.close()
@@ -152,7 +157,12 @@ for point in ('KILL-supervisor', 'KILL-group', 'KILL-swift-build', 'KILL-group-s
         child.wait(timeout=5)
         assert wait(lambda: not survivors(base), 15), f'{point}: survivors {survivors(base)}'
         assert (base / 'fixture-registration.closed').exists()
-        assert (base / 'fixture-cleanup.done').exists()
+        # The guardian may retain an unreadable/re-exec identity that exits later.
+        # Recover this run after death is proven instead of assuming one pass settles it.
+        def settled():
+            registry.sweep_index(Path(json.loads((base / 'fixture-registry.json').read_text())['index']).parent, root)
+            return (base / 'fixture-cleanup.done').exists()
+        assert wait(settled), 'cleanup did not settle'
         print(f'PASS full-harness abort {point}: zero run-tagged survivors', flush=True)
     finally:
         if child.poll() is None:

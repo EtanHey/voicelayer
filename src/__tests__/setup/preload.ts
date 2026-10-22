@@ -12,7 +12,8 @@
  * /tmp, so a suite can no longer collide with the resident VoiceBar's files.
  */
 
-import { lstatSync, mkdirSync, readdirSync, rmSync } from "fs";
+import { spawnSync } from "child_process";
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { join } from "path";
 import { randomBytes } from "crypto";
 
@@ -65,8 +66,25 @@ for (const entry of readdirSync(TEST_ROOT, { withFileTypes: true })) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
+// A dead run's hook-fixture index can still point at live setsid fixtures.
+// Reap them through the registry's identity-verified sweep FIRST; a run whose
+// index cannot be settled keeps its directory as recovery evidence.
+function fixturesSettled(path: string): boolean {
+  const index = join(path, "hook-fixtures");
+  const pending = () => existsSync(index) && readdirSync(index).some((name) => name.endsWith(".json"));
+  if (!pending()) return true;
+  const sweeper = join(process.cwd(), "tests", "hook_fixture_registry.py");
+  if (!existsSync(sweeper)) return false;
+  const result = spawnSync("python3", [sweeper, "--sweep-index", index, process.cwd()], {
+    env: process.env, stdio: "ignore", timeout: 30_000,
+  });
+  return result.status === 0 && !pending();
+}
+
 dead.sort((a, b) => b.modified - a.modified || b.pid - a.pid);
+const settled = new Set(dead.filter((entry) => fixturesSettled(entry.path)).map((entry) => entry.path));
 for (const entry of dead.slice(2)) {
+  if (!settled.has(entry.path)) continue;
   try {
     // Recheck liveness/type, but never rely on this to prevent PID reuse:
     // a new generation exclusively creates a different directory, so this
