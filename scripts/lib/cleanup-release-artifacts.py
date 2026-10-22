@@ -24,12 +24,13 @@ def artifact_handles(version, artifacts):
         raise ValueError('Python lacks symlink-safe descriptor-relative rmtree')
     # Inputs were resolved by the caller. Do not resolve again and bless a swap.
     paths = [Path(version), *(Path(item) for item in artifacts)]
-    for path in paths:
+    for index, path in enumerate(paths):
+        parent = path if index == 0 else path.parent
         if (not path.is_absolute() or '..' in path.parts
                 or any(p.casefold() == 'docs.local' for p in path.parts)
                 or (len(path.parts) > 1 and path.parts[1].casefold() == 'applications')
                 or path.parts[:5] == ('/', 'System', 'Volumes', 'Data', 'Applications')
-                or not any(p.endswith('.noindex') for p in path.parts[1:-1])):
+                or not any(p.endswith('.noindex') for p in parent.parts[1:])):
             raise ValueError('unsafe release artifact path: ' + str(path))
     version_path = paths[0]
     for path in paths[1:]:
