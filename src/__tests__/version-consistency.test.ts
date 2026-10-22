@@ -1,3 +1,4 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
@@ -8,7 +9,6 @@ import {
   rmSync,
   writeFileSync,
 } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
 
 // Real subprocesses: standalone p95 <= 325 ms; 4x rounded up, with a 5 s scheduling floor.
@@ -52,7 +52,7 @@ function fixture(options: {
   gitTag?: string;
   staplerExit?: number;
 } = {}) {
-  const root = mkdtempSync(join(tmpdir(), "voicelayer-version-check-"));
+  const root = mkdtempSync(join(bundleFixtureRoot(), "voicelayer-version-check-"));
   fixtureRoots.push(root);
   pendingFixtureRoots.push(root);
   const tapRoot = join(root, "homebrew-layers");

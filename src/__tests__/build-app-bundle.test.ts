@@ -1,6 +1,6 @@
+import { bundleFixtureRoot } from "./setup/bundle-fixtures";
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
 
 // Real subprocesses: standalone p95 <= 19 ms; 4x rounded up, with a 5 s scheduling floor.
@@ -54,7 +54,7 @@ function plistString(plist: string, key: string): string | undefined {
 
 describe("build-app.sh bundles runtime assets", () => {
   test("copies runtime sources without tests and checks the finished bundle", () => {
-    const root = mkdtempSync(join(tmpdir(), "priv2-bundle-"));
+    const root = mkdtempSync(join(bundleFixtureRoot(), "priv2-bundle-"));
     const repo = join(root, "source repo");
     const app = join(root, "VoiceBar.app");
     const resources = join(app, "Contents/Resources");

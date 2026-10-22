@@ -247,7 +247,7 @@ Expected RED: the archived regression must reproduce as either teleprompter inte
 
 **Step 2: Build the candidate without touching the resident**
 
-Run `bash flow-bar/build-app.sh --install-path /absolute/temporary/path/VoiceBar.app --no-stop --no-relaunch`. Never install or launch `/Applications/VoiceBar.app`.
+Run `bash flow-bar/build-app.sh --install-path $PWD/.build.noindex/VoiceBar.app --no-stop --no-relaunch`. Never install or launch `/Applications/VoiceBar.app`.
 
 **Step 3: Run the real-pixel harness on the candidate**
 

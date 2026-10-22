@@ -287,16 +287,16 @@ describe("voicebar-ui-e2e.sh restores the mute it found", () => {
     const s = sandbox(prior);
     const root = join(s.dir, "repo");
     for (const d of ["scripts/lib", "flow-bar"]) mkdirSync(join(root, d), { recursive: true });
-    for (const f of ["scripts/voicebar-ui-e2e.sh", "scripts/lib/output-mute-guard.sh"]) {
+    for (const f of ["scripts/voicebar-ui-e2e.sh", "scripts/lib/output-mute-guard.sh", "scripts/lib/noindex-path.sh"]) {
       writeFileSync(join(root, f), readFileSync(join(repo, f), "utf8"));
     }
     writeFileSync(join(root, "flow-bar/build-app.sh"), build);
     for (const tool of ["python3", "xcodebuild", "xcrun", "swift", "bun"]) {
       writeFileSync(join(s.bin, tool), "#!/bin/bash\nexit 0\n", { mode: 0o700 });
     }
-    const cmd = ["/bin/bash", join(root, "scripts/voicebar-ui-e2e.sh"), "--output", join(s.dir, "out")];
+    const cmd = ["/bin/bash", join(root, "scripts/voicebar-ui-e2e.sh"), "--output", join(s.dir, "out.noindex")];
     const cleanup = () => {
-      const pathFile = join(s.dir, "out/sandbox-path.txt");
+      const pathFile = join(s.dir, "out.noindex/sandbox-path.txt");
       if (existsSync(pathFile)) {
         const box = readFileSync(pathFile, "utf8").trim();
         if (/^\/tmp\/vl-ui-/.test(box) && existsSync(join(box, ".uie2e-sandbox"))) rmSync(box, { recursive: true, force: true });
