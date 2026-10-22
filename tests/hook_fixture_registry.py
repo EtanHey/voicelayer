@@ -3,9 +3,13 @@ import atexit
 import fcntl
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
+import secrets
+import select
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -19,6 +23,68 @@ def metadata(pid):
     if len(fields) < 7 or fields[0] != str(os.getuid()) or 'Z' in fields[1]:
         return None
     return ' '.join(fields[2:])
+
+
+# Stable harness-family identity: a sweep from any checkout may recover a run
+# from a copied or deleted checkout, but only through an index entry that is
+# token-bound to the run's own registry.
+FAMILY = 'voicelayer-hook-fixture/1'
+
+
+def liveness(pid, started):
+    """'alive', 'dead' (proven gone or PID reused) or 'unknown'; never guess."""
+    if type(pid) is not int or pid <= 1 or not started:
+        return 'unknown'
+    result = subprocess.run(['ps', '-p', str(pid), '-o', 'uid=,stat=,lstart='],
+                            text=True, capture_output=True, env=dict(os.environ, LC_ALL='C', TZ='UTC'))
+    fields = result.stdout.split()
+    if not fields:
+        return 'dead' if result.returncode == 1 and not result.stderr.strip() else 'unknown'
+    if result.returncode != 0 or len(fields) < 7:
+        return 'unknown'
+    if ' '.join(fields[2:]) != started or 'Z' in fields[1]:
+        return 'dead'
+    return 'alive' if fields[0] == str(os.getuid()) else 'unknown'
+
+
+def _private_dir(path):
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise OSError(f'not a private directory: {path}')
+    return path
+
+
+def run_root(root):
+    """The isolated root for scratch and the index; never /tmp and never adopted."""
+    supplied = os.environ.get('VOICELAYER_TEST_RUN_ROOT', '').strip()
+    if supplied:
+        return _private_dir(Path(supplied))
+    if os.environ.get('VOICELAYER_TEST_ISOLATED') == '1':
+        raise SystemExit('VOICELAYER_TEST_RUN_ROOT is required for isolated (Bun) runs')
+    tests = root / '.test-tmp'
+    tests.mkdir(mode=0o700, exist_ok=True)
+    _private_dir(tests)
+    for _ in range(8):
+        # Same <pid>-<nonce> shape as the Bun preload: exclusive, never adopted.
+        candidate = tests / f'{os.getpid()}-{secrets.token_hex(2)}'
+        try:
+            candidate.mkdir(mode=0o700)
+        except FileExistsError:
+            continue
+        os.environ['VOICELAYER_TEST_RUN_ROOT'] = str(candidate)
+        return candidate
+    raise SystemExit('could not create an exclusive test run root')
+
+
+def index_dir(root):
+    """Nested harnesses inherit the outermost index, which outlives X/Y checkouts."""
+    inherited = os.environ.get('HOOK_FIXTURE_INDEX', '').strip()
+    if inherited:
+        return _private_dir(Path(inherited))
+    index = run_root(root) / 'hook-fixtures'
+    index.mkdir(mode=0o700, exist_ok=True)
+    os.environ['HOOK_FIXTURE_INDEX'] = str(_private_dir(index))
+    return index
 
 
 _identity_readers = {}
@@ -81,7 +147,8 @@ def cleanup(base, root):
 
 def _cleanup_closed(base, root):
     identity = identities(root)
-    token = json.loads((base / 'fixture-registry.json').read_text())['token']
+    state = json.loads((base / 'fixture-registry.json').read_text())
+    token = state['token']
     rows = []
     reported = set()
     def report(pid, reason):
@@ -91,28 +158,39 @@ def _cleanup_closed(base, root):
         reported.add(key)
         with (base / 'fixture-cleanup.jsonl').open('a') as stream:
             stream.write(json.dumps(dict(pid=pid, reason=reason)) + '\n')
-    def matches(row):
+    def fixture_state(row):
+        """Signal only alive identities; settle only positively dead identities."""
         pid = row.get('pid')
         if type(pid) is not int or pid <= 1 or not row.get('started') or row.get('token') != token:
             report(pid, 'unverifiable record; never signalled')
-            return False
+            return 'unknown'
+        status = liveness(pid, row['started'])
+        if status != 'alive':
+            return status
         started = metadata(pid)
         if started is None:
-            report(pid, 'exited or unverifiable start; never signalled')
-            return False
+            report(pid, 'unverifiable start; never signalled')
+            return 'unknown'
+        if started != row['started']:
+            return 'dead'
         observed = identity(pid)
-        owned = observed is not None and any(
+        if observed is None:
+            report(pid, 'unreadable identity; never signalled')
+            return 'unknown'
+        owned = any(
             observed[1].get(run_key) == str(base) and observed[1].get(token_key) == token
             for run_key, token_key in (('HOOK_FIXTURE_RUN', 'HOOK_FIXTURE_TOKEN'),
                                        ('HOOK_FIXTURE_BIRTH_RUN', 'HOOK_FIXTURE_BIRTH_TOKEN')))
-        if started != row['started'] or not owned:
+        if not owned:
             report(pid, 'identity mismatch or unreadable; never signalled')
-            return False
-        return True
+            return 'unknown'
+        return 'alive'
+    unreadable = False
     for path in base.glob('fixture-*.json'):
         if path.name == 'fixture-registry.json':
             continue
         if path.is_symlink():
+            unreadable = True
             report(None, 'symlink record; never read')
             continue
         try:
@@ -121,10 +199,11 @@ def _cleanup_closed(base, root):
                 raise ValueError('non-object record')
             rows.append(row)
         except (OSError, ValueError):
+            unreadable = True
             report(None, 'malformed record; never signalled')
     def send(row, signum):
         # Re-read start time AND the native environment before EACH individual signal.
-        if matches(row):
+        if fixture_state(row) == 'alive':
             try:
                 os.kill(row['pid'], signum)
                 report(row['pid'], f'sent {int(signum)} after identity verification')
@@ -133,34 +212,78 @@ def _cleanup_closed(base, root):
     for row in rows:
         send(row, signal.SIGTERM)
     deadline = time.monotonic() + .5
-    while time.monotonic() < deadline and any(matches(row) for row in rows):
+    while time.monotonic() < deadline and any(fixture_state(row) == 'alive' for row in rows):
         time.sleep(.025)
     for row in rows:
         send(row, signal.SIGKILL)
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline and any(matches(row) for row in rows):
+    settle_seconds = float(os.environ.get("HOOK_FIXTURE_SETTLE_DEADLINE_S", "3"))
+    if not math.isfinite(settle_seconds) or settle_seconds <= 0:
+        raise ValueError("HOOK_FIXTURE_SETTLE_DEADLINE_S must be finite and positive")
+    deadline = time.monotonic() + settle_seconds
+    while time.monotonic() < deadline and any(fixture_state(row) != 'dead' for row in rows):
         time.sleep(.025)
-    remaining = [row['pid'] for row in rows if matches(row)]
-    if remaining:
-        raise RuntimeError(f'fixture teardown survivors: {remaining}')
+    remaining = [row.get('pid') for row in rows if fixture_state(row) != 'dead']
+    if remaining or unreadable:
+        # The index entry stays, so a later sweep retries with the same evidence.
+        raise RuntimeError(f'fixture teardown unresolved: {remaining}; unreadable={unreadable}')
     (base / 'fixture-cleanup.done').touch()
+    entry = state.get('index')
+    if entry and not Path(entry).is_symlink():
+        Path(entry).unlink(missing_ok=True)
+
+
+def _indexes(root):
+    found = []
+    for candidate in (os.environ.get('HOOK_FIXTURE_INDEX', '').strip(),
+                      os.environ.get('VOICELAYER_TEST_RUN_ROOT', '').strip() and
+                      str(Path(os.environ['VOICELAYER_TEST_RUN_ROOT'].strip()) / 'hook-fixtures')):
+        if candidate:
+            found.append(Path(candidate))
+    found.extend(sorted((root / '.test-tmp').glob('*/hook-fixtures')))
+    unique = {}
+    for index in found:
+        try:
+            unique.setdefault(os.path.realpath(_private_dir(index)), index)
+        except OSError:
+            continue
+    return list(unique.values())
 
 
 def sweep(root):
-    """Only our private run directories, with a dead owner AND no held owner lease."""
-    harness = str(root.resolve())
-    for base in Path('/tmp').glob('vlho-*'):
+    """Recover runs from this checkout's stable isolated indexes, never a /tmp glob."""
+    for index in _indexes(root):
+        sweep_index(index, root)
+
+
+def sweep_index(index, root):
+    """Only indexed runs with a proven-dead owner AND no held owner lease."""
+    for entry in sorted(index.glob('*.json')):
+        base = None
         try:
-            if base.is_symlink() or base.stat().st_uid != os.getuid():
+            if entry.is_symlink() or not entry.is_file():
+                continue
+            pointer = json.loads(entry.read_text())
+            if pointer.get('family') != FAMILY:
+                continue
+            base = Path(pointer['base'])
+            if not base.is_absolute():
+                raise ValueError('relative run path')
+            try:
+                _private_dir(base)
+            except FileNotFoundError:
+                # Nothing left to verify a signal against; the pointer alone is no authority.
+                print(f'UNVERIFIABLE fixture run {base}: registry missing; never signalled', flush=True)
+                entry.unlink(missing_ok=True)
                 continue
             marker = base / 'fixture-registry.json'
             lock = base / 'fixture-owner.lock'
             if marker.is_symlink() or lock.is_symlink() or not marker.is_file() or not lock.is_file():
                 continue
             state = json.loads(marker.read_text())
-            if (base / 'fixture-cleanup.done').is_file() and (base / 'fixture-registration.closed').is_file():
+            if state.get('token') != pointer.get('token') or state.get('family') != FAMILY:
                 continue
-            if state.get('harness') != harness:
+            if (base / 'fixture-cleanup.done').is_file() and (base / 'fixture-registration.closed').is_file():
+                entry.unlink(missing_ok=True)
                 continue
             with lock.open('r+') as lease:
                 try:
@@ -168,24 +291,42 @@ def sweep(root):
                 except BlockingIOError:
                     continue
                 owner = state['owner']
-                if metadata(owner['pid']) == owner['started']:
+                # An unreadable owner identity is not proof of death: keep the evidence.
+                if liveness(owner['pid'], owner['started']) != 'dead':
                     continue
                 # Serialize stale sweep with the surviving guardian.
                 with (base / 'fixture-cleanup.lock').open('a') as serial:
                     fcntl.flock(serial, fcntl.LOCK_EX)
                     cleanup(base, root)
+        except RuntimeError as error:
+            print(f'UNRESOLVED fixture run {base or entry}: {error}; evidence retained', flush=True)
         except (OSError, ValueError, KeyError, TypeError) as error:
-            print(f'UNVERIFIABLE fixture run {base}: {type(error).__name__}; never signalled', flush=True)
+            print(f'UNVERIFIABLE fixture run {base or entry}: {type(error).__name__}; never signalled', flush=True)
 
 
-def start(base, root):
+def start(base, root, upstream=None):
+    """upstream: the PID that launched the owner; its death also ends the run."""
+    watched = ''
+    if upstream is not None and upstream > 1:
+        watched = metadata(upstream)
+        # Re-check parentage after reading the start time, so a reused PID is never watched.
+        if not watched or os.getppid() != upstream:
+            raise SystemExit('fixture harness launcher already exited; refusing to start fixtures')
     token = uuid.uuid4().hex
-    state = dict(harness=str(root.resolve()), token=token,
-                 owner=dict(pid=os.getpid(), started=metadata(os.getpid())))
+    entry = index_dir(root) / f'{token}.json'
+    owner = dict(pid=os.getpid(), started=metadata(os.getpid()))
+    state = dict(family=FAMILY, harness=str(root.resolve()), base=str(base), index=str(entry),
+                 token=token, owner=owner, upstream=dict(pid=upstream if watched else None, started=watched or None))
     (base / 'fixture-registry.json').write_text(json.dumps(state))
+    # Index before any fixture can exist: a dead owner's run stays discoverable
+    # even when its checkout is gone.
+    temporary = entry.with_suffix('.tmp')
+    temporary.write_text(json.dumps(dict(family=FAMILY, token=token, base=str(base), owner=owner)))
+    temporary.replace(entry)
     os.environ.update(HOOK_FIXTURE_RUN=str(base), HOOK_FIXTURE_TOKEN=token)
     read_fd, write_fd = os.pipe()
-    guardian = subprocess.Popen([sys.executable, __file__, str(base), str(root)], stdin=read_fd,
+    guardian = subprocess.Popen([sys.executable, __file__, str(base), str(root),
+                                 str(upstream if watched else 0), watched], stdin=read_fd,
                                 stdout=subprocess.DEVNULL, stderr=(base / 'fixture-guardian.log').open('a'),
                                 start_new_session=True)
     (base / 'fixture-guardian.identity').write_text(json.dumps(dict(
@@ -214,15 +355,41 @@ def finish(guardian, write_fd):
 if __name__ == '__main__':
     if sys.argv[1] in ('--exec', '--orphan'):
         exec_registered(sys.argv[2:], orphan=sys.argv[1] == '--orphan')
-    base, root = map(Path, sys.argv[1:])
+    if sys.argv[1] == '--sweep-index':
+        sweep_index(Path(sys.argv[2]), Path(sys.argv[3]))
+        raise SystemExit(1 if any(Path(sys.argv[2]).glob('*.json')) else 0)
+    base, root = map(Path, sys.argv[1:3])
+    upstream, upstream_started = int(sys.argv[3]), sys.argv[4]
     # Load native identity code before allowing payloads to spawn: wrapper
     # checkouts can disappear on abort, but the guardian must remain independent.
     identities(root)
     (base / 'fixture-guardian.ready').touch()
     # Only the owner holds the write end. Unregistered launchers cannot exec
     # after EOF closes registration, including when stale cleanup wins the race.
-    while os.read(0, 4096):
-        pass
+    # Bounded polling also watches the owner's launcher: a SIGKILLed runner
+    # forwards nothing and leaves the owner (and its lease) alive.
+    ticks = 0
+    while True:
+        if select.select([0], [], [], .25)[0]:
+            if not os.read(0, 4096):
+                break
+            continue
+        if not upstream:
+            continue
+        ticks += 1
+        try:
+            os.kill(upstream, 0)
+        except ProcessLookupError:
+            reason = 'exited'
+        except PermissionError:
+            continue
+        else:
+            # Zombies and PID reuse need the start time; only proven death counts.
+            if ticks % 8 or liveness(upstream, upstream_started) != 'dead':
+                continue
+            reason = 'exited or reused'
+        print(f'fixture owner launcher {upstream} {reason}; closing registration', file=sys.stderr, flush=True)
+        break
     with (base / 'fixture-cleanup.lock').open('a') as serial:
         fcntl.flock(serial, fcntl.LOCK_EX)
         cleanup(base, root)
