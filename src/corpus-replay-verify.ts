@@ -801,7 +801,9 @@ export async function runSwiftRuntimeInteractionLeg(options: {
   await waitForInteractionRunner(
     interactionRunner,
     timeoutMs,
-    () => Bun.sleep(terminationGraceMs),
+    () => new Promise<void>(resolve => {
+      (options.clock ?? systemDeadlineClock).schedule(resolve, terminationGraceMs);
+    }),
     options.clock,
   );
 }

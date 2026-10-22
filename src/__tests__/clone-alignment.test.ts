@@ -105,6 +105,7 @@ test("fixture clock survives host delay beyond the playback-rate deadline", asyn
   input.playbackRate = 2;
   const clock = new ManualClock();
   expect(offsets(await alignCloneAudio(input, clock))).toEqual([50, 150]);
+  expect(clock.scheduledDelays).toEqual([1086]);
   expect(clock.pendingTimers).toBe(0);
 }, SUBPROCESS_TEST_TIMEOUT_MS);
 test("frozen Edge audio retains only spans corroborated by the same token's DTW anchor", async () => {
@@ -197,7 +198,17 @@ test("the half-duration deadline kills and reaps a slow decoder", async () => {
   await writeFile(prefix + ".pid", "");
   const clock = new ManualClock();
   const pending = alignCloneAudio(input, clock), pid = await started(prefix);
-  clock.advance(input.durationMs / input.playbackRate * .5);
+  let settled = false;
+  void pending.then(
+    () => { settled = true; },
+    () => { settled = true; },
+  );
+  clock.advance(input.durationMs / input.playbackRate * .5 - 1);
+  await Bun.sleep(0);
+  expect(settled).toBe(false);
+  expect(clock.pendingTimers).toBe(1);
+  expect(() => process.kill(pid, 0)).not.toThrow();
+  clock.advance(1);
   expect((await pending).reason).toBe("deadline"); reaped(pid);
   expect(clock.pendingTimers).toBe(0);
 }, SUBPROCESS_TEST_TIMEOUT_MS);

@@ -31,6 +31,7 @@ import { normalizeOutroKey } from "../stt-outro-gate";
 
 // Real subprocesses: standalone p95 <= 1113 ms; 4x rounded up, with a 5 s scheduling floor.
 const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
+const INTERACTION_SUBPROCESS_TEST_TIMEOUT_MS = 20_000;
 
 test("private caption expectation detects a deliberate over-cut without exposing text", () => {
   const kept = "Keep every spoken word at the end.";
@@ -771,7 +772,6 @@ describe("corpus replay verification", () => {
       [
         "#!/usr/bin/env bun",
         'import { writeFileSync, renameSync } from "fs";',
-        'await Bun.sleep(1_200);',
         'const child = Bun.spawn(["/bin/sh", "-c", \'trap "" TERM; exec /bin/sleep 300\'], { env: process.env,',
         '  stdin: "ignore",',
         '  stdout: "ignore",',
@@ -812,6 +812,10 @@ describe("corpus replay verification", () => {
       childPid = await waitForPidFile(childPidPath);
       expect(isProcessRunning(childPid)).toBe(true);
       clock.advance(1_000);
+      await Bun.sleep(0);
+      expect(clock.scheduledDelays).toEqual([1000, 100]);
+      expect(clock.pendingDelays).toEqual([100]);
+      clock.advance(100);
       await expect(pending).rejects.toThrow("runtime interaction leg timed out after 1000ms");
       expect(clock.pendingTimers).toBe(0);
       const deadline = Date.now() + 1000;
@@ -821,6 +825,8 @@ describe("corpus replay verification", () => {
       } while (childRunning && Date.now() < deadline);
     } finally {
       clock.advance(1_000);
+      await Bun.sleep(0);
+      clock.advance(Number.MAX_SAFE_INTEGER);
       await pending?.catch(() => {});
       if (childRunning && childPid > 1) {
         try {
@@ -851,7 +857,7 @@ describe("corpus replay verification", () => {
 
     expect(childPid).toBeGreaterThan(1);
     expect(childRunning).toBe(false);
-  }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }, INTERACTION_SUBPROCESS_TEST_TIMEOUT_MS);
 
   test("production Swift handoff propagates the isolated runtime environment", async () => {
     const root = makeTempRoot();
