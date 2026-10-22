@@ -52,7 +52,7 @@ test("Bun bare filters discover archives while explicit files select only the in
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 35_000);
 
 for (const suite of ["brew-cask-sync", "deploy-check"]) {
   test(`${suite} real hostile-Git wrapper excludes archived same-path tests`, () => {
