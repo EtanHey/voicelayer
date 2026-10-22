@@ -1619,7 +1619,7 @@ function findTimedNearSeam(merged: TimedChunkWord[], next: TimedChunkWord[]): nu
         head.startS < head.seamStartS || tail.endS > head.seamEndS ||
         first.startS > head.startS || first.startS < head.startS - 0.5 ||
         last.endS < tail.endS || last.endS > head.seamEndS) continue;
-    if ([...left, ...right].some(w => /(?:…|\.{3}|[-—])$/u.test(w.text))) continue;
+    if ([...left, ...right].some(w => /…|\.{3}|[-—][\p{P}\p{S}]*$/u.test(w.text))) continue;
     let differences = 0;
     for (let i = 0; i < size; i++) {
       if (normalizeChunkWordForOverlap(left[i]!.text) !==

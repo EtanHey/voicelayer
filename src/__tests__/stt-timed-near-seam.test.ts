@@ -45,7 +45,7 @@ describe("timestamp-supported near-repeat seams", () => {
     expect(mergeChunkTranscriptsWithSegments(chunks).text).toContain(later);
   });
 
-  test.each(["fu…", "er-", "wait—"])("keeps raw fragments and retractions: %s", fragment => {
+  test.each(["fu…", "er-", "wait—", "fu…,", "er-,", "wait—)"])("keeps raw fragments and retractions: %s", fragment => {
     const chunks = fixture();
     chunks[1]!.text = chunks[1]!.text.replace("we'll", fragment);
     chunks[1]!.segments[0]!.text = chunks[1]!.segments[0]!.text.replace("we'll", fragment);
