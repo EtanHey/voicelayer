@@ -1979,7 +1979,7 @@ class SupervisorTests(unittest.TestCase):
             self.assertTrue(any(row['pid'] == 303 for row in host.ownership_races))
             # Exercise the actual modal-proof writer, with only its native helper stubbed.
             with patch('subprocess.run', return_value=SimpleNamespace(
-                    returncode=0, stdout=json.dumps(dict(axTrusted=True, prompts=[], modals=[])))):
+                    returncode=0, stdout=json.dumps(dict(axTrusted=True, prompts=[], modals=[], inventoryErrors=[])))):
                 type(host).permissions(host)
             proof = json.loads((output / 'modal-run-proof.json').read_text())
             self.assertEqual(proof['owned'], [dict(pid=302, birth=[20, 1], path=xr)])
