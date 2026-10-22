@@ -245,6 +245,8 @@ final class VoiceBarPresentationTests: XCTestCase {
         let expectedNote = state.selectionFeedbackNote
         let deadline = ProcessInfo.processInfo.systemUptime + 10
         var bitmap: NSBitmapImageRep
+        var previousPixels: Data?
+        var previousCaptureTime: TimeInterval?
         while true {
             flushRender()
             bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: footer))
@@ -255,13 +257,18 @@ final class VoiceBarPresentationTests: XCTestCase {
             try VNImageRequestHandler(cgImage: XCTUnwrap(bitmap.cgImage)).perform([request])
             let renderedText = (request.results ?? [])
                 .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-            if renderedText == (expectedNote ?? "") { break }
+            let capturedAt = ProcessInfo.processInfo.systemUptime
+            let pixels = Data(bytes: try XCTUnwrap(bitmap.bitmapData), count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+            if renderedText == (expectedNote ?? ""), pixels == previousPixels,
+               let previousCaptureTime, capturedAt - previousCaptureTime >= 0.05 { break }
+            previousPixels = pixels
+            previousCaptureTime = capturedAt
             guard ProcessInfo.processInfo.systemUptime < deadline else {
-                XCTFail("Footer did not render \(expectedNote ?? "an empty note band"); OCR: \(renderedText)")
+                XCTFail("Footer did not stably render \(expectedNote ?? "an empty note band"); OCR: \(renderedText)")
                 throw NSError(domain: "SelectionFooterRenderTimeout", code: 1)
             }
-            // Polling cadence only: success requires exact text in the rendered bitmap.
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            // Poll at least 50 ms apart; elapsed time alone never establishes readiness.
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         }
         let bytes = try XCTUnwrap(bitmap.bitmapData)
         if let output = ProcessInfo.processInfo.environment["VOICEBAR_P2B_SHOTS_DIR"] {
