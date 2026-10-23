@@ -6,6 +6,28 @@ import SwiftUI
 import VoiceBarUI
 
 final class UIE2ESafetyTests: XCTestCase {
+    func testDeviceFreeLevelEngineExercisesMonitorWithoutConstructingAVAudioEngine() throws {
+        let engine = UIE2ENoDeviceLevelEngine()
+        let monitor = AudioLevelMonitor(engine: engine) { _ in }
+        monitor.start()
+        XCTAssertEqual(engine.starts, 1)
+        monitor.stop()
+        monitor.start()
+        XCTAssertEqual(engine.starts, 2)
+        monitor.shutdown()
+    }
+    /// Every scenario that constructs the real-AppDelegate GATE2245 fixture needs the tripwire,
+    /// and a GATE2245 build needs it whatever scenario is named (fail closed, #416 C2).
+    func testNoDeviceGuardIsRequiredForEveryGate2245ScenarioAndBuild() {
+        XCTAssertEqual(UIE2ENoDeviceGuard.guardedScenarios, ["hide1", "gate2246"])
+        for scenario in ["hide1", "gate2246"] {
+            XCTAssertTrue(UIE2ENoDeviceGuard.isRequired(scenario: scenario, gateBuild: false), scenario)
+        }
+        for scenario in ["full", "focused-338", nil] {
+            XCTAssertFalse(UIE2ENoDeviceGuard.isRequired(scenario: scenario, gateBuild: false), scenario ?? "nil")
+            XCTAssertTrue(UIE2ENoDeviceGuard.isRequired(scenario: scenario, gateBuild: true), scenario ?? "nil")
+        }
+    }
     func testRejectsMissingOrUnmarkedSandbox() throws {
         XCTAssertThrowsError(try UIE2ESandbox(environment: [:]))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
@@ -132,6 +154,18 @@ final class UIE2EFixtureCommandTests: XCTestCase {
         XCTAssertFalse(asks.hasMore)
         XCTAssertTrue(model.events.contains("history-page:200"))
         XCTAssertTrue(model.events.contains("ask-history-page:200"))
+    }
+
+    func testPreparingFixtureKeepsOriginalSelectionIdentityForSameSelectionStop() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vl-ui-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("voicebar-ui-e2e-v1\n".utf8).write(to: root.appendingPathComponent(".uie2e-sandbox"))
+        let model = UIE2EModel(sandbox: try UIE2ESandbox(environment: ["VOICEBAR_UIE2E_ROOT": root.path]))
+        model.fixture("preparing")
+        model.selectionText = "QA original selection"
+        model.fixture("selection-replace")
+        XCTAssertEqual(model.commands.last?["cmd"] as? String, "stop")
     }
 
     func testPreparingSelectionProbeUsesTheRealSelectionMethodWithNoNativeCapture() throws {

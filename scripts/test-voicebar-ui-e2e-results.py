@@ -13,6 +13,9 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('results', pathlib.Path(__file__).with_name('voicebar-ui-e2e-results.py'))
 results = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(results)
+# GATECAP1: every frame and movie must declare a QA-only capture source.
+QA_CAPTURE = dict(source='qa-window-id', status='PROVEN', windows=[4242])
+QA_SOURCE = dict(kind='application', bundle='com.voicelayer.voicebar.uie2e', executable='/private/tmp/vl-ui-x/VoiceBarQA.app/Contents/MacOS/VoiceBar', observedPids=[4242], fullDisplay=False)
 
 
 class ReportTests(unittest.TestCase):
@@ -24,7 +27,7 @@ class ReportTests(unittest.TestCase):
 
     def test_expected_packet_failure_is_explicit_xfail_and_unmatched_cannot_pass(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='newline frame', attachment='UIE2E-0001', passed=True,
+        step = dict(evidenceContract='visible', capture=QA_CAPTURE, number=1, name='newline frame', attachment='UIE2E-0001', passed=True,
                     expectedFailure=dict(packet='P14b', surface='notch:list-newlines',
                                          descriptions=['[P14b] items remain on one line']))
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=True)
@@ -60,7 +63,7 @@ class ReportTests(unittest.TestCase):
 
     def test_unexpected_pass_or_unmatched_failure_cannot_use_an_expected_tag(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='unexpected result', attachment='UIE2E-0001', passed=False)
+        step = dict(evidenceContract='visible', capture=QA_CAPTURE, number=1, name='unexpected result', attachment='UIE2E-0001', passed=False)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
         self.assertFalse(results.report(self.root, [step], [dict(attachments=[attachment])]))
         step['expectedFailure'] = dict(packet='SEL1', surface='notch:supersede-preparing', descriptions=['[SEL1] replacement'])
@@ -71,11 +74,13 @@ class ReportTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(suffix='.noindex', dir=BUILD_ROOT)
         self.root = pathlib.Path(self.temp.name)
         self.addCleanup(self.temp.cleanup)
+        inventory = patch.object(results, 'verify_no_system_capture')
+        inventory.start(); self.addCleanup(inventory.stop)
 
     def test_order_is_action_order_and_missing_image_fails_closed(self):
         (self.root / 'a.png').write_bytes(b'png')
         (self.root / 'b.png').write_bytes(b'png')
-        steps = [dict(number=i, name=f'<click {i}>', attachment=f'UIE2E-{i:04d}', passed=True) for i in (1, 2)]
+        steps = [dict(evidenceContract='visible', capture=QA_CAPTURE, number=i, name=f'<click {i}>', attachment=f'UIE2E-{i:04d}', passed=True) for i in (1, 2)]
         attachments = [dict(suggestedHumanReadableName=f'UIE2E-{i:04d}.png', exportedFileName=name, isAssociatedWithFailure=False)
                        for i, name in [(2, 'b.png'), (1, 'a.png')]]
         self.assertTrue(results.report(self.root, steps, [dict(attachments=attachments)]))
@@ -87,7 +92,7 @@ class ReportTests(unittest.TestCase):
 
     def test_unverified_surfaces_fail_even_with_passing_control_receipts(self):
         coverage = dict(observed=[], exercised=[], missing=[], missingSurfaces=['Speech', 'notch:seek-idle'])
-        ledger = dict(version=1, steps=[dict(number=1, name='click', attachment='UIE2E-0001', passed=True)],
+        ledger = dict(version=1, steps=[dict(evidenceContract='visible', capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)],
                       completed=True, failures=0, coverage=coverage, knownVisualGaps=[])
         (self.root / 'step.json').write_text(json.dumps(ledger['steps'][0]))
         (self.root / 'ledger.json').write_text(json.dumps(ledger))
@@ -99,20 +104,20 @@ class ReportTests(unittest.TestCase):
     def test_zero_steps_and_duplicate_screenshots_cannot_pass(self):
         with self.assertRaises(ValueError):
             results.report(self.root, [], [])
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        step = dict(evidenceContract='visible', capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
         with self.assertRaises(ValueError):
             results.report(self.root, [step], [dict(attachments=[attachment, attachment])])
 
     def test_failure_does_not_become_pass(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=False)
+        step = dict(evidenceContract='visible', capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=False)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
         self.assertFalse(results.report(self.root, [step], [dict(attachments=[attachment])]))
 
     def test_capability_skip_is_logged_without_becoming_a_failure(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='S3 not in this build', attachment='UIE2E-0001', passed=True,
+        step = dict(evidenceContract='visible', capture=QA_CAPTURE, number=1, name='S3 not in this build', attachment='UIE2E-0001', passed=True,
                     skipped='S3 not in this build')
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
         self.assertTrue(results.report(self.root, [step], [dict(attachments=[attachment])]))
@@ -127,6 +132,17 @@ class ReportTests(unittest.TestCase):
         target = plistlib.loads((self.root / 'UIE2E.xctestrun').read_bytes())['VoiceBarUIE2ETests']
         self.assertEqual(target['EnvironmentVariables']['Existing'], 'kept')
         self.assertEqual(target['EnvironmentVariables']['VOICEBAR_UIE2E_APP'], str(self.root / 'QA.app'))
+        self.assertEqual(target['TestBundlePath'], str(products / 'Debug/Test.xctest'))
+
+    def test_configure_uses_only_recorded_relocated_products(self):
+        products = self.root / 'relocated.noindex/DerivedData/Build/Products'
+        products.mkdir(parents=True)
+        (self.root / 'derived-data-path.txt').write_text(str(products.parents[1]) + '\n')
+        (products / 'test.xctestrun').write_bytes(plistlib.dumps({'VoiceBarUIE2ETests': {
+            'TestBundlePath': '__TESTROOT__/Debug/Test.xctest'}}))
+        self.assertFalse((self.root / 'DerivedData').exists())
+        results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox')
+        target = plistlib.loads((self.root / 'UIE2E.xctestrun').read_bytes())['VoiceBarUIE2ETests']
         self.assertEqual(target['TestBundlePath'], str(products / 'Debug/Test.xctest'))
 
     def test_configure_replaces_combined_selection_in_both_plist_formats(self):
@@ -148,6 +164,212 @@ class ReportTests(unittest.TestCase):
                     self.assertNotIn('SkipTestIdentifiers', configured)
                     self.assertEqual(configured['EnvironmentVariables']['VOICEBAR_UIE2E_SCENARIO'], scenario)
                     self.assertEqual(json.loads((self.root / 'scenario.json').read_text())['scenario'], scenario)
+
+    def test_configure_refuses_every_guarded_scenario_without_the_exact_guard_proof(self):
+        products = self.root / 'DerivedData/Build/Products'
+        products.mkdir(parents=True)
+        for scenario in ['hide1', 'gate2246']:
+            with self.subTest(scenario=scenario):
+                (self.root / 'scenario.json').unlink(missing_ok=True)
+                (self.root / 'UIE2E.xctestrun').unlink(missing_ok=True)
+                (products / 'test.xctestrun').write_bytes(plistlib.dumps({'VoiceBarUIE2ETests': {'EnvironmentVariables': {}}}))
+                with self.assertRaises(FileNotFoundError):
+                    results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox', scenario)
+                self.assertFalse((self.root / 'UIE2E.xctestrun').exists())
+                with patch.object(results, 'load_guard') as load:
+                    load.return_value.derived_data_path.return_value = self.root / 'DerivedData'
+                    load.return_value.required.return_value = True
+                    load.return_value.verify.return_value = self.root / 'device-guard.dylib'
+                    results.configure(self.root, self.root / 'QA.app', self.root / 'sandbox', scenario)
+                env = plistlib.loads((self.root / 'UIE2E.xctestrun').read_bytes())['VoiceBarUIE2ETests']['EnvironmentVariables']
+                self.assertEqual(env['VOICEBAR_UIE2E_DEVICE_GUARD'], str(self.root / 'device-guard.dylib'))
+
+    INSTALLED = 'voicebar-no-device-guard-v1:installed\n'
+
+    def guard_logs(self, sandbox, *contents):
+        for launch, text in enumerate(contents, 1):
+            name = 'no-device-guard.log' if launch == 1 else 'no-device-guard-launch-%d.log' % launch
+            (sandbox / name).write_text(text)
+
+    def test_guard_receipt_steps_cover_every_launch_and_the_scenario_boundaries(self):
+        launch = lambda n: {'GUARD launch %d installed' % n, 'GUARD launch %d no tripwire' % n}
+        for scenario, prefix in [('hide1', 'HIDE1VIS'), ('gate2246', 'GATE2246')]:
+            with self.subTest(scenario=scenario):
+                self.assertEqual(results.guard_receipt_steps(scenario, 1),
+                                 {prefix + ' no-device guard installed before fixtures',
+                                  prefix + ' no device-start or process tripwire invoked'} | launch(1))
+        self.assertEqual(results.guard_receipt_steps('full', 3, gate_build=True),
+                         {'GATE2245 no-device guard installed before fixtures',
+                          'GATE2245 no device-start or process tripwire invoked'} | launch(1) | launch(2) | launch(3))
+        self.assertEqual(results.guard_receipt_steps('full', 0), set())
+        self.assertEqual(results.guard_receipt_steps('focused-338', 0), set())
+
+    def test_one_install_marker_per_launch_passes_and_any_other_line_is_a_trip(self):
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        self.assertEqual(results.guard_launch_issues(sandbox, 1), ['FAIL no-device guard receipt missing for launch 1'])
+        self.guard_logs(sandbox, self.INSTALLED, self.INSTALLED)
+        self.assertEqual(results.guard_launch_issues(sandbox, 2), [])
+        for launch in [1, 2]:
+            with self.subTest(trip_on=launch):
+                logs = [self.INSTALLED, self.INSTALLED]
+                logs[launch - 1] += 'AudioDeviceStart\n'
+                self.guard_logs(sandbox, *logs)
+                issues = results.guard_launch_issues(sandbox, 2)
+                self.assertEqual(issues, ['FAIL device tripwire on launch %d: AudioDeviceStart' % launch])
+        # Two installs in one launch log mean two processes shared one receipt: never accepted.
+        self.guard_logs(sandbox, self.INSTALLED * 2, self.INSTALLED)
+        self.assertEqual(results.guard_launch_issues(sandbox, 2),
+                         ['FAIL launch 1 guard receipt is not exactly one install marker'])
+        # A gap in the launch sequence cannot hide a launch.
+        self.guard_logs(sandbox, self.INSTALLED, self.INSTALLED)
+        (sandbox / 'no-device-guard-launch-2.log').rename(sandbox / 'no-device-guard-launch-3.log')
+        self.assertEqual(results.guard_launch_issues(sandbox, 2),
+                         ['FAIL unexpected no-device guard launch logs: no-device-guard-launch-3.log',
+                          'FAIL no-device guard receipt missing for launch 2'])
+
+    def named_run(self, names, scenario):
+        directory = self.root / 'screenshots'; directory.mkdir()
+        steps = [dict(evidenceContract='visible', capture=QA_CAPTURE, number=n, name=name, attachment='UIE2E-%04d' % n, passed=True) for n, name in enumerate(names, 1)]
+        coverage = dict(observed=[], exercised=[], missing=[], scenario=scenario)
+        ledger = dict(version=1, steps=steps, completed=True, failures=0, coverage=coverage, knownVisualGaps=[],
+                      scenario=scenario, scope=scenario)
+        manifest = []
+        for step in steps:
+            png = '%04d.png' % step['number']
+            (directory / png).write_bytes(b'png' + str(step['number']).encode())
+            (directory / ('r%04d.json' % step['number'])).write_text(json.dumps(step))
+            manifest += [dict(suggestedHumanReadableName=step['attachment'] + '_0_UUID.png', exportedFileName=png,
+                              isAssociatedWithFailure=False),
+                         dict(suggestedHumanReadableName='UIE2E-RECEIPT-%04d_0_UUID.json' % step['number'],
+                              exportedFileName='r%04d.json' % step['number'], isAssociatedWithFailure=False)]
+        (directory / 'ledger.json').write_text(json.dumps(ledger))
+        manifest.append(dict(suggestedHumanReadableName='UIE2E-LEDGER_0_UUID.json', exportedFileName='ledger.json',
+                             isAssociatedWithFailure=False))
+        (directory / 'manifest.json').write_text(json.dumps([dict(attachments=manifest)]))
+        (self.root / 'run.mov').write_bytes(b'video')
+        (self.root / 'recording.json').write_text(json.dumps(dict(path='run.mov', valid=True, captureSource=QA_SOURCE, durationSeconds=1, bytes=5)))
+        (self.root / 'scenario.json').write_text(json.dumps({'scenario': scenario}))
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        return sandbox
+
+    def test_gate2245_full_run_with_a_relaunch_requires_receipts_for_both_launches(self):
+        names = ['launch isolated QA app', 'GUARD launch 1 installed',
+                 'GATE2245 no-device guard installed before fixtures', 'HIDE1 fixtures',
+                 'GATE2245 no device-start or process tripwire invoked', 'popover quit',
+                 'GUARD launch 1 no tripwire', 'relaunch isolated QA app', 'GUARD launch 2 installed',
+                 'terminate QA app', 'GUARD launch 2 no tripwire']
+        for case in ['clean', 'trip-on-relaunch', 'missing-relaunch-step', 'missing-boundary-step']:
+            with self.subTest(case=case):
+                for path in [self.root / 'screenshots', self.root / 'sandbox']:
+                    if path.exists():
+                        __import__('shutil').rmtree(path)
+                run_names = [n for n in names if not (
+                    (case == 'missing-relaunch-step' and n == 'GUARD launch 2 no tripwire')
+                    or (case == 'missing-boundary-step' and n.startswith('GATE2245 no device-start')))]
+                sandbox = self.named_run(run_names, 'full')
+                (sandbox / 'VoiceBarQA.app/Contents').mkdir(parents=True)
+                (sandbox / 'VoiceBarQA.app/Contents/Info.plist').write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
+                self.guard_logs(sandbox, self.INSTALLED,
+                                self.INSTALLED + ('posix_spawn\n' if case == 'trip-on-relaunch' else ''))
+                with patch.object(results.subprocess, 'run'):
+                    passed = results.export(self.root, sandbox)
+                self.assertEqual(passed, case == 'clean')
+                qa = json.loads((self.root / 'qa-report.json').read_text())
+                if case == 'trip-on-relaunch':
+                    self.assertIn('FAIL device tripwire on launch 2: posix_spawn', qa['issues'])
+                if case.startswith('missing'):
+                    self.assertTrue(any(i.startswith('FAIL no-device guard receipt steps missing') for i in qa['issues']))
+
+    def test_ordinary_full_run_needs_no_guard_receipts(self):
+        sandbox = self.named_run(['launch isolated QA app', 'terminate QA app'], 'full')
+        with patch.object(results.subprocess, 'run'):
+            self.assertTrue(results.export(self.root, sandbox))
+
+    def guarded_full_run(self, launches=2, extra_names=()):
+        names = ['launch isolated QA app', 'GUARD launch 1 installed',
+                 'GATE2245 no-device guard installed before fixtures',
+                 'GATE2245 no device-start or process tripwire invoked']
+        for launch in range(2, launches + 1):
+            names += ['GUARD launch %d no tripwire' % (launch - 1),
+                      'relaunch isolated QA app', 'GUARD launch %d installed' % launch]
+        names += ['terminate QA app', 'GUARD launch %d no tripwire' % launches]
+        sandbox = self.named_run(names + list(extra_names), 'full')
+        contents = sandbox / 'VoiceBarQA.app/Contents'; contents.mkdir(parents=True)
+        (contents / 'Info.plist').write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
+        self.guard_logs(sandbox, *([self.INSTALLED] * launches))
+        return sandbox
+
+    def export_guarded_run(self, sandbox):
+        with patch.object(results.subprocess, 'run'):
+            return results.export(self.root, sandbox)
+
+    def test_two_launch_ledger_cannot_pass_after_final_log_is_deleted(self):
+        sandbox = self.guarded_full_run()
+        self.assertTrue(self.export_guarded_run(sandbox))
+        (sandbox / 'no-device-guard-launch-2.log').unlink()
+        self.assertFalse(self.export_guarded_run(sandbox))
+        self.assertIn('launch 2', ' '.join(json.loads((self.root / 'qa-report.json').read_text())['issues']))
+
+    def test_extra_unrecorded_log_fails_even_with_orphan_guard_steps(self):
+        sandbox = self.guarded_full_run(extra_names=[
+            'GUARD launch 3 installed', 'GUARD launch 3 no tripwire'])
+        (sandbox / 'no-device-guard-launch-3.log').write_text(self.INSTALLED)
+        self.assertFalse(self.export_guarded_run(sandbox))
+
+    def test_extra_unrecorded_log_fails_without_guard_steps(self):
+        sandbox = self.guarded_full_run()
+        (sandbox / 'no-device-guard-launch-3.log').write_text(self.INSTALLED)
+        self.assertFalse(self.export_guarded_run(sandbox))
+
+    def test_all_recorded_launch_logs_and_guard_steps_pass(self):
+        sandbox = self.guarded_full_run(launches=3)
+        self.assertTrue(self.export_guarded_run(sandbox))
+        self.assertEqual(json.loads((self.root / 'qa-report.json').read_text())['issues'], [])
+
+    def test_misnumbered_launch_log_fails(self):
+        sandbox = self.guarded_full_run()
+        log = sandbox / 'no-device-guard-launch-2.log'
+        for name in ['no-device-guard-launch-3.log', 'no-device-guard-launch-02.log',
+                     'no-device-guard-launch-1.log', 'no-device-guard-launch-other.log']:
+            with self.subTest(name=name):
+                wrong = log.rename(sandbox / name)
+                self.assertFalse(self.export_guarded_run(sandbox))
+                wrong.rename(log)
+
+    def test_each_launch_requires_exactly_one_of_each_guard_step(self):
+        sandbox = self.guarded_full_run(extra_names=['GUARD launch 2 no tripwire'])
+        self.assertFalse(self.export_guarded_run(sandbox))
+
+    def test_relaunch_action_requires_evidence_even_when_both_guard_steps_are_missing(self):
+        names = ['launch isolated QA app', 'GUARD launch 1 installed',
+                 'GATE2245 no-device guard installed before fixtures',
+                 'GATE2245 no device-start or process tripwire invoked',
+                 'GUARD launch 1 no tripwire', 'relaunch isolated QA app', 'terminate QA app']
+        sandbox = self.named_run(names, 'full')
+        contents = sandbox / 'VoiceBarQA.app/Contents'; contents.mkdir(parents=True)
+        (contents / 'Info.plist').write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
+        self.guard_logs(sandbox, self.INSTALLED)
+        self.assertFalse(self.export_guarded_run(sandbox))
+
+    def test_guarded_scenarios_reconcile_launch_actions_and_unique_guard_steps(self):
+        sandbox = self.root / 'sandbox'; sandbox.mkdir()
+        self.guard_logs(sandbox, self.INSTALLED, self.INSTALLED)
+        for scenario in ['full', 'hide1', 'gate2246']:
+            with self.subTest(scenario=scenario):
+                if scenario == 'full':
+                    contents = sandbox / 'VoiceBarQA.app/Contents'; contents.mkdir(parents=True)
+                    (contents / 'Info.plist').write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
+                actions = ['launch isolated QA app', 'relaunch isolated QA app']
+                names = actions + sorted(results.guard_receipt_steps(scenario, 2, gate_build=True))
+                self.assertEqual(results.guard_export_issues(scenario, sandbox, names), [])
+                for phase in ['installed', 'no tripwire']:
+                    receipt = 'GUARD launch 2 ' + phase
+                    for bad_names in [[n for n in names if n != receipt], names + [receipt]]:
+                        self.assertTrue(results.guard_export_issues(scenario, sandbox, bad_names))
+                for bad_names in [[n for n in names if n not in actions],
+                                  names + ['launch isolated QA app'],
+                                  actions[::-1] + names[2:]]:
+                    self.assertTrue(results.guard_export_issues(scenario, sandbox, bad_names))
 
     def focused_run(self):
         directory, ledger, manifest = self.attachment_run()
@@ -333,9 +555,9 @@ class ReportTests(unittest.TestCase):
     def test_contact_sheet_links_the_validated_recording_and_metadata(self):
         directory = self.root / 'screenshots'; directory.mkdir()
         (directory / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        step = dict(evidenceContract='visible', capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
-        recording = dict(path='run.mov', valid=True, durationSeconds=1.25, bytes=123)
+        recording = dict(path='run.mov', valid=True, captureSource=QA_SOURCE, durationSeconds=1.25, bytes=123)
         self.assertTrue(results.report(directory, [step], [dict(attachments=[attachment])], recording))
         page = (directory / 'index.html').read_text()
         self.assertIn('../run.mov', page)
@@ -346,16 +568,16 @@ class ReportTests(unittest.TestCase):
 
     def test_valid_video_from_a_cancelled_run_cannot_pass_the_contact_sheet(self):
         (self.root / 'a.png').write_bytes(b'png')
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        step = dict(evidenceContract='visible', capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)
         attachment = dict(suggestedHumanReadableName='UIE2E-0001', exportedFileName='a.png', isAssociatedWithFailure=False)
-        recording = dict(path='run.mov', valid=True, durationSeconds=1.25, bytes=123,
+        recording = dict(path='run.mov', valid=True, captureSource=QA_SOURCE, durationSeconds=1.25, bytes=123,
                          runPassed=False, cancelledSignals=[15], error='UI run interrupted by signal 15')
         self.assertFalse(results.report(self.root, [step], [dict(attachments=[attachment])], recording))
         self.assertIn('interrupted', (self.root / 'index.html').read_text())
 
     def attachment_run(self, *, complete=True, gaps=None, failures=0):
         directory = self.root / 'screenshots'; directory.mkdir()
-        step = dict(number=1, name='click', attachment='UIE2E-0001', passed=True)
+        step = dict(evidenceContract='visible', capture=QA_CAPTURE, number=1, name='click', attachment='UIE2E-0001', passed=True)
         coverage = dict(observed=['Ask/response/Paste'], exercised=['Ask/response/Paste'], missing=[])
         ledger = dict(version=1, steps=[step], completed=complete, failures=failures,
                       coverage=coverage, knownVisualGaps=gaps or [])
@@ -370,7 +592,7 @@ class ReportTests(unittest.TestCase):
                                  isAssociatedWithFailure=False))
         (directory / 'manifest.json').write_text(json.dumps([dict(attachments=manifest)]))
         (self.root / 'run.mov').write_bytes(b'video')
-        (self.root / 'recording.json').write_text(json.dumps(dict(path='run.mov', valid=True, durationSeconds=1, bytes=5)))
+        (self.root / 'recording.json').write_text(json.dumps(dict(path='run.mov', valid=True, captureSource=QA_SOURCE, durationSeconds=1, bytes=5)))
         return directory, ledger, manifest
 
     def export_attached_run(self):

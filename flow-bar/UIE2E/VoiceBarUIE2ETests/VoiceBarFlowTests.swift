@@ -1,5 +1,84 @@
 import AppKit
+import CryptoKit
 import XCTest
+
+// BEGIN UIE2E BOUNDARY
+// The sandboxed runner asks the owned boundary broker (voicebar-ui-e2e-permissions --broker) for a
+// fresh, synchronous foreign-modal decision before each fixture command, UI action and still.
+let uie2eBoundaryPrefix = "com.voicelayer.voicebar.uie2e.boundary."
+struct UIE2EMutationStopped: Error {}
+enum UIE2EStopCategory: String { case runnerObserved = "runner-observed" }
+func uie2eBoundaryName(token: String, kind: String) -> String { uie2eBoundaryPrefix + token + "." + kind }
+func uie2eBoundaryAck(_ data: Data?) -> [String: Any]? {
+    guard let data, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          object["count"] is Int, object["kind"] is String, object["status"] is String else { return nil }
+    return object
+}
+/// Only a fresh "clear" answer to exactly this request lets the boundary proceed.
+func uie2eBoundaryClear(_ ack: [String: Any]?, count: Int, kind: String) -> Bool {
+    ack?["count"] as? Int == count && ack?["kind"] as? String == kind && ack?["status"] as? String == "clear"
+}
+/// The step's frame receipt: a PROVEN window-ID capture of the proven QA process, or NOT_PROVEN.
+func uie2eStillReceipt(_ ack: [String: Any]?, count: Int) -> [String: Any] {
+    guard ack?["count"] as? Int == count, ack?["kind"] as? String == "still",
+          let capture = ack?["capture"] as? [String: Any], let status = capture["status"] as? String else {
+        return ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "no-broker-answer"]
+    }
+    guard status == "PROVEN", capture["path"] is String, let windows = capture["windows"] as? [Int], !windows.isEmpty else {
+        var receipt: [String: Any] = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": capture["reason"] as? String ?? "unproven"]
+        if let proof = capture["absenceProof"] as? [String: Any], uie2eAbsenceProven(proof) { receipt["absenceProof"] = proof }
+        if let proof = capture["terminationProof"] as? [String: Any], uie2eTerminationProven(proof) { receipt["terminationProof"] = proof }
+        return receipt
+    }
+    return ["source": "qa-window-id", "status": "PROVEN", "windows": windows, "qaPid": capture["qaPid"] ?? 0]
+}
+/// Expected hidden-alive cases, also checked against the explicit declarations at their call sites.
+func uie2eExpectsHiddenQA(step name: String, scenario: String) -> Bool {
+    guard ["hide1", "gate2246"].contains(scenario) else { return false }
+    // The visual scenarios install their menu with every QA window ordered out.
+    if ["launch isolated QA app", "relaunch isolated QA app"].contains(name)
+        || (name.hasPrefix("GUARD launch ") && name.hasSuffix(" installed")) { return true }
+    if ["HIDE1VIS", "GATE2246"].contains(where: { name == $0 + " no-device guard installed before fixtures"
+        || name == $0 + " no device-start or process tripwire invoked" }) { return true }
+    if name.hasPrefix("HIDE1VIS "), name.hasSuffix(" hidden") { return true }
+    // Deferred failures keep every QA window hidden until Show; a dismissed immediate alert
+    // leaves the snoozed panel hidden (except the "visible" case).
+    if ["GATE2246 HIDE background failure", "GATE2246 HIDE recovered failure"].contains(name) { return true }
+    if name.hasPrefix("GATE2246 HIDE "), name.hasSuffix(" dismiss Later"),
+       !["GATE2246 HIDE visible dismiss Later", "GATE2246 HIDE background dismiss Later"].contains(name) { return true }
+    return false
+}
+/// A positive expected-absent proof: a successful CG inventory with zero on-screen QA windows.
+func uie2eInventoryProven(_ proof: [String: Any]?) -> Bool {
+    guard let birth = proof?["qaBirth"] as? [Int], birth.count == 2, birth[0] > 0,
+          (0..<1_000_000).contains(birth[1]) else { return false }
+    return proof?["cgInventory"] as? String == "ok" && proof?["onScreenQAWindows"] as? Int == 0
+        && proof?["qaPid"] as? Int ?? 0 > 0
+}
+func uie2eAbsenceProven(_ proof: [String: Any]?) -> Bool {
+    uie2eInventoryProven(proof) && proof?["pidLifetime"] as? String == "alive"
+}
+func uie2eTerminationProven(_ proof: [String: Any]?) -> Bool {
+    uie2eInventoryProven(proof) && proof?["pidLifetime"] as? String == "ended"
+        && proof?["visibleOwnerPaths"] as? String == "non-qa"
+}
+/// Hidden-alive and terminated proofs are distinct; no declaration or failed read can pass.
+func uie2eFrameFailure(_ capture: [String: Any], contract: String?) -> String? {
+    guard let contract, ["visible", "hidden-alive", "terminated"].contains(contract) else { return "undeclared evidence contract" }
+    if capture["status"] as? String == "PROVEN" { return contract == "terminated" ? "termination contract carries a window" : nil }
+    let reason = capture["reason"] as? String ?? "unproven"
+    let proven = contract == "hidden-alive" ? uie2eAbsenceProven(capture["absenceProof"] as? [String: Any])
+        : contract == "terminated" && uie2eTerminationProven(capture["terminationProof"] as? [String: Any])
+    return proven ? nil : "visual NOT_PROVEN for " + contract + " (" + reason + ")"
+}
+// Independent of the broker: this runner process owns its memory-only key for its lifetime.
+private let uie2eRedactionKey = SymmetricKey(size: .bits256)
+func uie2eRedacted(_ text: String) -> String {
+    let digest = HMAC<SHA256>.authenticationCode(for: Data(text.utf8), using: uie2eRedactionKey)
+        .map { String(format: "%02x", $0) }.joined()
+    return "<redacted len=\(text.count) hmac-sha256=\(digest.prefix(32))>"
+}
+// END UIE2E BOUNDARY
 
 /// The one serial UI test runs only through voicebar-ui-e2e.sh on an unoccupied Mac.
 @MainActor
@@ -13,6 +92,11 @@ final class VoiceBarFlowTests: XCTestCase {
     var limitations = ["NOT_PROVEN: external T3-client selection Speak is outside this isolated VoiceBar run. SEL1 probes the real VoiceState method with synthetic selection capture only."]
     var ledger = UIE2ECoverageLedger()
     var terminalFullTextProven = false
+    var gate2245Enabled = false
+    var guardRequired = false
+    var guardLaunches = 0
+    /// Latched on the first foreign modal / unanswered boundary: no later action, command or still runs.
+    var foreignModalStop: String?
     var observed: Set<String> { get { ledger.observed } set { ledger.observed = newValue } }
     var exercised: Set<String> { get { ledger.exercised } set { ledger.exercised = newValue } }
     var activePage = "General"
@@ -27,7 +111,7 @@ final class VoiceBarFlowTests: XCTestCase {
         continueAfterFailure = true
         let env = ProcessInfo.processInfo.environment
         scenario = env["VOICEBAR_UIE2E_SCENARIO"] ?? "full"
-        guard ["full", "focused-338"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
+        guard ["full", "focused-338", "hide1", "gate2246"].contains(scenario) else { throw NSError(domain: "UIE2E invalid scenario", code: 1) }
         if scenario == "focused-338" {
             limitations = ["Gallery variants use real production BarView/DictationCard in arbitrary page positions; they do not prove notch placement. One actual production-geometry notch render per family is checked separately.",
                 "Static confirmation holds are synthetic presentations of actual production outcomes; synchronized lifetime uses fresh production timers. No real microphone, audio, global hotkey, external insertion or installed-app acceptance is claimed.",
@@ -47,55 +131,49 @@ final class VoiceBarFlowTests: XCTestCase {
               Bundle(url: appURL)?.object(forInfoDictionaryKey: "VoiceBarUIE2EOnly") as? Bool == true
         else { throw NSError(domain: "UIE2E unsafe app", code: 1) }
         app = XCUIApplication(url: appURL)
+        gate2245Enabled = Bundle(url: appURL)?.object(forInfoDictionaryKey: "UIE2EGate2245") as? Bool == true
         app.launchEnvironment = ["VOICEBAR_UIE2E": "1", "VOICEBAR_UIE2E_SCENARIO": scenario, "VOICEBAR_UIE2E_ROOT": root.path,
             "HOME": root.appendingPathComponent("home").path, "CFFIXED_USER_HOME": root.appendingPathComponent("home").path,
+            "QA_VOICE_DISABLE_FLAG_PATH": root.appendingPathComponent("disabled").path,
             "VOICEBAR_USER_DEFAULTS_SUITE": "com.voicelayer.uie2e.\(root.lastPathComponent)",
             "VOICELAYER_SOCKET_PATH": root.appendingPathComponent("v.sock").path,
             "VOICELAYER_MCP_SOCKET_PATH": root.appendingPathComponent("m.sock").path]
-        addUIInterruptionMonitor(withDescription: "Known benign foreign overlay; never grant permissions") { [unowned self] alert in
-            switch UIE2EInterruptionPolicy.classify(alertDescription: alert.debugDescription) {
-            case .permissionPrompt:
-                XCTFail("BLOCKED permission prompt: \(alert.debugDescription)")
-                return false
-            case .qaOwnedInterruption:
-                XCTFail("BLOCKED QA-owned modal interruption; resolve the scoped QA control instead of treating its sheet as foreign: \(alert.debugDescription)")
-                return false
-            case let .knownBenignForeign(owner):
-                let foreign = XCUIApplication(bundleIdentifier: owner)
-                let foreignState = foreign.state
-                let processState: UIE2EInterruptionProcessState
-                switch foreignState {
-                case .runningForeground, .runningBackground: processState = .running
-                case .notRunning: processState = .notRunning
-                default: processState = .unknown
-                }
-                // The AX hierarchy is only queried inside this state-gated closure.
-                // A stale XCUIApplication handle for an exited owner can fatally fail XCTest.
-                guard let hasMatchingDialog = UIE2EInterruptionPolicy.queryHierarchyIfRunning(state: processState, {
-                    foreign.dialogs.allElementsBoundByIndex.contains { $0.frame == alert.frame }
-                }) else {
-                    XCTFail("BLOCKED known overlay owner is not queryable (state: \(foreignState)): \(owner)")
-                    return false
-                }
-                guard hasMatchingDialog else {
-                    XCTFail("BLOCKED known overlay did not match the interruption frame: \(owner), \(alert.debugDescription)")
-                    return false
-                }
-                self.app.activate() // Recover focus only; no foreign buttons, dismissal or permission action.
-                let clear = self.app.state == .runningForeground && self.app.windows["VoiceBar QA Settings"].isHittable
-                if !clear { XCTFail("BLOCKED benign foreign overlay persists after QA activation: \(owner)") }
-                return clear
-            case let .unknown(owner):
-                XCTFail("BLOCKED unknown interruption owner \(owner ?? "(unavailable)"): \(alert.debugDescription)")
-                return false
-            }
+        if gate2245Enabled {
+            app.launchEnvironment["QA_VOICEBAR_CAPTURE_TOP_RIGHT"] = "1"
+            app.launchEnvironment["VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE"] = "1"
         }
-        step("launch isolated QA app") {
-            app.launch()
-            app.activate()
-            XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+        // Every GATE2245 build or scenario constructs the real AppDelegate: insert the tripwire.
+        if gate2245Enabled || ["hide1", "gate2246"].contains(scenario) {
+            let library = try XCTUnwrap(env["VOICEBAR_UIE2E_DEVICE_GUARD"])
+            XCTAssertTrue(FileManager.default.fileExists(atPath: library))
+            app.launchEnvironment["DYLD_INSERT_LIBRARIES"] = library
+            guardRequired = true // Each launch gets its own receipt path in launchQA().
+        }
+        addUIInterruptionMonitor(withDescription: "Foreign interruption: latch STOP, never interact") { [unowned self] alert in
+            // GATECAP1 R4: never recover focus and continue around a foreign window. Latch STOP and
+            // log only a redacted description; returning true means "handled" with nothing pressed,
+            // so no implicit default handler can dismiss it.
+            let kind: String
+            switch UIE2EInterruptionPolicy.classify(alertDescription: alert.debugDescription) {
+            case .permissionPrompt: kind = "permission-prompt"
+            case .qaOwnedInterruption: kind = "qa-owned"
+            case .knownBenignForeign: kind = "known-foreign"
+            case .unknown: kind = "unknown"
+            }
+            // BEGIN UIE2E INTERRUPTION STOP
+            self.latchForeignStop("interruption " + kind + " " + uie2eRedacted(alert.debugDescription))
+            // END UIE2E INTERRUPTION STOP
+            return true
+        }
+        step("launch isolated QA app", evidenceContract: launchEvidenceContract) {
+            try launchQA()
+            try mutate { app.activate() }
+            if ["hide1", "gate2246"].contains(scenario) {
+                XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
+            } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             XCTAssertEqual(app.state, .runningForeground)
         }
+        recordGuardedLaunch()
     }
 
     override func tearDownWithError() throws {
@@ -109,15 +187,19 @@ final class VoiceBarFlowTests: XCTestCase {
                     "expectedSurfaces": ledger.expectedSurfaces],
                 "knownVisualGaps": knownVisualGaps, "limitations": limitations])
         }
-        if app != nil, app.state != .notRunning { step("terminate QA app") { app.terminate() } }
+        if app != nil, app.state != .notRunning { step("terminate QA app", evidenceContract: "terminated") { try mutate { app.terminate() } } }
+        finishGuardedLaunch()
         guard pasteboardSaved else { return }
-        NSPasteboard.general.clearContents()
+        try mutate { NSPasteboard.general.clearContents() }
         let restored = pasteboardItems.map { types -> NSPasteboardItem in
             let item = NSPasteboardItem()
             for (type, data) in types { item.setData(data, forType: type) }
             return item
         }
-        if !restored.isEmpty { XCTAssertTrue(NSPasteboard.general.writeObjects(restored)) }
+        if !restored.isEmpty {
+            let written = try mutate { NSPasteboard.general.writeObjects(restored) }
+            XCTAssertTrue(written)
+        }
     }
 
     func attachJSON(_ name: String, _ object: Any) {
@@ -132,14 +214,18 @@ final class VoiceBarFlowTests: XCTestCase {
 
     /// All input operations go through this wrapper, including scrolling, typing and menu dismissal.
     /// A failed assertion/action still produces a keepAlways attachment and a FAIL receipt.
-    func step(_ name: String, skipped: String? = nil, expected issue: UIE2EKnownIssue? = nil,
-              surface: String? = nil, surfaces: [String] = [], _ body: () -> Void) {
+    func step(_ name: String, evidenceContract: String = "visible", skipped: String? = nil, expected issue: UIE2EKnownIssue? = nil,
+              surface: String? = nil, surfaces: [String] = [], _ body: () throws -> Void) {
         let number = steps.count + 1
         let attachment = String(format: "UIE2E-%04d", number)
         let before = testRun?.failureCount ?? 0
         var matched: [String] = []
+        var capture: [String: Any] = [:]
         XCTContext.runActivity(named: "\(attachment) \(name)") { activity in
-            if let issue {
+            // Fresh synchronous modal decision before the UI action; a STOP skips the action entirely.
+            if !boundaryClear("action") {
+                capture = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "foreign-modal-stop"]
+            } else if let issue {
                 let options = XCTExpectedFailure.Options()
                 options.isStrict = true
                 options.issueMatcher = { recorded in
@@ -147,15 +233,29 @@ final class VoiceBarFlowTests: XCTestCase {
                     matched.append(recorded.compactDescription)
                     return true
                 }
-                XCTExpectFailure("Known product packet " + issue.rawValue, options: options) { body() }
-            } else { body() }
-            let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            screenshot.name = attachment
-            screenshot.lifetime = .keepAlways
-            activity.add(screenshot)
+                XCTExpectFailure("Known product packet " + issue.rawValue, options: options) { runStepBody(body) }
+            } else { runStepBody(body) }
+            if foreignModalStop == nil {
+                // Window-ID capture of the proven QA process only, taken by the broker after its own
+                // fresh modal check. No proven QA window: no capture, the frame is NOT_PROVEN.
+                let request = boundary("still")
+                if request.ack?["status"] as? String != "clear" { latchForeignStop("before still: " + (request.ack?["status"] as? String ?? "no-answer")) }
+                capture = uie2eStillReceipt(request.ack, count: request.count)
+                let path = (request.ack?["capture"] as? [String: Any])?["path"] as? String
+                if capture["status"] as? String == "PROVEN" {
+                    if let path, let png = try? Data(contentsOf: URL(fileURLWithPath: path)), !png.isEmpty {
+                        let screenshot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                        screenshot.name = attachment
+                        screenshot.lifetime = .keepAlways
+                        activity.add(screenshot)
+                    } else { capture = ["source": "qa-window-id", "status": "NOT_PROVEN", "reason": "still-unreadable"] }
+                }
+                requireFrame(capture, contract: evidenceContract)
+            }
         }
         let passed = (testRun?.failureCount ?? 0) == before
-        var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed]
+        var receipt: [String: Any] = ["number": number, "name": name, "attachment": attachment, "passed": passed,
+                                      "capture": capture, "evidenceContract": evidenceContract]
         if let skipped { receipt["skipped"] = skipped }
         if let issue, !matched.isEmpty, passed {
             var expectedReceipt: [String: Any] = ["packet": issue.rawValue, "surface": surface ?? "", "descriptions": matched]
@@ -174,7 +274,7 @@ final class VoiceBarFlowTests: XCTestCase {
 
     @discardableResult
     func click(_ resolve: @autoclosure () -> XCUIElement, _ name: String? = nil,
-               revealPolicy: UIE2EClickRevealPolicy = .automatic) -> Bool {
+               revealPolicy: UIE2EClickRevealPolicy = .automatic, evidenceContract: String = "visible") -> Bool {
         var clicked = false
         var found = false
         var needsReveal = false
@@ -195,7 +295,7 @@ final class VoiceBarFlowTests: XCTestCase {
         }
         guard found else { return false }
         if needsReveal { reveal(resolve()) }
-        step(name ?? "click \(label)") {
+        step(name ?? "click \(label)", evidenceContract: evidenceContract) {
             // Re-resolve after scrolling/row changes; never click the inspection snapshot.
             let element = resolve()
             guard element.exists || element.waitForExistence(timeout: 4), element.isEnabled, element.isHittable else {
@@ -213,7 +313,8 @@ final class VoiceBarFlowTests: XCTestCase {
             let failures = testRun?.failureCount ?? 0
             if label.contains(", Connected, Make default") {
                 // The combined AX row's centre is inert; the actual child button is at its right edge.
-                element.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).click()
+                let coordinate = element.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
+                try mutate { coordinate.click() }
                 waitUntil { self.fixtureEvents().dropFirst(self.lastActionEventIndex).contains("microphone-order") }
                 XCTAssertFalse(resolve().exists, "The old Make default row must become Default")
             } else if activePage == "History", type == .button,
@@ -222,15 +323,18 @@ final class VoiceBarFlowTests: XCTestCase {
                 // text lines; the older row stayed unselected after dispatch.
                 // Hit the first rendered line, then require actual selection.
                 let offset = UIE2EHistoryGeometry.selectionOffset(in: element.frame)
-                element.coordinate(withNormalizedOffset: .zero).withOffset(offset).click()
+                let coordinate = element.coordinate(withNormalizedOffset: .zero).withOffset(offset)
+                try mutate { coordinate.click() }
                 waitUntil { element.isSelected }
             } else if type == .disclosureTriangle {
                 // Native AX starts 22.5pt before the visible label/container edge:
                 // original frame x260.5; arrow x287. Centre and x+8 were inert.
-                element.coordinate(withNormalizedOffset: .zero)
-                    .withOffset(CGVector(dx: 27, dy: element.frame.height / 2)).click()
+                let coordinate = element.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: 27, dy: element.frame.height / 2))
+                try mutate { coordinate.click() }
                 waitUntil { self.controlValue(element) != beforeValue }
-            } else { element.click() }
+            } else { try mutate { element.click() } }
+            if evidenceContract == "terminated" { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
             guard (testRun?.failureCount ?? 0) == failures else { return }
             exercised.insert(key); clicked = true
             didActivate(label: label, type: type)
@@ -240,10 +344,10 @@ final class VoiceBarFlowTests: XCTestCase {
 
     func replace(_ field: XCUIElement, _ value: String) {
         guard click(field, "focus \(field.label)") else { return }
-        step("select field contents") { field.typeKey("a", modifierFlags: .command) }
+        step("select field contents") { try mutate { field.typeKey("a", modifierFlags: .command) } }
         step("type \(value)") {
-            if value.isEmpty { field.typeKey(.delete, modifierFlags: []) }
-            else { field.typeText(value) }
+            if value.isEmpty { try mutate { field.typeKey(.delete, modifierFlags: []) } }
+            else { try mutate { field.typeText(value) } }
         }
         step("assert exact field value after typing") {
             guard field.exists else { XCTFail("Edited field disappeared"); return }
@@ -275,7 +379,7 @@ final class VoiceBarFlowTests: XCTestCase {
             step("scroll \(direction > 0 ? "up" : "down") \(index)") {
                 guard let area = app.windows["VoiceBar QA Settings"].scrollViews.allElementsBoundByIndex.last
                 else { XCTFail("Missing Settings scroll view"); return }
-                area.scroll(byDeltaX: 0, deltaY: direction * 420)
+                try mutate { area.scroll(byDeltaX: 0, deltaY: direction * 420) }
                 observeControls()
             }
         }
@@ -283,8 +387,10 @@ final class VoiceBarFlowTests: XCTestCase {
 
     func assertCopy(_ label: String, equals expected: String? = nil, contains required: String? = nil,
                     target: XCUIElement? = nil, resolver: (() -> XCUIElement)? = nil) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString("UIE2E clipboard sentinel", forType: .string)
+        do {
+            try mutate { NSPasteboard.general.clearContents() }
+            try mutate { NSPasteboard.general.setString("UIE2E clipboard sentinel", forType: .string) }
+        } catch { return }
         guard click(resolver?() ?? target ?? (app.menuItems[label].exists ? app.menuItems[label] : app.buttons[label].firstMatch), "copy " + label) else { return }
         step("assert pasteboard for \(label)") {
             let actual = NSPasteboard.general.string(forType: .string)
@@ -300,6 +406,16 @@ final class VoiceBarFlowTests: XCTestCase {
 
     func testFullUIOnlyFlow() throws {
         guard scenario == "full" else { throw NSError(domain: "UIE2E full test selected in focused run", code: 1) }
+        if gate2245Enabled {
+            step("GATE2245 no-device guard installed before fixtures") {
+                XCTAssertTrue(guardReceiptIsClean(guardLaunches))
+            }
+            gate2245Flow()
+            step("GATE2245 no device-start or process tripwire invoked") {
+                XCTAssertTrue(guardReceiptIsClean(guardLaunches))
+            }
+            guard (testRun?.failureCount ?? 1) == 0 else { return }
+        }
         // Dictionary's animated top-level edit sheet and inline delete confirmation
         // have separate Cancel controls. Exercise both before the long tab sweeps.
         for (name, run) in [("Dictionary", dictionaryFlow), ("History", historyFlow), ("Pill", pillFlow),
@@ -307,7 +423,7 @@ final class VoiceBarFlowTests: XCTestCase {
             ("General", generalFlow), ("Transcription", transcriptionFlow), ("Speech", speechFlow)] {
             let before = testRun?.failureCount ?? 0
             run()
-            step("verify completed surface \(name)") {
+            step("verify completed surface \(name)", evidenceContract: name == "Context menu" ? "terminated" : "visible") {
                 XCTAssertEqual(testRun?.failureCount ?? 0, before, "Surface did not complete successfully")
                 if (testRun?.failureCount ?? 0) == before { ledger.verifiedSurfaces.insert(name) }
             }
@@ -327,6 +443,71 @@ extension VoiceBarFlowTests {
         if let number = element.value as? NSNumber { return number.stringValue }
         return element.value as? String
     }
+    /// Posts one boundary request and waits for the broker's answer to exactly it.
+    // BEGIN UIE2E BOUNDARY TRANSPORT
+    func boundary(_ kind: String, stop: UIE2EStopCategory? = nil) -> (count: Int, ack: [String: Any]?) {
+        let ackURL = root.appendingPathComponent("boundary/ack.json")
+        let count = (uie2eBoundaryAck(try? Data(contentsOf: ackURL))?["count"] as? Int ?? 0) + 1
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(uie2eBoundaryName(token: root.lastPathComponent, kind: kind)),
+            object: nil, userInfo: stop.map { ["category": $0.rawValue] }, deliverImmediately: true)
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if let ack = uie2eBoundaryAck(try? Data(contentsOf: ackURL)), ack["count"] as? Int == count {
+                return (count, ack["kind"] as? String == kind ? ack : nil)
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        return (count, nil)
+    }
+    // END UIE2E BOUNDARY TRANSPORT
+
+    /// True only on a fresh clear decision; anything else latches STOP for the rest of the run.
+    // BEGIN UIE2E BOUNDARY CLEAR
+    func boundaryClear(_ kind: String) -> Bool {
+        guard foreignModalStop == nil else { return false }
+        let request = boundary(kind)
+        if uie2eBoundaryClear(request.ack, count: request.count, kind: kind) { return true }
+        latchForeignStop("before " + kind + ": " + (request.ack?["status"] as? String ?? "no-broker-answer"))
+        return false
+    }
+    // END UIE2E BOUNDARY CLEAR
+
+    // BEGIN UIE2E MUTATION
+    /// One external effect per call; resolve its target with read-only queries before this guard.
+    /// Recheck the local latch after the synchronous broker wait: its callback can latch STOP.
+    @discardableResult
+    func mutate<T>(_ kind: String = "action", _ effect: () throws -> T) throws -> T {
+        guard boundaryClear(kind), foreignModalStop == nil else { throw UIE2EMutationStopped() }
+        let result = try effect()
+        guard foreignModalStop == nil else { throw UIE2EMutationStopped() }
+        return result
+    }
+
+    func runStepBody(_ body: () throws -> Void) {
+        do { try body() }
+        catch is UIE2EMutationStopped { /* The first STOP already emitted the real XCTFail. */ }
+        catch { XCTFail("QA step body failed: " + uie2eRedacted(String(describing: error))) }
+    }
+    // END UIE2E MUTATION
+
+    // BEGIN UIE2E REQUIRED FRAME
+    func requireFrame(_ capture: [String: Any], contract: String?) {
+        if let failure = uie2eFrameFailure(capture, contract: contract) {
+            latchForeignStop("required frame: " + uie2eRedacted(failure))
+        }
+    }
+    // END UIE2E REQUIRED FRAME
+
+    // BEGIN UIE2E FOREIGN STOP
+    func latchForeignStop(_ reason: String) {
+        guard foreignModalStop == nil else { return }
+        foreignModalStop = reason
+        XCTFail("Foreign modal STOP latched (" + reason + "); no further action, command or capture")
+        _ = boundary("stop", stop: .runnerObserved)
+    }
+    // END UIE2E FOREIGN STOP
+
     func waitUntil(_ predicate: @escaping () -> Bool, timeout: TimeInterval = 3) {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in predicate() }, object: nil)], timeout: timeout), .completed)
@@ -339,7 +520,7 @@ extension VoiceBarFlowTests {
 
     func foregroundQA() {
         step("activate QA window on screen") {
-            app.activate()
+            try mutate { app.activate() }
             let window = app.windows["VoiceBar QA Settings"]
             waitUntil { self.app.state == .runningForeground && window.isHittable }
             XCTAssertTrue(window.frame.width > 0 && window.frame.height > 0)
@@ -522,8 +703,8 @@ extension VoiceBarFlowTests {
         step("assert full scroll reached edge") { XCTFail("Scroll did not stabilize within 16 actions") }
     }
 
-    func receipt(_ expected: String) {
-        step("assert intent \(expected)") {
+    func receipt(_ expected: String, evidenceContract: String = "visible") {
+        step("assert intent \(expected)", evidenceContract: evidenceContract) {
             do {
                 let events = try JSONDecoder().decode([String].self, from: Data(contentsOf: root.appendingPathComponent("events.json")))
                 XCTAssertTrue(events.dropFirst(lastActionEventIndex).contains(expected), "Missing fresh fixture intent: \(expected)")
@@ -801,13 +982,13 @@ extension VoiceBarFlowTests {
             reveal(slider)
             step("change speech rate \(index)") {
                 guard slider.exists, slider.isHittable else { XCTFail("Missing speech rate slider"); return }
-                slider.adjust(toNormalizedSliderPosition: 0.75)
+                try mutate { slider.adjust(toNormalizedSliderPosition: 0.75) }
                 exercised.insert(controlKey(slider))
             }
         }
         let threshold = app.textFields["speech-short_limit_chars"]
         replace(threshold, "650")
-        step("commit threshold") { threshold.typeKey(.return, modifierFlags: []) }
+        step("commit threshold") { try mutate { threshold.typeKey(.return, modifierFlags: []) } }
         step("assert saved speech settings") {
             do {
                 let object = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("speech.json"))) as! [String: Any]
@@ -1041,7 +1222,7 @@ extension VoiceBarFlowTests {
     /// fails a required surface; it is never reported as exercised by a fixture click.
     func notchRegressionFlow() {
         geometryFlow()
-        func verify(_ name: String, expected issue: UIE2EKnownIssue? = nil, _ body: () -> Void) {
+        func verify(_ name: String, expected issue: UIE2EKnownIssue? = nil, _ body: () throws -> Void) {
             let before = testRun?.failureCount ?? 0
             let surface = "notch:" + name
             step("required notch flow \(name)", expected: issue, surface: surface, body)
@@ -1058,14 +1239,14 @@ extension VoiceBarFlowTests {
             let replay = app.dialogs["VoiceBar QA Pill"].buttons["Replay"]
             guard replay.waitForExistence(timeout: 3), replay.isHittable else { XCTFail("Replay not reachable in silent speaking fixture"); return }
             let before = fixtureEvents().count
-            replay.click() // Only this marked QA fixture; sendCommand is an in-memory sink.
+            try mutate { replay.click() } // Only this marked QA fixture; sendCommand is an in-memory sink.
             waitUntil { self.fixtureEvents().dropFirst(before).contains("command:replay") }
         }
         verify("seek-playing") {
             let word = app.dialogs["VoiceBar QA Pill"].buttons["Second"]
             guard word.waitForExistence(timeout: 3), word.isHittable else { XCTFail("Timed Second word is not seekable while playing"); return }
             let before = fixtureEvents().count
-            word.click()
+            try mutate { word.click() }
             waitUntil { self.fixtureEvents().dropFirst(before).contains("command:seek") }
             let object = try? JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("commands.json"))) as? [String: Any]
             let messages = object?["messages"] as? [[String: Any]]
@@ -1087,7 +1268,7 @@ extension VoiceBarFlowTests {
             guard word.exists, word.isEnabled else { XCTFail("[SEEK2] Idle readback words are not actionable seek controls"); return }
             guard word.isHittable else { XCTFail("Idle word exists but is unreachable in QA host"); return }
             let before = fixtureEvents().count
-            word.click()
+            try mutate { word.click() }
             let received = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 self.fixtureEvents().dropFirst(before).contains("command:seek") }, object: nil)], timeout: 3)
             XCTAssertEqual(received, .completed, "[SEEK2] Readback word did not dispatch seek")
@@ -1215,7 +1396,7 @@ extension VoiceBarFlowTests {
                 let replay = app.dialogs["VoiceBar QA Pill"].buttons["Replay"]
                 guard replay.exists, replay.isHittable else { XCTFail("GEO0 Replay unavailable"); return }
                 let count = fixtureEvents().count
-                replay.click() // Marked silent QA sink only.
+                try mutate { replay.click() } // Marked silent QA sink only.
                 waitUntil { self.fixtureEvents().dropFirst(count).contains("command:replay") }
             }
             let after = captureGeometry("speaking-after-replay-\(index)", speaking: true)
@@ -1276,11 +1457,12 @@ extension VoiceBarFlowTests {
         step("right-click actual pill") {
             let pill = app.dialogs["VoiceBar QA Pill"]
             if pill.exists {
-                pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).rightClick()
+                let coordinate = pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                try mutate { coordinate.rightClick() }
             } else {
                 let hiddenMenu = app.buttons["qa-fixture-hidden-menu"]
                 guard hiddenMenu.exists else { XCTFail("Neither pill nor isolated hidden-menu fixture is reachable"); return }
-                hiddenMenu.click() // Real controller's Show action when the actual panel is hidden.
+                try mutate { hiddenMenu.click() } // Real controller's Show action when the actual panel is hidden.
             }
             let marker = app.menuItems["Settings…"]
             guard marker.exists || marker.waitForExistence(timeout: 3), marker.isHittable else {
@@ -1292,18 +1474,63 @@ extension VoiceBarFlowTests {
         return opened
     }
 
+    /// The tripwire appends one install marker per process start, so each launch gets a fresh
+    /// receipt. Launch 1 keeps the path the supervisor watches; relaunches never reuse a log.
+    func guardReceipt(_ launch: Int) -> URL {
+        root.appendingPathComponent(launch == 1 ? "no-device-guard.log" : "no-device-guard-launch-\(launch).log")
+    }
+
+    func guardReceiptIsClean(_ launch: Int) -> Bool {
+        (try? String(contentsOf: guardReceipt(launch))) == "voicebar-no-device-guard-v1:installed\n"
+    }
+
+    /// The one QA launcher: the first launch and every relaunch go through here.
+    func launchQA() throws {
+        if guardRequired {
+            guardLaunches += 1
+            let receipt = guardReceipt(guardLaunches)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: receipt.path), "Guard receipt reused: \(receipt.lastPathComponent)")
+            app.launchEnvironment["VOICEBAR_UIE2E_GUARD_RECEIPT"] = receipt.path
+        }
+        try mutate { app.launch() }
+    }
+
+    /// Recorded after (never inside) the launch step, so step numbering stays sequential.
+    var launchEvidenceContract: String { ["hide1", "gate2246"].contains(scenario) ? "hidden-alive" : "visible" }
+    func recordGuardedLaunch() {
+        guard guardRequired, guardLaunches > 0 else { return }
+        step("GUARD launch \(guardLaunches) installed", evidenceContract: launchEvidenceContract) {
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches), "Launch \(guardLaunches) lacks exactly one install marker")
+        }
+    }
+
+    /// Called once the current QA process is stopped (before a relaunch, and in teardown).
+    func finishGuardedLaunch() {
+        guard guardRequired, guardLaunches > 0, app.state == .notRunning || app.wait(for: .notRunning, timeout: 5) else {
+            if guardRequired, guardLaunches > 0 { XCTFail("QA app still running; guard launch \(guardLaunches) not finalized") }
+            return
+        }
+        step("GUARD launch \(guardLaunches) no tripwire", evidenceContract: "terminated") {
+            XCTAssertTrue(guardReceiptIsClean(guardLaunches), "Device tripwire or extra install on launch \(guardLaunches)")
+        }
+    }
+
     func relaunchQA() {
-        step("relaunch isolated QA app") {
-            app.launch()
-            XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15))
+        finishGuardedLaunch()
+        step("relaunch isolated QA app", evidenceContract: launchEvidenceContract) {
+            try launchQA()
+            if ["hide1", "gate2246"].contains(scenario) {
+                XCTAssertTrue(app.menuBars.menuBarItems["HIDE1VIS"].waitForExistence(timeout: 15))
+            } else { XCTAssertTrue(app.windows["VoiceBar QA Settings"].waitForExistence(timeout: 15)) }
             activePage = "General"; activeHistoryScope = "Dictations"; selectedHistoryRow = "qa-recording"
         }
+        recordGuardedLaunch()
     }
 
     func menuBarFlow() {
         defer {
             if app.state != .notRunning, app.buttons["popover-settings"].exists {
-                step("dismiss remaining QA popover with Escape") { app.typeKey(.escape, modifierFlags: []) }
+                step("dismiss remaining QA popover with Escape") { try mutate { app.typeKey(.escape, modifierFlags: []) } }
             }
         }
         guard openQAPopover() else { return }
@@ -1319,9 +1546,9 @@ extension VoiceBarFlowTests {
             "popover Run setup") else { return }
         receipt("popover-setup")
         wizardFlow()
-        guard openQAPopover(), click(app.buttons["popover-quit"]) else { return }
-        step("assert QA popover Quit") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
-        receipt("popover-quit")
+        guard openQAPopover(), click(app.buttons["popover-quit"], evidenceContract: "terminated") else { return }
+        step("assert QA popover Quit", evidenceContract: "terminated") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
+        receipt("popover-quit", evidenceContract: "terminated")
         if app.state == .notRunning { relaunchQA() }
     }
 
@@ -1344,7 +1571,7 @@ extension VoiceBarFlowTests {
                 let events = fixtureEvents()
                 if let opened = events.lastIndex(of: "qa-menu-open"),
                    opened > (events.lastIndex(of: "qa-menu-close") ?? -1) {
-                    step("dismiss remaining QA context menu with Escape") { app.typeKey(.escape, modifierFlags: []) }
+                    step("dismiss remaining QA context menu with Escape") { try mutate { app.typeKey(.escape, modifierFlags: []) } }
                 }
             }
         }
@@ -1372,9 +1599,9 @@ extension VoiceBarFlowTests {
         click(app.menuItems["uie2e-microphone-change"], "context Change default microphone in Settings")
         receipt("menu-microphone")
         guard openContextMenu() else { return }
-        click(app.menuItems["Quit VoiceBar"], "context Quit VoiceBar")
-        step("assert QA quit, no resident process targeted") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
-        receipt("menu-quit")
+        click(app.menuItems["Quit VoiceBar"], "context Quit VoiceBar", evidenceContract: "terminated")
+        step("assert QA quit, no resident process targeted", evidenceContract: "terminated") { XCTAssertTrue(app.wait(for: .notRunning, timeout: 5)) }
+        receipt("menu-quit", evidenceContract: "terminated")
         attachJSON("UIE2E-MENU-LIFECYCLE", fixtureEvents())
     }
 
@@ -1389,7 +1616,7 @@ extension VoiceBarFlowTests {
             attachJSON("UIE2E-SUBMENU-\(title)", ["frame": NSStringFromRect(submenu.frame), "AX": submenu.debugDescription])
             // Native RED: hover only highlighted the parent, then lost tracking.
             // Click the real submenu parent and require its exposed child before credit.
-            submenu.click()
+            try mutate { submenu.click() }
             let child = app.menuItems[title == "Recent Transcriptions"
                 ? "uie2e-recent-qa-recording" : "uie2e-microphone-change"]
             opened = (child.exists || child.waitForExistence(timeout: 3)) && child.isHittable
