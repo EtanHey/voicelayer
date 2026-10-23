@@ -12,8 +12,8 @@ _Nothing yet._
 ## [2.2.52] - 2026-10-23
 
 ### Developer / QA
-- Harden QA runner identity and mutation authorization, fail closed on incomplete bundle inventories and occupied destinations, and redact private receipt details. These harness changes improve QA safety; they do not establish new live audio, visual, or native acceptance (#416).
-- Verify VoiceBar bundle identity during discovery and avoid duplicate bundle handling (#512).
+- Harden QA runner identity and mutation authorization, and redact private receipt details (#416). These harness changes improve QA safety; they do not establish new live audio, visual, or native acceptance.
+- Verify VoiceBar bundle identity during discovery, refuse incomplete bundle inventories and occupied destinations, and avoid duplicate bundle handling (#512).
 
 ## [2.2.51] - 2026-10-22
 
