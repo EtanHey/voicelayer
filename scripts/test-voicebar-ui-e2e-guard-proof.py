@@ -131,12 +131,12 @@ class GuardProofTests(unittest.TestCase):
                 guard.identities(repo, output)
 
     def test_missing_proof_refuses(self):
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(suffix='.noindex') as root:
             with self.assertRaises(FileNotFoundError):
                 guard.verify(pathlib.Path(root), pathlib.Path(root))
 
     def test_exact_proof_required_and_every_tripwire_must_pass(self):
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(suffix='.noindex') as root:
             output = pathlib.Path(root)
             proof = dict(version=1, paths=guard.PATHS, identities={'build': 'exact'}, tests=[
                 dict(path=p, passed=True, exit=86, events=['voicebar-no-device-guard-v1:installed',
@@ -165,7 +165,7 @@ class GuardProofTests(unittest.TestCase):
             self.assertFalse(guard.required(scenario))
 
     def test_a_gate2245_build_requires_the_guard_whatever_the_scenario(self):
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(suffix='.noindex') as root:
             plist = pathlib.Path(root) / 'Info.plist'
             plist.write_bytes(plistlib.dumps({'UIE2EGate2245': True}))
             self.assertTrue(guard.required('full', plist))
@@ -177,7 +177,7 @@ class GuardProofTests(unittest.TestCase):
                 guard.required('full', plist)
 
     def test_authorize_verifies_hide1_and_claims_the_retry_only_for_gate2246(self):
-        with tempfile.TemporaryDirectory() as root:
+        with tempfile.TemporaryDirectory(suffix='.noindex') as root:
             output = pathlib.Path(root)
             with self.assertRaises(FileNotFoundError):
                 guard.authorize(output, output, 'hide1')

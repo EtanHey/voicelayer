@@ -482,7 +482,7 @@ final class UIE2EModel {
             voice.handleEvent(["type": "state", "state": "speaking", "duration_ms": 600_000,
                 "text": message["text"] as? String ?? "",
                 "long_read": ["id": message["id"] as? String ?? "qa-selection",
-                              "chunk_start_ms": 0, "estimated_total_ms": 600_000]])
+                              "chunk_start_ms": 0]])
             return
         case "replay", "stop":
             // Synthetic daemon responses only, for native layout transitions. This

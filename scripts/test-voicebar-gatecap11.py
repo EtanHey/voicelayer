@@ -22,7 +22,7 @@ def load(name):
 class CapturePolicy(unittest.TestCase):
     def setUp(self):
         self.results = load('voicebar-ui-e2e-results')
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(suffix='.noindex')
         self.addCleanup(self.tmp.cleanup)
         self.root = pathlib.Path(self.tmp.name)
 
