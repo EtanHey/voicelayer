@@ -77,7 +77,7 @@ final class SettingsSidebarAccessibilityTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/VoiceBarUI/SettingsNavigationShell.swift"), encoding: .utf8)
         XCTAssertTrue(source.contains("Button {"))
-        XCTAssertTrue(source.contains(".accessibilityLabel(\"Open General settings\")"))
+        XCTAssertTrue(source.contains(".accessibilityLabel(footer.errorDetails != nil ? \"Show error details\" : \"Open General settings\")"))
         XCTAssertFalse(source.contains(".animation("))
         for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             let event = try XCTUnwrap(NSEvent.mouseEvent(
@@ -88,6 +88,55 @@ final class SettingsSidebarAccessibilityTests: XCTestCase {
         }
         settle()
         XCTAssertEqual(box.tab, .general)
+    }
+
+    func testErrorFooterOpensPopoverWithoutNavigatingAndDismissesOnChange() throws {
+        let box = SelectionBox()
+        box.tab = .history
+        func footer(_ message: String?, mode: VoiceMode = .error) -> VoiceBarFooterPresentation {
+            .resolve(isConnected: true, mode: mode, captureLive: false,
+                     errorMessage: message, remoteSTTConfigured: false, hasFreshHealth: true)
+        }
+        func shell(_ footer: VoiceBarFooterPresentation) -> some View {
+            SettingsNavigationShell(selection: Binding(get: { box.tab }, set: { box.tab = $0 }),
+                                    footer: footer) { Text("detail") }.frame(width: 780, height: 620)
+        }
+        let host = NSHostingView(rootView: shell(footer("Synthetic failure\nשלום 🧪")))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 620),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        VLOrderTestWindow(window)
+        defer { window.orderOut(nil); window.contentView = nil }
+        settle()
+        let existingWindows = Set(NSApp.windows.map { ObjectIdentifier($0) })
+        func clickFooter() throws {
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try XCTUnwrap(NSEvent.mouseEvent(
+                    with: type, location: NSPoint(x: 86, y: 30), modifierFlags: [], timestamp: 0,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+                ))
+                window.sendEvent(event)
+            }
+            settle()
+        }
+        for message: String? in ["Synthetic failure\nשלום 🧪", nil, " \n\t"] {
+            host.rootView = shell(footer(message))
+            settle()
+            try clickFooter()
+            XCTAssertEqual(box.tab, .history, "Error must not navigate to General")
+            let popover = try XCTUnwrap(NSApp.windows.first {
+                !existingWindows.contains(ObjectIdentifier($0)) && $0.isVisible
+            }, "The real footer button must present an error-details popover, including for absent details")
+            host.rootView = shell(footer("Changed synthetic failure"))
+            settle()
+            XCTAssertFalse(popover.isVisible, "Changed error details must dismiss the previous popover")
+            try clickFooter()
+            host.rootView = shell(footer(nil, mode: .idle))
+            settle()
+            XCTAssertFalse(NSApp.windows.contains {
+                !existingWindows.contains(ObjectIdentifier($0)) && $0.isVisible
+            }, "Cleared errors must not leave stale details open")
+        }
     }
 
     private func settle() {

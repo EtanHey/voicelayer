@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsNavigationShell<Detail: View>: View {
     @Binding var selection: SettingsTab
     @State private var isFooterHovered = false
+    @State private var showsErrorDetails = false
     let footer: VoiceBarFooterPresentation
     @ViewBuilder let detail: Detail
 
@@ -48,7 +49,11 @@ struct SettingsNavigationShell<Detail: View>: View {
 
                 Divider()
                 Button {
-                    selection = .general
+                    if footer.errorDetails != nil {
+                        showsErrorDetails = true
+                    } else {
+                        selection = .general
+                    }
                 } label: {
                     VoiceBarStatusFooter(presentation: footer)
                         .padding(8)
@@ -59,9 +64,29 @@ struct SettingsNavigationShell<Detail: View>: View {
                 }
                 .buttonStyle(.plain)
                 .onHover { isFooterHovered = $0 }
-                .accessibilityLabel("Open General settings")
+                .accessibilityLabel(footer.errorDetails != nil ? "Show error details" : "Open General settings")
                 .accessibilityValue("\(footer.status). \(footer.privacy)")
-                .help("Open General settings for permissions and setup")
+                .help(footer.errorDetails != nil ? "Show full current error details" : "Open General settings for permissions and setup")
+                .popover(isPresented: $showsErrorDetails) {
+                    if let details = footer.errorDetails {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("Error details").font(.headline)
+                                Spacer()
+                                SettingsCopyButton(text: details, label: "error details")
+                            }
+                            ScrollView {
+                                Text(verbatim: details)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 280)
+                        }
+                        .padding(16)
+                        .frame(width: 380)
+                    }
+                }
+                .onChange(of: footer.errorDetails) { _, _ in showsErrorDetails = false }
             }
             .frame(width: 172)
 
