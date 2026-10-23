@@ -152,7 +152,7 @@ print("PASS")
                   + G.block(G.PERMISSIONS, 'RUN MODAL PROOF') + probe)
         self.assertEqual(G.run_swift(self, source).strip(), 'PASS')
         swift = G.PERMISSIONS.read_text()
-        broker = swift.split('    func answer(_ kind: String)', 1)[1]
+        broker = G.block(G.PERMISSIONS, 'BOUNDARY BROKER')
         self.assertLess(broker.index('runInventory('), broker.index('latch.decide('))
         self.assertIn('requireQA: kind == "command"', broker)
         self.assertNotIn('excludedQAPids', swift)
