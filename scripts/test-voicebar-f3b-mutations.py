@@ -66,7 +66,7 @@ class MutationAuthorization(unittest.TestCase):
         return ["observationGeneration": generation, "reason": "read-current"]
     }
 ''')
-        return 'import Foundation\nimport CryptoKit\n' + G.block(G.FLOW_TESTS, 'UIE2E BOUNDARY') + HOST + host
+        return 'import Foundation\nimport CoreGraphics\nimport CryptoKit\n' + G.block(G.FLOW_TESTS, 'UIE2E BOUNDARY') + HOST + host
 
     def probe(self, body):
         self.assertEqual(G.run_swift(self, self.source() + body + '\nprint("PASS")\n').strip(), 'PASS')
