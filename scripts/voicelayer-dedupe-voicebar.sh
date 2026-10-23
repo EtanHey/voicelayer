@@ -21,6 +21,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/voicebar-launchagent.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/voicebar-bundle-identity.sh"
 
 CANONICAL_APP="/Applications/VoiceBar.app"
 BUNDLE_ID="com.voicelayer.voicebar"
@@ -82,16 +83,48 @@ is_canonical_signature() { # $1 = app path -> 0 if Developer-ID + required team
 # --- 1. discover every VoiceBar.app bundle ---------------------------------
 sect "1. VoiceBar.app bundles on this machine"
 declare -a BUNDLES=()
-{
-  # Spotlight-indexed copies (by bundle id, robust to renames)
-  mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null || true
-  # Common non-indexed locations (tmp/worktrees/build dirs often excluded from Spotlight)
-  find /Applications "$HOME_DIR/Applications" "$HOME_DIR/Gits" "$HOME_DIR/Desktop" \
-       "$HOME_DIR/Downloads" /tmp /private/tmp /var/folders \
-       -maxdepth 6 -name 'VoiceBar.app' -type d -prune 2>/dev/null || true
-} | sort -u > /tmp/.vb-bundles.$$
-while IFS= read -r b; do [[ -d "$b" ]] && BUNDLES+=("$b"); done < /tmp/.vb-bundles.$$
-rm -f /tmp/.vb-bundles.$$
+bundle_search_roots=(/Applications "$HOME_DIR/Applications" "$HOME_DIR/Gits" "$HOME_DIR/Desktop"
+                     "$HOME_DIR/Downloads" /tmp /private/tmp /var/folders)
+if [[ -n "${TMPDIR:-}" && -d "$TMPDIR" ]]; then
+  tmpdir_root="$TMPDIR"
+  while [[ "$tmpdir_root" != / && "$tmpdir_root" == */ ]]; do
+    tmpdir_root="${tmpdir_root%/}"
+  done
+  bundle_search_roots+=("$tmpdir_root")
+fi
+# -e follows links; -L also catches dangling links. A directory symlink remains
+# eligible for the same identity/signature checks as any other bundle directory.
+if [[ -e "$CANONICAL_APP" || -L "$CANONICAL_APP" ]] && [[ ! -d "$CANONICAL_APP" ]]; then
+  printf 'Cannot safely use occupied canonical path (not a bundle directory): %s\n' "$CANONICAL_APP" >&2
+  exit 1
+fi
+# Capture the foreground pipeline status under pipefail before consuming any
+# rows. EOF from a process substitution cannot establish producer completion.
+if ! bundle_inventory="$(
+  {
+    printf '%s\n' "$CANONICAL_APP"
+    mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null || true
+    find "${bundle_search_roots[@]}" \
+         -maxdepth 6 -name 'VoiceBar.app' -type d -prune 2>/dev/null || true
+  } | sort -u
+)"; then
+  printf 'VoiceBar bundle inventory failed; refusing incomplete discovery.\n' >&2
+  exit 1
+fi
+while IFS= read -r b; do
+  [[ -d "$b" ]] || continue
+  if voicebar_bundle_identity "$b"; then
+    BUNDLES+=("$b")
+  else
+    identity_status=$?
+    [[ "$identity_status" -eq 1 ]] || exit 1
+    # Never replace an unrelated directory occupying the canonical destination.
+    if [[ "$b" == "$CANONICAL_APP" ]]; then
+      log "Cannot safely use canonical path without VoiceBar bundle identity: $b"
+      exit 1
+    fi
+  fi
+done <<<"$bundle_inventory"
 
 if [[ "${#BUNDLES[@]}" -eq 0 ]]; then
   log "No VoiceBar.app bundles found."
