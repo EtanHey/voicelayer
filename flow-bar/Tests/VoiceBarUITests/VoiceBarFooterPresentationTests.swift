@@ -2,6 +2,44 @@
 import XCTest
 
 final class VoiceBarFooterPresentationTests: XCTestCase {
+    func testErrorDetailsPreserveExactPayloadAndCopyText() {
+        let message = "  Synthetic failure: שלום 🧪\n\tsecond line\n"
+        let footer = VoiceBarFooterPresentation.resolve(
+            isConnected: true, mode: .error, captureLive: false,
+            errorMessage: message, remoteSTTConfigured: false
+        )
+        XCTAssertEqual(footer.errorDetails, message)
+        XCTAssertEqual(SettingsCopyPayload.nonempty(footer.errorDetails), message)
+    }
+
+    func testErrorDetailsFallbackAndNonErrorPrecedence() {
+        for message: String? in [nil, "", " \n\t"] {
+            let footer = VoiceBarFooterPresentation.resolve(
+                isConnected: true, mode: .error, captureLive: false,
+                errorMessage: message, remoteSTTConfigured: nil
+            )
+            XCTAssertEqual(footer.errorDetails, "No error details are available.")
+        }
+        for (connected, mode, hidden) in [(false, VoiceMode.error, false), (true, .disconnected, false),
+                                         (true, .idle, true)] {
+            let footer = VoiceBarFooterPresentation.resolve(
+                isConnected: connected, mode: mode, captureLive: false,
+                errorMessage: "Synthetic failure", remoteSTTConfigured: nil, isHidden: hidden
+            )
+            XCTAssertNil(footer.errorDetails)
+        }
+        let ready = VoiceBarFooterPresentation.resolve(
+            isConnected: true, mode: .idle, captureLive: false,
+            errorMessage: nil, remoteSTTConfigured: false, hasFreshHealth: true
+        )
+        XCTAssertNil(ready.errorDetails)
+        let pendingError = VoiceBarFooterPresentation.resolve(
+            isConnected: true, mode: .idle, captureLive: false,
+            errorMessage: "Synthetic pending failure", remoteSTTConfigured: false
+        )
+        XCTAssertEqual(pendingError.errorDetails, "Synthetic pending failure")
+    }
+
     func testConnectedFooterWaitsForFreshModelsHealthAndResetsAfterDisconnect() {
         let state = VoiceState()
         state.setConnectionStatus(true)

@@ -3259,7 +3259,7 @@ public final class VoiceState {
         transcriptionTimeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
             guard let self, !Task.isCancelled, mode == .transcribing else { return }
-            failTranscription()
+            failTranscription(message: "Transcription timed out while waiting for the result.")
         }
     }
 
@@ -3643,7 +3643,7 @@ public final class VoiceState {
         }
     }
 
-    private func failTranscription() {
+    private func failTranscription(message: String = "Transcription failed") {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -3667,7 +3667,7 @@ public final class VoiceState {
         silenceMode = nil
         resetAudioLevels()
         mode = .error
-        errorMessage = "Transcription failed"
+        errorMessage = message
         onModeChange?(.error)
         expandFromCollapse()
     }

@@ -8,6 +8,7 @@ public struct VoiceBarFooterPresentation: Equatable {
     public let privacySymbol: String
     /// Hidden by choice ("Hide for 1 hour") with the daemon still connected: not broken, so no "Disconnected".
     public var isHidden: Bool = false
+    public var errorDetails: String? = nil
 
     public static func resolve(
         isConnected: Bool,
@@ -55,7 +56,10 @@ public struct VoiceBarFooterPresentation: Equatable {
             isReady: status == "Ready",
             isLocalOnly: remoteSTTConfigured == false,
             privacySymbol: privacySymbol,
-            isHidden: showsHidden
+            isHidden: showsHidden,
+            errorDetails: status == "Error"
+                ? SettingsCopyPayload.nonempty(errorMessage) ?? "No error details are available."
+                : nil
         )
     }
 

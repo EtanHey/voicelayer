@@ -598,6 +598,7 @@ public struct BarView: View {
         case .error:
             HStack(spacing: 3) {
                 statusLabel
+                    .help(SettingsCopyPayload.nonempty(state.errorMessage) ?? "No error details are available.")
                 notchButton(icon: "xmark", accessibilityLabel: "Dismiss error") {
                     state.dismissError()
                 }
@@ -903,6 +904,9 @@ public struct BarView: View {
             ) {
                 commandRouter.handlePrimaryTap()
             }
+            .help(state.mode == .error
+                ? SettingsCopyPayload.nonempty(state.errorMessage) ?? "No error details are available."
+                : "Start voice recording")
         } else {
             statusIconImage
         }
