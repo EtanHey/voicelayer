@@ -22,6 +22,7 @@ final class VoiceStateRecoveryTests: XCTestCase {
 
     func testTranscribingTimesOutAfterThirtySeconds() async {
         let state = VoiceState()
+        state.setConnectionStatus(true)
         state.transcriptionTimeout = .milliseconds(20)
 
         state.handleEvent([
@@ -34,7 +35,9 @@ final class VoiceStateRecoveryTests: XCTestCase {
         }
 
         XCTAssertEqual(state.mode, .error)
-        XCTAssertEqual(state.errorMessage, "Transcription failed")
+        XCTAssertEqual(state.errorMessage, "Transcription timed out while waiting for the result.")
+        XCTAssertEqual(VoiceBarFooterPresentation.resolve(state: state).errorDetails,
+                       "Transcription timed out while waiting for the result.")
     }
 
     func testBarInitiatedTranscribingUsesLongerTimeout() async {
