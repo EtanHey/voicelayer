@@ -102,6 +102,26 @@ test("both discovery paths preserve inert directories and valid missing/other ID
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 }, 16_000);
 
+test("dedupe normalizes TMPDIR trailing slashes without duplicate plans", () => {
+  const f = fixture();
+  try {
+    const duplicate = join(f.candidates, "tmp/VoiceBar.app");
+    f.plist(duplicate, bundleId);
+    for (const suffix of ["", "/", "//", "///"]) {
+      const result = f.run(scriptNames[1], { TMPDIR: f.candidates + suffix, VB_TEST_SPOTLIGHT: duplicate });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString().match(/would run: mv /g) ?? []).toHaveLength(1);
+      expect(result.stdout.toString()).toContain(`would run: mv ${duplicate} `);
+      expect(readFileSync(f.effects, "utf8")).toBe("");
+    }
+    f.stub("find", 'printf "%s\\n" "$@" > "$HOME/find-args"');
+    for (const tmpdir of ["", "/", "///"]) {
+      expect(f.run(scriptNames[1], { TMPDIR: tmpdir }).exitCode).toBe(0);
+      expect(readFileSync(join(f.root, "find-args"), "utf8").split("\n").includes("/")).toBe(Boolean(tmpdir));
+    }
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+}, 16_000);
+
 for (const prefix of [false, true]) {
   test(`dedupe refuses failed inventory before effects (canonical prefix=${prefix})`, () => {
     const f = fixture();

@@ -86,7 +86,11 @@ declare -a BUNDLES=()
 bundle_search_roots=(/Applications "$HOME_DIR/Applications" "$HOME_DIR/Gits" "$HOME_DIR/Desktop"
                      "$HOME_DIR/Downloads" /tmp /private/tmp /var/folders)
 if [[ -n "${TMPDIR:-}" && -d "$TMPDIR" ]]; then
-  bundle_search_roots+=("$TMPDIR")
+  tmpdir_root="$TMPDIR"
+  while [[ "$tmpdir_root" != / && "$tmpdir_root" == */ ]]; do
+    tmpdir_root="${tmpdir_root%/}"
+  done
+  bundle_search_roots+=("$tmpdir_root")
 fi
 # -e follows links; -L also catches dangling links. A directory symlink remains
 # eligible for the same identity/signature checks as any other bundle directory.
