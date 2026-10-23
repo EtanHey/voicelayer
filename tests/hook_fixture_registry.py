@@ -215,24 +215,32 @@ def _cleanup_closed(base, root):
             report(None, 'malformed record; never signalled')
     def send(row, signum):
         # Re-read start time AND the native environment before EACH individual signal.
-        if fixture_state(row) == 'alive':
+        status = fixture_state(row)
+        if status == 'alive':
             try:
                 os.kill(row['pid'], signum)
                 report(row['pid'], f'sent {int(signum)} after identity verification')
             except ProcessLookupError:
                 pass
-    for row in rows:
-        send(row, signal.SIGTERM)
+        return status
+    # Keep original PID/start/token rows for the final fresh verification. Each
+    # pending entry is that exact lifetime, never a PID-only signal authority.
+    rows = tuple(rows)
+    pending = [row for row in rows if send(row, signal.SIGTERM) != 'dead']
+    def pending_states():
+        nonlocal pending
+        observed = [(row, fixture_state(row)) for row in pending]
+        pending = [row for row, status in observed if status != 'dead']
+        return [status for _, status in observed]
     deadline = time.monotonic() + .5
-    while time.monotonic() < deadline and any(fixture_state(row) == 'alive' for row in rows):
+    while time.monotonic() < deadline and 'alive' in pending_states():
         time.sleep(.025)
-    for row in rows:
-        send(row, signal.SIGKILL)
+    pending = [row for row in pending if send(row, signal.SIGKILL) != 'dead']
     settle_seconds = float(os.environ.get("HOOK_FIXTURE_SETTLE_DEADLINE_S", "3"))
     if not math.isfinite(settle_seconds) or settle_seconds <= 0:
         raise ValueError("HOOK_FIXTURE_SETTLE_DEADLINE_S must be finite and positive")
     deadline = time.monotonic() + settle_seconds
-    while time.monotonic() < deadline and any(fixture_state(row) != 'dead' for row in rows):
+    while time.monotonic() < deadline and any(status != 'dead' for status in pending_states()):
         time.sleep(.025)
     remaining = [row.get('pid') for row in rows if fixture_state(row) != 'dead']
     if remaining or unreadable:
