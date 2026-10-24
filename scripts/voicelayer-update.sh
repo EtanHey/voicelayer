@@ -615,10 +615,14 @@ print(f"{version}_{revision}" if revision else version)
 }
 
 update_formula() {
-    local installed offered upgrade_stderr upgrade_status
-    if ! installed="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")"; then
-        log "Homebrew formula $VOICEBAR_FORMULA_NAME could not be queried; skipping formula upgrade."
+    local installed offered upgrade_stderr upgrade_status formula_status=0
+    installed="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")" || formula_status=$?
+    if [[ "$formula_status" -eq 2 ]]; then
+        log "Homebrew is unavailable; skipping formula upgrade for $VOICEBAR_FORMULA_NAME."
         return 0
+    elif [[ "$formula_status" -ne 0 ]]; then
+        err "Cannot determine active formula identity for $VOICEBAR_FORMULA_NAME; refusing formula upgrade."
+        return 1
     fi
     if [[ -z "$installed" ]]; then
         log "Homebrew formula $VOICEBAR_FORMULA_NAME is not installed; skipping formula upgrade."
@@ -759,6 +763,7 @@ launchd_service_loaded() {
 
 verify_voicebar_stack() {
     local cask_name app_version cask_version formula_version formula_offered package_version offered
+    local formula_status=0
     local expect_running=1
     VERIFY_FAILURES=0
 
@@ -769,9 +774,9 @@ verify_voicebar_stack() {
     cask_name="$(bcs_cask_name "$VOICEBAR_CASK_NAME")"
     app_version="$(bcs_app_bundle_version "$VOICEBAR_CANONICAL_APP")"
     cask_version="$(bcs_cask_registered_version "$cask_name")"
-    formula_version="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")"
+    formula_version="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")" || formula_status=$?
     formula_offered=""
-    if [[ -n "$formula_version" ]]; then
+    if [[ "$formula_status" -eq 0 && -n "$formula_version" ]]; then
         formula_offered="$(formula_offered_version || true)"
     fi
     package_version="$(installed_package_version)"
@@ -787,7 +792,9 @@ verify_voicebar_stack() {
         "${app_version:-not installed} ($VOICEBAR_CANONICAL_APP)"
     check_row "cask ledger" "$([[ -n "$cask_version" && ( -z "$offered" || "$cask_version" = "$offered" ) ]] && printf 0 || printf 1)" \
         "${cask_version:-not registered with brew}"
-    if [[ -n "$formula_version" ]]; then
+    if [[ "$formula_status" -ne 0 ]]; then
+        check_row "formula" 1 "could not determine active formula identity for $VOICEBAR_FORMULA_NAME"
+    elif [[ -n "$formula_version" ]]; then
         check_row "formula" "$([[ -n "$formula_offered" && "$formula_version" = "$formula_offered" ]] && printf 0 || printf 1)" \
             "${VOICEBAR_FORMULA_NAME##*/} $formula_version (offered ${formula_offered:-Unavailable})"
     else
