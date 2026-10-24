@@ -2,6 +2,169 @@
 import XCTest
 
 final class SpeakSelectionTests: XCTestCase {
+    @MainActor
+    func testReadClipboardIsExplicitAndDispatchesExactPlainTextOnce() throws {
+        let state = VoiceState()
+        state.isConnected = true
+        var reads = 0
+        var commands: [[String: Any]] = []
+        let text = "  שלום 👩🏽‍💻 e\u{301}\r\n\tend…\n"
+        state.sendCommand = { commands.append($0) }
+        state.clipboardTextReadHandler = { current, done in
+            XCTAssertTrue(current()); reads += 1; done(.completed(text)); done(.completed("duplicate"))
+        }
+        state.selectionTextCaptureHandler = { $0(.completed(nil)) }
+        let settings = SettingsView(hotkeyEnabled: true, missingPermissions: [], availableDevices: { [] },
+            selectedDeviceID: { nil }, modelsStatus: { .disconnected }, onRefreshModelsStatus: {},
+            onReadClipboard: { state.readClipboard() }, vocabularyRevision: { 0 })
+        _ = settings.body
+        state.speakSelection()
+        XCTAssertEqual(reads, 0, "Settings construction/body and empty selection never read clipboard")
+        XCTAssertTrue(commands.isEmpty)
+        try XCTUnwrap(settings.onReadClipboard)()
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual((commands.first?["text"] as? String).map { Array($0.utf8) }, Array(text.utf8))
+        XCTAssertEqual(commands.first?["format"] as? String, "plain")
+        XCTAssertEqual(commands.first?["source"] as? String, "clipboard")
+        XCTAssertEqual(commands.first?["queue"] as? Bool, true)
+        XCTAssertNotNil(commands.first?["id"] as? String)
+    }
+
+    func testOrdinarySelectionNeverFallsBackToExplicitClipboard() {
+        let state = VoiceState()
+        state.clipboardTextReadHandler = { _, _ in XCTFail("selection cannot read arbitrary clipboard") }
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        for result in [SelectionCaptureResult.completed(nil), .captureFailed, .clipboardChanged, .secureField] {
+            state.selectionTextCaptureHandler = { $0(result) }
+            state.speakSelection()
+            XCTAssertTrue(commands.isEmpty)
+        }
+        state.selectionTextCaptureHandler = { $0(.completed("native selection")) }
+        state.speakSelection()
+        XCTAssertEqual(commands.last?["source"] as? String, "selection")
+        XCTAssertEqual(commands.last?["format"] as? String, "markdown")
+        XCTAssertNil(commands.last?["queue"])
+    }
+
+    func testReadClipboardBusyAndDisconnectedNeverRead() {
+        for (mode, phase, connected) in [(VoiceMode.recording, HotkeyPhase.idle, true),
+            (.transcribing, .idle, true), (.idle, .pressing, true), (.idle, .holding, true),
+            (.idle, .awaitingSecondTap, true), (.disconnected, .idle, true), (.idle, .idle, false)] {
+            let state = VoiceState()
+            state.mode = mode; state.hotkeyPhase = phase; state.isConnected = connected
+            state.sendCommand = { _ in XCTFail("no dispatch") }
+            state.clipboardTextReadHandler = { _, _ in XCTFail("no clipboard access") }
+            state.readClipboard()
+        }
+        let noTransport = VoiceState()
+        noTransport.isConnected = true
+        noTransport.clipboardTextReadHandler = { _, _ in XCTFail("no transport must not read") }
+        noTransport.readClipboard()
+    }
+
+    func testReadClipboardFailuresDoNotStopOrQueueExistingPlayback() {
+        for result in [SelectionCaptureResult.completed(nil), .completed(""), .secureField, .clipboardChanged, .captureFailed] {
+            let state = speakingState()
+            state.sendCommand = { _ in XCTFail("failed clipboard read must send no request, including Stop") }
+            state.clipboardTextReadHandler = { _, done in done(result) }
+            state.readClipboard()
+            XCTAssertNotNil(state.confirmationText)
+            XCTAssertEqual(state.mode, .speaking)
+        }
+    }
+
+    func testReadClipboardCancellationAndNewSessionRejectLateAndDuplicateResults() throws {
+        for interrupt in ["stop", "cancel", "f5", "recording", "disconnect"] {
+            let state = VoiceState()
+            state.isConnected = true
+            var current: (() -> Bool)?, done: ((SelectionCaptureResult) -> Void)?
+            var commands: [String] = []
+            state.sendCommand = { commands.append($0["cmd"] as! String) }
+            state.clipboardTextReadHandler = { current = $0; done = $1 }
+            state.readClipboard()
+            XCTAssertTrue(try XCTUnwrap(current)())
+            switch interrupt {
+            case "stop": state.stop()
+            case "cancel": state.cancel()
+            case "f5": state.hotkeyPhase = .pressing; state.hotkeyPhase = .idle
+            case "recording": state.mode = .recording; state.mode = .idle
+            default: state.setConnectionStatus(false); state.setConnectionStatus(true)
+            }
+            XCTAssertFalse(try XCTUnwrap(current)(), interrupt)
+            let stale = try XCTUnwrap(done)
+            stale(.completed("stale"))
+            XCTAssertFalse(commands.contains("speak_text"), interrupt)
+            state.mode = .idle
+            state.clipboardTextReadHandler = { _, callback in done = callback }
+            state.readClipboard()
+            stale(.completed("duplicate stale result"))
+            done?(.completed("fresh"))
+            XCTAssertEqual(commands.filter { $0 == "speak_text" }.count, 1, interrupt)
+        }
+    }
+
+    func testReadClipboardMatchesJSTrimAndUTF16AdmissionWithoutPendingIdentity() throws {
+        let blank = "\u{0009}\u{000A}\u{000B}\u{000C}\u{000D}\u{0020}\u{00A0}\u{1680}"
+            + "\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}"
+            + "\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}"
+        for (text, feedback) in [(blank, "Clipboard has no text"),
+            (String(repeating: "x", count: 200_001), "Clipboard text is too long"),
+            (String(repeating: "😀", count: 100_000) + "x", "Clipboard text is too long")] {
+            for playing in [false, true] {
+                let state = playing ? speakingState(text) : VoiceState()
+                state.isConnected = true
+                state.sendCommand = { _ in XCTFail("Invalid text must neither speak nor Stop") }
+                state.clipboardTextReadHandler = { _, done in done(.completed(text)) }
+                state.readClipboard()
+                state.readClipboard()
+                XCTAssertEqual(state.confirmationText, feedback)
+                XCTAssertTrue(try submissionIDs(state).isEmpty)
+                XCTAssertNil(identityField("selectionSpeechRequestID", in: state) as? String)
+                XCTAssertNil(identityField("selectionSubmittedText", in: state) as? String)
+            }
+        }
+        for text in [String(repeating: "x", count: 200_000), String(repeating: "😀", count: 100_000),
+                     "\u{0085}", "\u{180E}", "\u{200B}", "\u{001C}", blank + "שלום\n👩‍💻" + blank] {
+            let state = VoiceState()
+            state.isConnected = true
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.clipboardTextReadHandler = { _, done in done(.completed(text)) }
+            state.readClipboard()
+            XCTAssertEqual(commands.count, 1)
+            XCTAssertEqual((commands.first?["text"] as? String).map { Array($0.utf16) }, Array(text.utf16))
+        }
+    }
+
+    func testReadClipboardKeepsWhitespaceAndSelectionQueueNextStopContract() throws {
+        let state = VoiceState()
+        state.isConnected = true
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.selectionTextCaptureHandler = { _ in XCTFail("explicit action must never capture selection") }
+        state.clipboardTextReadHandler = { _, done in done(.completed(" \n\tvalid text")) }
+        state.readClipboard()
+        XCTAssertEqual(commands.first?["text"] as? String, " \n\tvalid text")
+        let first = try XCTUnwrap(commands.first?["id"] as? String)
+        state.handleEvent(["type": "state", "state": "speaking", "request_id": first, "text": " \n\tvalid text",
+            "long_read": ["id": "clipboard-read", "preparing": false]])
+        state.clipboardTextReadHandler = { _, done in done(.completed("different")) }
+        state.readClipboard()
+        XCTAssertEqual(commands.last?["queue"] as? Bool, true)
+        state.handleEvent(["type": "read_queue", "count": 1, "current_request_id": first])
+        state.skipToNextRead()
+        XCTAssertEqual(commands.last?["cmd"] as? String, "read_next")
+        state.stop()
+        XCTAssertEqual(commands.last?["cmd"] as? String, "stop")
+        XCTAssertEqual(state.readQueueCount, 0)
+        XCTAssertNil(commands.last?["retain_read_queue"])
+        state.readClipboard()
+        state.readClipboard()
+        XCTAssertEqual(commands.suffix(2).compactMap { $0["cmd"] as? String }, ["speak_text", "stop"])
+    }
+
     func testBusyRequestEndsWithItsSessionAndCannotReappearInANewSession() {
         for (mode, phase) in [(VoiceMode.recording, HotkeyPhase.idle), (.transcribing, .idle),
                               (.idle, .pressing), (.idle, .holding), (.idle, .awaitingSecondTap)] {

@@ -40,7 +40,7 @@ public struct SelectionCaptureResult: Equatable {
         case copyFailed = "copy_failed"
     }
     public enum AXRead: String { case notAttempted = "not_attempted", unavailable, empty, text }
-    public enum Path: String { case unknown, ax, copy }
+    public enum Path: String { case unknown, ax, copy, clipboard }
     /// AXManualAccessibility recovery for a Chromium/Electron app whose AX tree was still off.
     public enum AXEnable: String { case attempted, set, failed }
 
@@ -1007,6 +1007,9 @@ public final class VoiceState {
 
     /// Capture may perform background work; its completion must run on main.
     public var selectionTextCaptureHandler: (@escaping (SelectionCaptureResult) -> Void) -> Void = { $0(.completed(nil)) }
+    public var clipboardTextReadHandler: (@escaping () -> Bool, @escaping (SelectionCaptureResult) -> Void) -> Void = { _, done in
+        done(.captureFailed)
+    }
     private var selectionCaptureInFlight = false
     private var selectionCaptureCancelled = false
     private var selectionCaptureID: UUID?
@@ -1164,6 +1167,27 @@ public final class VoiceState {
     }
 
     public func speakSelection() {
+        speakCapturedText(fromClipboard: false)
+    }
+
+    public func readClipboard() {
+        speakCapturedText(fromClipboard: true)
+    }
+
+    private static func clipboardTextRefusal(_ text: String) -> String? {
+        guard text.utf16.count <= 200_000 else { return "Clipboard text is too long" }
+        // Match JS.trim in parseCommand; Swift whitespace categories also include other scalars.
+        let nonblank = text.unicodeScalars.contains {
+            switch $0.value {
+            case 0x0009...0x000D, 0x0020, 0x00A0, 0x1680, 0x2000...0x200A,
+                 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF: return false
+            default: return true
+            }
+        }
+        return nonblank ? nil : "Clipboard has no text"
+    }
+
+    private func speakCapturedText(fromClipboard: Bool) {
         if let reason = VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) {
             showSelectionBusyNote()
             logDiagnostic("selection_busy", details: ["reason": reason.rawValue, "appKeyWindowTitle": "not_recorded"])
@@ -1174,7 +1198,7 @@ public final class VoiceState {
             if mode == .speaking || selectionSubmittedText != nil { stopSelectionRead() }
             return
         }
-        guard mode != .disconnected, sendCommand != nil else {
+        guard mode != .disconnected, sendCommand != nil, !fromClipboard || isConnected else {
             showConfirmation("VoiceLayer is disconnected")
             return
         }
@@ -1188,7 +1212,14 @@ public final class VoiceState {
         selectionCaptureID = captureID
         selectionCaptureInFlight = true
         selectionCaptureCancelled = false
-        selectionTextCaptureHandler { [weak self] result in
+        let isCurrent = { [weak self] in
+            guard let self else { return false }
+            return self.selectionCaptureID == captureID && !self.selectionCaptureCancelled
+                && self.isConnected && self.sendCommand != nil && self.selectionSpeechEpoch == speechEpoch
+                && self.mode != .disconnected && self.mode != .error
+                && VoiceBarPresentation.selectionBusyReason(mode: self.mode, hotkeyPhase: self.hotkeyPhase) == nil
+        }
+        let complete: (SelectionCaptureResult) -> Void = { [weak self] result in
             guard let self, selectionCaptureID == captureID else { return }
             selectionCaptureID = nil
             logDiagnostic("selection_capture", details: result.diagnosticDetails)
@@ -1200,6 +1231,19 @@ public final class VoiceState {
             // Capturing yields to the run loop. A new F5 session always wins.
             guard mode != .recording, mode != .transcribing, mode != .disconnected,
                   hotkeyPhase == .idle, selectionSpeechEpoch == speechEpoch else { return }
+            if fromClipboard {
+                guard isConnected, sendCommand != nil else { return }
+                let refusal = result.text.flatMap(Self.clipboardTextRefusal)
+                guard result.outcome == .completed, result.text != nil, refusal == nil else {
+                    let message = result.outcome == .secureField ? "Can't read a secure field"
+                        : result.outcome == .clipboardChanged ? "Clipboard changed. Try Read Clipboard again"
+                        : result.outcome == .completed ? (refusal ?? "Clipboard has no text") : "Couldn't read the clipboard safely"
+                    expandFromCollapse()
+                    showConfirmation(message)
+                    startCollapseTimer()
+                    return
+                }
+            }
             let normalized = Self.normalizedSelection(result.text ?? "")
             // Preparing's label is not input text. Prefer own input, otherwise use reliable
             // speaking text at completion; a same-read receipt may have arrived during capture.
@@ -1221,11 +1265,11 @@ public final class VoiceState {
             let samePlaying = selectionSubmittedText != nil && (selectionReadHash.map {
                 Self.selectionHash(result.text ?? "") == $0
             } ?? selectionReadText.map { normalized == Self.normalizedSelection($0) } ?? false)
-            if replacing, normalized.isEmpty || sameSelection || samePlaying {
+            if replacing, (!fromClipboard && normalized.isEmpty) || sameSelection || samePlaying {
                 stopSelectionRead()
                 return
             }
-            guard let text = result.text, !normalized.isEmpty else {
+            guard let text = result.text, fromClipboard ? !text.isEmpty : !normalized.isEmpty else {
                 expandFromCollapse()
                 switch result.outcome {
                 case .secureField: showConfirmation("Can't read a secure field")
@@ -1258,11 +1302,15 @@ public final class VoiceState {
             // QUEUE1 (Etan, 2026-10-20): a different selection while reading queues behind it; the daemon starts
             // it at once when no Option+F5 read is live. speak_text otherwise preempts only the owned read.
             var command: [String: Any] = ["cmd": "speak_text", "id": requestID, "text": text, "profile": "auto",
-                                          "format": "markdown", "source": "selection",
+                                          "format": fromClipboard ? "plain" : "markdown",
+                                          "source": fromClipboard ? "clipboard" : "selection",
                                           "text_hash": Self.selectionHash(text)]
-            if replacing { command["queue"] = true }
+            // The existing queue route also owns the first explicit clipboard read, without claiming AX selection.
+            if replacing || fromClipboard { command["queue"] = true }
             sendCommand?(command)
         }
+        if fromClipboard { clipboardTextReadHandler(isCurrent, complete) }
+        else { selectionTextCaptureHandler(complete) }
     }
 
     /// Callback when the pill's rendered size changes — used to resize the NSPanel.
@@ -4242,12 +4290,20 @@ public final class VoiceState {
         reason: String = "VoiceLayer is starting"
     ) {
         guard let commandName = command["cmd"] as? String,
-              let intentCommand = IntentCommand(rawValue: commandName),
               let id = command["id"] as? String,
               !id.isEmpty
         else {
             return
         }
+
+        if commandName == "speak_text" {
+            handleEvent([
+                "type": "ack", "command": commandName, "outcome": "reject",
+                "id": id, "reason": reason,
+            ])
+            return
+        }
+        guard let intentCommand = IntentCommand(rawValue: commandName) else { return }
 
         handleEvent([
             "type": "ack",

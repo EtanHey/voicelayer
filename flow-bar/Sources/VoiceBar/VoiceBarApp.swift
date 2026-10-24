@@ -1285,6 +1285,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.selectionTextCaptureHandler = { completion in
             SpeakSelectionCapture().capture(completion: completion)
         }
+        voiceState.clipboardTextReadHandler = { isCurrent, completion in
+            SpeakSelectionCapture().readClipboard(isCurrent: isCurrent, completion: completion)
+        }
         RetainedRecordingPreview.urlProvider = {
             URL(fileURLWithPath: VoiceLayerPaths.retainedRecordingPath)
         }
@@ -3072,6 +3075,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.voiceState.previewTTSProfile(profile)
                 self?.refreshSettingsWindowAnchorState()
             },
+            onReadClipboard: { [weak self] in self?.voiceState.readClipboard() },
             processingPending: { [weak self] in self?.voiceState.processingPending ?? [:] },
             processingNotice: { [weak self] in self?.voiceState.processingNotice },
             onToggleProcessing: { [weak self] key, value in
