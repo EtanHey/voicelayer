@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.53] - 2026-10-24
+
+### Fixed
+- Show selectable, copyable VoiceBar error details, including timeout guidance (#514).
+
+### Developer / QA
+- Prune only positively dead intermediate hook fixtures; retain supervisor custody when cleanup is refused and recheck process identity.
+
 ## [2.2.52] - 2026-10-23
 
 ### Developer / QA
