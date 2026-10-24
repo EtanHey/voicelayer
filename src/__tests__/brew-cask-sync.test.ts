@@ -275,6 +275,39 @@ describe("active formula reader", () => {
     }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
+  for (const current of [false, true]) {
+    test(`active formula underscore inventory: ${current ? "current" : "absent"} target`, () => {
+      const { box, result } = readFormula(current ? ["2.2.55", "2.2.54"] : [], current ? "2.2.54" : null, {
+        inventory: current ? "_fixture\nvoicelayer\n" : "_fixture\njq\n",
+        ...(current ? {} : { json: "", queryStatus: 1 }),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(decode(result.stdout)).toBe(current ? "2.2.54\n" : "");
+      expect(decode(result.stderr)).toBe("");
+      expect(brewCalls(box).trim().split("\n")).toEqual(current
+        ? ["list --formula -1", "info --json=v2 --formula etanhey/layers/voicelayer"]
+        : ["list --formula -1"]);
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  for (const formula of ["_fixture", "etanhey/layers/_fixture"]) {
+    test(`active formula underscore token: ${formula}`, () => {
+      const { box, result } = readFormula(["2.2.54"], "2.2.54", {
+        token: formula, inventory: "_fixture\n",
+        json: JSON.stringify({ formulae: [{
+          name: "_fixture", full_name: "etanhey/layers/_fixture",
+          installed: [{ version: "2.2.54" }], linked_keg: "2.2.54",
+        }], casks: [] }),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(decode(result.stdout)).toBe("2.2.54\n");
+      expect(decode(result.stderr)).toBe("");
+      expect(brewCalls(box).trim().split("\n")).toEqual([
+        "list --formula -1", `info --json=v2 --formula ${formula}`,
+      ]);
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
   for (const [label, options] of [
     ["failed empty inventory", { inventory: "", inventoryStatus: 1 }],
     ["failed partial inventory", { inventory: "jq\n", inventoryStatus: 42 }],

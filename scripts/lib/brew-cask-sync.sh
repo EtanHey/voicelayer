@@ -219,7 +219,8 @@ import re, sys
 parts = sys.argv[1].split("/")
 names = sys.stdin.read().splitlines()
 def valid_name(value):
-    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+_.@-]*", value) is not None
+    # tap_constants.rb: [\w+\-.@]+; Ruby \w is ASCII, with no first-char rule.
+    return re.fullmatch(r"[A-Za-z0-9_+\-.@]+", value) is not None
 if len(parts) not in (1, 3) or not all(valid_name(part) for part in parts):
     sys.exit("invalid formula token")
 if not all(valid_name(name) for name in names) or len(set(names)) != len(names):

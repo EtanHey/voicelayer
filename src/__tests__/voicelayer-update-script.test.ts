@@ -233,6 +233,28 @@ describe("active formula caller contracts", () => {
     }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
+  for (const current of [false, true]) {
+    for (const [caller, currentDetail, absentDetail] of [
+      ["update_formula", "already at 2.2.54", "is not installed; skipping formula upgrade"],
+      ["verify_voicebar_stack", "OK    formula: voicelayer 2.2.54 (offered 2.2.54)", "SKIP  formula: voicelayer is not installed"],
+    ] satisfies Array<[string, string, string]>) {
+      test(`active formula underscore inventory: ${current ? "current" : "absent"} target in ${caller}`, () => {
+        const fixture = activeFormulaFixture(current ? ["2.2.55", "2.2.54"] : [], current ? "2.2.54" : null, {
+          inventory: current ? "_fixture\nvoicelayer\n" : "_fixture\njq\n",
+          ...(current ? {} : { json: "", queryStatus: 1 }),
+        });
+        const result = fixture.execute(caller);
+        expect(result.exitCode).toBe(0);
+        expect(text(result.stderr)).toBe("");
+        expect(text(result.stdout)).toContain(current ? currentDetail : absentDetail);
+        expect(fixture.calls()).toEqual(current ? [
+          "list --formula -1", "info --json=v2 --formula etanhey/layers/voicelayer",
+          "info --json=v2 --formula etanhey/layers/voicelayer",
+        ] : ["list --formula -1"]);
+      }, SUBPROCESS_TEST_TIMEOUT_MS);
+    }
+  }
+
   for (const [label, options, queried] of [
     ["failed inventory", { inventory: "", inventoryStatus: 1 }, false],
     ["failed partial inventory", { inventory: "jq\n", inventoryStatus: 42 }, false],
