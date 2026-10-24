@@ -46,7 +46,12 @@ import {
   writeSync,
   writeFileSync,
 } from "fs";
-import { getRecordingsArchiveRoot } from "./paths";
+import {
+  recordingsArchiveRoot,
+  fsyncPath,
+  atomicWriteFile,
+  archiveId,
+} from "./recordings-archive-fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import {
   hasStopSignal,
@@ -904,10 +909,6 @@ interface VoiceAskRecordingMetadata {
   schema_version: 4;
 }
 
-function recordingsArchiveRoot(): string {
-  return getRecordingsArchiveRoot();
-}
-
 function resolvedRecordingsArchiveRoot(): string {
   const root = recordingsArchiveRoot();
   try {
@@ -951,46 +952,6 @@ function requireArchivedRecordingAudioPath(audioPath: string): string {
   }
 
   return resolvedAudioPath;
-}
-
-function fsyncPath(path: string): void {
-  let fd: number | undefined;
-  try {
-    fd = openSync(path, "r");
-    fsyncSync(fd);
-  } catch {
-    // Directory fsync is best-effort across platforms and filesystems.
-  } finally {
-    if (fd !== undefined) {
-      try {
-        closeSync(fd);
-      } catch {}
-    }
-  }
-}
-
-function atomicWriteFile(path: string, data: string | Uint8Array): void {
-  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomBytes(4).toString("hex")}`;
-  let fd: number | undefined;
-  let completed = false;
-  try {
-    try {
-      fd = openSync(tmpPath, "w", 0o600);
-      writeFileSync(fd, data);
-      fsyncSync(fd);
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-    }
-    renameSync(tmpPath, path);
-    fsyncPath(dirname(path));
-    completed = true;
-  } finally {
-    if (!completed) {
-      try {
-        if (existsSync(tmpPath)) unlinkSync(tmpPath);
-      } catch {}
-    }
-  }
 }
 
 function readAscii(data: Uint8Array, start: number, end: number): string {
@@ -1150,10 +1111,6 @@ function appendPcmChunkToRetainedWav(
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
-}
-
-function archiveId(createdAt: Date): string {
-  return `${createdAt.toISOString().replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}`;
 }
 
 export function archiveVoiceBarRecording(
