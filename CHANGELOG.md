@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.54] - 2026-10-24
+
+### Fixed
+- Preserve the frozen `bun.lock` in the npm package for package-root VoiceBar builds. Pin the OIDC publisher to npm 11.19.1 and refuse publication if its packed lock or package identity fails the source contract.
+
 ## [2.2.53] - 2026-10-24
 
 ### Fixed
