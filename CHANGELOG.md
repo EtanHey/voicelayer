@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.55] - 2026-10-24
+
+### Fixed
+- Show readback seek delivery failures and clear stale pending seek state when delivery is unavailable (#519).
+- Correct Homebrew version checks when multiple kegs are retained, keeping absent formulas skippable and invalid installations visible (#520, #521).
+
 ## [2.2.54] - 2026-10-24
 
 ### Fixed
