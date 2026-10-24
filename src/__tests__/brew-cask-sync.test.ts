@@ -201,6 +201,8 @@ describe("active formula reader", () => {
     token?: string;
     json?: string;
     queryStatus?: number;
+    inventory?: string;
+    inventoryStatus?: number;
   } = {}) {
     const box = sandbox({});
     const formula = options.token ?? "etanhey/layers/voicelayer";
@@ -209,11 +211,14 @@ describe("active formula reader", () => {
       installed: versions.map((version) => ({ version })), linked_keg: linked,
     }], casks: [] });
     writeFileSync(join(box.root, "formula.json"), json);
+    // Keep a rack candidate for JSON/error controls; model no rack explicitly.
+    writeFileSync(join(box.root, "inventory"), options.inventory ?? "voicelayer\n");
     writeFileSync(box.brewStub, [
       "#!/usr/bin/env bash",
       'printf "%s\\n" "$*" >> "$BREW_STUB_LOG"',
       '[[ "$HOMEBREW_NO_AUTO_UPDATE $HOMEBREW_NO_ENV_HINTS" = "1 1" ]] || exit 98',
       'case "$*" in',
+      `  "list --formula -1") cat "${join(box.root, "inventory")}"; exit ${options.inventoryStatus ?? 0} ;;`,
       `  "info --json=v2 --formula ${formula}") cat "${join(box.root, "formula.json")}"; exit ${options.queryStatus ?? 0} ;;`,
       `  "list --versions ${formula}") printf '%s\\n' 'voicelayer ${versions.join(" ")}' ;;`,
       '  *) exit 99 ;;',
@@ -237,7 +242,9 @@ describe("active formula reader", () => {
       const { box, result } = readFormula(versions, "2.2.54");
       expect(result.exitCode).toBe(0);
       expect(decode(result.stdout).trim()).toBe("2.2.54");
-      expect(brewCalls(box).trim()).toBe("info --json=v2 --formula etanhey/layers/voicelayer");
+      expect(brewCalls(box).trim().split("\n")).toEqual([
+        "list --formula -1", "info --json=v2 --formula etanhey/layers/voicelayer",
+      ]);
     }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
@@ -252,6 +259,130 @@ describe("active formula reader", () => {
     expect(result.exitCode).toBe(0);
     expect(decode(result.stdout).trim()).toBe("");
   }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  for (const [label, queryStatus, inventory] of [
+    ["untapped formula", 1, "jq\nvoicelayer-tools\n"],
+    ["available formula", 0, ""],
+  ] satisfies Array<[string, number, string]>) {
+    test(`active formula inventory proves absence of ${label} before named resolution`, () => {
+      const { box, result } = readFormula([], null, {
+        queryStatus, inventory, json: queryStatus === 1 ? "" : undefined,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(decode(result.stdout)).toBe("");
+      expect(decode(result.stderr)).toBe("");
+      expect(brewCalls(box).trim()).toBe("list --formula -1");
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  for (const current of [false, true]) {
+    test(`active formula underscore inventory: ${current ? "current" : "absent"} target`, () => {
+      const { box, result } = readFormula(current ? ["2.2.55", "2.2.54"] : [], current ? "2.2.54" : null, {
+        inventory: current ? "_fixture\nvoicelayer\n" : "_fixture\njq\n",
+        ...(current ? {} : { json: "", queryStatus: 1 }),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(decode(result.stdout)).toBe(current ? "2.2.54\n" : "");
+      expect(decode(result.stderr)).toBe("");
+      expect(brewCalls(box).trim().split("\n")).toEqual(current
+        ? ["list --formula -1", "info --json=v2 --formula etanhey/layers/voicelayer"]
+        : ["list --formula -1"]);
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  for (const formula of ["_fixture", "etanhey/layers/_fixture"]) {
+    test(`active formula underscore token: ${formula}`, () => {
+      const { box, result } = readFormula(["2.2.54"], "2.2.54", {
+        token: formula, inventory: "_fixture\n",
+        json: JSON.stringify({ formulae: [{
+          name: "_fixture", full_name: "etanhey/layers/_fixture",
+          installed: [{ version: "2.2.54" }], linked_keg: "2.2.54",
+        }], casks: [] }),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(decode(result.stdout)).toBe("2.2.54\n");
+      expect(decode(result.stderr)).toBe("");
+      expect(brewCalls(box).trim().split("\n")).toEqual([
+        "list --formula -1", `info --json=v2 --formula ${formula}`,
+      ]);
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  for (const formula of [".fixture", "etanhey/layers/.fixture"]) {
+    for (const [label, inventory] of [["empty", ""], ["unrelated", "jq\n_fixture\n"]] satisfies Array<[string, string]>) {
+      test(`active formula hidden target linked: ${formula} with ${label} inventory`, () => {
+        const { box, result } = readFormula(["2.2.55", "2.2.54_2"], "2.2.54_2", {
+          token: formula, inventory,
+          json: JSON.stringify({ formulae: [{
+            name: ".fixture", full_name: "etanhey/layers/.fixture",
+            installed: [{ version: "2.2.55" }, { version: "2.2.54_2" }], linked_keg: "2.2.54_2",
+          }], casks: [] }),
+        });
+        expect(result.exitCode).toBe(0);
+        expect(decode(result.stdout)).toBe("2.2.54_2\n");
+        expect(decode(result.stderr)).toBe("");
+        expect(brewCalls(box).trim().split("\n")).toEqual([
+          "list --formula -1", `info --json=v2 --formula ${formula}`,
+        ]);
+      }, SUBPROCESS_TEST_TIMEOUT_MS);
+    }
+  }
+
+  for (const [label, formula, linked, options] of [
+    ["installed-unlinked", ".fixture", null, {}],
+    ["missing JSON", "etanhey/layers/.fixture", "2.2.54", { json: "" }],
+    ["query failure with valid JSON", "etanhey/layers/.fixture", "2.2.54", { queryStatus: 42 }],
+    ["dot-only missing query", ".", null, { json: "", queryStatus: 1 }],
+    ["qualified dot-only missing query", "etanhey/layers/..", null, { json: "", queryStatus: 1 }],
+  ] satisfies Array<[string, string, string | null, { json?: string; queryStatus?: number }]>) {
+    test(`active formula hidden target rejects ${label}`, () => {
+      const { box, result } = readFormula(["2.2.54"], linked, {
+        token: formula, inventory: "",
+        json: JSON.stringify({ formulae: [{
+          name: ".fixture", full_name: "etanhey/layers/.fixture",
+          installed: [{ version: "2.2.54" }], linked_keg: linked,
+        }], casks: [] }), ...options,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(decode(result.stdout)).toBe("");
+      expect(decode(result.stderr)).toContain("active formula identity");
+      expect(brewCalls(box).trim().split("\n")).toEqual([
+        "list --formula -1", `info --json=v2 --formula ${formula}`,
+      ]);
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  test("active formula hidden target absence requires exact named JSON", () => {
+    const { box, result } = readFormula([], null, {
+      token: "etanhey/layers/.fixture", inventory: "jq\n",
+      json: JSON.stringify({ formulae: [{
+        name: ".fixture", full_name: "etanhey/layers/.fixture", installed: [], linked_keg: null,
+      }], casks: [] }),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(decode(result.stdout)).toBe("");
+    expect(decode(result.stderr)).toBe("");
+    expect(brewCalls(box).trim().split("\n")).toEqual([
+      "list --formula -1", "info --json=v2 --formula etanhey/layers/.fixture",
+    ]);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  for (const [label, options] of [
+    ["failed empty inventory", { inventory: "", inventoryStatus: 1 }],
+    ["failed partial inventory", { inventory: "jq\n", inventoryStatus: 42 }],
+    ["malformed inventory", { inventory: "Error: inventory unavailable\n" }],
+    ["qualified inventory entry", { inventory: "other/tap/voicelayer\n" }],
+    ["duplicate inventory", { inventory: "jq\njq\n" }],
+    ["invalid token", { inventory: "", token: "etanhey/voicelayer" }],
+  ] satisfies Array<[string, { inventory: string; inventoryStatus?: number; token?: string }]>) {
+    test(`active formula rejects ${label} without hiding it as absence`, () => {
+      const { box, result } = readFormula([], null, options);
+      expect(result.exitCode).toBe(1);
+      expect(decode(result.stdout)).toBe("");
+      expect(decode(result.stderr)).toContain("active formula identity");
+      expect(brewCalls(box).trim()).toBe("list --formula -1");
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
 
   test("active formula explicit seam still supports an empty version without Brew", () => {
     const box = sandbox({});
@@ -269,6 +400,8 @@ describe("active formula reader", () => {
     ["stale link", ["2.2.54"], "2.2.50", {}],
     ["ambiguous installed identity", ["2.2.54", "2.2.54"], "2.2.54", {}],
     ["query failure with valid stdout", ["2.2.54"], "2.2.54", { queryStatus: 42 }],
+    ["unavailable query with an existing rack", ["2.2.54"], "2.2.54", { queryStatus: 1 }],
+    ["unavailable query before JSON with an existing rack", ["2.2.54"], "2.2.54", { queryStatus: 1, json: "" }],
     ["malformed JSON", [], null, { json: "{" }],
     ["missing schema", [], null, { json: '{"formulae":[{}]}' }],
     ["missing linked field", [], null, { json: JSON.stringify({ formulae: [{
@@ -286,6 +419,17 @@ describe("active formula reader", () => {
       expect(decode(result.stderr)).toContain("active formula identity");
     }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
+
+  test("active formula missing Brew remains distinct from absence", () => {
+    const box = sandbox({});
+    const result = runInLib(box, [
+      "unset BREW_CASK_SYNC_TEST_FORMULA_VERSION",
+      "bcs_formula_version etanhey/layers/voicelayer",
+    ].join("\n"), { BREW_CASK_SYNC_BREW_BIN: join(box.root, "missing-brew") });
+    expect(result.exitCode).toBe(2);
+    expect(decode(result.stdout)).toBe("");
+    expect(brewCalls(box)).toBe("");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
 });
 
 describe("brew-cask-sync drift detection", () => {
