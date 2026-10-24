@@ -4290,12 +4290,20 @@ public final class VoiceState {
         reason: String = "VoiceLayer is starting"
     ) {
         guard let commandName = command["cmd"] as? String,
-              let intentCommand = IntentCommand(rawValue: commandName),
               let id = command["id"] as? String,
               !id.isEmpty
         else {
             return
         }
+
+        if commandName == "speak_text" {
+            handleEvent([
+                "type": "ack", "command": commandName, "outcome": "reject",
+                "id": id, "reason": reason,
+            ])
+            return
+        }
+        guard let intentCommand = IntentCommand(rawValue: commandName) else { return }
 
         handleEvent([
             "type": "ack",
