@@ -205,8 +205,32 @@ bcs_formula_version() {
         return 0
     fi
     local name="$1"
-    local formula_json
+    local formula_json inventory rack
     bcs_brew_bin >/dev/null 2>&1 || return 2
+    # Unnamed list reads Cellar entries without resolving formulae/taps (Homebrew
+    # list.sh and cmd/list.rb). Named info can fail before JSON for an untapped
+    # absent formula. A same-basename rack from ANY tap requires the strict query.
+    if ! inventory="$(bcs_brew list --formula -1)"; then
+        bcs_err "could not query inventory for active formula identity: $name"
+        return 1
+    fi
+    if ! rack="$(printf '%s' "$inventory" | python3 -c '
+import re, sys
+parts = sys.argv[1].split("/")
+names = sys.stdin.read().splitlines()
+def valid_name(value):
+    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+_.@-]*", value) is not None
+if len(parts) not in (1, 3) or not all(valid_name(part) for part in parts):
+    sys.exit("invalid formula token")
+if not all(valid_name(name) for name in names) or len(set(names)) != len(names):
+    sys.exit("invalid formula rack inventory")
+if parts[-1] in names:
+    print(parts[-1])
+' "$name")"; then
+        bcs_err "could not determine inventory for active formula identity: $name"
+        return 1
+    fi
+    [[ -n "$rack" ]] || return 0
     if ! formula_json="$(bcs_brew info --json=v2 --formula "$name")"; then
         bcs_err "could not query active formula identity for $name"
         return 1
