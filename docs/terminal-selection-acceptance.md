@@ -1,62 +1,38 @@
 # Terminal selection and explicit Read Clipboard
 
-Status: source authored; tests UNRUN; exact-build native acceptance NOT_PROVEN.
-E1 remains ITERATE, score 6/10, D0 false. This document is not a release receipt.
+Status: source authored; every test/native cell UNRUN, acceptance NOT_PROVEN.
+E1 stays ITERATE6, score 6/10, D0 false. No release or acoustic receipt is claimed.
 
-## Source contract
+Settings → General → Advanced → Gestures exposes **Read Clipboard**. Copy text
+first, then invoke it. Settings/render/hover/poll/hotkey/selection errors never
+read automatically. The optional Settings callback defaults nil (disabled);
+production binds VoiceState.readClipboard to the separate native read handler.
 
-Settings → General → Shortcut → Gestures exposes **Read Clipboard**. Copy text
-yourself before choosing it. Opening/rendering Settings, hover, polling, hotkeys,
-empty selection and selection errors never invoke this action automatically.
-The optional Settings callback defaults to nil (disabled); production binds it
-to `VoiceState.readClipboard()`, with a separate `clipboardTextReadHandler` bound
-to `SpeakSelectionCapture.readClipboard(isCurrent:completion:)`.
+Busy recording/transcribing/hotkey admission or missing connection/transport
+refuses before access. Nonprompt preflight runs before read and dispatch without
+AX recovery/exemption; secure input/focus, failed or malformed subrole evidence
+refuse. Legitimate absent/unsupported subroles remain allowed. Ordinary selection
+policy/queries/Copy/AX recovery/restore stay unchanged; only evidence is retained.
+No explicit-route Copy, snapshot, clear, write, restore or source-buffer export.
+Generation checks preserve newer ownership; current UUID/session/epoch guards
+reject late/duplicate results after Stop/Cancel/F5/recording/disconnection.
 
-The explicit route reads the string representation once, without trimming,
-Unicode normalization, Markdown projection or whitespace/newline rewriting.
-Empty/nontext clipboard, changed ownership and secure/unknown focus produce
-feedback without a speech or Stop request. It never snapshots, clears, writes,
-restores, synthesizes Copy, captures a selection or exports a source buffer.
-Other flavors and a newer owner's data are never replaced by this route.
+Empty/nontext, JS.trim-blank or >200000 UTF-16-unit text refuses before Stop or
+pending registration. Valid original Swift/wire text retains Unicode, multiline
+and whitespace bytes without trimming/normalizing/truncating. Existing engine
+sanitization still applies; exact engine/acoustic output is NOT_PROVEN.
+Existing speak_text/source:clipboard/format:plain/queue:true owns the first read;
+different text queues, same normalized text stops. Invalid reads never toggle
+Stop. Next stays request-scoped; Stop clears; existing F5 queue retention stays.
+Option+F5 remains selection/preserved Copy, never arbitrary clipboard fallback.
 
-Recording/transcribing, active hotkey admission and disconnected/missing transport
-refuse before access. After each asynchronous check, current request/session
-admission is checked again on main. Stop, Cancel, F5, recording and disconnection
-invalidate pending results, including duplicate callbacks and completed sessions.
-Clipboard changeCount is checked around the string read and after the focus
-recheck. These are authored guards, not proof of native race/security behavior.
+Authored seam tests cover invocation, guards, decoder subrole failures in both
+windows, raw valid text, JS.trim/UTF-16 limits, cancellation, races and queue/Stop.
+All G assertions remain; the fd3e whitespace-only queue fixture was parser-invalid
+and now uses valid text. Original adverse reports remain immutable. Future test:
+`swift test --package-path flow-bar --filter 'SpeakSelectionCaptureTests|SpeakSelectionTests'`.
 
-Secure checks reuse the existing nonprompt preflight with `recover: false` and
-no Chromium exemption: secure event input, secure AX role/subrole, unavailable
-trust or unreadable focus fail closed. No AX activation/manual accessibility
-recovery is attempted. Secure event input is checked again on main before read
-and dispatch. Ordinary selection preflight/AX/Copy/snapshot/restore are unchanged.
-
-Dispatch reuses the existing speak_text request identity, acknowledgement and
-selection queue path. Existing wire fields carry `source: clipboard`, `format:
-plain`, and `queue: true`; queue submission also owns the first clipboard read.
-Different text queues; the same normalized text stops, following the existing
-user-read comparison rule. Invalid/empty clipboard never toggles Stop. Next stays
-scoped to the current request; explicit Stop clears the queue. F5's existing
-retained-queue behavior is unchanged. Normal Option+F5 still uses selection and
-preserved Copy, with `source: selection`/Markdown, never arbitrary old clipboard.
-
-## Authored behavioral coverage (all UNRUN)
-
-SpeakSelectionCaptureTests adds synthetic string/generation/focus seam coverage
-for exact UTF-8, whitespace, empty/nontext, secure input/focus, unknown focus,
-cancelled admission and changes during read or recheck, with Copy/snapshot/write
-spies. SpeakSelectionTests adds explicit Settings callback/no automatic read,
-one dispatch, busy/disconnected refusals, failure feedback without Stop, stale
-and duplicate callbacks after Stop/Cancel/F5/recording/disconnect, ordinary
-selection nonfallback, and queue/Next/Stop compatibility. Existing assertions stay.
-
-Future executor: `swift test --package-path flow-bar --filter 'SpeakSelectionCaptureTests|SpeakSelectionTests'`.
-No baseline RED, compile, test, visual, native or acoustic result is claimed here.
-
-## Future exact-build native matrix
-
-| Surface | Exact selection | Explicit copy → Read Clipboard | Secure focus | Cancellation | Clipboard race/flavors |
+| Future exact-build surface | Exact selection | Explicit clipboard | Secure focus | Cancel | Race/flavors |
 |---|---|---|---|---|---|
 | cmux shell | UNRUN | UNRUN | UNRUN | UNRUN | UNRUN |
 | cmux Claude | UNRUN | UNRUN | UNRUN | UNRUN | UNRUN |
@@ -65,8 +41,7 @@ No baseline RED, compile, test, visual, native or acoustic result is claimed her
 | Terminal Claude | UNRUN | UNRUN | UNRUN | UNRUN | UNRUN |
 | Terminal Codex | UNRUN | UNRUN | UNRUN | UNRUN | UNRUN |
 
-The executor must also record installed modifier hints, exact source/build/loaded
-identities, exact synthetic spoken text including Unicode/multiline tails, native
-clipboard flavors/bytes/newer owner survival, and queue/Next/Stop/F5 compatibility.
-History URL/state tests do not establish any native cell. Native outcomes remain
-NOT_PROVEN until actual receipts exist; private payloads must not enter public logs.
+Executor receipts must include source/build/installed/loaded identity, modifier
+hints, exact spoken synthetic text, clipboard bytes/flavors/newer-owner survival
+and queue/Next/Stop/F5 outcomes. State/History URL tests prove no native cell;
+private payloads stay out of public logs. No baseline RED or execution is claimed.

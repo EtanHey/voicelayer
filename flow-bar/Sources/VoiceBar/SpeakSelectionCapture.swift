@@ -13,6 +13,8 @@ struct SelectionFocusAX {
         var role: String?; var subrole: String?
         var failure: Failure? = nil
         var roleStatus: AXError = .success
+        var subroleStatus: AXError = .success
+        var subroleValueIsValid = true
         // Malformed successful focus responses still return .failure to preserve capture policy.
         var queryStatus: AXError? = nil
     }
@@ -83,7 +85,8 @@ struct SelectionFocusAX {
             : roleValue == nil ? .roleAbsent : roleValue is String ? nil : .roleWrongType
         return (.success, Focus(role: status == .success ? roleValue as? String : nil,
                                 subrole: subroleStatus == .success ? subroleValue as? String : nil,
-                                failure: failure, roleStatus: status))
+                                failure: failure, roleStatus: status, subroleStatus: subroleStatus,
+                                subroleValueIsValid: subroleValue == nil || subroleValue is String))
     }
 }
 
@@ -92,6 +95,7 @@ struct SelectionFocusPreflight {
     var axEnable: SelectionCaptureResult.AXEnable?
     var retries = 0
     var details: [String: String] = [:]
+    var clipboardFocusResolved = false
     /// The focus stayed unreadable in this app, which accepted AXManualAccessibility (Chromium family,
     /// whose password fields enable secure event input). Preserved-clipboard Copy may run only while
     /// this exact process is still frontmost.
@@ -153,6 +157,7 @@ final class SpeakSelectionCapture {
             Self.onMain {
                 guard isCurrent() else { completion(.captureFailed); return }
                 if let reason = gate.blockReason { completion(reason); return }
+                guard gate.clipboardFocusResolved else { completion(.captureFailed); return }
                 guard !self.clipboardSecureInputEnabled() else { completion(.secureField); return }
                 let generation = self.clipboardChangeCount()
                 let text = self.readCopiedString()
@@ -162,6 +167,7 @@ final class SpeakSelectionCapture {
                     Self.onMain {
                         guard isCurrent() else { completion(.captureFailed); return }
                         if let reason = recheck.blockReason { completion(reason); return }
+                        guard recheck.clipboardFocusResolved else { completion(.captureFailed); return }
                         guard !self.clipboardSecureInputEnabled() else { completion(.secureField); return }
                         guard self.clipboardChangeCount() == generation else { completion(.clipboardChanged); return }
                         completion(.completed(text).observed(axRead: .notAttempted, path: .clipboard))
@@ -372,6 +378,9 @@ final class SpeakSelectionCapture {
             return done(focus?.failure?.rawValue ?? (status == .success ? "focus_absent" : "focus_query_failed"))
         }
         fields["role_ax_status"] = String(focus.roleStatus.rawValue)
+        // Evidence only: ordinary selection keeps its existing admission policy.
+        result.clipboardFocusResolved = (focus.subroleStatus == .success && focus.subroleValueIsValid)
+            || focus.subroleStatus == .noValue || focus.subroleStatus == .attributeUnsupported
         let secureInput = ax.secureInputEnabled()
         if isSecureFocus(role: focus.role, subrole: focus.subrole, secureInput: secureInput) {
             result.blockReason = .secureField

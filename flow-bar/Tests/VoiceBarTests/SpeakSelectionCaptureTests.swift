@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 @testable import VoiceBar
 import VoiceBarUI
 import XCTest
@@ -53,6 +54,42 @@ final class SpeakSelectionCaptureTests: XCTestCase {
                 done.fulfill()
             }
             wait(for: [done], timeout: 2)
+        }
+    }
+
+    func testClipboardSubroleDecoderEvidenceGuardsBothWindowsOnly() {
+        let cases: [(AXError, CFTypeRef?, Bool)] = [(.cannotComplete, nil, false), (.failure, nil, false),
+            (.success, NSNumber(value: 42), false), (.success, nil, true), (.noValue, nil, true),
+            (.attributeUnsupported, nil, true), (.success, "AXTextArea" as CFString, true)]
+        for (status, value, allowed) in cases {
+            for late in [false, true] {
+                var reads = 0, sends = 0
+                var ax = clipboardFocus()
+                ax.queryFocus = {
+                    SelectionFocusAX.decodeFocus(AXUIElementCreateApplication(0)) { key in
+                        if key == kAXRoleAttribute { return (.success, "AXTextField" as CFString) }
+                        return !late || reads > 0 ? (status, value) : (.success, nil)
+                    }
+                }
+                XCTAssertNil(SpeakSelectionCapture.preflight(ax, recover: false, copyExemptApp: nil).blockReason,
+                             "Ordinary selection admission stays unchanged")
+                let state = VoiceState()
+                state.isConnected = true
+                state.sendCommand = { _ in sends += 1 }
+                let capture = clipboardCapture(ax: ax, read: { reads += 1; return "valid text" })
+                let done = expectation(description: "subrole evidence")
+                state.clipboardTextReadHandler = { current, complete in
+                    capture.readClipboard(isCurrent: current) { result in
+                        complete(result)
+                        XCTAssertEqual(reads, allowed || late ? 1 : 0)
+                        XCTAssertEqual(sends, allowed ? 1 : 0)
+                        XCTAssertEqual(result.outcome, allowed ? .completed : .captureFailed)
+                        done.fulfill()
+                    }
+                }
+                state.readClipboard()
+                wait(for: [done], timeout: 2)
+            }
         }
     }
 

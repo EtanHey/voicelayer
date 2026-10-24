@@ -105,17 +105,50 @@ final class SpeakSelectionTests: XCTestCase {
         }
     }
 
+    func testReadClipboardMatchesJSTrimAndUTF16AdmissionWithoutPendingIdentity() throws {
+        let blank = "\u{0009}\u{000A}\u{000B}\u{000C}\u{000D}\u{0020}\u{00A0}\u{1680}"
+            + "\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}"
+            + "\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}"
+        for (text, feedback) in [(blank, "Clipboard has no text"),
+            (String(repeating: "x", count: 200_001), "Clipboard text is too long"),
+            (String(repeating: "😀", count: 100_000) + "x", "Clipboard text is too long")] {
+            for playing in [false, true] {
+                let state = playing ? speakingState(text) : VoiceState()
+                state.isConnected = true
+                state.sendCommand = { _ in XCTFail("Invalid text must neither speak nor Stop") }
+                state.clipboardTextReadHandler = { _, done in done(.completed(text)) }
+                state.readClipboard()
+                state.readClipboard()
+                XCTAssertEqual(state.confirmationText, feedback)
+                XCTAssertTrue(try submissionIDs(state).isEmpty)
+                XCTAssertNil(identityField("selectionSpeechRequestID", in: state) as? String)
+                XCTAssertNil(identityField("selectionSubmittedText", in: state) as? String)
+            }
+        }
+        for text in [String(repeating: "x", count: 200_000), String(repeating: "😀", count: 100_000),
+                     "\u{0085}", "\u{180E}", "\u{200B}", "\u{001C}", blank + "שלום\n👩‍💻" + blank] {
+            let state = VoiceState()
+            state.isConnected = true
+            var commands: [[String: Any]] = []
+            state.sendCommand = { commands.append($0) }
+            state.clipboardTextReadHandler = { _, done in done(.completed(text)) }
+            state.readClipboard()
+            XCTAssertEqual(commands.count, 1)
+            XCTAssertEqual((commands.first?["text"] as? String).map { Array($0.utf16) }, Array(text.utf16))
+        }
+    }
+
     func testReadClipboardKeepsWhitespaceAndSelectionQueueNextStopContract() throws {
         let state = VoiceState()
         state.isConnected = true
         var commands: [[String: Any]] = []
         state.sendCommand = { commands.append($0) }
         state.selectionTextCaptureHandler = { _ in XCTFail("explicit action must never capture selection") }
-        state.clipboardTextReadHandler = { _, done in done(.completed(" \n\t")) }
+        state.clipboardTextReadHandler = { _, done in done(.completed(" \n\tvalid text")) }
         state.readClipboard()
-        XCTAssertEqual(commands.first?["text"] as? String, " \n\t")
+        XCTAssertEqual(commands.first?["text"] as? String, " \n\tvalid text")
         let first = try XCTUnwrap(commands.first?["id"] as? String)
-        state.handleEvent(["type": "state", "state": "speaking", "request_id": first, "text": " \n\t",
+        state.handleEvent(["type": "state", "state": "speaking", "request_id": first, "text": " \n\tvalid text",
             "long_read": ["id": "clipboard-read", "preparing": false]])
         state.clipboardTextReadHandler = { _, done in done(.completed("different")) }
         state.readClipboard()

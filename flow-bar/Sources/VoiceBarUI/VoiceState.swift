@@ -1174,6 +1174,19 @@ public final class VoiceState {
         speakCapturedText(fromClipboard: true)
     }
 
+    private static func clipboardTextRefusal(_ text: String) -> String? {
+        guard text.utf16.count <= 200_000 else { return "Clipboard text is too long" }
+        // Match JS.trim in parseCommand; Swift whitespace categories also include other scalars.
+        let nonblank = text.unicodeScalars.contains {
+            switch $0.value {
+            case 0x0009...0x000D, 0x0020, 0x00A0, 0x1680, 0x2000...0x200A,
+                 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF: return false
+            default: return true
+            }
+        }
+        return nonblank ? nil : "Clipboard has no text"
+    }
+
     private func speakCapturedText(fromClipboard: Bool) {
         if let reason = VoiceBarPresentation.selectionBusyReason(mode: mode, hotkeyPhase: hotkeyPhase) {
             showSelectionBusyNote()
@@ -1220,10 +1233,11 @@ public final class VoiceState {
                   hotkeyPhase == .idle, selectionSpeechEpoch == speechEpoch else { return }
             if fromClipboard {
                 guard isConnected, sendCommand != nil else { return }
-                guard result.outcome == .completed, let text = result.text, !text.isEmpty else {
+                let refusal = result.text.flatMap(Self.clipboardTextRefusal)
+                guard result.outcome == .completed, result.text != nil, refusal == nil else {
                     let message = result.outcome == .secureField ? "Can't read a secure field"
                         : result.outcome == .clipboardChanged ? "Clipboard changed. Try Read Clipboard again"
-                        : result.outcome == .completed ? "Clipboard has no text" : "Couldn't read the clipboard safely"
+                        : result.outcome == .completed ? (refusal ?? "Clipboard has no text") : "Couldn't read the clipboard safely"
                     expandFromCollapse()
                     showConfirmation(message)
                     startCollapseTimer()
