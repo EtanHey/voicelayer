@@ -581,9 +581,26 @@ while True: time.sleep(.05)
         foreign = fixture("foreign-cleanup", cleanup_dir)
     finally:
         os.environ["VOICELAYER_HOOK_TEST_SCOPE"] = saved_scope
-    (cleanup_dir / "daemon-group.json").write_text(json.dumps(dict(pid=foreign, pgid=foreign)))
-    subprocess.run([sys.executable, str(root / "scripts/supervise-test-daemon.py"), "--cleanup", str(cleanup_dir)],
-                   env=env, check=True, timeout=15)
+    foreign_started = registry.metadata(foreign)
+    assert foreign_started is not None, "protected foreign identity unavailable"
+    foreign_state_file = cleanup_dir / "daemon-group.json"
+    saved_foreign_state = json.dumps(dict(pid=foreign, pgid=foreign)).encode()
+    foreign_state_file.write_bytes(saved_foreign_state)
+    foreign_lock = cleanup_dir / "daemon-spawn.lock"
+    foreign_lock.touch()
+    saved_foreign_lock = foreign_lock.read_bytes()
+    foreign_cleanup = subprocess.run([sys.executable, str(root / "scripts/supervise-test-daemon.py"), "--cleanup", str(cleanup_dir)],
+                                     env=env, check=False, timeout=15)
+    assert foreign_cleanup.returncode == 1, "foreign scope cleanup must refuse with exit 1"
+    assert cleanup_dir.is_dir() and foreign_state_file.is_file(), "foreign refusal lost custody metadata"
+    assert foreign_state_file.read_bytes() == saved_foreign_state, "foreign refusal changed persisted group identity"
+    assert foreign_lock.is_file() and foreign_lock.read_bytes() == saved_foreign_lock, "foreign refusal changed publication lock"
+    assert registry.metadata(foreign) == foreign_started, "protected foreign PID identity changed"
+    foreign_decisions = [json.loads(line) for line in (base / "decisions.jsonl").read_text().splitlines()]
+    assert not any(row["event"] in ("signal-attempt", "signal-sent", "signal-gone", "fixture-signal")
+                   and row.get("signal") in (int(signal.SIGTERM), int(signal.SIGKILL))
+                   and (row.get("pgid") == foreign or foreign in row.get("targets", []))
+                   for row in foreign_decisions), "protected foreign group received TERM/KILL"
     check_case("cleanup cannot signal foreign scope", lambda: alive(foreign) and term_free("foreign-cleanup"))
 
     # Inherited test state must never exempt an ordinary production orphan.
@@ -667,6 +684,8 @@ with path.open("w+") as lock:
     cases = ("KILL-supervisor", "KILL-group", "KILL-swift-build", "KILL-group-swift-build", "KILL-swift-test",
              "success", "failure", "timeout", "INT", "TERM", "HUP", "KILL", "KILL-late", "stubborn", "debug", "suite-failure", "real")
     if "--abort-lifecycle-check" in sys.argv[2:]:
+        cases = (sys.argv[-1],)
+    if "--lifecycle-only" in sys.argv[2:]:
         cases = (sys.argv[-1],)
     for case in cases:
         signal_reason = case + " fault injection"
@@ -799,15 +818,28 @@ with path.open("w+") as lock:
                 import fcntl, json
                 state_dir = base / "voicelayer-run-tests.900005"
                 state_dir.mkdir()
+                protected_started = registry.metadata(concurrent)
+                assert protected_started is not None, "protected concurrent identity unavailable"
+                state_file = state_dir / "daemon-group.json"
+                saved_state = json.dumps({"pid": concurrent, "pgid": concurrent}).encode()
                 with (state_dir / "daemon-spawn.lock").open("a") as lock:
                     fcntl.flock(lock, fcntl.LOCK_SH)
                     cleanup = registry.spawn([sys.executable, str(root / "scripts/supervise-test-daemon.py"),
                                                 "--cleanup", str(state_dir)])
                     time.sleep(.15)
                     assert cleanup.poll() is None, "cleanup raced unfinished group publication"
-                    (state_dir / "daemon-group.json").write_text(json.dumps({"pid": concurrent, "pgid": concurrent}))
-                assert cleanup.wait(timeout=5) == 0
+                    state_file.write_bytes(saved_state)
+                assert cleanup.wait(timeout=5) == 1
+                assert state_dir.is_dir() and state_file.is_file(), "refused cleanup lost custody metadata"
+                assert state_file.read_bytes() == saved_state, "refused cleanup changed persisted group identity"
+                assert (state_dir / "daemon-spawn.lock").is_file(), "refused cleanup removed publication lock"
                 assert alive(concurrent), "stale group identity killed a concurrent run"
+                assert registry.metadata(concurrent) == protected_started, "protected concurrent PID identity changed"
+                refusal_decisions = [json.loads(line) for line in (base / "decisions.jsonl").read_text().splitlines()]
+                assert not any(row["event"] in ("signal-attempt", "signal-sent", "signal-gone", "fixture-signal")
+                               and row.get("signal") in (int(signal.SIGTERM), int(signal.SIGKILL))
+                               and (row.get("pgid") == concurrent or concurrent in row.get("targets", []))
+                               for row in refusal_decisions), "protected concurrent group received TERM/KILL"
                 print("PASS sweep: missing-dir orphan reaped; live, concurrent, parented, unrelated and reused-group identities protected", flush=True)
             except Exception as error:
                 failures.append("sweep")

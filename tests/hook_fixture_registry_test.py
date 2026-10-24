@@ -15,6 +15,9 @@ os.environ["HOOK_FIXTURE_SETTLE_DEADLINE_S"] = "0.5"
 sys.path.insert(0, str(root / 'tests'))
 import hook_fixture_registry as registry
 
+subprocess.run([sys.executable, str(Path(__file__).with_name('hook_fixture_registry_cleanup_test.py'))],
+               check=True, env=os.environ)
+
 
 def wait(predicate, seconds=8):
     deadline = time.monotonic() + seconds

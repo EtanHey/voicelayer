@@ -1,5 +1,6 @@
 """Real cross-wrapper abort matrix plus stale-sweep boundaries; Python, no audio."""
 import fcntl
+import importlib.util
 import os
 import json
 import shutil
@@ -326,6 +327,185 @@ finally:
         base, entry = self.fabricate('Thu Jan  1 00:00:00 1970')
         entry.write_text(json.dumps(dict(json.loads(entry.read_text()), token=uuid.uuid4().hex)))
         self.assertFalse(self.swept(base, entry))
+
+
+_spec = importlib.util.spec_from_file_location('supervisor', ROOT / 'scripts/supervise-test-daemon.py')
+supervisor = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(supervisor)
+
+
+class SupervisorCompletion(unittest.TestCase):
+    """Event sequences model native observations, never real signal targets."""
+
+    def scenario(self, observation='owned', transient=False, orphan=False, reuse=False, lookup=False):
+        with tempfile.TemporaryDirectory() as directory:
+            scope = Path(directory)
+            run = scope / 'voicelayer-run-tests.1234567'
+            env = dict(VOICELAYER_HOOK_TEST_SCOPE=str(scope), VOICELAYER_TMP_ROOT=str(run),
+                       VOICELAYER_SOCKET_PATH=str(run / 'voicelayer.sock'),
+                       VOICELAYER_MCP_SOCKET_PATH=str(run / 'voicelayer-mcp.sock'))
+            clock, sent, reads, rows = [0.0], [], [], []
+            killed, term_at = [False], [None]
+            def sleep(seconds):
+                clock[0] += seconds
+            def processes():
+                if observation == 'gone' or killed[0]:
+                    current = []
+                else:
+                    current = [(1234567, 1, 1234567, ['src/mcp-server-daemon.ts'], env)]
+                    active = not transient or term_at[0] is not None and (transient == 'persistent' or clock[0] - term_at[0] < .2)
+                    if active and observation != 'owned':
+                        foreign = dict(env)
+                        if observation == 'scope':
+                            foreign['VOICELAYER_HOOK_TEST_SCOPE'] = str(scope / 'foreign')
+                        elif observation == 'mismatch':
+                            foreign['VOICELAYER_TMP_ROOT'] = str(scope / 'foreign')
+                        elif observation == 'empty-env':
+                            foreign = {}
+                        else:
+                            foreign = None
+                        # The leader stays owned and stubborn; one descendant's native
+                        # identity changes. A mixed group must never be partly signalled.
+                        current.append((1234568, 1234567, 1234567, ['worker'], foreign))
+                    if orphan and term_at[0] is not None:
+                        current = [(1234568, 1, 1234567, ['worker'], env)]
+                    if reuse and term_at[0] is not None and clock[0] >= .5:
+                        current = [(1234567, 1, 1234567, ['foreign'], {})]
+                rows[:] = current
+                reads.append((clock[0], current))
+                return current
+            def killpg(pgid, signum):
+                self.assertEqual(pgid, 1234567)
+                self.assertTrue(rows)
+                self.assertTrue(all(supervisor.carries_run(p[4], run) and
+                                    supervisor.matches_test_scope(p[4], run) for p in rows),
+                                'signal without a fresh complete native ownership check')
+                self.assertEqual(reads[-1][0], clock[0], 'signal used cached authority')
+                sent.append(int(signum))
+                if signum == signal.SIGTERM:
+                    term_at[0] = clock[0]
+                else:
+                    killed[0] = True
+                if lookup and signum == signal.SIGTERM:
+                    raise ProcessLookupError
+            with patch.dict(os.environ, {'VOICELAYER_HOOK_TEST_SCOPE': str(scope)}), \
+                 patch.object(supervisor, 'processes', processes), \
+                 patch.object(supervisor.time, 'monotonic', lambda: clock[0]), \
+                 patch.object(supervisor.time, 'sleep', sleep), \
+                 patch.object(supervisor.os, 'killpg', killpg), \
+                 patch.object(supervisor, 'audit'), \
+                 patch.object(supervisor, 'live_peer_fixture', return_value=False):
+                result = supervisor.reap_group(1234567, run, orphan_only=orphan)
+            print(f'supervisor sequence {observation=} {transient=} {orphan=} {reuse=} {lookup=} signals={sent} elapsed={clock[0]:.2f} outcome={getattr(result, "state", None)}', flush=True)
+            return result, sent, clock[0], reads
+
+    def test_transient_post_term_identity_is_not_completion(self):
+        for observation in ('unknown', 'empty-env', 'mismatch', 'scope'):
+            with self.subTest(observation=observation):
+                result, sent, elapsed, reads = self.scenario(observation, transient=True)
+                self.assertEqual(sent, [int(signal.SIGTERM), int(signal.SIGKILL)],
+                                 'owned stubborn leader survived a refusal reported as gone')
+                self.assertEqual(result.state, 'gone')
+                self.assertGreaterEqual(elapsed, 1)
+                self.assertTrue(any(len(rows) == 2 for _, rows in reads))
+
+    def test_persistent_foreign_or_unknown_group_is_incomplete_and_unsignalled(self):
+        for observation in ('unknown', 'empty-env', 'mismatch', 'scope'):
+            with self.subTest(observation=observation):
+                result, sent, elapsed, _ = self.scenario(observation)
+                self.assertEqual(sent, [])
+                self.assertEqual(result.state, 'unverifiable' if observation == 'unknown' else 'refused')
+                self.assertTrue(result.reason)
+                self.assertLessEqual(elapsed, 2.05)
+
+    def test_persistent_post_term_refusal_is_not_completion(self):
+        for observation in ('unknown', 'empty-env', 'mismatch', 'scope'):
+            with self.subTest(observation=observation):
+                result, sent, elapsed, _ = self.scenario(observation, transient='persistent')
+                self.assertEqual(sent, [int(signal.SIGTERM)])
+                self.assertEqual(result.state, 'unverifiable' if observation == 'unknown' else 'refused')
+                self.assertLessEqual(elapsed, 3.1)
+
+    def test_reused_group_after_term_has_no_kill_authority(self):
+        result, sent, _, _ = self.scenario(reuse=True)
+        self.assertEqual(sent, [int(signal.SIGTERM)])
+        self.assertEqual(result.state, 'refused')
+
+    def test_true_empty_group_completes_without_signalling(self):
+        result, sent, _, _ = self.scenario('gone')
+        self.assertEqual(sent, [])
+        self.assertEqual(result.state, 'gone')
+
+    def test_orphan_candidate_and_unknown_skip_remain_unsignalled(self):
+        result, sent, _, _ = self.scenario('unknown', orphan=True)
+        self.assertEqual(sent, [])
+        self.assertEqual(result.state, 'unverifiable')
+
+    def test_signal_lookup_error_requires_fresh_membership_observation(self):
+        result, sent, _, _ = self.scenario(lookup=True)
+        self.assertEqual(sent, [int(signal.SIGTERM), int(signal.SIGKILL)])
+        self.assertEqual(result.state, 'gone')
+
+    def test_orphan_term_leader_disappearance_keeps_owned_survivor_eligible(self):
+        # Once the candidate is established, survivors need ownership, not PPID 1
+        # or the daemon argv. The real harness also exercises this lifecycle.
+        result, sent, _, _ = self.scenario(orphan=True)
+        self.assertEqual(sent, [int(signal.SIGTERM), int(signal.SIGKILL)])
+        self.assertEqual(result.state, 'gone')
+
+
+    def test_orphan_sweep_preserves_failure_for_owned_sigkill_survivors(self):
+        run = Path('/isolated/voicelayer-run-tests.1234567')
+        env = dict(VOICELAYER_TMP_ROOT=str(run),
+                   VOICELAYER_SOCKET_PATH=str(run / 'voicelayer.sock'),
+                   VOICELAYER_MCP_SOCKET_PATH=str(run / 'voicelayer-mcp.sock'))
+        row = (1234567, 1, 1234567, ['src/mcp-server-daemon.ts'], env)
+        with patch.object(supervisor, 'processes', return_value=[row]), \
+             patch.object(supervisor, 'reap_group', return_value=supervisor.CleanupOutcome('remaining', 'survived SIGKILL')):
+            with self.assertRaisesRegex(RuntimeError, 'survived SIGKILL'):
+                supervisor.sweep_orphans()
+
+    def test_persisted_foreign_group_retains_state_and_fails_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            state = run / 'daemon-group.json'
+            state.write_text(json.dumps(dict(pid=1234567, pgid=1234567)))
+            foreign = [(1234567, 1, 1234567, ['foreign'], {})]
+            with patch.object(supervisor, 'processes', return_value=foreign), \
+                 patch.object(supervisor.os, 'killpg') as signals, \
+                 patch.object(supervisor, 'audit'):
+                with self.assertRaisesRegex(RuntimeError, 'refused'):
+                    supervisor.cleanup_group(run)
+                self.assertTrue(state.exists(), 'incomplete cleanup lost its custody metadata')
+                signals.assert_not_called()
+
+    def test_stop_refusal_has_child_status_and_never_waits(self):
+        from unittest.mock import Mock
+        child = Mock(pid=1234567)
+        child.poll.return_value = None
+        for state in ('refused', 'unverifiable', 'remaining'):
+            outcome = supervisor.CleanupOutcome(state, 'finite test reason')
+            with patch.object(supervisor, 'reap_group', return_value=outcome), \
+                 patch.object(supervisor, 'audit') as audit:
+                with self.assertRaisesRegex(RuntimeError, 'child_status=None'):
+                    supervisor.stop_group(child, Path('/isolated'))
+                self.assertEqual(audit.call_args.kwargs['outcome'], state)
+                child.wait.assert_not_called()
+                child.kill.assert_not_called()
+
+    def test_stop_wait_is_one_second_and_timeout_is_not_silenced(self):
+        from unittest.mock import Mock
+        child = Mock(pid=1234567)
+        child.poll.return_value = None
+        with patch.object(supervisor, 'reap_group', return_value=supervisor.CleanupOutcome('gone', 'empty')), \
+             patch.object(supervisor, 'audit'):
+            supervisor.stop_group(child, Path('/isolated'))
+            child.wait.assert_called_once_with(timeout=1)
+            child.wait.side_effect = subprocess.TimeoutExpired(['PRIVATE_ARGV'], 1)
+            with self.assertRaisesRegex(RuntimeError, 'child wait timed out') as error:
+                supervisor.stop_group(child, Path('/isolated'))
+            self.assertNotIn('PRIVATE_ARGV', str(error.exception))
+            child.kill.assert_not_called()
 
 
 if __name__ == '__main__':

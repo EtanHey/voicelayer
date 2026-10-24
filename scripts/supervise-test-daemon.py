@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import time
+from typing import NamedTuple
 
 
 def audit(event, reason, pgid=None, members=(), **fields):
@@ -160,69 +161,97 @@ def daemon_argv(argv):
     return any(arg == "src/mcp-server-daemon.ts" or arg.endswith("/src/mcp-server-daemon.ts") for arg in argv)
 
 
+class CleanupOutcome(NamedTuple):
+    state: str
+    reason: str
+    members: tuple = ()
+
+
 def reap_group(pgid, run_dir, orphan_only=False):
     def owned_members():
-        members = [p for p in processes() if p[2] == pgid]
+        members = tuple(p for p in processes() if p[2] == pgid)
+        if not members:
+            return CleanupOutcome("gone", "no live group members")
         if any(p[4] is not None and not matches_test_scope(p[4], run_dir) for p in members):
-            audit("skip", "outside test sweep scope", pgid, members)
-            return []
+            return CleanupOutcome("refused", "outside test sweep scope", members)
         unverified = [p for p in members if not carries_run(p[4], run_dir)]
         if unverified:
             # A different real environment is never ours. An unavailable native
             # identity can be transient during exec/exit; never signal it.
             if any(p[4] is not None for p in unverified):
-                audit("skip", "environment ownership mismatch", pgid, members)
-                return []
-            return None
-        if not members:
-            return []
+                return CleanupOutcome("refused", "environment ownership mismatch", members)
+            return CleanupOutcome("unverifiable", "environment unreadable after retry", members)
         if orphan_only and any(live_peer_fixture(p[4]) for p in members):
-            audit("skip", "fixture owner alive", pgid, members)
-            return []
+            return CleanupOutcome("refused", "fixture owner alive", members)
         if orphan_only and run_dir.exists():
-            audit("skip", "run directory still exists", pgid, members)
-            return []
-        return members
+            return CleanupOutcome("refused", "run directory still exists", members)
+        return CleanupOutcome("owned", "all live members verified", members)
 
     def verified_members():
         deadline = time.monotonic() + 2
         while True:
-            members = owned_members()
-            if members is not None:
-                return members
-            if time.monotonic() >= deadline:
-                if orphan_only:
-                    audit("skip", "environment unreadable after retry", pgid)
-                    return []  # Unknown environment: skip the entire group.
-                raise RuntimeError(f"cannot verify test daemon group {pgid}")
+            result = owned_members()
+            if result.state != "unverifiable" or time.monotonic() >= deadline:
+                return result
             time.sleep(0.05)
+
+    def finish(result):
+        audit("cleanup-outcome", result.reason, pgid, result.members, outcome=result.state)
+        if result.state in ("refused", "unverifiable"):
+            audit("skip", result.reason, pgid, result.members)
+        return result
 
     # Establish the orphan candidate once. TERM can remove its leader/entrypoint;
     # subsequent snapshots still verify EVERY survivor's env and directory.
-    if orphan_only and not any(p[1] == 1 and daemon_argv(p[3]) for p in verified_members()):
-        return
+    if orphan_only:
+        candidate = verified_members()
+        if candidate.state != "owned":
+            return finish(candidate)
+        if not any(p[1] == 1 and daemon_argv(p[3]) for p in candidate.members):
+            return finish(CleanupOutcome("refused", "no PPID-1 daemon candidate", candidate.members))
 
     # Revalidate before EACH signal. A stale PID/PGID file is never authority
     # to kill a reused group, a resident daemon, or another test run.
     for signum in (signal.SIGTERM, signal.SIGKILL):
-        members = verified_members()
-        if not members:
-            return
+        result = verified_members()
+        if result.state != "owned":
+            return finish(result)
         reason = "absent-dir PPID-1 daemon" if orphan_only else "owned daemon cleanup"
-        audit("signal-attempt", reason, pgid, members, signal=int(signum), run_dir=str(run_dir))
+        audit("signal-attempt", reason, pgid, result.members, signal=int(signum), run_dir=str(run_dir))
         try:
             os.killpg(pgid, signum)
-            audit("signal-sent", reason, pgid, members, signal=int(signum), run_dir=str(run_dir))
+            audit("signal-sent", reason, pgid, result.members, signal=int(signum), run_dir=str(run_dir))
         except ProcessLookupError:
-            audit("signal-gone", reason, pgid, members, signal=int(signum))
-            return
+            # Signal delivery is not a membership observation. Re-observe within
+            # this same phase, including if the PGID has already been reused.
+            audit("signal-gone", reason, pgid, result.members, signal=int(signum))
         deadline = time.monotonic() + 1
         while time.monotonic() < deadline:
-            if owned_members() == []:
-                return
+            result = owned_members()
+            if result.state == "gone":
+                return finish(result)
             time.sleep(0.05)
-    if verified_members():
-        raise RuntimeError(f"test daemon group {pgid} survived SIGKILL")
+    result = verified_members()
+    if result.state == "owned":
+        result = CleanupOutcome("remaining", "live group survived SIGKILL", result.members)
+    return finish(result)
+
+
+def stop_group(child, run_dir):
+    result = reap_group(child.pid, run_dir)
+    if result.state != "gone":
+        status = child.poll()
+        audit("cleanup-incomplete", result.reason, child.pid, result.members,
+              outcome=result.state, child_status=status)
+        raise RuntimeError(f"test daemon group {child.pid} cleanup {result.state}: "
+                           f"{result.reason}; child_status={status}")
+    try:
+        child.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        status = child.poll()
+        audit("cleanup-incomplete", "child wait timed out", child.pid, child_status=status)
+        raise RuntimeError(f"test daemon group {child.pid} child wait timed out; "
+                           f"child_status={status}") from None
 
 
 def cleanup_group(run_dir):
@@ -237,7 +266,9 @@ def cleanup_group(run_dir):
     except (OSError, ValueError, KeyError, TypeError):
         return
     if type(pid) is int and type(pgid) is int and pid == pgid and pgid > 1:
-        reap_group(pgid, run_dir)
+        result = reap_group(pgid, run_dir)
+        if result.state != "gone":
+            raise RuntimeError(f"test daemon group {pgid} cleanup {result.state}: {result.reason}")
 
 
 def sweep_orphans():
@@ -251,7 +282,9 @@ def sweep_orphans():
                 re.fullmatch(r"voicelayer-run-tests\.[0-9]+", run_dir.name) and daemon_argv(argv) and
                 carries_run(env, run_dir)):
             seen.add(pgid)
-            reap_group(pgid, run_dir, orphan_only=True)
+            result = reap_group(pgid, run_dir, orphan_only=True)
+            if result.state == "remaining":
+                raise RuntimeError(f"test daemon group {pgid} {result.reason}")
 
 
 def main():
@@ -298,10 +331,6 @@ def main():
         signal.signal(signum, request_stop)
     signal.signal(signal.SIGUSR2, request_start)
 
-    def stop_group(child):
-        reap_group(child.pid, run_dir)
-        child.wait(timeout=1)
-
     try:
         # The parent may already have died before Python installed handlers.
         if os.getppid() != parent_pid or exiting:
@@ -317,7 +346,7 @@ def main():
                                                str(lock.fileno()), *sys.argv[3:]],
                                               pass_fds=(lock.fileno(),), start_new_session=True)
             if daemon is not None and (stopping or daemon.poll() is not None):
-                stop_group(daemon)
+                stop_group(daemon, run_dir)
                 daemon = None
                 (run_dir / "daemon-reaped").touch()
             elif stopping and not started:
@@ -326,7 +355,7 @@ def main():
             time.sleep(0.05)
     finally:
         if daemon is not None:
-            stop_group(daemon)
+            stop_group(daemon, run_dir)
         # Bash owns normal EXIT cleanup. After SIGKILL/reparenting we own it.
         if os.getppid() != parent_pid and os.environ.get("VOICELAYER_RUN_TESTS_KEEP_RUN_DIR") != "1":
             shutil.rmtree(run_dir, ignore_errors=True)
