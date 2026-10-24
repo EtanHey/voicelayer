@@ -46,6 +46,328 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
         XCTAssertNil(drag.fraction)
     }
 
+    func testHeldTargetStaysAtFiftySecondsWhenReadyDurationDoubles() {
+        let seeks = SeekLog()
+        let playback = recordingPlayback(currentTime: 20, duration: 200, seeks: seeks)
+        playback.toggle(clipURL)
+        var drag = SettingsScrubDrag()
+
+        drag.changed(toFraction: 0.5, duration: 100, playback: playback, url: clipURL)
+        let grownPosition = SettingsAudioPlaybackPosition(currentTime: 21, duration: 200)
+        let shown = drag.previewPosition(grownPosition)
+        XCTAssertEqual(shown.currentTime, 50)
+        XCTAssertEqual(shown.duration, 200, "the ready total still updates")
+        XCTAssertEqual(shown.fraction, 0.25, "the knob represents 50 seconds on the grown track")
+        XCTAssertEqual(SettingsAudioPlaybackPosition.clockLabel(shown.currentTime), "0:50")
+        XCTAssertEqual(shown.spokenValue, "50 seconds of 3 minutes 20 seconds")
+
+        // A stationary pointer can still produce another changed callback after growth.
+        drag.changed(toFraction: 0.5, duration: 200, playback: playback, url: clipURL)
+        XCTAssertEqual(drag.previewPosition(grownPosition).currentTime, 50)
+        XCTAssertEqual(seeks.times, [], "duration updates and drag previews never seek")
+        drag.ended(atFraction: 0.5, duration: 200, playback: playback, url: clipURL)
+
+        XCTAssertEqual(seeks.times, [50], "one release commits the original absolute target once")
+        XCTAssertTrue(playback.isPlaying(clipURL))
+        XCTAssertNil(drag.fraction)
+        XCTAssertEqual(drag.previewPosition(grownPosition), grownPosition, "release returns to the sampled clock")
+    }
+
+    func testReleaseWithoutAnotherDragCallbackKeepsTheTargetThroughGrowth() {
+        var drag = SettingsScrubDrag()
+        var seeks: [TimeInterval] = []
+        drag.changed(toFraction: 0.5, duration: 100)
+
+        drag.ended(atFraction: 0.5, duration: 200, seek: { seeks.append($0) })
+
+        XCTAssertEqual(seeks, [50])
+    }
+
+    func testPointerMovementAndReleaseUseTheOriginalGestureScaleAfterGrowth() {
+        var drag = SettingsScrubDrag()
+        var seeks: [TimeInterval] = []
+        drag.changed(toFraction: 0.5, duration: 100)
+        drag.changed(toFraction: 0.75, duration: 200)
+        let shown = drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: 200))
+        XCTAssertEqual(shown.currentTime, 75, "movement deliberately changes the target on the 100-second scale")
+        XCTAssertEqual(shown.fraction, 0.375)
+        XCTAssertTrue(seeks.isEmpty)
+
+        // Include final pointer movement delivered only by onEnded, and another duration update.
+        drag.ended(atFraction: 0.8, duration: 300, seek: { seeks.append($0) })
+
+        XCTAssertEqual(seeks, [80])
+        XCTAssertNil(drag.fraction)
+    }
+
+    func testTheNextDragAndTrackClickUseTheNewCurrentDuration() {
+        var drag = SettingsScrubDrag()
+        var seeks: [TimeInterval] = []
+        drag.changed(toFraction: 0.5, duration: 100)
+        drag.ended(atFraction: 0.5, duration: 200, seek: { seeks.append($0) })
+
+        drag.changed(toFraction: 0.5, duration: 200)
+        XCTAssertEqual(drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 50, duration: 200)).currentTime, 100)
+        XCTAssertEqual(seeks, [50])
+        drag.ended(atFraction: 0.5, duration: 200, seek: { seeks.append($0) })
+        drag.ended(atFraction: 0.25, duration: 80, seek: { seeks.append($0) })
+
+        XCTAssertEqual(seeks, [50, 100, 20], "each new gesture rebases, including an end-only track click")
+    }
+
+    func testPreviewAndReleaseClampToShrunkenAvailabilityWithoutPointerMovement() {
+        for duration in [TimeInterval(40), 0.05] {
+            var drag = SettingsScrubDrag()
+            var seeks: [TimeInterval] = []
+            drag.changed(toFraction: 0.8, duration: 100)
+            let shown = drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: duration))
+            let expected = max(duration - SettingsScrubDrag.endMargin, 0)
+            XCTAssertEqual(shown.currentTime, expected)
+            XCTAssertEqual(shown.duration, duration)
+            XCTAssertLessThanOrEqual(shown.fraction, 1)
+            XCTAssertTrue(seeks.isEmpty)
+
+            drag.ended(atFraction: 0.8, duration: duration, seek: { seeks.append($0) })
+
+            XCTAssertEqual(seeks, [expected], "release cannot seek audio that is no longer available")
+        }
+    }
+
+    func testGrowingAvailabilityDoesNotExtendTheHeldGesturesEndMargin() {
+        var drag = SettingsScrubDrag()
+        var seeks: [TimeInterval] = []
+        drag.changed(toFraction: 1.4, duration: 100)
+        drag.changed(toFraction: 1.4, duration: 200)
+        let shown = drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: 200))
+        XCTAssertEqual(shown.currentTime, 100 - SettingsScrubDrag.endMargin)
+        XCTAssertTrue(seeks.isEmpty)
+
+        drag.ended(atFraction: 1.4, duration: 200, seek: { seeks.append($0) })
+
+        XCTAssertEqual(seeks, [100 - SettingsScrubDrag.endMargin])
+    }
+
+    func testFiniteClipDragsStillClampBothEndsAndCommitThePreview() {
+        for (fraction, expected) in [(-0.5, 0.0), (0.25, 16.25), (1.0, 64.9), (1.4, 64.9)] {
+            var drag = SettingsScrubDrag()
+            var seeks: [TimeInterval] = []
+            drag.changed(toFraction: fraction, duration: 65)
+            let shown = drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: 65))
+            XCTAssertEqual(shown.currentTime, expected, accuracy: 0.0001)
+            XCTAssertTrue(seeks.isEmpty)
+
+            drag.ended(atFraction: fraction, duration: 65, seek: { seeks.append($0) })
+
+            XCTAssertEqual(seeks, [shown.currentTime])
+        }
+    }
+
+    func testInvalidDurationsDoNotDispatchAndReleaseClearsTheOldGestureScale() {
+        for duration in [TimeInterval(0), -1, .nan, .infinity, -.infinity] {
+            var drag = SettingsScrubDrag()
+            var seeks: [TimeInterval] = []
+            drag.changed(toFraction: 0.5, duration: duration)
+            XCTAssertNil(drag.fraction, "invalid availability cannot start a gesture scale")
+            drag.changed(toFraction: 0.5, duration: 100)
+            drag.changed(toFraction: 0.9, duration: duration)
+            XCTAssertEqual(drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: 100)).currentTime, 50)
+            XCTAssertEqual(drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: duration)).currentTime, 0)
+
+            drag.ended(atFraction: 0.5, duration: duration, seek: { seeks.append($0) })
+            XCTAssertTrue(seeks.isEmpty)
+            XCTAssertNil(drag.fraction)
+            drag.changed(toFraction: 0.5, duration: 200)
+            drag.ended(atFraction: 0.5, duration: 200, seek: { seeks.append($0) })
+            XCTAssertEqual(seeks, [100])
+        }
+    }
+
+    func testNonfinitePointerValuesDoNotDispatchOrPoisonTheNextDrag() {
+        for fraction in [Double.nan, .infinity, -.infinity] {
+            var drag = SettingsScrubDrag()
+            var seeks: [TimeInterval] = []
+            drag.changed(toFraction: fraction, duration: 100)
+            XCTAssertNil(drag.fraction)
+            drag.changed(toFraction: 0.5, duration: 100)
+            drag.changed(toFraction: fraction, duration: 200)
+            XCTAssertEqual(drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: 200)).currentTime, 50)
+
+            drag.ended(atFraction: fraction, duration: 200, seek: { seeks.append($0) })
+            XCTAssertTrue(seeks.isEmpty)
+            XCTAssertNil(drag.fraction)
+            drag.changed(toFraction: 0.5, duration: 200)
+            drag.ended(atFraction: 0.5, duration: 200, seek: { seeks.append($0) })
+            XCTAssertEqual(seeks, [100])
+        }
+    }
+
+    func testADragCannotSeekOrRestartItsHistoryClipAfterPlaybackSwitchesURL() {
+        let seeks = SeekLog()
+        let playback = recordingPlayback(currentTime: 20, duration: 200, seeks: seeks)
+        playback.toggle(clipURL)
+        var drag = SettingsScrubDrag()
+        drag.changed(toFraction: 0.5, duration: 100, playback: playback, url: clipURL)
+        let otherURL = URL(fileURLWithPath: "/tmp/other-recording/audio.wav")
+        playback.toggle(otherURL)
+
+        drag.ended(atFraction: 0.5, duration: 200, playback: playback, url: clipURL)
+
+        XCTAssertEqual(seeks.times, [])
+        XCTAssertTrue(playback.isPlaying(otherURL))
+        XCTAssertFalse(playback.isPlaying(clipURL))
+        XCTAssertNil(drag.fraction)
+    }
+
+    func testStationaryGlobalPointerKeepsItsTargetAcrossBothLabelWidthThresholds() throws {
+        for (initialDuration, grownDuration) in [(3599.0, 3600.0), (35999.0, 36000.0)] {
+            let initialFrame = teleprompterTrackFrame(duration: initialDuration)
+            let grownFrame = teleprompterTrackFrame(duration: grownDuration)
+            XCTAssertGreaterThan(grownFrame.minX, initialFrame.minX)
+            XCTAssertLessThan(grownFrame.width, initialFrame.width)
+            let pointerX = initialFrame.minX + initialFrame.width * 0.75
+            let expected = initialDuration * 0.75
+            var drag = SettingsScrubDrag()
+            var seeks: [TimeInterval] = []
+
+            drag.changed(atX: pointerX, trackFrame: initialFrame, duration: initialDuration)
+            drag.changed(atX: pointerX, trackFrame: grownFrame, duration: grownDuration)
+            let shown = drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: grownDuration))
+            XCTAssertEqual(shown.currentTime, expected, accuracy: 0.000001)
+            XCTAssertEqual(shown.duration, grownDuration)
+            XCTAssertEqual(shown.fraction, expected / grownDuration, accuracy: 0.000001)
+            XCTAssertEqual(shown.spokenValue,
+                           SettingsAudioPlaybackPosition(currentTime: expected, duration: grownDuration).spokenValue)
+            XCTAssertTrue(seeks.isEmpty, "geometry reflow never dispatches a seek")
+
+            drag.ended(atX: pointerX, trackFrame: grownFrame, duration: grownDuration, seek: { seeks.append($0) })
+
+            XCTAssertEqual(seeks.count, 1)
+            XCTAssertEqual(try XCTUnwrap(seeks.first), expected, accuracy: 0.000001)
+            XCTAssertNil(drag.fraction)
+        }
+    }
+
+    func testStationaryGlobalReleaseAfterLabelGrowthNeedsNoIntermediateChangedCallback() throws {
+        for (initialDuration, grownDuration) in [(3599.0, 3600.0), (35999.0, 36000.0)] {
+            let initialFrame = teleprompterTrackFrame(duration: initialDuration)
+            let grownFrame = teleprompterTrackFrame(duration: grownDuration)
+            let pointerX = initialFrame.minX + initialFrame.width * 0.75
+            var drag = SettingsScrubDrag()
+            var seeks: [TimeInterval] = []
+            drag.changed(atX: pointerX, trackFrame: initialFrame, duration: initialDuration)
+
+            drag.ended(atX: pointerX, trackFrame: grownFrame, duration: grownDuration, seek: { seeks.append($0) })
+
+            XCTAssertEqual(seeks.count, 1)
+            XCTAssertEqual(try XCTUnwrap(seeks.first), initialDuration * 0.75, accuracy: 0.000001)
+        }
+    }
+
+    func testGlobalPointerMovementAfterLabelGrowthUsesTheStartingTrackWidth() throws {
+        for (initialDuration, grownDuration) in [(3599.0, 3600.0), (35999.0, 36000.0)] {
+            let initialFrame = teleprompterTrackFrame(duration: initialDuration)
+            let grownFrame = teleprompterTrackFrame(duration: grownDuration)
+            let pointerX = initialFrame.minX + initialFrame.width * 0.75
+            let movedX = pointerX - initialFrame.width * 0.25
+            var drag = SettingsScrubDrag()
+            var seeks: [TimeInterval] = []
+            drag.changed(atX: pointerX, trackFrame: initialFrame, duration: initialDuration)
+            drag.changed(atX: movedX, trackFrame: grownFrame, duration: grownDuration)
+            let shown = drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: grownDuration))
+            XCTAssertEqual(shown.currentTime, initialDuration * 0.5, accuracy: 0.000001)
+            XCTAssertTrue(seeks.isEmpty)
+
+            drag.ended(atX: movedX, trackFrame: grownFrame, duration: grownDuration, seek: { seeks.append($0) })
+
+            XCTAssertEqual(seeks.count, 1)
+            XCTAssertEqual(try XCTUnwrap(seeks.first), shown.currentTime, accuracy: 0.000001)
+        }
+    }
+
+    func testFinalOnlyGlobalPointerMovementAfterLabelGrowthUsesTheStartingDomain() throws {
+        for (initialDuration, grownDuration) in [(3599.0, 3600.0), (35999.0, 36000.0)] {
+            let initialFrame = teleprompterTrackFrame(duration: initialDuration)
+            let grownFrame = teleprompterTrackFrame(duration: grownDuration)
+            let pointerX = initialFrame.minX + initialFrame.width * 0.75
+            let releaseX = pointerX + initialFrame.width * 0.1
+            var drag = SettingsScrubDrag()
+            var seeks: [TimeInterval] = []
+            drag.changed(atX: pointerX, trackFrame: initialFrame, duration: initialDuration)
+            XCTAssertTrue(seeks.isEmpty)
+
+            drag.ended(atX: releaseX, trackFrame: grownFrame, duration: grownDuration, seek: { seeks.append($0) })
+
+            XCTAssertEqual(seeks.count, 1)
+            XCTAssertEqual(try XCTUnwrap(seeks.first), initialDuration * 0.85, accuracy: 0.000001)
+        }
+    }
+
+    func testGlobalPointerPreviewAndReleaseClampToShrunkenAvailability() throws {
+        let initialFrame = teleprompterTrackFrame(duration: 3600)
+        let shrunkenFrame = teleprompterTrackFrame(duration: 40)
+        let pointerX = initialFrame.minX + initialFrame.width * 0.75
+        var drag = SettingsScrubDrag()
+        var seeks: [TimeInterval] = []
+        drag.changed(atX: pointerX, trackFrame: initialFrame, duration: 3600)
+        drag.changed(atX: pointerX, trackFrame: shrunkenFrame, duration: 40)
+        let shown = drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: 40))
+        XCTAssertEqual(shown.currentTime, 40 - SettingsScrubDrag.endMargin)
+        XCTAssertTrue(seeks.isEmpty)
+
+        drag.ended(atX: pointerX, trackFrame: shrunkenFrame, duration: 40, seek: { seeks.append($0) })
+
+        XCTAssertEqual(seeks.count, 1)
+        XCTAssertEqual(try XCTUnwrap(seeks.first), shown.currentTime)
+    }
+
+    func testNextGlobalGestureAndEndOnlyClickRebaseToTheNewTrackAndDuration() throws {
+        let initialFrame = teleprompterTrackFrame(duration: 3599)
+        let grownFrame = teleprompterTrackFrame(duration: 3600)
+        let pointerX = initialFrame.minX + initialFrame.width * 0.75
+        var drag = SettingsScrubDrag()
+        var seeks: [TimeInterval] = []
+        drag.changed(atX: pointerX, trackFrame: initialFrame, duration: 3599)
+        drag.ended(atX: pointerX, trackFrame: grownFrame, duration: 3600, seek: { seeks.append($0) })
+
+        let nextX = grownFrame.minX + grownFrame.width * 0.25
+        drag.changed(atX: nextX, trackFrame: grownFrame, duration: 3600)
+        XCTAssertEqual(drag.previewPosition(SettingsAudioPlaybackPosition(currentTime: 20, duration: 3600)).currentTime, 900)
+        XCTAssertEqual(seeks.count, 1)
+        drag.ended(atX: nextX, trackFrame: grownFrame, duration: 3600, seek: { seeks.append($0) })
+        let clickFrame = teleprompterTrackFrame(duration: 100)
+        drag.ended(atX: clickFrame.midX, trackFrame: clickFrame, duration: 100, seek: { seeks.append($0) })
+
+        XCTAssertEqual(seeks, [2699.25, 900, 50])
+    }
+
+    func testInvalidGlobalCoordinatesDoNotEstablishOrLeakAGestureDomain() {
+        let validFrame = CGRect(x: 50, y: 0, width: 300, height: 24)
+        for invalidFrame in [CGRect(x: 50, y: 0, width: 0, height: 24),
+                             CGRect(x: CGFloat.nan, y: 0, width: 300, height: 24)] {
+            var drag = SettingsScrubDrag()
+            var seeks: [TimeInterval] = []
+            drag.changed(atX: 275, trackFrame: invalidFrame, duration: 100)
+            XCTAssertNil(drag.fraction)
+            drag.ended(atX: 275, trackFrame: invalidFrame, duration: 100, seek: { seeks.append($0) })
+            XCTAssertTrue(seeks.isEmpty)
+            drag.changed(atX: 275, trackFrame: validFrame, duration: 100)
+            drag.ended(atX: .nan, trackFrame: validFrame, duration: 100, seek: { seeks.append($0) })
+            XCTAssertTrue(seeks.isEmpty)
+            XCTAssertNil(drag.fraction)
+            let nextFrame = CGRect(x: 100, y: 0, width: 200, height: 24)
+            drag.changed(atX: 200, trackFrame: nextFrame, duration: 200)
+            drag.ended(atX: 200, trackFrame: nextFrame, duration: 200, seek: { seeks.append($0) })
+            XCTAssertEqual(seeks, [100])
+        }
+    }
+
+    /// Uses the production label widths and spacing; pointer events go through the same global mapping as the view.
+    private func teleprompterTrackFrame(duration: TimeInterval) -> CGRect {
+        let inset = SettingsPlaybackScrubBar.teleprompterLabelWidth(for: duration)
+            + SettingsPlaybackScrubBar.teleprompterLabelSpacing
+        return CGRect(x: 50 + inset, y: 0, width: 437 - 2 * inset, height: 24)
+    }
+
     func testAKeyboardOrVoiceOverStepPastTheEndKeepsTheClipPlaying() {
         let seeks = SeekLog()
         let playback = recordingPlayback(currentTime: 63, duration: 65, seeks: seeks)

@@ -41,7 +41,7 @@ struct SettingsPlaybackScrubBar: View {
     static let trackHeight: CGFloat = 4
     static let knobDiameter: CGFloat = 12
 
-    /// Where the finger is while dragging, so the knob follows it rather than the sampled clock.
+    /// The held seek target, independent of the sampled clock and duration growth.
     @State private var drag = SettingsScrubDrag()
     @FocusState private var isFocused: Bool
 
@@ -80,8 +80,7 @@ struct SettingsPlaybackScrubBar: View {
     }
 
     private func content(_ position: SettingsAudioPlaybackPosition) -> some View {
-        let shownTime = drag.fraction.map(position.time(atFraction:)) ?? position.currentTime
-        let shown = SettingsAudioPlaybackPosition(currentTime: shownTime, duration: position.duration)
+        let shown = drag.previewPosition(position)
 
         return HStack(spacing: isTeleprompter ? Self.teleprompterLabelSpacing : 8) {
             Text(SettingsAudioPlaybackPosition.clockLabel(shown.currentTime))
@@ -194,18 +193,20 @@ struct SettingsPlaybackScrubBar: View {
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 0)
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .onChanged { value in
                         isFocused = true
                         drag.changed(
-                            toFraction: Double(value.location.x / availableWidth),
-                            duration: position.duration
+                            atX: value.location.x,
+                            trackFrame: geometry.frame(in: .global),
+                            duration: self.position().duration
                         )
                     }
                     .onEnded { value in
                         drag.ended(
-                            atFraction: Double(value.location.x / availableWidth),
-                            duration: position.duration,
+                            atX: value.location.x,
+                            trackFrame: geometry.frame(in: .global),
+                            duration: self.position().duration,
                             seek: seek
                         )
                     },
@@ -251,12 +252,46 @@ struct SettingsScrubDrag {
     /// How far short of the end a drag or step can seek.
     static let endMargin: TimeInterval = 0.1
 
-    private(set) var fraction: Double?
+    /// Absolute target and the duration that defined the track when this gesture began.
+    private var preview: SettingsAudioPlaybackPosition?
+    /// Global coordinates survive the label slots moving and narrowing the track during a drag.
+    private var pointerTrack: CGRect?
+    var fraction: Double? { preview?.fraction }
     private(set) var hidesFocusRing = false
+
+    func previewPosition(_ position: SettingsAudioPlaybackPosition) -> SettingsAudioPlaybackPosition {
+        guard let preview else { return position }
+        return SettingsAudioPlaybackPosition(
+            currentTime: Self.clampedTime(preview.currentTime, duration: position.duration),
+            duration: position.duration
+        )
+    }
 
     static func clampedTime(_ time: TimeInterval, duration: TimeInterval) -> TimeInterval {
         guard duration.isFinite, duration > 0, time.isFinite else { return 0 }
         return min(max(time, 0), max(duration - endMargin, 0))
+    }
+
+    mutating func changed(atX x: CGFloat, trackFrame: CGRect, duration: TimeInterval) {
+        hidesFocusRing = true
+        guard duration.isFinite, duration > 0,
+              let raw = pointerFraction(atX: x, trackFrame: trackFrame) else { return }
+        changed(toFraction: raw, duration: duration)
+    }
+
+    mutating func ended(atX x: CGFloat, trackFrame: CGRect, duration: TimeInterval,
+                        seek: (TimeInterval) -> Void) {
+        let raw = pointerFraction(atX: x, trackFrame: trackFrame) ?? .nan
+        ended(atFraction: raw, duration: duration, seek: seek)
+    }
+
+    private mutating func pointerFraction(atX x: CGFloat, trackFrame: CGRect) -> Double? {
+        let frame = pointerTrack ?? trackFrame
+        guard x.isFinite, frame.origin.x.isFinite, frame.width.isFinite, frame.width > 0 else { return nil }
+        let raw = Double((x - frame.minX) / frame.width)
+        guard raw.isFinite else { return nil }
+        pointerTrack = frame
+        return raw
     }
 
     @MainActor
@@ -272,7 +307,11 @@ struct SettingsScrubDrag {
     mutating func changed(toFraction raw: Double, duration: TimeInterval) {
         hidesFocusRing = true
         guard duration.isFinite, duration > 0, raw.isFinite else { return }
-        fraction = Self.clampedTime(raw * duration, duration: duration) / duration
+        let gestureDuration = preview?.duration ?? duration
+        preview = SettingsAudioPlaybackPosition(
+            currentTime: Self.clampedTime(raw * gestureDuration, duration: gestureDuration),
+            duration: gestureDuration
+        )
     }
 
     @MainActor
@@ -286,9 +325,14 @@ struct SettingsScrubDrag {
     }
 
     mutating func ended(atFraction raw: Double, duration: TimeInterval, seek: (TimeInterval) -> Void) {
-        defer { fraction = nil }
+        defer {
+            preview = nil
+            pointerTrack = nil
+        }
         guard duration.isFinite, duration > 0, raw.isFinite else { return }
-        seek(Self.clampedTime(raw * duration, duration: duration))
+        let gestureDuration = preview?.duration ?? duration
+        let target = Self.clampedTime(raw * gestureDuration, duration: gestureDuration)
+        seek(Self.clampedTime(target, duration: duration))
     }
 
     mutating func focusChanged(to focused: Bool) {
