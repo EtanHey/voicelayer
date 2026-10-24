@@ -4,6 +4,7 @@ public enum IntentCommand: String {
     case stop
     case cancel
     case replay
+    case seek
     case retranscribeLast = "retranscribe_last"
     case retranscribeRecording = "retranscribe_recording"
     case toggle

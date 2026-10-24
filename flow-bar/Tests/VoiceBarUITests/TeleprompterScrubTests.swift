@@ -95,6 +95,105 @@ final class TeleprompterScrubTests: XCTestCase {
         XCTAssertEqual(state.confirmationText, "Replay prefix audio unavailable")
     }
 
+    func testUndeliveredReadbackSeekShowsFailureAndIgnoresItsLateAck() throws {
+        for reason in ["VoiceLayer is starting", "VoiceLayer is reconnecting"] {
+            let state = VoiceState()
+            state.handleEvent(["type": "state", "state": "speaking", "text": "Readback", "readback_id": "retained"])
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            var command: [String: Any]?
+            state.sendCommand = { [weak state] payload in
+                command = payload
+                if reason == "VoiceLayer is starting" {
+                    state?.handleCommandDeliveryFailure(payload)
+                } else {
+                    state?.handleCommandDeliveryFailure(payload, reason: reason)
+                }
+            }
+
+            state.seek(offsetMs: 100)
+
+            let sent = try XCTUnwrap(command)
+            let id = try XCTUnwrap(sent["id"] as? String)
+            XCTAssertEqual(sent["scope"] as? String, "readback")
+            XCTAssertEqual(sent["readback_id"] as? String, "retained")
+            XCTAssertEqual(sent["offset_ms"] as? Int, 100)
+            XCTAssertEqual(state.confirmationText, reason)
+            XCTAssertEqual(state.teleprompterText, "Readback")
+            XCTAssertEqual(state.mode, .idle)
+
+            state.confirmationText = nil
+            state.handleEvent(["type": "ack", "command": "seek", "id": id,
+                               "outcome": "reject", "reason": "stale failure"])
+            XCTAssertNil(state.confirmationText, "an undelivered request is no longer pending")
+        }
+    }
+
+    func testReadbackSeekWithoutSenderShowsStartingAndKeepsText() {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Readback", "readback_id": "retained"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        state.sendCommand = nil
+
+        state.seek(offsetMs: 100)
+
+        XCTAssertEqual(state.confirmationText, "VoiceLayer is starting")
+        XCTAssertEqual(state.teleprompterText, "Readback")
+        XCTAssertEqual(state.mode, .idle)
+    }
+
+    func testDeliveredReadbackSeekWaitsForMatchingAckAndConsumesItOnce() throws {
+        for outcome in ["accept", "reject"] {
+            let state = VoiceState()
+            state.handleEvent(["type": "state", "state": "speaking", "text": "Readback", "readback_id": "retained"])
+            state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+            var command: [String: Any]?
+            state.sendCommand = { command = $0 }
+            state.seek(offsetMs: 100)
+            let id = try XCTUnwrap(command?["id"] as? String)
+            XCTAssertNil(state.confirmationText, "dispatch alone does not reject a delivered seek")
+
+            state.handleEvent(["type": "ack", "command": "seek", "id": "foreign",
+                               "outcome": "accept"])
+            state.handleEvent(["type": "ack", "command": "seek", "id": "foreign",
+                               "outcome": "reject", "reason": "foreign failure"])
+            XCTAssertNil(state.confirmationText)
+            state.handleEvent(["type": "ack", "command": "seek", "id": id,
+                               "outcome": outcome, "reason": "Replay position unavailable"])
+            XCTAssertEqual(state.confirmationText, outcome == "accept" ? nil : "Replay position unavailable")
+
+            state.confirmationText = nil
+            state.handleEvent(["type": "ack", "command": "seek", "id": id,
+                               "outcome": "reject", "reason": "duplicate failure"])
+            XCTAssertNil(state.confirmationText)
+            XCTAssertEqual(state.teleprompterText, "Readback")
+            XCTAssertEqual(state.mode, .idle)
+        }
+    }
+
+    func testFailedSeekCannotRetireANewerReadbackSeek() throws {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "speaking", "text": "Readback", "readback_id": "retained"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.seek(offsetMs: 100)
+        let first = try XCTUnwrap(commands.first)
+        state.handleCommandDeliveryFailure(first)
+        XCTAssertEqual(state.confirmationText, "VoiceLayer is starting")
+        state.confirmationText = nil
+        state.seek(offsetMs: 200)
+        let secondID = try XCTUnwrap(commands.last?["id"] as? String)
+        XCTAssertNotEqual(first["id"] as? String, secondID)
+
+        state.handleCommandDeliveryFailure(first, reason: "stale delivery failure")
+        state.handleEvent(["type": "ack", "command": "seek", "id": first["id"] as Any,
+                           "outcome": "reject", "reason": "stale ack"])
+        XCTAssertNil(state.confirmationText)
+        state.handleEvent(["type": "ack", "command": "seek", "id": secondID,
+                           "outcome": "reject", "reason": "Replay prefix audio unavailable"])
+        XCTAssertEqual(state.confirmationText, "Replay prefix audio unavailable")
+    }
+
     func testUntimedAndEstimatedWordsNeverGuessASeek() {
         let untimed = TeleprompterContentModel.words(text: "Clone speech", wordBoundaries: [])
         let estimated = TeleprompterContentModel.words(text: "Hello world", wordBoundaries: [

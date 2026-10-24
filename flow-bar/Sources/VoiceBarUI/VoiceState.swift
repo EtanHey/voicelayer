@@ -1805,7 +1805,11 @@ public final class VoiceState {
             command["id"] = id
             pendingReadbackSeekIDs.insert(id)
         }
-        sendCommand?(command)
+        if let sendCommand {
+            sendCommand(command)
+        } else if isTeleprompterReadback {
+            handleCommandDeliveryFailure(command)
+        }
     }
 
     /// P16: the pill's pause/play control. Both commands are scoped to the player on screen, so a click that
