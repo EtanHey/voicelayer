@@ -87,6 +87,143 @@ function populatedModelDir(root: string, name: string) {
   return dir;
 }
 
+// Exercise both production callers through the real reader. Only Brew's external
+// JSON/list surfaces and mutation are fixtures; no formula-reader override.
+function activeFormulaFixture(versions: string[], linked: string | null, options: {
+  queryStatus?: number;
+  upgradeStatus?: number;
+  offered?: string;
+} = {}) {
+  const root = fixtureRoot("active-formula-");
+  const brew = join(root, "brew");
+  const calls = join(root, "calls");
+  const info = join(root, "formula.json");
+  const offered = options.offered ?? "2.2.54";
+  const [stable, revision] = offered.split("_");
+  const json = JSON.stringify({ formulae: [{
+    name: "voicelayer", full_name: "etanhey/layers/voicelayer",
+    versions: { stable }, revision: Number(revision ?? 0),
+    installed: versions.map((version) => ({ version })), linked_keg: linked,
+  }], casks: [] });
+  writeFileSync(info, json);
+  writeFileSync(brew, [
+    "#!/usr/bin/env bash",
+    'printf "%s\\n" "$*" >> "$FORMULA_CALLS"',
+    '[[ "$HOMEBREW_NO_AUTO_UPDATE $HOMEBREW_NO_ENV_HINTS" = "1 1" ]] || exit 98',
+    'case "$*" in',
+    `  "info --json=v2 --formula etanhey/layers/voicelayer") cat "$FORMULA_INFO"; exit ${options.queryStatus ?? 0} ;;`,
+    `  "list --versions etanhey/layers/voicelayer") printf '%s\\n' 'voicelayer ${versions.join(" ")}' ;;`,
+    `  "upgrade --formula etanhey/layers/voicelayer") exit ${options.upgradeStatus ?? 0} ;;`,
+    '  *) exit 99 ;;', "esac", "",
+  ].join("\n"));
+  chmodSync(brew, 0o755);
+  return {
+    execute(body: string) {
+      const result = run(["bash", "-c", [
+        'source "$1"', "unset BREW_CASK_SYNC_TEST_FORMULA_VERSION",
+        "unset VOICELAYER_UPDATE_TEST_FORMULA_OFFERED_VERSION",
+        "NO_RELAUNCH=1", "QWEN3_MODEL_STEP_OK=0", body,
+      ].join("; "), "_", updateScript], {
+        BREW_CASK_SYNC_BREW_BIN: brew, FORMULA_INFO: info, FORMULA_CALLS: calls,
+        BREW_CASK_SYNC_TEST_APP_VERSION: "2.2.54",
+        BREW_CASK_SYNC_TEST_CASK_VERSION: "2.2.54",
+        BREW_CASK_SYNC_TEST_OFFERED_VERSION: "2.2.54",
+      });
+      expect(readFileSync(info, "utf8")).toBe(json);
+      return result;
+    },
+    calls: () => readFileSync(calls, "utf8").trim().split("\n"),
+  };
+}
+
+describe("active formula caller contracts", () => {
+  for (const versions of [["2.2.51", "2.2.50", "2.2.54"], ["2.2.50", "2.2.54"], ["2.2.54", "2.2.55", "2.2.50"]]) {
+    test(`active formula current: no upgrade and agreeing summary for ${versions}`, () => {
+      const fixture = activeFormulaFixture(versions, "2.2.54");
+      const result = fixture.execute("update_formula; verify_voicebar_stack");
+      expect(result.exitCode).toBe(0);
+      expect(text(result.stdout)).toContain("already at 2.2.54");
+      expect(text(result.stdout)).toContain("OK    formula: voicelayer 2.2.54 (offered 2.2.54)");
+      expect(fixture.calls().every((call) => call === "info --json=v2 --formula etanhey/layers/voicelayer")).toBe(true);
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  test("active formula behind uses only ordinary upgrade; stale summary still fails", () => {
+    const fixture = activeFormulaFixture(["2.2.55", "2.2.54", "2.2.50"], "2.2.50");
+    const result = fixture.execute("update_formula; verify_voicebar_stack");
+    expect(result.exitCode).toBe(1);
+    expect(fixture.calls().filter((call) => !call.startsWith("info "))).toEqual([
+      "upgrade --formula etanhey/layers/voicelayer",
+    ]);
+    expect(text(result.stdout)).toContain("FAIL  formula: voicelayer 2.2.50 (offered 2.2.54)");
+    expect(text(result.stdout)).not.toContain("GREEN:");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("active formula revision agrees with its own offer ahead of the cask", () => {
+    const fixture = activeFormulaFixture(["2.2.55", "2.2.54_2"], "2.2.54_2", { offered: "2.2.54_2" });
+    const result = fixture.execute("update_formula; verify_voicebar_stack");
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("OK    formula: voicelayer 2.2.54_2 (offered 2.2.54_2)");
+    expect(fixture.calls().some((call) => call.startsWith("upgrade "))).toBe(false);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("active formula dry-run reads identity but only prints the ordinary upgrade", () => {
+    const fixture = activeFormulaFixture(["2.2.54", "2.2.50"], "2.2.50");
+    const result = fixture.execute("DRY_RUN_COMMANDS=1; update_formula");
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("upgrade --formula etanhey/layers/voicelayer");
+    expect(fixture.calls()).toEqual([
+      "info --json=v2 --formula etanhey/layers/voicelayer",
+      "info --json=v2 --formula etanhey/layers/voicelayer",
+    ]);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("active formula missing Homebrew cannot make the summary green", () => {
+    const fixture = activeFormulaFixture(["2.2.54"], "2.2.54");
+    const result = fixture.execute("bcs_brew_bin() { return 1; }; verify_voicebar_stack");
+    expect(result.exitCode).toBe(1);
+    expect(text(result.stdout)).toContain("FAIL  formula:");
+    expect(text(result.stdout)).not.toContain("SKIP  formula:");
+    expect(text(result.stdout)).not.toContain("GREEN:");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("active formula genuine absence remains a no-op and an explicit summary skip", () => {
+    const fixture = activeFormulaFixture([], null);
+    const result = fixture.execute("update_formula; verify_voicebar_stack");
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("is not installed; skipping formula upgrade");
+    expect(text(result.stdout)).toContain("SKIP  formula: voicelayer is not installed");
+    expect(fixture.calls()).toHaveLength(2);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  for (const [label, versions, linked, queryStatus] of [
+    ["unlinked", ["2.2.54"], null, 0],
+    ["stale link", ["2.2.54"], "2.2.50", 0],
+    ["ambiguous identity", ["2.2.54", "2.2.54"], "2.2.54", 0],
+    ["query failure", ["2.2.54"], "2.2.54", 42],
+  ] satisfies Array<[string, string[], string | null, number]>) {
+    for (const caller of ["update_formula", "verify_voicebar_stack"]) {
+      test(`active formula ${label} is fatal in ${caller}`, () => {
+        const fixture = activeFormulaFixture(versions, linked, { queryStatus });
+        const result = fixture.execute(caller);
+        expect(result.exitCode).toBe(1);
+        expect(text(result.stdout)).not.toContain("SKIP  formula");
+        expect(text(result.stdout)).not.toContain("GREEN:");
+        expect(fixture.calls()).toEqual(["info --json=v2 --formula etanhey/layers/voicelayer"]);
+        expect(text(result.stderr)).toContain("active formula identity");
+        if (caller === "verify_voicebar_stack") expect(text(result.stdout)).toContain("FAIL  formula:");
+      }, SUBPROCESS_TEST_TIMEOUT_MS);
+    }
+  }
+
+  test("active formula ordinary upgrade failure remains fatal", () => {
+    const fixture = activeFormulaFixture(["2.2.54", "2.2.50"], "2.2.50", { upgradeStatus: 42 });
+    const result = fixture.execute("update_formula");
+    expect(result.exitCode).toBe(42);
+    expect(fixture.calls().filter((call) => call.startsWith("upgrade "))).toHaveLength(1);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+});
+
 describe("voicelayer-update.sh", () => {
   test("dry-run prints the full M1 update plan without executing live steps", () => {
     const result = run(["bash", updateScript, "--dry-run"]);

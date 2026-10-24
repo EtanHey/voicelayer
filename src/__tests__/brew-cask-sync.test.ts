@@ -194,6 +194,100 @@ function registeredVersions(box: Sandbox) {
   return readdirSync(box.caskroom).filter((entry) => !entry.startsWith("."));
 }
 
+describe("active formula reader", () => {
+  // Homebrew docs/Querying-Brew.md and Formula#to_hash: linked_keg is a
+  // PkgVersion string; installed contains every retained keg, in any order.
+  function readFormula(versions: string[], linked: string | null, options: {
+    token?: string;
+    json?: string;
+    queryStatus?: number;
+  } = {}) {
+    const box = sandbox({});
+    const formula = options.token ?? "etanhey/layers/voicelayer";
+    const json = options.json ?? JSON.stringify({ formulae: [{
+      name: "voicelayer", full_name: "etanhey/layers/voicelayer",
+      installed: versions.map((version) => ({ version })), linked_keg: linked,
+    }], casks: [] });
+    writeFileSync(join(box.root, "formula.json"), json);
+    writeFileSync(box.brewStub, [
+      "#!/usr/bin/env bash",
+      'printf "%s\\n" "$*" >> "$BREW_STUB_LOG"',
+      '[[ "$HOMEBREW_NO_AUTO_UPDATE $HOMEBREW_NO_ENV_HINTS" = "1 1" ]] || exit 98',
+      'case "$*" in',
+      `  "info --json=v2 --formula ${formula}") cat "${join(box.root, "formula.json")}"; exit ${options.queryStatus ?? 0} ;;`,
+      `  "list --versions ${formula}") printf '%s\\n' 'voicelayer ${versions.join(" ")}' ;;`,
+      '  *) exit 99 ;;',
+      "esac", "",
+    ].join("\n"));
+    const result = runInLib(box, [
+      "unset BREW_CASK_SYNC_TEST_FORMULA_VERSION",
+      'bcs_formula_version "$FORMULA_TOKEN"',
+    ].join("\n"), { FORMULA_TOKEN: formula });
+    expect(readFileSync(join(box.root, "formula.json"), "utf8")).toBe(json);
+    return { box, result };
+  }
+
+  for (const versions of [
+    ["2.2.51", "2.2.50", "2.2.54"], // measured MBP order
+    ["2.2.50", "2.2.54"], // measured M1 retained/current shape
+    ["2.2.54", "2.2.50", "2.2.51"],
+    ["2.2.51", "2.2.55", "2.2.54"], // newer inactive keg must not win
+  ]) {
+    test(`active formula ignores retained order: ${versions.join(", ")}`, () => {
+      const { box, result } = readFormula(versions, "2.2.54");
+      expect(result.exitCode).toBe(0);
+      expect(decode(result.stdout).trim()).toBe("2.2.54");
+      expect(brewCalls(box).trim()).toBe("info --json=v2 --formula etanhey/layers/voicelayer");
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  test("active formula preserves revision and fully qualified identity", () => {
+    const { result } = readFormula(["2.2.55", "2.2.54_2"], "2.2.54_2");
+    expect(result.exitCode).toBe(0);
+    expect(decode(result.stdout).trim()).toBe("2.2.54_2");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("active formula accepts a bare token and reports true absence", () => {
+    const { result } = readFormula([], null, { token: "voicelayer" });
+    expect(result.exitCode).toBe(0);
+    expect(decode(result.stdout).trim()).toBe("");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  test("active formula explicit seam still supports an empty version without Brew", () => {
+    const box = sandbox({});
+    const result = runInLib(box, 'bcs_formula_version etanhey/layers/voicelayer', {
+      BREW_CASK_SYNC_TEST_FORMULA_VERSION: "",
+      BREW_CASK_SYNC_BREW_BIN: "/nonexistent/voicelayer-test-brew",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(decode(result.stdout).trim()).toBe("");
+    expect(brewCalls(box)).toBe("");
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
+  for (const [label, versions, linked, options] of [
+    ["unlinked", ["2.2.54"], null, {}],
+    ["stale link", ["2.2.54"], "2.2.50", {}],
+    ["ambiguous installed identity", ["2.2.54", "2.2.54"], "2.2.54", {}],
+    ["query failure with valid stdout", ["2.2.54"], "2.2.54", { queryStatus: 42 }],
+    ["malformed JSON", [], null, { json: "{" }],
+    ["missing schema", [], null, { json: '{"formulae":[{}]}' }],
+    ["missing linked field", [], null, { json: JSON.stringify({ formulae: [{
+      name: "voicelayer", full_name: "etanhey/layers/voicelayer", installed: [],
+    }] }) }],
+    ["ambiguous formulae", [], null, { json: '{"formulae":[{},{}]}' }],
+    ["wrong tap", [], null, { json: JSON.stringify({ formulae: [{
+      name: "voicelayer", full_name: "other/tap/voicelayer", installed: [], linked_keg: null,
+    }] }) }],
+  ] satisfies Array<[string, string[], string | null, { json?: string; queryStatus?: number }]>) {
+    test(`active formula rejects ${label} without an absent result`, () => {
+      const { result } = readFormula(versions, linked, options);
+      expect(result.exitCode).toBe(1);
+      expect(decode(result.stdout)).toBe("");
+      expect(decode(result.stderr)).toContain("active formula identity");
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+});
+
 describe("brew-cask-sync drift detection", () => {
   const cases: Array<[string, string | undefined, string | undefined, string]> = [
     ["both agree", "2.2.6", "2.2.6", "managed"],
