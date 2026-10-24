@@ -313,7 +313,7 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertTrue(commands.isEmpty)
         XCTAssertEqual(draft.displayedText(state.speechControls?.shortLimit), "20000")
         XCTAssertEqual(SpeechThresholdDraft.confirmedLabel(state.speechControls?.shortLimit),
-                       "Applied: 400 characters · Saved in settings")
+                       "Last reported cutoff: 400 characters · Saved in settings at that report")
         for _ in 0..<2 {
             draft.apply(controls: state.speechControls, connected: true, busy: false,
                         pending: state.speechPending, onChange: state.setTTSSetting)
@@ -369,6 +369,27 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertEqual(commands.count, 1)
     }
 
+    private func assertLastReportedThreshold(_ state: VoiceState, draft: SpeechThresholdDraft, cutoff: Int,
+                                             commandCount: () -> Int, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(SpeechThresholdDraft.confirmedLabel(state.speechControls?.shortLimit),
+                       "Last reported cutoff: \(cutoff) characters · Saved in settings at that report", file: file, line: line)
+        XCTAssertEqual(SpeechThresholdDraft.reportStatus,
+                       "Profile descriptions and Revert use the last reported cutoff; current settings may differ.", file: file, line: line)
+        XCTAssertEqual(SpeechThresholdDraft.captionContext,
+                       "Based on the last reported cutoff.", file: file, line: line)
+        XCTAssertEqual(SpeechThresholdDraft.revertHelp,
+                       "Restore the last reported cutoff locally without changing VoiceLayer.", file: file, line: line)
+        XCTAssertNil(SpeechThresholdDraft.blockedReason(controls: state.speechControls, connected: true,
+            busy: false, pending: state.speechPending, callbackAvailable: true), file: file, line: line)
+        XCTAssertEqual(draft.canApply(controls: state.speechControls, connected: true, busy: false,
+            pending: state.speechPending, callbackAvailable: true), cutoff == 400, file: file, line: line)
+        let sentBeforeRevert = commandCount()
+        var reverted = draft
+        reverted.revert()
+        XCTAssertEqual(reverted.displayedText(state.speechControls?.shortLimit), String(cutoff), file: file, line: line)
+        XCTAssertEqual(commandCount(), sentBeforeRevert, file: file, line: line)
+    }
+
     func testThresholdAcceptWithoutControlsWaitsForAuthoritativeHealth() throws {
         let state = VoiceState()
         var commands: [[String: Any]] = []
@@ -385,10 +406,18 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertEqual(commands.last?["cmd"] as? String, "health")
         XCTAssertEqual(state.speechControls?.shortLimit.effective, 400)
         XCTAssertEqual(draft.text, "20000")
+        XCTAssertNil(state.speechNotice, "Missing accept metadata has no notice-based freshness signal")
+        XCTAssertTrue(state.speechPending.isEmpty)
+        assertLastReportedThreshold(state, draft: draft, cutoff: 400, commandCount: { commands.count })
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls(400)])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertEqual(draft.text, "20000", "A fresh equal-value report must not erase the local draft")
+        assertLastReportedThreshold(state, draft: draft, cutoff: 400, commandCount: { commands.count })
         state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls(20000)])
         draft.reconcile(state.speechControls?.shortLimit)
         XCTAssertNil(draft.text)
         XCTAssertEqual(state.speechControls?.shortLimit.effective, 20000)
+        assertLastReportedThreshold(state, draft: draft, cutoff: 20000, commandCount: { commands.count })
     }
 
     @MainActor
@@ -413,10 +442,17 @@ final class SpeechSettingsTests: XCTestCase {
         draft.reconcile(state.speechControls?.shortLimit)
         XCTAssertEqual(state.speechControls?.shortLimit.effective, 400)
         XCTAssertEqual(draft.text, "20000")
+        XCTAssertTrue(state.speechPending.isEmpty)
+        assertLastReportedThreshold(state, draft: draft, cutoff: 400, commandCount: { commands.count })
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls(400)])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertEqual(draft.text, "20000", "A fresh equal-value report must not erase the local draft")
+        assertLastReportedThreshold(state, draft: draft, cutoff: 400, commandCount: { commands.count })
         state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls(20000)])
         draft.reconcile(state.speechControls?.shortLimit)
         XCTAssertNil(draft.text)
         XCTAssertEqual(state.speechControls?.shortLimit.effective, 20000)
+        assertLastReportedThreshold(state, draft: draft, cutoff: 20000, commandCount: { commands.count })
     }
 
     func testThresholdInvalidAndUnchangedDraftsRefuseApplyWithoutClamping() throws {
@@ -460,12 +496,14 @@ final class SpeechSettingsTests: XCTestCase {
         draft.apply(controls: controls, connected: true, busy: false, pending: [:], onChange: nil)
         draft.reconcile(nil)
         XCTAssertEqual(draft.displayedText(nil), "20000", "Disconnect keeps the draft, not invented confirmation")
-        XCTAssertEqual(SpeechThresholdDraft.confirmedLabel(nil), "Applied cutoff unavailable; waiting for VoiceLayer.")
+        XCTAssertEqual(SpeechThresholdDraft.confirmedLabel(nil), "No reported cutoff available; waiting for VoiceLayer.")
         XCTAssertTrue(SpeechSettingsView.fieldDisabled("short_limit_chars", controls: locked, pending: [:]))
         XCTAssertEqual(SpeechThresholdDraft.confirmedLabel(locked.shortLimit),
-                       "Effective: 600 characters · Environment override; saved value not reported.")
+                       "Last reported effective cutoff: 600 characters · Environment override; saved value not reported.")
         let defaults = try XCTUnwrap(SpeechControlsState(controls: Self.thresholdControls(source: "default")))
         XCTAssertTrue(SpeechThresholdDraft.confirmedLabel(defaults.shortLimit).contains("no saved value reported"))
+        XCTAssertEqual(SpeechThresholdDraft.confirmedLabel(defaults.shortLimit),
+                       "Last reported cutoff: 400 characters · Default at that report; no saved value reported.")
     }
 
 }

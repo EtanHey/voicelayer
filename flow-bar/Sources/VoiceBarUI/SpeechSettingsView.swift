@@ -157,6 +157,7 @@ public struct SpeechSettingsView: View {
                         } header: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(kind.title)
+                                Text(SpeechThresholdDraft.captionContext).font(.caption).foregroundStyle(.secondary)
                                 Text(Self.subtitle(kind, limit: controls.shortLimit.effective))
                                     .font(.caption).foregroundStyle(.secondary).fontWeight(.regular)
                             }
@@ -192,6 +193,7 @@ public struct SpeechSettingsView: View {
         Section("Voice profile threshold") {
             Text(SpeechThresholdDraft.confirmedLabel(controls?.shortLimit))
                 .accessibilityIdentifier("speech-threshold-applied")
+            Text(SpeechThresholdDraft.reportStatus).font(.caption).foregroundStyle(.secondary)
             HStack {
                 Text("Draft")
                 TextField("Characters", text: Binding(
@@ -212,6 +214,8 @@ public struct SpeechSettingsView: View {
                                                   pending: pending, callbackAvailable: onChange != nil))
                 .accessibilityIdentifier("speech-threshold-apply")
                 Button("Revert") { thresholdDraft.revert() }
+                    .help(SpeechThresholdDraft.revertHelp)
+                    .accessibilityLabel("Revert draft to last reported cutoff")
                     .disabled(thresholdDraft.text == nil || controls == nil)
                     .accessibilityIdentifier("speech-threshold-revert")
             }

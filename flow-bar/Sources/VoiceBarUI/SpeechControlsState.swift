@@ -125,16 +125,19 @@ struct SpeechThresholdDraft: Equatable {
     mutating func reconcile(_ limit: SpeechSetting<Int>?) {
         if let limit, let text, let value = Self.value(text), value == limit.effective { self.text = nil }
     }
+    static let reportStatus = "Profile descriptions and Revert use the last reported cutoff; current settings may differ."
+    static let captionContext = "Based on the last reported cutoff."
+    static let revertHelp = "Restore the last reported cutoff locally without changing VoiceLayer."
     static func confirmedLabel(_ limit: SpeechSetting<Int>?) -> String {
-        guard let limit else { return "Applied cutoff unavailable; waiting for VoiceLayer." }
+        guard let limit else { return "No reported cutoff available; waiting for VoiceLayer." }
         switch limit.source {
         case .environment:
-            return "Effective: \(limit.effective) characters · Environment override; saved value not reported."
+            return "Last reported effective cutoff: \(limit.effective) characters · Environment override; saved value not reported."
         case .settings:
-            let source = limit.raw == .number(limit.effective) ? "Saved in settings" : "Settings source"
-            return "Applied: \(limit.effective) characters · \(source)"
+            let source = limit.raw == .number(limit.effective) ? "Saved in settings at that report" : "Settings source at that report"
+            return "Last reported cutoff: \(limit.effective) characters · \(source)"
         case .default:
-            return "Applied: \(limit.effective) characters · Default; no saved value reported."
+            return "Last reported cutoff: \(limit.effective) characters · Default at that report; no saved value reported."
         }
     }
     static func blockedReason(controls: SpeechControlsState?, connected: Bool, busy: Bool,
