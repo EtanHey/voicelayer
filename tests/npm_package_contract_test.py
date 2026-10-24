@@ -4,6 +4,10 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -82,6 +86,51 @@ class PackageContractTests(unittest.TestCase):
     def test_invalid_manifest_refused(self):
         self.check_archive(omit=("package/package.json",), extra=[
             ("package/package.json", b"[", tarfile.REGTYPE)], expected_error="Expecting")
+
+
+class WorkflowSourceTests(unittest.TestCase):
+    def test_checkouts_and_package_commands_keep_separate_roots(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/publish.yml").read_text()
+        self.assertIn("defaults:\n      run:\n        working-directory: source", workflow)
+        self.assertIn("ref: ${{ inputs.ref || github.ref }}\n          path: source", workflow)
+        self.assertIn("ref: ${{ github.workflow_sha }}\n          path: workflow-tools", workflow)
+        self.assertIn("working-directory: workflow-tools\n        run: python3 -m unittest", workflow)
+        self.assertNotIn("${{ inputs.ref }}", workflow.split("        run:", 1)[1])
+
+    def test_legacy_source_guard_location_fails_and_workflow_command_passes(self):
+        root = Path(__file__).resolve().parents[1]
+        fixtures = root / ".build.noindex"
+        fixtures.mkdir(exist_ok=True)
+        workflow = (root / ".github/workflows/publish.yml").read_text()
+        command = re.search(r"^          (python3 .*verify-npm-package.py.*)$", workflow, re.M).group(1)
+        with tempfile.TemporaryDirectory(dir=fixtures) as directory:
+            workspace = Path(directory)
+            source = workspace / "source"
+            source.mkdir()
+            tools = workspace / "workflow-tools/scripts"
+            tools.mkdir(parents=True)
+            shutil.copyfile(root / "scripts/verify-npm-package.py", tools / "verify-npm-package.py")
+            (source / "bun.lock").write_bytes(LOCK)
+            (source / "package.json").write_text(json.dumps(IDENTITY))
+            for argv in (["git", "init", "-q"], ["git", "add", "bun.lock", "package.json"],
+                         ["git", "-c", "user.name=Contract Fixture", "-c", "user.email=fixture@example.invalid",
+                          "commit", "-qm", "fixture source"]):
+                subprocess.run(argv, cwd=source, check=True, capture_output=True)
+            archive = workspace / "fixture.tgz"
+            with tarfile.open(archive, "w:gz") as packed:
+                for name, data in [("bun.lock", LOCK), ("package.json", json.dumps(IDENTITY).encode())]:
+                    member = tarfile.TarInfo("package/" + name)
+                    member.size = len(data)
+                    packed.addfile(member, io.BytesIO(data))
+            old = subprocess.run([sys.executable, "scripts/verify-npm-package.py", str(archive)],
+                                 cwd=source, capture_output=True, text=True)
+            self.assertEqual(old.returncode, 2)
+            self.assertFalse((source / "scripts/verify-npm-package.py").exists())
+            result = subprocess.run(["bash", "-e", "-c", 'pack_dir="$1"; archive="$2"; ' + command,
+                                     "contract-fixture", str(workspace), archive.name],
+                                    cwd=source, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["version"], IDENTITY["version"])
 
 
 if __name__ == "__main__":

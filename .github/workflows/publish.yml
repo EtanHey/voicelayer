@@ -21,6 +21,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: source
     # Repeated from the top level deliberately: a job-level `permissions` block
     # replaces (not merges with) the workflow default, so anything added here
     # later would silently drop `id-token: write` and break OIDC.
@@ -31,6 +34,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
+          path: source
+
+      # Older requested tags need the guard from this immutable workflow revision.
+      # Keep tooling beside the package so it cannot enter the selected archive.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: workflow-tools
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -71,13 +82,16 @@ jobs:
           npm --version
           test "$(npm --version)" = 11.19.1
 
+      - name: Test package contract tooling
+        working-directory: workflow-tools
+        run: python3 -m unittest discover -s tests -p npm_package_contract_test.py -v
+
       - name: Verify packed package contract
         run: |
-          python3 -m unittest discover -s tests -p npm_package_contract_test.py -v
           pack_dir=$(mktemp -d "$RUNNER_TEMP/voicelayer-pack.XXXXXX")
           npm pack --pack-destination "$pack_dir"
           archive="voicelayer-mcp-$(node -p 'require("./package.json").version').tgz"
-          python3 scripts/verify-npm-package.py "$pack_dir/$archive"
+          python3 ../workflow-tools/scripts/verify-npm-package.py "$pack_dir/$archive" --source "$PWD"
 
       - name: Publish (OIDC trusted publishing)
         # Verbose so the OIDC token exchange is visible. A default-loglevel run
