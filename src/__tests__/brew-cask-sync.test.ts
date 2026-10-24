@@ -308,6 +308,65 @@ describe("active formula reader", () => {
     }, SUBPROCESS_TEST_TIMEOUT_MS);
   }
 
+  for (const formula of [".fixture", "etanhey/layers/.fixture"]) {
+    for (const [label, inventory] of [["empty", ""], ["unrelated", "jq\n_fixture\n"]] satisfies Array<[string, string]>) {
+      test(`active formula hidden target linked: ${formula} with ${label} inventory`, () => {
+        const { box, result } = readFormula(["2.2.55", "2.2.54_2"], "2.2.54_2", {
+          token: formula, inventory,
+          json: JSON.stringify({ formulae: [{
+            name: ".fixture", full_name: "etanhey/layers/.fixture",
+            installed: [{ version: "2.2.55" }, { version: "2.2.54_2" }], linked_keg: "2.2.54_2",
+          }], casks: [] }),
+        });
+        expect(result.exitCode).toBe(0);
+        expect(decode(result.stdout)).toBe("2.2.54_2\n");
+        expect(decode(result.stderr)).toBe("");
+        expect(brewCalls(box).trim().split("\n")).toEqual([
+          "list --formula -1", `info --json=v2 --formula ${formula}`,
+        ]);
+      }, SUBPROCESS_TEST_TIMEOUT_MS);
+    }
+  }
+
+  for (const [label, formula, linked, options] of [
+    ["installed-unlinked", ".fixture", null, {}],
+    ["missing JSON", "etanhey/layers/.fixture", "2.2.54", { json: "" }],
+    ["query failure with valid JSON", "etanhey/layers/.fixture", "2.2.54", { queryStatus: 42 }],
+    ["dot-only missing query", ".", null, { json: "", queryStatus: 1 }],
+    ["qualified dot-only missing query", "etanhey/layers/..", null, { json: "", queryStatus: 1 }],
+  ] satisfies Array<[string, string, string | null, { json?: string; queryStatus?: number }]>) {
+    test(`active formula hidden target rejects ${label}`, () => {
+      const { box, result } = readFormula(["2.2.54"], linked, {
+        token: formula, inventory: "",
+        json: JSON.stringify({ formulae: [{
+          name: ".fixture", full_name: "etanhey/layers/.fixture",
+          installed: [{ version: "2.2.54" }], linked_keg: linked,
+        }], casks: [] }), ...options,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(decode(result.stdout)).toBe("");
+      expect(decode(result.stderr)).toContain("active formula identity");
+      expect(brewCalls(box).trim().split("\n")).toEqual([
+        "list --formula -1", `info --json=v2 --formula ${formula}`,
+      ]);
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  test("active formula hidden target absence requires exact named JSON", () => {
+    const { box, result } = readFormula([], null, {
+      token: "etanhey/layers/.fixture", inventory: "jq\n",
+      json: JSON.stringify({ formulae: [{
+        name: ".fixture", full_name: "etanhey/layers/.fixture", installed: [], linked_keg: null,
+      }], casks: [] }),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(decode(result.stdout)).toBe("");
+    expect(decode(result.stderr)).toBe("");
+    expect(brewCalls(box).trim().split("\n")).toEqual([
+      "list --formula -1", "info --json=v2 --formula etanhey/layers/.fixture",
+    ]);
+  }, SUBPROCESS_TEST_TIMEOUT_MS);
+
   for (const [label, options] of [
     ["failed empty inventory", { inventory: "", inventoryStatus: 1 }],
     ["failed partial inventory", { inventory: "jq\n", inventoryStatus: 42 }],

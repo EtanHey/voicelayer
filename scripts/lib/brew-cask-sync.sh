@@ -225,7 +225,8 @@ if len(parts) not in (1, 3) or not all(valid_name(part) for part in parts):
     sys.exit("invalid formula token")
 if not all(valid_name(name) for name in names) or len(set(names)) != len(names):
     sys.exit("invalid formula rack inventory")
-if parts[-1] in names:
+# Unnamed ls omits dot-prefixed racks; only named JSON can prove their absence.
+if parts[-1].startswith(".") or parts[-1] in names:
     print(parts[-1])
 ' "$name")"; then
         bcs_err "could not determine inventory for active formula identity: $name"

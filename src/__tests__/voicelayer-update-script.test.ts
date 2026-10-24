@@ -90,6 +90,7 @@ function populatedModelDir(root: string, name: string) {
 // Exercise both production callers through the real reader. Only Brew's external
 // JSON/list surfaces and mutation are fixtures; no formula-reader override.
 function activeFormulaFixture(versions: string[], linked: string | null, options: {
+  token?: string;
   queryStatus?: number;
   upgradeStatus?: number;
   offered?: string;
@@ -101,6 +102,7 @@ function activeFormulaFixture(versions: string[], linked: string | null, options
   const brew = join(root, "brew");
   const calls = join(root, "calls");
   const info = join(root, "formula.json");
+  const formula = options.token ?? "etanhey/layers/voicelayer";
   const offered = options.offered ?? "2.2.54";
   const [stable, revision] = offered.split("_");
   const json = options.json ?? JSON.stringify({ formulae: [{
@@ -116,9 +118,9 @@ function activeFormulaFixture(versions: string[], linked: string | null, options
     '[[ "$HOMEBREW_NO_AUTO_UPDATE $HOMEBREW_NO_ENV_HINTS" = "1 1" ]] || exit 98',
     'case "$*" in',
     `  "list --formula -1") cat "$FORMULA_INVENTORY"; exit ${options.inventoryStatus ?? 0} ;;`,
-    `  "info --json=v2 --formula etanhey/layers/voicelayer") cat "$FORMULA_INFO"; exit ${options.queryStatus ?? 0} ;;`,
-    `  "list --versions etanhey/layers/voicelayer") printf '%s\\n' 'voicelayer ${versions.join(" ")}' ;;`,
-    `  "upgrade --formula etanhey/layers/voicelayer") exit ${options.upgradeStatus ?? 0} ;;`,
+    `  "info --json=v2 --formula ${formula}") cat "$FORMULA_INFO"; exit ${options.queryStatus ?? 0} ;;`,
+    `  "list --versions ${formula}") printf '%s\\n' 'voicelayer ${versions.join(" ")}' ;;`,
+    `  "upgrade --formula ${formula}") exit ${options.upgradeStatus ?? 0} ;;`,
     '  *) exit 99 ;;', "esac", "",
   ].join("\n"));
   chmodSync(brew, 0o755);
@@ -130,6 +132,7 @@ function activeFormulaFixture(versions: string[], linked: string | null, options
         "NO_RELAUNCH=1", "QWEN3_MODEL_STEP_OK=0", body,
       ].join("; "), "_", updateScript], {
         BREW_CASK_SYNC_BREW_BIN: brew, FORMULA_INFO: info, FORMULA_CALLS: calls,
+        VOICELAYER_UPDATE_VOICEBAR_FORMULA_NAME: formula,
         FORMULA_INVENTORY: join(root, "inventory"),
         BREW_CASK_SYNC_TEST_APP_VERSION: "2.2.54",
         BREW_CASK_SYNC_TEST_CASK_VERSION: "2.2.54",
@@ -251,6 +254,74 @@ describe("active formula caller contracts", () => {
           "list --formula -1", "info --json=v2 --formula etanhey/layers/voicelayer",
           "info --json=v2 --formula etanhey/layers/voicelayer",
         ] : ["list --formula -1"]);
+      }, SUBPROCESS_TEST_TIMEOUT_MS);
+    }
+  }
+
+  for (const [formula, inventory, linked] of [
+    [".fixture", "", "2.2.54"],
+    ["etanhey/layers/.fixture", "jq\n_fixture\n", "2.2.50"],
+  ] satisfies Array<[string, string, string]>) {
+    test(`active formula hidden target linked routing: ${formula} at ${linked}`, () => {
+      const current = linked === "2.2.54";
+      const fixture = activeFormulaFixture(["2.2.55", linked], linked, {
+        token: formula, inventory,
+        json: JSON.stringify({ formulae: [{
+          name: ".fixture", full_name: "etanhey/layers/.fixture",
+          versions: { stable: "2.2.54" }, revision: 0,
+          installed: [{ version: "2.2.55" }, { version: linked }], linked_keg: linked,
+        }], casks: [] }),
+      });
+      const result = fixture.execute("update_formula; verify_voicebar_stack");
+      expect(result.exitCode).toBe(current ? 0 : 1);
+      expect(text(result.stderr)).toBe(current ? "" : "ERROR: VoiceLayer is NOT canonical on this Mac: 1 check(s) failed above.\n");
+      expect(text(result.stdout)).toContain(current
+        ? `Homebrew formula ${formula} is already at 2.2.54.`
+        : `upgrade --formula ${formula}`);
+      expect(text(result.stdout)).toContain(`${current ? "OK  " : "FAIL"}  formula: .fixture ${linked} (offered 2.2.54)`);
+      expect(text(result.stdout)).not.toContain("SKIP  formula:");
+      if (!current) expect(text(result.stdout)).not.toContain("GREEN:");
+      const info = `info --json=v2 --formula ${formula}`;
+      expect(fixture.calls()).toEqual([
+        "list --formula -1", info, info,
+        ...(current ? [] : [`upgrade --formula ${formula}`]),
+        "list --formula -1", info, info,
+      ]);
+    }, SUBPROCESS_TEST_TIMEOUT_MS);
+  }
+
+  for (const [label, versions, linked, options] of [
+    ["installed-unlinked", ["2.2.54"], null, {}],
+    ["missing JSON", ["2.2.54"], "2.2.54", { json: "" }],
+    ["query failure with valid JSON", ["2.2.54"], "2.2.54", { queryStatus: 42 }],
+    ["exact named absence", [], null, {}],
+  ] satisfies Array<[string, string[], string | null, Parameters<typeof activeFormulaFixture>[2]]>) {
+    for (const caller of ["update_formula", "verify_voicebar_stack"]) {
+      test(`active formula hidden target ${label} in ${caller}`, () => {
+        const absent = label === "exact named absence";
+        const formula = "etanhey/layers/.fixture";
+        const fixture = activeFormulaFixture(versions, linked, {
+          token: formula, inventory: "jq\n",
+          json: JSON.stringify({ formulae: [{
+            name: ".fixture", full_name: formula,
+            installed: versions.map((version) => ({ version })), linked_keg: linked,
+          }], casks: [] }), ...options,
+        });
+        const result = fixture.execute(caller);
+        expect(result.exitCode).toBe(absent ? 0 : 1);
+        expect(fixture.calls()).toEqual(["list --formula -1", `info --json=v2 --formula ${formula}`]);
+        if (absent) {
+          expect(text(result.stderr)).toBe("");
+          expect(text(result.stdout)).toContain(caller === "update_formula"
+            ? `Homebrew formula ${formula} is not installed; skipping formula upgrade.`
+            : "SKIP  formula: .fixture is not installed");
+        } else {
+          expect(text(result.stderr)).toContain("active formula identity");
+          expect(text(result.stdout)).not.toContain("SKIP  formula:");
+          expect(text(result.stdout)).not.toContain("GREEN:");
+          expect(text(result.stdout)).not.toContain("is not installed; skipping formula upgrade");
+          if (caller === "verify_voicebar_stack") expect(text(result.stdout)).toContain("FAIL  formula:");
+        }
       }, SUBPROCESS_TEST_TIMEOUT_MS);
     }
   }
