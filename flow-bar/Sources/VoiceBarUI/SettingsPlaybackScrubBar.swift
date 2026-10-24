@@ -193,17 +193,19 @@ struct SettingsPlaybackScrubBar: View {
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 0)
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .onChanged { value in
                         isFocused = true
                         drag.changed(
-                            toFraction: Double(value.location.x / availableWidth),
+                            atX: value.location.x,
+                            trackFrame: geometry.frame(in: .global),
                             duration: self.position().duration
                         )
                     }
                     .onEnded { value in
                         drag.ended(
-                            atFraction: Double(value.location.x / availableWidth),
+                            atX: value.location.x,
+                            trackFrame: geometry.frame(in: .global),
                             duration: self.position().duration,
                             seek: seek
                         )
@@ -252,6 +254,8 @@ struct SettingsScrubDrag {
 
     /// Absolute target and the duration that defined the track when this gesture began.
     private var preview: SettingsAudioPlaybackPosition?
+    /// Global coordinates survive the label slots moving and narrowing the track during a drag.
+    private var pointerTrack: CGRect?
     var fraction: Double? { preview?.fraction }
     private(set) var hidesFocusRing = false
 
@@ -266,6 +270,28 @@ struct SettingsScrubDrag {
     static func clampedTime(_ time: TimeInterval, duration: TimeInterval) -> TimeInterval {
         guard duration.isFinite, duration > 0, time.isFinite else { return 0 }
         return min(max(time, 0), max(duration - endMargin, 0))
+    }
+
+    mutating func changed(atX x: CGFloat, trackFrame: CGRect, duration: TimeInterval) {
+        hidesFocusRing = true
+        guard duration.isFinite, duration > 0,
+              let raw = pointerFraction(atX: x, trackFrame: trackFrame) else { return }
+        changed(toFraction: raw, duration: duration)
+    }
+
+    mutating func ended(atX x: CGFloat, trackFrame: CGRect, duration: TimeInterval,
+                        seek: (TimeInterval) -> Void) {
+        let raw = pointerFraction(atX: x, trackFrame: trackFrame) ?? .nan
+        ended(atFraction: raw, duration: duration, seek: seek)
+    }
+
+    private mutating func pointerFraction(atX x: CGFloat, trackFrame: CGRect) -> Double? {
+        let frame = pointerTrack ?? trackFrame
+        guard x.isFinite, frame.origin.x.isFinite, frame.width.isFinite, frame.width > 0 else { return nil }
+        let raw = Double((x - frame.minX) / frame.width)
+        guard raw.isFinite else { return nil }
+        pointerTrack = frame
+        return raw
     }
 
     @MainActor
@@ -299,7 +325,10 @@ struct SettingsScrubDrag {
     }
 
     mutating func ended(atFraction raw: Double, duration: TimeInterval, seek: (TimeInterval) -> Void) {
-        defer { preview = nil }
+        defer {
+            preview = nil
+            pointerTrack = nil
+        }
         guard duration.isFinite, duration > 0, raw.isFinite else { return }
         let gestureDuration = preview?.duration ?? duration
         let target = Self.clampedTime(raw * gestureDuration, duration: gestureDuration)
