@@ -195,13 +195,52 @@ bcs_cask_registered_version() {
     bcs_brew list --versions --cask "$name" 2>/dev/null | awk 'NR==1 {print $2}'
 }
 
+# 0: linked version, or empty for proven absence; 2: Homebrew unavailable;
+# 1: query/schema failure or installed formula without one known linked keg.
+# Homebrew docs/Querying-Brew.md documents linked_keg; Formula#to_hash emits
+# linked_version as a full PkgVersion, independently of retained installed kegs.
 bcs_formula_version() {
     if [[ -n "${BREW_CASK_SYNC_TEST_FORMULA_VERSION+x}" ]]; then
         printf '%s\n' "$BREW_CASK_SYNC_TEST_FORMULA_VERSION"
         return 0
     fi
     local name="$1"
-    bcs_brew list --versions "$name" 2>/dev/null | awk 'NR==1 {print $2}'
+    local formula_json
+    bcs_brew_bin >/dev/null 2>&1 || return 2
+    if ! formula_json="$(bcs_brew info --json=v2 --formula "$name")"; then
+        bcs_err "could not query active formula identity for $name"
+        return 1
+    fi
+    if ! printf '%s\n' "$formula_json" | python3 -c '
+import json, sys
+try:
+    formulae = json.load(sys.stdin)["formulae"]
+    if not isinstance(formulae, list) or len(formulae) != 1:
+        raise ValueError("expected exactly one formula")
+    formula = formulae[0]
+    identity = "full_name" if "/" in sys.argv[1] else "name"
+    if formula[identity] != sys.argv[1]:
+        raise ValueError("formula identity mismatch")
+    installed = formula["installed"]
+    if not isinstance(installed, list) or any(
+        not isinstance(keg, dict) or not isinstance(keg.get("version"), str)
+        or not keg["version"] for keg in installed
+    ):
+        raise ValueError("invalid installed keg inventory")
+    linked = formula["linked_keg"]
+    if not installed and linked is None:
+        sys.exit(0)
+    if not isinstance(linked, str) or not linked or sum(
+        keg["version"] == linked for keg in installed
+    ) != 1:
+        raise ValueError("installed formula has no unique linked keg")
+    print(linked)
+except (KeyError, TypeError, ValueError) as error:
+    sys.exit(str(error))
+' "$name"; then
+        bcs_err "could not determine active formula identity for $name"
+        return 1
+    fi
 }
 
 # The version the tap is currently OFFERING, read straight from the tapped .rb.
