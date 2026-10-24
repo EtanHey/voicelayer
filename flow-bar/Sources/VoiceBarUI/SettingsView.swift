@@ -438,6 +438,7 @@ public struct SettingsView: View {
     public let onChangeSpeech: ((String, SpeechValue) -> Void)?
     public let onSelectSpeechEngine: ((SpeechProfile, String, String) -> Void)?
     public let onPreviewSpeech: ((SpeechProfile) -> Void)?
+    public let onReadClipboard: (() -> Void)?
     public let processingPending: () -> [ProcessingKey: Bool]
     public let processingNotice: () -> String?
     public let onToggleProcessing: ((ProcessingKey, Bool) -> Void)?
@@ -577,6 +578,7 @@ public struct SettingsView: View {
         onChangeSpeech: ((String, SpeechValue) -> Void)? = nil,
         onSelectSpeechEngine: ((SpeechProfile, String, String) -> Void)? = nil,
         onPreviewSpeech: ((SpeechProfile) -> Void)? = nil,
+        onReadClipboard: (() -> Void)? = nil,
         processingPending: @escaping () -> [ProcessingKey: Bool] = { [:] },
         processingNotice: @escaping () -> String? = { nil },
         onToggleProcessing: ((ProcessingKey, Bool) -> Void)? = nil,
@@ -683,6 +685,7 @@ public struct SettingsView: View {
         self.onChangeSpeech = onChangeSpeech
         self.onSelectSpeechEngine = onSelectSpeechEngine
         self.onPreviewSpeech = onPreviewSpeech
+        self.onReadClipboard = onReadClipboard
         self.processingPending = processingPending
         self.processingNotice = processingNotice
         self.onToggleProcessing = onToggleProcessing
@@ -1021,6 +1024,11 @@ public struct SettingsView: View {
                                    value: VoiceBarHotkeyContract.repasteDescription)
                     LabeledContent(VoiceBarHotkeyContract.speakSelectionShortcutLabel,
                                    value: VoiceBarHotkeyContract.speakSelectionDescription)
+                    Button(VoiceBarHotkeyContract.readClipboardActionLabel) { onReadClipboard?() }
+                        .disabled(onReadClipboard == nil)
+                        .help(VoiceBarHotkeyContract.readClipboardDescription)
+                    Text(VoiceBarHotkeyContract.readClipboardDescription)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(.top, 6)
             }

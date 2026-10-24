@@ -4,6 +4,76 @@ import VoiceBarUI
 import XCTest
 
 final class SpeakSelectionCaptureTests: XCTestCase {
+    func testExplicitClipboardReadsExactTextWithoutCopySnapshotOrWrites() {
+        for text: String? in ["  שלום 👩🏽‍💻 e\u{301}\r\n\tend…\n", " \n\t", "", nil] {
+            var reads = 0
+            let capture = clipboardCapture(read: { reads += 1; return text })
+            XCTAssertEqual(reads, 0, "constructing capture must not read")
+            let done = expectation(description: "explicit clipboard")
+            capture.readClipboard(isCurrent: { true }) { result in
+                XCTAssertTrue(Thread.isMainThread)
+                XCTAssertEqual(result.outcome, .completed)
+                XCTAssertEqual(result.text.map { Array($0.utf8) }, text.map { Array($0.utf8) })
+                XCTAssertEqual(result.path, .clipboard)
+                XCTAssertEqual(reads, 1)
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+        }
+    }
+
+    func testExplicitClipboardRefusesSecureUnknownCancelledAndChangedReads() {
+        for scenario in ["secure-input", "secure-focus", "unknown-focus", "untrusted", "cancelled",
+                         "race", "late-secure", "late-race", "late-cancelled"] {
+            var reads = 0, generation = 10
+            var secure = scenario == "secure-input"
+            var current = scenario != "cancelled"
+            var ax = clipboardFocus()
+            ax.secureInputEnabled = { secure }
+            ax.trusted = { scenario != "untrusted" }
+            ax.queryFocus = {
+                if scenario == "unknown-focus" { return (.noValue, nil) }
+                if scenario == "secure-focus" { return (.success, .init(role: "AXTextField", subrole: "AXSecureTextField")) }
+                if scenario == "late-race", reads > 0 { generation += 1 }
+                return (.success, .init(role: "AXTextArea", subrole: nil))
+            }
+            let capture = clipboardCapture(ax: ax, generation: { generation }, read: {
+                reads += 1
+                if scenario == "race" { generation += 1 }
+                if scenario == "late-secure" { secure = true }
+                if scenario == "late-cancelled" { current = false }
+                return "synthetic text"
+            })
+            let done = expectation(description: scenario)
+            capture.readClipboard(isCurrent: { current }) { result in
+                XCTAssertNil(result.text)
+                XCTAssertEqual(result.outcome, scenario.contains("race") ? .clipboardChanged
+                    : scenario.contains("secure") ? .secureField : .captureFailed)
+                XCTAssertEqual(reads, ["race", "late-secure", "late-race", "late-cancelled"].contains(scenario) ? 1 : 0)
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+        }
+    }
+
+    private func clipboardFocus() -> SelectionFocusAX {
+        SelectionFocusAX(secureInputEnabled: { false }, trusted: { true },
+            queryFocus: { (.success, .init(role: "AXTextArea", subrole: nil)) }, frontmostApp: { nil },
+            isChromiumFamily: { _ in XCTFail("no Chromium exemption"); return false },
+            setManualAccessibility: { _ in XCTFail("no AX recovery"); return .failure },
+            sleep: { _ in XCTFail("no focus recovery retries") })
+    }
+
+    private func clipboardCapture(ax: SelectionFocusAX? = nil, generation: @escaping () -> Int = { 10 },
+                                  read: @escaping () -> String?) -> SpeakSelectionCapture {
+        SpeakSelectionCapture(focusAX: ax ?? clipboardFocus(),
+            snapshotReader: { XCTFail("clipboard read must not snapshot/export"); return nil },
+            writeRestoredItems: { _ in XCTFail("clipboard read must not write/restore"); return false },
+            readAXSelection: { XCTFail("clipboard read must not capture selection"); return nil },
+            postCopy: { XCTFail("clipboard read must not synthesize Copy"); return false },
+            readCopiedString: read, clipboardChangeCount: generation)
+    }
+
     func testSecureInputAndSecureSubroleAreBothRecognized() {
         XCTAssertTrue(SpeakSelectionCapture.isSecureFocus(role: "AXTextField", subrole: "AXSecureTextField", secureInput: false))
         XCTAssertTrue(SpeakSelectionCapture.isSecureFocus(role: "AXSecureTextField", subrole: nil, secureInput: false))

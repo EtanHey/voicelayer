@@ -110,6 +110,8 @@ final class SpeakSelectionCapture {
     private let pasteboard: NSPasteboard
     private let postCopy: () -> Bool
     private let readCopiedString: () -> String?
+    private let clipboardChangeCount: () -> Int
+    private let clipboardSecureInputEnabled: () -> Bool
     private let schedule: (TimeInterval, @escaping () -> Void) -> Void
     private let now: () -> TimeInterval
 
@@ -121,6 +123,7 @@ final class SpeakSelectionCapture {
          pasteboard: NSPasteboard = .general,
          postCopy: @escaping () -> Bool = SpeakSelectionCapture.postCopyShortcut,
          readCopiedString: (() -> String?)? = nil,
+         clipboardChangeCount: (() -> Int)? = nil,
          schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void = {
              SpeakSelectionCapture.captureQueue.asyncAfter(deadline: .now() + $0, execute: $1)
          },
@@ -135,8 +138,37 @@ final class SpeakSelectionCapture {
         self.pasteboard = pasteboard
         self.postCopy = postCopy
         self.readCopiedString = readCopiedString ?? { pasteboard.string(forType: .string) }
+        self.clipboardChangeCount = clipboardChangeCount ?? { pasteboard.changeCount }
+        self.clipboardSecureInputEnabled = focusAX.secureInputEnabled
         self.schedule = schedule
         self.now = now
+    }
+
+    /// Explicit user action only. No Copy, snapshot, restoration, AX recovery or trust prompt.
+    /// The admission closure is rechecked on main after each asynchronous secure-focus check.
+    func readClipboard(isCurrent: @escaping () -> Bool,
+                       completion: @escaping (SelectionCaptureResult) -> Void) {
+        Self.captureQueue.async {
+            let gate = self.preflight(false, nil)
+            Self.onMain {
+                guard isCurrent() else { completion(.captureFailed); return }
+                if let reason = gate.blockReason { completion(reason); return }
+                guard !self.clipboardSecureInputEnabled() else { completion(.secureField); return }
+                let generation = self.clipboardChangeCount()
+                let text = self.readCopiedString()
+                guard self.clipboardChangeCount() == generation else { completion(.clipboardChanged); return }
+                Self.captureQueue.async {
+                    let recheck = self.preflight(false, nil)
+                    Self.onMain {
+                        guard isCurrent() else { completion(.captureFailed); return }
+                        if let reason = recheck.blockReason { completion(reason); return }
+                        guard !self.clipboardSecureInputEnabled() else { completion(.secureField); return }
+                        guard self.clipboardChangeCount() == generation else { completion(.clipboardChanged); return }
+                        completion(.completed(text).observed(axRead: .notAttempted, path: .clipboard))
+                    }
+                }
+            }
+        }
     }
 
     func capture(completion: @escaping (SelectionCaptureResult) -> Void) {
