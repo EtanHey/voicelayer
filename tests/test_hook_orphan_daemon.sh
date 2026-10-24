@@ -581,9 +581,26 @@ while True: time.sleep(.05)
         foreign = fixture("foreign-cleanup", cleanup_dir)
     finally:
         os.environ["VOICELAYER_HOOK_TEST_SCOPE"] = saved_scope
-    (cleanup_dir / "daemon-group.json").write_text(json.dumps(dict(pid=foreign, pgid=foreign)))
-    subprocess.run([sys.executable, str(root / "scripts/supervise-test-daemon.py"), "--cleanup", str(cleanup_dir)],
-                   env=env, check=True, timeout=15)
+    foreign_started = registry.metadata(foreign)
+    assert foreign_started is not None, "protected foreign identity unavailable"
+    foreign_state_file = cleanup_dir / "daemon-group.json"
+    saved_foreign_state = json.dumps(dict(pid=foreign, pgid=foreign)).encode()
+    foreign_state_file.write_bytes(saved_foreign_state)
+    foreign_lock = cleanup_dir / "daemon-spawn.lock"
+    foreign_lock.touch()
+    saved_foreign_lock = foreign_lock.read_bytes()
+    foreign_cleanup = subprocess.run([sys.executable, str(root / "scripts/supervise-test-daemon.py"), "--cleanup", str(cleanup_dir)],
+                                     env=env, check=False, timeout=15)
+    assert foreign_cleanup.returncode == 1, "foreign scope cleanup must refuse with exit 1"
+    assert cleanup_dir.is_dir() and foreign_state_file.is_file(), "foreign refusal lost custody metadata"
+    assert foreign_state_file.read_bytes() == saved_foreign_state, "foreign refusal changed persisted group identity"
+    assert foreign_lock.is_file() and foreign_lock.read_bytes() == saved_foreign_lock, "foreign refusal changed publication lock"
+    assert registry.metadata(foreign) == foreign_started, "protected foreign PID identity changed"
+    foreign_decisions = [json.loads(line) for line in (base / "decisions.jsonl").read_text().splitlines()]
+    assert not any(row["event"] in ("signal-attempt", "signal-sent", "signal-gone", "fixture-signal")
+                   and row.get("signal") in (int(signal.SIGTERM), int(signal.SIGKILL))
+                   and (row.get("pgid") == foreign or foreign in row.get("targets", []))
+                   for row in foreign_decisions), "protected foreign group received TERM/KILL"
     check_case("cleanup cannot signal foreign scope", lambda: alive(foreign) and term_free("foreign-cleanup"))
 
     # Inherited test state must never exempt an ordinary production orphan.
