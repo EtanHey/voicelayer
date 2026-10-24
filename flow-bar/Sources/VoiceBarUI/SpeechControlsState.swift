@@ -94,11 +94,73 @@ public struct SpeechControlsState: Equatable, Sendable {
         return candidates.contains(current) ? current : candidates.first
     }
     public func lockReason(for key: String) -> String? {
+        if key == "short_limit_chars", shortLimit.source == .environment { return "Set by environment" }
         let parts = key.split(separator: ".")
         guard parts.count == 2, let kind = SpeechProfile(rawValue: String(parts[0])), let p = profiles[kind] else { return nil }
         if parts[1] == "engine", p.engine.source == .environment { return "Set by QA_VOICE_TTS_VOICE" }
         if parts[1] == "voice", p.voice.source == .environment { return "Set by QA_VOICE_TTS_VOICE" }
         if parts[1] == "rate", p.rate.source == .environment { return "Set by QA_VOICE_TTS_RATE" }
         return nil
+    }
+}
+
+/// Local input only. Confirmed values always come from daemon controls, never pending writes.
+struct SpeechThresholdDraft: Equatable {
+    private(set) var text: String?
+    static let maximum = 9_007_199_254_740_991 // Number.MAX_SAFE_INTEGER in validTTSSetting.
+
+    func displayedText(_ limit: SpeechSetting<Int>?) -> String {
+        text ?? limit.map { String($0.effective) } ?? ""
+    }
+    static func value(_ text: String) -> Int? {
+        guard let value = Int(text), value > 0, value <= maximum else { return nil }
+        return value
+    }
+    var validationMessage: String? {
+        guard let text, Self.value(text) == nil else { return nil }
+        return "Enter a positive whole number no greater than \(Self.maximum)."
+    }
+    mutating func edit(_ text: String) { self.text = text }
+    mutating func revert() { text = nil }
+    mutating func reconcile(_ limit: SpeechSetting<Int>?) {
+        if let limit, let text, let value = Self.value(text), value == limit.effective { self.text = nil }
+    }
+    static func confirmedLabel(_ limit: SpeechSetting<Int>?) -> String {
+        guard let limit else { return "Applied cutoff unavailable; waiting for VoiceLayer." }
+        switch limit.source {
+        case .environment:
+            return "Effective: \(limit.effective) characters · Environment override; saved value not reported."
+        case .settings:
+            let source = limit.raw == .number(limit.effective) ? "Saved in settings" : "Settings source"
+            return "Applied: \(limit.effective) characters · \(source)"
+        case .default:
+            return "Applied: \(limit.effective) characters · Default; no saved value reported."
+        }
+    }
+    static func blockedReason(controls: SpeechControlsState?, connected: Bool, busy: Bool,
+                              pending: [String: SpeechValue], callbackAvailable: Bool) -> String? {
+        guard connected else { return "VoiceLayer isn't connected. Draft retained." }
+        guard let controls else { return "Waiting for Speech settings." }
+        if let lock = controls.lockReason(for: "short_limit_chars") { return "\(lock). Threshold is locked." }
+        if case .number(let value) = pending["short_limit_chars"] {
+            return "Applying \(value) characters… Awaiting confirmation."
+        }
+        if !pending.isEmpty { return "A speech request is pending." }
+        if busy { return "Voice session in progress." }
+        return callbackAvailable ? nil : "Speech setting changes are unavailable."
+    }
+    func canApply(controls: SpeechControlsState?, connected: Bool, busy: Bool,
+                  pending: [String: SpeechValue], callbackAvailable: Bool) -> Bool {
+        guard Self.blockedReason(controls: controls, connected: connected, busy: busy,
+                                 pending: pending, callbackAvailable: callbackAvailable) == nil,
+              let text, let value = Self.value(text) else { return false }
+        return value != controls?.shortLimit.effective
+    }
+    func apply(controls: SpeechControlsState?, connected: Bool, busy: Bool,
+               pending: [String: SpeechValue], onChange: ((String, SpeechValue) -> Void)?) {
+        guard canApply(controls: controls, connected: connected, busy: busy,
+                       pending: pending, callbackAvailable: onChange != nil),
+              let text, let value = Self.value(text) else { return }
+        onChange?("short_limit_chars", .number(value))
     }
 }

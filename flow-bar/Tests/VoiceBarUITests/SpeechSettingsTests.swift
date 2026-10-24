@@ -293,4 +293,179 @@ final class SpeechSettingsTests: XCTestCase {
         XCTAssertFalse(source.contains("Process("), "Showing or copying the command must never execute it")
     }
 
+    static func thresholdControls(_ value: Int = 400, source: String = "settings") -> [String: Any] {
+        var raw = controls()
+        let field: [String: Any] = ["source": source, "raw": source == "default" ? NSNull() : value,
+                                    "effective": value]
+        raw["short_limit_chars"] = field
+        return raw
+    }
+
+    func testThresholdTypingDoesNotWriteAndExplicitApplySendsOnePendingCommand() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls()])
+        var draft = SpeechThresholdDraft()
+        for text in ["2", "20", "200", "2000", "20000"] { draft.edit(text) }
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertTrue(commands.isEmpty)
+        XCTAssertEqual(draft.displayedText(state.speechControls?.shortLimit), "20000")
+        XCTAssertEqual(SpeechThresholdDraft.confirmedLabel(state.speechControls?.shortLimit),
+                       "Applied: 400 characters · Saved in settings")
+        for _ in 0..<2 {
+            draft.apply(controls: state.speechControls, connected: true, busy: false,
+                        pending: state.speechPending, onChange: state.setTTSSetting)
+        }
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "set_tts_setting")
+        XCTAssertEqual(commands.first?["key"] as? String, "short_limit_chars")
+        XCTAssertEqual(commands.first?["value"] as? Int, 20000)
+        XCTAssertEqual(state.speechControls?.shortLimit.effective, 400)
+        XCTAssertTrue(SpeechThresholdDraft.blockedReason(controls: state.speechControls, connected: true,
+            busy: true, pending: state.speechPending, callbackAvailable: true)?.contains("Applying 20000") == true)
+        let id = try XCTUnwrap(commands.first?["id"] as? String)
+        state.handleEvent(["type": "ack", "command": "set_tts_setting", "outcome": "reject",
+                           "id": id, "reason": "write failed"])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertEqual(draft.text, "20000")
+        XCTAssertEqual(state.speechControls?.shortLimit.effective, 400)
+        XCTAssertTrue(state.speechNotice?.contains("write failed") == true)
+        draft.revert()
+        XCTAssertEqual(draft.displayedText(state.speechControls?.shortLimit), "400")
+        XCTAssertEqual(commands.count, 1, "Revert must never send a command")
+    }
+
+    func testThresholdAcceptAndExternalControlsPreserveActiveEdits() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls()])
+        var draft = SpeechThresholdDraft()
+        draft.edit("20000")
+        draft.apply(controls: state.speechControls, connected: true, busy: false,
+                    pending: [:], onChange: state.setTTSSetting)
+        let id = try XCTUnwrap(commands.first?["id"] as? String)
+        state.handleEvent(["type": "ack", "command": "set_tts_setting", "outcome": "accept",
+                           "id": "stale", "tts_controls": Self.thresholdControls(600)])
+        XCTAssertEqual(state.speechControls?.shortLimit.effective, 400)
+        state.handleEvent(["type": "ack", "command": "set_tts_setting", "outcome": "accept",
+                           "id": id, "tts_controls": Self.thresholdControls(20000)])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertNil(draft.text)
+        XCTAssertTrue(state.speechPending.isEmpty)
+        XCTAssertEqual(draft.displayedText(state.speechControls?.shortLimit), "20000")
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls(600)])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertEqual(draft.displayedText(state.speechControls?.shortLimit), "600")
+        draft.edit("900")
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls(700)])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertEqual(draft.text, "900", "External confirmation must not erase a different local edit")
+        draft.revert()
+        XCTAssertEqual(draft.displayedText(state.speechControls?.shortLimit), "700")
+        XCTAssertEqual(commands.count, 1)
+    }
+
+    func testThresholdAcceptWithoutControlsWaitsForAuthoritativeHealth() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls()])
+        var draft = SpeechThresholdDraft()
+        draft.edit("20000")
+        draft.apply(controls: state.speechControls, connected: true, busy: false,
+                    pending: [:], onChange: state.setTTSSetting)
+        let id = try XCTUnwrap(commands.first?["id"] as? String)
+        state.handleEvent(["type": "ack", "command": "set_tts_setting", "outcome": "accept", "id": id])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertEqual(commands.last?["cmd"] as? String, "health")
+        XCTAssertEqual(state.speechControls?.shortLimit.effective, 400)
+        XCTAssertEqual(draft.text, "20000")
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls(20000)])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertNil(draft.text)
+        XCTAssertEqual(state.speechControls?.shortLimit.effective, 20000)
+    }
+
+    @MainActor
+    func testThresholdTimeoutLateAckAndHealthNeverPromotePendingToApplied() async throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.speechAckTimeout = .milliseconds(20)
+        state.setConnectionStatus(true)
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls()])
+        var draft = SpeechThresholdDraft()
+        draft.edit("20000")
+        draft.apply(controls: state.speechControls, connected: true, busy: false,
+                    pending: [:], onChange: state.setTTSSetting)
+        let id = try XCTUnwrap(commands.first?["id"] as? String)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(state.speechPending.isEmpty)
+        XCTAssertTrue(state.speechNotice?.contains("Couldn't confirm") == true)
+        XCTAssertEqual(commands.last?["cmd"] as? String, "health")
+        state.handleEvent(["type": "ack", "command": "set_tts_setting", "outcome": "accept",
+                           "id": id, "tts_controls": Self.thresholdControls(20000)])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertEqual(state.speechControls?.shortLimit.effective, 400)
+        XCTAssertEqual(draft.text, "20000")
+        state.handleEvent(["type": "health", "tts_controls": Self.thresholdControls(20000)])
+        draft.reconcile(state.speechControls?.shortLimit)
+        XCTAssertNil(draft.text)
+        XCTAssertEqual(state.speechControls?.shortLimit.effective, 20000)
+    }
+
+    func testThresholdInvalidAndUnchangedDraftsRefuseApplyWithoutClamping() throws {
+        let controls = try XCTUnwrap(SpeechControlsState(controls: Self.thresholdControls()))
+        var draft = SpeechThresholdDraft()
+        var sent: [SpeechValue] = []
+        for text in ["", "no", "0", "-1", "2.5", "9007199254740992", "9223372036854775808", "400"] {
+            draft.edit(text)
+            draft.apply(controls: controls, connected: true, busy: false, pending: [:],
+                        onChange: { _, value in sent.append(value) })
+            draft.reconcile(nil)
+            XCTAssertEqual(draft.text, text, "Missing controls must preserve even invalid local text")
+            XCTAssertEqual(draft.validationMessage == nil, text == "400")
+        }
+        XCTAssertTrue(sent.isEmpty)
+        draft.edit("9007199254740991")
+        draft.apply(controls: controls, connected: true, busy: false, pending: [:],
+                    onChange: { _, value in sent.append(value) })
+        XCTAssertEqual(sent, [.number(9_007_199_254_740_991)])
+    }
+
+    func testThresholdGatesAndEnvironmentMetadataDoNotInventSavedTruth() throws {
+        let controls = try XCTUnwrap(SpeechControlsState(controls: Self.thresholdControls()))
+        var raw = Self.thresholdControls(600, source: "environment")
+        raw["short_limit_chars"] = ["source": "environment", "raw": 400, "effective": 600]
+        let locked = try XCTUnwrap(SpeechControlsState(controls: raw))
+        var draft = SpeechThresholdDraft()
+        draft.edit("20000")
+        var sent = 0
+        let gates: [(SpeechControlsState?, Bool, Bool, [String: SpeechValue])] = [
+            (controls, false, false, [:]), (nil, true, false, [:]), (controls, true, true, [:]),
+            (controls, true, false, ["short_limit_chars": .number(20000)]),
+            (controls, true, false, ["preview": .string("long")]), (locked, true, false, [:])]
+        for (controls, connected, busy, pending) in gates {
+            draft.apply(controls: controls, connected: connected, busy: busy, pending: pending,
+                        onChange: { _, _ in sent += 1 })
+        }
+        XCTAssertEqual(sent, 0)
+        XCTAssertFalse(draft.canApply(controls: controls, connected: true, busy: false,
+                                      pending: [:], callbackAvailable: false))
+        draft.apply(controls: controls, connected: true, busy: false, pending: [:], onChange: nil)
+        draft.reconcile(nil)
+        XCTAssertEqual(draft.displayedText(nil), "20000", "Disconnect keeps the draft, not invented confirmation")
+        XCTAssertEqual(SpeechThresholdDraft.confirmedLabel(nil), "Applied cutoff unavailable; waiting for VoiceLayer.")
+        XCTAssertTrue(SpeechSettingsView.fieldDisabled("short_limit_chars", controls: locked, pending: [:]))
+        XCTAssertEqual(SpeechThresholdDraft.confirmedLabel(locked.shortLimit),
+                       "Effective: 600 characters · Environment override; saved value not reported.")
+        let defaults = try XCTUnwrap(SpeechControlsState(controls: Self.thresholdControls(source: "default")))
+        XCTAssertTrue(SpeechThresholdDraft.confirmedLabel(defaults.shortLimit).contains("no saved value reported"))
+    }
+
 }
