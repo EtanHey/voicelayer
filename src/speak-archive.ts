@@ -27,6 +27,11 @@ export interface SpeakReceiptRequest {
   };
 }
 
+// Keep the known-source request type used by event journals unchanged. Only creation accepts unknown provenance.
+type SpeakReceiptInput = Omit<SpeakReceiptRequest, "request_source"> & {
+  request_source: SpeakReceiptRequest["request_source"] | null;
+};
+
 export interface SpeakReceivedMetadata {
   schema_version: 1;
   source: "speak";
@@ -34,7 +39,7 @@ export interface SpeakReceivedMetadata {
   created_at: string;
   updated_at: string;
   request_id: string;
-  request_source: SpeakReceiptRequest["request_source"];
+  request_source: SpeakReceiptInput["request_source"];
   connection: SpeakReceiptRequest["connection"];
   format: SpeakReceiptRequest["format"];
   blocking: SpeakReceiptRequest["blocking"];
@@ -126,7 +131,7 @@ function writeReceiptFile(entry: string, name: string, data: Uint8Array): void {
  * Identity on failure names only our allocated final entry; never a collided entry.
  */
 export function createSpeakReceipt(
-  request: SpeakReceiptRequest,
+  request: SpeakReceiptInput,
   seams: { now?: () => Date; id?: (at: Date) => string } = {},
 ): SpeakReceiptResult {
   let stage: Stage = "validate";

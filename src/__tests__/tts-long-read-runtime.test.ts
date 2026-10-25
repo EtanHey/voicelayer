@@ -1,3 +1,4 @@
+import { projectStructuredSpeech } from "../tts/structured-speech";
 import * as pronunciation from "../pronunciation";
 import * as settings from "../tts-settings";
 import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from "bun:test";
@@ -432,6 +433,27 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const played = events.find((event) => event.state === "speaking" && !event.long_read?.preparing);
     expect(played.text).toBe(texts[0]); // synthesis chunking and per-chunk text are unchanged
     expect(played.long_read.text).toBeUndefined();
+  });
+
+  it("P14b runtime keeps legacy synthesis/chunks and attaches layout to player receipts and retained replay", async () => {
+    autoPlay = true;
+    const structuredDisplay = projectStructuredSpeech("2. Alpha.\n3. Beta.");
+    const h = speakLongRead(structuredDisplay.speechText, { engine: "edge", voice: "fixture", rate: "+0%" },
+      Date.now(), { request_id: "structured-read", structuredDisplay });
+    handles.push(h); await h.done;
+    const played = events.find(event => event.state === "speaking" && !event.long_read?.preparing);
+    expect(played.text).toBe(structuredDisplay.speechText);
+    expect(played.long_read.display.text).toBe(played.text);
+    expect(played.long_read.display.blocks.map((block: { marker: string }) => block.marker)).toEqual(["2.", "3."]);
+    expect(synths[0].argv.find(arg => arg.startsWith("--text="))).toBe("--text=Alpha. Beta.");
+    const subtitle = events.find(event => event.type === "subtitle");
+    expect(subtitle.words.map((word: { text: string }) => word.text)).toEqual(["Alpha.", "Beta."]);
+    expect(played.request_id).toBe("structured-read");
+    expect(seekPlayback(0, "readback", played.readback_id)).toMatchObject({ outcome: "accept" });
+    await awaitCurrentPlayback();
+    const replayed = events.filter(event => event.state === "speaking" && !event.long_read?.preparing).at(-1);
+    expect(replayed.long_read.display).toEqual(played.long_read.display);
+    expect(replayed.text).toBe(played.text);
   });
 
   it("PLAYER0 new speakLongRead cannot stop another agent's active or queued job", async () => {
