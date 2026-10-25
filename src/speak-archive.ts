@@ -1,3 +1,4 @@
+import { indexOpenSpeech } from "./speech-open-index";
 import { createHash } from "crypto";
 import * as fs from "fs";
 import { dirname, isAbsolute, join, normalize, parse } from "path";
@@ -186,6 +187,7 @@ export function createSpeakReceipt(
     stage = "input";
     writeReceiptFile(path, "input.txt", input);
     stage = "metadata"; // A received receipt is published only after the exact input syncs.
+    indexOpenSpeech(id);
     writeReceiptFile(path, "metadata.json", encoded);
     return { kind: "created", context: { ...partial, metadata } };
   } catch (error) {

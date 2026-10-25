@@ -76,7 +76,7 @@ test("private diagnostic reason is rejected without mutation", () => {
   expect(transitionSpeakArchive(c, "failed", "private selected text / exception" as never)).toEqual({ kind: "failed", code: "INVALID_INPUT" });
   expect(readFileSync(join(c.path, "metadata.json"))).toEqual(before);
 });
-for (const terminal of ["completed", "cancelled", "failed", "interrupted"] as const) {
+for (const terminal of ["completed", "stopped", "cancelled", "failed", "interrupted"] as const) {
   test(`durable ${terminal} retains partial out-of-order generation and excludes player gaps`, () => {
     const c = receipt(), items = [generated(c, 2), generated(c, 0)];
     for (const item of items) saveSpeakGenerated(c, item);
@@ -122,3 +122,32 @@ for (const operation of ["transition", "generated", "start", "end"] as const) fo
     }
   });
 }
+
+test("new writer validates an active legacy snapshot instead of restarting requested", () => {
+  const c = receipt(); updateSpeakLifecycle(c, legacy("playing"));
+  const before = readFileSync(join(c.path, "metadata.json"));
+  expect(transitionSpeakArchive(c, "preparing")).toEqual({ kind: "failed", code: "CONFLICT" });
+  expect(readFileSync(join(c.path, "metadata.json"))).toEqual(before);
+});
+test("a terminal compatibility outcome cannot be reopened even by stale speech state", () => {
+  const c = receipt(); transitionSpeakArchive(c, "preparing");
+  const m = disk(c); m.status = m.lifecycle.status = "completed";
+  fs.writeFileSync(join(c.path, "metadata.json"), JSON.stringify(m));
+  const before = readFileSync(join(c.path, "metadata.json"));
+  expect(transitionSpeakArchive(c, "playing")).toEqual({ kind: "failed", code: "FINALIZED" });
+  expect(readFileSync(join(c.path, "metadata.json"))).toEqual(before);
+});
+
+for (const reason of ["PLAYER_FAILED", "OUTPUT_UNAVAILABLE", "ARCHIVE_INCOMPLETE"] as const) {
+  test(`failed speech retains legacy ${reason}`, () => {
+    const c = receipt(); transitionSpeakArchive(c, "preparing");
+    expect(transitionSpeakArchive(c, "failed", reason)).toMatchObject({ metadata: { lifecycle: { summary: { error_code: reason } } } });
+  });
+}
+test("receipt indexes open intent and terminal transition removes it", () => {
+  const c = receipt();
+  const marker = join(process.env.QA_VOICE_RECORDINGS_DIR!, ".speech-open", c.id);
+  expect(fs.existsSync(marker)).toBe(true);
+  transitionSpeakArchive(c, "preparing"); transitionSpeakArchive(c, "failed", "SYNTH_FAILED");
+  expect(fs.existsSync(marker)).toBe(false);
+});

@@ -1,3 +1,4 @@
+import { unindexSpeech } from "./speech-open-index";
 import { initialSpeech, speechSchema, speechReasonSchema, transitionSpeech, type SpeechState, type SpeechRecord } from "./speech-state";
 import { createHash, randomBytes } from "crypto";
 import * as fs from "fs";
@@ -125,7 +126,9 @@ function persist(entry: string, m: SpeakStoreMetadata) {
   const stored = new Map(m.artifacts.filter(a => a.relative_path !== null).map(a => [a.relative_path, a.bytes]));
   m.totals.stored_audio_bytes = [...stored.values()].reduce((sum, bytes) => sum + bytes, 0);
   m.totals.provider_output_bytes = m.artifacts.filter(a => a.role === "provider_output").reduce((sum, a) => sum + a.bytes, 0);
-  m.updated_at = new Date().toISOString(); publish(entry, "metadata.json", encode(m)); return m;
+  m.updated_at = new Date().toISOString(); publish(entry, "metadata.json", encode(m));
+  if (terminal.has(m.status)) unindexSpeech(m.id);
+  return m;
 }
 function current(entry: string, context: Context) {
   const m = load(entry);
@@ -187,7 +190,7 @@ export function transitionSpeakArchive(context: Context, to: SpeechState, reason
   return boundary(() => {
     const entry = location(context.id), m = current(entry, context);
     reason = speechReasonSchema.parse(reason);
-    check(!terminal.has(m.status) || m.speech !== undefined, "FINALIZED");
+    check(!terminal.has(m.status) || (m.speech !== undefined && !legalRecovery(m.speech)), "FINALIZED");
     const next = transitionSpeech(m.speech ?? speechFromLegacy(m), to, reason, new Date().toISOString());
     check(next !== null, "CONFLICT");
     m.speech = next;
@@ -200,7 +203,7 @@ export function transitionSpeakArchive(context: Context, to: SpeechState, reason
     if (terminal.has(m.status)) {
       m.lifecycle.timing.ended_ms = Math.max(0, Date.now() - Date.parse(m.created_at));
       m.lifecycle.summary.player_reported_played_ms = next.played_ms;
-      m.lifecycle.summary.error_code = to !== "failed" ? null : reason === "REJECTED" ? "REJECTED" : "SYNTH_FAILED";
+      m.lifecycle.summary.error_code = to !== "failed" ? null : lifecycle.shape.summary.shape.error_code.parse(["REJECTED", "PLAYER_FAILED", "OUTPUT_UNAVAILABLE", "ARCHIVE_INCOMPLETE"].includes(reason ?? "") ? reason : "SYNTH_FAILED");
     }
     return persist(entry, m);
   });
