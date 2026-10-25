@@ -3,6 +3,7 @@
  * Only the user's Option+F5 reads live in this queue; agent voice_speak keeps the tts.ts priority queue.
  * Queued text and its private ingress context are never published: the pill sees a count.
  */
+import type { StructuredSpeech } from "./tts/structured-speech";
 import type { SpeakArchiveContext } from "./speak-archive";
 
 export const SELECTION_READ_QUEUE_LIMIT = 10;
@@ -13,6 +14,7 @@ export interface QueuedSelectionRead {
   textHash: string;
   profile: "auto" | "short" | "long";
   archiveContext?: SpeakArchiveContext;
+  structuredDisplay?: StructuredSpeech;
 }
 
 /** How a read ended. Only `completed` advances; Stop, preemption and player failure never do. */
