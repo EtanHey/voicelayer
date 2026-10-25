@@ -17,6 +17,7 @@ import { reserveArchiveRetranscription, hasActiveVoiceOperation } from "../voice
 import { __resetBinarySpawnForTests } from "../resolve-binary";
 import { formatSpeak } from "../format-response";
 import { sanitizeTtsText } from "../sanitize";
+import { SPEAK_TEXT_MAX_CHARS } from "../socket-protocol";
 
 const raw = " \t<speak>**Bun**\n\nשלום🙂 fu… no, full</speak>\r\n  ";
 const realCreate = archive.createSpeakReceipt, realSpeak = tts.speak;
@@ -164,6 +165,59 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     // Entry modules are read as source, never imported (they own the resident daemon lifecycle).
     expect(fs.readFileSync(new URL("../mcp-server.ts", import.meta.url), "utf8")).toContain('}, "stdio");');
     expect(fs.readFileSync(new URL("../mcp-server-daemon.ts", import.meta.url), "utf8")).toContain('connection: "daemon"');
+  });
+
+  for (const mode of ["announce", "brief", "consult", "auto", "unknown-mode"] as const) {
+    it(`refuses oversized original padding before receipt allocation or synthesis: ${mode}`, async () => {
+      const input = raw + " ".repeat(SPEAK_TEXT_MAX_CHARS + 1 - raw.length);
+      const result = await handleVoiceSpeak({ message: input, mode });
+      expect(input.length).toBe(SPEAK_TEXT_MAX_CHARS + 1);
+      expect(result).toEqual({ isError: true, content: [{ type: "text",
+        text: "voice_speak refused: raw input exceeds archive admission limit" }] });
+      expect(archive.createSpeakReceipt).not.toHaveBeenCalled();
+      expect(tts.speak).not.toHaveBeenCalled();
+      expect(health.synthesizeWithRetry).not.toHaveBeenCalled();
+      expect(entries()).toEqual([]); expect(contexts).toEqual([]);
+      expect(notifications).toEqual([]); expect(synthesized).toEqual([]);
+      expect(hasActiveVoiceOperation()).toBe(false);
+    });
+  }
+
+  for (const length of [SPEAK_TEXT_MAX_CHARS - 1, SPEAK_TEXT_MAX_CHARS]) {
+    it(`admits exact original Unicode and whitespace bytes at raw length ${length}`, async () => {
+      const input = raw + " ".repeat(length - raw.length);
+      const result = await handleVoiceSpeak({ message: input });
+      await tts.awaitCurrentPlayback();
+      expect(input.length).toBe(length); expect(result.isError).toBeUndefined();
+      expect(entries()).toHaveLength(1); expect(contexts).toHaveLength(1);
+      expect(fs.readFileSync(join(contexts[0].path, "input.txt"))).toEqual(Buffer.from(input));
+      expect(disk().input).toEqual({ bytes: Buffer.byteLength(input),
+        sha256: createHash("sha256").update(input).digest("hex") });
+      expect(synthesized.join(" ")).toContain("bun runtime");
+    });
+  }
+
+  for (const length of [1201, SPEAK_TEXT_MAX_CHARS]) {
+    it(`retains the ordinary speech-policy rejection receipt at raw length ${length}`, async () => {
+      const input = "Bun " + "x".repeat(length - 4);
+      const result = await handleVoiceSpeak({ message: input });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("the limit is 1,200");
+      expect(contexts).toHaveLength(1); expect(entries()).toHaveLength(1);
+      expect(disk().status).toBe("rejected");
+      expect(fs.readFileSync(join(contexts[0].path, "input.txt"))).toEqual(Buffer.from(input));
+      expect(tts.speak).not.toHaveBeenCalled();
+      expect(synthesized).toEqual([]);
+    });
+  }
+
+  it("keeps explicit and auto-detected silent think exempt from raw speech admission", async () => {
+    const input = "insight: Bun " + "x".repeat(SPEAK_TEXT_MAX_CHARS);
+    for (const mode of ["think", "auto"] as const) {
+      expect((await handleVoiceSpeak({ message: input, mode })).isError).toBeUndefined();
+    }
+    expect(archive.createSpeakReceipt).not.toHaveBeenCalled();
+    expect(entries()).toEqual([]); expect(synthesized).toEqual([]);
   });
 
   it("retains overlong and admission-backpressure refusals before synthesis", async () => {

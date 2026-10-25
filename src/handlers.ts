@@ -2,6 +2,7 @@ import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
 import { createSpeakReceipt, type SpeakArchiveContext } from "./speak-archive";
 import { updateSpeakLifecycle, type SpeakLifecycle } from "./speak-archive-store";
+import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 /**
  * MCP tool handler functions for VoiceLayer.
  *
@@ -319,6 +320,11 @@ export async function handleVoiceSpeak(
   if (mode === "think") {
     const category = typeof a.category === "string" ? a.category : "insight";
     return handleThink({ thought: rawMessage, category });
+  }
+
+  // Bound raw archive input separately from the later speech-duration policy.
+  if (originalMessage.length > SPEAK_TEXT_MAX_CHARS) {
+    return textResult("voice_speak refused: raw input exceeds archive admission limit", true);
   }
 
   const receipt = validateTtsArgs({ message: rawMessage, rate, voice })

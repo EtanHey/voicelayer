@@ -141,6 +141,10 @@ export function createSpeakReceipt(
     }
     const input = Buffer.from(request.input, "utf8");
     if (input.toString("utf8") !== request.input) throw new ReceiptFailure("INVALID_INPUT");
+    const rateRaw = request.requested.rate_raw;
+    if (rateRaw !== undefined && Buffer.from(rateRaw, "utf8").toString("utf8") !== rateRaw) {
+      throw new ReceiptFailure("INVALID_INPUT");
+    }
     const metadata: SpeakReceivedMetadata = {
       schema_version: 1, source: "speak", id, created_at: timestamp, updated_at: timestamp,
       request_id: request.request_id, request_source: request.request_source,
