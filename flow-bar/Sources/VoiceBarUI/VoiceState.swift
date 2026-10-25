@@ -490,6 +490,8 @@ public final class VoiceState {
     private var pendingReadbackSeekIDs: Set<String> = []
     private var retainedTeleprompterText: String?
     private var retainedTeleprompterWordBoundaries: [TeleprompterBoundary] = []
+    private var currentStructuredDisplay: TeleprompterStructuredDisplay?
+    private var retainedDisplayBlocks: [TeleprompterDisplayBlock] = []
     public private(set) var isTeleprompterDismissed = false
     /// P16: what a parked read needs to come back on the same word: its player identity and the read's
     /// text, timings and timeline at the moment it went quiet.
@@ -546,6 +548,12 @@ public final class VoiceState {
     public var teleprompterWordBoundaries: [TeleprompterBoundary] {
         if mode == .idle { return retainedTeleprompterWordBoundaries }
         return isShowingLongReadDocument ? longReadDocument?.boundaries ?? wordBoundaries : wordBoundaries
+    }
+
+    public var teleprompterDisplayBlocks: [TeleprompterDisplayBlock] {
+        if mode == .idle { return retainedDisplayBlocks }
+        if isShowingLongReadDocument { return longReadDocument?.displayBlocks ?? [] }
+        return currentStructuredDisplay?.text == statusText ? currentStructuredDisplay?.blocks ?? [] : []
     }
 
     public var isTeleprompterReadback: Bool {
@@ -3327,6 +3335,7 @@ public final class VoiceState {
                 retainedPlaybackPositionMilliseconds = min(playbackElapsedMilliseconds(), readbackDuration ?? 0)
                 retainedTeleprompterText = teleprompterText ?? statusText
                 retainedTeleprompterWordBoundaries = teleprompterWordBoundaries
+                retainedDisplayBlocks = teleprompterDisplayBlocks
                 notifyPanelLayoutChangedIfNeeded(true)
             }
         }
@@ -3387,11 +3396,13 @@ public final class VoiceState {
         fileprivate let isShowing: Bool
         fileprivate let wordStart: Int?
         fileprivate let chunkIndex: Int?
+        fileprivate let display: TeleprompterStructuredDisplay?
     }
 
     public func longReadDocumentSnapshot() -> LongReadDocumentSnapshot {
         LongReadDocumentSnapshot(document: longReadDocument, isShowing: isShowingLongReadDocument,
-                                 wordStart: longReadDocumentWordStart, chunkIndex: longReadDocumentChunkIndex)
+                                 wordStart: longReadDocumentWordStart, chunkIndex: longReadDocumentChunkIndex,
+                                 display: currentStructuredDisplay)
     }
 
     public func restoreLongReadDocument(_ snapshot: LongReadDocumentSnapshot) {
@@ -3399,11 +3410,14 @@ public final class VoiceState {
         isShowingLongReadDocument = snapshot.isShowing && snapshot.document != nil
         longReadDocumentWordStart = snapshot.wordStart
         longReadDocumentChunkIndex = snapshot.chunkIndex
+        currentStructuredDisplay = snapshot.display
     }
 
     /// Preparing brings the read's document; each chunk that is exactly its slice keeps that one page.
     /// A readback replay of the same audio keeps it too. Anything else is today's per-chunk text.
     private func updateLongReadDocument(_ longRead: [String: Any]?, readbackID: String?, chunkText: String) {
+        let display = TeleprompterStructuredDisplay.decode(longRead?["display"], text: chunkText)
+        currentStructuredDisplay = display
         isShowingLongReadDocument = false
         longReadDocumentWordStart = nil
         longReadDocumentChunkIndex = nil
@@ -3421,6 +3435,7 @@ public final class VoiceState {
         isShowingLongReadDocument = true
         longReadDocumentWordStart = start
         longReadDocumentChunkIndex = index
+        longReadDocument?.recordDisplay(display, wordStart: start)
     }
 
     private func clearRetainedTeleprompter() {
@@ -3431,6 +3446,7 @@ public final class VoiceState {
         pendingReadbackSeekIDs.removeAll()
         retainedTeleprompterText = nil
         retainedTeleprompterWordBoundaries = []
+        retainedDisplayBlocks = []
         isTeleprompterDismissed = false
         notifyPanelLayoutChangedIfNeeded(hadRetainedTeleprompter)
     }

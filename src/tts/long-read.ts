@@ -1,3 +1,4 @@
+import type { SpeakArchiveContext } from "../speak-archive";
 import type { PlaybackOutcomeEvent, StateEvent, WordBoundary } from "../socket-protocol";
 
 export interface LongReadChunk {
@@ -20,6 +21,8 @@ export interface SeekResult {
 export interface LongReadSeek { seek(offsetMs: number): SeekResult; restart(): SeekResult }
 
 export interface LongReadDependencies {
+  /** Private ingress identity; generation/artifact persistence is a later unit. */
+  archiveContext?: SpeakArchiveContext;
   initialOffsetMs?: number;
   registerSeek?(control: LongReadSeek): void;
   canReplay?(chunk: LongReadChunk): boolean;
