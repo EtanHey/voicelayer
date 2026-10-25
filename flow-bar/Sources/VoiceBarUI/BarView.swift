@@ -246,7 +246,7 @@ struct VoiceBarPillControlButton: View {
         .padding(-Self.hitOverhang)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
-        .help(accessibilityLabel)
+        .background(PillControlTooltip(text: accessibilityLabel))
     }
 
     private var plateColor: Color {
@@ -274,6 +274,26 @@ struct VoiceBarPillControlButton: View {
         } else {
             image.notchAdaptiveGlyphEdge(halo)
         }
+    }
+}
+
+// Native registration stays attached to the control inside the nested glass host.
+// Avoid resetting AppKit's hover delay on unrelated playback/hover redraws.
+struct PillControlTooltip: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> TooltipView {
+        let view = TooltipView()
+        view.toolTip = text
+        return view
+    }
+
+    func updateNSView(_ view: TooltipView, context: Context) {
+        if view.toolTip != text { view.toolTip = text }
+    }
+
+    final class TooltipView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
@@ -1114,7 +1134,7 @@ public struct BarView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
-        .help(accessibilityLabel)
+        .background(PillControlTooltip(text: accessibilityLabel))
     }
 }
 
