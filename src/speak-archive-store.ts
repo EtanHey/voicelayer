@@ -1,3 +1,4 @@
+import { initialSpeech, speechSchema, transitionSpeech, type SpeechState, type SpeechRecord } from "./speech-state";
 import { createHash, randomBytes } from "crypto";
 import * as fs from "fs";
 import { isAbsolute, join, normalize, parse } from "path";
@@ -41,7 +42,7 @@ const lifecycle = z.object({ status, generation_id: nullableText,
     error_code: z.enum(["SYNTH_FAILED", "PLAYER_FAILED", "REJECTED", "OUTPUT_UNAVAILABLE", "ARCHIVE_INCOMPLETE"]).nullable() }),
   played_spans: z.array(z.object({ chunk_id: text, playback_id: text, start_ms: count, end_ms: count,
     completion: z.enum(["completed", "partial", "unknown"]), measurement: z.literal("player_reported") })) });
-const metadata = z.object({ schema_version: z.literal(1), source: z.literal("speak"), id: text,
+const metadata = z.object({ speech: speechSchema.optional(), schema_version: z.literal(1), source: z.literal("speak"), id: text,
   created_at: z.string().datetime(), updated_at: z.string().datetime(), request_id: nullableText,
   request_source: z.enum(["voice_speak", "selection", "clipboard", "cli", "preview", "ask_prompt", "direct"]).nullable(),
   connection: z.enum(["stdio", "daemon", "cli_local"]).nullable(), format: z.enum(["plain", "markdown"]).nullable(),
@@ -150,6 +151,61 @@ export function updateSpeakLifecycle(context: Context, update: SpeakLifecycle, l
       Object.assign(m, links);
     }
     m.status = next.status; m.generation_id = next.generation_id; m.lifecycle = next;
+    return persist(entry, m);
+  });
+}
+export function readSpeakArchive(context: Context): SpeakStoreResult {
+  return boundary(() => current(location(context.id), context));
+}
+/** Close a player segment without inventing a pause between long-read chunks. */
+export function endSpeakPlayer(context: Context): SpeakStoreResult {
+  return boundary(() => {
+    const entry = location(context.id), m = current(entry, context);
+    if (m.speech?.playing_since) {
+      m.speech.played_ms += Math.max(0, Date.now() - Date.parse(m.speech.playing_since));
+      m.speech.playing_since = null;
+    }
+    return persist(entry, m);
+  });
+}
+export function startSpeakPlayer(context: Context): SpeakStoreResult {
+  return boundary(() => {
+    const entry = location(context.id), m = current(entry, context);
+    check(m.speech?.state === "playing", "CONFLICT");
+    m.speech.playing_since ??= new Date().toISOString();
+    return persist(entry, m);
+  });
+}
+/** Persist a validated transition using the existing private atomic metadata writer. */
+export function transitionSpeakArchive(context: Context, to: SpeechState, reason: string | null = null): SpeakStoreResult {
+  return boundary(() => {
+    const entry = location(context.id), m = current(entry, context);
+    check(m.speech !== undefined || !terminal.has(m.status), "FINALIZED");
+    const next = transitionSpeech(m.speech ?? initialSpeech(), to, reason, new Date().toISOString());
+    check(next !== null, "CONFLICT");
+    m.speech = next;
+    m.status = to === "failed" && reason === "REJECTED" ? "rejected" : to === "requested" ? "received" : to === "cancelled" ? "stopped" : to === "interrupted" ? "interrupted_unknown" : to;
+    m.lifecycle ??= { status: m.status, generation_id: m.generation_id,
+      timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
+      summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code: null }, played_spans: [] };
+    m.lifecycle.status = m.status;
+    if (to === "playing") m.lifecycle.timing.first_player_start_ms ??= Math.max(0, Date.now() - Date.parse(m.created_at));
+    if (terminal.has(m.status)) {
+      m.lifecycle.timing.ended_ms = Math.max(0, Date.now() - Date.parse(m.created_at));
+      m.lifecycle.summary.player_reported_played_ms = next.played_ms;
+      m.lifecycle.summary.error_code = to !== "failed" ? null : reason === "REJECTED" ? "REJECTED" : "SYNTH_FAILED";
+    }
+    return persist(entry, m);
+  });
+}
+export function saveSpeakGenerated(context: Context, generated: SpeechRecord["generated"][number]): SpeakStoreResult {
+  return boundary(() => {
+    const entry = location(context.id), m = current(entry, context);
+    const item = speechSchema.shape.generated.element.parse(generated);
+    check(m.artifacts.some(a => a.relative_path === item.audio_path), "INVALID_INPUT");
+    m.speech ??= initialSpeech();
+    m.speech.generated = m.speech.generated.filter(g => g.index !== item.index);
+    m.speech.generated.push(item); m.speech.generated.sort((a, b) => a.index - b.index);
     return persist(entry, m);
   });
 }
@@ -271,6 +327,9 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
       m.artifacts.push({ id: sha256, sha256, bytes: bytes.length, relative_path: "audio/" + name,
         role: "unknown", mime: name.endsWith(".mp3") ? "audio/mpeg" : "audio/wav", duration_ms: null, sample_rate: null, channels: null });
     }
+    if (m.speech && legalRecovery(m.speech)) {
+      m.speech = transitionSpeech({ ...m.speech, playing_since: null }, "interrupted", "PROCESS_RESTART", new Date().toISOString()) ?? m.speech;
+    }
     if (!finished) { m.status = "interrupted_unknown"; if (m.lifecycle) m.lifecycle.status = "interrupted_unknown"; }
     try {
       if (audioExists) sync(join(entry, "audio"));
@@ -279,3 +338,5 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
     return persist(entry, m);
   });
 }
+
+function legalRecovery(speech: SpeechRecord): boolean { return ["requested", "preparing", "playing", "paused"].includes(speech.state); }
