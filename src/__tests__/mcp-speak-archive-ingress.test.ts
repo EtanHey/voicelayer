@@ -265,6 +265,29 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     expect(contexts).toHaveLength(1); expect(disk().status).toBe("rejected");
   });
 
+  for (const [error, status, code] of [
+    [new Error(tts.SPEAKER_OUTPUT_REFUSED_MESSAGE), "rejected", "REJECTED"],
+    [new tts.SpeechPreparationStoppedError(), "stopped", null],
+    [new Error("synthetic output unavailable"), "failed", "OUTPUT_UNAVAILABLE"],
+  ] as const) it(`persists MCP preparation outcome: ${status}/${code}`, async () => {
+    const speak = spyOn(tts, "speak").mockRejectedValue(error);
+    try {
+      if (error instanceof tts.SpeechPreparationStoppedError) {
+        expect(await handleVoiceSpeak({ message: raw })).toEqual({
+          content: [{ type: "text", text: error.message }],
+        });
+      } else {
+        await expect(handleVoiceSpeak({ message: raw })).rejects.toBe(error);
+      }
+      expect(speak).toHaveBeenCalledTimes(1);
+      noAudio(status);
+      expect(disk().lifecycle.summary.error_code).toBe(code);
+      expect(entries()).toHaveLength(1);
+      expect(synthesized).toEqual([]); expect(notifications).toEqual([]);
+      expect(hasActiveVoiceOperation()).toBe(false);
+    } finally { speak.mockRestore(); }
+  });
+
   it("keeps the prior receipt when a late lifecycle write fails; logs no path, input or arbitrary exception", async () => {
     await handleToggle({ enabled: false, scope: "tts" });
     const rename = fs.renameSync;
