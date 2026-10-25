@@ -2,6 +2,15 @@
 import XCTest
 
 final class TeleprompterContentModelTests: XCTestCase {
+    func testSpeechPacingDoesNotHighlightBeforeFirstAudioWord() {
+        let words = TeleprompterContentModel.words(text: "Next word", wordBoundaries: [
+            TeleprompterBoundary(offsetMs: 1200, durationMs: 100, text: "Next"),
+            TeleprompterBoundary(offsetMs: 1400, durationMs: 100, text: "word")
+        ])
+        XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: words, elapsedMilliseconds: 1199), -1)
+        XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: words, elapsedMilliseconds: 1200), 0)
+    }
+
     func testWordFrameUsesCallerSuppliedWrapWidth() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

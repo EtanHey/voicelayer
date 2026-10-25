@@ -536,9 +536,9 @@ public enum TeleprompterPlaybackPolicy {
         in words: [TeleprompterWord],
         elapsedMilliseconds: Int
     ) -> Int {
-        guard let firstWord = words.first else { return 0 }
+        guard !words.isEmpty else { return 0 }
         let elapsedMilliseconds = max(0, elapsedMilliseconds)
-        var currentWordID = firstWord.id
+        var currentWordID = -1
         for index in words.indices {
             guard let offset = playbackOffsetMilliseconds(forWordAt: index, in: words) else { continue }
             guard offset <= elapsedMilliseconds else {

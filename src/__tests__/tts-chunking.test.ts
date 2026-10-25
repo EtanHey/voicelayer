@@ -56,3 +56,27 @@ describe("chunkTextForTTS", () => {
     expect(normalize(chunks.join(" "))).toBe(normalize(text));
   });
 });
+
+it("SPEECH-PACING caps only the startup chunk and retains all words", async () => {
+  const { chunkTextForLongRead } = await import("../tts");
+  const text = "First sentence starts promptly. " + "A longer sentence follows with every original word retained. ".repeat(20);
+  const chunks = chunkTextForLongRead(text);
+  expect(chunks[0]).toBe("First sentence starts promptly.");
+  expect(chunks[0].length).toBeLessThanOrEqual(100);
+  expect(chunks.slice(1).some(chunk => chunk.length > 100)).toBe(true);
+  expect(normalize(chunks.join(" "))).toBe(normalize(text));
+});
+
+it("SPEECH-PACING retains every character of an overlong first token", async () => {
+  const { chunkTextForLongRead } = await import("../tts");
+  const text = "x".repeat(450) + " final words.";
+  const chunks = chunkTextForLongRead(text);
+  expect(chunks[0].length).toBeLessThanOrEqual(100);
+  expect(chunks.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
+});
+
+it("SPEECH-PACING retains tokens across repeated whitespace and paragraphs", async () => {
+  const { chunkTextForLongRead } = await import("../tts");
+  const text = "First   sentence is deliberately long enough to split at a word boundary before its final punctuation ".repeat(4) + ".\n\nLast paragraph.";
+  expect(normalize(chunkTextForLongRead(text).join(" "))).toBe(normalize(text));
+});

@@ -37,9 +37,11 @@ export interface LongReadDependencies {
     started: Promise<boolean>;
     exited: Promise<Pick<PlaybackOutcomeEvent, "status" | "stopped_at_ms">>;
   };
+  /** Audible completion precedes History persistence and artifact cleanup. */
+  playbackFinished?(): void;
   /** Whole utterance once: every synthesized chunk in order, plus the canonical text. */
   saveHistory(audio: PlayedChunk[], info: { text: string; missingChunks: number[] }): Promise<void>;
-  dispose(chunk: LongReadChunk, index: number): void;
+  dispose(chunk: LongReadChunk, index: number): void | Promise<void>;
 }
 
 /** TELE1: the teleprompter shows one document; chunk boundaries stay audio-only. `chunk_word_starts`
@@ -194,6 +196,7 @@ export async function runLongRead(
       if (outcome.status !== "completed") break;
       currentIndex = index + 1; localOffsetMs = 0; isSeek = false;
     }
+    if (currentIndex === texts.length && !signal.aborted) deps.playbackFinished?.();
   } finally {
     closing = true;
     seeking?.abort();
@@ -215,7 +218,7 @@ export async function runLongRead(
         await deps.saveHistory(audio, { text: texts.join(" "), missingChunks });
       }
     } finally {
-      for (const [index, chunk] of owned) deps.dispose(chunk, index);
+      for (const [index, chunk] of owned) await deps.dispose(chunk, index);
     }
   }
 }

@@ -18,7 +18,7 @@ import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
 import { pausePlayback, isPlaybackPaused } from "../tts";
-import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForTTS, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
+import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForLongRead, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
 import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
@@ -212,6 +212,78 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech.transitions.map((t: { to: string }) => t.to))
       .toEqual(["preparing", "playing", "paused", "playing", "completed"]);
   });
+  it("SPEECH-PACING prepares the next waveform while current audio plays", async () => {
+    holdDecoder = true;
+    const h = start("edge", "First short sentence. " + "More words for the next sentence. ".repeat(5));
+    await decoderBarrier.at(0);
+    decoders[0].exit.resolve(0);
+    await playerBarrier.at(0);
+    await synthBarrier.at(1);
+    await fixtureCheckpoint();
+    expect(decoders.length).toBe(2);
+    // Inject 700 ms of preparation inside a 1000 ms playing chunk.
+    clockMs += 700;
+    decoders[1].exit.resolve(0);
+    await fixtureCheckpoint();
+    clockMs += 300;
+    const previousAudioEnded = clockMs;
+    players[0].exit.resolve(0);
+    await playerBarrier.at(1);
+    expect(clockMs - previousAudioEnded).toBe(0);
+    expect(decoders.length).toBe(2); // No decode starts at the join.
+    players[1].exit.resolve(0);
+    await h.done;
+  });
+
+  it("SPEECH-PACING dismisses before slow History persistence", async () => {
+    holdHistory = true;
+    const h = start("edge", "Finished now.");
+    await playerBarrier.at(0);
+    clockMs += 1000;
+    players[0].exit.resolve(0);
+    await historyBarrier.at(0);
+    expect(events.some(e => e.type === "state" && e.state === "idle" && e.source === "playback")).toBe(true);
+    clockMs += 6500; // Persistence is still blocked long after the idle event.
+    histories[0].exit.resolve(0);
+    await h.done;
+  });
+
+  it("SPEECH-PACING final audio dismisses while clone alignment is still reaping", async () => {
+    const fixture = cloneFixture();
+    const h = start("clone", "Finished clone.");
+    await playerBarrier.at(0);
+    await fixture.entered.at(0);
+    clockMs += 1000;
+    players[0].exit.resolve(0);
+    await fixtureCheckpoint();
+    expect(events.some(e => e.type === "state" && e.state === "idle" && e.source === "playback")).toBe(true);
+    expect(getPlaybackQueueDepth()).toBeGreaterThan(0); // Capture safety still waits for the child.
+    for (const release of releaseAlignments) release();
+    await h.done;
+  });
+
+  it("SPEECH-PACING measures clone startup separately from waveform preparation", async () => {
+    const parts: string[] = [];
+    spies.push(spyOn(qwen, "synthesizeCloned").mockImplementation(async part => {
+      if (!parts.length) clockMs += 900; // Injected engine time, not a hardware benchmark.
+      parts.push(part);
+      return Buffer.from("clone audio");
+    }));
+    holdDecoder = true;
+    const h = start("clone", "First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8));
+    await decoderBarrier.at(0);
+    expect(parts[0]).toBe("First sentence.");
+    expect(parts[0].length).toBeLessThanOrEqual(100);
+    clockMs += 300;
+    holdDecoder = false;
+    for (const child of decoders) child.exit.resolve(0);
+    await playerBarrier.at(0);
+    expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(1200);
+    autoPlay = true;
+    players[0].exit.resolve(0);
+    await h.done;
+  });
+
   it("SEL11 preserves request identity and original-text hash in Preparing and player receipts", async () => {
     const identity = { request_id: "selection-B", text_hash: createHash("sha256").update("**hello** world").digest("hex") };
     const h = speakLongRead("hello world", { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), identity);
@@ -530,7 +602,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const paragraphs = Array.from({ length: 12 }, (_, i) => `Paragraph ${i} keeps its own break and enough words to fill a chunk.`).join("\n\n");
     const h = start("edge", paragraphs); await fixtureCheckpoint();
     const preparing = events.find((event) => event.state === "speaking" && event.long_read?.preparing);
-    const texts = chunkTextForTTS(paragraphs);
+    const texts = chunkTextForLongRead(paragraphs);
     expect(texts.length).toBeGreaterThan(1);
     expect(preparing.long_read).toMatchObject({ id: h.id, chunk_count: texts.length, text: paragraphs });
     let words = 0;
@@ -726,9 +798,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     recordFirstAudio("long", 9999); recordFirstAudio("short", 1234);
     const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
     holdDecoder = true; const h = start();
-    const decoder = await decoderBarrier.at(0);
+    await decoderBarrier.at(0);
     expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(9999);
-    clockMs += 650; holdDecoder = false; decoder.exit.resolve(0);
+    clockMs += 650; holdDecoder = false; for (const child of decoders) child.exit.resolve(0);
     await playerBarrier.at(0); await h.started;
     expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(650);
     expect(readTTSControlsStatus().profiles.short.last_first_audio_ms).toBe(1234);
@@ -925,19 +997,24 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       const twoChunks = Array.from({ length: 9 }, (_, i) => `Alpha sentence ${i} has enough words to fill a chunk.`).join(" ");
 
       it("never prepares while A still has chunks to synthesize; then only B's first chunk, never C", async () => {
-        expect(chunkTextForTTS(twoChunks)).toHaveLength(2);
+        expect(chunkTextForLongRead(twoChunks)).toHaveLength(3);
         holdSynth = true;
         select("A", twoChunks);
         await playerBarrier.at(0);
-        await synthBarrier.at(1); // A's last chunk, held in synthesis.
+        await synthBarrier.at(1); // A's second chunk, held in synthesis.
         select("B", "Bravo queued selection."); select("C", "Charlie queued selection.");
         await settle();
         expect(spoken("Bravo")).toHaveLength(0);
         synths[1].exit.resolve(0);
-        await synthBarrier.at(2);
+        await fixtureCheckpoint();
+        expect(spoken("Bravo")).toHaveLength(0);
+        players[0].exit.resolve(0);
+        await synthBarrier.at(2); // Third and final chunk.
+        synths[2].exit.resolve(0);
+        await synthBarrier.at(3);
         expect(spoken("Bravo")).toHaveLength(1);
         expect(spoken("Charlie")).toHaveLength(0);
-        expect(players).toHaveLength(1);
+        expect(players).toHaveLength(2);
         expect(receipts("B")).toEqual([]);
         expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
       });
