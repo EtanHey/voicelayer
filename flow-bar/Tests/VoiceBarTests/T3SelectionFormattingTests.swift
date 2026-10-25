@@ -197,6 +197,47 @@ That completes the orchard route.
         wait(for: [done], timeout: 2)
     }
 
+    func testPreCopyFocusMismatchPreservesOriginalOrForeignGenerationForBothGuards() {
+        for earnedExemption in [false, true] {
+            for duringSnapshot in [true, false] {
+                for foreignCopy in [false, true] {
+                    let host = Host()
+                    if earnedExemption { host.status = .cannotComplete }
+                    let board = makeBoard()
+                    defer { board.releaseGlobally() }
+                    var expectedGeneration = board.changeCount
+                    var expectedContents = contents(board)
+                    var copies = 0
+                    let switchFocus = {
+                        host.app = .init(pid: 5353, startTime: 2_000_002)
+                        if foreignCopy {
+                            board.clearContents()
+                            board.setString("synthetic foreign copy", forType: .string)
+                        }
+                        expectedGeneration = board.changeCount
+                        expectedContents = self.contents(board)
+                    }
+                    let result = run(makeCapture(host, board: board, afterSnapshot: {
+                        if duringSnapshot { switchFocus() }
+                    }, postCopy: {
+                        copies += 1
+                        return false
+                    }, now: {
+                        if !duringSnapshot { switchFocus() }
+                        return 0
+                    }))
+                    XCTAssertEqual(result.outcome, foreignCopy ? .clipboardChanged : .captureFailed)
+                    XCTAssertNil(result.text)
+                    XCTAssertEqual(result.diagnosticDetails["copy_attempted"], "false")
+                    XCTAssertEqual(copies, 0, "focus failure must precede postCopy")
+                    XCTAssertEqual(board.changeCount, expectedGeneration, "no clear or rewrite before Copy")
+                    XCTAssertEqual(contents(board), expectedContents, "preserve every representation and item order")
+                    XCTAssertEqual(host.sets, earnedExemption ? 1 : 0)
+                }
+            }
+        }
+    }
+
     private func makeCapture(_ host: Host, board: NSPasteboard, snapshotFails: Bool = false,
                              afterSnapshot: @escaping () -> Void = {}, postCopy: @escaping () -> Bool = {
                                  XCTFail("must not synthesize Copy"); return false
