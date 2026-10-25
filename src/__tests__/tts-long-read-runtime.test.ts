@@ -442,6 +442,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       Date.now(), { request_id: "structured-read", structuredDisplay });
     handles.push(h); await h.done;
     const played = events.find(event => event.state === "speaking" && !event.long_read?.preparing);
+    expect(played).toBeDefined();
     expect(played.text).toBe(structuredDisplay.speechText);
     expect(played.long_read.display.text).toBe(played.text);
     expect(played.long_read.display.blocks.map((block: { marker: string }) => block.marker)).toEqual(["2.", "3."]);
@@ -452,6 +453,8 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(seekPlayback(0, "readback", played.readback_id)).toMatchObject({ outcome: "accept" });
     await awaitCurrentPlayback();
     const replayed = events.filter(event => event.state === "speaking" && !event.long_read?.preparing).at(-1);
+    expect(replayed).toBeDefined();
+    expect(replayed).not.toBe(played);
     expect(replayed.long_read.display).toEqual(played.long_read.display);
     expect(replayed.text).toBe(played.text);
   });

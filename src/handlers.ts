@@ -376,8 +376,8 @@ export async function handleVoiceSpeak(
         return await handleAnnounce({ message, rate, voice }, context, archiveContext);
     }
   } catch (error) {
-    finishSpeakReceipt(archiveContext, error instanceof SpeechPreparationStoppedError ? "stopped" : "failed",
-      error instanceof SpeechPreparationStoppedError ? null : "OUTPUT_UNAVAILABLE");
+    finishSpeakReceipt(archiveContext, error instanceof SpeechPreparationStoppedError ? "stopped" : isSpeakerOutputRefusedError(error) ? "rejected" : "failed",
+      error instanceof SpeechPreparationStoppedError ? null : isSpeakerOutputRefusedError(error) ? "REJECTED" : "OUTPUT_UNAVAILABLE");
     if (error instanceof SpeechPreparationStoppedError) return textResult(error.message);
     throw error;
   } finally {
@@ -439,6 +439,10 @@ export async function handleVoiceAsk(
   }
   if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
     warnLegacyPressToTalk("mcp.voice_ask");
+  }
+  // Bound raw archive input separately from the trimmed prompt-duration policy.
+  if (originalMessage.length > SPEAK_TEXT_MAX_CHARS) {
+    return textResult("voice_ask refused: raw input exceeds archive admission limit", true);
   }
   const receipt = createSpeakReceipt({
     input: originalMessage, request_id: randomUUID(), request_source: "ask_prompt",
