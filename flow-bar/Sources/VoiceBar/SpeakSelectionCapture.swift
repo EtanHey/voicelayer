@@ -252,6 +252,10 @@ final class SpeakSelectionCapture {
             let complete = { (resolved: SelectionCaptureResult) in
                 completion(copyAttempted ? resolved.withCopyAttempt(resolvedAs: resolved.outcome) : resolved)
             }
+            guard copyAttempted else {
+                complete(pasteboard.changeCount == expectedChangeCount ? result : .clipboardChanged)
+                return
+            }
             switch restore(snapshot, expectedChangeCount: expectedChangeCount) {
             case .restored:
                 complete(result)
