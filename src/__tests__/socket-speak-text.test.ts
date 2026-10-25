@@ -132,6 +132,25 @@ describe("QUEUE1 Option+F5 read queue over the socket", () => {
     expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 1, current_request_id: "A" });
   });
 
+  it("P14b direct and queued selections carry their own exact source projection with the original hash", () => {
+    idle();
+    const done = new Promise<void>(() => {});
+    const starts = spyOn(tts, "speakText").mockReturnValue({ id: "held", generation: 1, done,
+      playerExited: done, started: Promise.resolve({}), completion: Promise.resolve({}) }); spies.push(starts);
+    const a = "2. Alpha.\n3. Beta.", b = "# Heading\n\n4. Gamma.";
+    handleSocketCommand({ cmd: "speak_text", id: "A", text: a, source: "selection", format: "markdown" });
+    handleSocketCommand({ cmd: "speak_text", id: "B", text: b, source: "selection", format: "markdown", queue: true });
+    expect(starts).toHaveBeenCalledTimes(1);
+    expect(starts.mock.calls[0]?.[0]).toBe("Alpha. Beta.");
+    expect(starts.mock.calls[0]?.[2]?.structuredDisplay?.displayText).toBe(a);
+    expect(starts.mock.calls[0]?.[2]?.text_hash).toBe(normalizedSpeechHash(a));
+    handleSocketCommand({ cmd: "read_next", request_id: "A" });
+    expect(starts.mock.calls[1]?.[0]).toBe("Heading Gamma.");
+    expect(starts.mock.calls[1]?.[2]?.structuredDisplay?.displayText).toBe(b);
+    expect(starts.mock.calls[1]?.[2]?.text_hash).toBe(normalizedSpeechHash(b));
+    expect(starts.mock.calls[1]?.[2]?.archiveContext).not.toBe(starts.mock.calls[0]?.[2]?.archiveContext);
+  });
+
   it("speech-control speak_text (no selection source) keeps its lifecycle callback and does not own the queue", () => {
     idle();
     const spoken: unknown[] = [];

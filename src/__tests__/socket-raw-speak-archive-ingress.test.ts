@@ -1,3 +1,4 @@
+import { projectStructuredSpeech } from "../tts/structured-speech";
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { createHash } from "crypto";
@@ -102,7 +103,8 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
         build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null } });
       expect(start).toHaveBeenCalledTimes(1);
       expect(start.mock.calls[0]).toEqual(["שלום🙂 fu… no, full", "long",
-        { request_id: "direct", text_hash: normalizedSpeechHash(raw), archiveContext: contexts[0] }]);
+        { request_id: "direct", text_hash: normalizedSpeechHash(raw), archiveContext: contexts[0],
+          ...(source === "selection" ? { structuredDisplay: projectStructuredSpeech(raw) } : {}) }]);
       expect(observed).toEqual([start.mock.results[0].value]);
     });
   for (const format of [undefined, "plain"] as const) it(`keeps absent client ID and exact bytes with format=${format}`, () => {
@@ -141,6 +143,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     retained(contexts[1], "received");
     expect(start.mock.calls[1][2]?.archiveContext).toBe(contexts[1]);
     expect(start.mock.calls[1][3]).toBe(lease);
+    expect(start.mock.calls[1][2]?.structuredDisplay).toEqual(source === "selection" ? projectStructuredSpeech(raw) : undefined);
     expect(queueEvents()).toEqual([{ type: "read_queue", count: 1, current_request_id: "A" },
       { type: "read_queue", count: 0, current_request_id: "B" }]);
     for (const context of contexts) {
