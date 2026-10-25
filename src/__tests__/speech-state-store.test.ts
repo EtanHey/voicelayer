@@ -115,7 +115,7 @@ for (const operation of ["transition", "generated", "start", "end"] as const) fo
         expected.speech.transitions.push({ from: "playing", to: "stopped", reason: "USER_STOP", at: actual.speech.transitions.at(-1).at });
         expected.lifecycle.timing.ended_ms = actual.lifecycle.timing.ended_ms; expected.lifecycle.summary.player_reported_played_ms = actual.speech.played_ms;
       }
-      if (operation === "generated") expected.speech.generated.push({ ...item, index: 1 });
+      if (operation === "generated") { expected.speech.generated.push({ ...item, index: 1 }); expected.lifecycle.summary.generated_audio_ms = 2000; }
       expected.speech.played_ms = actual.speech.played_ms;
       expected.speech.playing_since = operation === "start" ? actual.speech.playing_since : null;
       expect(actual).toEqual(expected);

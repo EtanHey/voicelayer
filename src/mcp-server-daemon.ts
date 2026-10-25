@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { stopPlayback } from "./tts";
-import { recoverSpeechArchives, interruptLiveSpeech } from "./speech-archive-live";
+import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from "./speech-archive-live";
 /**
  * VoiceLayer MCP Daemon — persistent singleton replacing per-session MCP processes.
  *
@@ -290,7 +290,7 @@ async function main() {
   let shuttingDown = false;
   let disablePollTimer: ReturnType<typeof setInterval> | null = null;
   let parentWatchdog: ParentProcessWatchdog | null = null;
-  const shutdown = (reason = "signal") => {
+  const shutdown = async (reason = "signal") => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.error("[voicelayer-daemon] Shutting down...");
@@ -318,6 +318,7 @@ async function main() {
     stopSTTPolishServer();
     daemon.stop();
     disconnectFromBar();
+    await flushSpeechArchives();
     releaseProcessLock();
     console.error("[voicelayer-daemon] Shutdown complete.");
     process.exit(0);

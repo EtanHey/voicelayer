@@ -1,4 +1,4 @@
-import { beginSpeechArchive } from "../speech-archive-live";
+import { beginSpeechArchive, flushSpeechArchives } from "../speech-archive-live";
 import { readFileSync } from "fs";
 import { join } from "path";
 /**
@@ -91,7 +91,7 @@ describe("STOP1 Stop during speech preparation", () => {
     await speech;
     tts.stopPlayback();
     for (const player of players) player.exit.resolve(0);
-    await tts.awaitCurrentPlayback();
+    await tts.awaitCurrentPlayback(); await flushSpeechArchives();
     booking.releaseVoiceSession(); booking.clearStopSignal(); booking.clearCancelSignal();
     recording.setRecordingState("idle");
     for (const spy of spies.reverse()) spy.mockRestore();
@@ -106,11 +106,13 @@ describe("STOP1 Stop during speech preparation", () => {
       throw abort?.reason;
     });
     const archive = beginSpeechArchive("Cancel fixture.");
+    await archive.settled();
     speech = tts.speak("Cancel fixture.", { archiveContext: archive.context }).catch(error => error);
     await entered.promise;
     const ack = await handleSocketCommand({ cmd: "cancel" });
     expect(ack).toMatchObject({ outcome: "accept" });
     expect(signal?.aborted).toBe(true);
+    await flushSpeechArchives();
     expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech.state).toBe("cancelled");
   });
   it("N8 Stop during held Edge voice_speak synthesis prevents later playback", async () => {
@@ -291,10 +293,12 @@ describe("STOP1 Stop during speech preparation", () => {
       return { success: true, attempts: 1, audioFile: file, wordBoundaries: [] };
     });
     const archive = beginSpeechArchive("Original selection");
+    await archive.settled();
     speech = tts.speak("A sentence with enough words for multiple generated chunks. ".repeat(50), { archiveContext: archive.context }).catch(error => error);
     await entered.promise;
     const stopped = Promise.resolve(handleSocketCommand({ cmd: "cancel" }));
     releaseSynthesis(); await stopped; await speech;
+    await flushSpeechArchives();
     const m = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
     expect(m.speech.state).toBe("cancelled"); expect(m.speech.generated).toHaveLength(1);
     expect(readFileSync(join(archive.context.path, m.speech.generated[0].audio_path), "utf8")).toBe("finished chunk bytes");

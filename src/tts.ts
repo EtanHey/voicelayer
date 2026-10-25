@@ -1,4 +1,4 @@
-import { beginSpeechArchive, cancelLiveSpeech, type LiveSpeechArchive } from "./speech-archive-live";
+import { beginSpeechArchive, cancelLiveSpeech, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { structuredReadDisplay } from "./tts/structured-display";
 import type { StructuredSpeech } from "./tts/structured-speech";
@@ -738,10 +738,10 @@ async function playClonedAudio(
     if (!ffmpeg) throw new Error("ffmpeg unavailable for clone rate conversion");
     const conversion = Bun.spawnSync([ffmpeg, "-y", "-i", ttsFile, "-af", filters.join(","), adjusted], {stdout: "ignore", stderr: "pipe"});
     if (conversion.exitCode !== 0) {
-      for (const path of [adjusted, ttsFile]) { try { unlinkSync(path); } catch {} }
+      for (const path of [adjusted, ttsFile]) { try { unlinkSpeechAudio(path); } catch {} }
       throw new Error("Clone rate conversion failed");
     }
-    try { unlinkSync(ttsFile); } catch {}
+    try { unlinkSpeechAudio(ttsFile); } catch {}
     ttsFile = adjusted;
   }
   let proc: QueuedPlaybackHandle;
@@ -771,13 +771,13 @@ async function playClonedAudio(
     });
   } catch (err) {
     try {
-      unlinkSync(ttsFile);
+      unlinkSpeechAudio(ttsFile);
     } catch {}
     throw err;
   }
   void proc.playerExited.then(() => {
     try {
-      unlinkSync(ttsFile);
+      unlinkSpeechAudio(ttsFile);
     } catch {}
   }, () => {});
   const playbackOutcome = options?.waitForPlayback
@@ -990,6 +990,8 @@ function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
   broadcast(outcome);
   try {
     job.metadata?.speechArchive?.playerEnded();
+  } catch { console.error("[speech] player-end archive write failed"); }
+  try {
     job.metadata?.onCompleted?.(outcome);
   } catch (error) {
     console.error(
@@ -2291,7 +2293,7 @@ async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadPr
 }
 
 function disposeLongReadChunkFiles(audioFile: string): void {
-  try { unlinkSync(audioFile); } catch {}
+  try { unlinkSpeechAudio(audioFile); } catch {}
   try { unlinkSync(audioFile.replace(".mp3", ".meta.ndjson")); } catch {}
 }
 
@@ -2485,7 +2487,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);
         } finally { try { unlinkSync(combined); } catch {} }
       },
-      dispose: (chunk) => { cloneProjections.delete(chunk.audioFile); chunkAlignedWords.delete(chunk.audioFile); chunkEngines.delete(chunk.audioFile); chunkVoices.delete(chunk.audioFile); try { unlinkSync(chunk.audioFile); } catch {} },
+      dispose: (chunk) => { cloneProjections.delete(chunk.audioFile); chunkAlignedWords.delete(chunk.audioFile); chunkEngines.delete(chunk.audioFile); chunkVoices.delete(chunk.audioFile); try { unlinkSpeechAudio(chunk.audioFile); } catch {} },
     }, 1);
   };
   // Preserve stopped audio: finish its history/cleanup before a replacement starts.
@@ -2506,11 +2508,15 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     if (owned) activeLongRead = undefined;
     // QUEUE1: a natural end may start the next queued read before the idle edge, so the pill never blinks idle.
     const outcome = signal.aborted ? "stopped" : failure || !playedToEnd ? "failed" : "completed";
-    archive.finish(failure ? "failed" : signal.aborted && !audioStarted ? "cancelled" : outcome, failure || !playedToEnd && !signal.aborted ? "SPEECH_FAILED" : signal.aborted ? "USER_STOP" : "PLAYBACK_COMPLETED");
-    try { longReadSettledListener?.(speechIdentity.request_id, outcome); } catch (error) {
-      console.error(`[voicelayer] Read queue settle failed: ${error instanceof Error ? error.message : String(error)}`);
+    try { archive.finish(failure ? "failed" : signal.aborted && !audioStarted ? "cancelled" : outcome, failure || !playedToEnd && !signal.aborted ? "SPEECH_FAILED" : signal.aborted ? "USER_STOP" : "PLAYBACK_COMPLETED"); }
+    catch { console.error("[speech] terminal archive write failed"); }
+    finally {
+      try { longReadSettledListener?.(speechIdentity.request_id, outcome); } catch (error) {
+        console.error(`[voicelayer] Read queue settle failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        if (owned && !activeLongRead && playbackQueueManager.getDepthForHealth() === 0) broadcastPlaybackIdleIfSpeakerClear();
+      }
     }
-    if (owned && !activeLongRead && playbackQueueManager.getDepthForHealth() === 0) broadcastPlaybackIdleIfSpeakerClear();
   });
   handle.completion = handle.done.then(() => failure ? { error: failure } : {});
   handle.playerExited = handle.done.then(async () => { await Promise.all(playerExits); });
@@ -2583,8 +2589,10 @@ export async function speak(
   try {
     const result = await prepareSpeech(text, { ...options, speechArchive: archive,
       onPlaybackComplete: outcome => {
-        archive.finish(outcome.status === "completed" ? "completed" : outcome.status === "failed" ? "failed" : "stopped", outcome.reason ?? outcome.status);
-        onCompleted?.(outcome);
+        try { archive.finish(outcome.status === "completed" ? "completed" : outcome.status === "failed" ? "failed" : "stopped",
+          outcome.status === "completed" ? "PLAYBACK_COMPLETED" : outcome.status === "failed" ? "PLAYER_FAILED" : "USER_STOP"); }
+        catch { console.error("[speech] terminal archive write failed"); }
+        finally { onCompleted?.(outcome); }
       } }, controller.signal);
     if (!result.engine && !result.playbackId) archive.finish("failed", "REJECTED");
     return result;
@@ -2916,21 +2924,21 @@ async function speakWithEdgeTTS(
     broadcastPlaybackIdleIfSpeakerClear();
     for (const file of tempChunkFiles) {
       try {
-        unlinkSync(file);
+        unlinkSpeechAudio(file);
       } catch {}
       try {
         unlinkSync(file.replace(".mp3", ".meta.ndjson"));
       } catch {}
     }
     try {
-      unlinkSync(ttsFile);
+      unlinkSpeechAudio(ttsFile);
     } catch {}
     throw error;
   }
 
   for (const file of tempChunkFiles) {
     try {
-      unlinkSync(file);
+      unlinkSpeechAudio(file);
     } catch {}
   }
 
@@ -2968,13 +2976,13 @@ async function speakWithEdgeTTS(
     });
   } catch (err) {
     try {
-      unlinkSync(ttsFile);
+      unlinkSpeechAudio(ttsFile);
     } catch {}
     throw err;
   }
   void proc.playerExited.then(() => {
     try {
-      unlinkSync(ttsFile);
+      unlinkSpeechAudio(ttsFile);
     } catch {}
   }, () => {});
 

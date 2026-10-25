@@ -1,3 +1,4 @@
+import { finishLiveSpeechReceipt } from "./speech-archive-live";
 import { requireIsolatedOverride } from "./test-isolation";
 import { randomUUID } from "crypto";
 import { createSpeakReceipt, type SpeakArchiveContext } from "./speak-archive";
@@ -505,7 +506,7 @@ function finishSpeakReceipt(
   status: "rejected" | "failed" | "stopped",
   error_code: SpeakLifecycle["summary"]["error_code"],
 ): void {
-  if (!context) return;
+  if (!context || finishLiveSpeechReceipt(context, status, error_code)) return;
   const result = updateSpeakLifecycle(context, { status, generation_id: null,
     timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
     summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code }, played_spans: [] });

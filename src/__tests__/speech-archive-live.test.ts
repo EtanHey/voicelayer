@@ -1,21 +1,23 @@
-import { expect, test, spyOn } from "bun:test";
+import { expect, test, spyOn, setSystemTime } from "bun:test";
 import { readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
-import { beginSpeechArchive, recoverSpeechArchives } from "../speech-archive-live";
+import { beginSpeechArchive, recoverSpeechArchives, unlinkSpeechAudio } from "../speech-archive-live";
 import { transitionSpeakArchive } from "../speak-archive-store";
 const disk = (path: string) => JSON.parse(readFileSync(join(path, "metadata.json"), "utf8"));
 for (const terminal of ["completed", "stopped", "cancelled", "failed"] as const) {
-  test(`durable ${terminal} preserves original, actual input and audio`, () => {
+  test(`durable ${terminal} preserves original, actual input and audio`, async () => {
     expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");
     const archive = beginSpeechArchive("  **original**\n");
+    await archive.settled();
     const file = join(process.env.VOICELAYER_TEST_RUN_ROOT!, `${archive.context.id}.mp3`);
     writeFileSync(file, "synthetic audio");
     archive.generated(file, "actual engine input", "fixture voice", "long", "fixture engine");
-    unlinkSync(file);
+    unlinkSpeechAudio(file);
     archive.move("playing"); archive.move("paused"); archive.move("playing");
-    archive.finish(terminal, "FIXTURE_REASON");
+    archive.finish(terminal, "USER_STOP");
+    await archive.settled();
     const metadata = disk(archive.context.path);
-    expect(metadata.speech).toMatchObject({ state: terminal, reason: "FIXTURE_REASON", generated: [
+    expect(metadata.speech).toMatchObject({ state: terminal, reason: "USER_STOP", generated: [
       { text: "actual engine input", voice: "fixture voice", profile: "long", engine: "fixture engine" }] });
     expect(readFileSync(join(archive.context.path, "input.txt"), "utf8")).toBe("  **original**\n");
     expect(readFileSync(join(archive.context.path, metadata.speech.generated[0].audio_path), "utf8")).toBe("synthetic audio");
@@ -24,10 +26,11 @@ for (const terminal of ["completed", "stopped", "cancelled", "failed"] as const)
     expect(disk(archive.context.path).speech.state).toBe(terminal);
   });
 }
-test("restart recovers preparing, playing and paused as interrupted", () => {
+test("restart recovers preparing, playing and paused as interrupted", async () => {
   for (const state of ["preparing", "playing", "paused"] as const) {
     const archive = beginSpeechArchive(`fixture ${state}`);
     if (state !== "preparing") archive.move(state);
+    await archive.settled();
     recoverSpeechArchives();
     expect(disk(archive.context.path).speech).toMatchObject({ state: "interrupted", reason: "PROCESS_RESTART" });
     const before = readFileSync(join(archive.context.path, "metadata.json"), "utf8");
@@ -36,18 +39,16 @@ test("restart recovers preparing, playing and paused as interrupted", () => {
   }
 });
 
-test("player segments exclude synthesis gaps and paused time", () => {
-  const archive = beginSpeechArchive("timing fixture");
-  archive.playerStarted();
-  const first = disk(archive.context.path).speech.playing_since;
-  const now = spyOn(Date, "now").mockReturnValue(Date.parse(first) + 1000);
-  try { archive.playerEnded(); } finally { now.mockRestore(); }
-  expect(disk(archive.context.path).speech.played_ms).toBe(1000);
-  expect(disk(archive.context.path).speech.playing_since).toBeNull();
-  archive.playerStarted();
-  const second = disk(archive.context.path).speech.playing_since;
-  const later = spyOn(Date, "now").mockReturnValue(Date.parse(second) + 500);
-  try { archive.playerEnded(); } finally { later.mockRestore(); }
-  archive.finish("completed", "PLAYBACK_COMPLETED");
+test("player segments exclude delayed publication, synthesis gaps and paused time", async () => {
+  const archive = beginSpeechArchive("timing fixture"); await archive.settled();
+  const now = Date.now();
+  try {
+    setSystemTime(now); archive.playerStarted();
+    setSystemTime(now + 1000); archive.playerEnded();
+    setSystemTime(now + 10000); archive.playerStarted();
+    setSystemTime(now + 10500); archive.playerEnded();
+    archive.finish("completed", "PLAYBACK_COMPLETED");
+  } finally { setSystemTime(); }
+  await archive.settled();
   expect(disk(archive.context.path).speech.played_ms).toBe(1500);
 });

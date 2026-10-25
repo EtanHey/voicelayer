@@ -1,3 +1,5 @@
+import { flushSpeechArchives } from "../speech-archive-live";
+import { speechArchiveWriter } from "../speech-archive-writer";
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { createHash } from "crypto";
@@ -96,7 +98,7 @@ describe("Ask and Preview real receipt ingress (canonical preload; synthetic spe
     fs.rmSync(TTS_DISABLED_FILE, { force: true });
   });
   afterEach(async () => {
-    await Promise.resolve();
+    await flushSpeechArchives();
     expect(previewActive).toBe(false);
     for (const spy of spies.splice(0).reverse()) spy.mockRestore();
     fs.rmSync(TTS_DISABLED_FILE, { force: true });
@@ -210,6 +212,7 @@ describe("Ask and Preview real receipt ingress (canonical preload; synthetic spe
   for (const surface of ["Ask", "Preview"] as const) it(`${surface} speaker refusal during preparation retains rejected evidence`, async () => {
     speak.mockRejectedValue(new Error(tts.SPEAKER_OUTPUT_REFUSED_MESSAGE));
     const result = surface === "Ask" ? await handleVoiceAsk({ message: raw }) : await preview();
+    await flushSpeechArchives();
     retained(surface === "Ask" ? raw : sample, "rejected"); expect(capture).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).toContain(tts.SPEAKER_OUTPUT_REFUSED_MESSAGE);
   });
@@ -227,6 +230,7 @@ describe("Ask and Preview real receipt ingress (canonical preload; synthetic spe
   for (const surface of ["Ask", "Preview"] as const) it(`${surface} disabled TTS retains rejected evidence`, async () => {
     fs.writeFileSync(TTS_DISABLED_FILE, "1"); speak.mockImplementation(realSpeak);
     const result = surface === "Ask" ? await handleVoiceAsk({ message: raw }) : await preview();
+    await flushSpeechArchives();
     retained(surface === "Ask" ? raw : sample, "rejected"); expect(capture).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).toContain(surface === "Ask" ? "recording was not started" : "No preview audio was played");
   });
@@ -239,17 +243,13 @@ describe("Ask and Preview real receipt ingress (canonical preload; synthetic spe
   });
   for (const surface of ["Ask", "Preview"] as const) it(`${surface} disabled TTS and late archive failure retain original evidence`, async () => {
     fs.writeFileSync(TTS_DISABLED_FILE, "1"); speak.mockImplementation(realSpeak);
-    const rename = fs.renameSync;
-    const fault = spyOn(fs, "renameSync").mockImplementation((from, to) => {
-      if (String(from).endsWith(".partial")) throw new Error(`private ${root} ${raw}`);
-      rename(from, to);
-    }); spies.push(fault);
+    const fault = spyOn(speechArchiveWriter, "write").mockRejectedValue(new Error(`private ${root} ${raw}`)); spies.push(fault);
     const result = surface === "Ask" ? await handleVoiceAsk({ message: raw }) : await preview();
+    await flushSpeechArchives();
     retained(surface === "Ask" ? raw : sample, "received"); expect(capture).not.toHaveBeenCalled();
-    expect(fs.readdirSync(contexts[0].path).filter(name => /^\.metadata\.json\.[a-f0-9]+\.partial$/.test(name))).toHaveLength(2);
     expect(JSON.stringify(result)).not.toContain(root);
     const logs = log.mock.calls.flat().join(" ");
-    expect(logs).toContain("speak archive update failed: WRITE_UNCERTAIN");
+    expect(logs).toContain("[speech] archive write failed: move");
     expect(logs).not.toContain(root); expect(logs).not.toContain("שלום");
   });
 });

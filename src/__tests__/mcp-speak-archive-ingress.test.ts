@@ -1,3 +1,5 @@
+import { flushSpeechArchives } from "../speech-archive-live";
+import { speechArchiveWriter } from "../speech-archive-writer";
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { createHash } from "crypto";
@@ -96,7 +98,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     fs.rmSync(TTS_DISABLED_FILE, { force: true });
   });
   afterEach(async () => {
-    tts.stopPlayback(); await tts.awaitCurrentPlayback();
+    tts.stopPlayback(); await tts.awaitCurrentPlayback(); await flushSpeechArchives();
     fs.rmSync(TTS_DISABLED_FILE, { force: true });
     for (const key of ["QA_VOICE_PRONUNCIATION_PATH", "VOICELAYER_TTS_SETTINGS_PATH"]) {
       if (process.env[key]) fs.rmSync(process.env[key]!, { force: true });
@@ -117,7 +119,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     const input = raw + suffix;
     const context = createVoiceToolContext(undefined, n => { notifications.push(n); }, "stdio");
     const result = await handleVoiceSpeak({ message: input, mode: requested, rate: "+020%", voice: "en-US-JennyNeural" }, context);
-    await tts.awaitCurrentPlayback();
+    await tts.awaitCurrentPlayback(); await flushSpeechArchives();
     expect(entries()).toHaveLength(1); expect(contexts).toHaveLength(1);
     expect(fs.readFileSync(join(contexts[0].path, "input.txt"))).toEqual(Buffer.from(input));
     expect(disk()).toMatchObject({ source: "speak", request_source: "voice_speak", connection: "stdio",
@@ -145,7 +147,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
   });
 
   it("retains exact raw rate through creator, lifecycle parse and recovery; absent field stays absent", async () => {
-    await handleVoiceSpeak({ message: raw, rate: "-005%" }); await tts.awaitCurrentPlayback();
+    await handleVoiceSpeak({ message: raw, rate: "-005%" }); await tts.awaitCurrentPlayback(); await flushSpeechArchives();
     const context = contexts[0];
     expect(updateSpeakLifecycle(context, { status: "preparing", generation_id: null,
       timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
@@ -153,7 +155,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     expect(disk().requested.rate_raw).toBe("-005%");
     expect(recoverSpeakArchive(context.id).kind).toBe("stored");
     expect(disk().requested).toMatchObject({ rate: null, rate_raw: "-005%" });
-    await handleVoiceSpeak({ message: raw }); await tts.awaitCurrentPlayback();
+    await handleVoiceSpeak({ message: raw }); await tts.awaitCurrentPlayback(); await flushSpeechArchives();
     expect(recoverSpeakArchive(contexts[1].id).kind).toBe("stored");
     expect(disk(contexts[1]).requested).not.toHaveProperty("rate_raw");
     expect(contexts[1].metadata.request_id).not.toBe(context.metadata.request_id);
@@ -162,7 +164,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
   for (const connection of ["stdio", "daemon", undefined] as const) it(`records explicit transport or unknown: ${connection}`, async () => {
     const context = createVoiceToolContext(undefined, undefined, connection);
     await handleVoiceSpeak({ message: raw, connection: "untrusted", format: "markdown", token: "synthetic-secret" }, context);
-    await tts.awaitCurrentPlayback();
+    await tts.awaitCurrentPlayback(); await flushSpeechArchives();
     expect(disk().connection).toBe(connection ?? null); expect(disk().format).toBeNull();
     expect(JSON.stringify(disk())).not.toContain("synthetic-secret");
     // Entry modules are read as source, never imported (they own the resident daemon lifecycle).
@@ -190,7 +192,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     it(`admits exact original Unicode and whitespace bytes at raw length ${length}`, async () => {
       const input = raw + " ".repeat(length - raw.length);
       const result = await handleVoiceSpeak({ message: input });
-      await tts.awaitCurrentPlayback();
+      await tts.awaitCurrentPlayback(); await flushSpeechArchives();
       expect(input.length).toBe(length); expect(result.isError).toBeUndefined();
       expect(entries()).toHaveLength(1); expect(contexts).toHaveLength(1);
       expect(fs.readFileSync(join(contexts[0].path, "input.txt"))).toEqual(Buffer.from(input));
@@ -241,10 +243,10 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
   it("keeps disabled and synthesis-failed inputs without claiming audio or completion", async () => {
     await handleToggle({ enabled: false, scope: "tts" });
     const result = await handleVoiceSpeak({ message: raw });
-    expect(result.content[0].text).toBe(formatSpeak("announce", sanitizeTtsText(raw))); noAudio("rejected");
+    expect(result.content[0].text).toBe(formatSpeak("announce", sanitizeTtsText(raw))); await flushSpeechArchives(); noAudio("rejected");
     await handleToggle({ enabled: true, scope: "tts" }); contexts = []; failSynthesis = true;
     await expect(handleVoiceSpeak({ message: raw })).rejects.toThrow("synthetic engine unavailable");
-    noAudio("failed"); expect(hasActiveVoiceOperation()).toBe(false);
+    await flushSpeechArchives(); noAudio("failed"); expect(hasActiveVoiceOperation()).toBe(false);
   });
 
   it("refuses synthesis if initial persistence fails and exposes only an allowlisted error", async () => {
@@ -261,7 +263,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     const synth = spyOn(health, "synthesizeWithRetry").mockRejectedValue(new tts.SpeechPreparationStoppedError());
     try {
       expect((await handleVoiceSpeak({ message: raw })).content[0].text).toBe("Stopped by the user before playback.");
-      noAudio("stopped"); expect(hasActiveVoiceOperation()).toBe(false);
+      await flushSpeechArchives(); noAudio("stopped"); expect(hasActiveVoiceOperation()).toBe(false);
     } finally { synth.mockRestore(); }
     contexts = [];
     expect((await handleVoiceSpeak({ message: "<speak></speak>" })).isError).toBe(true);
@@ -293,19 +295,16 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
 
   it("keeps the prior receipt when a late lifecycle write fails; logs no path, input or arbitrary exception", async () => {
     await handleToggle({ enabled: false, scope: "tts" });
-    const rename = fs.renameSync;
-    const fail = spyOn(fs, "renameSync").mockImplementation((from, to) => {
-      if (String(from).endsWith(".partial")) throw new Error(`private ${root} ${raw}`);
-      rename(from, to);
-    });
-    const log = spyOn(console, "error");
+    const fail = spyOn(speechArchiveWriter, "write").mockRejectedValue(new Error(`private ${root} ${raw}`));
     try {
-      await expect(handleVoiceSpeak({ message: raw })).rejects.toThrow("Speech archive transition: WRITE_UNCERTAIN");
+      const result = await handleVoiceSpeak({ message: raw });
+      await flushSpeechArchives();
+      expect(result.isError).not.toBe(true);
       expect(disk().status).toBe("received");
-      expect(log.mock.calls.flat().join(" ")).toContain("speak archive update failed: WRITE_UNCERTAIN");
-      expect(log.mock.calls.flat().join(" ")).not.toContain(root);
-      expect(log.mock.calls.flat().join(" ")).not.toContain(raw);
-    } finally { fail.mockRestore(); log.mockRestore(); }
+      expect(errorLog.mock.calls.flat().join(" ")).toContain("[speech] archive write failed: move");
+      expect(errorLog.mock.calls.flat().join(" ")).not.toContain(root);
+      expect(errorLog.mock.calls.flat().join(" ")).not.toContain(raw);
+    } finally { fail.mockRestore(); }
   });
 
   it("creates no receipts for invalid/blank inputs or silent think/toggle/replay", async () => {

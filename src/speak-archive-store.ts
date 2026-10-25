@@ -126,9 +126,19 @@ function persist(entry: string, m: SpeakStoreMetadata) {
   const stored = new Map(m.artifacts.filter(a => a.relative_path !== null).map(a => [a.relative_path, a.bytes]));
   m.totals.stored_audio_bytes = [...stored.values()].reduce((sum, bytes) => sum + bytes, 0);
   m.totals.provider_output_bytes = m.artifacts.filter(a => a.role === "provider_output").reduce((sum, a) => sum + a.bytes, 0);
+  if (m.lifecycle) {
+    // Generated chunks count once per chunk, even if identical bytes share an artifact.
+    // Prefer chunk references over a concatenated playback copy of the same audio.
+    const audio = m.speech?.generated.length
+      ? m.speech.generated.map(g => m.artifacts.find(a => a.relative_path === g.audio_path && a.role === "playback_ready"))
+      : m.artifacts.filter(a => a.role === "playback_ready" && a.relative_path !== null);
+    if (audio.length) m.lifecycle.summary.generated_audio_ms = audio.every(a => a?.duration_ms !== null && a?.duration_ms !== undefined)
+      ? audio.reduce((sum, a) => sum + a!.duration_ms!, 0) : null;
+  }
   m.updated_at = new Date().toISOString(); publish(entry, "metadata.json", encode(m));
   if (terminal.has(m.status)) unindexSpeech(m.id);
   return m;
+
 }
 function current(entry: string, context: Context) {
   const m = load(entry);
@@ -167,31 +177,31 @@ export function readSpeakArchive(context: Context): SpeakStoreResult {
   return boundary(() => current(location(context.id), context));
 }
 /** Close a player segment without inventing a pause between long-read chunks. */
-export function endSpeakPlayer(context: Context): SpeakStoreResult {
+export function endSpeakPlayer(context: Context, at = new Date().toISOString()): SpeakStoreResult {
   return boundary(() => {
     const entry = location(context.id), m = current(entry, context);
     if (m.speech?.playing_since) {
-      m.speech.played_ms += Math.max(0, Date.now() - Date.parse(m.speech.playing_since));
+      m.speech.played_ms += Math.max(0, Date.parse(at) - Date.parse(m.speech.playing_since));
       m.speech.playing_since = null;
     }
     return persist(entry, m);
   });
 }
-export function startSpeakPlayer(context: Context): SpeakStoreResult {
+export function startSpeakPlayer(context: Context, at = new Date().toISOString()): SpeakStoreResult {
   return boundary(() => {
     const entry = location(context.id), m = current(entry, context);
     check(m.speech?.state === "playing", "CONFLICT");
-    m.speech.playing_since ??= new Date().toISOString();
+    m.speech.playing_since ??= at;
     return persist(entry, m);
   });
 }
 /** Persist a validated transition using the existing private atomic metadata writer. */
-export function transitionSpeakArchive(context: Context, to: SpeechState, reason: string | null = null): SpeakStoreResult {
+export function transitionSpeakArchive(context: Context, to: SpeechState, reason: string | null = null, at = new Date().toISOString()): SpeakStoreResult {
   return boundary(() => {
     const entry = location(context.id), m = current(entry, context);
     reason = speechReasonSchema.parse(reason);
     check(!terminal.has(m.status) || (m.speech !== undefined && !legalRecovery(m.speech)), "FINALIZED");
-    const next = transitionSpeech(m.speech ?? speechFromLegacy(m), to, reason, new Date().toISOString());
+    const next = transitionSpeech(m.speech ?? speechFromLegacy(m), to, reason, at);
     check(next !== null, "CONFLICT");
     m.speech = next;
     m.status = to === "failed" && reason === "REJECTED" ? "rejected" : to === "requested" ? "received" : to === "cancelled" ? "stopped" : to === "interrupted" ? "interrupted_unknown" : to;

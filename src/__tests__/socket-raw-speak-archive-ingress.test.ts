@@ -1,3 +1,4 @@
+import { flushSpeechArchives } from "../speech-archive-live";
 import { projectStructuredSpeech } from "../tts/structured-speech";
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { describeMicTouching as describe } from "./setup/live-host-guard";
@@ -80,9 +81,10 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
       return syntheticHandle(identity?.request_id ?? "synthetic-no-client-id");
     }); spies.push(start);
   });
-  afterEach(() => {
+  afterEach(async () => {
     if (!fixture) return;
     resetSelectionReadQueueForTests();
+    await flushSpeechArchives();
     for (const spy of spies.reverse()) spy.mockRestore();
     process.env.QA_VOICE_RECORDINGS_DIR = savedRoot;
     fs.rmSync(fixture, { recursive: true, force: true });
@@ -151,7 +153,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     }
     expect(JSON.stringify(events)).not.toContain("archiveContext"); expect(JSON.stringify(events)).not.toContain("שלום");
   });
-  it("retains busy/reservation and queue-full refusals without audio or clearing the owner", () => {
+  it("retains busy/reservation and queue-full refusals without audio or clearing the owner", async () => {
     state.mockReturnValue("recording"); expect(incoming({ id: "busy" })).toMatchObject({ outcome: "reject", reason: "busy" });
     state.mockReturnValue("idle"); active.mockReturnValue(true);
     expect(incoming({ id: "reserved" })).toMatchObject({ outcome: "reject", reason: "busy" }); active.mockReturnValue(false);
@@ -162,11 +164,11 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     retained(contexts.at(-1)!, "rejected"); expect(start).toHaveBeenCalledTimes(1);
     expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 10, current_request_id: "A" });
   });
-  it("clear/preemption retains waiting inputs without inventing completion or restarting them", () => {
+  it("clear/preemption retains waiting inputs without inventing completion or restarting them", async () => {
     incoming({ id: "A", source: "selection" }); incoming({ id: "B", source: "clipboard", queue: true });
     incoming({ id: "agent", source: "cli" });
     expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "noop", reason: "stale" });
-    expect(contexts).toHaveLength(3); retained(contexts[1], "stopped"); expect(start).toHaveBeenCalledTimes(2);
+    expect(contexts).toHaveLength(3); await flushSpeechArchives(); retained(contexts[1], "stopped"); expect(start).toHaveBeenCalledTimes(2);
     expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 0, current_request_id: null });
   });
   for (const queue of [false, true]) it(`keeps repeated-ID invocations distinct with queue=${queue}`, () => {
@@ -221,11 +223,11 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
       if (previous) fs.writeFileSync(TTS_DISABLED_FILE, previous); else fs.rmSync(TTS_DISABLED_FILE);
     }
   });
-  it("explicit idle Stop clears waiting reads without another receipt or completion", () => {
+  it("explicit idle Stop clears waiting reads without another receipt or completion", async () => {
     incoming({ id: "A", source: "selection" }); incoming({ id: "B", source: "selection", queue: true });
     expect(handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "noop", reason: "already idle" });
     expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "noop", reason: "stale" });
-    expect(contexts).toHaveLength(2); retained(contexts[1], "stopped"); expect(start).toHaveBeenCalledTimes(1);
+    expect(contexts).toHaveLength(2); await flushSpeechArchives(); retained(contexts[1], "stopped"); expect(start).toHaveBeenCalledTimes(1);
   });
   it("late archive update fault keeps honest received evidence and fixed telemetry", () => {
     start.mockImplementation(() => { throw new Error("TTS is disabled"); });
@@ -258,7 +260,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
       { engine: "edge", voice: "synthetic", rate: "+0%" }, Date.now(), identity));
     let handle: tts.LongReadHandle | undefined;
     expect(incoming({ id: "runner" }, value => { handle = value; })).toMatchObject({ outcome: "accept" });
-    expect(await entered.at(0)).toBe(contexts[0]); await handle!.done;
+    expect(await entered.at(0)).toBe(contexts[0]); await handle!.done; await flushSpeechArchives();
     retained(contexts[0], "failed");
     expect(synthesized).toHaveLength(1); expect(played).toEqual(["synthetic-no-file"]); expect(disposed).toEqual(played);
     expect(events).toContainEqual(expect.objectContaining({ type: "state", request_id: "runner", text_hash: normalizedSpeechHash(raw) }));
