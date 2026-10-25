@@ -66,10 +66,10 @@ final class Tip2PausedTooltipTests: XCTestCase {
         func stopHost() throws -> NSView {
             let ready = expectation(for: NSPredicate { _, _ in
                 host.layoutSubtreeIfNeeded()
-                return self.descendants(host).contains { $0.toolTip == "Stop speaking" }
+                return self.descendants(host).contains { $0.identifier?.rawValue == "real-stop" }
             }, evaluatedWith: nil)
             wait(for: [ready], timeout: 3)
-            return try XCTUnwrap(descendants(host).first { $0.toolTip == "Stop speaking" })
+            return try XCTUnwrap(descendants(host).first { $0.identifier?.rawValue == "real-stop" })
         }
         state.handleEvent(["type": "playback_state", "state": "paused", "offset_ms": 0, "playback_id": "tip2", "generation": 2])
         XCTAssertTrue(state.isPlaybackPaused)
@@ -139,6 +139,11 @@ final class Tip2PausedTooltipTests: XCTestCase {
             }
         }
         let playing = try controls("Pause speech")
+        let stops = descendants(host).filter { $0.toolTip == "Stop speaking" }
+        XCTAssertEqual(stops.count, 1, "Hidden compact Stop must clear its native registration")
+        XCTAssertLessThan(try XCTUnwrap(stops.first).convert(stops.first!.bounds, to: nil).midY,
+                          playing[0].convert(playing[0].bounds, to: nil).midY,
+                          "Expanded Stop belongs in the lower controls row")
         for tooltip in playing {
             XCTAssertNil(tooltip.hitTest(NSPoint(x: tooltip.bounds.midX, y: tooltip.bounds.midY)),
                          "Tooltip registration must leave button clicks to SwiftUI")
@@ -155,6 +160,29 @@ final class Tip2PausedTooltipTests: XCTestCase {
         XCTAssertTrue(playing[1] === resumed[1])
         XCTAssertTrue(panel.allowsToolTipsWhenApplicationIsInactive)
         XCTAssertFalse(panel.isKeyWindow)
+    }
+
+    func testErrorStatusRegistersOnlyErrorDetails() throws {
+        let state = VoiceState()
+        state.isConnected = true
+        state.mode = .error
+        state.errorMessage = "Microphone permission denied"
+        let host = PillHostingView(rootView: BarView(
+            state: state, commandRouter: BarViewClickabilityTests.SpyCommandRouter(),
+            onOpenSettings: {}, onOpenHistory: {}
+        ))
+        host.frame = NSRect(x: 0, y: 0, width: 700, height: 300)
+        let panel = FloatingPillPanel(content: host)
+        defer { panel.close() }
+        panel.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
+        panel.orderBack(nil)
+        let ready = expectation(for: NSPredicate { _, _ in
+            host.layoutSubtreeIfNeeded()
+            return self.descendants(host).contains { $0.toolTip == state.errorMessage }
+        }, evaluatedWith: nil)
+        wait(for: [ready], timeout: 3)
+        XCTAssertEqual(descendants(host).filter { $0.toolTip == state.errorMessage }.count, 1)
+        XCTAssertFalse(descendants(host).contains { $0.toolTip == "Retry voice recording" })
     }
 
     func testPlaybackWingUsesOneBranchAcrossPauseCollapse() throws {

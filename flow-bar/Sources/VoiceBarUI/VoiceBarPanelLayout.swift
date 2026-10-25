@@ -165,8 +165,8 @@ public struct VoiceBarPanelHitGate: Equatable {
     public static let settleDuration: TimeInterval = VoiceBarNotchContract.motion.contentExitDuration + 0.5
 
     public private(set) var layout: VoiceBarPanelLayout
-    /// Layouts the shell may still be drawn between. A change mid-transition keeps them all, so the claim never
-    /// widens before the shell gets there.
+    /// Layouts the shell may still be drawn between. Surface admission uses their intersection;
+    /// control tracking uses their union so a transition cannot drop an existing hover.
     public private(set) var settlingFrom: [VoiceBarPanelLayout] = []
     public private(set) var settlesAt: TimeInterval = 0
 
@@ -199,9 +199,15 @@ public struct VoiceBarPanelHitGate: Equatable {
             (!isSettling(now: now) || settlingFrom.allSatisfy { $0.containsVisibleSurface(point) })
     }
 
+    /// Preserve AppKit mouse-moved/tooltip tracking over controls during shell transitions.
+    /// The surrounding transparent canvas retains the conservative visible-surface gate.
+    public func containsMouseTrackingSurface(_ point: CGPoint, now: TimeInterval) -> Bool {
+        containsVisibleSurface(point, now: now) || containsInteractiveContent(point, now: now)
+    }
+
     public func containsInteractiveContent(_ point: CGPoint, now: TimeInterval) -> Bool {
-        layout.containsInteractiveContent(point) &&
-            (!isSettling(now: now) || settlingFrom.allSatisfy { $0.containsInteractiveContent(point) })
+        layout.containsInteractiveContent(point) ||
+            (isSettling(now: now) && settlingFrom.contains { $0.containsInteractiveContent(point) })
     }
 }
 
