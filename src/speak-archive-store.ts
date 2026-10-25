@@ -174,8 +174,10 @@ export function saveSpeakArtifact(context: Context, input: {
     check(bytes.length > 0 && a.role !== "unknown" && (a.role !== "playback_ready" || a.mime === "audio/mpeg"), "INVALID_INPUT");
     if (a.role === "playback_ready" || input.debug_provider_bytes === true) {
       const audio = join(entry, "audio");
-      try { fs.mkdirSync(audio, { mode: 0o700 }); sync(entry); } catch (e) { if (!(typeof e === "object" && e !== null && "code" in e && e.code === "EEXIST")) throw e; }
+      try { fs.mkdirSync(audio, { mode: 0o700 }); } catch (e) { if (!(typeof e === "object" && e !== null && "code" in e && e.code === "EEXIST")) throw e; }
       privateStat(fs.lstatSync(audio), true);
+      // EEXIST may be a retry after mkdir succeeded but its parent sync failed.
+      try { sync(entry); } catch { throw new Failure("SYNC_UNCERTAIN"); }
       const name = sha256 + (a.mime === "audio/mpeg" ? ".mp3" : ".wav");
       try {
         check(read(join(audio, name)).equals(bytes), "CONFLICT");
@@ -197,13 +199,23 @@ export function saveSpeakArtifact(context: Context, input: {
 export function recoverSpeakArchive(id: string): SpeakStoreResult {
   return boundary(id, entry => {
     const input = read(join(entry, "input.txt"));
+    let journal: Buffer = Buffer.alloc(0);
+    try { journal = read(join(entry, "events.ndjson")); } catch (e) { if (!absent(e)) throw e; }
+    const end = journal.lastIndexOf(10) + 1, lines = journal.subarray(0, end).toString("utf8").split("\n").slice(0, -1);
+    const requestIds = lines.map((line, index) => {
+      let decoded: unknown;
+      try { decoded = JSON.parse(line); } catch { throw new Failure("CORRUPT_METADATA"); }
+      const record = z.object({ seq: z.literal(index + 1), request_id: z.string() }).safeParse(decoded);
+      check(record.success, "CORRUPT_METADATA");
+      return record.data.request_id;
+    });
     let m: SpeakStoreMetadata, missing = false;
     try { m = load(entry); }
     catch (e) {
       if (!absent(e)) throw e; missing = true;
       const created_at = id.slice(0, 23).replace(/T(\d\d)-(\d\d)-(\d\d)-(\d{3})$/, "T$1:$2:$3.$4") + "Z";
       m = metadata.parse({ schema_version: 1, source: "speak", id, created_at, updated_at: created_at,
-        request_id: null, request_source: null, connection: null, format: null, blocking: null,
+        request_id: requestIds[0] ?? null, request_source: null, connection: null, format: null, blocking: null,
         requested: { mode: null, profile: null, engine: null, voice: null, rate: null },
         build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
         input: { bytes: input.length, sha256: digest(input) }, status: "received", generation_id: null });
@@ -212,15 +224,7 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
       m.input.sha256 === digest(input) && m.input.bytes === input.length, "CORRUPT_METADATA");
     const before = encode(m); // Outcome alone is not a reconciliation/durability checkpoint.
     const finished = terminal.has(m.status);
-    let journal: Buffer = Buffer.alloc(0);
-    try { journal = read(join(entry, "events.ndjson")); } catch (e) { if (!absent(e)) throw e; }
-    const end = journal.lastIndexOf(10) + 1, lines = journal.subarray(0, end).toString("utf8").split("\n").slice(0, -1);
-    for (const [index, line] of lines.entries()) {
-      let decoded: unknown;
-      try { decoded = JSON.parse(line); } catch { throw new Failure("CORRUPT_METADATA"); }
-      const record = z.object({ seq: z.literal(index + 1), request_id: nullableText }).safeParse(decoded);
-      check(record.success && record.data.request_id === m.request_id, "CORRUPT_METADATA");
-    }
+    check(requestIds.every(request_id => request_id === m.request_id), "CORRUPT_METADATA");
     let audio: string[] = [], audioExists = false;
     try { privateStat(fs.lstatSync(join(entry, "audio")), true); audio = fs.readdirSync(join(entry, "audio")); audioExists = true; }
     catch (e) { if (!absent(e)) throw e; }
@@ -234,8 +238,13 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
     for (const name of ["display.txt", "spoken.txt", "chunks.json"] as const) {
       try {
         const bytes = read(join(entry, name));
-        if (name === "chunks.json") m.totals.chunk_count = chunks.parse(JSON.parse(bytes.toString("utf8"))).length;
-        m.projections = [...m.projections.filter(p => p.name !== name), { name, sha256: digest(bytes) }];
+        if (name === "chunks.json") {
+          try { m.totals.chunk_count = chunks.parse(JSON.parse(bytes.toString("utf8"))).length; }
+          catch { throw new Failure("CORRUPT_METADATA"); }
+        }
+        const sha256 = digest(bytes), recorded = m.projections.find(p => p.name === name);
+        check(name === "chunks.json" || !recorded || recorded.sha256 === sha256, "CORRUPT_METADATA");
+        m.projections = [...m.projections.filter(p => p.name !== name), { name, sha256 }];
       } catch (e) { if (!absent(e)) throw e; }
     }
     const orphanAudio = audio.filter(name => !name.startsWith(".") && !m.artifacts.some(a => a.relative_path === "audio/" + name));
