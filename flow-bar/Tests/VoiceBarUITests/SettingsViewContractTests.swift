@@ -197,10 +197,11 @@ final class SettingsViewContractTests: XCTestCase {
     }
 
     func testHistoryTabExposesRecordingAndAskScopesWithRecordingFirst() {
-        XCTAssertEqual(SettingsHistoryScope.allCases, [.recording, .ask])
+        XCTAssertEqual(SettingsHistoryScope.allCases, [.recording, .ask, .speech])
         XCTAssertEqual(SettingsHistoryScope.allCases.first, .recording)
         XCTAssertEqual(SettingsHistoryScope.recording.title, "Dictations")
         XCTAssertEqual(SettingsHistoryScope.ask.title, "Ask")
+        XCTAssertEqual(SettingsHistoryScope.speech.title, "Speech")
     }
 
     func testHistoryTabRendersASegmentedScopePickerDefaultingToRecording() throws {

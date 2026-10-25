@@ -65,16 +65,17 @@ public enum SettingsFocus: String, Equatable, Hashable {
     case microphonePriority = "settings-general-microphone-priority"
 }
 
-/// The two lists inside Settings → History. Order is the on-screen order: recording sits on the
-/// left and is the default; Ask sits on the right.
+/// History scopes in on-screen order; Dictations remains the default.
 public enum SettingsHistoryScope: String, Hashable, CaseIterable, Sendable {
     case recording
     case ask
+    case speech
 
     public var title: String {
         switch self {
         case .recording: "Dictations"
         case .ask: "Ask"
+        case .speech: "Speech"
         }
     }
 }
@@ -83,6 +84,7 @@ enum SettingsHistoryPartRole: Hashable {
     case recording
     case question
     case response
+    case speech
 }
 
 enum SettingsHistoryAction: Hashable {
@@ -110,12 +112,14 @@ struct SettingsHistoryMediaPart: Equatable {
     var processingLabel: String?
     /// MICDROP2: "Mic disconnected at 0:42" when the input device was lost mid-recording.
     var micDisconnectLabel: String?
+    var playbackQueue: [URL] = []
 
     var label: String? {
         switch role {
         case .recording: nil
         case .question: "Question"
         case .response: "Response"
+        case .speech: nil
         }
     }
 
@@ -124,6 +128,7 @@ struct SettingsHistoryMediaPart: Equatable {
         case .recording: nil
         case .question: "speaker.wave.2.fill"
         case .response: "mic.fill"
+        case .speech: "speaker.wave.2.fill"
         }
     }
 
@@ -132,6 +137,7 @@ struct SettingsHistoryMediaPart: Equatable {
         case .recording: "recording audio"
         case .question: "question audio"
         case .response: "response audio"
+        case .speech: "speech audio"
         }
     }
 
@@ -139,6 +145,8 @@ struct SettingsHistoryMediaPart: Equatable {
         switch role {
         case .recording:
             [.play, .copy, .paste, .retranscribe, .finder]
+        case .speech:
+            [.play, .copy, .finder]
         case .question:
             [.play]
         case .response:
@@ -506,6 +514,11 @@ public struct SettingsView: View {
     @State private var isHistoryLoading = false
     @State private var historyLoadFence = SettingsHistoryLoadFence()
     @State private var historyRefreshTask: Task<Void, Never>?
+    private let speechHistoryRoot: URL
+    @State private var speechEntries: [SettingsSpeechHistoryEntry] = []
+    @State private var selectedSpeechID: String?
+    @State private var speechReloadID = UUID()
+    @State private var speechLimit = 100
     @State private var selectedHistoryScope: SettingsHistoryScope
     @State private var askHistoryDayGroups: [SettingsAskHistoryDayGroup]
     @State private var askHistoryLoadedEntryCount: Int
@@ -647,6 +660,8 @@ public struct SettingsView: View {
         initialTab: SettingsTab = .general,
         tabRequest: SettingsTabRequest? = nil,
         initialHistoryScope: SettingsHistoryScope = .recording,
+        speechHistoryRoot: URL = SettingsHistoryArchive.defaultRoot,
+        initialSpeechEntryID: String? = nil,
         initialDictionarySearch: String = "",
         initialHistorySearch: String = "",
         initialAskHistorySearch: String = "",
@@ -725,6 +740,8 @@ public struct SettingsView: View {
         } else {
             self.historyPage = historyPage
         }
+        self._selectedSpeechID = State(initialValue: initialSpeechEntryID)
+        self.speechHistoryRoot = speechHistoryRoot
         self.askHistoryPage = askHistoryPage
         self.historySearchPage = historySearchPage
         self.askHistorySearchPage = askHistorySearchPage
@@ -828,6 +845,8 @@ public struct SettingsView: View {
                     if !isHistoryLoading {
                         requestHistoryReload()
                     }
+                case .speech:
+                    break // The mounted Speech view reloads on appearance.
                 case .ask:
                     if !isAskHistoryLoading {
                         requestAskHistoryReload()
@@ -1299,6 +1318,10 @@ public struct SettingsView: View {
                     recordingHistoryScope
                         .historyScopeVisibility(selectedHistoryScope == .recording)
                 }
+                if mountedHistoryScopes.contains(.speech) || selectedHistoryScope == .speech {
+                    speechHistoryScope
+                        .historyScopeVisibility(selectedHistoryScope == .speech)
+                }
                 if mountedHistoryScopes.contains(.ask) || selectedHistoryScope == .ask {
                     askHistoryScope
                         .historyScopeVisibility(selectedHistoryScope == .ask)
@@ -1328,6 +1351,8 @@ public struct SettingsView: View {
             switch scope {
             case .recording:
                 requestHistoryReload()
+            case .speech:
+                break
             case .ask:
                 requestAskHistoryReload()
             }
@@ -1341,6 +1366,81 @@ public struct SettingsView: View {
 
     // AIDEV-NOTE: Recording is deliberately first (left) and the default scope — the F5 list is
     // unchanged by the Ask tab, and ask exchanges never appear in it.
+    private var speechHistoryScope: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("\(speechEntries.count) spoken output\(speechEntries.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Refresh") { selectedSpeechID = nil; speechReloadID = UUID() }
+            }.padding(.horizontal, 18).padding(.vertical, 10)
+            Divider()
+            if speechEntries.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "speaker.wave.2").font(.system(size: 28)).foregroundStyle(.secondary)
+                    Text("No speech yet").font(.headline)
+                    Text("Spoken outputs will appear here.").font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(speechEntries) { entry in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(entry.createdAt, style: .relative)
+                                    Text(entry.voice)
+                                    Spacer()
+                                    Text(entry.statusLabel).padding(.horizontal, 8).padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                                }.font(.caption).foregroundStyle(.secondary)
+                                historyMediaPartRow(entry.mediaPart)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(10)
+                                    .background(Color(nsColor: .controlBackgroundColor))
+                                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                if entry.audioPath == nil || entry.missingAudioCount > 0 {
+                                    Text(entry.audioPath == nil ? "Audio unavailable" : "Some audio unavailable").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Button(selectedSpeechID == entry.id ? "Hide details" : "Details") {
+                                    selectedSpeechID = selectedSpeechID == entry.id ? nil : entry.id
+                                }.buttonStyle(.plain).font(.caption).foregroundStyle(Color.accentColor)
+                                if selectedSpeechID == entry.id {
+                                    HStack(alignment: .top, spacing: 16) {
+                                        if entry.textsDiffer {
+                                            speechTextDetail("Original selected text", text: entry.originalText)
+                                        }
+                                        speechTextDetail("Actually spoken", text: entry.spokenText)
+                                    }
+                                    Text(entry.reason ?? "No status reason stored").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        if speechEntries.count >= speechLimit {
+                            Button("Load older") { speechLimit += 100 }
+                        }
+                    }.padding(18)
+                }
+            }
+        }
+        .task(id: "\(speechLimit)-\(speechReloadID)") {
+            let limit = speechLimit
+            let root = speechHistoryRoot
+            let entries = await Task.detached(priority: .utility) { SettingsSpeechHistoryArchive.load(from: root, limit: limit) }.value
+            guard !Task.isCancelled else { return }
+            speechEntries = entries
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
+            speechReloadID = UUID()
+        }
+    }
+
+    private func speechTextDetail(_ title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text(text.isEmpty ? "No text stored" : text).textSelection(.enabled)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var historyScopePicker: some View {
         Picker("History scope", selection: $selectedHistoryScope) {
             ForEach(SettingsHistoryScope.allCases, id: \.self) { scope in
@@ -1812,7 +1912,8 @@ public struct SettingsView: View {
                 enablement: enablement
             )
 
-            if let audioPath = part.audioPath, historyPlayback.isPlaying(audioPath) {
+            if let audioPath = historyPlayback.playingURL,
+               part.audioPath == audioPath || part.playbackQueue.contains(audioPath) {
                 SettingsPlaybackScrubBar(
                     playback: historyPlayback,
                     url: audioPath,
@@ -1838,7 +1939,7 @@ public struct SettingsView: View {
             HStack(spacing: 12) {
                 if let audioLabel {
                     Label(audioLabel, systemImage: "waveform")
-                        .help("Audio length — how long the mic was on")
+                        .help(part.role == .speech ? "Retained speech duration; playback time when generated duration is unavailable" : "Audio length — how long the mic was on")
                         .accessibilityLabel("Audio length \(audioLabel)")
                 }
                 if let heardLabel {
@@ -1940,7 +2041,11 @@ public struct SettingsView: View {
                     historyPlayback.stop()
                     return
                 }
-                historyPlayback.toggle(audioPath)
+                if part.playbackQueue.isEmpty {
+                    historyPlayback.toggle(audioPath)
+                } else {
+                    historyPlayback.toggle(part.playbackQueue)
+                }
             } label: {
                 historyActionLabel(
                     isPlaying ? "Stop" : "Play",
