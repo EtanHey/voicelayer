@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { describeMicTouching } from "./setup/live-host-guard";
-import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import * as stt from "../stt";
 import * as vad from "../vad";
@@ -17,12 +17,14 @@ import { releaseVoiceSession } from "../session-booking";
   let spies: ReturnType<typeof spyOn>[];
   let events: any[], synthTexts: string[], recorders: number, sttCalls: number, players: number;
   let vadCalls: number;
+  let onRecorderSpawn: (() => void) | undefined;
   const text = () => process.env.PRIV11_TEXT!;
   const child = (extra: object = {}) => ({ pid: 987654, exited: Promise.resolve(0),
     stdout: new Blob([]).stream(), stderr: new Blob([]).stream(), kill() {}, ...extra });
 
   beforeEach(() => {
     spies = []; events = []; synthTexts = []; recorders = 0; sttCalls = 0; players = 0; vadCalls = 0;
+    onRecorderSpawn = undefined;
     spies.push(spyOn(socket, "isConnected").mockReturnValue(true));
     spies.push(spyOn(socket, "broadcast").mockImplementation(e => { events.push(e); }));
     spies.push(spyOn(launcher, "ensureVoiceBarRunning").mockImplementation(() => {}));
@@ -51,6 +53,7 @@ import { releaseVoiceSession } from "../session-booking";
       }
       if (argv[0].endsWith("fake-rec.sh") || argv[0] === "rec") {
         recorders++;
+        onRecorderSpawn?.();
         const pcm = new Int16Array(512 * 48).fill(1800);
         return child({ stdout: new ReadableStream({ start(controller) {
           for (let i = 0; i < 48; i++) controller.enqueue(new Uint8Array(pcm.buffer, i * 1024, 1024));
@@ -83,11 +86,39 @@ import { releaseVoiceSession } from "../session-booking";
     expect(readFileSync(event.recording_path.replace("audio.wav", "agent-transcript.txt"), "utf8")).toBe(text());
   }, 15_000);
 
+  it("Ask refuses an unsafe initial prompt receipt before synthesis or capture", async () => {
+    const saved = process.env.QA_VOICE_RECORDINGS_DIR!;
+    const blocked = join(process.env.PRIV11_PRIVATE_ROOT!, `CANARY-HOME-${process.env.PRIV11_NONCE}`, "blocked");
+    mkdirSync(join(blocked, ".."), { recursive: true, mode: 0o700 }); writeFileSync(blocked, "not a directory");
+    process.env.QA_VOICE_RECORDINGS_DIR = blocked;
+    try {
+      const result = await handleVoiceAsk({ message: text(), timeout_seconds: 5, silence_mode: "quick" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe("voice_ask refused: input archive unavailable (UNSAFE_PATH)");
+      expect(result.content[0].text).not.toContain(blocked);
+      expect(recorders).toBe(0); expect(sttCalls).toBe(0); expect(players).toBe(0);
+      expect(synthTexts).toEqual([]);
+    } finally { process.env.QA_VOICE_RECORDINGS_DIR = saved; }
+  }, 15_000);
+
   it("Ask archive failure keeps path detail in MCP errors and no diagnostic", async () => {
     const saved = process.env.QA_VOICE_RECORDINGS_DIR!;
     const blocked = join(process.env.PRIV11_PRIVATE_ROOT!, `CANARY-HOME-${process.env.PRIV11_NONCE}`, "blocked");
-    mkdirSync(join(blocked, ".."), { recursive: true }); writeFileSync(blocked, "not a directory");
-    process.env.QA_VOICE_RECORDINGS_DIR = blocked;
+    mkdirSync(join(blocked, ".."), { recursive: true, mode: 0o700 }); writeFileSync(blocked, "not a directory");
+    mkdirSync(saved, { recursive: true, mode: 0o700 });
+    const priorInputs = new Set(readdirSync(saved, { recursive: true }).filter(p => p.endsWith("/input.txt")));
+    // The real handler has retained and played its prompt before this existing OS seam.
+    // Only the later archiveVoiceAskCapture call sees the blocked root; no yields/retries.
+    onRecorderSpawn = () => {
+      const inputs = readdirSync(saved, { recursive: true }).filter(p => p.endsWith("/input.txt") && !priorInputs.has(p));
+      expect(inputs).toHaveLength(1);
+      const input = join(saved, inputs[0]);
+      expect(readFileSync(input, "utf8")).toBe(text());
+      expect(JSON.parse(readFileSync(join(input, "..", "metadata.json"), "utf8"))).toMatchObject({
+        source: "speak", request_source: "ask_prompt", schema_version: 1,
+      });
+      process.env.QA_VOICE_RECORDINGS_DIR = blocked;
+    };
     try {
       const result = await handleVoiceAsk({ message: text(), timeout_seconds: 5, silence_mode: "quick" });
       expect(result.isError).toBe(true);
