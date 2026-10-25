@@ -129,10 +129,10 @@ public struct TeleprompterBoundary: Equatable {
     }
 
     /// WORDTIME1: clone timing leaves short and punctuation-glued tokens null. Each one gets an even
-    /// share of the gap between its timed neighbours (the chunk start before the first, the chunk's
+    /// share of the gap between its timed neighbours (decoded audio onset before the first, the chunk's
     /// audio end after the last), so every displayed word highlights and seeks. Offsets stay in token
     /// order; a gap with no room, or a tail with no known audio end, stays untimed.
-    static func interpolated(_ rows: [Self], text: String, startMs: Int, endMs: Int?) -> [Self] {
+    static func interpolated(_ rows: [Self], text: String, startMs: Int?, endMs: Int?) -> [Self] {
         let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         guard rows.contains(where: { $0.wordIndex != nil }),
               let byIndex = indexedRows(rows, tokens: tokens) else { return rows }
@@ -150,7 +150,7 @@ public struct TeleprompterBoundary: Equatable {
                                      wordIndex: index, isInterpolated: true)
             }
         }
-        fill(0 ..< first, from: max(0, startMs), to: result[first].offsetMs!)
+        if let startMs { fill(0 ..< first, from: max(0, startMs), to: result[first].offsetMs!) }
         for (left, right) in zip(timed, timed.dropFirst()) where right > left + 1 {
             let next = result[right].offsetMs!
             // Overlapping neighbours: share the left word's window rather than tie with it.

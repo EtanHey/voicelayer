@@ -272,7 +272,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     holdDecoder = true;
     const h = start("clone", "First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8));
     await decoderBarrier.at(0);
-    expect(parts[0]).toBe("First sentence.");
+    expect(parts[0]).toBe("First sentence. The rest of this read is synthesized in the background.");
     expect(parts[0].length).toBeLessThanOrEqual(100);
     clockMs += 300;
     holdDecoder = false;

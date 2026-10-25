@@ -399,16 +399,47 @@ export function chunkTextForTTS(text: string, maxLen = TTS_CHUNK_MAX_CHARS): str
   return chunks.length > 0 ? chunks : [text];
 }
 
-/** Short startup utterance; subsequent requests keep the throughput-friendly budget. */
+/** Natural startup, a 200-character bridge, then throughput-sized body requests. */
 export function chunkTextForLongRead(text: string): string[] {
   if (text.length <= 100 || !text.trim()) return [text];
-  const first = chunkTextForTTS(splitIntoSentences(text)[0], 100)[0].trim();
-  const tokens = [...text.matchAll(/\S+/gu)];
-  const firstTokens = first.match(/\S+/gu) ?? [];
-  const last = tokens[firstTokens.length - 1];
-  const lastPiece = firstTokens.at(-1)!;
-  const rest = text.slice(last.index + lastPiece.length).trimStart();
-  return rest ? [first, ...chunkTextForTTS(rest)] : [first];
+  const prefix = (remaining: string, budget: number): number => {
+    const minimum = 40;
+    const cap = TTS_CHUNK_MAX_CHARS;
+    const unsafeEnd = (end: number) => {
+      const ending = remaining.slice(0, end).replace(/["'”’)\]]+$/u, "");
+      return /(?:\b(?:dr|mr|mrs|ms|prof|sr|jr|vs|etc)|\b\d+)\.$/iu.test(ending) ||
+        /(?:^|[\s"'“‘(])(?:[A-Za-z]\.)+$/u.test(ending) || /\b(?:e\.g|i\.e)\.$/iu.test(ending);
+    };
+    const sentences = [...remaining.matchAll(/[.!?…]["'”’)]*(?=\s|$)/gu)]
+      .map(match => match.index + match[0].length)
+      .filter(end => !unsafeEnd(end));
+    const sentence = sentences.find(end => end >= minimum) ?? remaining.length;
+    if (sentence <= budget) return budget === 200
+      ? sentences.filter(end => end >= minimum && end <= budget).at(-1) ?? sentence
+      : sentence;
+    // Prefer a real clause over a bare word break. Short prefixes need enough speech
+    // to cover preparation of the next request, including names and list markers.
+    for (const punctuation of [/[;:](?=\s|$)/gu, /[,،，](?=\s|$)/gu]) {
+      const boundary = [...remaining.slice(0, Math.min(budget, sentence)).matchAll(punctuation)]
+        .map(match => match.index + match[0].length).find(end => end >= minimum);
+      if (boundary !== undefined) return boundary;
+    }
+    if (sentence <= cap) return sentence;
+    // Pathological unpunctuated prose still has a bounded engine request.
+    const words = [...remaining.slice(0, cap + 1).matchAll(/\s+/gu)]
+      .map(match => match.index).filter(end => end >= minimum && end <= cap && !unsafeEnd(end));
+    return words.at(-1) ?? cap;
+  };
+  const chunks: string[] = [];
+  let remaining = text.trim();
+  for (const budget of [100, 200]) {
+    if (!remaining) break;
+    const end = prefix(remaining, budget);
+    chunks.push(remaining.slice(0, end).trimEnd());
+    remaining = remaining.slice(end).trimStart();
+  }
+  if (remaining) chunks.push(...chunkTextForTTS(remaining));
+  return chunks;
 }
 
 function inferBoundaryEndMs(wordBoundaries: WordBoundary[]): number {

@@ -12,7 +12,9 @@ final class NullableSubtitleTests: XCTestCase {
     private func receive(_ text: String, _ rows: [[String: Any]], chunkStart: Int = 0) -> VoiceState {
         let state = VoiceState(playbackAmplitudeClock: { 100 })
         state.handleEvent(["type": "state", "state": "speaking", "text": text,
-                           "duration_ms": chunkStart + 5000, "long_read": ["chunk_start_ms": chunkStart]])
+                           "duration_ms": chunkStart + 5000, "long_read": ["chunk_start_ms": chunkStart]],
+                          playbackAmplitude: PlaybackAmplitudeEnvelope(source: .decodedRMS,
+                              sampleIntervalMilliseconds: 50, samples: [0.5]))
         state.handleEvent(["type": "subtitle", "words": [], "aligned_words": rows])
         return state
     }
