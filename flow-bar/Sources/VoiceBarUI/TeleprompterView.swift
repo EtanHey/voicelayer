@@ -619,6 +619,7 @@ struct TeleprompterPointerState {
 
 public struct TeleprompterView: View {
     public let text: String
+    public var displayBlocks: [TeleprompterDisplayBlock] = []
     public var playbackEpoch = 0
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [TeleprompterBoundary] = []
@@ -634,6 +635,7 @@ public struct TeleprompterView: View {
     public init(
         text: String,
         wordBoundaries: [TeleprompterBoundary] = [],
+        displayBlocks: [TeleprompterDisplayBlock] = [],
         isReadback: Bool = false,
         playbackEpoch: Int = 0,
         playbackElapsedMilliseconds: @escaping () -> Int,
@@ -645,6 +647,7 @@ public struct TeleprompterView: View {
         contentInset: CGFloat = Theme.teleprompterContentInset
     ) {
         self.text = text
+        self.displayBlocks = displayBlocks
         self.wordBoundaries = wordBoundaries
         self.isReadback = isReadback
         self.playbackEpoch = playbackEpoch
@@ -699,7 +702,7 @@ public struct TeleprompterView: View {
 
     /// Words, formatting and blocks, computed once per text and timeline (a highlight tick reuses them).
     private var rendered: TeleprompterRenderedDocument {
-        renderCache.document(text: text, wordBoundaries: wordBoundaries)
+        renderCache.document(text: text, wordBoundaries: wordBoundaries, displayBlocks: displayBlocks)
     }
 
     private var teleprompterWords: [TeleprompterWord] {
@@ -1065,13 +1068,21 @@ private struct TeleprompterBlockView: View, Equatable {
                     joinsPrevious: layout.gluesToPrevious,
                     joinsNext: layouts.indices.contains(position + 1) && layouts[position + 1].gluesToPrevious
                 )
+                if let marker = layout.decoration {
+                    Text(marker)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(notchPalette.primary.color)
+                        .accessibilityHidden(true)
+                        .layoutValue(key: TeleprompterFlowItemKey.self,
+                                     value: TeleprompterFlowItem(lineBreak: layout.lineBreak, isListMarker: true))
+                }
                 Group {
                     if let onSeek, isReadback || TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {
                         Button {
                             TeleprompterSeekPolicy.seek(word, isReadback: isReadback, seek: onSeek,
                                                         unavailable: { onSeekUnavailable?() })
                         } label: {
-                            wordLabel(word, text: layout.displayText, highlight: highlight)
+                            wordLabel(word, text: layout.displayText, heading: layout.isHeading, highlight: highlight)
                                 .underline(hoveredWordID == word.id)
                         }
                         .buttonStyle(.plain)
@@ -1080,20 +1091,21 @@ private struct TeleprompterBlockView: View, Equatable {
                         .accessibilityHint("Seek to this word")
                         .help("Seek to this word")
                     } else {
-                        wordLabel(word, text: layout.displayText, highlight: highlight)
+                        wordLabel(word, text: layout.displayText, heading: layout.isHeading, highlight: highlight)
                     }
                 }
                 .id(word.id)
-                .layoutValue(key: TeleprompterFlowItemKey.self, value: layout.flowItem)
+                .layoutValue(key: TeleprompterFlowItemKey.self, value: layout.decoration == nil ? layout.flowItem
+                             : TeleprompterFlowItem(gluesToPrevious: layout.gluesToPrevious))
             }
         }
     }
 
-    private func wordLabel(_ word: TeleprompterWord, text: String, highlight: WordHighlight) -> some View {
+    private func wordLabel(_ word: TeleprompterWord, text: String, heading: Bool, highlight: WordHighlight) -> some View {
         let isLit = highlight.isAvailable && highlight.isCurrent
         let leading: CGFloat = highlight.joinsPrevious ? 0 : 3, trailing: CGFloat = highlight.joinsNext ? 0 : 3
         return Text(text)
-            .font(.system(size: 16, weight: isLit ? .semibold : .medium))
+            .font(.system(size: 16, weight: isLit || heading ? .semibold : .medium))
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: wrapWidth, alignment: .leading)

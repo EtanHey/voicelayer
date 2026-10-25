@@ -32,6 +32,8 @@ public struct TeleprompterWordLayout: Equatable {
     public var displayText: String
     public var lineBreak: TeleprompterLineBreak = .none
     public var isListMarker = false
+    public var decoration: String?
+    public var isHeading = false
     public var gluesToPrevious = false
     /// Words that light up as one: a token's pieces, and punctuation glued to its word.
     public var highlightGroup: Int
@@ -48,7 +50,8 @@ public enum TeleprompterFormatting {
 
     /// One layout per word, from the whitespace the text had around each token. Words that do not
     /// come from `text` (a boundary-only payload) keep today's plain flow.
-    public static func layout(text: String, words: [TeleprompterWord]) -> [TeleprompterWordLayout] {
+    public static func layout(text: String, words: [TeleprompterWord],
+                              displayBlocks: [TeleprompterDisplayBlock] = []) -> [TeleprompterWordLayout] {
         let plain = words.map { TeleprompterWordLayout(displayText: $0.text, highlightGroup: $0.id) }
         var tokens: [(text: String, newlines: Int)] = []
         var newlines = 0
@@ -91,6 +94,29 @@ public enum TeleprompterFormatting {
             result[position].isListMarker = isMarker
             result[position].gluesToPrevious = glues
             if glues { result[position].highlightGroup = result[position - 1].highlightGroup }
+        }
+        // Overlay only exact speech-token positions. Decorations have no word id, time or seek target.
+        var position = 0
+        for block in displayBlocks {
+            while position < words.count, tokenOfWord[position] < block.word_start { position += 1 }
+            guard position < words.count, tokenOfWord[position] == block.word_start else { continue }
+            let first = position
+            while position < words.count, tokenOfWord[position] < block.word_end {
+                result[position].isHeading = block.kind == "heading"
+                position += 1
+            }
+            if block.starts_block || block.starts_section {
+                result[first].lineBreak = block.starts_section || block.kind == "paragraph" || block.kind == "heading"
+                    ? .paragraph : .line
+                result[first].gluesToPrevious = false
+                let oldGroup = result[first].highlightGroup
+                var grouped = first
+                while grouped < result.count, result[grouped].highlightGroup == oldGroup {
+                    result[grouped].highlightGroup = words[first].id
+                    grouped += 1
+                }
+            }
+            result[first].decoration = block.marker
         }
         return result
     }
@@ -185,23 +211,25 @@ public struct TeleprompterRenderedDocument {
 
 /// A highlight tick re-renders the view, never the document: formatting reruns only for new text or timings.
 public final class TeleprompterRenderCache {
-    private var key: (text: String, wordBoundaries: [TeleprompterBoundary])?
+    private var key: (text: String, wordBoundaries: [TeleprompterBoundary], displayBlocks: [TeleprompterDisplayBlock])?
     private var cached: TeleprompterRenderedDocument?
     private(set) var computations = 0
 
     public init() {}
 
-    public func document(text: String, wordBoundaries: [TeleprompterBoundary]) -> TeleprompterRenderedDocument {
-        if let key, let cached, key.text == text, key.wordBoundaries == wordBoundaries { return cached }
+    public func document(text: String, wordBoundaries: [TeleprompterBoundary],
+                         displayBlocks: [TeleprompterDisplayBlock] = []) -> TeleprompterRenderedDocument {
+        if let key, let cached, key.text == text, key.wordBoundaries == wordBoundaries,
+           key.displayBlocks == displayBlocks { return cached }
         computations += 1
         let words = TeleprompterContentModel.words(text: text, wordBoundaries: wordBoundaries)
-        let layouts = TeleprompterFormatting.layout(text: text, words: words)
+        let layouts = TeleprompterFormatting.layout(text: text, words: words, displayBlocks: displayBlocks)
         let blocks = TeleprompterFormatting.blocks(layouts: layouts, words: words)
         var blockOfWord = Array(repeating: 0, count: words.count)
         for (index, block) in blocks.enumerated() { for word in block { blockOfWord[word] = index } }
         let document = TeleprompterRenderedDocument(words: words, layouts: layouts, blocks: blocks,
                                                     blockOfWord: blockOfWord)
-        key = (text, wordBoundaries)
+        key = (text, wordBoundaries, displayBlocks)
         cached = document
         return document
     }

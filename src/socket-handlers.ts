@@ -96,7 +96,7 @@ import {
 } from "./whisper-server";
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 import { reserveStandardVoiceOperation, hasActiveVoiceOperation } from "./voice-operation-reservation";
-import { markdownToSpeech } from "./tts/markdown-to-speech";
+import { projectStructuredSpeech } from "./tts/structured-speech";
 import { clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
 
 let modelStatusRevision = 0;
@@ -131,7 +131,8 @@ function finishRawSpeakFailure(context: SpeakArchiveContext | undefined, error: 
 function startSelectionRead(read: QueuedSelectionRead, prepared?: PreparedReadStart): void {
   try {
     if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) throw new Error("busy");
-    const identity = { request_id: read.requestId, text_hash: read.textHash, archiveContext: read.archiveContext };
+    const identity = { request_id: read.requestId, text_hash: read.textHash, archiveContext: read.archiveContext,
+      ...(read.structuredDisplay ? { structuredDisplay: read.structuredDisplay } : {}) };
     if (prepared) speakText(read.text, read.profile, identity, prepared);
     else speakText(read.text, read.profile, identity);
   } catch (error) { finishRawSpeakFailure(read.archiveContext, error); throw error; }
@@ -213,13 +214,15 @@ export function handleSocketCommand(
       }
       let launched = false, queueStartOwnsFailure = false;
       try {
-        const text = command.format === "markdown" ? markdownToSpeech(command.text) : command.text;
+        const projection = command.format === "markdown" ? projectStructuredSpeech(command.text) : undefined;
+        const structuredDisplay = command.source === "selection" ? projection : undefined;
+        const text = projection?.speechText ?? command.text;
         const textHash = normalizedSpeechHash(command.text);
         if (command.queue === true && command.id) {
           // The queue starts the read itself when no user read is live; onSpeak observes only direct starts.
           queueStartOwnsFailure = true;
           const outcome = selectionReads.submit({ requestId: command.id, text, textHash, profile: command.profile ?? "auto",
-            archiveContext: receipt.context }, true);
+            archiveContext: receipt.context, ...(structuredDisplay ? { structuredDisplay } : {}) }, true);
           if (outcome === "full") {
             finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
             return buildAck(command, "reject", "queue full");
@@ -230,7 +233,7 @@ export function handleSocketCommand(
         if (command.source === "selection" && command.id) selectionReads.own(command.id);
         else selectionReads.clear();
         const read = speakText(text, command.profile ?? "auto", { request_id: command.id, text_hash: textHash,
-          archiveContext: receipt.context });
+          archiveContext: receipt.context, ...(structuredDisplay ? { structuredDisplay } : {}) });
         launched = true;
         onSpeak?.(read);
         return buildAck(command, "accept");

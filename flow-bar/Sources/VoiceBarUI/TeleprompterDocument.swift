@@ -15,6 +15,7 @@ public struct TeleprompterLongReadDocument: Equatable {
     private let chunkWordStarts: [Int]
     /// Global word index → timing. A seek or a readback replay of the same read keeps it.
     private var timings: [Int: TeleprompterBoundary] = [:]
+    private var displayChunks: [Int: [TeleprompterDisplayBlock]] = [:]
 
     /// Nil for a daemon that sends no document, or a document that does not tile its chunks.
     public init?(longRead: [String: Any]) {
@@ -65,6 +66,14 @@ public struct TeleprompterLongReadDocument: Equatable {
                                      wordIndex: wordStart + index, isInterpolated: $0.isInterpolated)
             }
         }
+    }
+
+    mutating func recordDisplay(_ display: TeleprompterStructuredDisplay?, wordStart: Int) {
+        displayChunks[wordStart] = display?.positioned(at: wordStart)
+    }
+
+    var displayBlocks: [TeleprompterDisplayBlock] {
+        displayChunks.sorted { $0.key < $1.key }.flatMap(\.value)
     }
 
     public var boundaries: [TeleprompterBoundary] {
