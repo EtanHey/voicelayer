@@ -1,4 +1,7 @@
 import { requireIsolatedOverride } from "./test-isolation";
+import { randomUUID } from "crypto";
+import { createSpeakReceipt, type SpeakArchiveContext } from "./speak-archive";
+import { updateSpeakLifecycle, type SpeakLifecycle } from "./speak-archive-store";
 /**
  * MCP tool handler functions for VoiceLayer.
  *
@@ -301,8 +304,8 @@ export async function handleVoiceSpeak(
 
   // Resolve think mode before TTS sanitization so silent notes retain code and
   // markup-shaped text exactly as the former direct think tool did.
-  const rawMessage =
-    typeof a.message === "string" ? a.message.trim() : "";
+  const originalMessage = typeof a.message === "string" ? a.message : "";
+  const rawMessage = originalMessage.trim();
   if (!rawMessage) {
     return textResult("Missing or empty required parameter: message", true);
   }
@@ -318,19 +321,38 @@ export async function handleVoiceSpeak(
     return handleThink({ thought: rawMessage, category });
   }
 
+  const receipt = validateTtsArgs({ message: rawMessage, rate, voice })
+    ? createSpeakReceipt({
+      input: originalMessage, request_id: randomUUID(), request_source: "voice_speak",
+      connection: context?.connection ?? null, format: null, blocking: false,
+      requested: { mode: typeof a.mode === "string" ? a.mode : null,
+        profile: null, engine: null, voice: voice ?? null, rate: null,
+        ...(rate !== undefined ? { rate_raw: rate } : {}) },
+      build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
+    }) : null;
+  if (receipt?.kind === "failed") {
+    return textResult(`voice_speak refused: input archive unavailable (${receipt.code})`, true);
+  }
+  const archiveContext = receipt?.kind === "created" ? receipt.context : undefined;
+
   // Pathology backstop for the spoken path only — a silent think note costs no
   // playback time, so it is exempt. Runs before synthesis, never truncating.
   const refusal = refuseOverlongMessage(rawMessage, "voice_speak");
-  if (refusal) return refusal;
+  if (refusal) {
+    finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
+    return refusal;
+  }
 
   // Spoken modes strip SSML-shaped content before synthesis.
   const message = sanitizeTtsText(rawMessage);
   if (!message) {
+    finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     return textResult("Missing or empty required parameter: message", true);
   }
 
   const reservation = reserveStandardVoiceOperation();
   if (!reservation) {
+    finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     return textResult(
       "voice_speak refused because an archive retranscription voice operation is in progress",
       true,
@@ -339,15 +361,17 @@ export async function handleVoiceSpeak(
   try {
     switch (mode) {
       case "announce":
-        return await handleAnnounce({ message, rate, voice }, context);
+        return await handleAnnounce({ message, rate, voice }, context, archiveContext);
       case "brief":
-        return await handleBrief({ message, rate, voice }, context);
+        return await handleBrief({ message, rate, voice }, context, archiveContext);
       case "consult":
-        return await handleConsult({ message, rate, voice }, context);
+        return await handleConsult({ message, rate, voice }, context, archiveContext);
       default:
-        return await handleAnnounce({ message, rate, voice }, context);
+        return await handleAnnounce({ message, rate, voice }, context, archiveContext);
     }
   } catch (error) {
+    finishSpeakReceipt(archiveContext, error instanceof SpeechPreparationStoppedError ? "stopped" : "failed",
+      error instanceof SpeechPreparationStoppedError ? null : "OUTPUT_UNAVAILABLE");
     if (error instanceof SpeechPreparationStoppedError) return textResult(error.message);
     throw error;
   } finally {
@@ -450,6 +474,25 @@ export async function handleVoiceAsk(
 
 // --- Mode Handlers ---
 
+function finishSpeakReceipt(
+  context: SpeakArchiveContext | undefined,
+  status: "rejected" | "failed" | "stopped",
+  error_code: SpeakLifecycle["summary"]["error_code"],
+): void {
+  if (!context) return;
+  const result = updateSpeakLifecycle(context, { status, generation_id: null,
+    timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
+    summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code }, played_spans: [] });
+  if (result.kind === "failed") console.error(`[voicelayer] speak archive update failed: ${result.code}`);
+}
+
+async function speakWithReceipt(message: string, options: TextToSpeechOptions) {
+  const result = await speak(message, options);
+  // Empty TTS result is the existing disabled/no-output path, never completion.
+  if (!result.playbackId && !result.engine) finishSpeakReceipt(options.archiveContext, "rejected", "REJECTED");
+  return result;
+}
+
 function playbackTelemetryOptions(
   context?: VoiceToolContext,
 ): Pick<TextToSpeechOptions, "onPlaybackComplete"> {
@@ -464,13 +507,15 @@ function playbackTelemetryOptions(
 export async function handleAnnounce(
   args: unknown,
   context?: VoiceToolContext,
+  archiveContext?: SpeakArchiveContext,
 ): Promise<McpResult> {
   const validated = validateTtsArgs(args);
   if (!validated) {
     return textResult("Missing or empty required parameter: message", true);
   }
 
-  const { warning, playbackId } = await speak(validated.message, {
+  const { warning, playbackId } = await speakWithReceipt(validated.message, {
+    archiveContext,
     mode: "announce",
     rate: validated.rate,
     voice: validated.voice,
@@ -485,13 +530,15 @@ export async function handleAnnounce(
 export async function handleBrief(
   args: unknown,
   context?: VoiceToolContext,
+  archiveContext?: SpeakArchiveContext,
 ): Promise<McpResult> {
   const validated = validateTtsArgs(args);
   if (!validated) {
     return textResult("Missing or empty required parameter: message", true);
   }
 
-  const { warning, playbackId } = await speak(validated.message, {
+  const { warning, playbackId } = await speakWithReceipt(validated.message, {
+    archiveContext,
     mode: "brief",
     rate: validated.rate,
     voice: validated.voice,
@@ -504,13 +551,15 @@ export async function handleBrief(
 export async function handleConsult(
   args: unknown,
   context?: VoiceToolContext,
+  archiveContext?: SpeakArchiveContext,
 ): Promise<McpResult> {
   const validated = validateTtsArgs(args);
   if (!validated) {
     return textResult("Missing or empty required parameter: message", true);
   }
 
-  const { warning, playbackId } = await speak(validated.message, {
+  const { warning, playbackId } = await speakWithReceipt(validated.message, {
+    archiveContext,
     mode: "consult",
     rate: validated.rate,
     voice: validated.voice,

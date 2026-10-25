@@ -16,6 +16,8 @@ export interface SpeakReceiptRequest {
     engine: string | null;
     voice: string | null;
     rate: number | null;
+    /** Exact caller spelling, including units; independent of the numeric field. */
+    rate_raw?: string;
   };
   build: {
     app_version: string | null;
@@ -49,6 +51,7 @@ type FailureCode = "INVALID_INPUT" | "UNSAFE_PATH" | "COLLISION" | "IO_ERROR";
 export type SpeakReceiptResult =
   | { kind: "created"; context: Identity & { metadata: SpeakReceivedMetadata } }
   | { kind: "failed"; stage: Stage; code: FailureCode; partial: Identity | null };
+export type SpeakArchiveContext = Extract<SpeakReceiptResult, { kind: "created" }>["context"];
 
 class ReceiptFailure extends Error {
   constructor(readonly code: FailureCode) { super(code); }
@@ -145,6 +148,7 @@ export function createSpeakReceipt(
       requested: {
         mode: request.requested.mode, profile: request.requested.profile,
         engine: request.requested.engine, voice: request.requested.voice, rate: request.requested.rate,
+        ...(request.requested.rate_raw !== undefined ? { rate_raw: request.requested.rate_raw } : {}),
       },
       build: {
         app_version: request.build.app_version, daemon_version: request.build.daemon_version,
