@@ -58,7 +58,8 @@ const metadata = z.object({ schema_version: z.literal(1), source: z.literal("spe
 export type SpeakStoreMetadata = z.infer<typeof metadata>;
 export type SpeakLifecycle = z.infer<typeof lifecycle>;
 export type SpeakChunks = z.infer<typeof chunks>;
-type Code = "INVALID_INPUT" | "UNSAFE_PATH" | "CORRUPT_METADATA" | "FINALIZED" | "CONFLICT" | "IO_ERROR" | "WRITE_UNCERTAIN" | "SYNC_UNCERTAIN";
+const failureCode = z.enum(["INVALID_INPUT", "UNSAFE_PATH", "CORRUPT_METADATA", "FINALIZED", "CONFLICT", "IO_ERROR", "WRITE_UNCERTAIN", "SYNC_UNCERTAIN"]);
+type Code = z.infer<typeof failureCode>;
 export type SpeakStoreResult = { kind: "stored"; metadata: SpeakStoreMetadata } | { kind: "failed"; code: Code };
 class Failure extends Error { constructor(readonly code: Code) { super(code); } }
 function check(ok: boolean, code: Code): asserts ok { if (!ok) throw new Failure(code); }
@@ -111,9 +112,13 @@ function load(entry: string) {
   try { return metadata.parse(JSON.parse(read(join(entry, "metadata.json")).toString("utf8"))); }
   catch (e) { if (e instanceof Failure || absent(e)) throw e; throw new Failure("CORRUPT_METADATA"); }
 }
-function boundary(id: string, work: (entry: string) => SpeakStoreMetadata): SpeakStoreResult {
-  try { return { kind: "stored", metadata: work(location(id)) }; }
-  catch (e) { return { kind: "failed", code: e instanceof Failure ? e.code : e instanceof z.ZodError ? "INVALID_INPUT" : "IO_ERROR" }; }
+function boundary(work: () => SpeakStoreMetadata): SpeakStoreResult {
+  try { return { kind: "stored", metadata: work() }; }
+  catch (e) {
+    try {
+      return { kind: "failed", code: e instanceof Failure ? failureCode.parse(e.code) : e instanceof z.ZodError ? "INVALID_INPUT" : "IO_ERROR" };
+    } catch { return { kind: "failed", code: "IO_ERROR" }; }
+  }
 }
 function persist(entry: string, m: SpeakStoreMetadata) {
   const stored = new Map(m.artifacts.filter(a => a.relative_path !== null).map(a => [a.relative_path, a.bytes]));
@@ -132,7 +137,8 @@ function current(entry: string, context: Context) {
 
 /** Single synchronous writer per entry. Context is explicit; no ambient current request. */
 export function updateSpeakLifecycle(context: Context, update: SpeakLifecycle, linkage?: { parent_ask_id: string | null; caller_request_id: string | null }): SpeakStoreResult {
-  return boundary(context.id, entry => {
+  return boundary(() => {
+    const entry = location(context.id);
     const m = current(entry, context), next = lifecycle.parse(update);
     check(!terminal.has(m.status), "FINALIZED");
     check(next.status !== "received" && next.status !== "interrupted_unknown", "INVALID_INPUT");
@@ -150,14 +156,20 @@ export function updateSpeakLifecycle(context: Context, update: SpeakLifecycle, l
 export function saveSpeakProjection(context: Context, projection: {
   display: string; spoken: string; normalization: z.infer<typeof normalization>; chunks: SpeakChunks;
 }): SpeakStoreResult {
-  return boundary(context.id, entry => {
+  return boundary(() => {
+    const entry = location(context.id);
     const m = current(entry, context);
     const p = z.object({ display: text, spoken: text, normalization, chunks }).parse(projection);
     // Projection text is immutable once published; chunk state can progress after Stop.
-    for (const [name, bytes] of [["display.txt", Buffer.from(p.display)], ["spoken.txt", Buffer.from(p.spoken)], ["chunks.json", encode(p.chunks)]] as const) {
+    const files = [["display.txt", Buffer.from(p.display)], ["spoken.txt", Buffer.from(p.spoken)], ["chunks.json", encode(p.chunks)]] as const;
+    for (const [name, bytes] of files) {
       if (name !== "chunks.json") {
+        const sha256 = digest(bytes);
+        check(m.projections.every(p => p.name !== name || p.sha256 === sha256), "CONFLICT");
         try { check(read(join(entry, name)).equals(bytes), "CONFLICT"); } catch (e) { if (!absent(e)) throw e; }
       }
+    }
+    for (const [name, bytes] of files) {
       publish(entry, name, bytes);
       m.projections = [...m.projections.filter(p => p.name !== name), { name, sha256: digest(bytes) }];
     }
@@ -168,7 +180,8 @@ export function saveSpeakArtifact(context: Context, input: {
   bytes: Uint8Array; role: "playback_ready" | "provider_output"; mime: z.infer<typeof artifact>["mime"];
   duration_ms: number | null; sample_rate: number | null; channels: number | null; debug_provider_bytes?: boolean;
 }): SpeakStoreResult {
-  return boundary(context.id, entry => {
+  return boundary(() => {
+    const entry = location(context.id);
     const m = current(entry, context), bytes = Buffer.from(input.bytes), sha256 = digest(bytes);
     const a = artifact.parse({ ...input, bytes: bytes.length, sha256, id: sha256, relative_path: null });
     check(bytes.length > 0 && a.role !== "unknown" && (a.role !== "playback_ready" || a.mime === "audio/mpeg"), "INVALID_INPUT");
@@ -197,7 +210,8 @@ export function saveSpeakArtifact(context: Context, input: {
 
 /** Caller invokes only after the previous writer has stopped. Never opens a journal for writing. */
 export function recoverSpeakArchive(id: string): SpeakStoreResult {
-  return boundary(id, entry => {
+  return boundary(() => {
+    const entry = location(id);
     const input = read(join(entry, "input.txt"));
     let journal: Buffer = Buffer.alloc(0);
     try { journal = read(join(entry, "events.ndjson")); } catch (e) { if (!absent(e)) throw e; }
