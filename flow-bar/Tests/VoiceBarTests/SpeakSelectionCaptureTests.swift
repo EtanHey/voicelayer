@@ -470,7 +470,7 @@ final class SpeakSelectionCaptureTests: XCTestCase {
         let executable = Bundle(for: Self.self).bundleURL.deletingLastPathComponent()
             .appendingPathComponent("VoiceBar")
         let pasteboardName = pasteboard.name.rawValue
-        return SpeakSelectionCapture(canCapture: canCapture, snapshotReader: snapshotReader ?? {
+        return SpeakSelectionCapture(canCapture: canCapture, focusAX: clipboardFocus(), snapshotReader: snapshotReader ?? {
             SelectionPasteboardSnapshot.readInHelper(name: pasteboardName, executable: executable)
         }, writeRestoredItems: writeRestoredItems, readAXSelection: readAXSelection, pasteboard: pasteboard,
            postCopy: postCopy, readCopiedString: readCopiedString, schedule: schedule ?? {
