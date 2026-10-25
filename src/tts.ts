@@ -753,9 +753,9 @@ async function playClonedAudio(
       ttsFile,
       options?.captureAudioArtifact,
     );
-    options?.speechArchive?.generated(ttsFile, options?.generatedEngine === "xtts-v2" ? truncateAtWordBoundary(projection.speechText, 240) : options?.generatedEngine === "f5-tts-mlx" ? truncateAtWordBoundary(projection.speechText, 300) : projection.speechText, resolvedVoice, options?.profile ?? "short", options?.generatedEngine ?? "qwen3-tts");
-    const historyRef = addToHistory(text, ttsFile, voiceLabel);
     const durationMs = probeAudioDurationMs(ttsFile) ?? undefined;
+    options?.speechArchive?.generated(ttsFile, options?.generatedEngine === "xtts-v2" ? truncateAtWordBoundary(projection.speechText, 240) : options?.generatedEngine === "f5-tts-mlx" ? truncateAtWordBoundary(projection.speechText, 300) : projection.speechText, resolvedVoice, options?.profile ?? "short", options?.generatedEngine ?? "qwen3-tts", 0, durationMs ?? null);
+    const historyRef = addToHistory(text, ttsFile, voiceLabel);
     proc = playAudioNonBlocking(ttsFile, {
       speechArchive: options?.speechArchive,
       text: speakingText,
@@ -2906,7 +2906,7 @@ async function speakWithEdgeTTS(
           await synthesizeEdgeChunk(chunk, voice, rate, chunkFile, scriptPath, signal),
         );
         throwIfAbortedSafe(signal);
-        options?.speechArchive?.generated(chunkFile, chunk, voice, options?.profile ?? "short", "edge-tts", index);
+        options?.speechArchive?.generated(chunkFile, chunk, voice, options?.profile ?? "short", "edge-tts", index, synthesizedChunks.at(-1)?.durationMs ?? null);
       }
 
       concatenateMp3Files(
@@ -2959,8 +2959,9 @@ async function speakWithEdgeTTS(
       ttsFile,
       options?.captureAudioArtifact,
     );
-    if (textChunks.length === 1) options?.speechArchive?.generated(ttsFile, textChunks[0], voice, options?.profile ?? "short", "edge-tts");
-    else options?.speechArchive?.keepAudio(ttsFile);
+    const durationMs = Math.max(probeAudioDurationMs(ttsFile) ?? 0, inferBoundaryEndMs(wordBoundaries)) || undefined;
+    if (textChunks.length === 1) options?.speechArchive?.generated(ttsFile, textChunks[0], voice, options?.profile ?? "short", "edge-tts", 0, durationMs ?? null);
+    else options?.speechArchive?.keepAudio(ttsFile, durationMs ?? null);
     addToHistory(displayText, ttsFile, voice, [], { wordBoundaries });
     proc = playAudioNonBlocking(ttsFile, {
       speechArchive: options?.speechArchive,
@@ -2968,7 +2969,7 @@ async function speakWithEdgeTTS(
       voice,
       wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
       priority: playbackPriorityForMode(options?.mode),
-      durationMs: Math.max(probeAudioDurationMs(ttsFile) ?? 0, inferBoundaryEndMs(wordBoundaries)) || undefined,
+      durationMs,
       nextState: options?.mode === "converse" ? "recording" : undefined,
       onStarted: options?.onPlaybackStart,
       onQueued: options?.onPlaybackQueued,

@@ -129,6 +129,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
       build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null } });
     expect(disk()).not.toHaveProperty("effective");
     expect(disk().speech.state).toBe("completed");
+    expect(disk().lifecycle.summary.generated_audio_ms).toBe(1000);
     expect(disk().speech.generated.map((g: { text: string }) => g.text).join(" ")).toBe(synthesized.join(" "));
     expect(disk().artifacts).toHaveLength(1);
     expect(fs.readFileSync(join(contexts[0].path, disk().artifacts[0].relative_path), "utf8")).toBe("synthetic mp3");
