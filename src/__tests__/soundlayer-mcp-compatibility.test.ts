@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
+import { createHash } from "crypto";
+import type { SpeakArchiveContext, SpeakReceiptRequest } from "../speak-archive";
 import {
   handleVoiceAsk,
   handleVoiceSpeak,
@@ -13,13 +15,111 @@ import * as tts from "../tts";
 import * as launcher from "../voice-bar-launcher";
 import { reserveArchiveRetranscription } from "../voice-operation-reservation";
 import {
+  lstatSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
 } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
+
+function ownedRunRoot(): string {
+  const run = process.env.VOICELAYER_TEST_RUN_ROOT;
+  if (process.env.VOICELAYER_TEST_ISOLATED !== "1" || !run ||
+      dirname(run) !== resolve(import.meta.dir, "../../.test-tmp") ||
+      !new RegExp(`^${process.pid}-[a-f0-9]{4}$`).test(basename(run)) ||
+      realpathSync(run) !== run) {
+    throw new Error("canonical owned preload root required");
+  }
+  const stat = lstatSync(run);
+  expect(stat.isDirectory() && !stat.isSymbolicLink()).toBe(true);
+  expect(stat.uid).toBe(process.getuid?.());
+  expect(stat.mode & 0o777).toBe(0o700);
+  return run;
+}
+
+function privateArchiveDirectory(path = process.env.QA_VOICE_RECORDINGS_DIR): string {
+  const run = ownedRunRoot();
+  const root = process.env.QA_VOICE_RECORDINGS_DIR;
+  if (!root || !path || !isAbsolute(root) || resolve(root) !== root ||
+      !root.startsWith(`${run}/`) ||
+      (path !== root && !path.startsWith(`${root}/`)) || resolve(path) !== path) {
+    throw new Error("archive inspection requires owned QA archive containment");
+  }
+  let current = run;
+  for (const part of relative(run, path).split("/")) {
+    current = join(current, part);
+    const stat = lstatSync(current);
+    expect(stat.isDirectory() && !stat.isSymbolicLink()).toBe(true);
+    expect(stat.uid).toBe(process.getuid?.());
+    expect(stat.mode & 0o777).toBe(0o700);
+  }
+  return path;
+}
+
+function privateArchiveFile(folder: string, name: string): Buffer {
+  const path = join(privateArchiveDirectory(folder), name);
+  const stat = lstatSync(path);
+  expect(stat.isFile() && !stat.isSymbolicLink()).toBe(true);
+  expect(stat.uid).toBe(process.getuid?.());
+  expect(stat.mode & 0o777).toBe(0o600);
+  expect(stat.nlink).toBe(1);
+  return readFileSync(path);
+}
+
+function expectSpeakReceipt(
+  context: SpeakArchiveContext | undefined,
+  request: Pick<SpeakReceiptRequest, "input" | "request_source" | "blocking" | "requested">,
+  diskStatus: "received" | "rejected" = "received",
+): SpeakArchiveContext {
+  if (!context) throw new Error("required ingress archive context missing");
+  const metadata = context.metadata;
+  expect(context.id).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/);
+  expect(metadata.created_at).toBe(new Date(metadata.created_at).toISOString());
+  expect(context.id.slice(0, -9)).toBe(metadata.created_at.replace(/[:.]/g, "-"));
+  expect(metadata.request_id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  expect(context.path).toBe(join(privateArchiveDirectory(), metadata.created_at.slice(0, 10), context.id));
+  expect(metadata).toEqual({
+    schema_version: 1, source: "speak", id: context.id,
+    created_at: metadata.created_at, updated_at: metadata.created_at,
+    request_id: metadata.request_id, request_source: request.request_source,
+    connection: null, format: null, blocking: request.blocking,
+    requested: request.requested,
+    build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
+    status: "received", generation_id: null,
+    input: { bytes: Buffer.byteLength(request.input), sha256: createHash("sha256").update(request.input).digest("hex") },
+  });
+  expect(readdirSync(privateArchiveDirectory(context.path)).sort()).toEqual(["input.txt", "metadata.json"]);
+  expect(privateArchiveFile(context.path, "input.txt")).toEqual(Buffer.from(request.input));
+  const disk: unknown = JSON.parse(privateArchiveFile(context.path, "metadata.json").toString("utf8"));
+  // The empty speech mock can reject on disk without mutating the received context.
+  if (diskStatus === "received") expect(disk).toEqual(metadata);
+  else expect(disk).toEqual({ ...metadata,
+    updated_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+    status: "rejected", generation_id: null,
+    lifecycle: { status: "rejected", generation_id: null,
+      timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
+      summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code: "REJECTED" }, played_spans: [] },
+    parent_ask_id: null, caller_request_id: null, normalization: null,
+    artifacts: [], projections: [], retention: { policy: "indefinite", pinned: false },
+    totals: { stored_audio_bytes: 0, provider_output_bytes: 0, chunk_count: 0 }, recovery: null });
+  return context;
+}
+
+function pairedRecordingFolder(root: string, prompt: SpeakArchiveContext): string {
+  const dayDirs = readdirSync(privateArchiveDirectory(root));
+  expect(dayDirs).toHaveLength(1);
+  const day = privateArchiveDirectory(join(root, dayDirs[0]));
+  const archiveIds = readdirSync(day);
+  expect(archiveIds).toHaveLength(2);
+  const recordings = archiveIds.filter(id =>
+    readdirSync(privateArchiveDirectory(join(day, id))).includes("audio.wav"));
+  expect(recordings).toHaveLength(1);
+  expect(archiveIds.sort()).toEqual([prompt.id, recordings[0]].sort());
+  return privateArchiveDirectory(join(day, recordings[0]));
+}
 
 describe("SoundLayer MCP compatibility regression", () => {
   let ensureBarSpy: ReturnType<typeof spyOn>;
@@ -139,7 +239,12 @@ describe("SoundLayer MCP compatibility regression", () => {
 
     expect(result.isError).toBeUndefined();
     expect(ensureBarSpy).toHaveBeenCalled();
+    const archiveContext = expectSpeakReceipt(speakSpy.mock.calls[0]?.[1]?.archiveContext, {
+      input: "ship it", request_source: "voice_speak", blocking: false,
+      requested: { mode: "announce", profile: null, engine: null, voice: null, rate: null },
+    }, "rejected");
     expect(speakSpy).toHaveBeenCalledWith("ship it", {
+      archiveContext,
       mode: "announce",
       rate: undefined,
       voice: undefined,
@@ -220,7 +325,12 @@ describe("SoundLayer MCP compatibility regression", () => {
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("answer");
     expect(calls).toEqual(["awaitCurrentPlayback", "speak", "waitForInput"]);
+    const archiveContext = expectSpeakReceipt(speakSpy.mock.calls[0]?.[1]?.archiveContext, {
+      input: "What changed?", request_source: "ask_prompt", blocking: true,
+      requested: { mode: "converse", profile: null, engine: null, voice: "theo", rate: null },
+    });
     expect(speakSpy).toHaveBeenCalledWith("What changed?", {
+      archiveContext,
       onPlaybackQueued: expect.any(Function),
       mode: "converse",
       waitForPlayback: true,
@@ -680,7 +790,7 @@ describe("SoundLayer MCP compatibility regression", () => {
   });
 
   it("publishes one paired folder through the voice_ask handler archive boundary", async () => {
-    const archiveRoot = mkdtempSync(join(tmpdir(), "voiceask-round-test-"));
+    const archiveRoot = mkdtempSync(join(privateArchiveDirectory(), "voiceask-round-test-"));
     const savedArchiveRoot = process.env.QA_VOICE_RECORDINGS_DIR;
     process.env.QA_VOICE_RECORDINGS_DIR = archiveRoot;
     const agentAudio = new Uint8Array([0x49, 0x44, 0x33, 7, 8, 9]);
@@ -713,15 +823,16 @@ describe("SoundLayer MCP compatibility regression", () => {
       });
 
       expect(result.isError).toBeUndefined();
-      const dayDirs = readdirSync(archiveRoot);
-      expect(dayDirs).toHaveLength(1);
-      const archiveIds = readdirSync(join(archiveRoot, dayDirs[0]));
-      expect(archiveIds).toHaveLength(1);
-      expect(result.content[0].text).toContain(`Archive: ${archiveIds[0]}`);
+      const prompt = expectSpeakReceipt(speakSpy.mock.calls[0]?.[1]?.archiveContext, {
+        input: "Paired question", request_source: "ask_prompt", blocking: true,
+        requested: { mode: "converse", profile: null, engine: null, voice: null, rate: null },
+      });
+      const folder = pairedRecordingFolder(archiveRoot, prompt);
+      const recordingId = basename(folder);
+      expect(result.content[0].text).toContain(`Archive: ${recordingId}`);
       expect(result.content[0].text).toContain(
-        `{"retranscribe_archive_id":"${archiveIds[0]}"}`,
+        `{"retranscribe_archive_id":"${recordingId}"}`,
       );
-      const folder = join(archiveRoot, dayDirs[0], archiveIds[0]);
       expect(readdirSync(folder).sort()).toEqual([
         "agent-audio.mp3",
         "agent-transcript.txt",
@@ -729,15 +840,27 @@ describe("SoundLayer MCP compatibility regression", () => {
         "metadata.json",
         "voicelayer-transcript.txt",
       ]);
-      expect(readFileSync(join(folder, "agent-audio.mp3"))).toEqual(
+      expect(privateArchiveFile(folder, "agent-audio.mp3")).toEqual(
         Buffer.from(agentAudio),
       );
-      expect(readFileSync(join(folder, "agent-transcript.txt"), "utf8")).toBe(
+      expect(privateArchiveFile(folder, "agent-transcript.txt").toString("utf8")).toBe(
         "Paired question without markup",
       );
       expect(
-        readFileSync(join(folder, "voicelayer-transcript.txt"), "utf8"),
+        privateArchiveFile(folder, "voicelayer-transcript.txt").toString("utf8"),
       ).toBe("Paired answer");
+      const userAudio = input.createWavBuffer(new Uint8Array([1, 2, 3, 4]));
+      expect(privateArchiveFile(folder, "audio.wav")).toEqual(Buffer.from(userAudio));
+      const metadata: unknown = JSON.parse(privateArchiveFile(folder, "metadata.json").toString("utf8"));
+      expect(metadata).toHaveProperty("id", recordingId);
+      expect(metadata).toHaveProperty("source", "voice_ask");
+      expect(metadata).toHaveProperty("schema_version", 4);
+      expect(metadata).toHaveProperty("transcription_status", "transcribed");
+      expect(metadata).toHaveProperty("retention_policy", "indefinite");
+      expect(metadata).toHaveProperty("agent_tts_engine", "qwen3-tts");
+      expect(metadata).toHaveProperty("agent_tts_voice", "etan-clone");
+      expect(metadata).toHaveProperty("user_audio_sha256", createHash("sha256").update(userAudio).digest("hex"));
+      expect(metadata).toHaveProperty("agent_audio_sha256", createHash("sha256").update(agentAudio).digest("hex"));
     } finally {
       if (savedArchiveRoot === undefined) {
         delete process.env.QA_VOICE_RECORDINGS_DIR;
@@ -749,7 +872,7 @@ describe("SoundLayer MCP compatibility regression", () => {
   });
 
   it("archives and returns promptly when a voice_ask capture contains no speech", async () => {
-    const archiveRoot = mkdtempSync(join(tmpdir(), "voiceask-no-speech-test-"));
+    const archiveRoot = mkdtempSync(join(privateArchiveDirectory(), "voiceask-no-speech-test-"));
     const savedArchiveRoot = process.env.QA_VOICE_RECORDINGS_DIR;
     process.env.QA_VOICE_RECORDINGS_DIR = archiveRoot;
     speakSpy.mockResolvedValue({
@@ -786,20 +909,33 @@ describe("SoundLayer MCP compatibility regression", () => {
       expect(Date.now() - startedAt).toBeLessThan(1_000);
       expect(result.content[0].text).toContain("No speech detected");
       expect(result.content[0].text).not.toContain("180s");
-      const dayDirs = readdirSync(archiveRoot);
-      expect(dayDirs).toHaveLength(1);
-      const archiveIds = readdirSync(join(archiveRoot, dayDirs[0]));
-      expect(archiveIds).toHaveLength(1);
-      const metadata = JSON.parse(
-        readFileSync(
-          join(archiveRoot, dayDirs[0], archiveIds[0], "metadata.json"),
-          "utf8",
-        ),
+      const prompt = expectSpeakReceipt(speakSpy.mock.calls[0]?.[1]?.archiveContext, {
+        input: "Are you there?", request_source: "ask_prompt", blocking: true,
+        requested: { mode: "converse", profile: null, engine: null, voice: null, rate: null },
+      });
+      const folder = pairedRecordingFolder(archiveRoot, prompt);
+      expect(readdirSync(folder).sort()).toEqual([
+        "agent-audio.mp3", "agent-transcript.txt", "audio.wav", "metadata.json",
+      ]);
+      const userAudio = input.createWavBuffer(new Uint8Array(32_000));
+      const agentAudio = Buffer.from([0x49, 0x44, 0x33, 2]);
+      expect(privateArchiveFile(folder, "audio.wav")).toEqual(Buffer.from(userAudio));
+      expect(privateArchiveFile(folder, "agent-audio.mp3")).toEqual(agentAudio);
+      expect(privateArchiveFile(folder, "agent-transcript.txt").toString("utf8")).toBe("Are you there?");
+      const metadata: unknown = JSON.parse(
+        privateArchiveFile(folder, "metadata.json").toString("utf8"),
       );
       expect(metadata).toMatchObject({
         source: "voice_ask",
         transcription_status: "captured",
       });
+      expect(metadata).toHaveProperty("id", basename(folder));
+      expect(metadata).toHaveProperty("schema_version", 4);
+      expect(metadata).toHaveProperty("retention_policy", "indefinite");
+      expect(metadata).toHaveProperty("agent_tts_engine", "edge-tts");
+      expect(metadata).toHaveProperty("agent_tts_voice", "en-US-AndrewNeural");
+      expect(metadata).toHaveProperty("user_audio_sha256", createHash("sha256").update(userAudio).digest("hex"));
+      expect(metadata).toHaveProperty("agent_audio_sha256", createHash("sha256").update(agentAudio).digest("hex"));
     } finally {
       if (savedArchiveRoot === undefined) {
         delete process.env.QA_VOICE_RECORDINGS_DIR;

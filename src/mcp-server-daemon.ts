@@ -254,7 +254,7 @@ async function main() {
             isError: true,
           };
         }
-        return await handler(args, context);
+        return await handler(args, { ...context, connection: "daemon", emit: event => context?.emit(event) });
       },
     },
     onNdjsonMessage: logUnhandledNdjsonMessage,

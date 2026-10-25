@@ -42,6 +42,54 @@ class LockTests(unittest.TestCase):
             runner.lock_violations(without_silence_phase)
 
 
+class FixtureSetupTests(unittest.TestCase):
+    def test_owned_fixture_directories_are_private_under_child_umasks(self):
+        child = '''import importlib.util, json, os, sys, tempfile
+from pathlib import Path
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location('runner', sys.argv[1])
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+os.umask(int(sys.argv[2], 8))
+with tempfile.TemporaryDirectory() as directory:
+    run = runner.Run.__new__(runner.Run)
+    run.root = Path(directory)
+    run.source, run.ref = run.root / 'source', 'synthetic-ref'
+    output = run.root / 'setup.log'
+    calls = []
+    def setup_command(argv, **kwargs):
+        if argv == ['git', '-C', str(runner.REPO), 'worktree', 'add', '--detach', '--quiet',
+                    str(run.source), run.ref]:
+            run.source.mkdir()
+            calls.append('git')
+        elif argv == ['bun', 'install', '--frozen-lockfile'] and kwargs['cwd'] == run.source:
+            calls.append('dependencies')
+        else:
+            raise AssertionError('unexpected setup command')
+    with patch.object(runner.subprocess, 'run', side_effect=setup_command):
+        run.setup(output)
+    names = ('state', 'tmp', 'recordings', 'bin', 'home')
+    print(json.dumps(dict(calls=calls,
+        modes={name: (run.root / name).lstat().st_mode & 0o7777 for name in names},
+        owned=all((run.root / name).lstat().st_uid == os.getuid() for name in names),
+        physical=all((run.root / name).is_dir() and not (run.root / name).is_symlink() for name in names),
+        recordings_redirect=run.env['QA_VOICE_RECORDINGS_DIR'] == str(run.root / 'recordings'),
+        stub_ready=(run.root / 'bin/whisper-cli').is_file())))
+'''
+        for mask in ('022', '077'):
+            with self.subTest(umask=mask):
+                result = subprocess.run([sys.executable, '-c', child,
+                                         str(Path(__file__).with_name('run.py')), mask],
+                                        env=dict(os.environ), check=True, timeout=5,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                evidence = json.loads(result.stdout)
+                self.assertEqual(evidence['calls'], ['git', 'dependencies'])
+                self.assertEqual(evidence['modes'], {name: 0o700 for name in
+                                 ('state', 'tmp', 'recordings', 'bin', 'home')})
+                for key in ('owned', 'physical', 'recordings_redirect', 'stub_ready'):
+                    self.assertTrue(evidence[key], key)
+
+
 class ExecutableFixtureTests(unittest.TestCase):
     # At 3 s, the unchanged 10% slack covers 200 ms of pre-signal receipt I/O.
     PACE_OBSERVATION_SECONDS = 3.0

@@ -1,4 +1,5 @@
 import type { SilenceMode } from "../vad";
+import type { SpeakArchiveContext } from "../speak-archive";
 import type { PlaybackScope, QueuedPlaybackHandle } from "../tts/playback-lifecycle";
 import type {
   PlaybackOutcomeEvent,
@@ -31,6 +32,8 @@ export interface SpeechToTextBackendSelector {
 }
 
 export interface TextToSpeechOptions {
+  /** Private ingress receipt, carried explicitly for future generation writers. */
+  archiveContext?: SpeakArchiveContext;
   /** Default SHORT for MCP; long-read callers can opt into automatic selection. */
   profile?: "short" | "long" | "auto";
   /** Attribution for the measured request-to-player latency. */

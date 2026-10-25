@@ -11,7 +11,7 @@ const count = z.number().finite().nonnegative();
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const nullableText = z.string().nullable(); // Creation retains unrestricted request identity/config strings.
 const config = z.object({ mode: nullableText, profile: nullableText, engine: nullableText,
-  voice: nullableText, rate: z.number().finite().nullable() });
+  voice: nullableText, rate: z.number().finite().nullable(), rate_raw: text.optional() });
 const range = z.tuple([z.number().int().nonnegative(), z.number().int().nonnegative()])
   .refine(([start, end]) => start <= end).nullable();
 const normalization = z.object({ version: nullableText, pronunciation_hash: hash.nullable(),

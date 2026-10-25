@@ -64,7 +64,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       );
     }
     return extra.sendNotification(notification);
-  });
+  }, "stdio");
 
   try {
     switch (name) {

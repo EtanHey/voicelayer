@@ -19,6 +19,7 @@ export type VoiceToolEvent =
   | PlaybackOutcomeToolEvent;
 
 export interface VoiceToolContext {
+  connection?: "stdio" | "daemon";
   emit(event: VoiceToolEvent): void;
   /** Test-only timing seam; production uses the default heartbeat interval. */
   heartbeatIntervalMs?: number;
@@ -122,8 +123,10 @@ export function voiceToolEventToMcpNotification(
 export function createVoiceToolContext(
   progressToken: ProgressToken | undefined,
   sendNotification?: NotificationSender,
+  connection?: VoiceToolContext["connection"],
 ): VoiceToolContext {
   return {
+    connection,
     emit(event) {
       if (!sendNotification) return;
       const notification = voiceToolEventToMcpNotification(

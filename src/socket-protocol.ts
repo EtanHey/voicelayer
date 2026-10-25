@@ -1,3 +1,4 @@
+import type { StructuredChunkDisplay } from "./tts/structured-display";
 /**
  * Socket protocol types for VoiceLayer <-> Voice Bar communication.
  *
@@ -56,6 +57,8 @@ export interface StateEvent {
     chunk_start_ms: number;
     /** Activates existing Stop/Escape UI before first audio; no audio clock yet. */
     preparing?: boolean;
+    /** P14b: bounded current-chunk layout; never replaces text or measured subtitle rows. */
+    display?: StructuredChunkDisplay;
     /** TELE1, Preparing only: the whole display document, sent once, and each chunk's first token index in it. */
     text?: string;
     chunk_word_starts?: number[];
@@ -691,6 +694,13 @@ export function serializeEvent(event: SocketEvent): string {
   const payload = serializeJsonEvent(normalizedEvent);
   if (serializedByteLength(payload) <= VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
     return payload;
+  }
+
+  // The same retained chunk also appears on pause/resume receipts. Layout is optional on both.
+  if (((normalizedEvent.type === "state" && normalizedEvent.state === "speaking") ||
+      normalizedEvent.type === "playback_state") && normalizedEvent.long_read?.display) {
+    const { display: _display, ...long_read } = normalizedEvent.long_read;
+    return serializeEvent({ ...normalizedEvent, long_read });
   }
 
   if (normalizedEvent.type === "state" && normalizedEvent.state === "speaking") {
