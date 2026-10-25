@@ -34,7 +34,7 @@ struct TeleprompterStructuredDisplay: Decodable {
     /// Decode at the wire boundary. A malformed decoration never weakens document/token validation.
     static func decode(_ value: Any?, text: String) -> Self? {
         guard let value, JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value), data.count <= 8191,
+              let data = try? JSONSerialization.data(withJSONObject: value), data.count <= 1024 * 1024,
               let result = try? JSONDecoder().decode(Self.self, from: data), result.version == 1,
               result.text == text, result.speech_start >= 0,
               result.speech_start <= 200_000 - text.utf16.count else { return nil }

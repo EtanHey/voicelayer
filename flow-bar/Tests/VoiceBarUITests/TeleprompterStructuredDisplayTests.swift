@@ -17,6 +17,68 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
                 "blocks": [block(0, 0, 6, 0, 9), block(1, 7, 12, 10, 18)]]
     }
 
+    // Exercise the production TypeScript serializer, then the real Swift wire decoder/cache.
+    func testLargeSerializedPreparingReadsKeepEveryBreakThroughTimingAndChunks() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        for (count, padding) in [(20, 0), (100, 140)] {
+            let process = Process()
+            process.currentDirectoryURL = root
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["bun", "-e", """
+                import {projectStructuredSpeech} from './src/tts/structured-speech';
+                import {structuredReadDisplay} from './src/tts/structured-display';
+                import {serializeEvent} from './src/socket-protocol';
+                const source = Array.from({length: \(count)}, (_,i) => '- Item '+i+' keeps its own separate bullet and useful explanation.'+'x'.repeat(\(padding))).join('\\n');
+                const p = projectStructuredSpeech(source);
+                const [display] = structuredReadDisplay(p, [p.speechText], 400);
+                process.stdout.write(serializeEvent({type:'state',state:'speaking',text:'Preparing speech…',long_read:{id:'r3',chunk_index:0,chunk_count:2,chunk_start_ms:0,preparing:true,text:p.speechText,chunk_word_starts:[0,110],display}}));
+                const words = p.speechText.split(' ');
+                const chunks = [words.slice(0,110).join(' '), words.slice(110).join(' ')];
+                const displays = structuredReadDisplay(p, chunks, 400);
+                process.stdout.write(serializeEvent({type:'state',state:'speaking',text:chunks[1],long_read:{id:'r3',chunk_index:1,chunk_count:2,chunk_start_ms:500,display:displays[1]}}));
+                """]
+            let pipe = Pipe(); process.standardOutput = pipe
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+            XCTAssertGreaterThan(data.count, 8191)
+            let frames = data.split(separator: 10).map { Data($0) }
+            XCTAssertEqual(frames.count, 2)
+            let event = try XCTUnwrap(JSONSerialization.jsonObject(with: frames[0]) as? [String: Any])
+            let read = try XCTUnwrap(event["long_read"] as? [String: Any])
+            var document = try XCTUnwrap(TeleprompterLongReadDocument(longRead: read))
+            XCTAssertEqual(document.displayBlocks.count, count)
+            let cache = TeleprompterRenderCache()
+            let first = cache.document(text: document.text, wordBoundaries: [
+                TeleprompterBoundary(offsetMs: 0, durationMs: 100, text: "Item", wordIndex: 0)
+            ], displayBlocks: document.displayBlocks)
+            XCTAssertEqual(first.layouts.filter { $0.lineBreak != .none }.count, count)
+            let chunkEvent = try XCTUnwrap(JSONSerialization.jsonObject(with: frames[1]) as? [String: Any])
+            let chunkRead = try XCTUnwrap(chunkEvent["long_read"] as? [String: Any])
+            let chunkText = try XCTUnwrap(chunkEvent["text"] as? String)
+            let chunkDisplay = try XCTUnwrap(TeleprompterStructuredDisplay.decode(chunkRead["display"], text: chunkText))
+            document.recordDisplay(chunkDisplay, wordStart: 110)
+            let later = cache.document(text: document.text, wordBoundaries: [
+                TeleprompterBoundary(offsetMs: 500, durationMs: 100, text: "Item", wordIndex: 110)
+            ], displayBlocks: document.displayBlocks)
+            XCTAssertEqual(later.layouts, first.layouts)
+            XCTAssertEqual(later.words.map(\.text), first.words.map(\.text))
+        }
+    }
+
+    func testMissingMetadataRederivesPlainTextNewlinesAfterTiming() throws {
+        let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(fixture(), text: "Alpha. Beta."))
+        let text = "Alpha.\n\nBeta."
+        let cache = TeleprompterRenderCache()
+        let timing = [TeleprompterBoundary(offsetMs: 0, durationMs: 100, text: "Alpha.", wordIndex: 0)]
+        _ = cache.document(text: text, wordBoundaries: timing, displayBlocks: display.blocks)
+        let fallback = cache.document(text: text, wordBoundaries: timing)
+        XCTAssertEqual(fallback.layouts.map(\.lineBreak), [.none, .paragraph])
+        XCTAssertEqual(fallback.layouts, TeleprompterFormatting.layout(text: text, words: fallback.words))
+    }
+
     func testListStartingAtTwoHasUntimedDecorationsAndUnchangedTimedWordIDs() throws {
         let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(fixture(), text: "Alpha. Beta."))
         let timings = [TeleprompterBoundary(offsetMs: 100, durationMs: 300, text: "Alpha.", wordIndex: 0),

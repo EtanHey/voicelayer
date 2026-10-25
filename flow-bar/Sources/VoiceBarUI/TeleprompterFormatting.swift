@@ -227,8 +227,10 @@ public final class TeleprompterRenderCache {
         if key?.text != text { layoutIsFrozen = false }
         // Chunk metadata and final alignment arrive during playback. Once timing starts,
         // keep the mounted document's geometry while refreshing its timing-bearing words.
+        // Without structured metadata, always derive breaks from the text's own
+        // newlines rather than retaining an incomplete/flat metadata layout.
         let layouts: [TeleprompterWordLayout]
-        if layoutIsFrozen, let cached, cached.words.map(\.text) == words.map(\.text) {
+        if layoutIsFrozen, !displayBlocks.isEmpty, let cached, cached.words.map(\.text) == words.map(\.text) {
             layouts = cached.layouts
         } else {
             layouts = TeleprompterFormatting.layout(text: text, words: words, displayBlocks: displayBlocks)

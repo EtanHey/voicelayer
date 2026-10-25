@@ -5,6 +5,23 @@ import { structuredReadDisplay } from "../tts/structured-display";
 import { serializeEvent, VOICEBAR_SOCKET_EVENT_MAX_BYTES, type StateEvent } from "../socket-protocol";
 
 describe("P14b layout over unchanged speech chunks", () => {
+  for (const [count, padding] of [[20, 0], [100, 140]]) {
+    it(`retains complete preparing structure for ${count} bullets`, () => {
+      const source = Array.from({ length: count }, (_, i) =>
+        `- Item ${i} keeps its own separate bullet and useful explanation.${"x".repeat(padding)}`).join("\n");
+      const projection = projectStructuredSpeech(source);
+      const [display] = structuredReadDisplay(projection, [projection.speechText], 400);
+      const event: StateEvent = { type: "state", state: "speaking", text: "Preparing speech…",
+        long_read: { id: "r3", chunk_index: 0, chunk_count: 2, chunk_start_ms: 0, preparing: true,
+          text: projection.speechText, chunk_word_starts: [0, 110], display } };
+      expect(Buffer.byteLength(JSON.stringify(event))).toBeGreaterThan(8191);
+      const decoded = JSON.parse(serializeEvent(event));
+      expect(decoded.long_read.display).toEqual(display);
+      expect(decoded.long_read.text).toBe(projection.speechText);
+      expect(decoded.long_read.display.blocks).toHaveLength(count);
+    });
+  }
+
   it("speaks a list starting at 2 without duplicate marker decorations", () => {
     const source = "2. Alpha.\n3. Beta.";
     const projection = projectStructuredSpeech(source);
@@ -97,7 +114,7 @@ describe("P14b layout over unchanged speech chunks", () => {
     const wire = serializeEvent({ type: "playback_state", state: "paused", playback_id: "player", generation: 7,
       offset_ms: 1250, chunk_offset_ms: 250,
       long_read: { id: "read", chunk_index: 0, chunk_count: 1, chunk_start_ms: 1000,
-        display: { ...display, blocks: Array.from({ length: 500 }, () => display.blocks[0]) } } });
+        display: { ...display, blocks: Array.from({ length: 5000 }, () => display.blocks[0]) } } });
     expect(Buffer.byteLength(wire)).toBeLessThanOrEqual(VOICEBAR_SOCKET_EVENT_MAX_BYTES);
     expect(JSON.parse(wire)).toEqual({ type: "playback_state", state: "paused", playback_id: "player", generation: 7,
       offset_ms: 1250, chunk_offset_ms: 250,
@@ -112,7 +129,7 @@ describe("P14b layout over unchanged speech chunks", () => {
       request_id: "selection", long_read: { id: "read", chunk_index: 0, chunk_count: 1, chunk_start_ms: 0, display } };
     expect(JSON.parse(serializeEvent(event))).toEqual(event);
     const oversized: StateEvent = { ...event, long_read: { id: "read", chunk_index: 0, chunk_count: 1, chunk_start_ms: 0,
-      display: { ...display, blocks: Array.from({ length: 500 }, () => display.blocks[0]) } } };
+      display: { ...display, blocks: Array.from({ length: 5000 }, () => display.blocks[0]) } } };
     const wire = serializeEvent(oversized), decoded = JSON.parse(wire);
     expect(Buffer.byteLength(wire)).toBeLessThanOrEqual(VOICEBAR_SOCKET_EVENT_MAX_BYTES);
     expect(decoded.text).toBe(display.text);
