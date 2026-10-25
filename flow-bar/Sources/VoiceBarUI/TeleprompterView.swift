@@ -288,20 +288,19 @@ public enum TeleprompterPacePolicy {
 public enum TeleprompterContentModel {
     // Mirrors display-tokens.ts: ambiguous bare paths are never guessed as prose.
     static func displayTokens(_ text: String) -> [String] {
-        let pattern = #"(?<![\w./\\:-])(?:list/paragraph|completion/cancellation|and/or)(?![\w/\\-]|\.[\w])"#
+        let pattern = #"`+[^`]*`+|(?<![\p{L}\p{M}\p{N}_./\\:`-])(?:list/paragraph|completion/cancellation)(?![\p{L}\p{M}\p{N}_/\\`-]|\.[\p{L}\p{M}\p{N}_])"#
         let regex = try! NSRegularExpression(pattern: pattern)
         let source = text as NSString
-        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).map {
+        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).filter { !source.substring(with: $0.range).hasPrefix("`") }.map {
             $0.range.location + (source.substring(with: $0.range) as NSString).range(of: "/").location
         })
         let words = try! NSRegularExpression(pattern: #"\S+"#)
         return words.matches(in: text, range: NSRange(location: 0, length: source.length)).flatMap { match -> [String] in
             let range = match.range
-            guard let cut = cuts.first(where: { $0 > range.location && $0 < NSMaxRange(range) }) else {
-                return [source.substring(with: range)]
+            let boundaries = [range.location] + cuts.filter { $0 > range.location && $0 < NSMaxRange(range) }.sorted() + [NSMaxRange(range)]
+            return zip(boundaries, boundaries.dropFirst()).map { start, end in
+                source.substring(with: NSRange(location: start, length: end - start))
             }
-            return [source.substring(with: NSRange(location: range.location, length: cut - range.location)),
-                    source.substring(with: NSRange(location: cut, length: NSMaxRange(range) - cut))]
         }
     }
 

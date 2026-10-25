@@ -1,4 +1,4 @@
-import { proseSlashPattern } from "./tts/display-tokens";
+import { proseSlashPattern, proseSlashMatches } from "./tts/display-tokens";
 import type { ProjectionRange } from "./tts/structured-speech";
 
 export type SpeakableEngine = "edge" | "clone";
@@ -239,6 +239,13 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     const input = pieces.map(p => p.text).join("");
     applyEdits(pieces, input, jsonEdits(input), false);
   }
+  // Edit only the separator so both words retain independent source anchors.
+  {
+    const input = pieces.map(p => p.text).join("");
+    applyEdits(pieces, input, proseSlashMatches(input).map(m => ({
+      start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: " "
+    })), false, true);
+  }
   edit(/`+|\*\*|\*([^*\n]+)\*|~~/g, m => m[1] ?? "");
   edit(/(?<![A-Za-z0-9\u0080-\uffff_])_([^_\n]+)_(?![A-Za-z0-9\u0080-\uffff_])/gu, m => m[1]);
   // Existing YAML rules run in their existing order and remain atomic/protected.
@@ -267,13 +274,6 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   }
   // YAML may add spaces inside a path/file/URL. Revisit those composites in
   // source coordinates so basename/suffix rules still wrap the protected override.
-  // Edit only the separator so both words retain independent source anchors.
-  {
-    const input = pieces.map(p => p.text).join("");
-    applyEdits(pieces, input, Array.from(input.matchAll(proseSlashPattern), m => ({
-      start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: " "
-    })), false, true);
-  }
   const composites = engine === "clone"
     ? /(?<![A-Za-z0-9\u0080-\uffff_])(?:(?:https?:\/\/|www\.)[^\s<>\])`]+|(?:[A-Za-z]:[\\/]|\.{0,2}[\\/]|[\p{L}\p{M}\p{N}_.-]+[\\/])[\p{L}\p{M}\p{N}_./\\-]+|[\w-]+\.[a-zA-Z]+)(?![\p{L}\p{M}\p{N}_])/gu
     : /(?<![A-Za-z0-9\u0080-\uffff_])(?:(?:https?:\/\/|www\.)[^\s<>\])`]+|(?:[A-Za-z]:\\|\.{0,2}\/|[\w.-]+\/)[\w./\\-]+|[\w-]+\.[a-zA-Z]+)\b/gu;

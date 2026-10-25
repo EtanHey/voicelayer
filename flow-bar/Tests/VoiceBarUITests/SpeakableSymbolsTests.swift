@@ -21,6 +21,36 @@ final class SpeakableSymbolsTests: XCTestCase {
         }
     }
 
+    func testProtectedAndRepeatedTokensAcceptIndexedBoundaries() {
+        for (text, tokens) in [
+            ("and/or", ["and/or"]),
+            ("`Use list/paragraph here`", ["`Use", "list/paragraph", "here`"]),
+            ("`list/paragraph`", ["`list/paragraph`"]),
+            ("שלlist/paragraph", ["שלlist/paragraph"]),
+            ("list/paragraphשלום", ["list/paragraphשלום"]),
+            ("list/paragraph́", ["list/paragraph́"]),
+            ("list/paragraph,completion/cancellation", ["list", "/paragraph,completion", "/cancellation"])
+        ] {
+            XCTAssertEqual(TeleprompterContentModel.displayTokens(text), tokens)
+            let rows = tokens.enumerated().map {
+                TeleprompterBoundary(offsetMs: 100 + $0.offset * 200, durationMs: 150, text: $0.element, wordIndex: $0.offset)
+            }
+            let words = TeleprompterContentModel.words(text: text, wordBoundaries: rows)
+            XCTAssertEqual(words.map(\.offsetMs), tokens.indices.map { Optional(100 + $0 * 200) })
+        }
+    }
+
+    func testSourceAdjacencyPreservesDisplaySpacing() {
+        for text in ["(list/paragraph)", "list /tmp/file", "list/paragraph,completion/cancellation"] {
+            let words = TeleprompterContentModel.words(text: text, wordBoundaries: [])
+            let layouts = TeleprompterFormatting.layout(text: text, words: words)
+            let rendered = layouts.enumerated().map { i, layout in
+                (i == 0 || layout.gluesToPrevious ? "" : " ") + layout.displayText
+            }.joined()
+            XCTAssertEqual(rendered, text)
+        }
+    }
+
     func testSilentBulletDoesNotAcquireInterpolatedTiming() {
         let rows = [TeleprompterBoundary(offsetMs: nil, durationMs: nil, text: "-", wordIndex: 0),
                     TeleprompterBoundary(offsetMs: 200, durationMs: 150, text: "Archive", wordIndex: 1)]

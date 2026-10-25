@@ -53,21 +53,13 @@ public enum TeleprompterFormatting {
     public static func layout(text: String, words: [TeleprompterWord],
                               displayBlocks: [TeleprompterDisplayBlock] = []) -> [TeleprompterWordLayout] {
         let plain = words.map { TeleprompterWordLayout(displayText: $0.text, highlightGroup: $0.id) }
-        var tokens: [(text: String, newlines: Int)] = []
-        var newlines = 0
-        var index = text.startIndex
-        while index < text.endIndex {
-            if text[index].isWhitespace {
-                if text[index].isNewline { newlines += 1 }
-                index = text.index(after: index)
-                continue
-            }
-            let start = index
-            while index < text.endIndex, !text[index].isWhitespace { index = text.index(after: index) }
-            for (piece, token) in TeleprompterContentModel.displayTokens(String(text[start ..< index])).enumerated() {
-                tokens.append((token, piece == 0 ? newlines : 0))
-            }
-            newlines = 0
+        var tokens: [(text: String, newlines: Int, continuation: Bool)] = []
+        var cursor = text.startIndex
+        for token in TeleprompterContentModel.displayTokens(text) {
+            guard let range = text.range(of: token, range: cursor..<text.endIndex) else { return plain }
+            let gap = text[cursor..<range.lowerBound]
+            tokens.append((token, gap.filter { $0.isNewline }.count, range.lowerBound == cursor && cursor != text.startIndex))
+            cursor = range.upperBound
         }
         let tokenOfWord = tokens.indices.flatMap { token in
             Array(repeating: token, count: TeleprompterContentModel.displayPieceCount(tokens[token].text))
@@ -83,7 +75,7 @@ public enum TeleprompterFormatting {
                 result[position].highlightGroup = result[position - 1].highlightGroup
                 continue
             }
-            let (token, breaks) = tokens[tokenIndex]
+            let (token, breaks, slashContinuation) = tokens[tokenIndex]
             guard tokenIndex > 0 else {
                 result[position].isListMarker = isLineStartMarker(token)
                 continue
@@ -91,8 +83,6 @@ public enum TeleprompterFormatting {
             var lineBreak: TeleprompterLineBreak = breaks >= 2 ? .paragraph : breaks == 1 ? .line : .none
             let isMarker = bullets.contains(token) || (lineBreak != .none && isLineStartMarker(token))
             if isMarker, lineBreak == .none { lineBreak = .line }
-            let slashContinuation = token.hasPrefix("/") && tokenIndex > 0 &&
-                ["list", "completion", "and"].contains(tokens[tokenIndex - 1].text)
             let glues = lineBreak == .none && (slashContinuation || token.allSatisfy(closingPunctuation.contains))
             result[position].lineBreak = lineBreak
             result[position].isListMarker = isMarker
