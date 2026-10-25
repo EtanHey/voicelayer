@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.56] - 2026-10-25
+
+### Fixed
+- Preserve selected list and paragraph boundaries in T3 Option+F5 through the existing protected Copy transaction (#549).
+- Leave clipboard contents and ownership unchanged when focus moves before Copy (#550).
+
 ## [2.2.55] - 2026-10-24
 
 ### Fixed
