@@ -1,5 +1,8 @@
+import { structuredReadDisplay } from "./tts/structured-display";
+import type { StructuredSpeech } from "./tts/structured-speech";
 import { randomUUID } from "node:crypto";
 import { normalizedSpeechHash } from "./speech-identity";
+import type { SpeakArchiveContext } from "./speak-archive";
 /**
  * TTS module — multi-engine voice synthesis with context-aware routing.
  *
@@ -368,7 +371,8 @@ function splitLongSegment(segment: string, maxLen: number): string[] {
  * edge-tts fails with exit code 2 on very long text (roughly >500 chars).
  * Prefer sentence boundaries, then fall back to word boundaries, then hard cuts.
  */
-export function chunkTextForTTS(text: string, maxLen = 400): string[] {
+export const TTS_CHUNK_MAX_CHARS = 400;
+export function chunkTextForTTS(text: string, maxLen = TTS_CHUNK_MAX_CHARS): string[] {
   if (text.length <= maxLen) return [text];
 
   const chunks: string[] = [];
@@ -803,7 +807,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   text: string;
   voice: string;
   longRead?: StateEvent["long_read"];
-  speechIdentity?: SpeechIdentity;
+  speechIdentity?: Pick<StateEvent, "request_id" | "text_hash">;
   playbackOffsetMs?: number;
   utteranceDurationMs?: number;
   getUtteranceDurationMs?(): number;
@@ -2102,7 +2106,8 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
       const metadata = chunks[info.chunk_index].metadata;
       const playback = playAudioNonBlocking(chunk.audioFile, { ...metadata, retainedReplay: true, readbackID,
         // Ordinary short speech remains short; long speech keeps its global cursor.
-        longRead: metadata.longRead ? { ...info, estimated_total_ms: duration } : undefined,
+        longRead: metadata.longRead ? { ...info, estimated_total_ms: duration,
+          ...(metadata.longRead.display ? { display: metadata.longRead.display } : {}) } : undefined,
         utteranceDurationMs: duration, getUtteranceDurationMs: () => duration,
         playbackOffsetMs: info.chunk_start_ms + position.offsetMs, localOffsetMs: position.offsetMs,
         isSeek: true, seekSliceFile: position.sliceFile,
@@ -2221,7 +2226,7 @@ export function resolveLongReadProfile(kind: "auto" | "short" | "long", text: st
     rate: profile.rate, fallbackVoice: resolved.fallbackVoice };
 }
 
-type SpeechIdentity = Pick<StateEvent, "request_id" | "text_hash">;
+type SpeechIdentity = Pick<StateEvent, "request_id" | "text_hash"> & { archiveContext?: SpeakArchiveContext; structuredDisplay?: StructuredSpeech };
 
 /** One long-read chunk: pronunciation projection, engine fallback and rate adjustment. Owns the audio
  * file until it resolves; no broadcast, history, playback queue or active-read state. */
@@ -2300,6 +2305,7 @@ function untilAborted(signal: AbortSignal): Promise<never> {
  * broadcasts, history or the active read. Rejects when the owner is gone or the signal aborts. */
 export async function prepareSelectionReadStart(
   text: string, kind: "auto" | "short" | "long", ownerRequestId: string, signal: AbortSignal,
+  _archiveContext?: SpeakArchiveContext, // Private ingress identity for the future preparation writer.
 ): Promise<PreparedReadStart> {
   const owner = [...longReads.values()].find((read) => read.requestId === ownerRequestId);
   if (!owner?.synthesized) throw new Error("No playing read owns this queue");
@@ -2351,6 +2357,9 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   const controller = new AbortController();
   const id = `long-read-${process.pid}-${++longReadCounter}`;
   const texts = chunkTextForTTS(displayText);
+  // Optional source layout cannot change the existing sanitizer, chunk text or synthesis.
+  const displays = identity.structuredDisplay?.speechText === displayText
+    ? structuredReadDisplay(identity.structuredDisplay, texts, TTS_CHUNK_MAX_CHARS) : [];
   let resolveStarted!: (result: { error?: string }) => void;
   const started = new Promise<{ error?: string }>((resolve) => { resolveStarted = resolve; });
   let failure: string | undefined;
@@ -2380,6 +2389,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     // A recording may have begun while the predecessor was settling.
     assertSpeakerClear();
     await runLongRead(texts, id, signal, {
+      archiveContext: identity.archiveContext,
       registerSeek: (control) => {
         const advance = (result: SeekResult) => { if (result.outcome === "accept") generation++; return result; };
         handle.seek = { seek: offset => advance(control.seek(offset)), restart: () => advance(control.restart()) };
@@ -2415,7 +2425,8 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         const start = new Promise<boolean>((resolve) => { resolveStarted = resolve; });
         const playback = playAudioNonBlocking(chunk.audioFile, {
           ...(startPaused ? { startPaused: true } : {}),
-          text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs, longRead: info, speechIdentity,
+          text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs,
+          longRead: { ...info, ...(displays[info.chunk_index] ? { display: displays[info.chunk_index] } : {}) }, speechIdentity,
           wordBoundaries: chunk.wordBoundaries, priority: "normal",
           cloneProjection: cloneProjections.get(chunk.audioFile),
           alignedWords: chunkAlignedWords.get(chunk.audioFile),
