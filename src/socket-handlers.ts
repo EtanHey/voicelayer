@@ -6,6 +6,9 @@
  */
 
 import { normalizedSpeechHash } from "./speech-identity";
+import { randomUUID } from "crypto";
+import { createSpeakReceipt } from "./speak-archive";
+import { updateSpeakLifecycle, type SpeakLifecycle } from "./speak-archive-store";
 import { setTTSSetting, setTTSProfile } from "./tts-settings";
 import { setTTSPreviewActive, readTTSControlsStatus } from "./tts-controls-status";
 import { PROCESSING_ENV_VARS, setProcessingSetting } from "./processing-settings";
@@ -33,6 +36,8 @@ import {
   resumePlayback,
   isPlaybackPaused,
   isCaptureAdmissionReserved,
+  isSpeakerOutputRefusedError,
+  SpeechPreparationStoppedError,
   setLongReadSettledListener,
   setExternalSpeechPreemptionListener,
   prepareSelectionReadStart,
@@ -534,19 +539,39 @@ export function handleSocketCommand(
       return handleResidencyCommand(command);
     case "preview_tts_profile": {
       const reject = (reason: string) => ({...buildAck(command, "reject", reason), tts_controls: readTTSControlsStatus()});
-      if (residencyBusy()) return reject(residencyBusyReason());
+      const sample = "Here is a sample of this voice. Clear speech, at your preferred pace.";
+      const receipt = createSpeakReceipt({
+        input: sample, request_id: randomUUID(), request_source: "preview",
+        // Both MCP entrypoints register this socket handler; transport is unknown here.
+        connection: null, format: "plain", blocking: true,
+        requested: { mode: null, profile: command.profile, engine: null, voice: null, rate: null },
+        build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
+      });
+      if (receipt.kind === "failed") return reject(`Preview refused: input archive unavailable (${receipt.code})`);
+      const finish = (status: "rejected" | "failed" | "stopped", error_code: SpeakLifecycle["summary"]["error_code"]) => {
+        const result = updateSpeakLifecycle(receipt.context, { status, generation_id: null,
+          timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
+          summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code }, played_spans: [] });
+        if (result.kind === "failed") console.error(`[voicelayer] speak archive update failed: ${result.code}`);
+      };
+      if (residencyBusy()) { finish("rejected", "REJECTED"); return reject(residencyBusyReason()); }
       const reservation = reserveStandardVoiceOperation();
-      if (!reservation) return reject("Voice session in progress");
+      if (!reservation) { finish("rejected", "REJECTED"); return reject("Voice session in progress"); }
       setTTSPreviewActive(true);
       return (async () => {
         let ack: AckEvent;
+        let queued = false;
         try {
-          const result = await speak("Here is a sample of this voice. Clear speech, at your preferred pace.", {
+          const result = await speak(sample, {
             profile: command.profile, waitForPlayback: true, measurementOrigin: "preview",
+            archiveContext: receipt.context, onPlaybackQueued: () => { queued = true; },
           });
+          if (!result.playbackId && !result.engine) finish("rejected", "REJECTED");
           ack = buildAck(command, result.playbackId ? "accept" : "reject",
             result.playbackId ? undefined : "No preview audio was played");
         } catch (error) {
+          if (!queued) finish(error instanceof SpeechPreparationStoppedError ? "stopped" : isSpeakerOutputRefusedError(error) ? "rejected" : "failed",
+            error instanceof SpeechPreparationStoppedError ? null : isSpeakerOutputRefusedError(error) ? "REJECTED" : "OUTPUT_UNAVAILABLE");
           ack = buildAck(command, "reject", vocabularyErrorReason(error));
         } finally {
           setTTSPreviewActive(false);

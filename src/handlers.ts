@@ -387,6 +387,7 @@ export async function handleVoiceAsk(
     return textResult("Missing arguments", true);
   }
   const a = args as Record<string, unknown>;
+  const originalMessage = typeof a.message === "string" ? a.message : "";
   const parsed = VoiceAskSchema.safeParse(args);
   if (!parsed.success) {
     return textResult(
@@ -433,13 +434,27 @@ export async function handleVoiceAsk(
   if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
     warnLegacyPressToTalk("mcp.voice_ask");
   }
+  const receipt = createSpeakReceipt({
+    input: originalMessage, request_id: randomUUID(), request_source: "ask_prompt",
+    connection: context?.connection ?? null, format: null, blocking: true,
+    requested: { mode: "converse", profile: null, engine: null, voice: parsed.data.voice ?? null, rate: null },
+    build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
+  });
+  if (receipt.kind === "failed") {
+    return textResult(`voice_ask refused: input archive unavailable (${receipt.code})`, true);
+  }
+  const archiveContext = receipt.context;
   const refusal = refuseOverlongMessage(
     parsed.data.message,
     "voice_ask",
   );
-  if (refusal) return refusal;
+  if (refusal) {
+    finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
+    return refusal;
+  }
   const reservation = reserveStandardVoiceOperation();
   if (!reservation) {
+    finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     return textResult(
       "voice_ask refused because an archive retranscription voice operation is in progress",
       true,
@@ -466,6 +481,7 @@ export async function handleVoiceAsk(
       },
       context,
       operationLifecycle,
+      archiveContext,
     );
   } finally {
     if (!releaseDeferred) reservation.release();
@@ -575,7 +591,9 @@ export async function handleConverse(
   args: unknown,
   context?: VoiceToolContext,
   operationLifecycle?: VoiceOperationLifecycle,
+  archiveContext?: SpeakArchiveContext,
 ): Promise<McpResult> {
+  // Direct internal callers retain their existing no-receipt contract.
   const validated = validateConverseArgs(args);
   if (!validated) {
     return textResult("Missing or empty required parameter: message", true);
@@ -588,14 +606,21 @@ export async function handleConverse(
 
   const silenceMode = validated.silence_mode ?? DEFAULT_CONVERSE_SILENCE_MODE;
 
-  if (isCaptureAdmissionReserved()) return textResult("[converse] Another Ask owns capture admission", true);
+  if (isCaptureAdmissionReserved()) {
+    finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
+    return textResult("[converse] Another Ask owns capture admission", true);
+  }
   try { assertSpeakerClear(); }
-  catch (error) { return textResult(`[converse] Error: ${error instanceof Error ? error.message : String(error)}`, true); }
+  catch (error) {
+    finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
+    return textResult(`[converse] Error: ${error instanceof Error ? error.message : String(error)}`, true);
+  }
 
   // Reject an external booking before yielding maintenance, so an ask that
   // cannot record does not cancel an in-flight unload.
   const pre = isVoiceBooked();
   if (pre.booked && !pre.ownedByUs) {
+    finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     return textResult(
       formatBusy(
         pre.owner?.sessionId ?? "unknown",
@@ -613,6 +638,7 @@ export async function handleConverse(
   // the mic for capture; another process can win the lock during that handoff.
   const post = isVoiceBooked();
   if (post.booked && !post.ownedByUs) {
+    finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     return textResult(
       formatBusy(
         post.owner?.sessionId ?? "unknown",
@@ -625,6 +651,7 @@ export async function handleConverse(
   if (!post.booked) {
     const result = bookVoiceSession();
     if (!result.success) {
+      finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
       return textResult(`[converse] ${result.error}`, true);
     }
   }
@@ -653,6 +680,7 @@ export async function handleConverse(
   let admissionFailed = false;
   let noSpeech = false;
   let captureArchivePath: string | null = null;
+  let promptAttempted = false;
   const progressHeartbeat = context
     ? new VoiceAskProgressHeartbeat(context)
     : null;
@@ -779,20 +807,32 @@ export async function handleConverse(
     // Speak the question aloud — BLOCKING for converse
     armTimeout(voiceAskPromptTimeoutMs(validated.message), "prompt");
     const voiceName = validated.voice;
-    const speech = await speak(validated.message, {
-      mode: "converse",
-      waitForPlayback: true,
-      voice: voiceName,
-      captureAudioArtifact: true,
-      onPlaybackQueued: handle => {
-        promptPlayers.push(handle);
-        if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle)) {
-          admissionFailed = true;
-          cancelPlayback({ id: handle.id });
-        }
-      },
-      ...playbackTelemetryOptions(context),
-    });
+    promptAttempted = true;
+    let speech: Awaited<ReturnType<typeof speak>>;
+    try {
+      speech = await speak(validated.message, {
+        archiveContext,
+        mode: "converse",
+        waitForPlayback: true,
+        voice: voiceName,
+        captureAudioArtifact: true,
+        onPlaybackQueued: handle => {
+          promptPlayers.push(handle);
+          if (inputAbortController.signal.aborted || !captureAdmission!.admit(handle)) {
+            admissionFailed = true;
+            cancelPlayback({ id: handle.id });
+          }
+        },
+        ...playbackTelemetryOptions(context),
+      });
+    } catch (error) {
+      // Once queued, a failure cannot establish that no prompt audio existed.
+      if (!promptPlayers.length) finishSpeakReceipt(archiveContext,
+        error instanceof SpeechPreparationStoppedError ? "stopped" : isSpeakerOutputRefusedError(error) ? "rejected" : "failed",
+        error instanceof SpeechPreparationStoppedError ? null : isSpeakerOutputRefusedError(error) ? "REJECTED" : "OUTPUT_UNAVAILABLE");
+      throw error;
+    }
+    if (!speech.playbackId && !speech.engine) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return textResult(
         "[converse] Request ended before recording could start.",
@@ -930,9 +970,11 @@ export async function handleConverse(
   try {
     const result = await Promise.race([flowPromise, timeoutPromise]);
     if (timer) clearTimeout(timer);
+    if (!promptAttempted) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     return result;
   } catch (err) {
     if (timer) clearTimeout(timer);
+    if (!promptAttempted) finishSpeakReceipt(archiveContext, "rejected", "REJECTED");
     if (
       !isSpeakerOutputRefusedError(err) &&
       !isRecordingConflictError(err)
