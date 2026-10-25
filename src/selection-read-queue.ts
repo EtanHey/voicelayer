@@ -1,8 +1,11 @@
 /**
  * QUEUE1 (Etan, 2026-10-20): Option+F5 on a different selection while VoiceBar reads one appends it here.
  * Only the user's Option+F5 reads live in this queue; agent voice_speak keeps the tts.ts priority queue.
- * Queued text is held in memory only and never logged or published: the pill sees a count.
+ * Queued text and its private ingress context are never published: the pill sees a count.
  */
+import type { StructuredSpeech } from "./tts/structured-speech";
+import type { SpeakArchiveContext } from "./speak-archive";
+
 export const SELECTION_READ_QUEUE_LIMIT = 10;
 
 export interface QueuedSelectionRead {
@@ -10,6 +13,8 @@ export interface QueuedSelectionRead {
   text: string;
   textHash: string;
   profile: "auto" | "short" | "long";
+  archiveContext?: SpeakArchiveContext;
+  structuredDisplay?: StructuredSpeech;
 }
 
 /** How a read ended. Only `completed` advances; Stop, preemption and player failure never do. */

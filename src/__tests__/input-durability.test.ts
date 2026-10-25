@@ -3722,7 +3722,7 @@ describe("input recording durability", () => {
         id.slice(0, 10),
         id,
       );
-      mkdirSync(archiveDir, { recursive: true });
+      mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
       const audio = options.audio ?? makeWav(makePcmChunk(1800));
       const audioHash = createHash("sha256").update(audio).digest("hex");
       const agentAudio = Buffer.from([0x49, 0x44, 0x33, 1, 2, 3]);
@@ -3901,6 +3901,7 @@ describe("input recording durability", () => {
 
     it("blocks voice_speak while exact-path History retranscription is pending", async () => {
       const archive = writeAskArchive();
+      expect(fsModule.statSync(process.env.QA_VOICE_RECORDINGS_DIR!).mode & 0o777).toBe(0o700);
       const audioPath = join(archive.archiveDir, "audio.wav");
       backendMode = "hang";
       const speakSpy = spyOn(tts, "speak").mockResolvedValue({});
