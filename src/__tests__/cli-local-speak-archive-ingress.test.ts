@@ -263,7 +263,27 @@ describe("CLI local raw ingress (real creator/store; controlled speech and socke
       { engine: "edge", voice: "synthetic", rate: "+0%" }, Date.now(), identity));
     await expect(speakLocally(request())).rejects.toThrow("Speech stopped before playback");
     expect(await entered.at(0)).toBe(contexts[0]); expect(contexts).toHaveLength(1);
-    expect(archive.createSpeakReceipt).toHaveBeenCalledTimes(1); retained(contexts[0]);
+    expect(archive.createSpeakReceipt).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(join(contexts[0].path, "input.txt"), "utf8")).toBe(raw);
+    expect(metadata(contexts[0]).speech).toMatchObject({ state: "failed", reason: "SPEECH_FAILED" });
     expect(synthesized).toHaveLength(1); expect(played).toEqual(["synthetic-no-file"]); expect(disposed).toEqual(played);
+  });
+});
+
+describe("CLI terminal persistence before returning", () => {
+  it("flushes queued terminal writes before the caller can exit", async () => {
+    const { beginSpeechArchive } = await import("../speech-archive-live");
+    let saved: archive.SpeakArchiveContext | undefined;
+    const play = spyOn(tts, "speakText").mockImplementation((_text, _profile, identity) => {
+      saved = identity?.archiveContext;
+      const live = beginSpeechArchive(raw, saved);
+      live.move("playing"); live.finish("completed", "PLAYBACK_COMPLETED");
+      return handle();
+    });
+    try {
+      await speakLocally(request());
+      expect(saved).toBeDefined();
+      expect(metadata(saved!).speech.state).toBe("completed");
+    } finally { play.mockRestore(); }
   });
 });

@@ -1,4 +1,4 @@
-import { beginSpeechArchive, cancelLiveSpeech, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
+import { beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
 import { structuredReadDisplay } from "./tts/structured-display";
 import type { StructuredSpeech } from "./tts/structured-speech";
@@ -1143,7 +1143,11 @@ class PlaybackQueueManager {
     return this.jobs.get(id)?.lifecycle.playerExited ?? Promise.resolve();
   }
 
-  stop(playbackElapsedMs?: number): boolean {
+  stop(playbackElapsedMs?: number, cancelled = false): boolean {
+    if (cancelled) {
+      const jobs = [this.current?.job, this.preparing?.job, this.restartAfterTermination, this.parked?.job, ...this.pending];
+      for (const job of jobs) job?.metadata?.speechArchive?.finish("cancelled", "USER_CANCEL");
+    }
     const seekJob = this.seekPreparation?.job;
     if (seekJob && (this.current?.job === seekJob || this.preparing?.job === seekJob ||
       this.restartAfterTermination === seekJob || this.pending.includes(seekJob))) this.cancelSeekPreparation();
@@ -1652,12 +1656,7 @@ class PlaybackQueueManager {
     }
     if (next.resuming) { next.resuming = false; this.broadcastPlaybackState(next, "resumed"); }
     try { next.metadata?.speechArchive?.playerStarted(); }
-    catch {
-      try { proc.kill("SIGKILL"); } catch {}
-      this.current = null;
-      completeJob(next, buildPlaybackOutcome(next, "failed", "player-error"));
-      this.resolveIfIdle(); this.processNext(); return;
-    }
+    catch { console.error("[speech] player-start archive write failed"); }
     next.metadata?.onStarted?.(Date.now());
     const active = this.current;
     if (active?.job === next && next.metadata?.cloneProjection && durationMs) {
@@ -1946,6 +1945,7 @@ const playbackQueueManager = new PlaybackQueueManager();
 // Standard speech has no queue job until synthesis finishes. Keep its operation
 // identity alive across every preparation await so global Stop can invalidate it.
 const speechPreparations = new Set<AbortController>();
+const preparationArchives = new Map<AbortController, LiveSpeechArchive>();
 const speechPreparationSettlements = new Set<Promise<void>>();
 
 /** Only an owned global Stop creates this reason; generic AbortErrors remain failures. */
@@ -1989,13 +1989,20 @@ const PLAYBACK_WAIT_TIMEOUT_MS = 35_000;
  * returned immediately if the queue hadn't started processing.
  * Rejects after 35 seconds without releasing pending playback/cleanup ownership.
  */
-export async function awaitCurrentPlayback(): Promise<void> {
+export async function awaitCurrentPlayback(options: { forCaptureAdmission?: boolean } = {}): Promise<void> {
   // Snapshot generation ownership before yielding, including already-aborted cleanup.
-  const generations = [...cancelledLongReadTeardowns, ...speechPreparationSettlements];
+  const generations = [...cancelledLongReadTeardowns, ...(options.forCaptureAdmission ? [] : speechPreparationSettlements)];
   if (activeLongRead) generations.push(activeLongRead.done);
   // Snapshot queue drain now: a later unrelated speech must not join this acknowledgement.
-  const queueDrained = playbackQueueManager.awaitDrained();
-  const settled = () => Promise.all([...generations, queueDrained]);
+  const queueDrained = options.forCaptureAdmission ? undefined : playbackQueueManager.awaitDrained();
+  const settled = async () => {
+    if (options.forCaptureAdmission) {
+      // Match main's Ask policy: ordinary preparation may finish while capture
+      // owns admission, but its player remains deferred until admission releases.
+      await Promise.all(generations);
+      await playbackQueueManager.awaitDrained();
+    } else await Promise.all([...generations, queueDrained]);
+  };
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
@@ -2143,11 +2150,14 @@ function replayReadback(offsetMs: number, readbackID?: string): SeekResult {
 
 /** Stop current playback if any. */
 export function stopPlayback(playbackElapsedMs?: number, cancelled = false): boolean {
-  if (cancelled) cancelLiveSpeech();
+  if (cancelled) {
+    for (const controller of speechPreparations) preparationArchives.get(controller)?.finish("cancelled", "USER_CANCEL");
+    activeLongRead?.archive?.finish("cancelled", "USER_CANCEL");
+  }
   const hadPreparation = hasPendingSpeechPreparation();
   for (const controller of speechPreparations) controller.abort(new SpeechPreparationStoppedError());
   const hadLongRead = cancelLongRead(playbackElapsedMs);
-  const stopped = playbackQueueManager.stop(playbackElapsedMs);
+  const stopped = playbackQueueManager.stop(playbackElapsedMs, cancelled);
   if ((hadPreparation || hadLongRead) && !stopped) broadcastPlaybackIdleIfSpeakerClear(undefined, "stop");
   return hadPreparation || hadLongRead || stopped;
 }
@@ -2199,6 +2209,7 @@ export function preemptLongRead(by: "external" | "successor" = "external"): bool
   if (by === "external") externalSpeechListener?.();
   // New accepted speech (and Ask) replaces a parked item so held speech cannot strand a waiter.
   playbackQueueManager.replaceParked();
+  activeLongRead?.archive?.finish("stopped", "REPLACED");
   if (!cancelLongRead()) return false;
   if (playbackQueueManager.getDepthForHealth() === 0) broadcastPlaybackIdleIfSpeakerClear();
   return true;
@@ -2582,6 +2593,7 @@ export async function speak(
   const controller = new AbortController();
   const archive = beginSpeechArchive(text, options?.archiveContext);
   speechPreparations.add(controller);
+  preparationArchives.set(controller, archive);
   let settle!: () => void;
   const settlement = new Promise<void>(resolve => { settle = resolve; });
   speechPreparationSettlements.add(settlement);
@@ -2597,11 +2609,14 @@ export async function speak(
     if (!result.engine && !result.playbackId) archive.finish("failed", "REJECTED");
     return result;
   } catch (error) {
-    archive.finish(controller.signal.aborted ? "cancelled" : error instanceof SpeechPreparationStoppedError ? "stopped" : "failed",
-      controller.signal.aborted || error instanceof SpeechPreparationStoppedError ? "USER_STOP_PREPARING" : isSpeakerOutputRefusedError(error) ? "REJECTED" : "SYNTH_FAILED");
+    // Stop before audio is cancellation, consistently with long-read preparation.
+    const stoppedPreparing = controller.signal.aborted || error instanceof SpeechPreparationStoppedError;
+    archive.finish(stoppedPreparing ? "cancelled" : "failed",
+      stoppedPreparing ? "USER_STOP_PREPARING" : isSpeakerOutputRefusedError(error) ? "REJECTED" : "SYNTH_FAILED");
     throw error;
   } finally {
     speechPreparations.delete(controller);
+    preparationArchives.delete(controller);
     speechPreparationSettlements.delete(settlement); settle();
   }
 }

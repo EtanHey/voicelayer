@@ -192,11 +192,10 @@ async function main() {
     );
   }
 
-  recoverSpeechArchives();
-
   // This sequence advances only when Bun's event loop runs. VoiceBar watches
   // it independently and force-restarts an owned child that wedges in JS.
   daemonHeartbeat = startDaemonHeartbeat();
+  void recoverSpeechArchives();
 
   // Start log rotation (10MB threshold, 60s interval)
   startLogRotation();

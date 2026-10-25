@@ -576,8 +576,10 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   });
 
   it("new long read preempts the old generation and stale results never restart it", async () => {
+    const finishes = spyOn(LiveSpeechArchive.prototype, "finish"); spies.push(finishes);
     holdSynth = true; const old = start(); await synthBarrier.at(1); await playerBarrier.at(0);
     const current = start(); await synthBarrier.at(2);
+    expect(finishes).toHaveBeenCalledWith("stopped", "REPLACED");
     expect(synths[1].killed).toBe(true); synths[2].exit.resolve(0);
     await playerBarrier.at(1); stopPlayback(120); await Promise.all([old.done, current.done]);
     expect(players).toHaveLength(2);
@@ -1097,6 +1099,33 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(receipts("B").length).toBeGreaterThan(0);
       expect(receipts("C")).toEqual([]);
       expect(lastQueue()).toEqual({ type: "read_queue", count: 1, current_request_id: "B" });
+    });
+
+    it("capture Cancel preserves a prefetched queued archive through completed playback", async () => {
+      const create = speechReceipts.createSpeakReceipt;
+      let queued: speechReceipts.SpeakArchiveContext | undefined;
+      spies.push(spyOn(speechReceipts, "createSpeakReceipt").mockImplementation(request => {
+        const result = create(request);
+        if (request.input === "Bravo prefetched archive.") {
+          if (result.kind !== "created") throw Error(result.code);
+          queued = result.context;
+        }
+        return result;
+      }));
+      select("A", "Alpha active read."); await playerBarrier.at(0);
+      select("B", "Bravo prefetched archive."); await synthBarrier.at(1); await settle();
+      expect(queued).toBeDefined();
+      const disk = () => JSON.parse(readFileSync(join(queued!.path, "metadata.json"), "utf8"));
+      expect(disk().speech.state).toBe("preparing");
+      await handleSocketCommand({ cmd: "stop", retain_read_queue: true } as any); await settle();
+      const capture = startCapture();
+      expect(await handleSocketCommand({ cmd: "cancel" })).toMatchObject({ outcome: "accept" });
+      capture.state.mockReturnValue("idle"); capture.done.resolve(""); await settle();
+      expect(disk().speech.state).toBe("preparing");
+      expect(handleSocketCommand({ cmd: "read_next", request_id: "A" } as any)).toMatchObject({ outcome: "accept" });
+      await playerBarrier.at(1); players[1].exit.resolve(0);
+      await awaitCurrentPlayback(); await flushSpeechArchives();
+      expect(disk().speech.state).toBe("completed");
     });
 
     // QUEUE1b: a queue F5 retained (suspended) survives the capture, and dies on agent speech or Ask.

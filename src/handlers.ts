@@ -804,7 +804,7 @@ export async function handleConverse(
 
     // Wait for all queued playback to finish (P0-2: awaits full queue)
     preemptLongRead();
-    await awaitCurrentPlayback();
+    await awaitCurrentPlayback({ forCaptureAdmission: true });
     if (timeoutSettled || inputAbortController.signal.aborted) {
       return textResult(
         "[converse] Request ended before recording could start.",

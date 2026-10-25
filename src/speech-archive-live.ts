@@ -1,9 +1,7 @@
 import { speechArchiveWriter, type ArchiveWrite } from "./speech-archive-writer";
-import { readFileSync, unlinkSync, readdirSync, lstatSync, openSync, closeSync, constants } from "fs";
-import { join } from "path";
+import { unlinkSync } from "fs";
+import { Worker } from "node:worker_threads";
 import type { SpeakArchiveContext } from "./speak-archive";
-import { recoverSpeakArchive } from "./speak-archive-store";
-import { recordingsArchiveRoot } from "./recordings-archive-fs";
 import type { SpeechState } from "./speech-state";
 
 const liveArchives = new Map<string, LiveSpeechArchive>();
@@ -91,8 +89,9 @@ export class LiveSpeechArchive {
     this.enqueue(operation);
   }
 }
-export async function flushSpeechArchives(): Promise<void> {
-  for (const archive of liveArchives.values()) await archive.settled();
+export async function flushSpeechArchives(context?: SpeakArchiveContext): Promise<void> {
+  const archives = context ? [liveArchives.get(context.id)].filter((archive): archive is LiveSpeechArchive => archive !== undefined) : [...new Set(liveArchives.values())];
+  for (const archive of archives) { await archive.settled(); await archive.retryFailed(); }
 }
 export function beginSpeechArchive(text: string, context?: SpeakArchiveContext): LiveSpeechArchive {
   if (context) { const current = liveArchives.get(context.id); if (current) return current; }
@@ -101,30 +100,22 @@ export function beginSpeechArchive(text: string, context?: SpeakArchiveContext):
   return archive;
 }
 /** Only call after acquiring the daemon singleton; never recover another live writer. */
-export function recoverSpeechArchives(): void {
-  const root = recordingsArchiveRoot();
-  let days: string[];
-  try { days = readdirSync(root); } catch (e) {
-    if (typeof e === "object" && e !== null && "code" in e && e.code === "ENOENT") return;
-    throw e;
-  }
-  for (const day of days.filter(d => /^\d{4}-\d\d-\d\d$/.test(d))) {
-    const dir = join(root, day);
-    if (!lstatSync(dir).isDirectory() || lstatSync(dir).isSymbolicLink()) continue;
-    for (const id of readdirSync(dir).filter(n => /^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z-[a-f0-9]{8}$/.test(n))) {
-      try {
-        const entry = lstatSync(join(dir, id));
-        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-        const fd = openSync(join(dir, id, "metadata.json"), constants.O_RDONLY | constants.O_NOFOLLOW);
-        let m: unknown;
-        try { m = JSON.parse(readFileSync(fd, "utf8")); } finally { closeSync(fd); }
-        if (typeof m !== "object" || m === null || !("source" in m) || m.source !== "speak") continue;
-        const result = recoverSpeakArchive(id);
-        if (result.kind === "failed") console.error(`[speech] recovery ${id}: ${result.code}`);
-        else liveArchives.delete(id);
-      } catch { console.error(`[speech] recovery unreadable: ${id}`); }
-    }
-  }
+export function recoverSpeechArchives(): Promise<void> {
+  return new Promise(resolve => {
+    const worker = new Worker(new URL("./speech-archive-recovery-worker.ts", import.meta.url), { env: process.env });
+    const finish = () => { clearTimeout(timeout); void worker.terminate(); resolve(); };
+    let timeout = setTimeout(() => { console.error("[speech] recovery budget exhausted; remaining intents retained"); finish(); }, 5000);
+    worker.on("message", ({ recovered, more }: { recovered: string[]; more: boolean }) => {
+      for (const id of recovered) liveArchives.delete(id);
+      if (!more) { finish(); return; }
+      clearTimeout(timeout);
+      timeout = setTimeout(() => { console.error("[speech] recovery budget exhausted; migration checkpoint retained"); finish(); }, 5000);
+      worker.postMessage({});
+    });
+    worker.once("error", () => { console.error("[speech] recovery worker failed"); finish(); });
+    worker.once("exit", finish);
+    worker.postMessage({});
+  });
 }
 
 /** Once live speech owns an entry, ingress observers share its serialized writer. */
@@ -133,9 +124,6 @@ export function finishLiveSpeechReceipt(context: SpeakArchiveContext, status: "r
   if (!archive) return false;
   archive.finish(status === "stopped" ? "stopped" : "failed", status === "rejected" ? "REJECTED" : reason ?? "USER_STOP");
   return true;
-}
-export function cancelLiveSpeech(): void {
-  for (const archive of [...liveArchives.values()]) archive.finish("cancelled", "USER_CANCEL");
 }
 export function cancelQueuedSpeech(context: SpeakArchiveContext): void {
   beginSpeechArchive("", context).finish("cancelled", "QUEUE_CLEARED");

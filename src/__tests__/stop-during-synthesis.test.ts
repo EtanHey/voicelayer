@@ -1,4 +1,4 @@
-import { beginSpeechArchive, flushSpeechArchives } from "../speech-archive-live";
+import { LiveSpeechArchive, beginSpeechArchive, flushSpeechArchives } from "../speech-archive-live";
 import { readFileSync } from "fs";
 import { join } from "path";
 /**
@@ -95,6 +95,43 @@ describe("STOP1 Stop during speech preparation", () => {
     booking.releaseVoiceSession(); booking.clearStopSignal(); booking.clearCancelSignal();
     recording.setRecordingState("idle");
     for (const spy of spies.reverse()) spy.mockRestore();
+  });
+
+  it("Ask matches main: admits capture before unrelated preparation finishes", async () => {
+    const entered = deferredFixture<void>(), release = deferredFixture<void>();
+    releaseSynthesis = () => release.resolve();
+    synthesize.mockImplementation(async (_text, _voice, _rate, file) => {
+      entered.resolve(); await release.promise; writeFileSync(file, "fixture audio");
+      return { success: true, attempts: 1, audioFile: file, wordBoundaries: [] };
+    });
+    speech = tts.speak("Preparing speak before Ask."); await entered.promise;
+    let resolved = false;
+    const wait = tts.awaitCurrentPlayback({ forCaptureAdmission: true }).then(() => { resolved = true; });
+    await fixtureCheckpoint();
+    expect(resolved).toBe(true);
+    const admission = tts.reserveCaptureAdmission();
+    expect(admission).toBeDefined();
+    try {
+      release.resolve(); await speech; await fixtureCheckpoint();
+      expect(players).toHaveLength(0);
+    } finally { admission?.release(); }
+    await fixtureCheckpoint(); expect(players).toHaveLength(1);
+    let drained = false;
+    const playingWait = tts.awaitCurrentPlayback({ forCaptureAdmission: true }).then(() => { drained = true; });
+    await fixtureCheckpoint(); expect(drained).toBe(false);
+    players[0].exit.resolve(0); await playingWait; await wait;
+    const late = tts.reserveCaptureAdmission(); expect(late).toBeDefined(); late?.release();
+  });
+
+  it("archive player-start faults leave the player running", async () => {
+    synthesize.mockImplementation(async (_text, _voice, _rate, file) => {
+      writeFileSync(file, "fixture audio");
+      return { success: true, attempts: 1, audioFile: file, wordBoundaries: [] };
+    });
+    spies.push(spyOn(LiveSpeechArchive.prototype, "playerStarted").mockImplementation(() => { throw Error("fixture archive fault"); }));
+    speech = tts.speak("Speech must survive its archive fault."); await speech;
+    expect(players).toHaveLength(1); expect(players[0].kills).toEqual([]);
+    players[0].exit.resolve(0); await tts.awaitCurrentPlayback();
   });
 
   it("SPEECH-WIRE Cancel during preparation aborts generation", async () => {

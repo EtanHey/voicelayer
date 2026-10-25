@@ -138,7 +138,6 @@ function persist(entry: string, m: SpeakStoreMetadata) {
   m.updated_at = new Date().toISOString(); publish(entry, "metadata.json", encode(m));
   if (terminal.has(m.status)) unindexSpeech(m.id);
   return m;
-
 }
 function current(entry: string, context: Context) {
   const m = load(entry);
