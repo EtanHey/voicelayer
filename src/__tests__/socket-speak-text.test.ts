@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
+import { createHash } from "crypto";
+import { lstatSync, readFileSync, realpathSync } from "fs";
+import { basename, dirname, join, resolve } from "path";
 import { normalizedSpeechHash } from "../speech-identity";
 import { parseCommand } from "../socket-protocol";
 import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
@@ -47,12 +50,40 @@ describe("speak_text socket command", () => {
     expect(handleSocketCommand({ cmd: "speak_text", text: "hello" } as any)).toMatchObject({ outcome: "reject", reason: "busy" });
   });
   it("normalizes markdown before starting through the profile seam", () => {
+    const run = process.env.VOICELAYER_TEST_RUN_ROOT, root = process.env.QA_VOICE_RECORDINGS_DIR;
+    if (process.env.VOICELAYER_TEST_ISOLATED !== "1" || !run || !root ||
+        dirname(run) !== resolve(import.meta.dir, "../../.test-tmp") ||
+        !new RegExp(`^${process.pid}-[a-f0-9]{4}$`).test(basename(run)) || realpathSync(run) !== run ||
+        !root.startsWith(run + "/") || realpathSync(root) !== root) throw new Error("canonical isolated preload required");
+    for (const directory of [run, root]) {
+      const stat = lstatSync(directory);
+      expect(stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === process.getuid?.() && (stat.mode & 0o7777) === 0o700).toBe(true);
+    }
     spies.push(spyOn(input, "getRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
     spies.push(spyOn(reservation, "hasActiveVoiceOperation").mockReturnValue(false));
     const start = spyOn(tts, "speakText").mockReturnValue({ id: "test", done: Promise.resolve() }); spies.push(start);
     expect(handleSocketCommand({ cmd: "speak_text", text: "**Hi**", format: "markdown", profile: "long", id: "s2" } as any)).toMatchObject({ outcome: "accept", id: "s2" });
-    expect(start).toHaveBeenCalledWith("Hi", "long", { request_id: "s2", text_hash: "46f3be07cae69b13f2cf62e764b4aa3f3aa67de0f952d0e37cd1d87f6fff63a4" });
+    const context = start.mock.calls[0]?.[2]?.archiveContext;
+    expect(context).toBeDefined();
+    if (!context) throw new Error("Required raw speech receipt context is absent");
+    expect(context.id).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/);
+    const expectedPath = join(root, context.id.slice(0, 10), context.id);
+    expect(context.path).toBe(expectedPath);
+    for (const directory of [dirname(expectedPath), expectedPath]) {
+      const stat = lstatSync(directory);
+      expect(stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === process.getuid?.() && (stat.mode & 0o7777) === 0o700).toBe(true);
+    }
+    for (const name of ["input.txt", "metadata.json"]) {
+      const stat = lstatSync(join(expectedPath, name));
+      expect(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.uid === process.getuid?.() && (stat.mode & 0o7777) === 0o600).toBe(true);
+    }
+    expect(readFileSync(join(expectedPath, "input.txt"))).toEqual(Buffer.from("**Hi**", "utf8"));
+    expect(context.metadata).toMatchObject({ schema_version: 1, id: context.id, source: "speak", status: "received",
+      request_id: "s2", request_source: null, connection: null, format: "markdown", blocking: null,
+      input: { bytes: 6, sha256: createHash("sha256").update(Buffer.from("**Hi**", "utf8")).digest("hex") } });
+    expect(JSON.parse(readFileSync(join(expectedPath, "metadata.json"), "utf8"))).toEqual(context.metadata);
+    expect(start).toHaveBeenCalledWith("Hi", "long", { request_id: "s2", text_hash: "46f3be07cae69b13f2cf62e764b4aa3f3aa67de0f952d0e37cd1d87f6fff63a4", archiveContext: context });
   });
 });
 

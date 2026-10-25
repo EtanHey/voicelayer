@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { normalizedSpeechHash } from "./speech-identity";
+import type { SpeakArchiveContext } from "./speak-archive";
 /**
  * TTS module — multi-engine voice synthesis with context-aware routing.
  *
@@ -803,7 +804,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   text: string;
   voice: string;
   longRead?: StateEvent["long_read"];
-  speechIdentity?: SpeechIdentity;
+  speechIdentity?: Pick<StateEvent, "request_id" | "text_hash">;
   playbackOffsetMs?: number;
   utteranceDurationMs?: number;
   getUtteranceDurationMs?(): number;
@@ -2221,7 +2222,7 @@ export function resolveLongReadProfile(kind: "auto" | "short" | "long", text: st
     rate: profile.rate, fallbackVoice: resolved.fallbackVoice };
 }
 
-type SpeechIdentity = Pick<StateEvent, "request_id" | "text_hash">;
+type SpeechIdentity = Pick<StateEvent, "request_id" | "text_hash"> & { archiveContext?: SpeakArchiveContext };
 
 /** One long-read chunk: pronunciation projection, engine fallback and rate adjustment. Owns the audio
  * file until it resolves; no broadcast, history, playback queue or active-read state. */
@@ -2300,6 +2301,7 @@ function untilAborted(signal: AbortSignal): Promise<never> {
  * broadcasts, history or the active read. Rejects when the owner is gone or the signal aborts. */
 export async function prepareSelectionReadStart(
   text: string, kind: "auto" | "short" | "long", ownerRequestId: string, signal: AbortSignal,
+  _archiveContext?: SpeakArchiveContext, // Private ingress identity for the future preparation writer.
 ): Promise<PreparedReadStart> {
   const owner = [...longReads.values()].find((read) => read.requestId === ownerRequestId);
   if (!owner?.synthesized) throw new Error("No playing read owns this queue");
@@ -2380,6 +2382,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
     // A recording may have begun while the predecessor was settling.
     assertSpeakerClear();
     await runLongRead(texts, id, signal, {
+      archiveContext: identity.archiveContext,
       registerSeek: (control) => {
         const advance = (result: SeekResult) => { if (result.outcome === "accept") generation++; return result; };
         handle.seek = { seek: offset => advance(control.seek(offset)), restart: () => advance(control.restart()) };

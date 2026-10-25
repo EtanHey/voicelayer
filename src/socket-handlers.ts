@@ -7,7 +7,7 @@
 
 import { normalizedSpeechHash } from "./speech-identity";
 import { randomUUID } from "crypto";
-import { createSpeakReceipt } from "./speak-archive";
+import { createSpeakReceipt, type SpeakArchiveContext } from "./speak-archive";
 import { updateSpeakLifecycle, type SpeakLifecycle } from "./speak-archive-store";
 import { setTTSSetting, setTTSProfile } from "./tts-settings";
 import { setTTSPreviewActive, readTTSControlsStatus } from "./tts-controls-status";
@@ -113,17 +113,34 @@ function publishModelStatusEvent(): void {
 }
 onWhisperModelStateChange(publishModelStatusEvent);
 
+function finishRawSpeakReceipt(context: SpeakArchiveContext | undefined, status: "rejected" | "failed",
+  error_code: SpeakLifecycle["summary"]["error_code"]): void {
+  if (!context) return;
+  const result = updateSpeakLifecycle(context, { status, generation_id: null,
+    timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
+    summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code }, played_spans: [] });
+  if (result.kind === "failed") console.error(`[voicelayer] speak archive update failed: ${result.code}`);
+}
+
+function finishRawSpeakFailure(context: SpeakArchiveContext | undefined, error: unknown): void {
+  const refused = isSpeakerOutputRefusedError(error) || (error instanceof Error &&
+    (error.message === "busy" || error.message === "TTS is disabled"));
+  finishRawSpeakReceipt(context, refused ? "rejected" : "failed", refused ? "REJECTED" : "OUTPUT_UNAVAILABLE");
+}
+
 function startSelectionRead(read: QueuedSelectionRead, prepared?: PreparedReadStart): void {
-  if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) throw new Error("busy");
-  const identity = { request_id: read.requestId, text_hash: read.textHash };
-  if (prepared) speakText(read.text, read.profile, identity, prepared);
-  else speakText(read.text, read.profile, identity);
+  try {
+    if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) throw new Error("busy");
+    const identity = { request_id: read.requestId, text_hash: read.textHash, archiveContext: read.archiveContext };
+    if (prepared) speakText(read.text, read.profile, identity, prepared);
+    else speakText(read.text, read.profile, identity);
+  } catch (error) { finishRawSpeakFailure(read.archiveContext, error); throw error; }
 }
 
 /** QPRE1: the queue head's first chunk is prepared once the playing read's synthesis is complete. */
 const selectionReadPreparation = {
   prepare: (read: QueuedSelectionRead, signal: AbortSignal, owner: string) =>
-    prepareSelectionReadStart(read.text, read.profile, owner, signal),
+    prepareSelectionReadStart(read.text, read.profile, owner, signal, read.archiveContext),
 };
 const newSelectionReadQueue = () => new SelectionReadQueue<PreparedReadStart>(startSelectionRead,
   (state) => broadcast({ type: "read_queue", ...state }), SELECTION_READ_QUEUE_LIMIT, selectionReadPreparation);
@@ -179,25 +196,47 @@ export function handleSocketCommand(
         ...(result.offset_ms !== undefined ? { offset_ms: result.offset_ms } : {}) };
     }
     case "speak_text": {
+      // Socket parsing/authentication precede this boundary. IDs retain their existing ownership
+      // meaning: each validated invocation gets one receipt, including repeated client IDs.
+      const receipt = createSpeakReceipt({
+        input: command.text, request_id: command.id ?? randomUUID(),
+        request_source: command.source === "selection" || command.source === "clipboard" || command.source === "cli"
+          ? command.source : null,
+        connection: null, format: command.format ?? null, blocking: null,
+        requested: { mode: null, profile: command.profile ?? null, engine: null, voice: null, rate: null },
+        build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
+      });
+      if (receipt.kind === "failed") return buildAck(command, "reject", `Speech refused: input archive unavailable (${receipt.code})`);
       if (getEffectiveRecordingState() !== "idle" || hasActiveVoiceOperation()) {
+        finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
         return buildAck(command, "reject", "busy");
       }
-      const text = command.format === "markdown" ? markdownToSpeech(command.text) : command.text;
+      let launched = false, queueStartOwnsFailure = false;
       try {
+        const text = command.format === "markdown" ? markdownToSpeech(command.text) : command.text;
         const textHash = normalizedSpeechHash(command.text);
         if (command.queue === true && command.id) {
           // The queue starts the read itself when no user read is live; onSpeak observes only direct starts.
-          const outcome = selectionReads.submit({ requestId: command.id, text, textHash, profile: command.profile ?? "auto" }, true);
-          if (outcome === "full") return buildAck(command, "reject", "queue full");
+          queueStartOwnsFailure = true;
+          const outcome = selectionReads.submit({ requestId: command.id, text, textHash, profile: command.profile ?? "auto",
+            archiveContext: receipt.context }, true);
+          if (outcome === "full") {
+            finishRawSpeakReceipt(receipt.context, "rejected", "REJECTED");
+            return buildAck(command, "reject", "queue full");
+          }
           return buildAck(command, "accept", outcome === "queued" ? "queued" : undefined);
         }
         // The first Option+F5 selection owns the queue, so a different one queues behind it.
         if (command.source === "selection" && command.id) selectionReads.own(command.id);
         else selectionReads.clear();
-        const read = speakText(text, command.profile ?? "auto", { request_id: command.id, text_hash: textHash });
+        const read = speakText(text, command.profile ?? "auto", { request_id: command.id, text_hash: textHash,
+          archiveContext: receipt.context });
+        launched = true;
         onSpeak?.(read);
         return buildAck(command, "accept");
       } catch (error) {
+        // A callback failure after speakText returned does not prove absent audio.
+        if (!launched && !queueStartOwnsFailure) finishRawSpeakFailure(receipt.context, error);
         if (command.id) selectionReads.settled(command.id, "failed");
         return buildAck(command, "reject", error instanceof Error ? error.message : String(error));
       }
