@@ -1,3 +1,4 @@
+import { displayTokens } from "./display-tokens";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -55,7 +56,7 @@ export function startCloneTiming(input: TimingInput, isCurrent: () => boolean, p
         result.identity.chunkId !== input.chunkId || result.identity.playbackRate !== 1) return;
     const sha = createHash("sha256").update(await readFile(input.audioPath)).digest("hex");
     if (!current() || result.identity.audioSha256 !== sha) return;
-    const display = Array.from(input.displayText.matchAll(/\S+/gu));
+    const display = displayTokens(input.displayText);
     if (display.length !== result.words.length || result.words.some((word, i) => word.text !== display[i][0] ||
         word.displayRange.start !== display[i].index || word.displayRange.end !== display[i].index + display[i][0].length)) return;
     const words = result.words.map((word, word_index) => {

@@ -64,7 +64,9 @@ public enum TeleprompterFormatting {
             }
             let start = index
             while index < text.endIndex, !text[index].isWhitespace { index = text.index(after: index) }
-            tokens.append((String(text[start ..< index]), newlines))
+            for (piece, token) in TeleprompterContentModel.displayTokens(String(text[start ..< index])).enumerated() {
+                tokens.append((token, piece == 0 ? newlines : 0))
+            }
             newlines = 0
         }
         let tokenOfWord = tokens.indices.flatMap { token in
@@ -89,11 +91,13 @@ public enum TeleprompterFormatting {
             var lineBreak: TeleprompterLineBreak = breaks >= 2 ? .paragraph : breaks == 1 ? .line : .none
             let isMarker = bullets.contains(token) || (lineBreak != .none && isLineStartMarker(token))
             if isMarker, lineBreak == .none { lineBreak = .line }
-            let glues = lineBreak == .none && token.allSatisfy(closingPunctuation.contains)
+            let slashContinuation = token.hasPrefix("/") && tokenIndex > 0 &&
+                ["list", "completion", "and"].contains(tokens[tokenIndex - 1].text)
+            let glues = lineBreak == .none && (slashContinuation || token.allSatisfy(closingPunctuation.contains))
             result[position].lineBreak = lineBreak
             result[position].isListMarker = isMarker
             result[position].gluesToPrevious = glues
-            if glues { result[position].highlightGroup = result[position - 1].highlightGroup }
+            if glues && !slashContinuation { result[position].highlightGroup = result[position - 1].highlightGroup }
         }
         // Overlay only exact speech-token positions. Decorations have no word id, time or seek target.
         var position = 0

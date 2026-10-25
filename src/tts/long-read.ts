@@ -1,3 +1,4 @@
+import { displayTokens } from "./display-tokens";
 import type { SpeakArchiveContext } from "../speak-archive";
 import type { PlaybackOutcomeEvent, StateEvent, WordBoundary } from "../socket-protocol";
 
@@ -48,7 +49,7 @@ export interface LongReadDependencies {
  * indexes each chunk's first whitespace token in `text`. Synthesis chunks drop the line breaks between
  * sentences, so the display text keeps them whenever its tokens are exactly the chunks' tokens. */
 export function longReadDocument(displayText: string, texts: string[]): { text: string; chunk_word_starts: number[] } {
-  const tokens = (text: string) => text.match(/\S+/gu) ?? [];
+  const tokens = (text: string) => displayTokens(text).map(m => m[0]);
   const chunkTokens = texts.map(tokens), all = chunkTokens.flat(), display = tokens(displayText);
   let next = 0;
   const chunk_word_starts = chunkTokens.map((chunk) => { const at = next; next += chunk.length; return at; });

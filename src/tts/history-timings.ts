@@ -1,3 +1,4 @@
+import { displayTokens } from "./display-tokens";
 import type { AlignedWordBoundary, WordBoundary } from "../socket-protocol";
 
 /** One synthesized chunk of a read, in the order its audio sits in the history file. */
@@ -10,7 +11,7 @@ export interface HistoryChunkTiming {
   words?: WordBoundary[];
 }
 
-const tokensOf = (text: string) => Array.from(text.matchAll(/\S+/gu), match => match[0]);
+const tokensOf = (text: string) => displayTokens(text).map(match => match[0]);
 
 /**
  * Fill each untimed token with an even share of the gap between its timed neighbours,
@@ -25,6 +26,7 @@ function interpolateChunk(rows: AlignedWordBoundary[], endMs: number): void {
     const count = last - first;
     if (count <= 0 || to <= from) return;
     for (let step = 0; step < count; step++) {
+      if (/^[-+*•◦▪‣]$/.test(rows[first + step].text)) continue;
       const start = from + Math.trunc((to - from) * step / count), stop = from + Math.trunc((to - from) * (step + 1) / count);
       if (stop > start) rows[first + step] = { ...rows[first + step], offset_ms: start, duration_ms: stop - start, estimated: true };
     }

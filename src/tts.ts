@@ -1,5 +1,6 @@
 import { beginSpeechArchive, unlinkSpeechAudio, type LiveSpeechArchive } from "./speech-archive-live";
 import { truncateAtWordBoundary } from "./tts/truncate";
+import { displayTokens } from "./tts/display-tokens";
 import { structuredReadDisplay } from "./tts/structured-display";
 import type { StructuredSpeech } from "./tts/structured-speech";
 import { randomUUID } from "node:crypto";
@@ -559,7 +560,7 @@ export function alignWordBoundariesToDisplayText(
 ): WordBoundary[] {
   if ((!force && displayText === spokenText) || !wordBoundaries.length) return wordBoundaries;
   const projection = ranges ? {speechText: spokenText, ranges} : projectSpeakableText(displayText, pronunciationRules(), "edge");
-  const tokens = Array.from(displayText.matchAll(/\S+/gu));
+  const tokens = displayTokens(displayText);
   const unknown = (): WordBoundary[] => tokens.length === 1 ? [{
     text: displayText, offset_ms: wordBoundaries[0].offset_ms,
     duration_ms: wordBoundaries.at(-1)!.offset_ms + wordBoundaries.at(-1)!.duration_ms - wordBoundaries[0].offset_ms,
@@ -611,7 +612,7 @@ export function alignWordBoundariesToDisplayText(
 
 /** Edge timings one per display token. Raw engine words (display === spoken) still need the token map. */
 export function displayTokenBoundaries(displayText: string, wordBoundaries: WordBoundary[]): WordBoundary[] {
-  const tokens = Array.from(displayText.matchAll(/\S+/gu), match => match[0]);
+  const tokens = displayTokens(displayText).map(match => match[0]);
   if (wordBoundaries.length === tokens.length && wordBoundaries.every((word, i) => word.text === tokens[i])) return wordBoundaries;
   const whole = { start: 0, end: displayText.length };
   return alignWordBoundariesToDisplayText(displayText, displayText, wordBoundaries,

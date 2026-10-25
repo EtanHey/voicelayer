@@ -133,7 +133,7 @@ public struct TeleprompterBoundary: Equatable {
     /// audio end after the last), so every displayed word highlights and seeks. Offsets stay in token
     /// order; a gap with no room, or a tail with no known audio end, stays untimed.
     static func interpolated(_ rows: [Self], text: String, startMs: Int?, endMs: Int?) -> [Self] {
-        let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let tokens = TeleprompterContentModel.displayTokens(text)
         guard rows.contains(where: { $0.wordIndex != nil }),
               let byIndex = indexedRows(rows, tokens: tokens) else { return rows }
         var result = tokens.indices.map { byIndex[$0] ?? Self(offsetMs: nil, durationMs: nil, text: tokens[$0], wordIndex: $0) }
@@ -144,6 +144,7 @@ public struct TeleprompterBoundary: Equatable {
             guard !gap.isEmpty, to > from else { return }
             let span = Double(to - from), count = Double(gap.count)
             for (step, index) in gap.enumerated() {
+                guard !["-", "+", "*", "•", "◦", "▪", "‣"].contains(tokens[index]) else { continue }
                 let start = from + Int(span * Double(step) / count), stop = from + Int(span * Double(step + 1) / count)
                 guard stop > start else { continue }
                 result[index] = Self(offsetMs: start, durationMs: stop - start, text: tokens[index],
@@ -285,6 +286,25 @@ public enum TeleprompterPacePolicy {
 }
 
 public enum TeleprompterContentModel {
+    // Mirrors display-tokens.ts: ambiguous bare paths are never guessed as prose.
+    static func displayTokens(_ text: String) -> [String] {
+        let pattern = #"(?<![\w./\\:-])(?:list/paragraph|completion/cancellation|and/or)(?![\w/\\-]|\.[\w])"#
+        let regex = try! NSRegularExpression(pattern: pattern)
+        let source = text as NSString
+        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).map {
+            $0.range.location + (source.substring(with: $0.range) as NSString).range(of: "/").location
+        })
+        let words = try! NSRegularExpression(pattern: #"\S+"#)
+        return words.matches(in: text, range: NSRange(location: 0, length: source.length)).flatMap { match -> [String] in
+            let range = match.range
+            guard let cut = cuts.first(where: { $0 > range.location && $0 < NSMaxRange(range) }) else {
+                return [source.substring(with: range)]
+            }
+            return [source.substring(with: NSRange(location: range.location, length: cut - range.location)),
+                    source.substring(with: NSRange(location: cut, length: NSMaxRange(range) - cut))]
+        }
+    }
+
     public static let maxDisplayTokenLength = 24
     private static let maximumBoundaryComparisonCharacters = 512
 
@@ -293,7 +313,7 @@ public enum TeleprompterContentModel {
         wordBoundaries: [TeleprompterBoundary]
     ) -> [TeleprompterWord] {
         if wordBoundaries.contains(where: { $0.wordIndex != nil }) {
-            let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            let tokens = TeleprompterContentModel.displayTokens(text)
             guard let byIndex = TeleprompterBoundary.indexedRows(wordBoundaries, tokens: tokens) else {
                 return words(text: text, wordBoundaries: [])
             }
@@ -304,8 +324,7 @@ public enum TeleprompterContentModel {
                     hasInterpolatedTiming: boundary?.isInterpolated ?? false))
             })
         }
-        let textWords = text
-            .split(whereSeparator: { $0.isWhitespace })
+        let textWords = displayTokens(text)
             .map { word in
                 TeleprompterWord(
                     id: 0,
@@ -362,7 +381,7 @@ public enum TeleprompterContentModel {
     /// TELE1: legacy (Edge) rows, one per whitespace token, keyed by token index. Nil unless the counts
     /// match and the rows plausibly spell the text, the same test the per-chunk zip uses.
     static func legacyTokenRows(text: String, boundaries: [TeleprompterBoundary]) -> [Int: TeleprompterBoundary]? {
-        let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let tokens = TeleprompterContentModel.displayTokens(text)
         let rows = boundaries.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard !tokens.isEmpty, rows.count == tokens.count, boundariesPlausiblyBelong(
             to: tokens.map { TeleprompterWord(id: 0, text: $0, offsetMs: nil, durationMs: nil) },
@@ -976,11 +995,11 @@ private struct TeleprompterBlockView: View, Equatable {
             ForEach(Array(words.enumerated()), id: \.element.id) { position, word in
                 let layout = layouts[position]
                 let head = layout.highlightGroup - first
-                let isCurrent = layout.highlightGroup == highlightedGroup
+                let isCurrent = !layout.isListMarker && layout.highlightGroup == highlightedGroup
                 let highlight = WordHighlight(
                     isCurrent: isCurrent,
-                    isAvailable: canHighlight(word) || words.indices.contains(head) && canHighlight(words[head]) ||
-                        isCurrent && highlightedGroupIsTimed,
+                    isAvailable: !layout.isListMarker && (canHighlight(word) || words.indices.contains(head) && canHighlight(words[head]) ||
+                        isCurrent && highlightedGroupIsTimed),
                     joinsPrevious: layout.gluesToPrevious,
                     joinsNext: layouts.indices.contains(position + 1) && layouts[position + 1].gluesToPrevious
                 )
