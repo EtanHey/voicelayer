@@ -1,3 +1,6 @@
+import { beginSpeechArchive } from "../speech-archive-live";
+import { readFileSync } from "fs";
+import { join } from "path";
 /**
  * STOP1 N8 regression (imported from 8fe22c83). Run this file alone with bunfig.toml's safety preload.
  * Real handlers and synthesis-to-queue path; every external
@@ -94,6 +97,22 @@ describe("STOP1 Stop during speech preparation", () => {
     for (const spy of spies.reverse()) spy.mockRestore();
   });
 
+  it("SPEECH-WIRE Cancel during preparation aborts generation", async () => {
+    const entered = deferredFixture<void>();
+    let signal: AbortSignal | undefined;
+    synthesize.mockImplementation(async (_text, _voice, _rate, _file, _script, _retries, abort) => {
+      signal = abort; entered.resolve();
+      await new Promise<void>(resolve => { releaseSynthesis = resolve; abort?.addEventListener("abort", () => resolve(), { once: true }); });
+      throw abort?.reason;
+    });
+    const archive = beginSpeechArchive("Cancel fixture.");
+    speech = tts.speak("Cancel fixture.", { archiveContext: archive.context }).catch(error => error);
+    await entered.promise;
+    const ack = await handleSocketCommand({ cmd: "cancel" });
+    expect(ack).toMatchObject({ outcome: "accept" });
+    expect(signal?.aborted).toBe(true);
+    expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech.state).toBe("cancelled");
+  });
   it("N8 Stop during held Edge voice_speak synthesis prevents later playback", async () => {
     const entered = deferredFixture<void>();
     const synthesis = deferredFixture<void>();
@@ -162,8 +181,11 @@ describe("STOP1 Stop during speech preparation", () => {
       spies.push(xttsSynth, f5Synth);
       speech = tts.speak("Held cloned speech preparation.", { voice: "fixture" }).catch(error => error);
       await entered.promise;
-      const ack = await handleSocketCommand({ cmd: "stop" });
-      releaseSynthesis(); await speech; await fixtureCheckpoint();
+      let acknowledged = false;
+      const stopped = Promise.resolve(handleSocketCommand({ cmd: "stop" })).then(ack => { acknowledged = true; return ack; });
+      await fixtureCheckpoint();
+      expect(acknowledged).toBe(false); // No success receipt while generation still owns work.
+      releaseSynthesis(); const ack = await stopped; await speech; await fixtureCheckpoint();
       expect(ack).toMatchObject({ outcome: "accept" });
       if (tier.startsWith("qwen")) expect(signal?.aborted).toBe(true);
       else expect(qwenSynth).not.toHaveBeenCalled();
@@ -222,13 +244,14 @@ describe("STOP1 Stop during speech preparation", () => {
     });
     speech = tts.speak("Old speech.").catch(error => error);
     await entered.promise;
-    expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
+    const stopped = Promise.resolve(handleSocketCommand({ cmd: "stop" }));
     await tts.speak("New speech.");
     await fixtureCheckpoint();
     expect(signals).toHaveLength(2);
     expect(signals[0].aborted).toBe(true);
     expect(signals[1].aborted).toBe(false);
     releaseSynthesis(); await speech; await fixtureCheckpoint();
+    expect(await stopped).toMatchObject({ outcome: "accept" });
     expect(players).toHaveLength(1);
     expect(events.filter(e => e.type === "state" && e.state === "speaking").map(e => e.text)).toEqual(["New speech."]);
   });
@@ -258,6 +281,24 @@ describe("STOP1 Stop during speech preparation", () => {
     expect(events.some(e => e.type === "error")).toBe(false);
   });
 
+  it("SPEECH-WIRE keeps finished chunks when later generation is cancelled", async () => {
+    const entered = deferredFixture<void>(), held = deferredFixture<void>();
+    releaseSynthesis = () => held.resolve();
+    let calls = 0;
+    synthesize.mockImplementation(async (_text, _voice, _rate, file) => {
+      if (++calls === 2) { entered.resolve(); await held.promise; }
+      writeFileSync(file, "finished chunk bytes");
+      return { success: true, attempts: 1, audioFile: file, wordBoundaries: [] };
+    });
+    const archive = beginSpeechArchive("Original selection");
+    speech = tts.speak("A sentence with enough words for multiple generated chunks. ".repeat(50), { archiveContext: archive.context }).catch(error => error);
+    await entered.promise;
+    const stopped = Promise.resolve(handleSocketCommand({ cmd: "cancel" }));
+    releaseSynthesis(); await stopped; await speech;
+    const m = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
+    expect(m.speech.state).toBe("cancelled"); expect(m.speech.generated).toHaveLength(1);
+    expect(readFileSync(join(archive.context.path, m.speech.generated[0].audio_path), "utf8")).toBe("finished chunk bytes");
+  });
   it("Stop during multi-chunk Edge preparation prevents the next chunk", async () => {
     const entered = deferredFixture<void>();
     const synthesis = deferredFixture<void>();
@@ -268,8 +309,8 @@ describe("STOP1 Stop during speech preparation", () => {
     });
     speech = tts.speak("A long sentence with enough words for several preparation chunks. ".repeat(100)).catch(error => error);
     await entered.promise;
-    const ack = await handleSocketCommand({ cmd: "stop" });
-    releaseSynthesis(); await speech;
+    const stopped = Promise.resolve(handleSocketCommand({ cmd: "stop" }));
+    releaseSynthesis(); const ack = await stopped; await speech;
     expect(ack).toMatchObject({ outcome: "accept" });
     expect(synthesize).toHaveBeenCalledTimes(1);
     expect(players).toHaveLength(0);
@@ -291,8 +332,9 @@ describe("STOP1 Stop during speech preparation", () => {
       });
       const pending = mcpCall(tool, mode); speech = pending;
       await entered.promise;
-      expect(await handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "accept" });
+      const stopped = Promise.resolve(handleSocketCommand({ cmd: "stop" }));
       releaseSynthesis();
+      expect(await stopped).toMatchObject({ outcome: "accept" });
       const response = await pending;
       expect(response?.error).toBeUndefined();
       expect(response?.result?.isError).not.toBe(true);

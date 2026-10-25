@@ -10,6 +10,7 @@ export interface PreparedChunk {
   chunk: LongReadChunk;
   voice: string;
   engine: string;
+  spokenText?: string;
   /** Clone chunks carry their speakable projection for alignment, as on-demand synthesis does. */
   projection?: SpeakableText;
 }

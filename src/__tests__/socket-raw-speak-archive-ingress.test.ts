@@ -166,7 +166,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     incoming({ id: "A", source: "selection" }); incoming({ id: "B", source: "clipboard", queue: true });
     incoming({ id: "agent", source: "cli" });
     expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "noop", reason: "stale" });
-    expect(contexts).toHaveLength(3); retained(contexts[1], "received"); expect(start).toHaveBeenCalledTimes(2);
+    expect(contexts).toHaveLength(3); retained(contexts[1], "stopped"); expect(start).toHaveBeenCalledTimes(2);
     expect(queueEvents().at(-1)).toEqual({ type: "read_queue", count: 0, current_request_id: null });
   });
   for (const queue of [false, true]) it(`keeps repeated-ID invocations distinct with queue=${queue}`, () => {
@@ -225,7 +225,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     incoming({ id: "A", source: "selection" }); incoming({ id: "B", source: "selection", queue: true });
     expect(handleSocketCommand({ cmd: "stop" })).toMatchObject({ outcome: "noop", reason: "already idle" });
     expect(handleSocketCommand({ cmd: "read_next", request_id: "A" })).toMatchObject({ outcome: "noop", reason: "stale" });
-    expect(contexts).toHaveLength(2); retained(contexts[1], "received"); expect(start).toHaveBeenCalledTimes(1);
+    expect(contexts).toHaveLength(2); retained(contexts[1], "stopped"); expect(start).toHaveBeenCalledTimes(1);
   });
   it("late archive update fault keeps honest received evidence and fixed telemetry", () => {
     start.mockImplementation(() => { throw new Error("TTS is disabled"); });
@@ -259,7 +259,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     let handle: tts.LongReadHandle | undefined;
     expect(incoming({ id: "runner" }, value => { handle = value; })).toMatchObject({ outcome: "accept" });
     expect(await entered.at(0)).toBe(contexts[0]); await handle!.done;
-    retained(contexts[0], "received");
+    retained(contexts[0], "failed");
     expect(synthesized).toHaveLength(1); expect(played).toEqual(["synthetic-no-file"]); expect(disposed).toEqual(played);
     expect(events).toContainEqual(expect.objectContaining({ type: "state", request_id: "runner", text_hash: normalizedSpeechHash(raw) }));
     expect(JSON.stringify(events)).not.toContain(contexts[0].path); expect(JSON.stringify(events)).not.toContain("archiveContext");

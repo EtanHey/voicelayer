@@ -1,3 +1,6 @@
+import * as speechReceipts from "../speak-archive";
+import { beginSpeechArchive } from "../speech-archive-live";
+import { join } from "path";
 import { projectStructuredSpeech } from "../tts/structured-speech";
 import * as pronunciation from "../pronunciation";
 import * as settings from "../tts-settings";
@@ -106,6 +109,56 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
 
+  for (const engine of ["edge", "clone"] as const) {
+    it(`SPEECH-WIRE live ${engine} archive records actual generation and completion`, async () => {
+      autoPlay = true;
+      if (engine === "clone") spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
+      const archive = beginSpeechArchive("  **Original** selection\n");
+      const h = speakLongRead("Actual generated words.", { engine, voice: "fixture", rate: "+0%" }, Date.now(), { archiveContext: archive.context });
+      handles.push(h); await h.done;
+      const m = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
+      expect(m.speech.state).toBe("completed");
+      expect(m.speech.generated[0]).toMatchObject({ text: "Actual generated words.", engine: engine === "edge" ? "edge-tts" : "qwen3-tts" });
+      expect(existsSync(join(archive.context.path, m.speech.generated[0].audio_path))).toBe(true);
+      expect(readFileSync(join(archive.context.path, "input.txt"), "utf8")).toBe("  **Original** selection\n");
+    });
+  }
+  it("SPEECH-WIRE player errors persist failed rather than stopped", async () => {
+    failPlayerSpawn = true;
+    const archive = beginSpeechArchive("Failure fixture.");
+    const h = speakLongRead("Failure fixture.", { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), { archiveContext: archive.context });
+    handles.push(h); await h.done;
+    expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech.state).toBe("failed");
+  });
+  it("SPEECH-WIRE Ask archives its real spoken question", async () => {
+    const create = speechReceipts.createSpeakReceipt;
+    let context: speechReceipts.SpeakArchiveContext | undefined;
+    spies.push(spyOn(speechReceipts, "createSpeakReceipt").mockImplementation(request => {
+      const receipt = create(request);
+      if (receipt.kind === "created" && request.request_source === "ask_prompt") context = receipt.context;
+      return receipt;
+    }));
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    spies.push(spyOn(input, "waitForInput").mockResolvedValue("fixture answer"));
+    autoPlay = true;
+    const answer = await handleVoiceAsk({ message: "  Durable question?  ", voice: "en-US-JennyNeural", timeout_seconds: 5 });
+    expect(answer.isError).not.toBe(true);
+    expect(context).toBeDefined();
+    const m = JSON.parse(readFileSync(join(context!.path, "metadata.json"), "utf8"));
+    expect(m.speech).toMatchObject({ state: "completed", generated: [{ text: "Durable question?" }] });
+    expect(readFileSync(join(context!.path, "input.txt"), "utf8")).toBe("  Durable question?  ");
+  });
+  it("SPEECH-WIRE real pause and resume persist the same output", async () => {
+    const archive = beginSpeechArchive("Pause fixture.");
+    const h = speakLongRead("Pause fixture.", { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), { archiveContext: archive.context });
+    handles.push(h); await playerBarrier.at(0);
+    expect(pausePlayback().outcome).toBe("accept");
+    expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech.state).toBe("paused");
+    expect(tts.resumePlayback().outcome).toBe("accept");
+    await playerBarrier.at(1); players[1].exit.resolve(0); await h.done;
+    expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech.transitions.map((t: { to: string }) => t.to))
+      .toEqual(["preparing", "playing", "paused", "playing", "completed"]);
+  });
   it("SEL11 preserves request identity and original-text hash in Preparing and player receipts", async () => {
     const identity = { request_id: "selection-B", text_hash: createHash("sha256").update("**hello** world").digest("hex") };
     const h = speakLongRead("hello world", { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), identity);

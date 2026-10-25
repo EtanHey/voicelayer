@@ -121,12 +121,15 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     expect(entries()).toHaveLength(1); expect(contexts).toHaveLength(1);
     expect(fs.readFileSync(join(contexts[0].path, "input.txt"))).toEqual(Buffer.from(input));
     expect(disk()).toMatchObject({ source: "speak", request_source: "voice_speak", connection: "stdio",
-      format: null, blocking: false, status: "received", generation_id: null,
+      format: null, blocking: false, status: "completed", generation_id: null,
       input: { bytes: Buffer.byteLength(input), sha256: createHash("sha256").update(input).digest("hex") },
       requested: { mode: requested ?? null, profile: null, engine: null, voice: "en-US-JennyNeural", rate: null, rate_raw: "+020%" },
       build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null } });
     expect(disk()).not.toHaveProperty("effective");
-    expect(disk()).not.toHaveProperty("artifacts");
+    expect(disk().speech.state).toBe("completed");
+    expect(disk().speech.generated.map((g: { text: string }) => g.text).join(" ")).toBe(synthesized.join(" "));
+    expect(disk().artifacts).toHaveLength(1);
+    expect(fs.readFileSync(join(contexts[0].path, disk().artifacts[0].relative_path), "utf8")).toBe("synthetic mp3");
     const outcome = notifications[0]?.params.data;
     if (!outcome || typeof outcome !== "object" || !("playback_id" in outcome)) throw new Error("missing playback notification");
     expect(result.content[0].text).toBe(formatSpeak(effective, sanitizeTtsText(input), undefined, String(outcome.playback_id)));
@@ -146,7 +149,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     const context = contexts[0];
     expect(updateSpeakLifecycle(context, { status: "preparing", generation_id: null,
       timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
-      summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code: null }, played_spans: [] }).kind).toBe("stored");
+      summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code: null }, played_spans: [] })).toEqual({ kind: "failed", code: "FINALIZED" });
     expect(disk().requested.rate_raw).toBe("-005%");
     expect(recoverSpeakArchive(context.id).kind).toBe("stored");
     expect(disk().requested).toMatchObject({ rate: null, rate_raw: "-005%" });
@@ -297,7 +300,7 @@ describe("MCP raw speak ingress (canonical preload, synthetic adapters only)", (
     });
     const log = spyOn(console, "error");
     try {
-      await handleVoiceSpeak({ message: raw });
+      await expect(handleVoiceSpeak({ message: raw })).rejects.toThrow("Speech archive transition: WRITE_UNCERTAIN");
       expect(disk().status).toBe("received");
       expect(log.mock.calls.flat().join(" ")).toContain("speak archive update failed: WRITE_UNCERTAIN");
       expect(log.mock.calls.flat().join(" ")).not.toContain(root);

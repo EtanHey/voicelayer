@@ -246,7 +246,7 @@ describe("Ask and Preview real receipt ingress (canonical preload; synthetic spe
     }); spies.push(fault);
     const result = surface === "Ask" ? await handleVoiceAsk({ message: raw }) : await preview();
     retained(surface === "Ask" ? raw : sample, "received"); expect(capture).not.toHaveBeenCalled();
-    expect(fs.readdirSync(contexts[0].path).filter(name => /^\.metadata\.json\.[a-f0-9]+\.partial$/.test(name))).toHaveLength(1);
+    expect(fs.readdirSync(contexts[0].path).filter(name => /^\.metadata\.json\.[a-f0-9]+\.partial$/.test(name))).toHaveLength(2);
     expect(JSON.stringify(result)).not.toContain(root);
     const logs = log.mock.calls.flat().join(" ");
     expect(logs).toContain("speak archive update failed: WRITE_UNCERTAIN");

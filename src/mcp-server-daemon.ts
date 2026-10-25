@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { stopPlayback } from "./tts";
+import { recoverSpeechArchives, interruptLiveSpeech } from "./speech-archive-live";
 /**
  * VoiceLayer MCP Daemon — persistent singleton replacing per-session MCP processes.
  *
@@ -190,6 +192,8 @@ async function main() {
     );
   }
 
+  recoverSpeechArchives();
+
   // This sequence advances only when Bun's event loop runs. VoiceBar watches
   // it independently and force-restarts an owned child that wedges in JS.
   daemonHeartbeat = startDaemonHeartbeat();
@@ -304,6 +308,8 @@ async function main() {
       parent_pid: readProcessParentPid(),
       expected_parent_pid: resolveInitialParentPid(),
     });
+    interruptLiveSpeech();
+    stopPlayback();
     stopControlLayerHeartbeat();
     daemonHeartbeat?.stop();
     daemonHeartbeat = null;

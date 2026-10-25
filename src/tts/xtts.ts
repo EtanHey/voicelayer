@@ -1,3 +1,5 @@
+import { runSpeechGeneration } from "./generation-process";
+import { throwIfAbortedSafe } from "../abort";
 /**
  * XTTS-v2 inference bridge — fine-tuned voice synthesis with learned cadence.
  *
@@ -11,7 +13,7 @@
  * Falls through to F5-TTS (zero-shot) or edge-tts if unavailable.
  */
 
-import { existsSync, readdirSync } from "fs";
+import { unlinkSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { truncateAtWordBoundary } from "./truncate";
@@ -91,6 +93,7 @@ export async function synthesizeXTTS(
   text: string,
   voiceName: string,
   referenceAudio: string,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   const checkpoint = findXTTSCheckpoint(voiceName);
   if (!checkpoint) {
@@ -159,20 +162,8 @@ print("OK")
 `;
 
   try {
-    const proc = Bun.spawn([XTTS_VENV_PYTHON, "-c", script], {
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 120_000, // 2 min timeout (XTTS on CPU is slow)
-    });
-
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      console.error(
-        `[voicelayer] XTTS inference failed (exit ${exitCode}): ${stderr.slice(-300)}`,
-      );
-      return null;
-    }
+    const exitCode = await runSpeechGeneration([XTTS_VENV_PYTHON, "-c", script], signal, 120000);
+    if (exitCode !== 0) return null;
 
     if (!existsSync(outputPath)) {
       console.error("[voicelayer] XTTS produced no output file");
@@ -181,6 +172,10 @@ print("OK")
 
     return outputPath;
   } catch (err) {
+    if (signal?.aborted) {
+      try { unlinkSync(outputPath); } catch {}
+      throwIfAbortedSafe(signal);
+    }
     console.error(`[voicelayer] XTTS error: ${err}`);
     return null;
   }
