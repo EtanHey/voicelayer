@@ -1,4 +1,4 @@
-import { initialSpeech, speechSchema, transitionSpeech, type SpeechState, type SpeechRecord } from "./speech-state";
+import { initialSpeech, speechSchema, speechReasonSchema, transitionSpeech, type SpeechState, type SpeechRecord } from "./speech-state";
 import { createHash, randomBytes } from "crypto";
 import * as fs from "fs";
 import { isAbsolute, join, normalize, parse } from "path";
@@ -150,6 +150,12 @@ export function updateSpeakLifecycle(context: Context, update: SpeakLifecycle, l
         (m.caller_request_id === null || m.caller_request_id === links.caller_request_id), "CONFLICT");
       Object.assign(m, links);
     }
+    if (m.speech && speechStateForStatus(next.status) !== m.speech.state) {
+      const changed = transitionSpeech(m.speech, speechStateForStatus(next.status),
+        next.status === "replaced" ? "REPLACED" : next.summary.error_code, new Date().toISOString());
+      check(changed !== null, "CONFLICT");
+      m.speech = changed;
+    }
     m.status = next.status; m.generation_id = next.generation_id; m.lifecycle = next;
     return persist(entry, m);
   });
@@ -180,8 +186,9 @@ export function startSpeakPlayer(context: Context): SpeakStoreResult {
 export function transitionSpeakArchive(context: Context, to: SpeechState, reason: string | null = null): SpeakStoreResult {
   return boundary(() => {
     const entry = location(context.id), m = current(entry, context);
-    check(m.speech !== undefined || !terminal.has(m.status), "FINALIZED");
-    const next = transitionSpeech(m.speech ?? initialSpeech(), to, reason, new Date().toISOString());
+    reason = speechReasonSchema.parse(reason);
+    check(!terminal.has(m.status) || m.speech !== undefined, "FINALIZED");
+    const next = transitionSpeech(m.speech ?? speechFromLegacy(m), to, reason, new Date().toISOString());
     check(next !== null, "CONFLICT");
     m.speech = next;
     m.status = to === "failed" && reason === "REJECTED" ? "rejected" : to === "requested" ? "received" : to === "cancelled" ? "stopped" : to === "interrupted" ? "interrupted_unknown" : to;
@@ -203,7 +210,7 @@ export function saveSpeakGenerated(context: Context, generated: SpeechRecord["ge
     const entry = location(context.id), m = current(entry, context);
     const item = speechSchema.shape.generated.element.parse(generated);
     check(m.artifacts.some(a => a.relative_path === item.audio_path), "INVALID_INPUT");
-    m.speech ??= initialSpeech();
+    m.speech ??= speechFromLegacy(m);
     m.speech.generated = m.speech.generated.filter(g => g.index !== item.index);
     m.speech.generated.push(item); m.speech.generated.sort((a, b) => a.index - b.index);
     return persist(entry, m);
@@ -340,3 +347,17 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
 }
 
 function legalRecovery(speech: SpeechRecord): boolean { return ["requested", "preparing", "playing", "paused"].includes(speech.state); }
+
+function speechStateForStatus(status: SpeakStoreMetadata["status"]): SpeechState {
+  switch (status) {
+    case "received": return "requested";
+    case "rejected": return "failed";
+    case "replaced": return "stopped";
+    case "interrupted_unknown": return "interrupted";
+    default: return status;
+  }
+}
+// Import an old snapshot without fabricating historical transitions or player time.
+function speechFromLegacy(m: SpeakStoreMetadata): SpeechRecord {
+  return { ...initialSpeech(), state: speechStateForStatus(m.status), reason: m.status === "rejected" ? "REJECTED" : null };
+}

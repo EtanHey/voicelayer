@@ -11,7 +11,7 @@ for (const from of ["requested", "preparing", "playing", "paused", "completed", 
   for (const to of ["requested", "preparing", "playing", "paused", "completed", "stopped", "cancelled", "failed", "interrupted"] as const) {
     test(`${from} → ${to}`, () => {
       const state = { ...initialSpeech(), state: from };
-      const result = transitionSpeech(state, to, "test", "2026-10-26T12:00:01.000Z");
+      const result = transitionSpeech(state, to, null, "2026-10-26T12:00:01.000Z");
       expect(result !== null).toBe(expected[from].includes(to));
       expect(state.transitions).toHaveLength(0);
     });
