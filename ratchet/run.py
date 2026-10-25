@@ -185,8 +185,9 @@ class Run:
             subprocess.run(["bun", "install", "--frozen-lockfile"], cwd=self.source, check=True,
                            stdout=log, stderr=subprocess.STDOUT)
         self.env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "PATH") if k in os.environ}
+        # Owned synthetic roots must satisfy archive privacy before any probe starts.
         for name in ("state", "tmp", "recordings", "bin", "home"):
-            (self.root / name).mkdir()
+            (self.root / name).mkdir(mode=0o700)
         self.env.update({
             "HOME": str(self.root / "home"), "SHELL": "/bin/sh", "VOICELAYER_SOCKET_PATH": str(self.root / "v.sock"),
             "VOICELAYER_MCP_SOCKET_PATH": str(self.root / "m.sock"),
