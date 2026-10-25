@@ -1,7 +1,10 @@
 #!/usr/bin/env bun
 import { createConnection } from "node:net";
+import { randomUUID } from "node:crypto";
 import { getMcpSocketPath } from "../paths";
 import { readSpeechSecret } from "../speech-control";
+import { createSpeakReceipt } from "../speak-archive";
+import { updateSpeakLifecycle } from "../speak-archive-store";
 
 export type SpeechRequest = { cmd: "stop" } | {
   cmd: "speak_text"; text: string; profile: "auto" | "short" | "long";
@@ -94,8 +97,16 @@ export function requestSpeech(request: SpeechRequest, options: { socketPath?: st
 }
 
 /** Local fallback stays in the foreground so terminal signals own every child. */
-async function speakLocally(request: Extract<SpeechRequest, { cmd: "speak_text" }>): Promise<void> {
+export async function speakLocally(request: Extract<SpeechRequest, { cmd: "speak_text" }>): Promise<void> {
+  const receipt = createSpeakReceipt({
+    input: request.text, request_id: randomUUID(), request_source: "cli",
+    connection: null, format: request.format, blocking: true,
+    requested: { mode: null, profile: request.profile, engine: null, voice: null, rate: null },
+    build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
+  });
+  if (receipt.kind === "failed") throw new Error(`Speech refused: input archive unavailable (${receipt.code})`);
   let runtime: typeof import("../tts") | undefined;
+  let launched = false;
   let interrupted: "SIGINT" | "SIGTERM" | undefined;
   const stop = (signal: "SIGINT" | "SIGTERM") => {
     interrupted = signal;
@@ -107,12 +118,27 @@ async function speakLocally(request: Extract<SpeechRequest, { cmd: "speak_text" 
     runtime = await import("../tts");
     const { markdownToSpeech } = await import("../tts/markdown-to-speech");
     if (interrupted) throw new Error(`Local speech interrupted (${interrupted})`);
-    const read = runtime.speakText(request.format === "markdown" ? markdownToSpeech(request.text) : request.text, request.profile);
+    const read = runtime.speakText(request.format === "markdown" ? markdownToSpeech(request.text) : request.text,
+      request.profile, { archiveContext: receipt.context });
+    launched = true;
     // The foreground fallback always waits, including synthesis/history teardown.
     const completion = await read.completion;
     if (interrupted) throw new Error(`Local speech interrupted (${interrupted})`);
     const start = await read.started;
     if (start.error || completion.error) throw new Error(start.error ?? completion.error);
+  } catch (error) {
+    // A returned handle may already have generated/played audio; this boundary cannot prove its absence.
+    if (!launched) {
+      const refused = runtime?.isSpeakerOutputRefusedError(error) || (error instanceof Error && error.message === "TTS is disabled");
+      const result = updateSpeakLifecycle(receipt.context, {
+        status: interrupted ? "stopped" : refused ? "rejected" : "failed", generation_id: null,
+        timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
+        summary: { generated_audio_ms: null, player_reported_played_ms: null,
+          error_code: interrupted ? null : refused ? "REJECTED" : "OUTPUT_UNAVAILABLE" }, played_spans: [],
+      });
+      if (result.kind === "failed") console.error(`[voicelayer] speak archive update failed: ${result.code}`);
+    }
+    throw error;
   } finally {
     if (interrupted && runtime) await runtime.awaitCurrentPlayback();
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
