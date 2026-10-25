@@ -76,8 +76,8 @@ test("slash alternatives align each raw display word independently", async () =>
   const { input } = await request("list/paragraph completion/cancellation");
   const result = await alignCloneAudio(input);
   expect(result.words.map(w => w.text)).toEqual(["list", "/paragraph", "completion", "/cancellation"]);
-  expect(result.words.map(w => w.offset_ms)).toEqual([100, 300, 500, 700]);
-  expect(result.words.map(w => w.duration_ms)).toEqual([160, 160, 160, 160]);
+  expect(result.words.map(w => w.offset_ms)).toEqual([100, 300, 700, 900]);
+  expect(result.words.map(w => w.duration_ms)).toEqual([160, 360, 160, 360]);
 });
 
 const offsets = (result: Awaited<ReturnType<typeof alignCloneAudio>>) => result.words.map(w => w.offset_ms);

@@ -137,6 +137,17 @@ public struct TeleprompterBoundary: Equatable {
         guard rows.contains(where: { $0.wordIndex != nil }),
               let byIndex = indexedRows(rows, tokens: tokens) else { return rows }
         var result = tokens.indices.map { byIndex[$0] ?? Self(offsetMs: nil, durationMs: nil, text: tokens[$0], wordIndex: $0) }
+        // Inspect source line position, not just the marker glyph: a + b is prose.
+        let source = text as NSString
+        let markerRanges = Set(try! NSRegularExpression(pattern: #"(?m)^[ \t]*([-+*•◦▪‣])(?=[ \t])"#)
+            .matches(in: text, range: NSRange(location: 0, length: source.length)).map { $0.range(at: 1).location })
+        var cursor = 0
+        let markerIndices = Set(tokens.indices.filter { index in
+            let range = source.range(of: tokens[index], range: NSRange(location: cursor, length: source.length - cursor))
+            guard range.location != NSNotFound else { return false }
+            cursor = NSMaxRange(range)
+            return markerRanges.contains(range.location)
+        })
         let timed = result.indices.filter { result[$0].offsetMs != nil }
         guard let first = timed.first, let last = timed.last else { return result }
         func end(_ index: Int) -> Int { result[index].offsetMs! + (result[index].durationMs ?? 0) }
@@ -144,7 +155,7 @@ public struct TeleprompterBoundary: Equatable {
             guard !gap.isEmpty, to > from else { return }
             let span = Double(to - from), count = Double(gap.count)
             for (step, index) in gap.enumerated() {
-                guard !["-", "+", "*", "•", "◦", "▪", "‣"].contains(tokens[index]) else { continue }
+                guard !markerIndices.contains(index) else { continue }
                 let start = from + Int(span * Double(step) / count), stop = from + Int(span * Double(step + 1) / count)
                 guard stop > start else { continue }
                 result[index] = Self(offsetMs: start, durationMs: stop - start, text: tokens[index],
@@ -286,12 +297,12 @@ public enum TeleprompterPacePolicy {
 }
 
 public enum TeleprompterContentModel {
-    // Mirrors display-tokens.ts: ambiguous bare paths are never guessed as prose.
+    // Mirrors display-tokens.ts: prose alternatives, lexical paths/code, and chunk context resets.
     static func displayTokens(_ text: String) -> [String] {
-        let pattern = #"`+[^`]*`+|(?<![\p{L}\p{M}\p{N}_./\\:`-])(?:list/paragraph|completion/cancellation)(?![\p{L}\p{M}\p{N}_/\\`-]|\.[\p{L}\p{M}\p{N}_])"#
+        let pattern = #"`+[^`\u2029]*`+|\]\([^\n\u2029]*?\)|(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP/IP|he/she|assets/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}/)))"#
         let regex = try! NSRegularExpression(pattern: pattern)
         let source = text as NSString
-        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).filter { !source.substring(with: $0.range).hasPrefix("`") }.map {
+        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).filter { !source.substring(with: $0.range).hasPrefix("`") && !source.substring(with: $0.range).hasPrefix("](") }.map {
             $0.range.location + (source.substring(with: $0.range) as NSString).range(of: "/").location
         })
         let words = try! NSRegularExpression(pattern: #"\S+"#)

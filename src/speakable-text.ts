@@ -243,7 +243,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   {
     const input = pieces.map(p => p.text).join("");
     applyEdits(pieces, input, proseSlashMatches(input).map(m => ({
-      start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: " "
+      start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: m[0] === "and/or" ? " " : " or "
     })), false, true);
   }
   edit(/`+|\*\*|\*([^*\n]+)\*|~~/g, m => m[1] ?? "");

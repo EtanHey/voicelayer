@@ -1,0 +1,417 @@
+[
+  {
+    "raw": "list/paragraph",
+    "edge": "list or paragraph",
+    "clone": "list or paragraph"
+  },
+  {
+    "raw": "completion/cancellation",
+    "edge": "completion or cancellation",
+    "clone": "completion or cancellation"
+  },
+  {
+    "raw": "Use list/paragraph.",
+    "edge": "Use list or paragraph.",
+    "clone": "Use list or paragraph."
+  },
+  {
+    "raw": "(list/paragraph)",
+    "edge": "(list or paragraph)",
+    "clone": "(list or paragraph)"
+  },
+  {
+    "raw": "list/paragraph,completion/cancellation",
+    "edge": "list or paragraph,completion or cancellation",
+    "clone": "list or paragraph,completion or cancellation"
+  },
+  {
+    "raw": "list/paragraph/completion",
+    "edge": "completion",
+    "clone": "list slash paragraph slash completion"
+  },
+  {
+    "raw": "completion/cancellation/list/paragraph",
+    "edge": "paragraph",
+    "clone": "completion slash cancellation slash list slash paragraph"
+  },
+  {
+    "raw": "list/paragraphs",
+    "edge": "list or paragraphs",
+    "clone": "list or paragraphs"
+  },
+  {
+    "raw": "lists/paragraph",
+    "edge": "lists or paragraph",
+    "clone": "lists or paragraph"
+  },
+  {
+    "raw": "List/Paragraph",
+    "edge": "List or Paragraph",
+    "clone": "List or Paragraph"
+  },
+  {
+    "raw": "LIST/PARAGRAPH",
+    "edge": "LIST or PARAGRAPH",
+    "clone": "LIST or PARAGRAPH"
+  },
+  {
+    "raw": "\"list/paragraph\"",
+    "edge": "\"list or paragraph\"",
+    "clone": "list or paragraph"
+  },
+  {
+    "raw": "list/paragraph:",
+    "edge": "list or paragraph:",
+    "clone": "list or paragraph:"
+  },
+  {
+    "raw": "list/paragraph?",
+    "edge": "list or paragraph?",
+    "clone": "list or paragraph?"
+  },
+  {
+    "raw": "list/paragraph's",
+    "edge": "paragraph's",
+    "clone": "list slash paragraph's"
+  },
+  {
+    "raw": "list/paragraph-based",
+    "edge": "paragraph based",
+    "clone": "list slash paragraph based"
+  },
+  {
+    "raw": "list /paragraph",
+    "edge": "list paragraph",
+    "clone": "list slash paragraph"
+  },
+  {
+    "raw": "list/ paragraph",
+    "edge": "list/ paragraph",
+    "clone": "list/ paragraph"
+  },
+  {
+    "raw": "x list/paragraph y",
+    "edge": "x list or paragraph y",
+    "clone": "x list or paragraph y"
+  },
+  {
+    "raw": "https://a.com/x list/paragraph",
+    "edge": "a dot com slash x list or paragraph",
+    "clone": "a dot com slash x list or paragraph"
+  },
+  {
+    "raw": "src/list/paragraph",
+    "edge": "paragraph",
+    "clone": "src slash list slash paragraph"
+  },
+  {
+    "raw": "list/paragraph.ts",
+    "edge": "paragraph dot T S",
+    "clone": "list slash paragraph dot T S"
+  },
+  {
+    "raw": "list/paragraph.",
+    "edge": "list or paragraph.",
+    "clone": "list or paragraph."
+  },
+  {
+    "raw": "list/paragraph...",
+    "edge": "list or paragraph...",
+    "clone": "list or paragraph..."
+  },
+  {
+    "raw": "[list/paragraph](url)",
+    "edge": "list or paragraph",
+    "clone": "list or paragraph"
+  },
+  {
+    "raw": "[x](list/paragraph)",
+    "edge": "x",
+    "clone": "x"
+  },
+  {
+    "raw": "**list/paragraph**",
+    "edge": "paragraph",
+    "clone": "list slash paragraph"
+  },
+  {
+    "raw": "*list/paragraph*",
+    "edge": "paragraph",
+    "clone": "list slash paragraph"
+  },
+  {
+    "raw": "_list/paragraph_",
+    "edge": "paragraph",
+    "clone": "list slash paragraph"
+  },
+  {
+    "raw": "~~list/paragraph~~",
+    "edge": "paragraph",
+    "clone": "list slash paragraph"
+  },
+  {
+    "raw": "`code` list/paragraph `x`",
+    "edge": "code list or paragraph x",
+    "clone": "code list or paragraph x"
+  },
+  {
+    "raw": "``a`b`` list/paragraph",
+    "edge": "ab list or paragraph",
+    "clone": "ab list or paragraph"
+  },
+  {
+    "raw": "`unclosed list/paragraph",
+    "edge": "unclosed list or paragraph",
+    "clone": "unclosed list or paragraph"
+  },
+  {
+    "raw": "שלום list/paragraph עולם",
+    "edge": "שלום list or paragraph עולם",
+    "clone": "שלום list or paragraph עולם"
+  },
+  {
+    "raw": "רשימה/פסקה",
+    "edge": "רשימה/פסקה",
+    "clone": "רשימה slash פסקה"
+  },
+  {
+    "raw": "list/paragraph 😀",
+    "edge": "list or paragraph 😀",
+    "clone": "list or paragraph 😀"
+  },
+  {
+    "raw": "😀list/paragraph",
+    "edge": "😀paragraph",
+    "clone": "😀list slash paragraph"
+  },
+  {
+    "raw": "list/paragraph😀",
+    "edge": "paragraph😀",
+    "clone": "list slash paragraph😀"
+  },
+  {
+    "raw": "km/h",
+    "edge": "h",
+    "clone": "km slash h"
+  },
+  {
+    "raw": "TCP/IP",
+    "edge": "IP",
+    "clone": "T C P slash IP"
+  },
+  {
+    "raw": "I/O",
+    "edge": "O",
+    "clone": "I slash O"
+  },
+  {
+    "raw": "client/server",
+    "edge": "client or server",
+    "clone": "client or server"
+  },
+  {
+    "raw": "he/she",
+    "edge": "she",
+    "clone": "he slash she"
+  },
+  {
+    "raw": "a/b",
+    "edge": "b",
+    "clone": "a slash b"
+  },
+  {
+    "raw": "1/2",
+    "edge": "1/2",
+    "clone": "1/2"
+  },
+  {
+    "raw": "10/26/2026",
+    "edge": "10/26/2026",
+    "clone": "10/26/2026"
+  },
+  {
+    "raw": "src/a/b.ts",
+    "edge": "b dot T S",
+    "clone": "src slash a slash b dot T S"
+  },
+  {
+    "raw": "- list/paragraph",
+    "edge": "list or paragraph.",
+    "clone": "list or paragraph."
+  },
+  {
+    "raw": "1. completion/cancellation",
+    "edge": "completion or cancellation.",
+    "clone": "completion or cancellation."
+  },
+  {
+    "raw": "#list/paragraph",
+    "edge": "#list or paragraph",
+    "clone": "#list or paragraph"
+  },
+  {
+    "raw": "@list/paragraph",
+    "edge": "@list or paragraph",
+    "clone": "@list or paragraph"
+  },
+  {
+    "raw": "list/paragraph@x",
+    "edge": "paragraph@x",
+    "clone": "list slash paragraph@x"
+  },
+  {
+    "raw": "~/list/paragraph",
+    "edge": "~paragraph",
+    "clone": "~slash list slash paragraph"
+  },
+  {
+    "raw": "list\\/paragraph",
+    "edge": "list\\paragraph",
+    "clone": "list slash paragraph"
+  },
+  {
+    "raw": "and/or",
+    "edge": "and or",
+    "clone": "and or"
+  },
+  {
+    "raw": "list/paragraph\nnext",
+    "edge": "list or paragraph next",
+    "clone": "list or paragraph next"
+  },
+  {
+    "raw": "'list/paragraph'",
+    "edge": "'list or paragraph'",
+    "clone": "'list or paragraph'"
+  },
+  {
+    "raw": "list/paragraph—completion/cancellation",
+    "edge": "paragraph—completion or cancellation",
+    "clone": "list slash paragraph—completion or cancellation"
+  },
+  {
+    "raw": "list/paragraph/",
+    "edge": "paragraph",
+    "clone": "list slash paragraph"
+  },
+  {
+    "raw": "/list/paragraph/",
+    "edge": "paragraph",
+    "clone": "slash list slash paragraph"
+  },
+  {
+    "raw": "?list/paragraph",
+    "edge": "?list or paragraph",
+    "clone": "?list or paragraph"
+  },
+  {
+    "raw": "#heading list/paragraph",
+    "edge": "#heading list or paragraph",
+    "clone": "#heading list or paragraph"
+  },
+  {
+    "raw": "{\"a\":\"list/paragraph\"}",
+    "edge": "{\"a\":\"paragraph\"}",
+    "clone": "a: list or paragraph"
+  },
+  {
+    "raw": "list/paragraph=1",
+    "edge": "paragraph equals 1",
+    "clone": "list slash paragraph equals 1"
+  },
+  {
+    "raw": "x=list/paragraph",
+    "edge": "x equals paragraph",
+    "clone": "x equals list slash paragraph"
+  },
+  {
+    "raw": "list/paragraph+",
+    "edge": "paragraph+",
+    "clone": "list slash paragraph+"
+  },
+  {
+    "raw": "list/paragraph_",
+    "edge": "paragraph_",
+    "clone": "list slash paragraph_"
+  },
+  {
+    "raw": "list/paragraph%",
+    "edge": "paragraph%",
+    "clone": "list slash paragraph%"
+  },
+  {
+    "raw": "$list/paragraph",
+    "edge": "$paragraph",
+    "clone": "$list slash paragraph"
+  },
+  {
+    "raw": "list/paragraph]",
+    "edge": "list or paragraph]",
+    "clone": "list or paragraph close bracket"
+  },
+  {
+    "raw": "list/paragraph:foo",
+    "edge": "paragraph:foo",
+    "clone": "list slash paragraph:foo"
+  },
+  {
+    "raw": "list/paragraph#x",
+    "edge": "paragraph#x",
+    "clone": "list slash paragraph#x"
+  },
+  {
+    "raw": "list/paragraph?q=1",
+    "edge": "paragraph?q equals 1",
+    "clone": "list slash paragraph?q equals 1"
+  },
+  {
+    "raw": "list/paragraph&completion/cancellation",
+    "edge": "paragraph&completion or cancellation",
+    "clone": "list slash paragraph&completion or cancellation"
+  },
+  {
+    "raw": "list/paragraph|x",
+    "edge": "paragraph pipe x",
+    "clone": "list slash paragraph pipe x"
+  },
+  {
+    "raw": "list/paragraph~",
+    "edge": "paragraph~",
+    "clone": "list slash paragraph~"
+  },
+  {
+    "raw": "list/paragraph(1)",
+    "edge": "paragraph(1)",
+    "clone": "list slash paragraph(1)"
+  },
+  {
+    "raw": "see list/paragraph:",
+    "edge": "see list or paragraph:",
+    "clone": "see list or paragraph:"
+  },
+  {
+    "raw": "list/paragraph;completion/cancellation",
+    "edge": "paragraph;completion or cancellation",
+    "clone": "list slash paragraph;completion or cancellation"
+  },
+  {
+    "raw": "list/paragraph%20x",
+    "edge": "paragraph%twenty x",
+    "clone": "list slash paragraph%twenty x"
+  },
+  {
+    "raw": "list/paragraph@v1",
+    "edge": "paragraph@v1",
+    "clone": "list slash paragraph@v one"
+  },
+  {
+    "raw": "list/paragraph!",
+    "edge": "list or paragraph!",
+    "clone": "list or paragraph!"
+  },
+  {
+    "raw": "list/paragraph\"x\"",
+    "edge": "paragraph\"x\"",
+    "clone": "list slash paragraph x"
+  }
+]

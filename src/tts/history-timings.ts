@@ -18,7 +18,7 @@ const tokensOf = (text: string) => displayTokens(text).map(match => match[0]);
  * bounded by the chunk [0, endMs]. Mirrors VoiceBar's `TeleprompterBoundary.interpolated`
  * so a replay reproduces the first run's per-chunk estimates.
  */
-function interpolateChunk(rows: AlignedWordBoundary[], endMs: number): void {
+function interpolateChunk(rows: AlignedWordBoundary[], endMs: number, markers: Set<number>): void {
   const timed = rows.flatMap((row, i) => row.offset_ms === null ? [] : [i]);
   if (!timed.length) return;
   const end = (i: number) => rows[i].offset_ms! + (rows[i].duration_ms ?? 0);
@@ -26,7 +26,7 @@ function interpolateChunk(rows: AlignedWordBoundary[], endMs: number): void {
     const count = last - first;
     if (count <= 0 || to <= from) return;
     for (let step = 0; step < count; step++) {
-      if (/^[-+*•◦▪‣]$/.test(rows[first + step].text)) continue;
+      if (markers.has(first + step)) continue;
       const start = from + Math.trunc((to - from) * step / count), stop = from + Math.trunc((to - from) * (step + 1) / count);
       if (stop > start) rows[first + step] = { ...rows[first + step], offset_ms: start, duration_ms: stop - start, estimated: true };
     }
@@ -64,7 +64,11 @@ export function combineHistoryTimings(chunks: HistoryChunkTiming[]): AlignedWord
       if (finite && duration === 0 && !aligned.has(i) && edge) return { word_index: i, text, offset_ms: offset, duration_ms: 0, estimated: true };
       return { word_index: i, text, offset_ms: null, duration_ms: null };
     });
-    interpolateChunk(rows, chunk.durationMs);
+    const markers = new Set(displayTokens(chunk.text).flatMap((token, i) =>
+      /^[-+*•◦▪‣]$/.test(token[0]) &&
+      /^[ \t]*$/.test(chunk.text.slice(chunk.text.lastIndexOf("\n", token.index - 1) + 1, token.index)) &&
+      /[ \t]/.test(chunk.text[token.index + token[0].length] ?? "") ? [i] : []));
+    interpolateChunk(rows, chunk.durationMs, markers);
     for (const row of rows) combined.push({ ...row, word_index: combined.length,
       offset_ms: row.offset_ms === null ? null : startMs + row.offset_ms });
     startMs += chunk.durationMs;

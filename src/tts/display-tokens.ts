@@ -1,11 +1,12 @@
-/** Bare word/word is also a legal relative path. Only known prose alternatives
- * are disambiguated; explicit paths, URLs and numeric slash syntax stay lexical. */
-export const proseSlashPattern = /(?<![\p{L}\p{M}\p{N}_./\\:`-])(?:list\/paragraph|completion\/cancellation)(?![\p{L}\p{M}\p{N}_/\\`-]|\.[\p{L}\p{M}\p{N}_])/gu;
+/** Prose alternatives: two alphabetic words, excluding explicit paths, routes,
+ * units, established slash idioms and code. Keep this pattern mirrored in Swift. */
+export const proseSlashPattern = /(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP\/IP|he\/she|assets\/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}\/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}\/)))/gu;
 
-/** Consume backtick code spans before considering prose alternatives. */
+/** A paragraph separator marks an audio-chunk context boundary in fallback documents.
+ * Ordinary backtick spans (including multiline code) and link targets stay lexical. */
 export function proseSlashMatches(text: string) {
-  const pattern = new RegExp("`+[^`]*`+|" + proseSlashPattern.source, "gu");
-  return Array.from(text.matchAll(pattern)).filter(m => !m[0].startsWith("`"));
+  const pattern = new RegExp("`+[^`\\u2029]*`+|\\]\\([^\\n\\u2029]*?\\)|" + proseSlashPattern.source, "gu");
+  return Array.from(text.matchAll(pattern)).filter(m => !m[0].startsWith("`") && !m[0].startsWith("]("));
 }
 
 /** Keep slash glyphs in the raw display, attached to the following word. */

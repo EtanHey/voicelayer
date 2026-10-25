@@ -54,7 +54,13 @@ export function longReadDocument(displayText: string, texts: string[]): { text: 
   let next = 0;
   const chunk_word_starts = chunkTokens.map((chunk) => { const at = next; next += chunk.length; return at; });
   const same = display.length === all.length && display.every((token, i) => token === all[i]);
-  return { text: same ? displayText : texts.join(" "), chunk_word_starts };
+  // Keep the chunk-local code context when the original document cannot tile it.
+  // U+2029 is whitespace in both clients and resets backtick/link context without
+  // adding a display token. A space would let a stray backtick pair across chunks.
+  const joined = texts.join(" ");
+  const joinedTokens = tokens(joined);
+  const joinedTiles = joinedTokens.length === all.length && joinedTokens.every((token, i) => token === all[i]);
+  return { text: same ? displayText : joinedTiles ? joined : texts.join("\u2029"), chunk_word_starts };
 }
 
 type Synthesis = { chunk: LongReadChunk } | { error: unknown };
