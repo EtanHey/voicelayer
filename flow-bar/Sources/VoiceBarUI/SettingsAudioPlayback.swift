@@ -169,7 +169,8 @@ public final class SettingsAudioPlayback {
            target >= duration {
             // AVAudioPlayer parked at its duration stops without reliably calling its delegate,
             // which would strand the row in "playing" with a frozen bar.
-            stop()
+            stopBackend()
+            playbackDidFinish(url)
             return
         }
         seekBackend(target)

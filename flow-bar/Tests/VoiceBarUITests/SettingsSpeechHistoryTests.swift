@@ -50,6 +50,14 @@ final class SettingsSpeechHistoryTests: XCTestCase {
         XCTAssertEqual(record.reason, "USER_CANCELLED")
         XCTAssertEqual(record.originalText, "  Original **selection**\n")
         XCTAssertEqual(record.spokenText, "first second")
+        XCTAssertNil(record.durationMs, "Cancelled fixture has no recorded playback")
+        let source = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/SettingsView.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("speechTextDetail(\"Requested text\", text: entry.originalText)"))
+        XCTAssertTrue(source.contains("speechTextDetail(\"Generated speech text\", text: entry.spokenText)"))
+        XCTAssertFalse(source.contains("Actually spoken"))
+
         XCTAssertEqual(record.audioPaths.map(\.lastPathComponent), ["first.mp3", "second.mp3"])
         XCTAssertEqual(record.mediaPart.actions, [.play, .copy, .finder])
         XCTAssertEqual(record.mediaPart.actionableText, "first second")
@@ -72,6 +80,40 @@ final class SettingsSpeechHistoryTests: XCTestCase {
         try Data([3]).write(to: root.appendingPathComponent("outside.mp3"))
         XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).first?.audioPaths.count, 1)
         XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).first?.missingAudioCount, 1)
+    }
+
+    @MainActor
+    func testSeekingToChunkEndContinuesRetainedQueue() {
+        assertSeekingContinuesQueue(skip: false)
+    }
+
+    @MainActor
+    func testSkippingPastChunkEndContinuesRetainedQueue() {
+        assertSeekingContinuesQueue(skip: true)
+    }
+
+    @MainActor
+    private func assertSeekingContinuesQueue(skip: Bool) {
+        var started: [URL] = []
+        var stops = 0
+        let urls = ["first", "second", "third"].map { URL(fileURLWithPath: "/fixture/" + $0) }
+        let player = SettingsAudioPlayback(start: { started.append($0); return true },
+            stop: { stops += 1 },
+            position: { .init(currentTime: 8, duration: 10) })
+        player.toggle(urls)
+        if skip { player.skip(urls[0], by: 5) } else { player.seek(urls[0], to: 10) }
+        XCTAssertEqual(stops, 1)
+        XCTAssertEqual(started, Array(urls.prefix(2)))
+        XCTAssertEqual(player.playingURL, urls[1])
+        XCTAssertTrue(player.isPlaying(urls[0]))
+        player.playbackDidFinish(urls[0]) // A stale completion must not skip the next chunk.
+        XCTAssertEqual(player.playingURL, urls[1])
+        player.playbackDidFinish(urls[1])
+        XCTAssertEqual(started, urls)
+        player.stop()
+        player.playbackDidFinish(urls[2])
+        XCTAssertNil(player.playingURL)
+        XCTAssertEqual(started, urls)
     }
 
     @MainActor

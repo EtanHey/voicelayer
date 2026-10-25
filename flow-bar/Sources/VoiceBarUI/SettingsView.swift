@@ -1369,7 +1369,7 @@ public struct SettingsView: View {
     private var speechHistoryScope: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("\(speechEntries.count) spoken output\(speechEntries.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                Text("\(speechEntries.count) speech record\(speechEntries.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Refresh") { selectedSpeechID = nil; speechReloadID = UUID() }
             }.padding(.horizontal, 18).padding(.vertical, 10)
@@ -1407,9 +1407,9 @@ public struct SettingsView: View {
                                 if selectedSpeechID == entry.id {
                                     HStack(alignment: .top, spacing: 16) {
                                         if entry.textsDiffer {
-                                            speechTextDetail("Original selected text", text: entry.originalText)
+                                            speechTextDetail("Requested text", text: entry.originalText)
                                         }
-                                        speechTextDetail("Actually spoken", text: entry.spokenText)
+                                        speechTextDetail("Generated speech text", text: entry.spokenText)
                                     }
                                     Text(entry.reason ?? "No status reason stored").font(.caption).foregroundStyle(.secondary)
                                 }
