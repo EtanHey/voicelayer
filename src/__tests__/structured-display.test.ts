@@ -5,15 +5,15 @@ import { structuredReadDisplay } from "../tts/structured-display";
 import { serializeEvent, VOICEBAR_SOCKET_EVENT_MAX_BYTES, type StateEvent } from "../socket-protocol";
 
 describe("P14b layout over unchanged speech chunks", () => {
-  it("retains a list starting at 2 without adding decorations to speech", () => {
+  it("speaks a list starting at 2 without duplicate marker decorations", () => {
     const source = "2. Alpha.\n3. Beta.";
     const projection = projectStructuredSpeech(source);
     const [display] = structuredReadDisplay(projection, [projection.speechText], 400);
     expect(projection.displayText).toBe(source);
     expect(projection.speechText).toBe(markdownToSpeech(source));
-    expect(display?.text).toBe("Alpha. Beta.");
-    expect(display?.blocks.map(block => block.marker)).toEqual(["2.", "3."]);
-    expect(display?.blocks.map(block => [block.word_start, block.word_end])).toEqual([[0, 1], [1, 2]]);
+    expect(display?.text).toBe("2. Alpha. 3. Beta.");
+    expect(display?.blocks.map(block => block.marker)).toEqual([undefined, undefined]);
+    expect(display?.blocks.map(block => [block.word_start, block.word_end])).toEqual([[0, 2], [2, 4]]);
     expect(display?.blocks.map(block => block.starts_section)).toEqual([true, false]);
     expect(new Set(display?.blocks.map(block => block.section_id)).size).toBe(1);
   });
@@ -35,8 +35,8 @@ describe("P14b layout over unchanged speech chunks", () => {
   });
 
   it("conserves UTF-16 speech slices and whole replacement anchors across legacy chunks", () => {
-    const projection = projectStructuredSpeech("2. שלום 😀 same same.\n3. Next.");
-    const texts = ["שלום 😀 same", "same. Next."];
+    const projection = projectStructuredSpeech("2) שלום 😀 same same.\n3. Next.");
+    const texts = ["2. שלום 😀 same", "same. 3. Next."];
     const displays = structuredReadDisplay(projection, texts, 400);
     expect(displays.every(Boolean)).toBe(true);
     for (const display of displays) {
@@ -73,11 +73,11 @@ describe("P14b layout over unchanged speech chunks", () => {
   });
 
   it("retains exact anchors when a legacy hard cut divides an unspaced word", () => {
-    const projection = projectStructuredSpeech("2. " + "x".repeat(799) + ".");
+    const projection = projectStructuredSpeech("2) " + "x".repeat(799) + ".");
     const texts = [projection.speechText.slice(0, 400), projection.speechText.slice(400)];
     const displays = structuredReadDisplay(projection, texts, 400);
     expect(displays.map(display => display?.speech_start)).toEqual([0, 400]);
-    expect(displays.map(display => display?.text.length)).toEqual([400, 400]);
+    expect(displays.map(display => display?.text.length)).toEqual([400, 403]);
     expect(displays[1]?.blocks[0].ranges[0].source).toEqual(displays[0]?.blocks[0].ranges[0].source);
     expect(displays[1]?.blocks[0].marker).toBeUndefined();
   });

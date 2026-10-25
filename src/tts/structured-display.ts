@@ -76,7 +76,7 @@ function projectReadDisplay(projection: StructuredSpeech, texts: string[], budge
       runs.push({ kind: block.kind, source: { ...block.source }, speech, ranges,
         word_start: first, word_end: word, section_id: `section:${group.start}`, starts_block,
         starts_section: !projection.speechText.slice(group.start, at).trim(),
-        ...(marker && marker.length <= 32 ? { marker } : {}) });
+        ...(marker && !/^\d+[.)]$/.test(marker) && marker.length <= 32 ? { marker } : {}) });
     }
     result.push({ version: 1, text, speech_start: start, blocks: runs });
   }

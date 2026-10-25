@@ -22,7 +22,7 @@ function speechLineText(raw: string): string {
   let line = raw.replace(/^\s{0,3}#{1,6}\s+/, "").replace(/\s+#+\s*$/, "").replace(/^\s*>\s?/, "");
   if (/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)) return "";
   const list = /^\s*(?:[-+*]|\d+[.)])\s+/.test(line);
-  line = line.replace(/^\s*(?:[-+*]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, "");
+  line = line.replace(/^\s*(?:([-+*])|(\d+)[.)])\s+(?:\[[ xX]\]\s*)?/, (_match, _bullet, digits) => digits ? `${digits}. ` : "");
   line = stripInlineLinkTargets(line)
     .replace(/!?\[([^\]]+)\]\[[^\]]*\]/g, "$1")
     .replace(/<https?:\/\/[^>]+>/gi, "link")

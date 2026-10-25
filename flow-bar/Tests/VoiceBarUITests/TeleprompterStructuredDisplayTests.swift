@@ -124,6 +124,23 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
         XCTAssertEqual(formatted.layouts.map(\.lineBreak), [.paragraph, .paragraph])
     }
 
+    func testLateStructuredDisplayCannotReflowTimedDocument() throws {
+        let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(fixture(), text: "Alpha. Beta."))
+        let cache = TeleprompterRenderCache()
+        let timings = [TeleprompterBoundary(offsetMs: 0, durationMs: 300, text: "Alpha.", wordIndex: 0)]
+        let initial = cache.document(text: display.text, wordBoundaries: timings)
+        let updated = cache.document(text: display.text, wordBoundaries: timings, displayBlocks: display.blocks)
+        XCTAssertEqual(updated.layouts, initial.layouts)
+        XCTAssertEqual(updated.blocks, initial.blocks)
+        let laterTimings = timings + [TeleprompterBoundary(offsetMs: 500, durationMs: 300, text: "Beta.", wordIndex: 1)]
+        let aligned = cache.document(text: display.text, wordBoundaries: laterTimings, displayBlocks: display.blocks)
+        XCTAssertEqual(aligned.layouts, initial.layouts)
+        XCTAssertEqual(aligned.words.compactMap(\.offsetMs), [0, 500])
+        _ = cache.document(text: "New read.", wordBoundaries: [])
+        let replacement = cache.document(text: display.text, wordBoundaries: [], displayBlocks: display.blocks)
+        XCTAssertEqual(replacement.layouts.map(\.decoration), ["2.", "3."])
+    }
+
     func testUTF16ReplacementAnchorsDoNotInventPerCharacterSourceTimings() throws {
         let text = "שלום 😀."
         let source = ["start": 0, "end": 11], speech = ["start": 0, "end": 8]

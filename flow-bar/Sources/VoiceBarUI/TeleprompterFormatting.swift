@@ -213,6 +213,7 @@ public struct TeleprompterRenderedDocument {
 public final class TeleprompterRenderCache {
     private var key: (text: String, wordBoundaries: [TeleprompterBoundary], displayBlocks: [TeleprompterDisplayBlock])?
     private var cached: TeleprompterRenderedDocument?
+    private var layoutIsFrozen = false
     private(set) var computations = 0
 
     public init() {}
@@ -223,7 +224,16 @@ public final class TeleprompterRenderCache {
            key.displayBlocks == displayBlocks { return cached }
         computations += 1
         let words = TeleprompterContentModel.words(text: text, wordBoundaries: wordBoundaries)
-        let layouts = TeleprompterFormatting.layout(text: text, words: words, displayBlocks: displayBlocks)
+        if key?.text != text { layoutIsFrozen = false }
+        // Chunk metadata and final alignment arrive during playback. Once timing starts,
+        // keep the mounted document's geometry while refreshing its timing-bearing words.
+        let layouts: [TeleprompterWordLayout]
+        if layoutIsFrozen, let cached, cached.words.map(\.text) == words.map(\.text) {
+            layouts = cached.layouts
+        } else {
+            layouts = TeleprompterFormatting.layout(text: text, words: words, displayBlocks: displayBlocks)
+        }
+        if wordBoundaries.contains(where: { $0.offsetMs != nil }) { layoutIsFrozen = true }
         let blocks = TeleprompterFormatting.blocks(layouts: layouts, words: words)
         var blockOfWord = Array(repeating: 0, count: words.count)
         for (index, block) in blocks.enumerated() { for word in block { blockOfWord[word] = index } }
