@@ -256,8 +256,8 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
           try { m.totals.chunk_count = chunks.parse(JSON.parse(bytes.toString("utf8"))).length; }
           catch { throw new Failure("CORRUPT_METADATA"); }
         }
-        const sha256 = digest(bytes), recorded = m.projections.find(p => p.name === name);
-        check(name === "chunks.json" || !recorded || recorded.sha256 === sha256, "CORRUPT_METADATA");
+        const sha256 = digest(bytes);
+        check(name === "chunks.json" || m.projections.every(p => p.name !== name || p.sha256 === sha256), "CORRUPT_METADATA");
         m.projections = [...m.projections.filter(p => p.name !== name), { name, sha256 }];
       } catch (e) { if (!absent(e)) throw e; }
     }

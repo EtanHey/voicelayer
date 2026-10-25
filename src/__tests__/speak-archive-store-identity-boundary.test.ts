@@ -216,4 +216,66 @@ describe("speak store immutable identity and total error boundary (source-only a
     try { bounded(() => recoverSpeakArchive(c.id), "IO_ERROR"); } finally { spy.mockRestore(); }
     expect(faults).toBe(1); expect(traps).toBe(1); expect(evidence(c.path)).toEqual(before);
   });
+
+  for (const field of ["display", "spoken"] as const) {
+    for (const order of ["matching first", "conflicting first"]) {
+      it(`STORE2-23CA-R1-1 refuses conflicting ${field} duplicates with ${order} without erasing evidence`, () => {
+        const c = receipt(), m = stored(saveSpeakProjection(c, projection)), name = `${field}.txt`;
+        m.projections = m.projections.flatMap(p => {
+          if (p.name !== name) return [p];
+          const conflicting = { ...p, sha256: hash(Buffer.from("synthetic conflicting identity")) };
+          return order === "matching first" ? [p, conflicting] : [conflicting, p];
+        });
+        fs.writeFileSync(join(c.path, "metadata.json"), JSON.stringify(m));
+        fs.writeFileSync(join(c.path, "events.ndjson"),
+          JSON.stringify({ seq: 1, request_id: c.metadata.request_id }) + '\n{"torn":', { mode: 0o600 });
+        fs.writeFileSync(join(c.path, ".synthetic.partial"), "synthetic retained partial", { mode: 0o600 });
+        const before = evidence(c.path);
+        bounded(() => saveSpeakProjection(c, projection), "CONFLICT");
+        expect(evidence(c.path)).toEqual(before);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          bounded(() => recoverSpeakArchive(c.id), "CORRUPT_METADATA");
+          expect(evidence(c.path)).toEqual(before);
+        }
+        bounded(() => saveSpeakProjection(c, projection), "CONFLICT");
+        expect(evidence(c.path)).toEqual(before);
+      });
+    }
+    for (const ledger of ["absent", "unique", "matching duplicates"]) {
+      it(`preserves ${field} recovery with ${ledger} identity records`, () => {
+        const c = receipt(), m = stored(saveSpeakProjection(c, projection)), name = `${field}.txt`;
+        m.projections = m.projections.flatMap(p => p.name !== name ? [p] :
+          ledger === "absent" ? [] : ledger === "unique" ? [p] : [p, { ...p }]);
+        fs.writeFileSync(join(c.path, "metadata.json"), JSON.stringify(m));
+        const before = evidence(c.path), recovered = stored(recoverSpeakArchive(c.id));
+        expect(recovered.projections.filter(p => p.name === name)).toEqual([
+          { name, sha256: hash(Buffer.from(projection[field])) }]);
+        expect(recovered.projections).toHaveLength(3);
+        expect(recovered.normalization).toEqual(projection.normalization);
+        expect(evidence(c.path).filter(f => f.name !== "metadata.json")).toEqual(
+          before.filter(f => f.name !== "metadata.json"));
+        const settled = evidence(c.path);
+        stored(recoverSpeakArchive(c.id)); expect(evidence(c.path)).toEqual(settled);
+        stored(saveSpeakProjection(c, projection));
+      });
+    }
+  }
+
+  it("keeps chunks mutable after Stop despite conflicting duplicate chunk hashes", () => {
+    const c = receipt(); stored(saveSpeakProjection(c, projection));
+    const m = stored(updateSpeakLifecycle(c, stopped));
+    m.projections.push({ name: "chunks.json", sha256: hash(Buffer.from("synthetic stale chunk identity")) });
+    fs.writeFileSync(join(c.path, "metadata.json"), JSON.stringify(m));
+    const bytes = Buffer.from(JSON.stringify(projection.chunks.map(chunk => ({ ...chunk, state: "generated" }))));
+    fs.writeFileSync(join(c.path, "chunks.json"), bytes);
+    const before = evidence(c.path), recovered = stored(recoverSpeakArchive(c.id));
+    expect(recovered.status).toBe("stopped"); expect(recovered.lifecycle).toEqual(stopped);
+    expect(recovered.projections.filter(p => p.name === "chunks.json")).toEqual([
+      { name: "chunks.json", sha256: hash(bytes) }]);
+    expect(recovered.projections.filter(p => p.name !== "chunks.json")).toEqual(
+      m.projections.filter(p => p.name !== "chunks.json"));
+    expect(recovered.totals.chunk_count).toBe(1);
+    expect(evidence(c.path).filter(f => f.name !== "metadata.json")).toEqual(
+      before.filter(f => f.name !== "metadata.json"));
+  });
 });
