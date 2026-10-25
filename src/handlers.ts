@@ -440,6 +440,10 @@ export async function handleVoiceAsk(
   if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
     warnLegacyPressToTalk("mcp.voice_ask");
   }
+  // Bound raw archive input separately from the trimmed prompt-duration policy.
+  if (originalMessage.length > SPEAK_TEXT_MAX_CHARS) {
+    return textResult("voice_ask refused: raw input exceeds archive admission limit", true);
+  }
   const receipt = createSpeakReceipt({
     input: originalMessage, request_id: randomUUID(), request_source: "ask_prompt",
     connection: context?.connection ?? null, format: null, blocking: true,
