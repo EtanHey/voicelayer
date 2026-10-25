@@ -33,6 +33,7 @@ public struct VoiceBarPanelLayout: Equatable {
     public let hoverRetentionRect: CGRect
 
     private let interactionRegion: VoiceBarNotchHitRegion
+    private let controlRegion: VoiceBarNotchHitRegion
     private let visibleRegion: VoiceBarNotchVisibleRegion
     private let localHoverCoreRect: CGRect
 
@@ -104,18 +105,30 @@ public struct VoiceBarPanelLayout: Equatable {
             hoverExpansionRect: hoverExpansionRect,
             hoverRetentionRect: hoverRetentionRect,
             interactionRegion: interactionRegion,
+            controlRegion: VoiceBarNotchHitRegion(geometry: geometry, configuration: .init(
+                leadingControlCount: interactionConfiguration.leadingControlCount,
+                trailingControlCountFromCore: interactionConfiguration.trailingControlCountFromCore,
+                trailingControlCountFromOuter: interactionConfiguration.trailingControlCountFromOuter,
+                trailingOuterInset: interactionConfiguration.trailingOuterInset,
+                lowerControlCount: interactionConfiguration.lowerControlCount
+            )),
             visibleRegion: visibleRegion,
             localHoverCoreRect: localHoverCoreRect
         )
     }
 
     public func containsInteractiveContent(_ point: CGPoint) -> Bool {
-        interactionRegion.contains(
+        containsControl(point) || (containsVisibleSurface(point) && interactionRegion.contains(
             CGPoint(
                 x: point.x - visibleContentRect.minX,
                 y: point.y - visibleContentRect.minY
             )
-        )
+        ))
+    }
+
+    public func containsControl(_ point: CGPoint) -> Bool {
+        controlRegion.contains(CGPoint(x: point.x - visibleContentRect.minX,
+                                      y: point.y - visibleContentRect.minY))
     }
 
     public func containsHoverExpansion(_ point: CGPoint) -> Bool {
@@ -161,12 +174,12 @@ public struct VoiceBarPanelLayout: Equatable {
 /// so a claimed point is always drawn. A size change moves the window itself, so it applies the destination as
 /// before.
 public struct VoiceBarPanelHitGate: Equatable {
-    /// The shell spring settles well inside this (stiffness 310, overdamped), after the closing delay.
-    public static let settleDuration: TimeInterval = VoiceBarNotchContract.motion.contentExitDuration + 0.5
+    /// Hard retention deadline, anchored to the first change and never extended by reversals.
+    public static let settleDuration: TimeInterval = 0.5
 
     public private(set) var layout: VoiceBarPanelLayout
     /// Layouts the shell may still be drawn between. Surface admission uses their intersection;
-    /// control tracking uses their union so a transition cannot drop an existing hover.
+    /// actual control tracking uses their union for at most 500 ms (eight unique layouts maximum).
     public private(set) var settlingFrom: [VoiceBarPanelLayout] = []
     public private(set) var settlesAt: TimeInterval = 0
 
@@ -177,12 +190,18 @@ public struct VoiceBarPanelHitGate: Equatable {
     /// Returns true when the layout changed, so the caller can refresh the window's event gate.
     @discardableResult
     public mutating func update(to next: VoiceBarPanelLayout, now: TimeInterval) -> Bool {
-        guard next != layout else { return false }
+        let expired = !settlingFrom.isEmpty && now >= settlesAt
+        if expired { settlingFrom.removeAll() }
+        guard next != layout else { return expired }
         if next.presentation.geometry == layout.presentation.geometry {
             // Only the interaction configuration changed; nothing is animating.
         } else if next.panelSize == layout.panelSize {
-            settlingFrom = (isSettling(now: now) ? settlingFrom : []) + [layout]
-            settlesAt = now + Self.settleDuration
+            if settlingFrom.isEmpty { settlesAt = now + Self.settleDuration }
+            if !settlingFrom.contains(layout) {
+                settlingFrom.append(layout)
+                // Bound storage even for a stream of distinct geometries.
+                if settlingFrom.count > 8 { settlingFrom.removeFirst() }
+            }
         } else {
             settlingFrom = []
         }
@@ -202,12 +221,16 @@ public struct VoiceBarPanelHitGate: Equatable {
     /// Preserve AppKit mouse-moved/tooltip tracking over controls during shell transitions.
     /// The surrounding transparent canvas retains the conservative visible-surface gate.
     public func containsMouseTrackingSurface(_ point: CGPoint, now: TimeInterval) -> Bool {
-        containsVisibleSurface(point, now: now) || containsInteractiveContent(point, now: now)
+        containsVisibleSurface(point, now: now) || containsTrackedControl(point, now: now)
     }
 
     public func containsInteractiveContent(_ point: CGPoint, now: TimeInterval) -> Bool {
-        layout.containsInteractiveContent(point) ||
-            (isSettling(now: now) && settlingFrom.contains { $0.containsInteractiveContent(point) })
+        layout.containsInteractiveContent(point) || containsTrackedControl(point, now: now)
+    }
+
+    private func containsTrackedControl(_ point: CGPoint, now: TimeInterval) -> Bool {
+        layout.containsControl(point) ||
+            (isSettling(now: now) && settlingFrom.contains { $0.containsControl(point) })
     }
 }
 
