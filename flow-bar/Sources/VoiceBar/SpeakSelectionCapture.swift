@@ -31,6 +31,8 @@ struct SelectionFocusAX {
     var isChromiumFamily: (AppIdentity) -> Bool
     var setManualAccessibility: (AppIdentity) -> AXError
     var sleep: (TimeInterval) -> Void
+    // Fake AX adapters have no host policy unless they explicitly supply one.
+    var bundleIdentifier: ((AppIdentity) -> String?)? = nil
 
     static let live = SelectionFocusAX(
         secureInputEnabled: { IsSecureEventInputEnabled() },
@@ -71,7 +73,8 @@ struct SelectionFocusAX {
             AXUIElementSetMessagingTimeout(element, 0.2)
             return AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         },
-        sleep: { Thread.sleep(forTimeInterval: $0) })
+        sleep: { Thread.sleep(forTimeInterval: $0) },
+        bundleIdentifier: { NSRunningApplication(processIdentifier: $0.pid)?.bundleIdentifier })
 
     /// Decodes the existing query without additional AX calls or logging attribute values.
     static func decodeFocus(_ value: CFTypeRef?, attribute: (String) -> (AXError, CFTypeRef?)) -> (AXError, Focus?) {
@@ -108,6 +111,7 @@ final class SpeakSelectionCapture {
     typealias Snapshot = [[(NSPasteboard.PasteboardType, Data)]]
     private let preflight: (_ recover: Bool, _ copyExemptApp: SelectionFocusAX.AppIdentity?) -> SelectionFocusPreflight
     private let frontmostApp: () -> SelectionFocusAX.AppIdentity?
+    private let bundleIdentifier: ((SelectionFocusAX.AppIdentity) -> String?)?
     private let snapshotReader: () -> Snapshot?
     private let writeRestoredItems: ([NSPasteboardItem]) -> Bool
     private let readAXSelection: () -> String?
@@ -135,6 +139,7 @@ final class SpeakSelectionCapture {
         self.preflight = canCapture.map { check in { _, _ in SelectionFocusPreflight(blockReason: check() ? nil : .secureField) } }
             ?? { SpeakSelectionCapture.preflight(focusAX, recover: $0, copyExemptApp: $1) }
         self.frontmostApp = focusAX.frontmostApp
+        self.bundleIdentifier = focusAX.bundleIdentifier
         let pasteboardName = pasteboard.name.rawValue
         self.snapshotReader = snapshotReader ?? { SelectionPasteboardSnapshot.readInHelper(name: pasteboardName) }
         self.writeRestoredItems = writeRestoredItems ?? { pasteboard.writeObjects($0) }
@@ -189,15 +194,21 @@ final class SpeakSelectionCapture {
                 Self.onMain { complete(reason) }
                 return
             }
+            // T3's AX selection can flatten lists. Its normal Copy preserves the original bytes.
+            // This target pin grants no unreadable-focus exemption; only preflight can earn that.
+            let intendedCopyApp = self.bundleIdentifier.flatMap { bundleIdentifier in
+                self.frontmostApp().flatMap { bundleIdentifier($0) == "com.t3tools.t3code" ? $0 : nil }
+            }
             let selectedText = preflight.unreadableFocusAllowsCopy ? nil : self.readAXSelection()
-            if let text = selectedText, !text.isEmpty {
+            if let text = selectedText, !text.isEmpty, intendedCopyApp == nil {
                 Self.onMain { complete(.completed(text).observed(axRead: .text, path: .ax)) }
             } else {
                 let axRead: SelectionCaptureResult.AXRead = preflight.unreadableFocusAllowsCopy ? .notAttempted
-                    : selectedText == nil ? .unavailable : .empty
+                    : selectedText == nil ? .unavailable : selectedText?.isEmpty == true ? .empty : .text
                 // Keep AppKit pasteboard/item access serialized with the app's other clipboard users.
                 Self.onMain {
-                    self.captureUsingPasteboard(copyExemptApp: preflight.copyExemptApp) {
+                    self.captureUsingPasteboard(copyExemptApp: preflight.copyExemptApp,
+                                                intendedCopyApp: intendedCopyApp) {
                         complete($0.observed(axRead: axRead, path: .copy))
                     }
                 }
@@ -206,6 +217,7 @@ final class SpeakSelectionCapture {
     }
 
     private func captureUsingPasteboard(copyExemptApp: SelectionFocusAX.AppIdentity?,
+                                        intendedCopyApp: SelectionFocusAX.AppIdentity?,
                                         completion: @escaping (SelectionCaptureResult) -> Void) {
         // Unlike the transcript-paste snapshot, keep dynamic and org.nspasteboard
         // types too. Fail closed if any advertised representation cannot be saved.
@@ -220,19 +232,29 @@ final class SpeakSelectionCapture {
                 guard let snapshot else { complete(.captureFailed); return }
                 guard self.pasteboard.changeCount == changeCount else { complete(.clipboardChanged); return }
                 if let blockReason = recheck.blockReason { complete(blockReason); return }
+                if let intendedCopyApp, self.frontmostApp() != intendedCopyApp {
+                    complete(.captureFailed)
+                    return
+                }
                 self.copyAndPoll(snapshot: snapshot, changeCount: changeCount, copyExemptApp: copyExemptApp,
+                                 intendedCopyApp: intendedCopyApp,
                                  completion: complete)
             }
         }
     }
 
     private func copyAndPoll(snapshot: Snapshot, changeCount: Int, copyExemptApp: SelectionFocusAX.AppIdentity?,
+                             intendedCopyApp: SelectionFocusAX.AppIdentity?,
                              completion: @escaping (SelectionCaptureResult) -> Void) {
         let deadline = now() + 0.4
         var copyAttempted = false
         func finish(_ result: SelectionCaptureResult, expectedChangeCount: Int) {
             let complete = { (resolved: SelectionCaptureResult) in
                 completion(copyAttempted ? resolved.withCopyAttempt(resolvedAs: resolved.outcome) : resolved)
+            }
+            guard copyAttempted else {
+                complete(pasteboard.changeCount == expectedChangeCount ? result : .clipboardChanged)
+                return
             }
             switch restore(snapshot, expectedChangeCount: expectedChangeCount) {
             case .restored:
@@ -246,6 +268,10 @@ final class SpeakSelectionCapture {
         }
         // An unreadable-focus Copy goes only to the exact process that earned it, checked right before Cmd+C.
         if let copyExemptApp, frontmostApp() != copyExemptApp {
+            finish(.captureFailed, expectedChangeCount: changeCount)
+            return
+        }
+        if let intendedCopyApp, frontmostApp() != intendedCopyApp {
             finish(.captureFailed, expectedChangeCount: changeCount)
             return
         }
