@@ -3,10 +3,10 @@
 export const proseSlashPattern = /(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP\/IP|he\/she|assets\/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}\/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}\/)))/gu;
 
 /** A paragraph separator marks an audio-chunk context boundary in fallback documents.
- * Ordinary backtick spans (including multiline code) and link targets stay lexical. */
+ * URLs, equal-length backtick spans and link targets stay lexical. */
 export function proseSlashMatches(text: string) {
-  const pattern = new RegExp("`+[^`\\u2029]*`+|\\]\\([^\\n\\u2029]*?\\)|" + proseSlashPattern.source, "gu");
-  return Array.from(text.matchAll(pattern)).filter(m => !m[0].startsWith("`") && !m[0].startsWith("]("));
+  const pattern = new RegExp("https?:\\/\\/[^\\s<>]+|www\\.[^\\s<>]+|(`+)(?!`)[^\\u2029]*?(?<!`)\\1(?!`)|\\]\\([^\\n\\u2029]*?\\)|" + proseSlashPattern.source, "gu");
+  return Array.from(text.matchAll(pattern)).filter(m => !/^(?:https?:\/\/|www\.|`|\]\()/.test(m[0]));
 }
 
 /** Keep slash glyphs in the raw display, attached to the following word. */

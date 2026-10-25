@@ -2,6 +2,12 @@ import XCTest
 @testable import VoiceBarUI
 
 final class SpeakableSymbolsTests: XCTestCase {
+    func testURLFragmentsAndMultiBacktickCodeStayLexical() {
+        for text in ["https://x.com/a#b", "https://x.com/a?q=", "https://example.com#client/server", "https://example.com?next=client/server", "``a/b``", "``a` client/server `b``", "```\nclient/server\n```", "```ts\nconst x = `client/server`;\n```", "````\n```\nclient/server\n```\n````"] {
+            XCTAssertEqual(TeleprompterContentModel.displayTokens(text), text.split(whereSeparator: { $0.isWhitespace }).map(String.init))
+        }
+    }
+
     func testSlashWordsKeepRawGlyphsAndSeparateTiming() {
         let text = "list/paragraph completion/cancellation"
         let rows = ["list", "/paragraph", "completion", "/cancellation"].enumerated().map {

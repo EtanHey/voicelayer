@@ -113,3 +113,11 @@ test("complete review probe speech regression set", () => {
   for (const row of reviewProbes) for (const engine of ["edge", "clone"] as const)
     expect(projectSpeakableText(row.raw, [], engine).speechText).toBe(row[engine]);
 });
+
+for (const row of protectedProbes.slice(-10)) {
+  test(`fix3 main-identical speech and tokens: ${JSON.stringify(row.raw)}`, () => {
+    for (const engine of ["edge", "clone"] as const)
+      expect(projectSpeakableText(row.raw, [], engine).speechText).toBe(row[engine]);
+    expect(displayTokens(row.raw).map(t => t[0])).toEqual(row.raw.split(/\s+/));
+  });
+}

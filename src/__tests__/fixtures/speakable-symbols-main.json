@@ -138,5 +138,55 @@
     "raw": "[x](list/paragraph)",
     "edge": "x",
     "clone": "x"
+  },
+  {
+    "raw": "https://x.com/a#b",
+    "edge": "link to x dot com",
+    "clone": "link to x dot com"
+  },
+  {
+    "raw": "https://x.com/a?q=",
+    "edge": "link to x dot com",
+    "clone": "link to x dot com"
+  },
+  {
+    "raw": "https://example.com#client/server",
+    "edge": "link to example dot com",
+    "clone": "link to example dot com"
+  },
+  {
+    "raw": "https://example.com?next=client/server",
+    "edge": "link to example dot com",
+    "clone": "link to example dot com"
+  },
+  {
+    "raw": "https://example.com?next=list/paragraph",
+    "edge": "link to example dot com",
+    "clone": "link to example dot com"
+  },
+  {
+    "raw": "``a/b``",
+    "edge": "b",
+    "clone": "a slash b"
+  },
+  {
+    "raw": "``a` client/server `b``",
+    "edge": "a server b",
+    "clone": "a client slash server b"
+  },
+  {
+    "raw": "```\nclient/server\n```",
+    "edge": "code block",
+    "clone": "code block"
+  },
+  {
+    "raw": "```ts\nconst x = `client/server`;\n```",
+    "edge": "code block",
+    "clone": "code block"
+  },
+  {
+    "raw": "````\n```\nclient/server\n```\n````",
+    "edge": "code block",
+    "clone": "code block"
   }
 ]

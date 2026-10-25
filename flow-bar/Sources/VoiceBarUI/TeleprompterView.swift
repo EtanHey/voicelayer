@@ -299,10 +299,10 @@ public enum TeleprompterPacePolicy {
 public enum TeleprompterContentModel {
     // Mirrors display-tokens.ts: prose alternatives, lexical paths/code, and chunk context resets.
     static func displayTokens(_ text: String) -> [String] {
-        let pattern = #"`+[^`\u2029]*`+|\]\([^\n\u2029]*?\)|(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP/IP|he/she|assets/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}/)))"#
+        let pattern = #"https?://[^\s<>]+|www\.[^\s<>]+|(`+)(?!`)[^\u2029]*?(?<!`)\1(?!`)|\]\([^\n\u2029]*?\)|(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP/IP|he/she|assets/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}/)))"#
         let regex = try! NSRegularExpression(pattern: pattern)
         let source = text as NSString
-        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).filter { !source.substring(with: $0.range).hasPrefix("`") && !source.substring(with: $0.range).hasPrefix("](") }.map {
+        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).filter { !source.substring(with: $0.range).hasPrefix("http://") && !source.substring(with: $0.range).hasPrefix("https://") && !source.substring(with: $0.range).hasPrefix("www.") && !source.substring(with: $0.range).hasPrefix("`") && !source.substring(with: $0.range).hasPrefix("](") }.map {
             $0.range.location + (source.substring(with: $0.range) as NSString).range(of: "/").location
         })
         let words = try! NSRegularExpression(pattern: #"\S+"#)
