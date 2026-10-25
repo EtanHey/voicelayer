@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 public struct SpeechSettingsView: View {
+    @State private var thresholdDraft = SpeechThresholdDraft()
     @State private var rateDraft: [SpeechProfile: Double] = [:]
     public let controls: SpeechControlsState?
     public let connected: Bool
@@ -53,18 +54,11 @@ public struct SpeechSettingsView: View {
 
     public var body: some View {
         Form {
+            thresholdSection
             if let controls, connected {
                 ForEach(SpeechProfile.allCases, id: \.self) { kind in
                     if let profile = controls.profiles[kind], let display = Self.displayProfile(kind, controls: controls, pending: pending) {
                         Section {
-                            if kind == .long {
-                                field("Long-read threshold", key: "short_limit_chars", controls: controls) {
-                                    SpeechThresholdField(value: controls.shortLimit.effective) {
-                                        onChange?("short_limit_chars", .number($0))
-                                    }
-                                    Text("characters").foregroundStyle(.secondary)
-                                }
-                            }
                             field("Voice", key: "\(kind.rawValue).voice", controls: controls) {
                                 if controls.lockReason(for: "\(kind.rawValue).voice") != nil || controls.lockReason(for: "\(kind.rawValue).engine") != nil {
                                     Text(Self.voiceLabel(display.voice)).foregroundStyle(.primary)
@@ -163,6 +157,7 @@ public struct SpeechSettingsView: View {
                         } header: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(kind.title)
+                                Text(SpeechThresholdDraft.captionContext).font(.caption).foregroundStyle(.secondary)
                                 Text(Self.subtitle(kind, limit: controls.shortLimit.effective))
                                     .font(.caption).foregroundStyle(.secondary).fontWeight(.regular)
                             }
@@ -188,9 +183,52 @@ public struct SpeechSettingsView: View {
                 }
             }
         }
+        .onChange(of: controls?.shortLimit) { _, limit in thresholdDraft.reconcile(limit) }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("speech-settings-form")
+    }
+
+    private var thresholdSection: some View {
+        Section("Voice profile threshold") {
+            Text(SpeechThresholdDraft.confirmedLabel(controls?.shortLimit))
+                .accessibilityIdentifier("speech-threshold-applied")
+            Text(SpeechThresholdDraft.reportStatus).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text("Draft")
+                TextField("Characters", text: Binding(
+                    get: { thresholdDraft.displayedText(controls?.shortLimit) },
+                    set: { thresholdDraft.edit($0) }))
+                    .textFieldStyle(.roundedBorder).frame(width: 130)
+                    .multilineTextAlignment(.trailing)
+                    .onSubmit {} // Enter, like blur, never applies a draft.
+                    .accessibilityLabel("Voice profile threshold draft in characters")
+                    .accessibilityIdentifier("speech-threshold-draft")
+                Text("characters").foregroundStyle(.secondary)
+                Spacer()
+                Button("Apply") {
+                    thresholdDraft.apply(controls: controls, connected: connected, busy: busy,
+                                         pending: pending, onChange: onChange)
+                }
+                .disabled(!thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,
+                                                  pending: pending, callbackAvailable: onChange != nil))
+                .accessibilityIdentifier("speech-threshold-apply")
+                Button("Revert") { thresholdDraft.revert() }
+                    .help(SpeechThresholdDraft.revertHelp)
+                    .accessibilityLabel("Revert draft to last reported cutoff")
+                    .disabled(thresholdDraft.text == nil || controls == nil)
+                    .accessibilityIdentifier("speech-threshold-revert")
+            }
+            if let message = thresholdDraft.validationMessage {
+                Text(message).font(.caption).foregroundStyle(.secondary)
+            }
+            if let reason = SpeechThresholdDraft.blockedReason(controls: controls, connected: connected, busy: busy,
+                                                               pending: pending, callbackAvailable: onChange != nil) {
+                Text(reason).font(.caption).foregroundStyle(.secondary)
+            }
+            Text("Chooses the short or long voice profile for the next speech.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     static func engineLabel(_ engine: String) -> String { engine == "clone" ? "Cloned voice" : "Fast" }
@@ -246,28 +284,5 @@ public struct SpeechSettingsView: View {
             .disabled(Self.fieldDisabled(key, controls: controls, pending: pending,
                                         callbackAvailable: (key.hasSuffix(".engine") || key.hasSuffix(".voice")) ? onSelectEngine != nil : onChange != nil))
             .accessibilityIdentifier("speech-\(key)")
-    }
-}
-
-/// Keep typing local; persist only the completed field, like a completed rate drag.
-private struct SpeechThresholdField: View {
-    let value: Int
-    let onCommit: (Int) -> Void
-    @State private var draft = ""
-    @FocusState private var focused: Bool
-    var body: some View {
-        TextField("Characters", text: $draft)
-            .textFieldStyle(.roundedBorder)
-            .labelsHidden().frame(width: 90).multilineTextAlignment(.trailing)
-            .focused($focused)
-            .onAppear { draft = String(value) }
-            .onChange(of: value) { _, value in if !focused { draft = String(value) } }
-            .onSubmit { commit() }
-            .onChange(of: focused) { _, focused in if !focused { commit() } }
-            .accessibilityLabel("Long-read threshold in characters")
-    }
-    private func commit() {
-        guard let number = Int(draft), number > 0 else { draft = String(value); return }
-        if number != value { onCommit(number) }
     }
 }

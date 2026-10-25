@@ -56,6 +56,38 @@ final class SpeechSettingsShotsTests: XCTestCase {
         }
     }
 
+    func testThresholdPrecedesProfilesAndHasNoBlurOrEnterCommitWiring() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SpeechSettingsView.swift"), encoding: .utf8)
+        let threshold = try XCTUnwrap(source.range(of: "            thresholdSection"))
+        let profiles = try XCTUnwrap(source.range(of: "ForEach(SpeechProfile.allCases"))
+        XCTAssertLessThan(threshold.lowerBound, profiles.lowerBound)
+        XCTAssertTrue(source.contains(".onSubmit {}"))
+        XCTAssertFalse(source.contains("onChange(of: focused)"))
+        XCTAssertFalse(source.contains("SpeechThresholdField"))
+        XCTAssertTrue(source.contains("Text(SpeechThresholdDraft.reportStatus)"))
+        XCTAssertTrue(source.contains("Text(SpeechThresholdDraft.captionContext)"))
+        XCTAssertTrue(source.contains(".help(SpeechThresholdDraft.revertHelp)"))
+    }
+
+    func testProfileCaptionsKeepConfirmedCutoffDuringDraftAndPendingWrite() throws {
+        let controls = try XCTUnwrap(SpeechControlsState(controls: SpeechSettingsTests.thresholdControls()))
+        var draft = SpeechThresholdDraft()
+        draft.edit("20000")
+        XCTAssertEqual(draft.displayedText(controls.shortLimit), "20000")
+        XCTAssertEqual(SpeechSettingsView.subtitle(.short, limit: controls.shortLimit.effective),
+                       "Agent announcements and automatic reads up to 400 characters.")
+        XCTAssertEqual(SpeechSettingsView.subtitle(.long, limit: controls.shortLimit.effective),
+                       "Reads over 400 characters, such as the speak command and Option+F5.")
+        XCTAssertFalse(draft.canApply(controls: controls, connected: true, busy: false,
+                                      pending: ["short_limit_chars": .number(20000)], callbackAvailable: true))
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent("Sources/VoiceBarUI/SpeechSettingsView.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("Self.subtitle(kind, limit: controls.shortLimit.effective)"))
+    }
+
     private func render(_ view: some View, appearance: NSAppearance?, to url: URL) throws {
         let size = CGSize(width: 780, height: 1000)
         let host = NSHostingView(rootView: view
