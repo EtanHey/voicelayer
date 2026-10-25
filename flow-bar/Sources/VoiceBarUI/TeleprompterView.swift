@@ -499,14 +499,6 @@ public enum TeleprompterScrollPolicy {
     public static func contentIdentity(for text: String) -> String {
         text
     }
-
-    /// TELE1: a move inside the current block glides, and so does playback reading on to the very next
-    /// word. Anything else is a jump, reached block-first. Neither is trusted to land: after layout the view
-    /// checks that the destination block is mounted (TELE1C).
-    public static func scrollsSmoothly(from old: Int, to new: Int, blockOfWord: [Int], isPlaybackStep: Bool) -> Bool {
-        guard blockOfWord.indices.contains(old), blockOfWord.indices.contains(new) else { return false }
-        return blockOfWord[old] == blockOfWord[new] || isPlaybackStep && new == old + 1
-    }
 }
 
 public enum TeleprompterVisibilityPolicy {
@@ -620,6 +612,7 @@ struct TeleprompterPointerState {
 public struct TeleprompterView: View {
     public let text: String
     public var displayBlocks: [TeleprompterDisplayBlock] = []
+    public var hasCompleteDisplay = false
     public var playbackEpoch = 0
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [TeleprompterBoundary] = []
@@ -636,6 +629,7 @@ public struct TeleprompterView: View {
         text: String,
         wordBoundaries: [TeleprompterBoundary] = [],
         displayBlocks: [TeleprompterDisplayBlock] = [],
+        hasCompleteDisplay: Bool = false,
         isReadback: Bool = false,
         playbackEpoch: Int = 0,
         playbackElapsedMilliseconds: @escaping () -> Int,
@@ -648,6 +642,7 @@ public struct TeleprompterView: View {
     ) {
         self.text = text
         self.displayBlocks = displayBlocks
+        self.hasCompleteDisplay = hasCompleteDisplay
         self.wordBoundaries = wordBoundaries
         self.isReadback = isReadback
         self.playbackEpoch = playbackEpoch
@@ -674,6 +669,7 @@ public struct TeleprompterView: View {
 
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
+    @State private var contentHeight: CGFloat = 0
     @State private var hoveredWordID: Int?
     @State private var pointerState = TeleprompterPointerState()
     @State private var currentIndex: Int
@@ -683,7 +679,8 @@ public struct TeleprompterView: View {
     @State private var isPlaybackStep = false
     /// Words, formatting and blocks, computed once per text and timeline (a highlight tick reuses them).
     private var rendered: TeleprompterRenderedDocument {
-        renderCache.document(text: text, wordBoundaries: wordBoundaries, displayBlocks: displayBlocks)
+        renderCache.document(text: text, wordBoundaries: wordBoundaries, displayBlocks: displayBlocks,
+                             hasCompleteDisplay: hasCompleteDisplay)
     }
 
     private var teleprompterWords: [TeleprompterWord] {
@@ -711,9 +708,10 @@ public struct TeleprompterView: View {
                 }
                 .padding(.horizontal, Theme.teleprompterShellInset)
                 .frame(width: wrapWidth, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
                 .padding(.horizontal, contentInset)
                 .padding(.top, contentInset)
-                .padding(.bottom, contentInset + viewportHeight / 2)
+                .padding(.bottom, contentInset + (contentHeight + 2 * contentInset > viewportHeight ? viewportHeight / 2 : 0))
                 .frame(
                     maxWidth: .infinity,
                     minHeight: viewportHeight,
@@ -736,6 +734,9 @@ public struct TeleprompterView: View {
                 stopAnimating()
                 pointerState.reset(pop: { NSCursor.pop() })
                 hoveredWordID = nil
+            }
+            .onChange(of: contentHeight) { _, _ in
+                scrollToCurrentWord(with: proxy, animated: false)
             }
             .onChange(of: text) { _, _ in
                 restart()
@@ -1072,13 +1073,9 @@ private struct TeleprompterBlockView: View, Equatable {
     }
 }
 
-/// Test seams: when a scroll starts waiting for its block (so a test can change the document inside that
-/// window), and when a waiting landing scrolls. Never set in production.
+/// Mounted word geometry for presentation tests. Never set in production.
 @MainActor enum TeleprompterLandingProbe {
     static var didMeasure: (([Int: CGRect]) -> Void)?
-    static var didPend: (() -> Void)?
-    /// Fires with the word when a waiting landing actually scrolls.
-    static var didLand: ((Int) -> Void)?
 }
 
 private struct TeleprompterWordFrames: PreferenceKey {

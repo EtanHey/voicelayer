@@ -53,7 +53,7 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
             let cache = TeleprompterRenderCache()
             let first = cache.document(text: document.text, wordBoundaries: [
                 TeleprompterBoundary(offsetMs: 0, durationMs: 100, text: "Item", wordIndex: 0)
-            ], displayBlocks: document.displayBlocks)
+            ], displayBlocks: document.displayBlocks, hasCompleteDisplay: document.hasCompleteDisplay)
             XCTAssertEqual(first.layouts.filter { $0.lineBreak != .none }.count, count)
             let chunkEvent = try XCTUnwrap(JSONSerialization.jsonObject(with: frames[1]) as? [String: Any])
             let chunkRead = try XCTUnwrap(chunkEvent["long_read"] as? [String: Any])
@@ -62,10 +62,32 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
             document.recordDisplay(chunkDisplay, wordStart: 110)
             let later = cache.document(text: document.text, wordBoundaries: [
                 TeleprompterBoundary(offsetMs: 500, durationMs: 100, text: "Item", wordIndex: 110)
-            ], displayBlocks: document.displayBlocks)
+            ], displayBlocks: document.displayBlocks, hasCompleteDisplay: document.hasCompleteDisplay)
             XCTAssertEqual(later.layouts, first.layouts)
             XCTAssertEqual(later.words.map(\.text), first.words.map(\.text))
         }
+    }
+
+    func testMissingPreparingDisplayReflowsEveryArrivingChunk() throws {
+        var document = try XCTUnwrap(TeleprompterLongReadDocument(longRead: [
+            "id": "fallback", "text": "Alpha. Beta.", "chunk_count": 2, "chunk_word_starts": [0, 1]
+        ]))
+        let cache = TeleprompterRenderCache()
+        let timing = [TeleprompterBoundary(offsetMs: 0, durationMs: 100, text: "Alpha.", wordIndex: 0)]
+        // Both chunk payloads use local word indices; the second is positioned by the document.
+        var value = fixture()
+        let blocks = try XCTUnwrap(value["blocks"] as? [[String: Any]])
+        value["text"] = "Alpha."; value["blocks"] = [blocks[0]]
+        document.recordDisplay(try XCTUnwrap(TeleprompterStructuredDisplay.decode(value, text: "Alpha.")), wordStart: 0)
+        let first = cache.document(text: document.text, wordBoundaries: timing, displayBlocks: document.displayBlocks, hasCompleteDisplay: document.hasCompleteDisplay)
+        XCTAssertEqual(first.layouts.map(\.decoration), ["2.", nil])
+        value["text"] = "Beta.";
+        value["blocks"] = [blocks[1].merging(["word_start": 0, "word_end": 1]) { _, new in new }]
+        value["speech_start"] = 7
+        document.recordDisplay(try XCTUnwrap(TeleprompterStructuredDisplay.decode(value, text: "Beta.")), wordStart: 1)
+        let later = cache.document(text: document.text, wordBoundaries: timing, displayBlocks: document.displayBlocks, hasCompleteDisplay: document.hasCompleteDisplay)
+        XCTAssertEqual(later.layouts.map(\.decoration), ["2.", "3."])
+        XCTAssertEqual(later.blocks, [0..<1, 1..<2])
     }
 
     func testMissingMetadataRederivesPlainTextNewlinesAfterTiming() throws {
@@ -193,24 +215,24 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
         ]))
         let first = TeleprompterRenderCache().document(text: document.text, wordBoundaries: [
             TeleprompterBoundary(offsetMs: 0, durationMs: 100, text: "Alpha.", wordIndex: 0)
-        ], displayBlocks: document.displayBlocks)
+        ], displayBlocks: document.displayBlocks, hasCompleteDisplay: document.hasCompleteDisplay)
         XCTAssertEqual(first.layouts.map(\.decoration), ["2.", "3."])
         XCTAssertEqual(first.blocks, [0..<1, 1..<2])
         document.recordDisplay(nil, wordStart: 1)
         XCTAssertEqual(document.displayBlocks.count, 2)
     }
 
-    func testLateStructuredDisplayCannotReflowTimedDocument() throws {
+    func testLateCompleteDisplayAdoptsStructureThenFreezes() throws {
         let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(fixture(), text: "Alpha. Beta."))
         let cache = TeleprompterRenderCache()
         let timings = [TeleprompterBoundary(offsetMs: 0, durationMs: 300, text: "Alpha.", wordIndex: 0)]
         let initial = cache.document(text: display.text, wordBoundaries: timings)
-        let updated = cache.document(text: display.text, wordBoundaries: timings, displayBlocks: display.blocks)
-        XCTAssertEqual(updated.layouts, initial.layouts)
-        XCTAssertEqual(updated.blocks, initial.blocks)
+        let updated = cache.document(text: display.text, wordBoundaries: timings, displayBlocks: display.blocks, hasCompleteDisplay: true)
+        XCTAssertNotEqual(updated.layouts, initial.layouts)
+        XCTAssertEqual(updated.layouts.map(\.decoration), ["2.", "3."])
         let laterTimings = timings + [TeleprompterBoundary(offsetMs: 500, durationMs: 300, text: "Beta.", wordIndex: 1)]
-        let aligned = cache.document(text: display.text, wordBoundaries: laterTimings, displayBlocks: display.blocks)
-        XCTAssertEqual(aligned.layouts, initial.layouts)
+        let aligned = cache.document(text: display.text, wordBoundaries: laterTimings, displayBlocks: [], hasCompleteDisplay: true)
+        XCTAssertEqual(aligned.layouts, updated.layouts)
         XCTAssertEqual(aligned.words.compactMap(\.offsetMs), [0, 500])
         _ = cache.document(text: "New read.", wordBoundaries: [])
         let replacement = cache.document(text: display.text, wordBoundaries: [], displayBlocks: display.blocks)

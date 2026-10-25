@@ -53,3 +53,13 @@ test("list numbers 9, 10, 42 and 100 stay whole on both engines and preserve Heb
     }
   }
 });
+
+test("parenthesis list markers keep their exact display glyph", () => {
+  const source = "2) Keep the raw marker.\n3. Keep the dot.";
+  const structured = projectStructuredSpeech(source);
+  expect(structured.displayText).toBe(source);
+  expect(structured.speechText).toBe("2) Keep the raw marker. 3. Keep the dot.");
+  const [display] = structuredReadDisplay(structured, [structured.speechText], 400);
+  expect(display?.text).toBe(structured.speechText);
+  expect(display?.blocks[0].word_start).toBe(0); // Marker is the first body token, never duplicated decoration.
+});

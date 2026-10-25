@@ -772,6 +772,7 @@ public struct BarView: View {
                     text: text,
                     wordBoundaries: state.teleprompterWordBoundaries,
                     displayBlocks: state.teleprompterDisplayBlocks,
+                    hasCompleteDisplay: state.teleprompterHasCompleteDisplay,
                     isReadback: state.isTeleprompterReadback,
                     playbackEpoch: state.playbackEpoch,
                     playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,

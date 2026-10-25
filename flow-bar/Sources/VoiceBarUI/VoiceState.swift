@@ -550,6 +550,10 @@ public final class VoiceState {
         return isShowingLongReadDocument ? longReadDocument?.boundaries ?? wordBoundaries : wordBoundaries
     }
 
+    public var teleprompterHasCompleteDisplay: Bool {
+        !isShowingLongReadDocument || longReadDocument?.hasCompleteDisplay == true
+    }
+
     public var teleprompterDisplayBlocks: [TeleprompterDisplayBlock] {
         if mode == .idle { return retainedDisplayBlocks }
         if isShowingLongReadDocument { return longReadDocument?.displayBlocks ?? [] }

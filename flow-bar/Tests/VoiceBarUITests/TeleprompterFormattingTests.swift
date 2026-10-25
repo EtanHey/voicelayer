@@ -127,16 +127,4 @@ final class TeleprompterFormattingTests: XCTestCase {
         }
     }
 
-    func testOnlyPlaybackStepsGlideAndAdjacencyIsNeverProofABlockIsBuilt() {
-        let blockOfWord = Array(repeating: 0, count: 320) + Array(repeating: 1, count: 320) + Array(repeating: 2, count: 320)
-        func glides(_ old: Int, _ new: Int, _ step: Bool) -> Bool {
-            TeleprompterScrollPolicy.scrollsSmoothly(from: old, to: new, blockOfWord: blockOfWord, isPlaybackStep: step)
-        }
-        XCTAssertTrue(glides(10, 300, false), "inside the block on screen, even a jump is laid out")
-        XCTAssertTrue(glides(319, 320, true), "playback reading on into the next block glides")
-        XCTAssertFalse(glides(9, 320, false), "a timeline jump into the adjacent block is reached block-first")
-        XCTAssertFalse(glides(9, 320, true), "a long playback step across blocks is a jump too")
-        XCTAssertFalse(glides(330, 300, false), "backwards into the previous block is a jump")
-        XCTAssertFalse(glides(10, 700, true))
-    }
 }

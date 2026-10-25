@@ -15,7 +15,7 @@ public struct TeleprompterLongReadDocument: Equatable {
     private let chunkWordStarts: [Int]
     /// Global word index → timing. A seek or a readback replay of the same read keeps it.
     private var timings: [Int: TeleprompterBoundary] = [:]
-    private var hasCompleteDisplay = false
+    public private(set) var hasCompleteDisplay = false
     private var displayChunks: [Int: [TeleprompterDisplayBlock]] = [:]
 
     /// Nil for a daemon that sends no document, or a document that does not tile its chunks.
