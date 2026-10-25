@@ -39,3 +39,17 @@ test("Hebrew list markers remain numeric for the locale's voice frontend", () =>
       .toBe("1. שלום עולם. 2. עוד משפט.");
   }
 });
+
+test("list numbers 9, 10, 42 and 100 stay whole on both engines and preserve Hebrew digits", () => {
+  for (const engine of ["edge", "clone"] as const) {
+    for (const [digits, spoken] of [["9", "nine"], ["10", "ten"], ["42", "forty-two"], ["100", "100"]]) {
+      for (const input of [`${digits}. Read this.`, projectStructuredSpeech(`${digits}. Read this.`).speechText]) {
+        const result = projectSpeakableText(input, [], engine);
+        expect(result.speechText).toBe(`${spoken}. Read this.`);
+        const marker = result.ranges.find(r => result.speechText.slice(r.speech.start, r.speech.end) === `${spoken}.`);
+        expect(marker && input.slice(marker.source.start, marker.source.end)).toBe(`${digits}.`);
+      }
+      expect(projectSpeakableText(`${digits}. שלום עולם`, [], engine).speechText).toBe(`${digits}. שלום עולם.`);
+    }
+  }
+});

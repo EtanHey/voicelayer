@@ -124,6 +124,20 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
         XCTAssertEqual(formatted.layouts.map(\.lineBreak), [.paragraph, .paragraph])
     }
 
+    func testPreparingCarriesFutureBulletStructureBeforeFirstTimedRender() throws {
+        var document = try XCTUnwrap(TeleprompterLongReadDocument(longRead: [
+            "id": "read", "text": "Alpha. Beta.", "chunk_count": 2,
+            "chunk_word_starts": [0, 1], "display": fixture()
+        ]))
+        let first = TeleprompterRenderCache().document(text: document.text, wordBoundaries: [
+            TeleprompterBoundary(offsetMs: 0, durationMs: 100, text: "Alpha.", wordIndex: 0)
+        ], displayBlocks: document.displayBlocks)
+        XCTAssertEqual(first.layouts.map(\.decoration), ["2.", "3."])
+        XCTAssertEqual(first.blocks, [0..<1, 1..<2])
+        document.recordDisplay(nil, wordStart: 1)
+        XCTAssertEqual(document.displayBlocks.count, 2)
+    }
+
     func testLateStructuredDisplayCannotReflowTimedDocument() throws {
         let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(fixture(), text: "Alpha. Beta."))
         let cache = TeleprompterRenderCache()

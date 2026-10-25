@@ -15,6 +15,7 @@ public struct TeleprompterLongReadDocument: Equatable {
     private let chunkWordStarts: [Int]
     /// Global word index → timing. A seek or a readback replay of the same read keeps it.
     private var timings: [Int: TeleprompterBoundary] = [:]
+    private var hasCompleteDisplay = false
     private var displayChunks: [Int: [TeleprompterDisplayBlock]] = [:]
 
     /// Nil for a daemon that sends no document, or a document that does not tile its chunks.
@@ -29,6 +30,10 @@ public struct TeleprompterLongReadDocument: Equatable {
         self.text = text
         self.tokens = tokens
         chunkWordStarts = starts
+        if let display = TeleprompterStructuredDisplay.decode(longRead["display"], text: text) {
+            displayChunks[0] = display.blocks
+            hasCompleteDisplay = true
+        }
     }
 
     /// The chunk's first word in the document, or nil when the chunk is not exactly that slice of it.
@@ -69,6 +74,7 @@ public struct TeleprompterLongReadDocument: Equatable {
     }
 
     mutating func recordDisplay(_ display: TeleprompterStructuredDisplay?, wordStart: Int) {
+        guard !hasCompleteDisplay else { return }
         displayChunks[wordStart] = display?.positioned(at: wordStart)
     }
 

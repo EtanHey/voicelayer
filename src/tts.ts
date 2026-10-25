@@ -2457,7 +2457,9 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   // Swift routes Escape only in active modes. Actual playback resets this clock/text.
   broadcast({ type: "state", state: "speaking", text: "Preparing speech…", voice: profile.voice, ...speechIdentity,
     long_read: { id, chunk_index: 0, chunk_count: texts.length, chunk_start_ms: 0, preparing: true,
-      ...longReadDocument(displayText, texts) } });
+      ...longReadDocument(displayText, texts),
+      ...(identity.structuredDisplay?.speechText === displayText
+        ? { display: structuredReadDisplay(identity.structuredDisplay, [displayText], TTS_CHUNK_MAX_CHARS)[0] } : {}) } });
   const run = async () => {
     if (signal.aborted) return;
     // A recording may have begun while the predecessor was settling.

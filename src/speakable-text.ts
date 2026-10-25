@@ -230,7 +230,7 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   edit(/^[ \t]*(\d+)[.)](?=[ \t]+)/gm, m => {
     const line = m.input.slice(m.index).split(/\r?\n/, 1)[0];
     // Let the voice frontend pronounce digits in Hebrew rather than injecting English.
-    return `${/[\u0590-\u05ff]/.test(line) ? m[1] : number(m[1])}.`;
+    return `${/[\u0590-\u05ff]/.test(line) || m[1].length > 2 ? m[1] : number(m[1])}.`;
   }, true);
   edit(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+(?:\[[ xX]\][ \t]*)?)/gm, "");
   edit(/!?\[([^\]\n]+)\]\((?:[^()\n]|\([^()\n]*\))*\)/g, m => m[1]);
