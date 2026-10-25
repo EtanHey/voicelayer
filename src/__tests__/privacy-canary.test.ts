@@ -26,7 +26,7 @@ const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
       const root = mkdtempSync(join(process.env.VOICELAYER_TEST_RUN_ROOT!, "privacy-"));
       const privateRoot = join(root, "private");
       const home = join(root, `CANARY-HOME-${nonce}`);
-      mkdirSync(privateRoot); mkdirSync(home);
+      mkdirSync(privateRoot, { mode: 0o700 }); mkdirSync(home);
       const tokens = [`CANARY-TXT-${nonce}`, `CANARY-HOME-${nonce}`];
       const env = canaryChildEnv(root, nonce);
       const child = withChildFixtureEnv(env, () => Bun.spawn([process.execPath, "test", ...files, "--test-name-pattern", pattern],
@@ -37,7 +37,7 @@ const SUBPROCESS_TEST_TIMEOUT_MS = 5_000;
         ]);
         if (process.env.PRIV11_RECEIPTS_DIR) writeFileSync(
           join(process.env.PRIV11_RECEIPTS_DIR, name.replaceAll("/", "-") + ".log"), stdout + stderr);
-        assertNoCanaryDiagnostics(root, tokens, stdout, stderr);
+        assertNoCanaryDiagnostics(root, tokens, stdout, stderr, env.QA_VOICE_RECORDINGS_DIR);
         expect(code, `${name}: fixture child failed (output withheld)`).toBe(0);
         expect(/\b[1-9]\d* pass\b/.test(stderr), `${name}: no fixtures ran`).toBe(true);
         if (name === "outro") {
