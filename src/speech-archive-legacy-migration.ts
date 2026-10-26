@@ -5,6 +5,8 @@ import { speechOpenIndex, speechPendingIndex } from "./speech-open-index";
 import { recoverSpeakArchive } from "./speak-archive-store";
 
 const terminal = new Set(["completed", "stopped", "replaced", "rejected", "failed", "interrupted_unknown"]);
+const corrupt = new Set(["CORRUPT_METADATA", "UNSAFE_PATH", "INVALID_INPUT"]);
+const recoveryCodes = new Set([...corrupt, "CONFLICT", "FINALIZED", "IO_ERROR", "WRITE_UNCERTAIN", "SYNC_UNCERTAIN", "ENOENT", "EIO", "EMFILE", "EACCES"]);
 const absent = (error: unknown) => error && typeof error === "object" && "code" in error && error.code === "ENOENT";
 
 /** Worker-only upgrade pass. Checkpoint each bounded slice; a restart resumes it.
@@ -43,12 +45,18 @@ export async function migrateLegacySpeechSlice(): Promise<{ more: boolean; recov
           const metadata = JSON.parse(await readFile(join(root, day, id, "metadata.json"), "utf8"));
           if (metadata.source === "speak" && !terminal.has(metadata.status)) {
             const result = recoverSpeakArchive(id);
-            if (result.kind === "failed") throw new Error(`legacy speech recovery ${id}: ${result.code}`);
+            if (result.kind === "failed") throw Object.assign(new Error("legacy speech recovery failed"), { code: result.code });
             recovered.push(id);
           }
         } catch (error) {
-          // Retain the bad receipt, but let healthy history reach its checkpoint.
-          if (!absent(error)) console.error("[speech] legacy receipt recovery failed; entry retained");
+          const code = error instanceof SyntaxError ? "CORRUPT_METADATA"
+            : error && typeof error === "object" && "code" in error && typeof error.code === "string" && recoveryCodes.has(error.code) ? error.code : "IO_ERROR";
+          console.error(`[speech] legacy receipt recovery ${id}: ${code}; entry retained`);
+          if (!corrupt.has(code)) {
+            atomicWriteFile(checkpoint, cursor);
+            // End this boot's migration instead of spinning the worker's slice loop.
+            throw new Error("LEGACY_MIGRATION_DEFERRED");
+          }
         }
       }
       cursor = id;
