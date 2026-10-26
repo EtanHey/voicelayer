@@ -71,13 +71,30 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         text.filter { $0 == "x" || $0 == "X" }.count >= 8
     }
 
-    /// OCR reads a bold 0 as O and 1 as l now and then; fold lookalikes on both sides.
-    private func isOnScreen(_ word: String, _ host: NSView) -> Bool {
+    /// OCR reads a bold 0 as O and 1 as l now and then; fold lookalikes on both sides. Fixture tokens are
+    /// letters then a number, so a match may touch a neighbour's last digit on the left (Vision joins a word
+    /// to a highlighted neighbour) but never a letter, and is never followed by another digit.
+    static func ocr(_ text: String, shows word: String) -> Bool {
         func fold(_ text: String) -> String {
             String(text.map { "Oo".contains($0) ? "0" : "lI|".contains($0) ? "1" : $0 })
         }
-        return onScreenText(host).components(separatedBy: CharacterSet.alphanumerics.inverted).map(fold)
-            .contains(fold(word))
+        let pattern = "(?<![A-Za-z])" + NSRegularExpression.escapedPattern(for: fold(word)) + "(?![0-9])"
+        return fold(text).range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private func isOnScreen(_ word: String, _ host: NSView) -> Bool {
+        Self.ocr(onScreenText(host), shows: word)
+    }
+
+    // CI (1x backing) OCR read "word1000word1001": the highlight box starts at the next word's glyphs, so
+    // Vision can join a word to its highlighted neighbour. The 5 pt flow gap is still there; a joined
+    // neighbour must count, a longer or different number must not.
+    func testOCRMatchAcceptsAWordJoinedToItsNeighbourButNotANearMiss() {
+        XCTAssertTrue(Self.ocr("word999 word1000word1001 word1002", shows: "word1000"))
+        XCTAssertTrue(Self.ocr("word999word1000 word1001", shows: "word1000"))
+        XCTAssertTrue(Self.ocr("w0rdl000", shows: "word1000"))
+        XCTAssertFalse(Self.ocr("word10000 word100", shows: "word1000"))
+        XCTAssertFalse(Self.ocr("sword1000 word2000", shows: "word1000"))
     }
 
     private func mount(_ feed: Feed) -> (NSWindow, NSView) {
