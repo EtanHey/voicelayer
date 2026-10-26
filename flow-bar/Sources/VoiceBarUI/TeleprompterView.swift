@@ -303,22 +303,33 @@ public enum TeleprompterContentModel {
         return displayTokenRanges(text).map { source.substring(with: $0) }
     }
 
+    private static let proseSlashCuts = try! NSRegularExpression(pattern: #"https?://[^\s<>]+|www\.[^\s<>]+|(`+)(?!`)[^\u2029]*?(?<!`)\1(?!`)|\]\([^\n\u2029]*?\)|(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP/IP|he/she|assets/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}/)))"#)
+    private static let nonWhitespace = try! NSRegularExpression(pattern: #"\S+"#)
+
     /// UTF-16 ranges of `displayTokens`; structured-display word indices count these.
+    /// One ordered pass: the decoder calls this on the main thread for whole long reads.
     static func displayTokenRanges(_ text: String) -> [NSRange] {
-        let pattern = #"https?://[^\s<>]+|www\.[^\s<>]+|(`+)(?!`)[^\u2029]*?(?<!`)\1(?!`)|\]\([^\n\u2029]*?\)|(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP/IP|he/she|assets/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}/)))"#
-        let regex = try! NSRegularExpression(pattern: pattern)
         let source = text as NSString
-        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).filter { !source.substring(with: $0.range).hasPrefix("http://") && !source.substring(with: $0.range).hasPrefix("https://") && !source.substring(with: $0.range).hasPrefix("www.") && !source.substring(with: $0.range).hasPrefix("`") && !source.substring(with: $0.range).hasPrefix("](") }.map {
-            $0.range.location + (source.substring(with: $0.range) as NSString).range(of: "/").location
-        })
-        let words = try! NSRegularExpression(pattern: #"\S+"#)
-        return words.matches(in: text, range: NSRange(location: 0, length: source.length)).flatMap { match -> [NSRange] in
-            let range = match.range
-            let boundaries = [range.location] + cuts.filter { $0 > range.location && $0 < NSMaxRange(range) }.sorted() + [NSMaxRange(range)]
-            return zip(boundaries, boundaries.dropFirst()).map { start, end in
-                NSRange(location: start, length: end - start)
-            }
+        let whole = NSRange(location: 0, length: source.length)
+        // Every cut is a prose slash, so text without one has none.
+        let cuts = source.range(of: "/").location == NSNotFound ? [] : proseSlashCuts.matches(in: text, range: whole).compactMap { match -> Int? in
+            let token = source.substring(with: match.range)
+            guard !["http://", "https://", "www.", "`", "]("].contains(where: { token.hasPrefix($0) }) else { return nil }
+            return match.range.location + (token as NSString).range(of: "/").location
         }
+        // Matches arrive in source order, so one cursor pairs each word with its cuts.
+        var ranges: [NSRange] = [], next = 0
+        for match in nonWhitespace.matches(in: text, range: whole) {
+            var start = match.range.location
+            let end = NSMaxRange(match.range)
+            while next < cuts.count, cuts[next] <= start { next += 1 }
+            while next < cuts.count, cuts[next] < end {
+                ranges.append(NSRange(location: start, length: cuts[next] - start))
+                start = cuts[next]; next += 1
+            }
+            ranges.append(NSRange(location: start, length: end - start))
+        }
+        return ranges
     }
 
     public static let maxDisplayTokenLength = 24

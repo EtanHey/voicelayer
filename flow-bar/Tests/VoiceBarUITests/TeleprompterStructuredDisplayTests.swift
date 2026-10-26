@@ -93,6 +93,29 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
         XCTAssertEqual(display.blocks.map { [$0.word_start, $0.word_end] }, [[0, 3]])
     }
 
+    // The decoder runs on the main thread: slash-heavy text must tokenize in one linear pass.
+    func testLongSlashHeavyDecodeStaysCloseToPlainText() throws {
+        func decodeMs(_ word: String) throws -> Double {
+            let text = Array(repeating: word, count: 12_000).joined(separator: " ")
+            let span = ["start": 0, "end": (text as NSString).length]
+            let words = TeleprompterContentModel.displayTokenRanges(text).count
+            let value: [String: Any] = ["version": 1, "text": text, "speech_start": 0, "blocks": [[
+                "kind": "paragraph", "source": span, "speech": span,
+                "ranges": [["source": span, "display": span, "speech": span, "kind": "identity"]],
+                "word_start": 0, "word_end": words, "section_id": "section:0",
+                "starts_block": true, "starts_section": true]]]
+            return try (0..<3).map { _ in
+                let start = DispatchTime.now().uptimeNanoseconds
+                _ = try XCTUnwrap(TeleprompterStructuredDisplay.decode(value, text: text))
+                return Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+            }.min()!
+        }
+        // Same length and word count: 12,000 slash compounds against 24,000 plain words.
+        XCTAssertEqual(TeleprompterContentModel.displayTokenRanges("client/server client server").count, 4)
+        let plain = try decodeMs("client server"), slash = try decodeMs("client/server")
+        XCTAssertLessThan(slash, plain * 4, "slash \(slash) ms vs plain \(plain) ms")
+    }
+
     func testMissingPreparingDisplayReflowsEveryArrivingChunk() throws {
         var document = try XCTUnwrap(TeleprompterLongReadDocument(longRead: [
             "id": "fallback", "text": "Alpha. Beta.", "chunk_count": 2, "chunk_word_starts": [0, 1]
