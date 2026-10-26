@@ -43,7 +43,8 @@ export class LiveSpeechArchive {
       await this.retryWrites();
       if (operation.kind === "move") {
         for (let i = this.failures.length - 1; i >= 0; i--) {
-          if (this.failures[i].operation.kind !== "move") continue;
+          const failed = this.failures[i].operation;
+          if (failed.kind !== "move" || (operation.to === "completed" && failed.to === "playing")) continue;
           this.failures.splice(i, 1);
           console.error("[speech] archive write superseded: move");
         }
@@ -52,6 +53,14 @@ export class LiveSpeechArchive {
     });
   }
   private async write(operation: ArchiveWrite, retry = false): Promise<void> {
+    // Completion needs the real playing edge; keep both until that edge lands.
+    if (operation.kind === "move" && operation.to === "completed" && this.failures.some(
+      ({ operation: failed }) => failed.kind === "move" && failed.to === "playing",
+    )) {
+      this.failures.push({ operation, code: "ARCHIVE_PREREQUISITE_PENDING" });
+      console.error("[speech] archive write deferred: move prerequisite");
+      return;
+    }
     try {
       this.storedContext = (await speechArchiveWriter.write(this.key, operation, this.storedContext, this.root)).context;
       liveArchives.delete(this.key);

@@ -241,3 +241,36 @@ test("R1C S5 missing legacy metadata does not block a later healthy receipt", as
     }
   } finally { process.env.QA_VOICE_RECORDINGS_DIR = original; }
 });
+
+for (const prior of ["preparing", "paused"] as const) test(`R1C R4 completed retains failed playing prerequisite from ${prior}`, async () => {
+  const archive = beginSpeechArchive(`completion prerequisite from ${prior}`);
+  if (prior === "paused") { archive.playerStarted(); archive.move("paused"); }
+  await archive.settled();
+  const write = speechArchiveWriter.write.bind(speechArchiveWriter);
+  let storageRecovered = false;
+  const fault = spyOn(speechArchiveWriter, "write").mockImplementation(async (...args) => {
+    if (!storageRecovered && args[1].kind === "move" && args[1].to === "playing") throw Error("IO_ERROR");
+    return write(...args);
+  });
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    archive.playerStarted();
+    await archive.settled();
+    expect(archive.failures).toHaveLength(1);
+    archive.finish("completed", "PLAYBACK_COMPLETED");
+    await archive.settled();
+    expect(disk(archive.context.path).speech.state).toBe(prior);
+    storageRecovered = true;
+    await archive.retryFailed();
+    const speech = disk(archive.context.path).speech;
+    expect(speech.state).toBe("completed");
+    expect(speech.transitions.map((edge: { to: string }) => edge.to)).toEqual(prior === "paused"
+      ? ["preparing", "playing", "paused", "playing", "completed"]
+      : ["preparing", "playing", "completed"]);
+    expect(archive.failures).toEqual([]);
+    await archive.retryFailed();
+    expect(disk(archive.context.path).speech).toEqual(speech);
+    expect(recoverSpeakArchive(archive.context.id).kind).toBe("stored");
+    expect(disk(archive.context.path).speech.state).toBe("completed");
+  } finally { fault.mockRestore(); log.mockRestore(); }
+});
