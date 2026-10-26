@@ -611,14 +611,14 @@ export async function runDaemonInteractionLeg(
   );
 }
 
-function stageSpecimen(
+export function stageSpecimen(
   specimen: CorpusSpecimen,
   sourceRoot: string,
   stagedRoot: string,
 ): CorpusSpecimen {
   const relativeDirectory = relative(sourceRoot, specimen.directory);
   const directory = join(stagedRoot, relativeDirectory);
-  mkdirSync(directory, { recursive: true });
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
   for (const name of ["audio.wav", "metadata.json", "voicelayer-transcript.txt"]) {
     copyFileSync(join(specimen.directory, name), join(directory, name));
   }
@@ -808,6 +808,13 @@ export async function runSwiftRuntimeInteractionLeg(options: {
   );
 }
 
+export function corpusArchiveRoot(workDir: string): string {
+  // Speech receipts reject symlink ancestors and group/world-readable roots.
+  const root = join(realpathSync(workDir), "recordings");
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  return root;
+}
+
 async function runCorpusReplay(options: {
   count: number;
   corpusRoot: string;
@@ -824,7 +831,7 @@ async function runCorpusReplay(options: {
   });
 
   mkdirSync(options.workDir, { recursive: true });
-  const stagedRoot = join(options.workDir, "recordings");
+  const stagedRoot = corpusArchiveRoot(options.workDir);
   const pinnedIds = options.manifestPath
     ? readCorpusManifest(options.manifestPath)
     : undefined;
