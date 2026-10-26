@@ -1583,6 +1583,8 @@ class PlaybackQueueManager {
         return;
       }
       const extraction = next.metadata?.preparedAmplitude ?? startPlaybackAmplitudeEnvelopeExtraction(next.audioFile);
+      // Transfer this decode once; a cancelled preparation cannot serve Resume.
+      next.metadata.preparedAmplitude = undefined;
       next.lifecycle.track(extraction.result);
       const preparation = { job: next, cancel: extraction.cancel };
       this.preparing = preparation;

@@ -209,6 +209,41 @@ describe("P10 queue pause/resume", () => {
 });
 
 describe("P10 envelope and preparation", () => {
+  it("R1C waveform resume redecodes cancelled prepared amplitude for a non-opening chunk", async () => {
+    const result = deferred<amplitude.PlaybackAmplitudeEnvelope>();
+    let cancelled = 0;
+    const preparedAmplitude = { result: result.promise, cancel: () => {
+      cancelled++;
+      result.resolve({ source: "unavailable", sample_interval_ms: 50, samples: [] });
+    } };
+    const envelope: amplitude.PlaybackAmplitudeEnvelope = {
+      source: "decoded-rms", sample_interval_ms: 50, samples: [0.2, 0.7, 0.4],
+    };
+    extractSpy.mockReturnValue({ result: Promise.resolve(envelope), cancel: () => {} });
+    const file = `${TEST_TMP}/non-opening-chunk.mp3`;
+    const handle = tts.playAudioNonBlocking(file, {
+      text: "Second chunk", voice: "fixture", durationMs: 10_000, preparedAmplitude,
+      longRead: { id: "waveform-fixture", chunk_index: 1, chunk_count: 2, chunk_start_ms: 1000 },
+    });
+    await fixtureCheckpoint();
+    expect(players.values).toHaveLength(0);
+    expect(tts.pausePlayback()).toMatchObject({ outcome: "accept", offset_ms: 1000 });
+    await fixtureCheckpoint();
+    expect(cancelled).toBe(1);
+    expect(players.values).toHaveLength(0);
+    expect(trims.values).toHaveLength(0);
+    expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 1000 });
+    const player = await players.at(0);
+    await fixtureCheckpoint();
+    expect(events.filter(event => event.state === "speaking").at(-1).playback_amplitude).toEqual(envelope);
+    expect(extractSpy).toHaveBeenCalledWith(file);
+    expect(player.argv.at(-1)).toBe(file);
+    expect(players.values).toHaveLength(1);
+    expect(trims.values).toHaveLength(0);
+    player.exit.resolve(0);
+    expect(await handle.exited).toMatchObject({ status: "completed", duration_ms: 10_000 });
+  });
+
   it("resumes with the original decoded envelope, rebased to the resume offset", async () => {
     const samples = Array.from({ length: 200 }, (_, i) => (i % 10) / 10 + 0.05);
     extractSpy.mockReturnValue({ result: Promise.resolve({ source: "decoded-rms", sample_interval_ms: 50, samples }), cancel: () => {} });
