@@ -97,6 +97,21 @@ test("a dictionary rule for a whole slash compound wins over the prose slash spl
   }
 });
 
+test("a whole-compound rule reserves its slash only when it applies in rule order", () => {
+  // Rule shapes from pronunciation.ts: whole word, case-insensitive.
+  const read = {pattern: /\bread\b/gi, replacement: "reed"};
+  const compound = {pattern: /\bread\/write\b/gi, replacement: "custom"};
+  for (const engine of ["edge", "clone"] as const) {
+    expect(projectSpeakableText("Use read/write mode.", [read, compound], engine).speechText).toBe("Use reed slash write mode.");
+    expect(projectSpeakableText("Use read/write mode.", [compound, read], engine).speechText).toBe("Use custom mode.");
+    expect(projectSpeakableText("Use read/write mode.", [compound, {pattern: /\bcustom\b/gi, replacement: "chosen"}], engine).speechText)
+      .toBe("Use chosen mode.");
+    // Emphasis merges the sentence into one span; a part rule there still leaves the slash spoken.
+    expect(projectSpeakableText("*Use read/write now*", [read, compound], engine).speechText).toBe("Use reed slash write now");
+    expect(projectSpeakableText("*Use read/write now*", [compound, read], engine).speechText).toBe("Use custom now");
+  }
+});
+
 test("dictionary rules win, including phrases and chained replacements", () => {
   const rules = [{pattern: /\bMP3 audio\b/gi, replacement: "custom voice"},
     {pattern: /\bcustom\b/gi, replacement: "Chosen"}, {pattern: /\bAPI\b/g, replacement: "ay pee eye"}];

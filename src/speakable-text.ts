@@ -244,25 +244,45 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   // Edge treats bare compounds as paths and drops their first word.
   // Speak the separator explicitly, preserving independent source anchors.
   // Main leaves compounds after non-ASCII boundaries lexical; preserve that speech.
-  // A dictionary rule that covers the slash owns the compound; its replacement runs below.
+  // Existing YAML rules run in their existing order and remain atomic/protected.
+  const applyRules = (target: Piece[]) => {
+    for (const rule of rules) rewrite(target, new RegExp(rule.pattern.source, rule.pattern.flags.includes("g") ? rule.pattern.flags : rule.pattern.flags + "g"),
+      m => {
+        const pattern = new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "") + "y");
+        pattern.lastIndex = m.index;
+        const replaced = pattern[Symbol.replace](m.input, rule.replacement);
+        return replaced.slice(m.index, replaced.length - (m.input.length - m.index - m[0].length));
+      }, true);
+  };
   {
     const input = pieces.map(p => p.text).join("");
-    const ruled = rules.flatMap(rule => Array.from(input.matchAll(new RegExp(rule.pattern.source,
-      rule.pattern.flags.includes("g") ? rule.pattern.flags : rule.pattern.flags + "g"))));
-    applyEdits(pieces, input, proseSlashMatches(input).filter(m => m.index === 0 || !/[^\x00-\x7f]/.test(input[m.index - 1])).map(m => ({
+    const slashes = proseSlashMatches(input).filter(m => m.index === 0 || !/[^\x00-\x7f]/.test(input[m.index - 1])).map(m => ({
       start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: " slash "
-    })).filter(slash => !ruled.some(r => r.index < slash.end && slash.start < r.index + r[0].length)), false, true);
+    }));
+    // A dictionary rule that actually consumes the slash, in rule order, owns the compound.
+    // Dry-run the rules on a copy: a rule pre-empted by an earlier one owns nothing. Inline
+    // strips stay out of the trial, since they merge whole emphasised spans into one piece.
+    let owned = (_at: number) => false;
+    if (rules.length && slashes.length) {
+      const trial = pieces.map(p => ({...p}));
+      applyRules(trial);
+      owned = at => {
+        let cursor = 0;
+        for (const p of pieces) {
+          if (at < cursor + p.text.length) {
+            const source = p.start + at - cursor;
+            return !p.atomic && trial.some(t => t.protected && t.start <= source && source < t.end);
+          }
+          cursor += p.text.length;
+        }
+        return false;
+      };
+    }
+    applyEdits(pieces, input, slashes.filter(slash => !owned(slash.start)), false, true);
   }
   edit(/`+|\*\*|\*([^*\n]+)\*|~~/g, m => m[1] ?? "");
   edit(/(?<![A-Za-z0-9\u0080-\uffff_])_([^_\n]+)_(?![A-Za-z0-9\u0080-\uffff_])/gu, m => m[1]);
-  // Existing YAML rules run in their existing order and remain atomic/protected.
-  for (const rule of rules) edit(new RegExp(rule.pattern.source, rule.pattern.flags.includes("g") ? rule.pattern.flags : rule.pattern.flags + "g"),
-    m => {
-      const pattern = new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "") + "y");
-      pattern.lastIndex = m.index;
-      const replaced = pattern[Symbol.replace](m.input, rule.replacement);
-      return replaced.slice(m.index, replaced.length - (m.input.length - m.index - m[0].length));
-    }, true);
+  applyRules(pieces);
   edit(/[A-Za-z0-9\u0590-\u05ff_.-]+/gu, m => {
     // Clone path projection owns the whole path and preserves Hebrew components.
     if (engine === "clone" && /[\\/]/.test((m.input[m.index - 1] ?? "") + (m.input[m.index + m[0].length] ?? ""))) return undefined;
