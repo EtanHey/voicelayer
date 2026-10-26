@@ -1,4 +1,5 @@
 import { unindexSpeech } from "./speech-open-index";
+import { UnsafeSpeechDirectory } from "./speech-archive-directory";
 import { initialSpeech, speechSchema, speechReasonSchema, transitionSpeech, type SpeechState, type SpeechRecord } from "./speech-state";
 import { createHash, randomBytes } from "crypto";
 import * as fs from "fs";
@@ -118,7 +119,7 @@ function boundary(work: () => SpeakStoreMetadata): SpeakStoreResult {
   try { return { kind: "stored", metadata: work() }; }
   catch (e) {
     try {
-      return { kind: "failed", code: e instanceof Failure ? failureCode.parse(e.code) : e instanceof z.ZodError ? "INVALID_INPUT" : "IO_ERROR" };
+      return { kind: "failed", code: e instanceof Failure ? failureCode.parse(e.code) : e instanceof UnsafeSpeechDirectory ? "UNSAFE_PATH" : e instanceof z.ZodError ? "INVALID_INPUT" : "IO_ERROR" };
     } catch { return { kind: "failed", code: "IO_ERROR" }; }
   }
 }
@@ -343,7 +344,11 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
     if (!finished) { m.status = "interrupted_unknown"; if (m.lifecycle) m.lifecycle.status = "interrupted_unknown"; }
     try {
       if (audioExists) sync(join(entry, "audio"));
-      if (before.equals(encode(m))) { sync(entry); return m; }
+      if (before.equals(encode(m))) {
+        sync(entry);
+        if (terminal.has(m.status)) unindexSpeech(m.id);
+        return m;
+      }
     } catch { throw new Failure("SYNC_UNCERTAIN"); }
     return persist(entry, m);
   });

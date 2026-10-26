@@ -3,6 +3,7 @@ import * as fs from "fs";
 import { dirname, join, relative } from "path";
 import { createSpeakReceipt } from "../speak-archive";
 import * as index from "../speech-open-index";
+import { recoverSpeakArchive, transitionSpeakArchive } from "../speak-archive-store";
 
 const request = { input: "synthetic durable input", request_id: "fixture", request_source: "direct",
   connection: "stdio", format: "plain", blocking: true,
@@ -74,4 +75,62 @@ test("index refuses a symlink ancestor and a nonprivate directory", () => {
     fs.chmodSync(index.speechOpenIndex(), 0o755);
     expect(() => index.indexOpenSpeech("fixture")).toThrow();
   } finally { process.env.QA_VOICE_RECORDINGS_DIR = root; fs.rmSync(base, { recursive: true }); }
+});
+
+
+test("trailing separators keep indexes outside records and receipts transitionable", () => {
+  const root = process.env.QA_VOICE_RECORDINGS_DIR!;
+  try {
+    process.env.QA_VOICE_RECORDINGS_DIR = root + "///";
+    const result = createSpeakReceipt(request);
+    expect(result.kind).toBe("created");
+    expect(relative(root, index.speechOpenIndex()).startsWith("..")).toBe(true);
+    expect(relative(root, index.speechPendingIndex()).startsWith("..")).toBe(true);
+    if (result.kind !== "created") throw Error("expected receipt");
+    expect(transitionSpeakArchive(result.context, "preparing").kind).toBe("stored");
+    expect(transitionSpeakArchive(result.context, "failed", "SYNTH_FAILED").kind).toBe("stored");
+  } finally { process.env.QA_VOICE_RECORDINGS_DIR = root; }
+});
+
+for (const fault of ["index", "metadata"] as const) {
+  test(`recovery removes pending receipt after ${fault} publication failure`, () => {
+    const original = fs.writeFileSync;
+    let writes = 0;
+    const spy = fault === "index"
+      ? spyOn(index, "indexOpenSpeech").mockImplementation(() => { throw Error("synthetic index failure"); })
+      : spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+        if (++writes === 2) throw Error("synthetic metadata failure");
+        original(file, data, options);
+      });
+    let result;
+    try { result = createSpeakReceipt(request); } finally { spy.mockRestore(); }
+    if (result.kind !== "failed" || !result.partial) throw Error("expected partial receipt");
+    const id = result.partial.id;
+    expect(fs.existsSync(join(index.speechPendingIndex(), id))).toBe(true);
+    expect(recoverSpeakArchive(id)).toMatchObject({ kind: "stored", metadata: { status: "interrupted_unknown" } });
+    expect(fs.existsSync(join(index.speechPendingIndex(), id))).toBe(false);
+    expect(fs.existsSync(join(index.speechOpenIndex(), id))).toBe(false);
+  });
+}
+
+test("durable terminal transition removes pending as well as published index", () => {
+  const result = createSpeakReceipt(request);
+  if (result.kind !== "created") throw Error("expected receipt");
+  index.beginSpeechReceipt(result.context.id);
+  expect(transitionSpeakArchive(result.context, "failed", "SYNTH_FAILED").kind).toBe("stored");
+  expect(fs.existsSync(join(index.speechPendingIndex(), result.context.id))).toBe(false);
+  expect(fs.existsSync(join(index.speechOpenIndex(), result.context.id))).toBe(false);
+});
+
+test("recovery retries terminal cleanup after unsafe index permissions are restored", () => {
+  const result = createSpeakReceipt(request);
+  if (result.kind !== "created") throw Error("expected receipt");
+  fs.chmodSync(index.speechOpenIndex(), 0o755);
+  try { expect(transitionSpeakArchive(result.context, "failed", "SYNTH_FAILED")).toEqual({ kind: "failed", code: "UNSAFE_PATH" }); }
+  finally { fs.chmodSync(index.speechOpenIndex(), 0o700); }
+  expect(recoverSpeakArchive(result.context.id).kind).toBe("stored");
+  // Repeat after recreating a stale index to exercise byte-identical terminal recovery.
+  index.indexOpenSpeech(result.context.id);
+  expect(recoverSpeakArchive(result.context.id).kind).toBe("stored");
+  expect(fs.existsSync(join(index.speechOpenIndex(), result.context.id))).toBe(false);
 });
