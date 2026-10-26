@@ -41,6 +41,13 @@ export class LiveSpeechArchive {
   private enqueue(operation: ArchiveWrite): Promise<void> {
     return this.schedule(async () => {
       await this.retryWrites();
+      if (operation.kind === "move") {
+        for (let i = this.failures.length - 1; i >= 0; i--) {
+          if (this.failures[i].operation.kind !== "move") continue;
+          this.failures.splice(i, 1);
+          console.error("[speech] archive write superseded: move");
+        }
+      }
       await this.write(operation);
     });
   }

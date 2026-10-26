@@ -194,3 +194,50 @@ test("R1C R2 unreadable legacy metadata is recovered by the next boot instead of
     expect(readFileSync(join(root, ".speech-index-migration-v1"), "utf8")).toBe("done");
   } finally { process.env.QA_VOICE_RECORDINGS_DIR = original; }
 });
+
+test("R1C S4 a newer move supersedes a pause that still fails after retry", async () => {
+  const archive = beginSpeechArchive("superseded pause fixture");
+  archive.playerStarted();
+  await archive.settled();
+  const write = speechArchiveWriter.write.bind(speechArchiveWriter);
+  let pauseAttempts = 0;
+  const fault = spyOn(speechArchiveWriter, "write").mockImplementation(async (...args) => {
+    if (args[1].kind === "move" && args[1].to === "paused" && pauseAttempts++ < 2) throw Error("IO_ERROR");
+    return write(...args);
+  });
+  const log = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    archive.move("paused");
+    archive.playerStarted();
+    archive.finish("completed", "PLAYBACK_COMPLETED");
+    await archive.settled();
+    expect(disk(archive.context.path).speech.state).toBe("completed");
+    await archive.retryFailed();
+    expect(disk(archive.context.path)).toMatchObject({ status: "completed", speech: { state: "completed" } });
+    expect(archive.failures).toEqual([]);
+    expect(log).toHaveBeenCalledWith("[speech] archive write superseded: move");
+    expect(recoverSpeakArchive(archive.context.id).kind).toBe("stored");
+    expect(disk(archive.context.path).speech.state).toBe("completed");
+  } finally { fault.mockRestore(); log.mockRestore(); }
+});
+
+test("R1C S5 missing legacy metadata does not block a later healthy receipt", async () => {
+  const original = process.env.QA_VOICE_RECORDINGS_DIR;
+  const root = join(process.env.VOICELAYER_TEST_RUN_ROOT!, "legacy-missing-metadata");
+  mkdirSync(root, { mode: 0o700 });
+  process.env.QA_VOICE_RECORDINGS_DIR = root;
+  try {
+    const missing = "2020-01-01T00-00-00-000Z-00000000";
+    mkdirSync(join(root, "2020-01-01", missing), { recursive: true, mode: 0o700 });
+    const archive = beginSpeechArchive("healthy legacy after missing metadata");
+    archive.playerStarted();
+    await archive.settled();
+    unlinkSync(join(speechOpenIndex(), archive.context.id));
+    expect(await migrateLegacySpeechSlice()).toEqual({ more: false, recovered: [archive.context.id] });
+    expect(disk(archive.context.path).speech.state).toBe("interrupted");
+    expect(readFileSync(join(root, ".speech-index-migration-v1"), "utf8")).toBe("done");
+    for (let boot = 0; boot < 2; boot++) {
+      expect(await migrateLegacySpeechSlice()).toEqual({ more: false, recovered: [] });
+    }
+  } finally { process.env.QA_VOICE_RECORDINGS_DIR = original; }
+});
