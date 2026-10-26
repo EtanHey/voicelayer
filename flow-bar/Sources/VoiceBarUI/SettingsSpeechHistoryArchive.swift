@@ -141,4 +141,18 @@ enum SettingsSpeechHistoryReload {
         }
         return Task.isCancelled ? nil : entries
     }
+
+    /// Runs `run` and hands its entries to `apply` on the main actor.
+    @MainActor
+    static func reload(
+        debounce: Bool,
+        load: @escaping @Sendable () -> [SettingsSpeechHistoryEntry],
+        apply: ([SettingsSpeechHistoryEntry]) -> Void
+    ) async {
+        guard let entries = await run(debounce: debounce, load: load) else { return }
+        // `run` checked cancellation off the main actor; a reload or unmount can cancel this task
+        // after that check and before this continuation runs. No await between here and the apply.
+        guard !Task.isCancelled else { return }
+        apply(entries)
+    }
 }

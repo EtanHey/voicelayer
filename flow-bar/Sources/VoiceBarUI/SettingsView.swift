@@ -1428,10 +1428,9 @@ public struct SettingsView: View {
             let root = speechHistoryRoot
             let debounce = speechReloadDebounced
             speechReloadDebounced = false
-            guard let entries = await SettingsSpeechHistoryReload.run(debounce: debounce, load: {
+            await SettingsSpeechHistoryReload.reload(debounce: debounce, load: {
                 SettingsSpeechHistoryArchive.load(from: root, limit: limit)
-            }) else { return }
-            speechEntries = entries
+            }, apply: { speechEntries = $0 })
         }
         .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
             speechReloadDebounced = true

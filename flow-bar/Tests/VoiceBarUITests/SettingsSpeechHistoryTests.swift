@@ -123,6 +123,30 @@ final class SettingsSpeechHistoryTests: XCTestCase {
         XCTAssertEqual(probe.events, [.started, .cancelled], "The previous scan must observe cancellation")
     }
 
+    // `run` checks cancellation off the main actor; a cancel can land after it returns entries but
+    // before the main-actor continuation applies them. Holding the main actor opens exactly that window.
+    @MainActor
+    func testCancelAfterLoadReturnsSkipsApply() async {
+        let probe = ReloadProbe()
+        var applied: [[SettingsSpeechHistoryEntry]] = []
+        let reload = Task {
+            await SettingsSpeechHistoryReload.reload(debounce: false, load: {
+                probe.record(.started)
+                while !probe.isReleased { Thread.sleep(forTimeInterval: 0.001) }
+                probe.record(.returned)
+                return []
+            }, apply: { applied.append($0) })
+        }
+        while !probe.events.contains(.started) { await Task.yield() }
+        // No awaits from here until the cancel: the main actor stays busy, so the apply cannot run.
+        probe.release()
+        while !probe.events.contains(.returned) { Thread.sleep(forTimeInterval: 0.001) }
+        Thread.sleep(forTimeInterval: 0.2) // let `run` finish its own check and return the entries
+        reload.cancel()
+        await reload.value
+        XCTAssertTrue(applied.isEmpty, "A load cancelled before its main-actor apply must not apply")
+    }
+
     // Mirrors the Dictations/Ask reloads: each archive-change notification restarts the load, and only
     // the one that survives the 300 ms wait scans.
     func testNotificationBurstProducesOneLoad() async {
@@ -231,9 +255,12 @@ final class SettingsSpeechHistoryTests: XCTestCase {
 }
 
 private final class ReloadProbe: @unchecked Sendable {
-    enum Event: Equatable { case started, cancelled, ranToDeadline }
+    enum Event: Equatable { case started, cancelled, ranToDeadline, returned }
     private let lock = NSLock()
     private var recorded: [Event] = []
+    private var released = false
     var events: [Event] { lock.withLock { recorded } }
+    var isReleased: Bool { lock.withLock { released } }
     func record(_ event: Event) { lock.withLock { recorded.append(event) } }
+    func release() { lock.withLock { released = true } }
 }
