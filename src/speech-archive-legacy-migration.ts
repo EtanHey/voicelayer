@@ -1,7 +1,7 @@
 import { access, readFile, readdir } from "fs/promises";
 import { join } from "path";
 import { atomicWriteFile, recordingsArchiveRoot } from "./recordings-archive-fs";
-import { speechOpenIndex } from "./speech-open-index";
+import { speechOpenIndex, speechPendingIndex } from "./speech-open-index";
 import { recoverSpeakArchive } from "./speak-archive-store";
 
 const terminal = new Set(["completed", "stopped", "replaced", "rejected", "failed", "interrupted_unknown"]);
@@ -33,7 +33,11 @@ export async function migrateLegacySpeechSlice(): Promise<{ more: boolean; recov
       // Never inspect audio for terminal history, nor recover an indexed live owner.
       let indexed = true;
       try { await access(join(speechOpenIndex(), id)); }
-      catch (error) { if (!absent(error)) throw error; indexed = false; }
+      catch (error) {
+        if (!absent(error)) throw error;
+        try { await access(join(speechPendingIndex(), id)); }
+        catch (pendingError) { if (!absent(pendingError)) throw pendingError; indexed = false; }
+      }
       if (!indexed) {
         try {
           const metadata = JSON.parse(await readFile(join(root, day, id, "metadata.json"), "utf8"));
