@@ -63,3 +63,42 @@ test("parenthesis list markers keep their exact display glyph", () => {
   expect(display?.text).toBe(structured.speechText);
   expect(display?.blocks[0].word_start).toBe(0); // Marker is the first body token, never duplicated decoration.
 });
+
+test("numbered task-list items speak the number, drop the checkbox like unnumbered items, and keep raw display", () => {
+  const items: [string, string, string][] = [
+    ["1. [ ] Buy milk", "one.", "Buy milk."],
+    ["2. [x] Done thing", "two.", "Done thing."],
+    ["3) [X] Caps", "three.", "Caps."],
+  ];
+  const source = items.map(([line]) => line).join("\n");
+  for (const engine of ["edge", "clone"] as const) {
+    for (const [line, spokenNumber, body] of items) {
+      const projected = projectSpeakableText(line, [], engine);
+      expect(projected.displayText).toBe(line);
+      // Same checkbox handling as the unnumbered path, with R3's spoken number in front.
+      const unnumbered = projectSpeakableText(line.replace(/^\d+[.)]/, "-"), [], engine).speechText;
+      expect(unnumbered).toBe(body);
+      expect(projected.speechText).toBe(`${spokenNumber} ${unnumbered}`);
+      const marker = projected.ranges.find(r => projected.speechText.slice(r.speech.start, r.speech.end) === spokenNumber);
+      expect(marker && line.slice(marker.source.start, marker.source.end)).toBe(line.slice(0, 2));
+    }
+    const projected = projectSpeakableText(source, [], engine);
+    expect(projected.displayText).toBe(source);
+    expect(projected.speechText).toBe("one. Buy milk. two. Done thing. three. Caps.");
+    const structured = projectStructuredSpeech(source);
+    expect(structured.displayText).toBe(source);
+    expect(structured.speechText).toBe("1. Buy milk. 2. Done thing. 3) Caps.");
+  }
+});
+
+test("a numbered link whose label looks like a checkbox keeps its label", () => {
+  for (const engine of ["edge", "clone"] as const) {
+    for (const label of ["x", "X", " "]) {
+      const line = `1. [${label}](https://example.com) next`;
+      const projected = projectSpeakableText(line, [], engine);
+      expect(projected.displayText).toBe(line);
+      if (label.trim()) expect(projected.speechText).toContain(`${label} next`);
+      expect(projected.speechText).not.toContain("example");
+    }
+  }
+});

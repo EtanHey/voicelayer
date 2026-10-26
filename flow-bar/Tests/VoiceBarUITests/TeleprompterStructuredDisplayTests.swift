@@ -68,6 +68,54 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
         }
     }
 
+    // R7: "client/server" highlights as two words, so the decoder counts slash-split display tokens.
+    func testSlashCompoundDisplayFromTypeScriptDecodesWithSplitWordCount() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let process = Process()
+        process.currentDirectoryURL = root
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["bun", "-e", """
+            import {projectStructuredSpeech} from './src/tts/structured-speech';
+            import {structuredReadDisplay} from './src/tts/structured-display';
+            const p = projectStructuredSpeech('Pick client/server.');
+            process.stdout.write(JSON.stringify(structuredReadDisplay(p, [p.speechText], 400)[0]));
+            """]
+        let pipe = Pipe(); process.standardOutput = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        let value = try JSONSerialization.jsonObject(with: data)
+        let text = "Pick client/server."
+        XCTAssertEqual(TeleprompterContentModel.displayTokens(text), ["Pick", "client", "/server."])
+        let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(value, text: text))
+        XCTAssertEqual(display.blocks.map { [$0.word_start, $0.word_end] }, [[0, 3]])
+    }
+
+    // The decoder runs on the main thread: slash-heavy text must tokenize in one linear pass.
+    func testLongSlashHeavyDecodeStaysCloseToPlainText() throws {
+        func decodeMs(_ word: String) throws -> Double {
+            let text = Array(repeating: word, count: 12_000).joined(separator: " ")
+            let span = ["start": 0, "end": (text as NSString).length]
+            let words = TeleprompterContentModel.displayTokenRanges(text).count
+            let value: [String: Any] = ["version": 1, "text": text, "speech_start": 0, "blocks": [[
+                "kind": "paragraph", "source": span, "speech": span,
+                "ranges": [["source": span, "display": span, "speech": span, "kind": "identity"]],
+                "word_start": 0, "word_end": words, "section_id": "section:0",
+                "starts_block": true, "starts_section": true]]]
+            return try (0..<3).map { _ in
+                let start = DispatchTime.now().uptimeNanoseconds
+                _ = try XCTUnwrap(TeleprompterStructuredDisplay.decode(value, text: text))
+                return Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+            }.min()!
+        }
+        // Same length and word count: 12,000 slash compounds against 24,000 plain words.
+        XCTAssertEqual(TeleprompterContentModel.displayTokenRanges("client/server client server").count, 4)
+        let plain = try decodeMs("client server"), slash = try decodeMs("client/server")
+        XCTAssertLessThan(slash, plain * 4, "slash \(slash) ms vs plain \(plain) ms")
+    }
+
     func testMissingPreparingDisplayReflowsEveryArrivingChunk() throws {
         var document = try XCTUnwrap(TeleprompterLongReadDocument(longRead: [
             "id": "fallback", "text": "Alpha. Beta.", "chunk_count": 2, "chunk_word_starts": [0, 1]
