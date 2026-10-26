@@ -23,7 +23,7 @@ public struct TeleprompterLongReadDocument: Equatable {
         guard let readID = longRead["id"] as? String, let text = longRead["text"] as? String,
               let starts = longRead["chunk_word_starts"] as? [Int],
               starts.count == longRead["chunk_count"] as? Int, starts.first == 0 else { return nil }
-        let tokens = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        let tokens = TeleprompterContentModel.displayTokens(text)
         guard let last = starts.last, last < tokens.count,
               zip(starts, starts.dropFirst()).allSatisfy({ $0 < $1 }) else { return nil }
         self.readID = readID
@@ -44,7 +44,7 @@ public struct TeleprompterLongReadDocument: Equatable {
               chunkWordStarts.indices.contains(chunkIndex) else { return nil }
         let start = chunkWordStarts[chunkIndex]
         let end = chunkIndex + 1 < chunkWordStarts.count ? chunkWordStarts[chunkIndex + 1] : tokens.count
-        let chunkTokens = chunkText.split(whereSeparator: \.isWhitespace).map(String.init)
+        let chunkTokens = TeleprompterContentModel.displayTokens(chunkText)
         return tokens[start ..< end].elementsEqual(chunkTokens) ? start : nil
     }
 
@@ -53,7 +53,7 @@ public struct TeleprompterLongReadDocument: Equatable {
     /// Indexed rows must match their tokens; legacy rows must be one plausible row per token. Anything
     /// else is an identity mismatch and records nothing. An untimed chunk erases nothing.
     public mutating func record(chunkText: String, boundaries: [TeleprompterBoundary], wordStart: Int) {
-        let chunkTokens = chunkText.split(whereSeparator: \.isWhitespace).map(String.init)
+        let chunkTokens = TeleprompterContentModel.displayTokens(chunkText)
         let rows: [Int: TeleprompterBoundary]
         if boundaries.contains(where: { $0.wordIndex != nil }) {
             guard let indexed = TeleprompterBoundary.indexedRows(boundaries, tokens: chunkTokens) else { return }

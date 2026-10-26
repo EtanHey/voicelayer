@@ -1,3 +1,4 @@
+import { displayTokens } from "./display-tokens";
 import type { SpeakArchiveContext } from "../speak-archive";
 import type { PlaybackOutcomeEvent, StateEvent, WordBoundary } from "../socket-protocol";
 
@@ -48,12 +49,18 @@ export interface LongReadDependencies {
  * indexes each chunk's first whitespace token in `text`. Synthesis chunks drop the line breaks between
  * sentences, so the display text keeps them whenever its tokens are exactly the chunks' tokens. */
 export function longReadDocument(displayText: string, texts: string[]): { text: string; chunk_word_starts: number[] } {
-  const tokens = (text: string) => text.match(/\S+/gu) ?? [];
+  const tokens = (text: string) => displayTokens(text).map(m => m[0]);
   const chunkTokens = texts.map(tokens), all = chunkTokens.flat(), display = tokens(displayText);
   let next = 0;
   const chunk_word_starts = chunkTokens.map((chunk) => { const at = next; next += chunk.length; return at; });
   const same = display.length === all.length && display.every((token, i) => token === all[i]);
-  return { text: same ? displayText : texts.join(" "), chunk_word_starts };
+  // Keep the chunk-local code context when the original document cannot tile it.
+  // U+2029 is whitespace in both clients and resets backtick/link context without
+  // adding a display token. A space would let a stray backtick pair across chunks.
+  const joined = texts.join(" ");
+  const joinedTokens = tokens(joined);
+  const joinedTiles = joinedTokens.length === all.length && joinedTokens.every((token, i) => token === all[i]);
+  return { text: same ? displayText : joinedTiles ? joined : texts.join("\u2029"), chunk_word_starts };
 }
 
 type Synthesis = { chunk: LongReadChunk } | { error: unknown };

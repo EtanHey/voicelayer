@@ -1,3 +1,4 @@
+import { proseSlashMatches } from "./tts/display-tokens";
 import type { ProjectionRange } from "./tts/structured-speech";
 
 export type SpeakableEngine = "edge" | "clone";
@@ -237,6 +238,15 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   if (engine === "clone") {
     const input = pieces.map(p => p.text).join("");
     applyEdits(pieces, input, jsonEdits(input), false);
+  }
+  // Edge treats bare compounds as paths and drops their first word.
+  // Speak the separator explicitly, preserving independent source anchors.
+  // Main leaves compounds after non-ASCII boundaries lexical; preserve that speech.
+  {
+    const input = pieces.map(p => p.text).join("");
+    applyEdits(pieces, input, proseSlashMatches(input).filter(m => m.index === 0 || !/[^\x00-\x7f]/.test(input[m.index - 1])).map(m => ({
+      start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: " slash "
+    })), false, true);
   }
   edit(/`+|\*\*|\*([^*\n]+)\*|~~/g, m => m[1] ?? "");
   edit(/(?<![A-Za-z0-9\u0080-\uffff_])_([^_\n]+)_(?![A-Za-z0-9\u0080-\uffff_])/gu, m => m[1]);

@@ -1,3 +1,4 @@
+import { displayTokens } from "./display-tokens";
 import { buildSectionMap } from "./sections";
 import type { DisplayBlockKind, ProjectionRange, StructuredSpeech, TextRange } from "./structured-speech";
 
@@ -53,7 +54,7 @@ function projectReadDisplay(projection: StructuredSpeech, texts: string[], budge
     const start = projection.speechText.indexOf(text, cursor);
     if (start < 0 || projection.speechText.slice(cursor, start).trim()) return texts.map(() => undefined);
     cursor = start + text.length;
-    const tokens = Array.from(text.matchAll(/\S+/gu));
+    const tokens = displayTokens(text);
     const runs: StructuredChunkDisplay["blocks"] = [];
     for (let word = 0; word < tokens.length;) {
       const at = start + tokens[word].index;

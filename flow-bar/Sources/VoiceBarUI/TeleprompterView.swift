@@ -133,10 +133,21 @@ public struct TeleprompterBoundary: Equatable {
     /// audio end after the last), so every displayed word highlights and seeks. Offsets stay in token
     /// order; a gap with no room, or a tail with no known audio end, stays untimed.
     static func interpolated(_ rows: [Self], text: String, startMs: Int?, endMs: Int?) -> [Self] {
-        let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let tokens = TeleprompterContentModel.displayTokens(text)
         guard rows.contains(where: { $0.wordIndex != nil }),
               let byIndex = indexedRows(rows, tokens: tokens) else { return rows }
         var result = tokens.indices.map { byIndex[$0] ?? Self(offsetMs: nil, durationMs: nil, text: tokens[$0], wordIndex: $0) }
+        // Inspect source line position, not just the marker glyph: a + b is prose.
+        let source = text as NSString
+        let markerRanges = Set(try! NSRegularExpression(pattern: #"(?m)^[ \t]*([-+*•◦▪‣])(?=[ \t])"#)
+            .matches(in: text, range: NSRange(location: 0, length: source.length)).map { $0.range(at: 1).location })
+        var cursor = 0
+        let markerIndices = Set(tokens.indices.filter { index in
+            let range = source.range(of: tokens[index], range: NSRange(location: cursor, length: source.length - cursor))
+            guard range.location != NSNotFound else { return false }
+            cursor = NSMaxRange(range)
+            return markerRanges.contains(range.location)
+        })
         let timed = result.indices.filter { result[$0].offsetMs != nil }
         guard let first = timed.first, let last = timed.last else { return result }
         func end(_ index: Int) -> Int { result[index].offsetMs! + (result[index].durationMs ?? 0) }
@@ -144,6 +155,7 @@ public struct TeleprompterBoundary: Equatable {
             guard !gap.isEmpty, to > from else { return }
             let span = Double(to - from), count = Double(gap.count)
             for (step, index) in gap.enumerated() {
+                guard !markerIndices.contains(index) else { continue }
                 let start = from + Int(span * Double(step) / count), stop = from + Int(span * Double(step + 1) / count)
                 guard stop > start else { continue }
                 result[index] = Self(offsetMs: start, durationMs: stop - start, text: tokens[index],
@@ -285,6 +297,24 @@ public enum TeleprompterPacePolicy {
 }
 
 public enum TeleprompterContentModel {
+    // Mirrors display-tokens.ts: prose alternatives, lexical paths/code, and chunk context resets.
+    static func displayTokens(_ text: String) -> [String] {
+        let pattern = #"https?://[^\s<>]+|www\.[^\s<>]+|(`+)(?!`)[^\u2029]*?(?<!`)\1(?!`)|\]\([^\n\u2029]*?\)|(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP/IP|he/she|assets/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}/)))"#
+        let regex = try! NSRegularExpression(pattern: pattern)
+        let source = text as NSString
+        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).filter { !source.substring(with: $0.range).hasPrefix("http://") && !source.substring(with: $0.range).hasPrefix("https://") && !source.substring(with: $0.range).hasPrefix("www.") && !source.substring(with: $0.range).hasPrefix("`") && !source.substring(with: $0.range).hasPrefix("](") }.map {
+            $0.range.location + (source.substring(with: $0.range) as NSString).range(of: "/").location
+        })
+        let words = try! NSRegularExpression(pattern: #"\S+"#)
+        return words.matches(in: text, range: NSRange(location: 0, length: source.length)).flatMap { match -> [String] in
+            let range = match.range
+            let boundaries = [range.location] + cuts.filter { $0 > range.location && $0 < NSMaxRange(range) }.sorted() + [NSMaxRange(range)]
+            return zip(boundaries, boundaries.dropFirst()).map { start, end in
+                source.substring(with: NSRange(location: start, length: end - start))
+            }
+        }
+    }
+
     public static let maxDisplayTokenLength = 24
     private static let maximumBoundaryComparisonCharacters = 512
 
@@ -293,7 +323,7 @@ public enum TeleprompterContentModel {
         wordBoundaries: [TeleprompterBoundary]
     ) -> [TeleprompterWord] {
         if wordBoundaries.contains(where: { $0.wordIndex != nil }) {
-            let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            let tokens = TeleprompterContentModel.displayTokens(text)
             guard let byIndex = TeleprompterBoundary.indexedRows(wordBoundaries, tokens: tokens) else {
                 return words(text: text, wordBoundaries: [])
             }
@@ -304,8 +334,7 @@ public enum TeleprompterContentModel {
                     hasInterpolatedTiming: boundary?.isInterpolated ?? false))
             })
         }
-        let textWords = text
-            .split(whereSeparator: { $0.isWhitespace })
+        let textWords = displayTokens(text)
             .map { word in
                 TeleprompterWord(
                     id: 0,
@@ -362,7 +391,7 @@ public enum TeleprompterContentModel {
     /// TELE1: legacy (Edge) rows, one per whitespace token, keyed by token index. Nil unless the counts
     /// match and the rows plausibly spell the text, the same test the per-chunk zip uses.
     static func legacyTokenRows(text: String, boundaries: [TeleprompterBoundary]) -> [Int: TeleprompterBoundary]? {
-        let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let tokens = TeleprompterContentModel.displayTokens(text)
         let rows = boundaries.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard !tokens.isEmpty, rows.count == tokens.count, boundariesPlausiblyBelong(
             to: tokens.map { TeleprompterWord(id: 0, text: $0, offsetMs: nil, durationMs: nil) },
@@ -976,11 +1005,11 @@ private struct TeleprompterBlockView: View, Equatable {
             ForEach(Array(words.enumerated()), id: \.element.id) { position, word in
                 let layout = layouts[position]
                 let head = layout.highlightGroup - first
-                let isCurrent = layout.highlightGroup == highlightedGroup
+                let isCurrent = !layout.isListMarker && layout.highlightGroup == highlightedGroup
                 let highlight = WordHighlight(
                     isCurrent: isCurrent,
-                    isAvailable: canHighlight(word) || words.indices.contains(head) && canHighlight(words[head]) ||
-                        isCurrent && highlightedGroupIsTimed,
+                    isAvailable: !layout.isListMarker && (canHighlight(word) || words.indices.contains(head) && canHighlight(words[head]) ||
+                        isCurrent && highlightedGroupIsTimed),
                     joinsPrevious: layout.gluesToPrevious,
                     joinsNext: layouts.indices.contains(position + 1) && layouts[position + 1].gluesToPrevious
                 )
@@ -991,6 +1020,14 @@ private struct TeleprompterBlockView: View, Equatable {
                         .accessibilityHidden(true)
                         .layoutValue(key: TeleprompterFlowItemKey.self,
                                      value: TeleprompterFlowItem(lineBreak: layout.lineBreak, isListMarker: true))
+                }
+                if let separator = layout.separator {
+                    Text(separator)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(notchPalette.primary.color.opacity(0.78))
+                        .accessibilityHidden(true)
+                        .layoutValue(key: TeleprompterFlowItemKey.self,
+                                     value: TeleprompterFlowItem(gluesToPrevious: true))
                 }
                 Group {
                     if let onSeek, isReadback || TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {

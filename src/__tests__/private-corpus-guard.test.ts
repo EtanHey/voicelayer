@@ -74,6 +74,14 @@ const ALLOWED: Record<string, Array<[string, number]>> = {
     ["\"/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav\",", 1],
     ["\"/Users/fixture-user/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav\";", 1],
   ],
+  // synthetic speakable-symbols probe (home-relative path stays unspoken), not a private path
+  "src/__tests__/fixtures/speakable-symbols-main.json": [
+    ['{"raw":"~/list/paragraph","edge":"~paragraph","clone":"~slash list slash paragraph"},', 1],
+  ],
+  // synthetic speakable-symbols probe (home-relative path stays unspoken), not a private path
+  "src/__tests__/fixtures/speakable-symbols-probes.json": [
+    ['{"raw":"~/list/paragraph","edge":"~paragraph","clone":"~slash list slash paragraph"},', 1],
+  ],
   // Synthetic path spoken-text conversion fixture.
   "src/__tests__/speakable-text.test.ts": [
     ["[\"/Users/dev/app/qwen3_tts/qwen3_tts.py\", \"slash Users slash dev slash app slash qwen three T T S slash qwen three T T S dot P Y\"],", 1],

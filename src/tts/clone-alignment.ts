@@ -1,3 +1,4 @@
+import { displayTokens } from "./display-tokens";
 import { systemDeadlineClock, type DeadlineClock } from "../deadline-clock";
 import { createHash } from "node:crypto";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -119,7 +120,7 @@ export async function alignCloneAudio(request: CloneAlignmentRequest, clock: Dea
   const input = { ...request, decoder: { ...request.decoder }, ranges: structuredClone(request.ranges) };
   const result: CloneAlignmentResult = {
     status: "untimed", identity: { requestId: input.requestId, chunkId: input.chunkId, audioSha256: null, playbackRate: input.playbackRate },
-    words: Array.from(input.displayText.matchAll(/\S+/gu), word => ({ text: word[0], displayRange: { start: word.index, end: word.index + word[0].length }, offset_ms: null, duration_ms: null })),
+    words: displayTokens(input.displayText).map(word => ({ text: word[0], displayRange: { start: word.index, end: word.index + word[0].length }, offset_ms: null, duration_ms: null })),
   };
   const untimed = (reason: CloneAlignmentResult["reason"]) => {
     result.status = "untimed"; result.reason = reason;
