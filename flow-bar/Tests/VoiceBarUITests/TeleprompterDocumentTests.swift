@@ -39,6 +39,70 @@ final class TeleprompterDocumentTests: XCTestCase {
                                        wordBoundaries: state.teleprompterWordBoundaries)
     }
 
+    func testMidReadJoinDoesNotInterpolateOpeningWordIntoDecodedLeadingSilence() {
+        for opening in ["At", "This", "The"] {
+            let joinedDocument = "Alpha one. \(opening) two.\n\nGamma three."
+            var now = 100.0
+            let state = VoiceState(playbackAmplitudeClock: { now })
+            state.handleEvent(["type": "state", "state": "speaking", "text": "Preparing speech…",
+                               "long_read": ["id": "read-1", "chunk_index": 0, "chunk_count": 3, "chunk_start_ms": 0,
+                                             "preparing": true, "text": joinedDocument, "chunk_word_starts": [0, 2, 4]]])
+            play(state, chunk: 0)
+            now += 1
+            state.handleEvent(["type": "state", "state": "speaking", "text": "\(opening) two.",
+                               "duration_ms": 3000, "playback_offset_ms": 1000,
+                               "long_read": ["id": "read-1", "chunk_index": 1, "chunk_count": 3,
+                                             "chunk_start_ms": 1000]],
+                              playbackAmplitude: PlaybackAmplitudeEnvelope(source: .decodedRMS,
+                                  sampleIntervalMilliseconds: 50,
+                                  samples: Array(repeating: 0.0, count: 22) + [0.4, 0.5, 0.3]))
+            // Clone alignment cannot match the opening token, but measures its neighbour.
+            state.handleEvent(["type": "subtitle", "words": [], "duration_ms": 2000, "aligned_words": [
+                ["word_index": 0, "text": opening, "offset_ms": NSNull(), "duration_ms": NSNull()],
+                row(1, "two.", 1400),
+            ]])
+            XCTAssertEqual(state.teleprompterText, joinedDocument)
+            XCTAssertEqual(words(state)[2].offsetMs, 2100, "opening estimate starts at decoded onset, not chunk admission")
+            func highlighted() -> Int {
+                TeleprompterPlaybackPolicy.currentWordIndex(in: words(state),
+                                                            elapsedMilliseconds: state.playbackElapsedMilliseconds())
+            }
+            XCTAssertEqual(highlighted(), 1)
+            now += 1.099
+            XCTAssertEqual(highlighted(), 1, "the previous chunk's last word remains highlighted throughout the gap")
+            now += 0.001
+            XCTAssertEqual(highlighted(), 2, "the next chunk's opening word starts at its audio onset")
+            now += 0.3
+            XCTAssertEqual(highlighted(), 3, "measured word timing is unchanged")
+            // A later seek uses a sliced envelope; it must not relocate the known opening.
+            state.handleEvent(["type": "state", "state": "speaking", "text": "\(opening) two.",
+                               "duration_ms": 3000, "playback_offset_ms": 2300,
+                               "long_read": ["id": "read-1", "chunk_index": 1, "chunk_count": 3,
+                                             "chunk_start_ms": 1000]],
+                              playbackAmplitude: PlaybackAmplitudeEnvelope(source: .decodedRMS,
+                                  sampleIntervalMilliseconds: 50, samples: [0.4]))
+            state.handleEvent(["type": "subtitle", "words": [], "duration_ms": 2000, "aligned_words": [
+                ["word_index": 0, "text": opening, "offset_ms": NSNull(), "duration_ms": NSNull()],
+                row(1, "two.", 1400),
+            ]])
+            XCTAssertEqual(words(state)[2].offsetMs, 2100, "a sliced envelope never replaces a known onset")
+        }
+    }
+
+    func testMidReadJoinWithoutDecodedOnsetDoesNotInventALeadingWordTime() {
+        let state = VoiceState(playbackAmplitudeClock: { 100 })
+        prepare(state)
+        play(state, chunk: 0)
+        play(state, chunk: 1, text: chunks[1])
+        state.handleEvent(["type": "subtitle", "words": [], "duration_ms": 2000, "aligned_words": [
+            ["word_index": 0, "text": "Beta", "offset_ms": NSNull(), "duration_ms": NSNull()],
+            row(1, "two.", 1400),
+        ]])
+        XCTAssertNil(words(state)[2].offsetMs, "an unavailable onset cannot justify a leading estimate")
+        XCTAssertEqual(TeleprompterPlaybackPolicy.currentWordIndex(in: words(state),
+                                                                  elapsedMilliseconds: 2100), 1)
+    }
+
     func testThreeChunkLongReadRendersOneDocumentAndTheHighlightCrossesChunkBoundaries() {
         let state = VoiceState(playbackAmplitudeClock: { 100 })
         prepare(state)

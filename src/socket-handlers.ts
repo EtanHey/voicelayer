@@ -150,7 +150,8 @@ const newSelectionReadQueue = () => new SelectionReadQueue<PreparedReadStart>(st
 /** QUEUE1: the user's Option+F5 reads. Agent voice_speak/announce keep the tts.ts priority queue and,
  * as before, preempt a user read; that ends this queue too (no surprise resumption after an agent). */
 let selectionReads = newSelectionReadQueue();
-setLongReadSettledListener((requestId, outcome) => selectionReads.settled(requestId, outcome));
+setLongReadSettledListener((requestId, outcome) => selectionReads.settled(requestId, outcome),
+  () => selectionReads.pendingCount > 0);
 // QUEUE1b: agent speech and Ask end the user chain, including reads F5 left waiting for Next.
 setExternalSpeechPreemptionListener(() => selectionReads.clear());
 
