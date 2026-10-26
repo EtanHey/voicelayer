@@ -2296,7 +2296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         now: TimeInterval,
         isIsolatedCapture: Bool
     ) {
-        panel.ignoresMouseEvents = !isIsolatedCapture && !gate.containsVisibleSurface(pointer, now: now)
+        panel.ignoresMouseEvents = !isIsolatedCapture && !gate.containsMouseTrackingSurface(pointer, now: now)
     }
 
     static func applyPanelMouseEventPassthrough(
