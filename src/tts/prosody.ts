@@ -9,10 +9,11 @@ export const PAUSE = { heading: 800, h1: 900, h2: 750, beforeHeading: 600,
 export const PROSODY_MAX_CHARS = 400;
 /** Engine requests in flight at once for one read. */
 export const PROSODY_SYNTH_CONCURRENCY = 3;
-/** Request-size ramp. Speech plays at ~15 chars/s while an engine renders far faster, so text already
- * queued ahead covers the synthesis of about RAMP times its length. Nothing ahead: the full limit,
- * exactly like the long-read chunker's first chunk. Below FAST_MIN a split is not worth a request. */
-const RAMP = 8, FAST_MIN = 120;
+/** Request-size ramp, in projected speech characters. Speech plays at ~15 chars/s (MS_PER_CHAR) while an
+ * engine renders far faster, so audio already queued ahead (words and planned pauses) covers the synthesis
+ * of about RAMP times its length. Nothing ahead: the full limit, like the long-read chunker's first chunk.
+ * FAST_MIN (~6–8 words) is the smallest request worth splitting off. */
+const RAMP = 8, FAST_MIN = 40, MS_PER_CHAR = 65;
 export function prosodyBudget(charsAhead: number, maxChars = PROSODY_MAX_CHARS): number {
   return charsAhead === 0 ? maxChars : Math.min(maxChars, Math.max(FAST_MIN, RAMP * charsAhead));
 }
@@ -122,7 +123,8 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   /** A bold label at the start of a source line; its end is found in read coordinates. */
   const label = (lineStart: number, lineEnd: number, content: number, item: boolean) => {
     const match = source.slice(content, lineEnd).match(LABEL);
-    if (!match) return false;
+    // A label names what follows: it carries a colon. Plain inline emphasis is prose.
+    if (!match || !(match[2].endsWith(":") || match[3])) return false;
     const sourceEnd = content + match[0].length;
     let end: number;
     if (!structured) end = sourceEnd;
@@ -162,18 +164,22 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
       continue;
     }
     // Paragraph, code and table blocks: a soft wrap or an adjacent code/table block is not a boundary.
+    // A continuation line is structural only inside a run of label/heading lines ("**A:** x\n**B:** y").
+    let structuralLine = true;
     for (const line of raw.matchAll(/[^\r\n]*(?:\r\n|\r|\n|$)/g)) {
       if (!line[0]) break;
       const text = line[0].replace(/[\r\n]+$/, "");
       const lineStart = start + line.index, lineEnd = lineStart + text.length;
       if (!text.trim()) continue;
-      if (block.kind === "paragraph" && BOLD_LINE.test(text)) {
+      const structural: boolean = block.kind === "paragraph" && structuralLine;
+      if (structural && BOLD_LINE.test(text) && !/:[*_]*\s*$/.test(text)) {
         if (units.length) pause(PAUSE.beforeHeading);
         push(readAt(lineStart), "heading", PAUSE.heading, true);
         fresh = true;
         continue;
       }
-      const body = block.kind === "paragraph" ? label(lineStart, lineEnd, lineStart + (text.length - text.trimStart().length), false) : false;
+      const body: number | false = structural ? label(lineStart, lineEnd, lineStart + (text.length - text.trimStart().length), false) : false;
+      structuralLine = body !== false;
       if (body === false && fresh) push(readAt(lineStart), "prose");
       fresh = false;
       if (block.kind === "paragraph") asides(body === false ? readAt(lineStart) : body, readAt(lineEnd), text, false);
@@ -183,21 +189,25 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   }
 
   // Read spans → engine spans. Units are cut points; an utterance without words joins its neighbour.
-  let segments: ProsodySegment[] = [];
-  let carry: number | undefined;
-  for (const [i, unit] of units.entries()) {
-    const readStart = carry ?? (i === 0 ? 0 : unit.at), readEnd = units[i + 1]?.at ?? readText.length;
-    if (readEnd < readStart) continue;
-    const segment = makeSegment(unit, readStart, readEnd);
-    if (WORD.test(segment.text)) { segments.push(segment); carry = undefined; continue; }
-    const previous = segments.at(-1);
-    if (previous) Object.assign(previous, makeSegment(previous, previous.read.start, readEnd), { pauseMs: Math.max(previous.pauseMs, unit.pauseMs) });
-    else carry = readStart;
-  }
-  if (!segments.length && projection.speechText.trim()) segments = [makeSegment({ kind: "prose", emphasis: false, pauseMs: 0 }, 0, readText.length)];
-  if (carry !== undefined && segments.length) {
-    const last = segments.at(-1)!;
-    Object.assign(last, makeSegment(last, last.read.start, readText.length));
+  let segments = mergeWordless(units.flatMap((unit, i) => {
+    const readStart = i === 0 ? 0 : unit.at, readEnd = units[i + 1]?.at ?? readText.length;
+    return readEnd < readStart ? [] : [makeSegment(unit, readStart, readEnd)];
+  }));
+
+  /** Every phase that cuts ends here: no engine request without a word, read ownership preserved. */
+  function mergeWordless(list: (ProsodySegment & { item?: boolean })[]) {
+    const out: (ProsodySegment & { item?: boolean })[] = [];
+    let carry: number | undefined;
+    for (const segment of list) {
+      const current = carry === undefined ? segment : { ...makeSegment(segment, carry, segment.read.end), pauseMs: segment.pauseMs };
+      if (WORD.test(current.text)) { out.push(current); carry = undefined; continue; }
+      const previous = out.at(-1);
+      if (previous) out[out.length - 1] = { ...makeSegment(previous, previous.read.start, current.read.end), pauseMs: Math.max(previous.pauseMs, current.pauseMs) };
+      else carry = current.read.start;
+    }
+    if (!out.length && projection.speechText.trim()) return [makeSegment({ kind: "prose", emphasis: false, pauseMs: 0 }, 0, readText.length)];
+    if (carry !== undefined && out.length) out[out.length - 1] = { ...makeSegment(out.at(-1)!, out.at(-1)!.read.start, readText.length), pauseMs: out.at(-1)!.pauseMs };
+    return out;
   }
 
   function makeSegment(unit: Pick<Unit, "kind" | "emphasis" | "pauseMs"> & { item?: boolean }, readStart: number, readEnd: number): ProsodySegment & { item?: boolean } {
@@ -217,55 +227,76 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     const text = readText.slice(start, end);
     return { start: start + text.length - text.trimStart().length, end: end - (text.length - text.trimEnd().length) };
   };
-  const readLength = (span: TextRange) => { const t = trim(span.start, span.end); return Math.max(0, t.end - t.start); };
+  /** A cut is valid only outside atomic projection edits: a replacement is never split. */
+  const clean = (read: number) => !projection.ranges.some((r) => r.kind !== "identity" && r.source.start < read && read < r.source.end);
+  /** Engine request size: projected speech characters, trimmed. */
+  const speechLength = (start: number, end: number) => makeSegment({ kind: "prose", emphasis: false, pauseMs: 0 }, start, end).text.length;
   const split = (segment: ProsodySegment & { item?: boolean }, cut: number, pauseMs: number) => [
     { ...makeSegment(segment, segment.read.start, cut), pauseMs },
     { ...makeSegment(segment, cut, segment.read.end), kind: segment.kind === "label" || segment.kind === "heading" ? "prose" as const : segment.kind },
   ];
 
-  // Oversized prose is packed like the long-read chunker: whole sentences up to the limit,
-  // whitespace word runs for a giant sentence, and never a hard cut inside a token.
+  // Size the requests. Whole sentences pack up to the budget, like the long-read chunker; a sentence
+  // over the budget splits into whitespace word runs. The budget ramps with the audio queued ahead,
+  // so a request after a short label or heading is ready before that audio ends. Cuts never fall
+  // inside a token or an atomic replacement; an oversized replacement stays one whole request.
   let ahead = 0;
-  segments = segments.flatMap((segment) => {
-    const length = readLength(segment.read);
-    if (length <= prosodyBudget(ahead, maxChars)) { ahead += length + 1; return [segment]; }
-    const pieces: { start: number; end: number; length: number }[] = [];
+  const budget = () => prosodyBudget(ahead, maxChars);
+  segments = mergeWordless(segments.flatMap((segment) => {
+    if (segment.kind === "heading" || segment.kind === "label" || segment.text.length <= budget()) {
+      ahead += segment.text.length + 1 + segment.pauseMs / MS_PER_CHAR;
+      return [segment];
+    }
+    const sentences: TextRange[] = [];
     const starts = sentenceStarts(segment);
     starts.forEach((from, i) => {
       const span = trim(from, starts[i + 1] ?? segment.read.end);
       if (span.end <= span.start) return;
-      if (span.end - span.start <= maxChars) { pieces.push({ ...span, length: span.end - span.start }); return; }
-      let run: (typeof pieces)[number] | undefined;
-      for (const word of readText.slice(span.start, span.end).matchAll(/\S+/g)) {
-        const at = span.start + word.index;
-        if (run && run.length + 1 + word[0].length <= maxChars) { run.end = at + word[0].length; run.length += 1 + word[0].length; }
-        else pieces.push(run = { start: at, end: at + word[0].length, length: word[0].length });
-      }
+      const last = sentences.at(-1);
+      if (last && !clean(span.start)) last.end = span.end; else sentences.push(span);
     });
-    const packed: typeof pieces = [];
-    for (const piece of pieces) {
-      const last = packed.at(-1);
-      if (last && last.length + 1 + piece.length <= prosodyBudget(ahead, maxChars)) { last.end = piece.end; last.length += 1 + piece.length; }
-      else { if (last) ahead += last.length + 1; packed.push({ ...piece }); }
+    const pieces: TextRange[] = [];
+    let current: TextRange | undefined;
+    const emit = () => {
+      const length = speechLength(current!.start, current!.end);
+      ahead += length + 1 + (TERMINAL.test(readText.slice(current!.start, current!.end)) ? PAUSE.sentence / MS_PER_CHAR : 0);
+      pieces.push(current!); current = undefined;
+    };
+    for (const sentence of sentences) {
+      if (current && speechLength(current.start, sentence.end) <= budget()) { current.end = sentence.end; continue; }
+      if (current) emit();
+      if (speechLength(sentence.start, sentence.end) <= budget()) { current = { ...sentence }; continue; }
+      const words = [...readText.slice(sentence.start, sentence.end).matchAll(/\S+/g)]
+        .map((w) => sentence.start + w.index).filter((at, i) => i === 0 || clean(at));
+      words.forEach((at, i) => {
+        const word = trim(at, words[i + 1] ?? sentence.end);
+        if (current && speechLength(current.start, word.end) <= budget()) { current.end = word.end; return; }
+        if (current) emit();
+        current = word;
+      });
     }
-    ahead += (packed.at(-1)?.length ?? 0) + 1;
+    if (current) emit();
+    ahead += segment.pauseMs / MS_PER_CHAR;
     const out: ProsodySegment[] = [];
     let rest: ProsodySegment & { item?: boolean } = segment;
-    for (const piece of packed.slice(1)) {
+    for (const piece of pieces.slice(1)) {
       const [head, tail] = split(rest, piece.start, 0);
       head.pauseMs = TERMINAL.test(head.text) ? PAUSE.sentence : 0;
       out.push(head);
       rest = tail;
     }
     return [...out, rest];
-  });
+  }));
 
   if (input.ask) {
     const at = segments.findLastIndex((s) => (s.kind === "prose" || s.kind === "aside") && !(s as { item?: boolean }).item);
     const question = segments[at];
     if (question && /\?["'”’)]*$/.test(question.text)) {
-      const cut = sentenceStarts(question).at(-1)!;
-      if (WORD.test(readText.slice(question.read.start, cut))) segments.splice(at, 1, ...split(question, cut, PAUSE.askQuestion));
+      const cut = trim(sentenceStarts(question).at(-1)!, question.read.end).start;
+      if (clean(cut) && WORD.test(readText.slice(question.read.start, cut))) {
+        segments.splice(at, 1, ...split(question, cut, PAUSE.askQuestion));
+        segments = mergeWordless(segments);
+      }
     }
   }
 
@@ -288,10 +319,13 @@ function planChunks(readText: string, segments: ProsodySegment[], maxChars: numb
   for (const [i, segment] of segments.entries()) {
     const group = groups.at(-1);
     const count = group ? group[1] - group[0] : 0;
-    const length = readText.slice(segment.read.start, segment.read.end).trim().length;
+    const length = segment.text.length;
     const fits = group && groups.length > 1 && size + 1 + length <= prosodyBudget(before, maxChars) && (groups.length > 2 || count < concurrency);
     if (fits) { group[1] = i + 1; size += 1 + length; }
-    else { before += group ? size + 1 : 0; groups.push([i, i + 1]); size = length; }
+    else {
+      if (group) before += size + 1 + segments.slice(group[0], group[1]).reduce((ms, s) => ms + s.pauseMs, 0) / MS_PER_CHAR;
+      groups.push([i, i + 1]); size = length;
+    }
   }
   return groups.map(([first, end], i) => {
     const start = i === 0 ? 0 : segments[first].read.start;

@@ -3,6 +3,7 @@ import { projectSpeakableText } from "../speakable-text";
 import { chunkTextForTTS } from "../tts";
 import { planProsody, PROSODY_SYNTH_CONCURRENCY, type ProsodyPlan, type ProsodySegment } from "../tts/prosody";
 import { createSegmentScheduler } from "../tts/prosody-schedule";
+import { runLongRead, type LongReadChunk } from "../tts/long-read";
 
 /** Deterministic virtual time: timers fire in order, and every microtask settles between them. */
 class FakeClock {
@@ -28,6 +29,34 @@ class FakeClock {
 const plan = (text: string, ask = false) => planProsody({ readText: text, projection: projectSpeakableText(text, [], "edge"), ask });
 
 describe("createSegmentScheduler: bounded, ordered, abortable", () => {
+  it("B4: a rejected chunk keeps ownership of its successful siblings, including a late one, and close() disposes them", async () => {
+    const clock = new FakeClock(), p = plan("## Status\n\n- One\n- Two\n- Three\n- Four\n- Five");
+    expect(p.chunks.map((c) => [c.first, c.end])).toEqual([[0, 1], [1, 4], [4, 6]]);
+    const disposed: number[] = [];
+    const scheduler = createSegmentScheduler(p, async (_s, index) => {
+      await clock.sleep(index === 1 ? 2 : index === 3 ? 40 : 5);
+      if (index === 1) throw new Error("engine down");
+      return index;
+    }, { signal: new AbortController().signal, dispose: (result) => disposed.push(result) });
+    expect(await clock.until(scheduler.chunk(0))).toEqual([0]);
+    await expect(clock.until(scheduler.chunk(1))).rejects.toThrow("engine down");
+    await clock.until(scheduler.close());
+    expect(disposed.sort()).toEqual([2]);
+  });
+  it("B4: a chunk that settles after close() is disposed, never delivered", async () => {
+    const clock = new FakeClock(), p = plan("## Status\n\n- One\n- Two\n- Three");
+    const disposed: number[] = [];
+    const scheduler = createSegmentScheduler(p, async (_s, index) => { await clock.sleep(10 * (index + 1)); return index; },
+      { signal: new AbortController().signal, dispose: (result) => disposed.push(result) });
+    const late = scheduler.chunk(1);
+    late.catch(() => {});
+    await clock.until(scheduler.close());
+    await expect(clock.until(late)).rejects.toThrow();
+    // 0, 1 and 2 ran (concurrency 3) and were never handed out; 3 was queued and never started.
+    expect(p.chunks.map((c) => [c.first, c.end])).toEqual([[0, 1], [1, 4]]);
+    expect(disposed.sort()).toEqual([0, 1, 2]);
+    expect(new Set(disposed).size).toBe(disposed.length);
+  });
   const doc = "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three\n- Four\n- Five\n\nDone.";
   it("never exceeds the concurrency limit and starts segments strictly in order", async () => {
     const clock = new FakeClock(), p = plan(doc);
@@ -111,11 +140,29 @@ const corpus: [string, string, boolean?][] = [
   ["plain short", "New long read."],
   ["plain long", Array.from({ length: 30 }, (_, i) => `Sentence ${i} has enough words to fill the next chunk.`).join(" ")],
   ["labels then long paragraph", "**Summary:** all green.\n\n" + Array.from({ length: 12 }, (_, i) => `Detail ${i} explains one more part of the change.`).join(" ")],
+  ["Sol B2: short label, 399-char sentence", "**X:** " + "word ".repeat(79) + "end."],
+  ["Sol B2: short heading, 399-char sentence", "## A\n" + "word ".repeat(79) + "end."],
+  ["heading then long sentences", "# A\n" + Array.from({ length: 12 }, (_, i) => `Sentence ${i} has a fair number of plain words inside it.`).join(" ")],
 ];
 
-function mainFirstAudioMs(text: string) {
-  return SYNTH(projectSpeakableText(chunkTextForTTS(text)[0], [], "edge").speechText);
+type Played = { index: number; startMs: number; endMs: number };
+/** The real pure long-read coordinator, fake synthesis and player, virtual time. */
+async function driveLongRead(texts: string[], synthMs: (index: number) => Promise<number>, clock: FakeClock): Promise<Played[]> {
+  const played: Played[] = [];
+  const signal = new AbortController().signal;
+  await clock.until(runLongRead(texts, "virtual", signal, {
+    synthesize: async (_text, index) => ({ audioFile: `virtual-${index}`, durationMs: await synthMs(index), wordBoundaries: [] }) satisfies LongReadChunk,
+    play: (chunk, _text, info) => {
+      const startMs = clock.now;
+      return { started: Promise.resolve(true),
+        exited: clock.sleep(chunk.durationMs).then(() => { played.push({ index: info.chunk_index, startMs, endMs: clock.now }); return { status: "completed" as const, stopped_at_ms: chunk.durationMs }; }) };
+    },
+    saveHistory: async () => {},
+    dispose: () => {},
+  }));
+  return played;
 }
+const stallsOf = (played: Played[]) => played.slice(1).map((p, i) => p.startMs - played[i].endMs);
 
 async function simulate(p: ProsodyPlan, lookahead?: number, concurrency?: number) {
   const clock = new FakeClock();
@@ -123,19 +170,22 @@ async function simulate(p: ProsodyPlan, lookahead?: number, concurrency?: number
     await clock.sleep(SYNTH(segment.text) + (index >= p.chunks[0].end ? DECODE : 0));
     return segment;
   }, { signal: new AbortController().signal, lookahead, concurrency });
-  const ready: number[] = [];
-  for (let i = 0; i < p.chunks.length; i++) {
-    await clock.until(scheduler.chunk(i));
-    ready.push(clock.now + (i === 0 ? 0 : ENCODE));
-  }
-  const stalls: number[] = [];
-  let end = 0;
-  p.chunks.forEach((chunk, i) => {
-    const start = i === 0 ? ready[0] : Math.max(ready[i], end);
-    if (i > 0) stalls.push(Math.max(0, ready[i] - end));
-    end = start + p.segments.slice(chunk.first, chunk.end).reduce((ms, s) => ms + AUDIO(s.text) + s.pauseMs, 0);
-  });
-  return { firstAudioMs: ready[0], stalls };
+  const played = await driveLongRead(p.chunks.map((c) => c.text), async (index) => {
+    const segments = await scheduler.chunk(index);
+    if (index > 0) await clock.sleep(ENCODE);
+    return segments.reduce((ms, s) => ms + AUDIO(s.text) + s.pauseMs, 0);
+  }, clock);
+  return { firstAudioMs: played[0].startMs, stalls: stallsOf(played) };
+}
+
+async function simulateMain(text: string) {
+  const clock = new FakeClock(), texts = chunkTextForTTS(text);
+  const played = await driveLongRead(texts, async (index) => {
+    const speech = projectSpeakableText(texts[index], [], "edge").speechText;
+    await clock.sleep(SYNTH(speech));
+    return AUDIO(speech);
+  }, clock);
+  return { firstAudioMs: played[0].startMs, stalls: stallsOf(played) };
 }
 
 describe("latency vs main (fake timed synth)", () => {
@@ -143,8 +193,11 @@ describe("latency vs main (fake timed synth)", () => {
     const p = plan(text, ask);
     expect(p.chunks[0].end - p.chunks[0].first).toBe(1);
     const { firstAudioMs, stalls } = await simulate(p);
-    expect(firstAudioMs).toBeLessThanOrEqual(mainFirstAudioMs(text));
-    expect(stalls.every((ms) => ms === 0)).toBe(true);
+    const main = await simulateMain(text);
+    // The only allowance: the spec's closing period on an emphasized chunk 0 ("A" → "A.") costs its characters.
+    const added = p.segments[0].emphasis ? p.segments[0].text.length - (p.segments[0].speech.end - p.segments[0].speech.start) : 0;
+    expect(firstAudioMs).toBeLessThanOrEqual(main.firstAudioMs + 5 * added);
+    expect(stalls).toEqual(stalls.map(() => 0));
   });
   it("the model detects stalls: serial synthesis (one request at a time, no prefetch) stalls structured reads", async () => {
     let stalled = 0;

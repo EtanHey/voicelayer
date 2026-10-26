@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { projectSpeakableText } from "../speakable-text";
 import { chunkTextForTTS, TTS_CHUNK_MAX_CHARS } from "../tts";
 import { PAUSE, PROSODY_MAX_CHARS, planProsody, type ProsodyPlan } from "../tts/prosody";
+import type { SpeakableText } from "../speakable-text";
 import { projectStructuredSpeech } from "../tts/structured-speech";
 
 /** voice_speak path: the read text is the sanitized markdown itself. */
@@ -226,6 +227,71 @@ describe("single owner of chunk boundaries (integrates with the long-read chunke
   });
 });
 
+/** Every engine request is nonempty and within the limit, unless it is one atomic replacement or one token. */
+function expectBounded(plan: ProsodyPlan, projection: SpeakableText) {
+  for (const segment of plan.segments) {
+    expect(segment.text.length).toBeGreaterThan(0);
+    if (segment.text.length <= PROSODY_MAX_CHARS) continue;
+    const atomic = projection.ranges.some((r) => r.kind !== "identity" && r.speech.start <= segment.speech.start && segment.speech.end <= r.speech.end + 1);
+    expect(atomic || !/\s/.test(segment.text)).toBe(true);
+  }
+}
+
+describe("round 2 (Sol, TEAM-PROSODY-V2A-SOL)", () => {
+  it("B1: a long code fence is never cut inside; no empty request", () => {
+    const raw = "Before\n```ts\n" + "const value = foo(42);\n".repeat(50) + "```\nAfter";
+    const projection = projectSpeakableText(raw, [], "edge");
+    const plan = speakPlan(raw);
+    expectSound(plan, projection.speechText);
+    expectBounded(plan, projection);
+    expect(texts(plan)).toEqual(["Before code block After"]);
+  });
+  it("B1: an oversized link replacement is one whole request, never cut and never empty", () => {
+    const raw = "See [" + "label word ".repeat(80) + "](https://example.com) now.";
+    const projection = projectSpeakableText(raw, [], "edge");
+    const plan = speakPlan(raw);
+    expectSound(plan, projection.speechText);
+    expectBounded(plan, projection);
+  });
+  it("B1: the selection route holds the same invariants", () => {
+    const source = "See [" + "label word ".repeat(80) + "](https://example.com) now.\n\n" + "Plain words follow here. ".repeat(30);
+    const plan = selectionPlan(source);
+    const projection = projectSpeakableText(plan.readText, [], "edge");
+    expectSound(plan, projection.speechText);
+    expectBounded(plan, projection);
+  });
+  it("B2: after a short label or heading, the next request is small enough to be ready in time", () => {
+    for (const raw of ["**X:** " + "word ".repeat(79) + "end.", "## A\n" + "word ".repeat(79) + "end."]) {
+      const plan = speakPlan(raw);
+      expectSound(plan, projectSpeakableText(raw, [], "edge").speechText);
+      expect(plan.segments[0].text.length).toBeLessThanOrEqual(2);
+      expect(plan.segments[1].text.length).toBeLessThan(120);
+      expect(plan.segments[1].pauseMs).toBe(0); // a word-run cut inside a sentence adds no pause
+    }
+  });
+  it("B3: a soft-wrapped inline bold word is prose, through both routes", () => {
+    const raw = "This is\n**very** important to me.";
+    for (const plan of [speakPlan(raw), selectionPlan(raw)]) {
+      expect(texts(plan)).toEqual(["This is very important to me."]);
+      expect(plan.segments[0].emphasis).toBe(false);
+    }
+    expect(texts(speakPlan("**very** important to me."))).toEqual(["very important to me."]);
+    expect(speakPlan("Intro line\n**very important**").segments).toHaveLength(1);
+  });
+  it("B3: colon labels, standalone bold headings and runs of label lines keep their structure", () => {
+    expect(texts(speakPlan("**Label:** text"))).toEqual(["Label.", "text"]);
+    expect(texts(speakPlan("**Label**: text"))).toEqual(["Label.", "text"]);
+    expect(texts(speakPlan("**A:** first\n**B:** second"))).toEqual(["A.", "first", "B.", "second"]);
+    expect(texts(selectionPlan("**A:** first\n**B:** second"))).toEqual(["A.", "first", "B.", "second"]);
+    expect(texts(speakPlan("**Orchard route**\nAn orchard route follows three stops."))).toEqual(["Orchard route.", "An orchard route follows three stops."]);
+  });
+  it("N2: plain prose chunk parity holds on the normalized token stream when lines wrap", () => {
+    const raw = "Sentence has enough plain words.\n".repeat(20);
+    const plan = speakPlan(raw);
+    expect(plan.chunks.map((c) => c.text.split(/\s+/).join(" "))).toEqual(chunkTextForTTS(raw));
+  });
+});
+
 describe("corpus invariants (edge and clone)", () => {
   const corpus = [
     "# Heading\nDescription. Next.\n\n**Label:** details\nOptions:\n- Small item\n- This item contains six or more words.\nAside (quiet words) done.",
@@ -235,10 +301,14 @@ describe("corpus invariants (edge and clone)", () => {
     "שלום עולם. זה משפט.\n\n- פריט אחד\n- פריט שני",
     "",
     "   ",
+    "Before\n```ts\n" + "const value = foo(42);\n".repeat(50) + "```\nAfter",
+    "See [" + "label word ".repeat(80) + "](https://example.com) now.",
+    "| A | B |\n| --- | --- |\n" + "| cell words here | more cell words |\n".repeat(40),
   ];
   for (const engine of ["edge", "clone"] as const) for (const raw of corpus) it(`${engine}: ${JSON.stringify(raw.slice(0, 30))}`, () => {
     const projection = projectSpeakableText(raw, [], engine);
     expectSound(speakPlan(raw, { engine }), projection.speechText);
     expectSound(speakPlan(raw, { engine, ask: true }), projection.speechText);
+    expectBounded(speakPlan(raw, { engine }), projection);
   });
 });

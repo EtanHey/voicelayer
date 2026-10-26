@@ -28,8 +28,15 @@ export function createSegmentScheduler<T>(
 ): SegmentScheduler<T> {
   const tasks: Task<T>[] = [];
   const inFlight = new Set<Promise<unknown>>();
-  const handedOut = new Set<number>();
-  let next = 0, running = 0, stopped: unknown;
+  /** Ownership transfers to the caller only when a whole chunk is delivered; everything else is ours. */
+  const handedOut = new Set<number>(), released = new Set<number>();
+  let next = 0, running = 0, stopped: unknown, closed = false;
+  const release = (index: number) => {
+    const result = tasks[index]?.result;
+    if (!result || handedOut.has(index) || released.has(index)) return;
+    released.add(index);
+    dispose?.(result.value);
+  };
   const stop = (reason: unknown) => {
     if (stopped !== undefined) return;
     stopped = reason;
@@ -65,18 +72,23 @@ export function createSegmentScheduler<T>(
       if (!chunk) return Promise.reject(new Error(`No prosody chunk ${index}`));
       enqueue(plan.chunks[Math.min(index + lookahead, plan.chunks.length - 1)].end);
       pump();
-      for (let i = chunk.first; i < chunk.end; i++) handedOut.add(i);
-      return Promise.all(tasks.slice(chunk.first, chunk.end).map((task) => task.promise));
+      return Promise.all(tasks.slice(chunk.first, chunk.end).map((task) => task.promise)).then((values) => {
+        if (closed) {
+          for (let i = chunk.first; i < chunk.end; i++) release(i);
+          throw new Error("Synthesis closed");
+        }
+        for (let i = chunk.first; i < chunk.end; i++) handedOut.add(i);
+        return values;
+      });
     },
     async settled() {
       while (inFlight.size) await Promise.allSettled([...inFlight]);
     },
     async close() {
+      closed = true;
       stop(new Error("Synthesis closed"));
       await this.settled();
-      tasks.forEach((task, index) => {
-        if (task.result && !handedOut.has(index)) { const { value } = task.result; task.result = undefined; dispose?.(value); }
-      });
+      tasks.forEach((_, index) => release(index));
     },
   };
 }
