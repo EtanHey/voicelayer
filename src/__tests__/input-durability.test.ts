@@ -384,8 +384,10 @@ describe("input recording durability", () => {
   }
 
   beforeEach(() => {
-    tmpRoot = mkdtempSync(join(process.env.PRIV11_PRIVATE_ROOT ?? tmpdir(),
-      process.env.PRIV11_NONCE ? `CANARY-HOME-${process.env.PRIV11_NONCE}-` : "voicelayer-input-durability-"));
+    // macOS tmpdir() can contain /var -> /private/var; archive admission rejects aliases.
+    tmpRoot = fsModule.realpathSync(mkdtempSync(join(
+      process.env.PRIV11_PRIVATE_ROOT ?? process.env.VOICELAYER_TEST_RUN_ROOT ?? tmpdir(),
+      process.env.PRIV11_NONCE ? `CANARY-HOME-${process.env.PRIV11_NONCE}-` : "voicelayer-input-durability-")));
     retainedPath = join(tmpRoot, "last-recording.wav");
     savedRetainedPath = process.env.QA_VOICE_RETAINED_RECORDING_PATH;
     savedRecordingsDir = process.env.QA_VOICE_RECORDINGS_DIR;
@@ -393,6 +395,7 @@ describe("input recording durability", () => {
     savedRecordingHoldPath = process.env.QA_VOICE_RECORDING_HOLD_PATH;
     process.env.QA_VOICE_RETAINED_RECORDING_PATH = retainedPath;
     process.env.QA_VOICE_RECORDINGS_DIR = join(tmpRoot, "recordings");
+    mkdirSync(process.env.QA_VOICE_RECORDINGS_DIR, { mode: 0o700 });
     process.env.QA_VOICE_RECORDING_STATE_PATH = join(
       tmpRoot,
       "recording-state.json",
@@ -524,7 +527,7 @@ describe("input recording durability", () => {
         try {
           if (surface === "archived") {
             archiveDir = join(process.env.QA_VOICE_RECORDINGS_DIR!, "2026-06-25", "2026-06-25T10-11-12-000Z-abcd1234");
-            mkdirSync(archiveDir, { recursive: true });
+            mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
             const audioPath = join(archiveDir, "audio.wav");
             writeFileSync(audioPath, makeWav(makePcmChunk()));
             backendMode = "hang";
@@ -582,7 +585,7 @@ describe("input recording durability", () => {
         ? join(tmpRoot, "PRIVATE_OWNER", "rejected.wav")
         : join(process.env.QA_VOICE_RECORDINGS_DIR!, "2026-06-25", "2026-06-25T10-11-12-000Z-abcd1234", "audio.wav");
       if (failure === "backend error") {
-        mkdirSync(join(audioPath, ".."), { recursive: true });
+        mkdirSync(join(audioPath, ".."), { recursive: true, mode: 0o700 });
         writeFileSync(audioPath, makeWav(makePcmChunk()));
         backendMode = "throw-on-get";
       }
@@ -3165,7 +3168,7 @@ describe("input recording durability", () => {
       "2026-06-25",
       "2026-06-25T10-11-12-000Z-abcd1234",
     );
-    mkdirSync(archiveDir, { recursive: true });
+    mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
     const audioPath = join(archiveDir, "audio.wav");
     const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
     writeFileSync(audioPath, makeWav(makePcmChunk()));
@@ -3198,7 +3201,7 @@ describe("input recording durability", () => {
     const { retranscribeRecordingCapture } = await import("../input");
     const capture = (day: string, id: string, source = "voicebar") => {
       const dir = join(process.env.QA_VOICE_RECORDINGS_DIR!, day, id);
-      mkdirSync(dir, { recursive: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
       writeFileSync(join(dir, "audio.wav"), makeWav(makePcmChunk()));
       writeFileSync(join(dir, "metadata.json"), JSON.stringify({
         source, created_at: `${day}T10:00:00.000Z`, transcription_status: "cancelled",
@@ -3240,7 +3243,7 @@ describe("input recording durability", () => {
       "2026-06-25",
       "2026-06-25T10-11-12-000Z-repair123",
     );
-    mkdirSync(archiveDir, { recursive: true });
+    mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
     const audioPath = join(archiveDir, "audio.wav");
     const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
     const metadataPath = join(archiveDir, "metadata.json");
@@ -3288,7 +3291,7 @@ describe("input recording durability", () => {
       "2026-06-25",
       "2026-06-25T10-11-12-000Z-menu1234",
     );
-    mkdirSync(archiveDir, { recursive: true });
+    mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
     const archivedAudioPath = join(archiveDir, "audio.wav");
     const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
     const metadataPath = join(archiveDir, "metadata.json");
@@ -3352,7 +3355,7 @@ describe("input recording durability", () => {
       "2026-06-25",
       "2026-06-25T10-11-12-000Z-trimlast",
     );
-    mkdirSync(archiveDir, { recursive: true });
+    mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
     const archivedAudioPath = join(archiveDir, "audio.wav");
     const archiveWav = makePttWavWithLongQuietTail();
     const retainedWav = makeWav(pcmWithConstantSample(2000, 5000));
@@ -3392,7 +3395,7 @@ describe("input recording durability", () => {
       "2026-06-25",
       "2026-06-25T10-11-12-000Z-trimhist",
     );
-    mkdirSync(archiveDir, { recursive: true });
+    mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
     const audioPath = join(archiveDir, "audio.wav");
     writeFileSync(audioPath, makePttWavWithLongQuietTail());
     writeFileSync(
@@ -3584,7 +3587,7 @@ describe("input recording durability", () => {
       "2026-06-25",
       "2026-06-25T10-11-12-000Z-riffchunks",
     );
-    mkdirSync(archiveDir, { recursive: true });
+    mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
     const archivedAudioPath = join(archiveDir, "audio.wav");
     const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
     const pcm = makePcmChunk();
@@ -3625,7 +3628,7 @@ describe("input recording durability", () => {
       "2026-06-25",
       "2026-06-25T10-11-12-000Z-swapped",
     );
-    mkdirSync(archiveDir, { recursive: true });
+    mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
     const archivedAudioPath = join(archiveDir, "audio.wav");
     const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
     const retainedWav = makeWav(makePcmChunk());
@@ -3902,6 +3905,8 @@ describe("input recording durability", () => {
     it("blocks voice_speak while exact-path History retranscription is pending", async () => {
       const archive = writeAskArchive();
       expect(fsModule.statSync(process.env.QA_VOICE_RECORDINGS_DIR!).mode & 0o777).toBe(0o700);
+      expect(fsModule.realpathSync(process.env.QA_VOICE_RECORDINGS_DIR!))
+        .toBe(process.env.QA_VOICE_RECORDINGS_DIR!);
       const audioPath = join(archive.archiveDir, "audio.wav");
       backendMode = "hang";
       const speakSpy = spyOn(tts, "speak").mockResolvedValue({});
