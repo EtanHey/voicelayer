@@ -8,6 +8,13 @@ const repo = join(import.meta.dir, "..");
 const intended = 'import { test, expect } from "bun:test"; test("intended fixture", () => expect(true).toBe(true));';
 const counterfeit = 'import { test } from "bun:test"; test("counterfeit archive discovered", () => { throw new Error("COUNTERFEIT_ARCHIVE"); });';
 
+function clearAgentReporterEnv(env: NodeJS.ProcessEnv) {
+  // Bun's agent reporter hides passing test names that these fixtures assert.
+  delete env.CLAUDECODE;
+  delete env.AGENT;
+  delete env.REPL_ID;
+}
+
 function put(root: string, path: string, text: string) {
   const target = join(root, path);
   mkdirSync(dirname(target), { recursive: true });
@@ -35,9 +42,13 @@ test("Bun bare filters discover archives while explicit files select only the in
     const target = "src/__tests__/selection.test.ts";
     put(root, target, intended);
     put(root, `docs.local/archived/${target}`, counterfeit);
-    const run = (path: string) => spawnSync(process.execPath, ["test", path], {
-      cwd: root, env: process.env, encoding: "utf8", timeout: 10_000,
-    });
+    const run = (path: string) => {
+      const env = { ...process.env };
+      clearAgentReporterEnv(env);
+      return spawnSync(process.execPath, ["test", path], {
+        cwd: root, env, encoding: "utf8", timeout: 10_000,
+      });
+    };
     const bare = run(target);
     expect(bare.error).toBeUndefined();
     expect(bare.status).toBe(1);
@@ -63,9 +74,11 @@ for (const suite of ["brew-cask-sync", "deploy-check"]) {
       const target = `src/__tests__/${suite}.test.ts`;
       put(root, target, intended);
       put(root, `docs.local/archived/${target}`, counterfeit);
+      const env = { ...process.env };
+      clearAgentReporterEnv(env);
       const result = spawnSync(process.execPath, ["test", "./tests/pre-push-git-env.test.ts",
         "--test-name-pattern", `${suite} fixtures resist`], {
-        cwd: root, env: process.env, encoding: "utf8", timeout: 15_000,
+        cwd: root, env, encoding: "utf8", timeout: 15_000,
       });
       expect(result.error).toBeUndefined();
       expect({ status: result.status, stderr: result.stderr }).toEqual({
@@ -90,10 +103,13 @@ test("real cross-run wrapper excludes archived tests through its shared src tree
     put(root, "src/docs.local/archived/tests/hook-orphan-daemon.test.ts", counterfeit);
     const runRoot = join(root, "run");
     mkdirSync(runRoot);
-    const result = withChildFixtureEnv({ VOICELAYER_TEST_RUN_ROOT: runRoot }, () => spawnSync("bash", [join(root, "tests/test_hook_orphan_daemon.sh"), "--cross-run"], {
-      cwd: root, env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}` },
-      encoding: "utf8", timeout: 20_000,
-    }));
+    const result = withChildFixtureEnv({ VOICELAYER_TEST_RUN_ROOT: runRoot }, () => {
+      const env = { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH}` };
+      clearAgentReporterEnv(env);
+      return spawnSync("bash", [join(root, "tests/test_hook_orphan_daemon.sh"), "--cross-run"], {
+        cwd: root, env, encoding: "utf8", timeout: 20_000,
+      });
+    });
     expect(result.error).toBeUndefined();
     expect({ status: result.status, stdout: result.stdout, stderr: result.stderr }).toEqual({
       status: 0, stdout: expect.stringContaining("intended fixture"), stderr: "",
