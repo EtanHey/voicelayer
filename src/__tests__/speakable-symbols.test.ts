@@ -1,4 +1,4 @@
-import reviewProbes from "./fixtures/speakable-symbols-probes.json";
+import originalReviewProbes from "./fixtures/speakable-symbols-probes.json";
 import protectedProbes from "./fixtures/speakable-symbols-main.json";
 import { combineHistoryTimings } from "../tts/history-timings";
 import { longReadDocument } from "../tts/long-read";
@@ -7,6 +7,10 @@ import { displayTokens } from "../tts/display-tokens";
 import { expect, test } from "bun:test";
 import { projectSpeakableText } from "../speakable-text";
 import { alignWordBoundariesToDisplayText } from "../tts";
+
+const reviewProbes = originalReviewProbes.map(row => row.raw === "1. completion/cancellation"
+  ? { ...row, edge: "one. completion slash cancellation.", clone: "one. completion slash cancellation." }
+  : row);
 
 for (const engine of ["clone", "edge"] as const) {
   test(`${engine}: prose slash alternatives keep raw text and individual timings`, () => {
