@@ -249,7 +249,7 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     spies.push(spyOn(runner, "runLongRead").mockImplementation((texts, id, signal, deps, lookahead) => {
       entered.push(deps.archiveContext);
       return realRun(texts, id, signal, { ...deps,
-        synthesize: async text => { synthesized.push(text); return { audioFile: "synthetic-no-file", durationMs: 1, wordBoundaries: [] }; },
+        synthesize: async (text, index) => { synthesized.push(text); return { audioFile: `synthetic-no-file-${index}`, durationMs: 1, wordBoundaries: [] }; },
         play: chunk => { played.push(chunk.audioFile); return { started: Promise.resolve(false),
           exited: Promise.resolve({ status: "failed", stopped_at_ms: 0 }) }; },
         saveHistory: async () => { throw new Error("Unstarted player must not save history"); },
@@ -265,8 +265,8 @@ describe("socket raw speech ingress (real creator/store/queue; canonical isolate
     // PROSODY v2 (b): the bold-only first line is planned as its own emphasized utterance, so this raw
     // fixture is two chunks and lookahead may synthesize chunk 1 before chunk 0's player fails. Every
     // synthesized chunk is still disposed exactly once, and only chunk 0 ever reached a player.
-    expect(synthesized.length).toBeGreaterThanOrEqual(1); expect(played).toEqual(["synthetic-no-file"]);
-    expect(disposed).toEqual(synthesized.map(() => "synthetic-no-file"));
+    expect(synthesized.length).toBeGreaterThanOrEqual(1); expect(played).toEqual(["synthetic-no-file-0"]);
+    expect([...disposed].sort()).toEqual(synthesized.map((_, index) => `synthetic-no-file-${index}`));
     expect(events).toContainEqual(expect.objectContaining({ type: "state", request_id: "runner", text_hash: normalizedSpeechHash(raw) }));
     expect(JSON.stringify(events)).not.toContain(contexts[0].path); expect(JSON.stringify(events)).not.toContain("archiveContext");
   });

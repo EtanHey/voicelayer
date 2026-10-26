@@ -631,6 +631,12 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(JSON.parse(serializeEvent(preparing)).long_read.display).toEqual(preparing.long_read.display);
     expect(preparing.long_read.display.blocks.map((block: { marker: string }) => block.marker)).toEqual([undefined, undefined]);
     for (const event of played) expect(event.long_read.display.text).toBe(event.text);
+    // Each receipt carries its own slice of the list blocks, not an empty or whole-document layout.
+    expect(played.map(event => event.long_read.display.blocks.map((block: { kind: string; word_start: number; word_end: number; starts_block: boolean }) =>
+      [block.kind, block.word_start, block.word_end, block.starts_block]))).toEqual([
+      [["list-item", 0, 1, true]],
+      [["list-item", 0, 1, false], ["list-item", 1, 3, true]],
+    ]);
     expect(synths.map(synth => synth.argv.find(arg => arg.startsWith("--text=")))).toEqual(["--text=two.", "--text=Alpha.", "--text=3.", "--text=Beta."]);
     expect(events.filter(event => event.type === "subtitle").flatMap(event => event.words.map((word: { text: string }) => word.text)))
       .toEqual(["2.", "Alpha.", "3.", "Beta."]);

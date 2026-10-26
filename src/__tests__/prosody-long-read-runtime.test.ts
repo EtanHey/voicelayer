@@ -13,13 +13,15 @@ import { projectStructuredSpeech } from "../tts/structured-speech";
  * plain prose is untouched. Every child (edge synth, ffmpeg, player) is a fake. */
 describe("prosody long reads (fake engine, decoder and player children)", () => {
   const originalSpawn = Bun.spawn, originalSpawnSync = Bun.spawnSync;
-  let synths: { argv: string[]; media: string }[], encodes: string[], decodes: string[], players: { argv: string[]; synthCount: number; encodeCount: number }[];
+  let synths: { argv: string[]; media: string }[], encodes: string[], decodes: string[], players: { argv: string[]; synthCount: number; encodeCount: number; decodeCount: number }[];
   let spies: ReturnType<typeof spyOn>[], events: any[], handles: { done: Promise<void> }[];
   let holdAfter: number;
+  let holdTail = false, pendingTail = 0, releaseTails: (() => void)[] = [];
   let releaseHeld: (() => void)[];
 
   beforeEach(() => {
     synths = []; encodes = []; decodes = []; players = []; spies = []; events = []; handles = []; holdAfter = Infinity; releaseHeld = [];
+    holdTail = false; pendingTail = 0; releaseTails = [];
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
     spies.push(spyOn(socket, "broadcast").mockImplementation((event) => events.push(structuredClone(event))));
     spies.push(spyOn(recording, "getEffectiveRecordingState").mockReturnValue("idle"));
@@ -51,16 +53,23 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
           // 100 ms silence, 300 ms tone per word slot (fixture metadata), 200 ms silence: about 1 s.
           const pcm = new Float32Array(24000);
           for (let i = 2400; i < 19200; i++) pcm[i] = 0.3 * Math.sin(2 * Math.PI * i / 48);
+          if (holdTail) {
+            pendingTail++;
+            let finish!: () => void;
+            const exited = new Promise<number>((r) => { finish = () => { pendingTail--; r(0); }; releaseTails.push(finish); });
+            return { pid: 301, stdout: new Blob([pcm.buffer]).stream(), exited, kill: () => finish() };
+          }
           return { pid: 301, stdout: new Blob([pcm.buffer]).stream(), exited: Promise.resolve(0), kill() {} };
         }
         if (argv.includes("-ss") || argv.includes("concat")) writeFileSync(argv.at(-1)!, "derived audio");
         return { pid: 302, stdout: new Blob([new Uint8Array(8)]).stream(), exited: Promise.resolve(0), kill() {} };
       }
-      players.push({ argv, synthCount: synths.length, encodeCount: encodes.length });
+      players.push({ argv, synthCount: synths.length, encodeCount: encodes.length, decodeCount: decodes.length });
       return { pid: 400 + players.length, exited: Promise.resolve(0), kill() {} };
     }) as any;
   });
   afterEach(async () => {
+    for (const release of releaseTails.splice(0)) release();
     stopPlayback(); for (const release of releaseHeld) release();
     for (const h of handles) await h.done; await awaitCurrentPlayback(); await flushSpeechArchives();
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
@@ -96,6 +105,15 @@ describe("prosody long reads (fake engine, decoder and player children)", () => 
     expect(encodes.every((file) => file.endsWith(".mp3"))).toBe(true);
     // Segment files of spliced chunks were decoded, then removed.
     for (const synth of synths.slice(1)) { expect(decodes).toContain(synth.media); expect(existsSync(synth.media)).toBe(false); }
+  });
+  it("B3: the first player spawns before chunk 0's tail is decoded", async () => {
+    const h = start("## Status"); await h.done;
+    expect(players[0].decodeCount).toBe(0);
+  });
+  it("B1: completion reaps chunk 0's tail decoder; none is pending after done", async () => {
+    holdTail = true;
+    const h = start("## Status"); await h.done;
+    expect(pendingTail).toBe(0);
   });
   it("a selection read plans from its structured display", async () => {
     const structure = projectStructuredSpeech("## Choose\n- Red apple\n- Green pear");

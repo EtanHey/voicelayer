@@ -2569,7 +2569,11 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         let started = false;
         let resolveStarted!: (value: boolean) => void;
         const start = new Promise<boolean>((resolve) => { resolveStarted = resolve; });
-        const playback = playAudioNonBlocking(chunk.audioFile, {
+        // PROSODY: chunk 0's tail is measured only once its player starts; a chunk 0 that never plays
+        // releases later chunks with a zero tail, so nothing waits on a decode that will not happen.
+        const firstAudio = prosodyRead && info.chunk_index === 0 ? prosodyRead : undefined;
+        let playback: ReturnType<typeof playAudioNonBlocking>;
+        try { playback = playAudioNonBlocking(chunk.audioFile, {
           speechArchive: archive,
           ...(startPaused ? { startPaused: true } : {}),
           text, voice: chunkVoices.get(chunk.audioFile) ?? profile.voice, durationMs: chunk.durationMs,
@@ -2592,14 +2596,15 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
               console.error(`[tts] first_audio_ms=${ms} profile=${kind} engine=${engine} voice=${voice} chars=${chars}`);
             }
             started = true; resolveStarted(true); audioStarted = true; handleStarted();
+            firstAudio?.firstAudioStarted(chunk.audioFile);
           },
           onCompleted: (outcome) => {
-            if (!started) resolveStarted(false);
+            if (!started) { resolveStarted(false); firstAudio?.firstAudioUnavailable(); }
             if (outcome.status === "failed") failure = `Speech playback failed: ${outcome.reason ?? "player-error"}`;
             // QUEUE1: only a chunk that played to its end counts toward a natural completion.
             playedToEnd = outcome.status === "completed";
           },
-        });
+        }); } catch (error) { firstAudio?.firstAudioUnavailable(); throw error; }
         playerExits.push(playback.playerExited); void playback.playerExited.catch(() => {});
         const audioExited = playbackQueueManager.audioExited(playback.id);
         return { started: start, exited: playback.exited.then(async outcome => { await audioExited; return outcome; }),
@@ -2622,7 +2627,9 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
           console.error(`[voicelayer] Long-read history could not be saved: ${error instanceof Error ? error.message : String(error)}`);
         } finally { try { unlinkSync(combined); } catch {} }
       },
-      dispose: async (chunk) => {
+      dispose: async (chunk, index) => {
+        // PROSODY: chunk 0's tail decode reads this file; it settles before the file goes.
+        if (index === 0) await prosodyRead?.settleTail();
         const decode = chunkAmplitudes.get(chunk.audioFile);
         decode?.cancel(); await decode?.result;
         chunkAmplitudes.delete(chunk.audioFile); cloneProjections.delete(chunk.audioFile);

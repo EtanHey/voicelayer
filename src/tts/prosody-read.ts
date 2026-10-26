@@ -61,8 +61,10 @@ type Synthesized =
   | { raw: false; pcm: Float32Array; words: WordBoundary[] };
 
 /** One read's audio: chunk 0 is the engine's own file, played without a decode before first audio.
- * Its tail is measured in the background and completed by chunk 1's leading pad. Every later chunk
- * splices its utterances with exact planned silence into one MP3. Requests run at most 3 at once. */
+ * Once its player has started (`firstAudioStarted`), its tail is measured and completed by chunk 1's
+ * leading pad. Every later chunk splices its utterances with exact planned silence into one MP3.
+ * Requests run at most 3 at once. The tail decode is owned: abort cancels it, and `close()` and
+ * `settleTail()` wait for it to settle. */
 export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, signal: AbortSignal) {
   const firstEnd = plan.chunks[0]?.end ?? 0;
   const scheduler = createSegmentScheduler<Synthesized>(plan, async (segment, index, signal) => {
@@ -72,6 +74,18 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
     finally { engine.unlink(result.audioFile); }
   }, { signal, dispose: (result) => { if (result.raw) engine.unlink(result.audioFile); } });
   let previousTailMs: Promise<number> = Promise.resolve(0);
+  // Chunk 0's tail: decoded only after its player started; resolves 0 if it never starts or on abort.
+  const tailAbort = new AbortController();
+  let resolveTail!: (ms: number) => void;
+  const tail = new Promise<number>((resolve) => { resolveTail = resolve; });
+  let firstRaw: { audioFile: string; words: WordBoundary[] } | undefined, tailClaimed = false;
+  let tailTask: Promise<void> | undefined;
+  const cancelTail = () => { tailAbort.abort(); resolveTail(0); };
+  if (signal.aborted) cancelTail(); else signal.addEventListener("abort", cancelTail, { once: true });
+  const settleTail = async () => {
+    tailClaimed = true; cancelTail();
+    await tailTask;
+  };
   const spoken = (index: number) => plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map((s) => s.text).join(" ");
 
   return {
@@ -79,8 +93,8 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
       const parts = await scheduler.chunk(index);
       const [first] = parts;
       if (index === 0 && parts.length === 1 && first.raw) {
-        previousTailMs = engine.decode(first.audioFile, signal)
-          .then((pcm) => measurePCMExtent(pcm, PROSODY_SAMPLE_RATE, first.words).tailMs, () => 0);
+        firstRaw = first;
+        previousTailMs = tail;
         return { audioFile: first.audioFile, durationMs: first.durationMs, words: first.words, spokenText: spoken(0) };
       }
       const tailMs = await previousTailMs;
@@ -94,8 +108,27 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
       previousTailMs = Promise.resolve(measurePCMExtent(spliced.pcm, PROSODY_SAMPLE_RATE).tailMs);
       return { audioFile, durationMs: spliced.durationMs, words: spliced.words, spokenText: spoken(index) };
     },
-    /** Waits for every started request and removes engine files that were never delivered. */
-    close: () => scheduler.close(),
+    /** Chunk 0's player actually started: measure its tail now, never before first audio. */
+    firstAudioStarted(audioFile: string) {
+      if (tailClaimed || firstRaw?.audioFile !== audioFile) return;
+      tailClaimed = true;
+      const raw = firstRaw;
+      tailTask = engine.decode(raw.audioFile, tailAbort.signal)
+        .then((pcm) => resolveTail(measurePCMExtent(pcm, PROSODY_SAMPLE_RATE, raw.words).tailMs), () => resolveTail(0));
+    },
+    /** Chunk 0 will not play (player failed or never started): later chunks pad from a zero tail. */
+    firstAudioUnavailable() {
+      if (tailClaimed) return;
+      tailClaimed = true; resolveTail(0);
+    },
+    /** Cancels and awaits chunk 0's tail decode; call before disposing chunk 0's file. */
+    settleTail,
+    /** Waits for every started request and the tail decode; removes files that were never delivered. */
+    async close() {
+      signal.removeEventListener("abort", cancelTail);
+      await settleTail();
+      await scheduler.close();
+    },
   };
 }
 
@@ -105,7 +138,8 @@ async function ffmpegChild(args: string[], signal: AbortSignal, stdin?: Float32A
   if (!ffmpeg) throw new Error("ffmpeg unavailable for speech prosody");
   throwIfAbortedSafe(signal);
   const proc = Bun.spawn([ffmpeg, ...args], { env: process.env, stdin: stdin ? "pipe" : "ignore", stdout: "pipe", stderr: "ignore" });
-  const kill = () => { try { proc.kill("SIGKILL"); } catch {} };
+  let killed = false;
+  const kill = () => { if (killed) return; killed = true; try { proc.kill("SIGKILL"); } catch {} };
   const timeout = setTimeout(kill, 30_000);
   signal.addEventListener("abort", kill, { once: true });
   try {
@@ -117,6 +151,12 @@ async function ffmpegChild(args: string[], signal: AbortSignal, stdin?: Float32A
     throwIfAbortedSafe(signal);
     if (code !== 0) throw new Error(`Speech prosody audio conversion failed (${code})`);
     return output;
+  } catch (error) {
+    // Any failure after spawn (stdin EPIPE, stdout error, abort): the owned child dies and is reaped
+    // before the caller cleans up, and the original error is what the caller sees.
+    kill();
+    await proc.exited.catch(() => {});
+    throw error;
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener("abort", kill);

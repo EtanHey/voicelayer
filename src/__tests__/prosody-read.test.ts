@@ -1,8 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import * as binaries from "../resolve-binary";
 import type { WordBoundary } from "../socket-protocol";
 import { projectSpeakableText } from "../speakable-text";
 import { PAUSE, planProsody, type ProsodySegment } from "../tts/prosody";
-import { createProsodyRead, isStructuredPlan, PROSODY_SAMPLE_RATE, sliceProjection, type ProsodyReadEngine } from "../tts/prosody-read";
+import { createProsodyRead, decodeAudioToPCM, encodePCMToMp3, isStructuredPlan, PROSODY_SAMPLE_RATE, sliceProjection, type ProsodyReadEngine } from "../tts/prosody-read";
 import { projectStructuredSpeech } from "../tts/structured-speech";
 
 const RATE = PROSODY_SAMPLE_RATE;
@@ -53,20 +54,26 @@ describe("isStructuredPlan: prosody engages only when the text has structure", (
 
 describe("createProsodyRead", () => {
   const doc = "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three";
-  it("chunk 0 is the engine's own file, delivered before anything is decoded", async () => {
+  it("chunk 0 is the engine's own file, delivered before anything is decoded (B3)", async () => {
     const { engine, calls } = fakeEngine(), p = plan(doc);
     const read = createProsodyRead(p, engine, new AbortController().signal);
     const first = await read.chunk(0);
     expect(first.audioFile).toBe("seg-0.mp3");
     expect(first.spokenText).toBe("Status.");
     expect(calls.encoded).toEqual([]);
+    // Chunk 0's tail is measured only after its player has actually started.
+    await new Promise((r) => setTimeout(r, 5));
+    expect(calls.decoded).not.toContain("seg-0.mp3");
+    read.firstAudioStarted(first.audioFile);
+    await read.chunk(1);
+    expect(calls.decoded).toContain("seg-0.mp3");
     expect(calls.synthesized[0]).toMatchObject({ kind: "heading", emphasis: true });
     await read.close();
   });
   it("later chunks splice their segments into one encoded MP3; segment files are removed", async () => {
     const { engine, calls } = fakeEngine(), p = plan(doc);
     const read = createProsodyRead(p, engine, new AbortController().signal);
-    await read.chunk(0);
+    read.firstAudioStarted((await read.chunk(0)).audioFile);
     const second = await read.chunk(1);
     expect(second.audioFile).toMatch(/^chunk-\d+\.mp3$/);
     expect(calls.encoded).toContain(second.audioFile);
@@ -84,7 +91,9 @@ describe("createProsodyRead", () => {
   it("the pause across a chunk join counts the raw chunk 0's measured tail", async () => {
     const { engine } = fakeEngine(), p = plan(doc);
     const read = createProsodyRead(p, engine, new AbortController().signal);
-    const first = await read.chunk(0), second = await read.chunk(1);
+    const first = await read.chunk(0);
+    read.firstAudioStarted(first.audioFile);
+    const second = await read.chunk(1);
     const lastWord = first.words.at(-1)!;
     const tailMs = first.durationMs - (lastWord.offset_ms + lastWord.duration_ms);
     expect(tailMs + second.words[0].offset_ms).toBeCloseTo(p.chunks[0].trailingPauseMs, 0);
@@ -131,5 +140,71 @@ describe("sliceProjection: a chunk aligns against the whole projection, never a 
     const projection = projectSpeakableText(raw, [], "edge");
     const p = planProsody({ readText: raw, projection });
     expect(sliceProjection(projection, p.chunks[0].read)).toMatchObject({ displayText: "2.", speechText: "two." });
+  });
+});
+
+describe("B1: chunk 0's tail decode is owned by the read", () => {
+  const doc = "## Status\n\nThe build is green.";
+  /** Chunk 0's tail decoder only settles when released (or killed through its signal). */
+  function heldDecoder() {
+    const base = fakeEngine();
+    let pending = 0;
+    const releases: (() => void)[] = [];
+    const decode = base.engine.decode;
+    base.engine.decode = (audioFile, signal) => audioFile !== "seg-0.mp3" ? decode(audioFile, signal) : new Promise((resolve, reject) => {
+      pending++;
+      const settle = (ok: boolean) => { pending--; ok ? resolve(new Float32Array(24000)) : reject(new Error("killed")); };
+      releases.push(() => settle(true));
+      signal.addEventListener("abort", () => settle(false), { once: true });
+    });
+    return { ...base, pending: () => pending, release: () => releases.splice(0).forEach((r) => r()) };
+  }
+  it("close() cancels and awaits a still-running tail decode", async () => {
+    const held = heldDecoder(), p = plan(doc);
+    const read = createProsodyRead(p, held.engine, new AbortController().signal);
+    read.firstAudioStarted((await read.chunk(0)).audioFile);
+    expect(held.pending()).toBe(1);
+    await read.close();
+    expect(held.pending()).toBe(0);
+  });
+  it("abort cancels the tail decode, and a later chunk never waits on it", async () => {
+    const held = heldDecoder(), p = plan(doc), controller = new AbortController();
+    const read = createProsodyRead(p, held.engine, controller.signal);
+    read.firstAudioStarted((await read.chunk(0)).audioFile);
+    const second = read.chunk(1); second.catch(() => {});
+    controller.abort();
+    await expect(second).rejects.toThrow();
+    await read.close();
+    expect(held.pending()).toBe(0);
+  });
+  it("if chunk 0 never starts playing, later chunks still resolve (no deadlock)", async () => {
+    const { engine, calls } = fakeEngine(), p = plan(doc);
+    const read = createProsodyRead(p, engine, new AbortController().signal);
+    await read.chunk(0);
+    read.firstAudioUnavailable();
+    const second = await read.chunk(1);
+    expect(second.audioFile).toMatch(/\.mp3$/);
+    expect(calls.decoded).not.toContain("seg-0.mp3");
+    await read.close();
+  });
+});
+
+describe("B2: ffmpeg children are killed and reaped on every exceptional path", () => {
+  for (const [name, child, run, message] of [
+    ["encoder stdin EPIPE", (exited: Promise<number>, kill: () => void) => ({ pid: 1, stdin: { write() { throw Error("EPIPE synthetic encoder closed stdin"); }, end() {} }, stdout: new Blob([]).stream(), exited, kill }),
+      () => encodePCMToMp3(new Float32Array([0.1]), "synthetic.mp3", new AbortController().signal), "EPIPE"],
+    ["decoder stdout rejection", (exited: Promise<number>, kill: () => void) => ({ pid: 1, stdout: new ReadableStream({ start(c) { c.error(Error("synthetic decoder stdout failure")); } }), exited, kill }),
+      () => decodeAudioToPCM("synthetic.mp3", new AbortController().signal), "stdout failure"],
+  ] as const) it(name, async () => {
+    const spawn = Bun.spawn;
+    const resolver = spyOn(binaries, "resolveBinaryAsync").mockResolvedValue("ffmpeg");
+    let killed = false, exited = false, release!: () => void;
+    const done = new Promise<number>((r) => { release = () => { exited = true; r(0); }; });
+    Bun.spawn = (() => child(done, () => { killed = true; release(); })) as any;
+    try {
+      await expect(run()).rejects.toThrow(message);
+      expect(killed).toBe(true);
+      expect(exited).toBe(true);
+    } finally { release(); Bun.spawn = spawn; resolver.mockRestore(); }
   });
 });
