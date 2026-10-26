@@ -1,5 +1,5 @@
 import { mkdirSync, rmdirSync, readdirSync, lstatSync, openSync, closeSync, writeFileSync, fsyncSync, unlinkSync } from "fs";
-import { isAbsolute, join, relative } from "path";
+import { basename, dirname, isAbsolute, join, relative } from "path";
 import { recordingsArchiveRoot } from "./recordings-archive-fs";
 import { preparePrivateSpeechDirectory, syncSpeechDirectory, UnsafeSpeechDirectory } from "./speech-archive-directory";
 
@@ -7,8 +7,13 @@ function indexPath(suffix: string): string {
   const path = `${recordingsArchiveRoot()}.${suffix}`;
   if (process.env.VOICELAYER_TEST_ISOLATED === "1") {
     const run = process.env.VOICELAYER_TEST_RUN_ROOT;
-    const local = run ? relative(run, path) : "..";
-    if (!run || !local || local === ".." || local.startsWith("../") || isAbsolute(local)) {
+    // A preloaded child gets a fresh run identity but keeps its parent's
+    // redirected archive. Both must stay inside the same canonical test tree.
+    const testRoot = run ? dirname(run) : "";
+    const local = testRoot ? relative(testRoot, path) : "..";
+    const parts = local.split("/");
+    if (!run || basename(testRoot) !== ".test-tmp" || parts.length < 2 ||
+        !/^[1-9]\d*-[a-f0-9]{4,6}$/.test(parts[0]) || isAbsolute(local)) {
       throw new Error("speech index requires an isolated run path");
     }
   }

@@ -567,7 +567,8 @@ final class SettingsPlaybackScrubBarTests: XCTestCase {
         let source = try source(named: "SettingsView.swift")
 
         XCTAssertTrue(source.contains(
-            "if let audioPath = part.audioPath, historyPlayback.isPlaying(audioPath) {\n"
+            "if let audioPath = historyPlayback.playingURL,\n"
+                + "               part.audioPath == audioPath || part.playbackQueue.contains(audioPath) {\n"
                 + "                SettingsPlaybackScrubBar("
         ))
     }
