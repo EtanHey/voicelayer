@@ -7,6 +7,12 @@
 
 import { STOP_FILE } from "./paths";
 
+const SPOKEN_STYLE =
+  "Spoken style: Announce who is speaking (for questions, who is asking). " +
+  "Use sentences of about 15 words or fewer. No markdown, URLs, code or long identifiers aloud. " +
+  'For questions, front-load the ask; one question per ask. Offer short numbered options ("One. … Two. …") answerable with a single word. ' +
+  "End with the question itself.\n";
+
 /** The two canonical VoiceLayer MCP tools. */
 export function getToolDefinitions() {
   return [
@@ -16,6 +22,7 @@ export function getToolDefinitions() {
       name: "voice_speak",
       description:
         "Speak an announcement/status aloud or log a note silently. NON-BLOCKING — returns instantly.\n" +
+        SPOKEN_STYLE +
         "Spoken modes have a HARD LIMIT: 1,200 characters — longer messages are refused, not truncated. " +
         "Use them only for announcements or status updates that do not require the user to understand or respond. " +
         "voice_speak never waits for the user to absorb it — it has no acknowledgement gate, " +
@@ -96,6 +103,7 @@ export function getToolDefinitions() {
       name: "voice_ask",
       description:
         "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
+        SPOKEN_STYLE +
         "Waits for the user's voice response. BLOCKING: " +
         "the question is spoken before the microphone opens, and the caller blocks for the entire playback plus the response.\n" +
         "HARD LIMIT: 600 characters maximum, independent of timeout_seconds. " +
