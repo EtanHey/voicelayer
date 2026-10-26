@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  symlinkSync,
   rmSync,
   writeFileSync,
 } from "fs";
@@ -17,6 +18,8 @@ import {
   assertCorpusReplayResult,
   assertIsolatedVerifyPaths,
   buildCorpusDaemonEnvironment,
+  corpusArchiveRoot,
+  stageSpecimen,
   readCorpusManifest,
   repoRootFromModuleUrl,
   runSwiftRuntimeInteractionLeg,
@@ -27,6 +30,7 @@ import {
   waitForInteractionRunner,
   runDaemonInteractionLeg,
 } from "../corpus-replay-verify";
+import { createSpeakReceipt } from "../speak-archive";
 import { normalizeOutroKey } from "../stt-outro-gate";
 
 // Real subprocesses: standalone p95 <= 1113 ms; 4x rounded up, with a 5 s scheduling floor.
@@ -997,4 +1001,32 @@ describe("corpus replay verification", () => {
       expect.objectContaining({ press_to_talk: true }),
     ]);
   });
+});
+
+// Exercise the archive contract used by real MCP speech, not just the STT leg.
+test.each([false, true])("staged corpus permits private speech receipts (aliased=%s)", (aliased) => {
+  const redirected = process.env.QA_VOICE_RECORDINGS_DIR;
+  if (!redirected) throw new Error("isolated preload required");
+  const workDir = mkdtempSync(join(redirected, "corpus-receipt-"));
+  tempRoots.push(workDir);
+  const source = join(workDir, "source");
+  writeSpecimen(source, new Date().toISOString().slice(0, 10), "fixture", "A corpus speech fixture.");
+  const alias = join(workDir, "alias");
+  symlinkSync(workDir, alias, "dir");
+  const stagedRoot = corpusArchiveRoot(aliased ? alias : workDir);
+  const specimen = selectCorpusSpecimens(source, 1)[0];
+  if (!specimen) throw new Error("missing fixture");
+  stageSpecimen(specimen, source, stagedRoot);
+  process.env.QA_VOICE_RECORDINGS_DIR = stagedRoot;
+  try {
+    const receipt = createSpeakReceipt({
+      input: "Finished speech replay must start again.", request_id: "corpus-speak",
+      request_source: "voice_speak", connection: "daemon", format: "plain", blocking: false,
+      requested: {mode: "announce", profile: null, engine: null, voice: null, rate: null},
+      build: {app_version: null, daemon_version: null, git_sha: null, executable_hash: null},
+    });
+    expect(receipt.kind).toBe("created");
+  } finally {
+    process.env.QA_VOICE_RECORDINGS_DIR = redirected;
+  }
 });
