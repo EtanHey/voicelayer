@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.57] - 2026-10-26
+
+### Added
+- Add Speech history in Settings with durable speech records and live playback updates (#553, #555, #556).
+
+### Fixed
+- Improve speech pacing, pronunciation rules and list readout in the teleprompter (#557, #558, #559, #562, #565).
+- Keep Speech history refresh and cancellation responsive, and preserve completed playback status (#556, #560, #564).
+- Clarify the Speech threshold label, stabilize pill tooltips and support spoken styles in voice_ask (#554).
+
+### Developer / QA
+- Isolate wrapper discovery tests from Bun reporter state and install Bun before running VoiceBar Swift tests in CI (#561, #563).
+
 ## [2.2.56] - 2026-10-25
 
 ### Fixed
