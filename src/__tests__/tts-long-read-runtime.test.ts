@@ -112,6 +112,31 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
 
+  it("R1C playback wait includes audio enqueued by captured short-speech preparation", async () => {
+    await speak("First fixture.", { voice: "en-US-JennyNeural" });
+    await playerBarrier.at(0);
+    holdSynth = true;
+    const preparing = speak("Later fixture.", { voice: "en-US-JennyNeural" });
+    const synthesis = await synthBarrier.at(1);
+    let finished = false;
+    const wait = awaitCurrentPlayback().then(() => { finished = true; });
+    try {
+      players[0].exit.resolve(0);
+      await fixtureCheckpoint();
+      synthesis.exit.resolve(0);
+      await preparing;
+      await playerBarrier.at(1);
+      await fixtureCheckpoint();
+      expect(finished).toBe(false);
+    } finally {
+      synthesis.exit.resolve(0);
+      await preparing;
+      for (const player of players) player.exit.resolve(0);
+      await wait;
+    }
+    expect(finished).toBe(true);
+  });
+
   for (const fault of ["playerEnded", "finish"] as const) it(`SPEECH-WIRE ${fault} archive fault still delivers completion observer`, async () => {
     const outcomes: unknown[] = [];
     spies.push(spyOn(LiveSpeechArchive.prototype, fault).mockImplementation(() => { throw Error("synthetic archive fault"); }));

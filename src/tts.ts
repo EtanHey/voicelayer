@@ -1330,7 +1330,10 @@ class PlaybackQueueManager {
     const parked: ParkedPlayback = { job, offsetMs: offset, controller: new AbortController(),
       ready: offset === 0, failed: false, resumeRequested: false };
     this.parked = parked;
-    job.metadata?.speechArchive?.move("paused");
+    if (offset < (metadata.durationMs ?? Infinity)) metadata.speechArchive?.move("paused");
+    // Resume at EOF completes without a new player. Close timing now and keep
+    // the legal playing -> completed path, including for a long-read chunk.
+    else metadata.speechArchive?.playerEnded();
     if (!parked.ready) this.prepareParked(parked);
     this.broadcastPlaybackState(job, "paused");
     this.emitQueueSnapshot();
@@ -1580,6 +1583,8 @@ class PlaybackQueueManager {
         return;
       }
       const extraction = next.metadata?.preparedAmplitude ?? startPlaybackAmplitudeEnvelopeExtraction(next.audioFile);
+      // Transfer this decode once; a cancelled preparation cannot serve Resume.
+      next.metadata.preparedAmplitude = undefined;
       next.lifecycle.track(extraction.result);
       const preparation = { job: next, cancel: extraction.cancel };
       this.preparing = preparation;
@@ -2040,15 +2045,16 @@ export async function awaitCurrentPlayback(options: { forCaptureAdmission?: bool
   // Snapshot generation ownership before yielding, including already-aborted cleanup.
   const generations = [...cancelledLongReadTeardowns, ...(options.forCaptureAdmission ? [] : speechPreparationSettlements)];
   if (activeLongRead) generations.push(activeLongRead.done);
-  // Snapshot queue drain now: a later unrelated speech must not join this acknowledgement.
+  // Capture the queue now; later unrelated speech must not join this acknowledgement.
   const queueDrained = options.forCaptureAdmission ? undefined : playbackQueueManager.awaitDrained();
   const settled = async () => {
     if (options.forCaptureAdmission) {
-      // Match main's Ask policy: ordinary preparation may finish while capture
-      // owns admission, but its player remains deferred until admission releases.
       await Promise.all(generations);
       await playbackQueueManager.awaitDrained();
-    } else await Promise.all([...generations, queueDrained]);
+    } else {
+      // Each captured short-speech settlement includes its own eventual player.
+      await Promise.all([...generations, queueDrained]);
+    }
   };
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -2671,9 +2677,12 @@ export async function speak(
   let settle!: () => void;
   const settlement = new Promise<void>(resolve => { settle = resolve; });
   speechPreparationSettlements.add(settlement);
+  let playback: QueuedPlaybackHandle | undefined;
+  const onQueued = options?.onPlaybackQueued;
   const onCompleted = options?.onPlaybackComplete;
   try {
     const result = await prepareSpeech(text, { ...options, speechArchive: archive,
+      onPlaybackQueued: handle => { playback = handle; onQueued?.(handle); },
       onPlaybackComplete: outcome => {
         try { archive.finish(outcome.status === "completed" ? "completed" : outcome.status === "failed" ? "failed" : "stopped",
           outcome.status === "completed" ? "PLAYBACK_COMPLETED" : outcome.status === "failed" ? "PLAYER_FAILED" : "USER_STOP"); }
@@ -2691,7 +2700,11 @@ export async function speak(
   } finally {
     speechPreparations.delete(controller);
     preparationArchives.delete(controller);
-    speechPreparationSettlements.delete(settlement); settle();
+    const finish = () => { speechPreparationSettlements.delete(settlement); settle(); };
+    // Preparation may enqueue after a waiter's queue snapshot has drained. Keep
+    // this operation's barrier through its player, without adopting newer speech.
+    if (playback) void playback.playerExited.then(finish, finish);
+    else finish();
   }
 }
 

@@ -5,6 +5,8 @@ import type { SpeakArchiveContext } from "./speak-archive";
 import type { SpeechState } from "./speech-state";
 
 const liveArchives = new Map<string, LiveSpeechArchive>();
+const deterministicWriteFailures = new Set(["CONFLICT", "FINALIZED", "INVALID_INPUT", "UNSAFE_PATH", "CORRUPT_METADATA"]);
+const writeFailureCodes = new Set([...deterministicWriteFailures, "IO_ERROR", "WRITE_UNCERTAIN", "SYNC_UNCERTAIN", "ARCHIVE_WORKER_FAILED", "ARCHIVE_IO_FAILED"]);
 
 const retainedAudio = new Map<string, Set<ArchiveWrite>>();
 const cleanupRequested = new Set<string>();
@@ -37,19 +39,51 @@ export class LiveSpeechArchive {
     return this.storedContext;
   }
   private enqueue(operation: ArchiveWrite): Promise<void> {
-    liveArchives.set(this.storedContext?.id ?? this.key, this);
-    const work = this.tail.then(async () => {
-      try {
-        this.storedContext = (await speechArchiveWriter.write(this.key, operation, this.storedContext, this.root)).context;
-        liveArchives.delete(this.key);
-        liveArchives.set(this.storedContext.id, this);
-        if (operation.kind === "audio") releaseAudio(operation);
+    return this.schedule(async () => {
+      await this.retryWrites();
+      if (operation.kind === "move") {
+        for (let i = this.failures.length - 1; i >= 0; i--) {
+          const failed = this.failures[i].operation;
+          if (failed.kind !== "move" || (operation.to === "completed" && failed.to === "playing")) continue;
+          this.failures.splice(i, 1);
+          console.error("[speech] archive write superseded: move");
+        }
       }
-      catch {
-        this.failures.push({ operation, code: "ARCHIVE_WRITE_FAILED" });
-        console.error(`[speech] archive write failed: ${operation.kind}`);
-      }
+      await this.write(operation);
     });
+  }
+  private async write(operation: ArchiveWrite, retry = false): Promise<void> {
+    // Completion needs the real playing edge; keep both until that edge lands.
+    if (operation.kind === "move" && operation.to === "completed" && this.failures.some(
+      ({ operation: failed }) => failed.kind === "move" && failed.to === "playing",
+    )) {
+      this.failures.push({ operation, code: "ARCHIVE_PREREQUISITE_PENDING" });
+      console.error("[speech] archive write deferred: move prerequisite");
+      return;
+    }
+    try {
+      this.storedContext = (await speechArchiveWriter.write(this.key, operation, this.storedContext, this.root)).context;
+      liveArchives.delete(this.key);
+      liveArchives.set(this.storedContext.id, this);
+      if (operation.kind === "audio") releaseAudio(operation);
+    } catch (error) {
+      const code = error instanceof Error && writeFailureCodes.has(error.message) ? error.message : "ARCHIVE_WRITE_FAILED";
+      if (retry && deterministicWriteFailures.has(code)) {
+        console.error(`[speech] archive write dropped: ${operation.kind} ${code}`);
+        return;
+      }
+      this.failures.push({ operation, code });
+      console.error(`[speech] archive write failed: ${operation.kind}`);
+    }
+  }
+  private async retryWrites(): Promise<void> {
+    const failed = this.failures.splice(0);
+    for (const { operation } of failed) await this.write(operation, true);
+    // Audio/timing failures remain retryable, but cannot veto a later final status.
+  }
+  private schedule(run: () => Promise<void>): Promise<void> {
+    liveArchives.set(this.storedContext?.id ?? this.key, this);
+    const work = this.tail.then(run);
     this.tail = work;
     void work.then(() => {
       if (this.tail === work && this.terminal && !this.failures.length) {
@@ -61,9 +95,7 @@ export class LiveSpeechArchive {
   }
   settled(): Promise<void> { return this.tail; }
   async retryFailed(): Promise<void> {
-    const failed = this.failures.splice(0);
-    for (const { operation } of failed) this.enqueue(operation);
-    await this.settled();
+    await this.schedule(() => this.retryWrites());
   }
   playerStarted(): void {
     if (this.state !== "playing") this.move("playing");
