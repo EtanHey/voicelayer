@@ -183,6 +183,7 @@ struct VoiceBarPillControlButton: View {
     let isDestructive: Bool
     let accessibilityLabel: String
     let accessibilityHint: String
+    let tooltip: String?
     let action: () -> Void
     let previewHovered: Bool
     let previewPressed: Bool
@@ -205,6 +206,7 @@ struct VoiceBarPillControlButton: View {
         isDestructive: Bool,
         accessibilityLabel: String,
         accessibilityHint: String,
+        tooltip: String? = nil,
         previewHovered: Bool = false,
         previewPressed: Bool = false,
         action: @escaping () -> Void
@@ -218,6 +220,7 @@ struct VoiceBarPillControlButton: View {
         self.isDestructive = isDestructive
         self.accessibilityLabel = accessibilityLabel
         self.accessibilityHint = accessibilityHint
+        self.tooltip = tooltip ?? accessibilityLabel
         self.previewHovered = previewHovered
         self.previewPressed = previewPressed
         self.action = action
@@ -246,7 +249,7 @@ struct VoiceBarPillControlButton: View {
         .padding(-Self.hitOverhang)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint(accessibilityHint)
-        .help(accessibilityLabel)
+        .background(PillControlTooltip(text: tooltip))
     }
 
     private var plateColor: Color {
@@ -274,6 +277,26 @@ struct VoiceBarPillControlButton: View {
         } else {
             image.notchAdaptiveGlyphEdge(halo)
         }
+    }
+}
+
+// Native registration stays attached to the control inside the nested glass host.
+// Avoid resetting AppKit's hover delay on unrelated playback/hover redraws.
+struct PillControlTooltip: NSViewRepresentable {
+    let text: String?
+
+    func makeNSView(context: Context) -> TooltipView {
+        let view = TooltipView()
+        view.toolTip = text
+        return view
+    }
+
+    func updateNSView(_ view: TooltipView, context: Context) {
+        if view.toolTip != text { view.toolTip = text }
+    }
+
+    final class TooltipView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
@@ -633,7 +656,8 @@ public struct BarView: View {
             notchTeleprompterButton(
                 icon: "stop.fill",
                 isDestructive: true,
-                accessibilityLabel: "Stop speaking"
+                accessibilityLabel: "Stop speaking",
+                registersTooltip: isCompact
             ) {
                 commandRouter.handleStop()
             }
@@ -901,13 +925,13 @@ public struct BarView: View {
                 icon: iconName,
                 accessibilityLabel: state.mode == .error
                     ? "Retry voice recording"
+                    : "Start voice recording",
+                tooltip: state.mode == .error
+                    ? SettingsCopyPayload.nonempty(state.errorMessage) ?? "No error details are available."
                     : "Start voice recording"
             ) {
                 commandRouter.handlePrimaryTap()
             }
-            .help(state.mode == .error
-                ? SettingsCopyPayload.nonempty(state.errorMessage) ?? "No error details are available."
-                : "Start voice recording")
         } else {
             statusIconImage
         }
@@ -1063,6 +1087,7 @@ public struct BarView: View {
         isDestructive: Bool = false,
         accessibilityLabel: String? = nil,
         accessibilityHint: String? = nil,
+        tooltip: String? = nil,
         action: @escaping () -> Void
     ) -> some View {
         let optics = VoiceBarNotchControlOptics.resolve(for: icon)
@@ -1081,6 +1106,7 @@ public struct BarView: View {
             isDestructive: isDestructive && icon == "stop.fill",
             accessibilityLabel: accessibilityLabel ?? icon,
             accessibilityHint: accessibilityHint ?? "",
+            tooltip: tooltip,
             action: action
         )
     }
@@ -1089,6 +1115,8 @@ public struct BarView: View {
         icon: String,
         isDestructive: Bool = false,
         accessibilityLabel: String,
+        tooltip: String? = nil,
+        registersTooltip: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
         let pointSize = VoiceBarNotchControlOptics.legacyCompact(for: icon).pointSize
@@ -1114,7 +1142,7 @@ public struct BarView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
-        .help(accessibilityLabel)
+        .background(PillControlTooltip(text: registersTooltip ? (tooltip ?? accessibilityLabel) : nil))
     }
 }
 
