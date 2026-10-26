@@ -231,9 +231,10 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   const clean = (read: number) => !projection.ranges.some((r) => r.kind !== "identity" && r.source.start < read && read < r.source.end);
   /** Engine request size: projected speech characters, trimmed. */
   const speechLength = (start: number, end: number) => makeSegment({ kind: "prose", emphasis: false, pauseMs: 0 }, start, end).text.length;
+  /** Both halves keep the kind and emphasis; only the last piece of an utterance closes it with a period. */
   const split = (segment: ProsodySegment & { item?: boolean }, cut: number, pauseMs: number) => [
-    { ...makeSegment(segment, segment.read.start, cut), pauseMs },
-    { ...makeSegment(segment, cut, segment.read.end), kind: segment.kind === "label" || segment.kind === "heading" ? "prose" as const : segment.kind },
+    { ...makeSegment(segment, segment.read.start, cut), pauseMs, continues: segment.emphasis },
+    makeSegment(segment, cut, segment.read.end),
   ];
 
   // Size the requests. Whole sentences pack up to the budget, like the long-read chunker; a sentence
@@ -243,7 +244,7 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
   let ahead = 0;
   const budget = () => prosodyBudget(ahead, maxChars);
   segments = mergeWordless(segments.flatMap((segment) => {
-    if (segment.kind === "heading" || segment.kind === "label" || segment.text.length <= budget()) {
+    if (segment.text.length <= budget()) {
       ahead += segment.text.length + 1 + segment.pauseMs / MS_PER_CHAR;
       return [segment];
     }
@@ -270,7 +271,8 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
         .map((w) => sentence.start + w.index).filter((at, i) => i === 0 || clean(at));
       words.forEach((at, i) => {
         const word = trim(at, words[i + 1] ?? sentence.end);
-        if (current && speechLength(current.start, word.end) <= budget()) { current.end = word.end; return; }
+        // Word runs are never longer than the long-read chunker's own word split (read characters).
+        if (current && Math.max(speechLength(current.start, word.end), word.end - current.start) <= budget()) { current.end = word.end; return; }
         if (current) emit();
         current = word;
       });
@@ -281,7 +283,7 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     let rest: ProsodySegment & { item?: boolean } = segment;
     for (const piece of pieces.slice(1)) {
       const [head, tail] = split(rest, piece.start, 0);
-      head.pauseMs = TERMINAL.test(head.text) ? PAUSE.sentence : 0;
+      head.pauseMs = !head.emphasis && TERMINAL.test(head.text) ? PAUSE.sentence : 0;
       out.push(head);
       rest = tail;
     }
@@ -304,7 +306,9 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     const item = (segment as { item?: boolean }).item;
     if (!item && (segment.kind === "prose" || segment.kind === "aside") && TERMINAL.test(segment.text) && i < segments.length - 1)
       segment.pauseMs = Math.max(segment.pauseMs, PAUSE.sentence);
-    if (segment.emphasis) segment.text = segment.text.endsWith(":") ? `${segment.text.slice(0, -1)}.` : TERMINAL.test(segment.text) ? segment.text : `${segment.text}.`;
+    const continues = (segment as { continues?: boolean }).continues;
+    delete (segment as { continues?: boolean }).continues;
+    if (segment.emphasis && !continues) segment.text = segment.text.endsWith(":") ? `${segment.text.slice(0, -1)}.` : TERMINAL.test(segment.text) ? segment.text : `${segment.text}.`;
     delete (segment as { item?: boolean }).item;
   }
   if (segments.length) segments.at(-1)!.pauseMs = 0;

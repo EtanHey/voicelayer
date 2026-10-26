@@ -285,6 +285,23 @@ describe("round 2 (Sol, TEAM-PROSODY-V2A-SOL)", () => {
     expect(texts(selectionPlan("**A:** first\n**B:** second"))).toEqual(["A.", "first", "B.", "second"]);
     expect(texts(speakPlan("**Orchard route**\nAn orchard route follows three stops."))).toEqual(["Orchard route.", "An orchard route follows three stops."]);
   });
+  it("R2-B1: an oversized heading or label is still sized; every piece keeps the emphasis, the last keeps the pause", () => {
+    for (const [raw, kind, pause] of [
+      ["# " + "word ".repeat(100) + "end.\nBody.", "heading", PAUSE.h1],
+      ["**" + "word ".repeat(100) + "end:** body.", "label", PAUSE.label],
+    ] as const) {
+      const projection = projectSpeakableText(raw, [], "edge");
+      const plan = speakPlan(raw);
+      expectSound(plan, projection.speechText);
+      expectBounded(plan, projection);
+      const pieces = plan.segments.filter((s) => s.kind === kind);
+      expect(pieces.length).toBeGreaterThan(1);
+      expect(pieces.every((s) => s.emphasis && s.text.length <= PROSODY_MAX_CHARS)).toBe(true);
+      expect(pieces.slice(0, -1).every((s) => s.pauseMs === 0 && !s.text.endsWith("."))).toBe(true);
+      expect(pieces.at(-1)).toMatchObject({ pauseMs: pause });
+      expect(pieces.at(-1)!.text.endsWith(".")).toBe(true);
+    }
+  });
   it("N2: plain prose chunk parity holds on the normalized token stream when lines wrap", () => {
     const raw = "Sentence has enough plain words.\n".repeat(20);
     const plan = speakPlan(raw);
@@ -304,6 +321,8 @@ describe("corpus invariants (edge and clone)", () => {
     "Before\n```ts\n" + "const value = foo(42);\n".repeat(50) + "```\nAfter",
     "See [" + "label word ".repeat(80) + "](https://example.com) now.",
     "| A | B |\n| --- | --- |\n" + "| cell words here | more cell words |\n".repeat(40),
+    "# " + "word ".repeat(100) + "end.\nBody.",
+    "**" + "word ".repeat(100) + "end:** body.",
   ];
   for (const engine of ["edge", "clone"] as const) for (const raw of corpus) it(`${engine}: ${JSON.stringify(raw.slice(0, 30))}`, () => {
     const projection = projectSpeakableText(raw, [], engine);

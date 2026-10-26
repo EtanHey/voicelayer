@@ -142,6 +142,8 @@ const corpus: [string, string, boolean?][] = [
   ["labels then long paragraph", "**Summary:** all green.\n\n" + Array.from({ length: 12 }, (_, i) => `Detail ${i} explains one more part of the change.`).join(" ")],
   ["Sol B2: short label, 399-char sentence", "**X:** " + "word ".repeat(79) + "end."],
   ["Sol B2: short heading, 399-char sentence", "## A\n" + "word ".repeat(79) + "end."],
+  ["Sol R2-B1: oversized heading", "# " + "word ".repeat(100) + "end.\nBody."],
+  ["Sol R2-B1: oversized label", "**" + "word ".repeat(100) + "end:** body."],
   ["heading then long sentences", "# A\n" + Array.from({ length: 12 }, (_, i) => `Sentence ${i} has a fair number of plain words inside it.`).join(" ")],
 ];
 
