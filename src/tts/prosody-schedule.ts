@@ -45,6 +45,11 @@ export function createSegmentScheduler<T>(
   const abort = () => stop(signal.reason ?? new Error("Synthesis cancelled"));
   if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
 
+  const delivered = (): Task<T> => {
+    const promise = Promise.reject(new Error("Prosody chunk already delivered"));
+    promise.catch(() => {});
+    return { promise, resolve() {}, reject() {}, started: true };
+  };
   const enqueue = (through: number) => {
     while (tasks.length < Math.min(through, plan.segments.length)) {
       let resolve!: (value: T) => void, reject!: (error: unknown) => void;
@@ -77,7 +82,9 @@ export function createSegmentScheduler<T>(
           for (let i = chunk.first; i < chunk.end; i++) release(i);
           throw new Error("Synthesis closed");
         }
-        for (let i = chunk.first; i < chunk.end; i++) handedOut.add(i);
+        // Ownership moved to the caller: drop the task (its result and settled promise), so a long read
+        // keeps only the lookahead window, never every utterance already delivered.
+        for (let i = chunk.first; i < chunk.end; i++) { handedOut.add(i); tasks[i] = delivered(); }
         return values;
       });
     },

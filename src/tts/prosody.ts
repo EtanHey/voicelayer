@@ -75,7 +75,7 @@ const DASH_ASIDE = /(?<=\S)\s[—–]\s(?=[^\n—–]*\p{L})[^\n—–]*?\S\s[�
 
 /** Map an offset through an ordered partition. Interior offsets translate only inside identity
  * ranges; any other range is atomic and the offset snaps to its start, so it is never split. */
-function mapper(ranges: readonly ProjectionRange[], side: "source" | "display" = "source") {
+export function mapper(ranges: readonly ProjectionRange[], side: "source" | "display" = "source") {
   return (offset: number): number => {
     for (const range of ranges) {
       const from = range[side];

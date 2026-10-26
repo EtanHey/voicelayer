@@ -208,3 +208,21 @@ describe("B2: ffmpeg children are killed and reaped on every exceptional path", 
     } finally { release(); Bun.spawn = spawn; resolver.mockRestore(); }
   });
 });
+
+describe("Macroscope #562: a chunk starting inside an atomic replacement keeps its speech", () => {
+  const letters = (t: string) => t.replace(/[^\p{L}\p{N}]/gu, "");
+  for (const raw of ["Intro.\n\n  1. Pick up the blue basket.\n  2. Walk to the gate.", "## Head\n\t1. First item here\n\t2. Second item here"]) it(JSON.stringify(raw), async () => {
+    const { alignWordBoundariesToDisplayText } = await import("../tts");
+    const projection = projectSpeakableText(raw, [], "edge");
+    const p = planProsody({ readText: raw, projection });
+    for (const chunk of p.chunks) {
+      const synthesized = p.segments.slice(chunk.first, chunk.end).map((s) => s.text).join(" ");
+      const slice = sliceProjection(projection, chunk.read);
+      // The spoken marker ("one.") is synthesized, and the slice used for highlight timing must carry it too.
+      expect(letters(slice.speechText)).toBe(letters(synthesized));
+      const words = synthesized.split(/\s+/).map((text, i) => ({ text, offset_ms: 100 + 300 * i, duration_ms: 250 }));
+      const timed = alignWordBoundariesToDisplayText(chunk.text, slice.speechText, words, slice.ranges, true);
+      expect(timed.length).toBe(chunk.text.match(/\S+/g)!.length);
+    }
+  });
+});
