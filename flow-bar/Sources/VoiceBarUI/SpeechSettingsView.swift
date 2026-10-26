@@ -195,25 +195,29 @@ public struct SpeechSettingsView: View {
                 .accessibilityIdentifier("speech-threshold-applied")
             Text(SpeechThresholdDraft.reportStatus).font(.caption).foregroundStyle(.secondary)
             HStack {
-                Text("Draft")
+                Text("Draft").lineLimit(1).fixedSize()
                 TextField("Characters", text: Binding(
                     get: { thresholdDraft.displayedText(controls?.shortLimit) },
                     set: { thresholdDraft.edit($0) }))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder).frame(width: 130)
                     .multilineTextAlignment(.trailing)
                     .onSubmit {} // Enter, like blur, never applies a draft.
                     .accessibilityLabel("Voice profile threshold draft in characters")
                     .accessibilityIdentifier("speech-threshold-draft")
                 Text("characters").foregroundStyle(.secondary)
+                    .lineLimit(1).fixedSize().layoutPriority(1)
                 Spacer()
                 Button("Apply") {
                     thresholdDraft.apply(controls: controls, connected: connected, busy: busy,
                                          pending: pending, onChange: onChange)
                 }
+                .lineLimit(1).fixedSize()
                 .disabled(!thresholdDraft.canApply(controls: controls, connected: connected, busy: busy,
                                                   pending: pending, callbackAvailable: onChange != nil))
                 .accessibilityIdentifier("speech-threshold-apply")
                 Button("Revert") { thresholdDraft.revert() }
+                    .lineLimit(1).fixedSize()
                     .help(SpeechThresholdDraft.revertHelp)
                     .accessibilityLabel("Revert draft to last reported cutoff")
                     .disabled(thresholdDraft.text == nil || controls == nil)
