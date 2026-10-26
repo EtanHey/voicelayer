@@ -1,7 +1,7 @@
-import { mkdirSync, rmdirSync, openSync, closeSync, writeFileSync, fsyncSync, unlinkSync } from "fs";
+import { mkdirSync, rmdirSync, readdirSync, lstatSync, openSync, closeSync, writeFileSync, fsyncSync, unlinkSync } from "fs";
 import { isAbsolute, join, relative } from "path";
 import { recordingsArchiveRoot } from "./recordings-archive-fs";
-import { preparePrivateSpeechDirectory, syncSpeechDirectory } from "./speech-archive-directory";
+import { preparePrivateSpeechDirectory, syncSpeechDirectory, UnsafeSpeechDirectory } from "./speech-archive-directory";
 
 function indexPath(suffix: string): string {
   const path = `${recordingsArchiveRoot()}.${suffix}`;
@@ -52,6 +52,23 @@ export function unindexSpeech(id: string): void {
   preparePrivateSpeechDirectory(speechOpenIndex());
   try { unlinkSync(join(speechOpenIndex(), id)); syncIndex(); }
   catch (error) { if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error; }
+  preparePrivateSpeechDirectory(speechPendingIndex());
+  const pending = join(speechPendingIndex(), id);
+  try { lstatSync(pending); }
+  catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+  preparePrivateSpeechDirectory(pending);
+  const owners = readdirSync(pending);
+  if (owners.length > 1 || owners.some(owner => !/^[1-9]\d*$/.test(owner))) throw new UnsafeSpeechDirectory();
+  for (const owner of owners) {
+    preparePrivateSpeechDirectory(join(pending, owner));
+    rmdirSync(join(pending, owner));
+    syncSpeechDirectory(pending);
+  }
+  rmdirSync(pending);
+  syncSpeechDirectory(speechPendingIndex());
 }
 function syncIndex(): void {
   syncSpeechDirectory(speechOpenIndex());
