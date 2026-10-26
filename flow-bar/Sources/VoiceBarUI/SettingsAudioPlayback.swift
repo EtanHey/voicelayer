@@ -92,6 +92,18 @@ public final class SettingsAudioPlayback {
         }
     }
 
+    private var queuedURLs: [URL] = []
+    private var queueHead: URL?
+
+    public func toggle(_ urls: [URL]) {
+        guard let first = urls.first else { return }
+        if queueHead == first, playingURL != nil { stop(); return }
+        toggle(first)
+        guard playingURL == first else { return }
+        queueHead = first
+        queuedURLs = Array(urls.dropFirst())
+    }
+
     private let start: @MainActor (URL) -> Bool
     private let stopBackend: @MainActor () -> Void
     private let positionBackend: @MainActor () -> SettingsAudioPlaybackPosition?
@@ -112,7 +124,7 @@ public final class SettingsAudioPlayback {
     }
 
     public func isPlaying(_ url: URL) -> Bool {
-        playingURL == url
+        playingURL == url || (queueHead == url && playingURL != nil)
     }
 
     /// Starts `url`, or stops it when it is already the clip playing.
@@ -135,6 +147,8 @@ public final class SettingsAudioPlayback {
     }
 
     public func stop() {
+        queuedURLs = []
+        queueHead = nil
         guard playingURL != nil else { return }
         stopBackend()
         playingURL = nil
@@ -155,7 +169,8 @@ public final class SettingsAudioPlayback {
            target >= duration {
             // AVAudioPlayer parked at its duration stops without reliably calling its delegate,
             // which would strand the row in "playing" with a frozen bar.
-            stop()
+            stopBackend()
+            playbackDidFinish(url)
             return
         }
         seekBackend(target)
@@ -181,6 +196,15 @@ public final class SettingsAudioPlayback {
     public func playbackDidFinish(_ url: URL) {
         guard playingURL == url else { return }
         playingURL = nil
+        guard !queuedURLs.isEmpty else { queueHead = nil; return }
+        let next = queuedURLs.removeFirst()
+        guard !isVoiceBusy, start(next) else {
+            queuedURLs = []
+            queueHead = nil
+            failureMessage = "Audio could not continue. Try Play again."
+            return
+        }
+        playingURL = next
     }
 }
 

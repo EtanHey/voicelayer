@@ -36,4 +36,3 @@ export function preparePrivateSpeechDirectory(root: string): void {
   syncSpeechDirectory(root);
   syncSpeechDirectory(dirname(root));
 }
-
