@@ -68,6 +68,31 @@ final class TeleprompterStructuredDisplayTests: XCTestCase {
         }
     }
 
+    // R7: "client/server" highlights as two words, so the decoder counts slash-split display tokens.
+    func testSlashCompoundDisplayFromTypeScriptDecodesWithSplitWordCount() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let process = Process()
+        process.currentDirectoryURL = root
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["bun", "-e", """
+            import {projectStructuredSpeech} from './src/tts/structured-speech';
+            import {structuredReadDisplay} from './src/tts/structured-display';
+            const p = projectStructuredSpeech('Pick client/server.');
+            process.stdout.write(JSON.stringify(structuredReadDisplay(p, [p.speechText], 400)[0]));
+            """]
+        let pipe = Pipe(); process.standardOutput = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        let value = try JSONSerialization.jsonObject(with: data)
+        let text = "Pick client/server."
+        XCTAssertEqual(TeleprompterContentModel.displayTokens(text), ["Pick", "client", "/server."])
+        let display = try XCTUnwrap(TeleprompterStructuredDisplay.decode(value, text: text))
+        XCTAssertEqual(display.blocks.map { [$0.word_start, $0.word_end] }, [[0, 3]])
+    }
+
     func testMissingPreparingDisplayReflowsEveryArrivingChunk() throws {
         var document = try XCTUnwrap(TeleprompterLongReadDocument(longRead: [
             "id": "fallback", "text": "Alpha. Beta.", "chunk_count": 2, "chunk_word_starts": [0, 1]

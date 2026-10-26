@@ -22,6 +22,13 @@ describe("P14b layout over unchanged speech chunks", () => {
     });
   }
 
+  it("counts each prose slash alternative as its own word, as the Swift decoder does", () => {
+    const projection = projectStructuredSpeech("Pick client/server.");
+    const [display] = structuredReadDisplay(projection, [projection.speechText], 400);
+    expect(display?.text).toBe("Pick client/server.");
+    expect(display?.blocks.map(block => [block.word_start, block.word_end])).toEqual([[0, 3]]);
+  });
+
   it("speaks a list starting at 2 without duplicate marker decorations", () => {
     const source = "2. Alpha.\n3. Beta.";
     const projection = projectStructuredSpeech(source);

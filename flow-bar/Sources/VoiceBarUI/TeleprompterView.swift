@@ -299,6 +299,12 @@ public enum TeleprompterPacePolicy {
 public enum TeleprompterContentModel {
     // Mirrors display-tokens.ts: prose alternatives, lexical paths/code, and chunk context resets.
     static func displayTokens(_ text: String) -> [String] {
+        let source = text as NSString
+        return displayTokenRanges(text).map { source.substring(with: $0) }
+    }
+
+    /// UTF-16 ranges of `displayTokens`; structured-display word indices count these.
+    static func displayTokenRanges(_ text: String) -> [NSRange] {
         let pattern = #"https?://[^\s<>]+|www\.[^\s<>]+|(`+)(?!`)[^\u2029]*?(?<!`)\1(?!`)|\]\([^\n\u2029]*?\)|(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP/IP|he/she|assets/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}/)))"#
         let regex = try! NSRegularExpression(pattern: pattern)
         let source = text as NSString
@@ -306,11 +312,11 @@ public enum TeleprompterContentModel {
             $0.range.location + (source.substring(with: $0.range) as NSString).range(of: "/").location
         })
         let words = try! NSRegularExpression(pattern: #"\S+"#)
-        return words.matches(in: text, range: NSRange(location: 0, length: source.length)).flatMap { match -> [String] in
+        return words.matches(in: text, range: NSRange(location: 0, length: source.length)).flatMap { match -> [NSRange] in
             let range = match.range
             let boundaries = [range.location] + cuts.filter { $0 > range.location && $0 < NSMaxRange(range) }.sorted() + [NSMaxRange(range)]
             return zip(boundaries, boundaries.dropFirst()).map { start, end in
-                source.substring(with: NSRange(location: start, length: end - start))
+                NSRange(location: start, length: end - start)
             }
         }
     }

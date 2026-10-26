@@ -39,7 +39,8 @@ struct TeleprompterStructuredDisplay: Decodable {
               result.text == text, result.speech_start >= 0,
               result.speech_start <= 200_000 - text.utf16.count else { return nil }
         let ns = text as NSString
-        let tokens = text.rangesOfNonWhitespace()
+        // Word indices are display tokens, as in display-tokens.ts: "client/server" is two words.
+        let tokens = TeleprompterContentModel.displayTokenRanges(text)
         let kinds: Set<String> = ["heading", "paragraph", "list-item", "table-row", "table-separator", "separator", "code"]
         var next = 0
         for block in result.blocks {
@@ -80,19 +81,5 @@ struct TeleprompterStructuredDisplay: Decodable {
             block.word_end += wordStart
             return block
         }
-    }
-}
-
-private extension String {
-    func rangesOfNonWhitespace() -> [NSRange] {
-        var result: [NSRange] = []
-        var start: String.Index?
-        for index in indices {
-            if self[index].isWhitespace {
-                if let lower = start { result.append(NSRange(lower ..< index, in: self)); start = nil }
-            } else if start == nil { start = index }
-        }
-        if let start { result.append(NSRange(start ..< endIndex, in: self)) }
-        return result
     }
 }
