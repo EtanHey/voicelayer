@@ -1,3 +1,5 @@
+import { runSpeechGeneration } from "./generation-process";
+import { throwIfAbortedSafe } from "../abort";
 /**
  * F5-TTS MLX bridge — zero-shot voice cloning on Apple Silicon.
  *
@@ -8,7 +10,7 @@
  * or when the Qwen3-TTS daemon is unavailable.
  */
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { truncateAtWordBoundary } from "./truncate";
@@ -42,7 +44,7 @@ export async function synthesizeF5TTS(
   text: string,
   referenceAudio: string,
   referenceText: string,
-  options?: { steps?: number; speed?: number },
+  options?: { steps?: number; speed?: number; signal?: AbortSignal },
 ): Promise<string | null> {
   if (!isF5TTSAvailable()) {
     console.error(
@@ -85,20 +87,8 @@ print("OK")
 `;
 
   try {
-    const proc = Bun.spawn([VENV_PYTHON, "-c", script], {
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 60_000, // 60s timeout
-    });
-
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      console.error(
-        `[voicelayer] F5-TTS failed (exit ${exitCode}): ${stderr.slice(-200)}`,
-      );
-      return null;
-    }
+    const exitCode = await runSpeechGeneration([VENV_PYTHON, "-c", script], options?.signal, 60000);
+    if (exitCode !== 0) return null;
 
     if (!existsSync(outputPath)) {
       console.error("[voicelayer] F5-TTS produced no output file");
@@ -107,6 +97,10 @@ print("OK")
 
     return outputPath;
   } catch (err) {
+    if (options?.signal?.aborted) {
+      try { unlinkSync(outputPath); } catch {}
+      throwIfAbortedSafe(options?.signal);
+    }
     console.error(`[voicelayer] F5-TTS error: ${err}`);
     return null;
   }

@@ -1,3 +1,4 @@
+import { cancelQueuedSpeech } from "./speech-archive-live";
 /**
  * QUEUE1 (Etan, 2026-10-20): Option+F5 on a different selection while VoiceBar reads one appends it here.
  * Only the user's Option+F5 reads live in this queue; agent voice_speak keeps the tts.ts priority queue.
@@ -128,6 +129,10 @@ export class SelectionReadQueue<L extends PreparedSelectionRead = PreparedSelect
   clear(): void {
     const changed = this.session || this.items.length > 0;
     this.discardPreparation();
+    for (const read of this.items) {
+      if (!read.archiveContext) continue;
+      cancelQueuedSpeech(read.archiveContext);
+    }
     this.items = [];
     this.current = undefined;
     this.session = false;

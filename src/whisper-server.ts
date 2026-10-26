@@ -1541,9 +1541,7 @@ export function isServerAvailable(): boolean {
 process.on("exit", stopServer);
 process.on("SIGTERM", () => {
   stopServer();
-  process.exit(0);
 });
 process.on("SIGINT", () => {
   stopServer();
-  process.exit(0);
 });

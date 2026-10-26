@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { stopPlayback } from "./tts";
+import { recoverSpeechArchives, interruptLiveSpeech, flushSpeechArchives } from "./speech-archive-live";
 /**
  * VoiceLayer MCP Daemon — persistent singleton replacing per-session MCP processes.
  *
@@ -193,6 +195,7 @@ async function main() {
   // This sequence advances only when Bun's event loop runs. VoiceBar watches
   // it independently and force-restarts an owned child that wedges in JS.
   daemonHeartbeat = startDaemonHeartbeat();
+  void recoverSpeechArchives();
 
   // Start log rotation (10MB threshold, 60s interval)
   startLogRotation();
@@ -286,7 +289,7 @@ async function main() {
   let shuttingDown = false;
   let disablePollTimer: ReturnType<typeof setInterval> | null = null;
   let parentWatchdog: ParentProcessWatchdog | null = null;
-  const shutdown = (reason = "signal") => {
+  const shutdown = async (reason = "signal") => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.error("[voicelayer-daemon] Shutting down...");
@@ -304,6 +307,8 @@ async function main() {
       parent_pid: readProcessParentPid(),
       expected_parent_pid: resolveInitialParentPid(),
     });
+    interruptLiveSpeech();
+    stopPlayback();
     stopControlLayerHeartbeat();
     daemonHeartbeat?.stop();
     daemonHeartbeat = null;
@@ -312,6 +317,7 @@ async function main() {
     stopSTTPolishServer();
     daemon.stop();
     disconnectFromBar();
+    await flushSpeechArchives();
     releaseProcessLock();
     console.error("[voicelayer-daemon] Shutdown complete.");
     process.exit(0);

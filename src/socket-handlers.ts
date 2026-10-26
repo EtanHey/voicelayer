@@ -1,3 +1,4 @@
+import { finishLiveSpeechReceipt } from "./speech-archive-live";
 /**
  * Socket command handlers — logic for Voice Bar socket commands.
  *
@@ -115,11 +116,11 @@ onWhisperModelStateChange(publishModelStatusEvent);
 
 function finishRawSpeakReceipt(context: SpeakArchiveContext | undefined, status: "rejected" | "failed",
   error_code: SpeakLifecycle["summary"]["error_code"]): void {
-  if (!context) return;
+  if (!context || finishLiveSpeechReceipt(context, status, error_code)) return;
   const result = updateSpeakLifecycle(context, { status, generation_id: null,
     timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
     summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code }, played_spans: [] });
-  if (result.kind === "failed") console.error(`[voicelayer] speak archive update failed: ${result.code}`);
+  if (result.kind === "failed" && result.code !== "FINALIZED") console.error(`[voicelayer] speak archive update failed: ${result.code}`);
 }
 
 function finishRawSpeakFailure(context: SpeakArchiveContext | undefined, error: unknown): void {
@@ -160,10 +161,10 @@ export function resetSelectionReadQueueForTests(): void {
 
 /** Stop means stop. F5 over a playing read (`suspend`) still stops it, but keeps the queued reads for Next;
  * a stop or cancel aimed at the capture (`keep`) leaves those waiting reads alone (QUEUE1b). */
-function stopAll(playbackElapsedMs?: number, queue: "clear" | "suspend" | "keep" = "clear"): void {
+function stopAll(playbackElapsedMs?: number, queue: "clear" | "suspend" | "keep" = "clear", cancelled = false): void {
   if (queue === "suspend") selectionReads.suspend();
   else if (queue === "clear") selectionReads.clear();
-  stopPlayback(playbackElapsedMs);
+  stopPlayback(playbackElapsedMs, cancelled);
 }
 
 function stopQueuePolicy(recordingState: string, retain: boolean): "clear" | "suspend" | "keep" {
@@ -283,7 +284,7 @@ export function handleSocketCommand(
       // Hide (QUEUE1b ruling) and an idle Cancel with no capture (QUEUE1c ruling) end the user read chain,
       // before the idle no-op below. A Cancel aimed at a capture keeps the waiting reads.
       if (command.discard_read_queue === true || recordingState === "idle") selectionReads.clear();
-      if (recordingState === "idle" && playbackQueueDepth === 0 && !isPlaybackPaused()) {
+      if (recordingState === "idle" && playbackQueueDepth === 0 && !hasPendingSpeechPreparation() && !isPlaybackPaused()) {
         return buildAck(command, "noop", "already idle");
       }
       // AIDEV-NOTE: Cancel differs from stop — it sets the cancel signal
@@ -299,7 +300,7 @@ export function handleSocketCommand(
       // capture; the parked read stays parked for Play, and the ack never waits on it (P16b, TLA+
       // CaptureCmdAckWithoutAwait): a parked long read cannot finish, so awaiting it false-rejected at 35 s.
       if (recordingState !== "idle" && isPlaybackPaused()) return buildAck(command, "accept");
-      stopAll(command.playback_elapsed_ms, stopQueuePolicy(recordingState, false));
+      stopAll(command.playback_elapsed_ms, stopQueuePolicy(recordingState, false), true);
       return awaitCurrentPlayback().then(
         () => buildAck(command, "accept"),
         (error) => buildAck(command, "reject", error instanceof Error ? error.message : String(error)),
@@ -591,10 +592,11 @@ export function handleSocketCommand(
       });
       if (receipt.kind === "failed") return reject(`Preview refused: input archive unavailable (${receipt.code})`);
       const finish = (status: "rejected" | "failed" | "stopped", error_code: SpeakLifecycle["summary"]["error_code"]) => {
+        if (finishLiveSpeechReceipt(receipt.context, status, error_code)) return;
         const result = updateSpeakLifecycle(receipt.context, { status, generation_id: null,
           timing: { request_clock_id: null, first_player_start_ms: null, acoustic_first_audio_ms: null, ended_ms: null },
           summary: { generated_audio_ms: null, player_reported_played_ms: null, error_code }, played_spans: [] });
-        if (result.kind === "failed") console.error(`[voicelayer] speak archive update failed: ${result.code}`);
+        if (result.kind === "failed" && result.code !== "FINALIZED") console.error(`[voicelayer] speak archive update failed: ${result.code}`);
       };
       if (residencyBusy()) { finish("rejected", "REJECTED"); return reject(residencyBusyReason()); }
       const reservation = reserveStandardVoiceOperation();
