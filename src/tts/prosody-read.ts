@@ -1,0 +1,136 @@
+import { throwIfAbortedSafe } from "../abort";
+import type { SpeakableText } from "../speakable-text";
+import type { ProjectionRange, TextRange } from "./structured-speech";
+import { resolveBinaryAsync } from "../resolve-binary";
+import type { WordBoundary } from "../socket-protocol";
+import { PAUSE, type ProsodyPlan, type ProsodySegment } from "./prosody";
+import { measurePCMExtent, splicePCM } from "./prosody-pcm";
+import { createSegmentScheduler } from "./prosody-schedule";
+
+/** Every engine result is decoded to mono float PCM at this one rate before splicing. */
+export const PROSODY_SAMPLE_RATE = 24000;
+
+export interface ProsodyReadEngine {
+  /** One utterance as the engine writes it (MP3), with words relative to that file. */
+  synthesize(segment: ProsodySegment, signal: AbortSignal): Promise<{ audioFile: string; words: WordBoundary[]; durationMs: number }>;
+  decode(audioFile: string, signal: AbortSignal): Promise<Float32Array>;
+  /** Writes an MP3 (the archive and history container) and returns its path. */
+  encode(pcm: Float32Array, signal: AbortSignal): Promise<string>;
+  unlink(audioFile: string): void;
+}
+export interface ProsodyReadChunk { audioFile: string; durationMs: number; words: WordBoundary[]; spokenText: string }
+
+/** Prosody engages only for structure; plain prose (any length) keeps the existing chunker byte-for-byte. */
+export function isStructuredPlan(plan: ProsodyPlan): boolean {
+  return plan.segments.some((s) => s.kind !== "prose" || s.pauseMs > PAUSE.sentence);
+}
+
+/** The whole read's projection restricted to one chunk (trimmed read span), in chunk-local offsets.
+ * Alignment uses this instead of re-projecting the chunk text, which can speak it differently. */
+export function sliceProjection(projection: SpeakableText, read: TextRange): SpeakableText {
+  const raw = projection.displayText.slice(read.start, read.end);
+  const start = read.start + raw.length - raw.trimStart().length, end = Math.max(start, read.end - (raw.length - raw.trimEnd().length));
+  const displayText = projection.displayText.slice(start, end);
+  const ranges: ProjectionRange[] = [];
+  let speechText = "";
+  for (const range of projection.ranges) {
+    const { source } = range;
+    let text: string;
+    if (source.start === source.end) {
+      if (!(source.start > start && source.start <= end)) continue;
+      text = projection.speechText.slice(range.speech.start, range.speech.end);
+    } else {
+      const from = Math.max(source.start, start), to = Math.min(source.end, end);
+      if (to <= from) continue;
+      text = range.kind === "identity"
+        ? projection.speechText.slice(range.speech.start + from - source.start, range.speech.start + to - source.start)
+        : source.start >= start ? projection.speechText.slice(range.speech.start, range.speech.end) : "";
+    }
+    const local = { start: Math.max(source.start, start) - start, end: Math.min(source.end, end) - start };
+    if (source.start === source.end) local.end = local.start;
+    const speech = { start: speechText.length, end: speechText.length + text.length };
+    speechText += text;
+    ranges.push({ source: local, display: { ...local }, speech,
+      kind: local.start === local.end ? "insertion" : !text ? "omission" : displayText.slice(local.start, local.end) === text ? "identity" : "replacement" });
+  }
+  return { displayText, speechText, ranges };
+}
+
+type Synthesized =
+  | { raw: true; audioFile: string; words: WordBoundary[]; durationMs: number }
+  | { raw: false; pcm: Float32Array; words: WordBoundary[] };
+
+/** One read's audio: chunk 0 is the engine's own file, played without a decode before first audio.
+ * Its tail is measured in the background and completed by chunk 1's leading pad. Every later chunk
+ * splices its utterances with exact planned silence into one MP3. Requests run at most 3 at once. */
+export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, signal: AbortSignal) {
+  const firstEnd = plan.chunks[0]?.end ?? 0;
+  const scheduler = createSegmentScheduler<Synthesized>(plan, async (segment, index, signal) => {
+    const result = await engine.synthesize(segment, signal);
+    if (index < firstEnd) return { raw: true, ...result };
+    try { return { raw: false, pcm: await engine.decode(result.audioFile, signal), words: result.words }; }
+    finally { engine.unlink(result.audioFile); }
+  }, { signal, dispose: (result) => { if (result.raw) engine.unlink(result.audioFile); } });
+  let previousTailMs: Promise<number> = Promise.resolve(0);
+  const spoken = (index: number) => plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map((s) => s.text).join(" ");
+
+  return {
+    async chunk(index: number): Promise<ProsodyReadChunk> {
+      const parts = await scheduler.chunk(index);
+      const [first] = parts;
+      if (index === 0 && parts.length === 1 && first.raw) {
+        previousTailMs = engine.decode(first.audioFile, signal)
+          .then((pcm) => measurePCMExtent(pcm, PROSODY_SAMPLE_RATE, first.words).tailMs, () => 0);
+        return { audioFile: first.audioFile, durationMs: first.durationMs, words: first.words, spokenText: spoken(0) };
+      }
+      const tailMs = await previousTailMs;
+      throwIfAbortedSafe(signal);
+      const segments = plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end);
+      const spliced = splicePCM(parts.map((part, i) => {
+        if (part.raw) throw new Error("Only chunk 0 plays an engine file directly");
+        return { pcm: part.pcm, words: part.words, pauseMs: segments[i].pauseMs };
+      }), PROSODY_SAMPLE_RATE, index > 0 ? { leadingPauseMs: plan.chunks[index - 1].trailingPauseMs, previousTailMs: tailMs } : {});
+      const audioFile = await engine.encode(spliced.pcm, signal);
+      previousTailMs = Promise.resolve(measurePCMExtent(spliced.pcm, PROSODY_SAMPLE_RATE).tailMs);
+      return { audioFile, durationMs: spliced.durationMs, words: spliced.words, spokenText: spoken(index) };
+    },
+    /** Waits for every started request and removes engine files that were never delivered. */
+    close: () => scheduler.close(),
+  };
+}
+
+async function ffmpegChild(args: string[], signal: AbortSignal, stdin?: Float32Array) {
+  throwIfAbortedSafe(signal);
+  const ffmpeg = await resolveBinaryAsync("ffmpeg");
+  if (!ffmpeg) throw new Error("ffmpeg unavailable for speech prosody");
+  throwIfAbortedSafe(signal);
+  const proc = Bun.spawn([ffmpeg, ...args], { env: process.env, stdin: stdin ? "pipe" : "ignore", stdout: "pipe", stderr: "ignore" });
+  const kill = () => { try { proc.kill("SIGKILL"); } catch {} };
+  const timeout = setTimeout(kill, 30_000);
+  signal.addEventListener("abort", kill, { once: true });
+  try {
+    if (stdin && proc.stdin && typeof proc.stdin !== "number") {
+      proc.stdin.write(new Uint8Array(stdin.buffer, stdin.byteOffset, stdin.byteLength));
+      await proc.stdin.end();
+    }
+    const [output, code] = await Promise.all([new Response(proc.stdout as ReadableStream).arrayBuffer(), proc.exited]);
+    throwIfAbortedSafe(signal);
+    if (code !== 0) throw new Error(`Speech prosody audio conversion failed (${code})`);
+    return output;
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", kill);
+  }
+}
+
+/** Any engine container → mono float PCM at PROSODY_SAMPLE_RATE (downmixed and resampled). */
+export async function decodeAudioToPCM(audioFile: string, signal: AbortSignal): Promise<Float32Array> {
+  const output = await ffmpegChild(["-nostdin", "-v", "error", "-i", audioFile, "-f", "f32le", "-ac", "1", "-ar", String(PROSODY_SAMPLE_RATE), "pipe:1"], signal);
+  return new Float32Array(output.slice(0, output.byteLength - output.byteLength % 4));
+}
+
+/** Spliced PCM → MP3 at `audioFile`; never a WAV under an .mp3 name. */
+export async function encodePCMToMp3(pcm: Float32Array, audioFile: string, signal: AbortSignal): Promise<void> {
+  await ffmpegChild(["-y", "-v", "error", "-f", "f32le", "-ar", String(PROSODY_SAMPLE_RATE), "-ac", "1", "-i", "pipe:0",
+    "-codec:a", "libmp3lame", "-q:a", "2", "-f", "mp3", audioFile], signal, pcm);
+}

@@ -4,7 +4,9 @@ import { projectStructuredSpeech, type ProjectionRange, type StructuredSpeech, t
 /** Total silence (ms) from the last word of one utterance to the first of the next. */
 export const PAUSE = { heading: 800, h1: 900, h2: 750, beforeHeading: 600,
   label: 320, listIntro: 600, shortItem: 450, longItem: 700,
-  sentence: 550, paragraph: 1000, beforeAside: 200, afterAside: 300, askQuestion: 600 };
+  sentence: 550, paragraph: 1000, beforeAside: 200, afterAside: 300, askQuestion: 600,
+  /** After a spoken list number: short (1–5 word) and long items. */
+  number: 250, longNumber: 280 };
 /** Same limit as the long-read chunker (TTS_CHUNK_MAX_CHARS); one owner of request size. */
 export const PROSODY_MAX_CHARS = 400;
 /** Engine requests in flight at once for one read. */
@@ -18,7 +20,7 @@ export function prosodyBudget(charsAhead: number, maxChars = PROSODY_MAX_CHARS):
   return charsAhead === 0 ? maxChars : Math.min(maxChars, Math.max(FAST_MIN, RAMP * charsAhead));
 }
 
-export type ProsodySegmentKind = "heading" | "label" | "prose" | "item" | "aside";
+export type ProsodySegmentKind = "heading" | "label" | "prose" | "item" | "aside" | "number";
 export interface ProsodySegment {
   kind: ProsodySegmentKind;
   /** Exact engine text: a slice of the projection, plus a closing period on emphasized utterances. */
@@ -56,6 +58,9 @@ export interface ProsodyInput {
   structure?: StructuredSpeech;
   /** voice_ask: pause before the question itself. */
   ask?: boolean;
+  /** "separate" (default): a spoken list number is its own utterance, followed by the number pause.
+   * "inline": it stays inside the item request (engines that fail on one-word requests). */
+  listNumbers?: "separate" | "inline";
   maxChars?: number;
   concurrency?: number;
 }
@@ -121,7 +126,7 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     }
   };
   /** A bold label at the start of a source line; its end is found in read coordinates. */
-  const label = (lineStart: number, lineEnd: number, content: number, item: boolean) => {
+  const label = (lineStart: number, lineEnd: number, content: number, item: boolean, readFrom = readAt(lineStart)) => {
     const match = source.slice(content, lineEnd).match(LABEL);
     // A label names what follows: it carries a colon. Plain inline emphasis is prose.
     if (!match || !(match[2].endsWith(":") || match[3])) return false;
@@ -129,16 +134,27 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     let end: number;
     if (!structured) end = sourceEnd;
     else {
-      const readStart = readAt(lineStart), readLine = readText.slice(readStart, readAt(lineEnd));
+      const readLine = readText.slice(readFrom, readAt(lineEnd));
       const text = match[2].replace(/[*_`]/g, "") + match[3];
       const lead = readLine.length - readLine.trimStart().length;
       if (!readLine.startsWith(text, lead)) return false;
-      end = readStart + lead + text.length;
+      end = readFrom + lead + text.length;
     }
-    push(readAt(lineStart), "label", PAUSE.label, true, item);
+    push(readFrom, "label", PAUSE.label, true, item);
     push(end, item ? "item" : "prose", 0, false, item);
     return end;
   };
+
+  /** Read offset just after a numbered marker ("1. ", "100) "), if the item has one. */
+  function numberEnd(start: number, lineEnd: number, raw: string): number | undefined {
+    const marker = raw.match(/^[ \t]*\d+[.)][ \t]+/)?.[0];
+    if (!marker) return undefined;
+    if (!structured) return start + marker.length;
+    const readStart = readAt(start), readLine = readText.slice(readStart, readAt(lineEnd));
+    const lead = readLine.length - readLine.trimStart().length;
+    const kept = readLine.slice(lead).match(/^\d+[.)][ \t]+/)?.[0];
+    return kept ? readStart + lead + kept.length : undefined;
+  }
 
   let fresh = true;
   for (const [index, block] of blocks.entries()) {
@@ -155,11 +171,19 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     if (block.kind === "list-item") {
       const marker = raw.match(MARKER)?.[0].length ?? 0;
       const lineEnd = start + raw.replace(/[\r\n]+$/, "").length;
-      const body = label(start, lineEnd, start + marker, true);
-      if (body === false) push(readAt(start), "item", 0, false, true);
-      asides(body === false ? readAt(start) : body, readAt(lineEnd), raw, true);
       const words = source.slice(start + marker, lineEnd).split(/\s+/).filter((w) => WORD.test(w)).length;
-      pause(words >= 6 ? PAUSE.longItem : PAUSE.shortItem);
+      const long = words >= 6;
+      // A spoken number ("one.", "1.", "100.") is its own utterance: the item starts after it.
+      let content = readAt(start);
+      const number = input.listNumbers === "inline" ? undefined : numberEnd(start, lineEnd, raw);
+      if (number !== undefined && WORD.test(projection.speechText.slice(speechAt(content), speechAt(number)))) {
+        push(content, "number", long ? PAUSE.longNumber : PAUSE.number, false, true);
+        content = number;
+      }
+      const body = label(start, lineEnd, start + marker, true, content);
+      if (body === false) push(content, "item", 0, false, true);
+      asides(body === false ? content : body, readAt(lineEnd), raw, true);
+      pause(long ? PAUSE.longItem : PAUSE.shortItem);
       fresh = true;
       continue;
     }

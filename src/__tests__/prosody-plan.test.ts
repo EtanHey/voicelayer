@@ -77,8 +77,10 @@ describe("projection-first structure (v1 defect 3: main's projection is never re
     const plan = selectionPlan(source);
     expect(plan.readText).toBe(projectStructuredSpeech(source).speechText);
     expectSound(plan, projectSpeakableText(plan.readText, [], "edge").speechText);
-    expect(texts(plan)).toEqual(["Choose.", "Question.", "Which one?", "Red apple.", "Green pear."]);
-    expect(plan.segments.map((s) => s.emphasis)).toEqual([true, true, false, false, false]);
+    // R3 reflow keeps list numbers in the flattened text; each spoken number is its own utterance (N1).
+    expect(texts(plan)).toEqual(["Choose.", "Question.", "Which one?", "1.", "Red apple.", "2.", "Green pear."]);
+    expect(plan.segments.map((s) => s.emphasis)).toEqual([true, true, false, false, false, false, false]);
+    expect(pauses(plan).slice(3)).toEqual([PAUSE.number, PAUSE.shortItem, PAUSE.number, 0]);
   });
 });
 
@@ -128,10 +130,30 @@ describe("pause vocabulary (spec table) with max-collapse", () => {
   it("an item that speaks nothing never overwrites the previous boundary", () => {
     expect(pauses(speakPlan("Intro.\n\n- **\n- Real item"))).toEqual([PAUSE.paragraph, 0]);
   });
-  it("numbered items keep whatever the projection speaks for the marker inside the item request", () => {
-    const plan = speakPlan("1. שלום עולם\n2. מה נשמע\n100. Hundredth item");
-    expect(plan.segments).toHaveLength(3);
-    expect(texts(plan).join(" ")).toBe(projectSpeakableText("1. שלום עולם\n2. מה נשמע\n100. Hundredth item", [], "edge").speechText);
+  it("N1: a spoken list number is its own utterance with 250 ms (short item) or 280 ms (long item) after it", () => {
+    const plan = speakPlan("1. Pick up the blue basket.\n2. Walk past the old apple tree to the wall.");
+    expect(texts(plan)).toEqual(["one.", "Pick up the blue basket.", "two.", "Walk past the old apple tree to the wall."]);
+    expect(pauses(plan)).toEqual([PAUSE.number, PAUSE.shortItem, PAUSE.longNumber, 0]);
+    expect(plan.segments.map((s) => s.kind)).toEqual(["number", "item", "number", "item"]);
+  });
+  it("N1: Hebrew and multi-digit markers are spoken as the projection keeps them, in order, never dropped", () => {
+    const raw = "1. שלום עולם\n2. מה נשמע\n100. Hundredth item";
+    const plan = speakPlan(raw);
+    expect(texts(plan)).toEqual(["1.", "שלום עולם.", "2.", "מה נשמע.", "100.", "Hundredth item."]);
+    expect(texts(plan).join(" ")).toBe(projectSpeakableText(raw, [], "edge").speechText);
+  });
+  it("N1: a numbered label keeps the number, then the emphasized label", () => {
+    const plan = speakPlan("1. **Merge:** now\n2. **Wait:** later");
+    expect(texts(plan)).toEqual(["one.", "Merge.", "now.", "two.", "Wait.", "later."]);
+    expect(pauses(plan)).toEqual([PAUSE.number, PAUSE.label, PAUSE.shortItem, PAUSE.number, PAUSE.label, 0]);
+    expect(texts(selectionPlan("1. **Merge:** now\n2. **Wait:** later"))).toEqual(["one.", "Merge.", "now.", "2.", "Wait.", "later."]);
+  });
+  it("N1: inline numbers (clone engines) stay inside the item request; bullets never add a number", () => {
+    const raw = "1. Pick up the blue basket.\n2. Walk to the gate.";
+    const plan = planProsody({ readText: raw, projection: projectSpeakableText(raw, [], "clone"), listNumbers: "inline" });
+    expect(plan.segments).toHaveLength(2);
+    expect(plan.segments.some((s) => s.kind === "number")).toBe(false);
+    expect(speakPlan("- one bullet\n- two bullet").segments.some((s) => s.kind === "number")).toBe(false);
   });
   it("asides: 200 before, 300 after; trailing punctuation stays with the aside", () => {
     const plan = speakPlan("The build (which took long) passed today.");
@@ -152,9 +174,10 @@ describe("evidence passages (GEMINI-1 §4–5)", () => {
     const raw = "Nothing needed from you.\n\n**Orchard route**\n\nAn orchard route follows three stops.\n\n1. Pick up the blue basket.\n2. Walk to the garden gate.\n3. Follow the path past the old apple tree to the low stone wall.";
     const plan = speakPlan(raw);
     expectSound(plan, projectSpeakableText(raw, [], "edge").speechText);
-    expect(texts(plan).slice(0, 3)).toEqual(["Nothing needed from you.", "Orchard route.", "An orchard route follows three stops."]);
+    expect(texts(plan).slice(0, 4)).toEqual(["Nothing needed from you.", "Orchard route.", "An orchard route follows three stops.", "one."]);
     expect(plan.segments[1].emphasis).toBe(true);
-    expect(pauses(plan)).toEqual([PAUSE.paragraph, PAUSE.paragraph, PAUSE.paragraph, PAUSE.shortItem, PAUSE.shortItem, 0]);
+    expect(pauses(plan)).toEqual([PAUSE.paragraph, PAUSE.paragraph, PAUSE.paragraph,
+      PAUSE.number, PAUSE.shortItem, PAUSE.number, PAUSE.shortItem, PAUSE.longNumber, 0]);
   });
   it("video 2: colon lead-in and bold bullet labels", () => {
     const raw = "I spent today on:\n- **Archive backend:** saving every spoken reply.\n- **Your Option+F5 formatting bug:** preserving list structure.";

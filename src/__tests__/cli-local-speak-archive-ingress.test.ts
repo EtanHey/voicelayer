@@ -266,7 +266,11 @@ describe("CLI local raw ingress (real creator/store; controlled speech and socke
     expect(archive.createSpeakReceipt).toHaveBeenCalledTimes(1);
     expect(fs.readFileSync(join(contexts[0].path, "input.txt"), "utf8")).toBe(raw);
     expect(metadata(contexts[0]).speech).toMatchObject({ state: "failed", reason: "SPEECH_FAILED" });
-    expect(synthesized).toHaveLength(1); expect(played).toEqual(["synthetic-no-file"]); expect(disposed).toEqual(played);
+    // PROSODY v2 (b): the bold-only first line is planned as its own emphasized utterance, so this raw
+    // fixture is two chunks and lookahead may synthesize chunk 1 before chunk 0's player fails. Every
+    // synthesized chunk is still disposed exactly once, and only chunk 0 ever reached a player.
+    expect(synthesized.length).toBeGreaterThanOrEqual(1); expect(played).toEqual(["synthetic-no-file"]);
+    expect(disposed).toEqual(synthesized.map(() => "synthetic-no-file"));
   });
 });
 

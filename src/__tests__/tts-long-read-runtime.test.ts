@@ -614,31 +614,35 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(played.long_read.text).toBeUndefined();
   });
 
-  it("P14b runtime keeps legacy synthesis/chunks and attaches layout to player receipts and retained replay", async () => {
+  it("P14b structured reads attach layout to every player receipt and to retained replay", async () => {
+    // PROSODY v2 (b): this test used to pin "legacy synthesis/chunks" (one request "two. Alpha. 3. Beta.").
+    // A numbered list is now planned utterances: each spoken number is its own request followed by the
+    // 250 ms number pause (N1), so the list is two chunks of four requests. Layout, subtitles and replay
+    // guarantees are unchanged and still asserted below.
     autoPlay = true;
     const structuredDisplay = projectStructuredSpeech("2. Alpha.\n3. Beta.");
     const h = speakLongRead(structuredDisplay.speechText, { engine: "edge", voice: "fixture", rate: "+0%" },
       Date.now(), { request_id: "structured-read", structuredDisplay });
     handles.push(h); await h.done; await flushSpeechArchives();
-    const played = events.find(event => event.state === "speaking" && !event.long_read?.preparing);
-    expect(played).toBeDefined();
-    expect(played.text).toBe(structuredDisplay.speechText);
+    const played = events.filter(event => event.state === "speaking" && !event.long_read?.preparing);
+    expect(played.map(event => event.text)).toEqual(["2.", "Alpha. 3. Beta."]);
     const preparing = events.find(event => event.long_read?.preparing);
-    expect(preparing.long_read.display.blocks).toEqual(played.long_read.display.blocks);
+    expect(preparing.long_read.display.text).toBe(structuredDisplay.speechText);
     expect(JSON.parse(serializeEvent(preparing)).long_read.display).toEqual(preparing.long_read.display);
-    expect(played.long_read.display.text).toBe(played.text);
-    expect(played.long_read.display.blocks.map((block: { marker: string }) => block.marker)).toEqual([undefined, undefined]);
-    expect(synths[0].argv.find(arg => arg.startsWith("--text="))).toBe("--text=two. Alpha. 3. Beta.");
-    const subtitle = events.find(event => event.type === "subtitle");
-    expect(subtitle.words.map((word: { text: string }) => word.text)).toEqual(["2.", "Alpha.", "3.", "Beta."]);
-    expect(played.request_id).toBe("structured-read");
-    expect(seekPlayback(0, "readback", played.readback_id)).toMatchObject({ outcome: "accept" });
+    expect(preparing.long_read.display.blocks.map((block: { marker: string }) => block.marker)).toEqual([undefined, undefined]);
+    for (const event of played) expect(event.long_read.display.text).toBe(event.text);
+    expect(synths.map(synth => synth.argv.find(arg => arg.startsWith("--text=")))).toEqual(["--text=two.", "--text=Alpha.", "--text=3.", "--text=Beta."]);
+    expect(events.filter(event => event.type === "subtitle").flatMap(event => event.words.map((word: { text: string }) => word.text)))
+      .toEqual(["2.", "Alpha.", "3.", "Beta."]);
+    expect(played.every(event => event.request_id === "structured-read")).toBe(true);
+    const before = events.length;
+    expect(seekPlayback(0, "readback", played[0].readback_id)).toMatchObject({ outcome: "accept" });
     await awaitCurrentPlayback();
-    const replayed = events.filter(event => event.state === "speaking" && !event.long_read?.preparing).at(-1);
-    expect(replayed).toBeDefined();
-    expect(replayed).not.toBe(played);
-    expect(replayed.long_read.display).toEqual(played.long_read.display);
-    expect(replayed.text).toBe(played.text);
+    const replayed = events.slice(before).filter(event => event.state === "speaking" && !event.long_read?.preparing);
+    expect(replayed.length).toBeGreaterThan(0);
+    expect(replayed[0]).not.toBe(played[0]);
+    expect(replayed[0].long_read.display).toEqual(played[0].long_read.display);
+    expect(replayed[0].text).toBe(played[0].text);
   });
 
   it("PLAYER0 new speakLongRead cannot stop another agent's active or queued job", async () => {

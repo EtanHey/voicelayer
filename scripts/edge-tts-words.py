@@ -25,6 +25,9 @@ async def main():
     parser.add_argument("--text", required=True)
     parser.add_argument("--voice", default="en-US-JennyNeural")
     parser.add_argument("--rate", default="+0%")
+    # Top-level prosody only: edge's endpoint ignores SSML breaks/emphasis inside the text.
+    parser.add_argument("--pitch", default="+0Hz")
+    parser.add_argument("--volume", default="+0%")
     parser.add_argument("--write-media", required=True)
     parser.add_argument("--write-metadata", required=True)
     args = parser.parse_args()
@@ -33,6 +36,8 @@ async def main():
         text=args.text,
         voice=args.voice,
         rate=args.rate,
+        pitch=args.pitch,
+        volume=args.volume,
         boundary="WordBoundary",
     )
 

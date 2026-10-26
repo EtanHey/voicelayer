@@ -153,6 +153,7 @@ export function buildEdgeTTSArgs(
   rate: string,
   audioFile: string,
   metadataFile: string,
+  prosody?: EdgeProsody,
 ): string[] {
   return [
     python3,
@@ -164,8 +165,12 @@ export function buildEdgeTTSArgs(
     // =-form for consistency so no argument can ever be re-interpreted as a flag.
     `--write-media=${audioFile}`,
     `--write-metadata=${metadataFile}`,
+    ...(prosody ? [`--pitch=${prosody.pitch}`, `--volume=${prosody.volume}`] : []),
   ];
 }
+
+/** Edge honours one top-level prosody per request; emphasized utterances are their own request. */
+export interface EdgeProsody { pitch: string; volume: string }
 
 function parseWordBoundaries(metadataFile: string): WordBoundary[] {
   try {
@@ -199,6 +204,7 @@ export async function synthesizeWithRetry(
   scriptPath: string,
   maxRetries = 1,
   signal?: AbortSignal,
+  prosody?: EdgeProsody,
 ): Promise<SynthesizeResult> {
   const metadataFile = audioFile.replace(".mp3", ".meta.ndjson");
   let lastError = "";
@@ -221,6 +227,7 @@ export async function synthesizeWithRetry(
           rate,
           audioFile,
           metadataFile,
+          prosody,
         ),
       );
 
