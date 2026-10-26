@@ -75,5 +75,11 @@ jobs:
       - name: QA-only UIE2E sources compile (hide1, gate2246)
         run: bash scripts/check-voicebar-qa-compile.sh
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
       - name: Swift tests
         run: swift test --package-path flow-bar
