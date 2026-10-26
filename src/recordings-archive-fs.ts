@@ -12,7 +12,7 @@ import { dirname } from "path";
 import { getRecordingsArchiveRoot } from "./paths";
 
 export function recordingsArchiveRoot(): string {
-  return getRecordingsArchiveRoot();
+  return getRecordingsArchiveRoot().replace(/\/+$/, "") || "/";
 }
 
 export function fsyncPath(path: string): void {
