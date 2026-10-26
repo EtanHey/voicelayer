@@ -6,6 +6,9 @@ import * as input from "../input";
 import { handleSocketCommand } from "../socket-handlers";
 import { parseCommand } from "../socket-protocol";
 import { TEST_TMP } from "./setup/test-tmp";
+import { beginSpeechArchive } from "../speech-archive-live";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { deferredFixture as deferred, fixtureBarrier, fixtureCheckpoint } from "./long-read-fixture-barriers";
 
 const T0 = new Date("2026-10-18T12:00:00.000Z").getTime();
@@ -71,6 +74,28 @@ async function pauseAt4200() {
 }
 
 describe("P10 queue pause/resume", () => {
+  it("R1C pause at duration resumes to a durable completed receipt without another player", async () => {
+    const archive = beginSpeechArchive("endpoint pause fixture");
+    await archive.settled();
+    const handle = tts.playAudioNonBlocking(`${TEST_TMP}/endpoint.mp3`, {
+      text: "Endpoint", voice: "fixture", durationMs: 1000, speechArchive: archive,
+      onCompleted: outcome => archive.finish(outcome.status === "completed" ? "completed" : "stopped", "PLAYBACK_COMPLETED"),
+    });
+    await players.at(0);
+    at(1000);
+    expect(tts.pausePlayback()).toMatchObject({ outcome: "accept", offset_ms: 1000 });
+    const trim = await trims.at(0);
+    trim.exit.resolve(0);
+    await fixtureCheckpoint();
+    at(31_000);
+    expect(tts.resumePlayback()).toMatchObject({ outcome: "accept", offset_ms: 1000 });
+    expect(await handle.exited).toMatchObject({ status: "completed" });
+    await archive.settled();
+    expect(players.values).toHaveLength(1);
+    expect(archive.failures).toEqual([]);
+    expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech).toMatchObject({ state: "completed", played_ms: 1000 });
+  });
+
   it("pause-resume-keeps-4200ms-cursor: frozen clock, offset and envelope; one resume within 150 ms", async () => {
     const { handle, player, paused, trim } = await pauseAt4200();
     expect(paused).toMatchObject({ outcome: "accept", offset_ms: 4200 });

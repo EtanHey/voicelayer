@@ -37,19 +37,27 @@ export class LiveSpeechArchive {
     return this.storedContext;
   }
   private enqueue(operation: ArchiveWrite): Promise<void> {
+    return this.schedule(() => this.writeOrDefer(operation));
+  }
+  private async writeOrDefer(operation: ArchiveWrite): Promise<void> {
+    // A failed edge owns its place in the journal; later writes cannot overtake it.
+    if (this.failures.length) {
+      this.failures.push({ operation, code: "ARCHIVE_WRITE_BLOCKED" });
+      return;
+    }
+    try {
+      this.storedContext = (await speechArchiveWriter.write(this.key, operation, this.storedContext, this.root)).context;
+      liveArchives.delete(this.key);
+      liveArchives.set(this.storedContext.id, this);
+      if (operation.kind === "audio") releaseAudio(operation);
+    } catch {
+      this.failures.push({ operation, code: "ARCHIVE_WRITE_FAILED" });
+      console.error(`[speech] archive write failed: ${operation.kind}`);
+    }
+  }
+  private schedule(run: () => Promise<void>): Promise<void> {
     liveArchives.set(this.storedContext?.id ?? this.key, this);
-    const work = this.tail.then(async () => {
-      try {
-        this.storedContext = (await speechArchiveWriter.write(this.key, operation, this.storedContext, this.root)).context;
-        liveArchives.delete(this.key);
-        liveArchives.set(this.storedContext.id, this);
-        if (operation.kind === "audio") releaseAudio(operation);
-      }
-      catch {
-        this.failures.push({ operation, code: "ARCHIVE_WRITE_FAILED" });
-        console.error(`[speech] archive write failed: ${operation.kind}`);
-      }
-    });
+    const work = this.tail.then(run);
     this.tail = work;
     void work.then(() => {
       if (this.tail === work && this.terminal && !this.failures.length) {
@@ -61,9 +69,10 @@ export class LiveSpeechArchive {
   }
   settled(): Promise<void> { return this.tail; }
   async retryFailed(): Promise<void> {
-    const failed = this.failures.splice(0);
-    for (const { operation } of failed) this.enqueue(operation);
-    await this.settled();
+    await this.schedule(async () => {
+      const failed = this.failures.splice(0);
+      for (const { operation } of failed) await this.writeOrDefer(operation);
+    });
   }
   playerStarted(): void {
     if (this.state !== "playing") this.move("playing");

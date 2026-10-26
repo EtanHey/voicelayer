@@ -46,7 +46,10 @@ export async function migrateLegacySpeechSlice(): Promise<{ more: boolean; recov
             if (result.kind === "failed") throw new Error(`legacy speech recovery ${id}: ${result.code}`);
             recovered.push(id);
           }
-        } catch (error) { if (!absent(error)) throw error; }
+        } catch (error) {
+          // Retain the bad receipt, but let healthy history reach its checkpoint.
+          if (!absent(error)) console.error("[speech] legacy receipt recovery failed; entry retained");
+        }
       }
       cursor = id;
       if (++visited >= 100 || Date.now() >= deadline) {

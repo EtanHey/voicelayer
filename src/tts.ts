@@ -1330,7 +1330,10 @@ class PlaybackQueueManager {
     const parked: ParkedPlayback = { job, offsetMs: offset, controller: new AbortController(),
       ready: offset === 0, failed: false, resumeRequested: false };
     this.parked = parked;
-    job.metadata?.speechArchive?.move("paused");
+    if (offset < (metadata.durationMs ?? Infinity)) metadata.speechArchive?.move("paused");
+    // Resume at EOF completes without a new player. Close timing now and keep
+    // the legal playing -> completed path, including for a long-read chunk.
+    else metadata.speechArchive?.playerEnded();
     if (!parked.ready) this.prepareParked(parked);
     this.broadcastPlaybackState(job, "paused");
     this.emitQueueSnapshot();
@@ -2040,15 +2043,11 @@ export async function awaitCurrentPlayback(options: { forCaptureAdmission?: bool
   // Snapshot generation ownership before yielding, including already-aborted cleanup.
   const generations = [...cancelledLongReadTeardowns, ...(options.forCaptureAdmission ? [] : speechPreparationSettlements)];
   if (activeLongRead) generations.push(activeLongRead.done);
-  // Snapshot queue drain now: a later unrelated speech must not join this acknowledgement.
-  const queueDrained = options.forCaptureAdmission ? undefined : playbackQueueManager.awaitDrained();
   const settled = async () => {
-    if (options.forCaptureAdmission) {
-      // Match main's Ask policy: ordinary preparation may finish while capture
-      // owns admission, but its player remains deferred until admission releases.
-      await Promise.all(generations);
-      await playbackQueueManager.awaitDrained();
-    } else await Promise.all([...generations, queueDrained]);
+    // Captured preparations can enqueue after the current queue has drained.
+    // For capture admission, ordinary preparations remain excluded above.
+    await Promise.all(generations);
+    await playbackQueueManager.awaitDrained();
   };
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
