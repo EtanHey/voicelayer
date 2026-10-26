@@ -11,7 +11,10 @@ class FakeClock {
   private timers: { at: number; seq: number; fire: () => void }[] = [];
   private seq = 0;
   sleep(ms: number) { return new Promise<void>((fire) => this.timers.push({ at: this.now + ms, seq: this.seq++, fire })); }
-  private async flush() { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); }
+  /** Settles pending promise continuations without the event loop: the code under test runs only on
+   * promises and this clock, so microtask yields are complete, and no other file's timers, sockets or
+   * replaced globals can delay them. */
+  private async flush() { for (let i = 0; i < 200; i++) await Promise.resolve(); }
   async until<T>(promise: Promise<T>): Promise<T> {
     let done = false;
     promise.then(() => { done = true; }, () => { done = true; });
@@ -25,6 +28,32 @@ class FakeClock {
     }
   }
 }
+
+describe("FakeClock is immune to the event loop and to replaced globals", () => {
+  // Full-suite flake (2026-10-26): after socket-byte-framing.test.ts left a VoiceBar client's keepalive and
+  // socket alive, Bun ran nested setImmediate callbacks only on real timer wakeups (~1 s apart), so a
+  // setImmediate-based flush advanced virtual time once per real second and these tests hit 5 s timeouts.
+  it("advances a scheduler scenario even when setImmediate never calls back", async () => {
+    const realImmediate = globalThis.setImmediate;
+    globalThis.setImmediate = (() => 0) as unknown as typeof setImmediate;
+    try {
+      const clock = new FakeClock(), p = plan("## Status\n\n- One\n- Two\n- Three\n- Four");
+      const controller = new AbortController();
+      const scheduler = createSegmentScheduler(p, async (_s, index, signal) => {
+        await clock.sleep(50); if (signal.aborted) throw new Error("killed"); return index;
+      }, { signal: controller.signal });
+      const first = scheduler.chunk(0); first.catch(() => {});
+      const finished = (async () => {
+        await clock.until(Promise.resolve());
+        controller.abort();
+        await clock.until(first).catch(() => {});
+        await clock.until(scheduler.settled());
+        return "done";
+      })();
+      expect(await Promise.race([finished, Bun.sleep(1000).then(() => "stalled")])).toBe("done");
+    } finally { globalThis.setImmediate = realImmediate; }
+  });
+});
 
 const plan = (text: string, ask = false) => planProsody({ readText: text, projection: projectSpeakableText(text, [], "edge"), ask });
 
