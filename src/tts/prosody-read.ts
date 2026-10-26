@@ -3,7 +3,7 @@ import type { SpeakableText } from "../speakable-text";
 import type { ProjectionRange, TextRange } from "./structured-speech";
 import { resolveBinaryAsync } from "../resolve-binary";
 import type { WordBoundary } from "../socket-protocol";
-import { PAUSE, type ProsodyPlan, type ProsodySegment } from "./prosody";
+import { mapper, PAUSE, type ProsodyPlan, type ProsodySegment } from "./prosody";
 import { measurePCMExtent, splicePCM } from "./prosody-pcm";
 import { createSegmentScheduler } from "./prosody-schedule";
 
@@ -31,6 +31,10 @@ export function sliceProjection(projection: SpeakableText, read: TextRange): Spe
   const raw = projection.displayText.slice(read.start, read.end);
   const start = read.start + raw.length - raw.trimStart().length, end = Math.max(start, read.end - (raw.length - raw.trimEnd().length));
   const displayText = projection.displayText.slice(start, end);
+  // An atomic range belongs to the chunk the planner gave its speech to: the same offset mapping that cut
+  // the synthesized segments. A chunk whose (untrimmed) start falls inside one owns it whole.
+  const speechAt = mapper(projection.ranges);
+  const ownStart = speechAt(read.start), ownEnd = read.end >= projection.displayText.length ? projection.speechText.length : speechAt(read.end);
   const ranges: ProjectionRange[] = [];
   let speechText = "";
   for (const range of projection.ranges) {
@@ -44,7 +48,7 @@ export function sliceProjection(projection: SpeakableText, read: TextRange): Spe
       if (to <= from) continue;
       text = range.kind === "identity"
         ? projection.speechText.slice(range.speech.start + from - source.start, range.speech.start + to - source.start)
-        : source.start >= start ? projection.speechText.slice(range.speech.start, range.speech.end) : "";
+        : ownStart <= range.speech.start && range.speech.start < ownEnd ? projection.speechText.slice(range.speech.start, range.speech.end) : "";
     }
     const local = { start: Math.max(source.start, start) - start, end: Math.min(source.end, end) - start };
     if (source.start === source.end) local.end = local.start;

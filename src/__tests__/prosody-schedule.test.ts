@@ -29,6 +29,25 @@ class FakeClock {
   }
 }
 
+describe("Macroscope #562: delivered results are not retained by the scheduler", () => {
+  it("after a chunk is handed out and the caller drops it, its results can be collected", async () => {
+    const clock = new FakeClock(), p = plan(Array.from({ length: 40 }, (_, i) => `## Part ${i}\n\nBody ${i} text.`).join("\n\n"));
+    const refs = new Map<number, WeakRef<object>>();
+    const scheduler = createSegmentScheduler(p, async (_s, index) => {
+      await clock.sleep(10);
+      const result = { index, pcm: new Float32Array(200_000) };
+      refs.set(index, new WeakRef(result));
+      return result;
+    }, { signal: new AbortController().signal });
+    // Deliver one chunk past the ones checked: the newest delivery may still sit on this test's own stack.
+    for (const index of [0, 1, 2, 3]) { const result = await clock.until(scheduler.chunk(index)); expect(result.length).toBeGreaterThan(0); }
+    const delivered = p.segments.map((_, i) => i).filter((i) => i < p.chunks[2].end);
+    for (let i = 0; i < 3; i++) { Bun.gc(true); await Promise.resolve(); }
+    expect(delivered.filter((i) => refs.get(i)?.deref() !== undefined)).toEqual([]);
+    await clock.until(scheduler.close());
+  });
+});
+
 describe("FakeClock is immune to the event loop and to replaced globals", () => {
   // Full-suite flake (2026-10-26): after socket-byte-framing.test.ts left a VoiceBar client's keepalive and
   // socket alive, Bun ran nested setImmediate callbacks only on real timer wakeups (~1 s apart), so a
