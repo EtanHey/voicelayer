@@ -3,6 +3,7 @@ import * as fs from "fs";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { createSpeakReceipt } from "../speak-archive";
+import { speechOpenIndex } from "../speech-open-index";
 import { transitionSpeakArchive, recoverSpeakArchive, updateSpeakLifecycle, saveSpeakArtifact, saveSpeakGenerated, readSpeakArchive, startSpeakPlayer, endSpeakPlayer, type SpeakLifecycle } from "../speak-archive-store";
 function receipt() {
   expect(process.env.VOICELAYER_TEST_ISOLATED).toBe("1");
@@ -146,7 +147,7 @@ for (const reason of ["PLAYER_FAILED", "OUTPUT_UNAVAILABLE", "ARCHIVE_INCOMPLETE
 }
 test("receipt indexes open intent and terminal transition removes it", () => {
   const c = receipt();
-  const marker = join(process.env.QA_VOICE_RECORDINGS_DIR!, ".speech-open", c.id);
+  const marker = join(speechOpenIndex(), c.id);
   expect(fs.existsSync(marker)).toBe(true);
   transitionSpeakArchive(c, "preparing"); transitionSpeakArchive(c, "failed", "SYNTH_FAILED");
   expect(fs.existsSync(marker)).toBe(false);
