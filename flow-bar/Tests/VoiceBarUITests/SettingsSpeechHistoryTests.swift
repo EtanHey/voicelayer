@@ -114,7 +114,9 @@ final class SettingsSpeechHistoryTests: XCTestCase {
                 return []
             }
         }
-        while !probe.events.contains(.started) { await Task.yield() }
+        let startDeadline = Date().addingTimeInterval(2)
+        while !probe.events.contains(.started), Date() < startDeadline { await Task.yield() }
+        XCTAssertEqual(probe.events, [.started], "The first scan never started")
         first.cancel()
         let second = await SettingsSpeechHistoryReload.run(debounce: false) { [] }
         let stale = await first.value
@@ -137,7 +139,12 @@ final class SettingsSpeechHistoryTests: XCTestCase {
                 return []
             }, apply: { applied.append($0) })
         }
-        while !probe.events.contains(.started) { await Task.yield() }
+        let startDeadline = Date().addingTimeInterval(2)
+        while !probe.events.contains(.started), Date() < startDeadline { await Task.yield() }
+        guard probe.events.contains(.started) else {
+            reload.cancel()
+            return XCTFail("The load never started")
+        }
         // No awaits from here until the cancel: the main actor stays busy, so the apply cannot run.
         probe.release()
         while !probe.events.contains(.returned) { Thread.sleep(forTimeInterval: 0.001) }
@@ -145,6 +152,27 @@ final class SettingsSpeechHistoryTests: XCTestCase {
         reload.cancel()
         await reload.value
         XCTAssertTrue(applied.isEmpty, "A load cancelled before its main-actor apply must not apply")
+    }
+
+    // Refresh and Load older are user actions: a notification that just arrived must not make them wait.
+    func testButtonsLoadImmediatelyAfterArchiveChange() {
+        var request = SettingsSpeechHistoryReloadRequest()
+        let initial = request.taskID
+        request.archiveChanged()
+        XCTAssertNotEqual(request.taskID, initial)
+        request.refresh()
+        XCTAssertFalse(request.takeDebounce(), "Refresh after a notification must load immediately")
+
+        request.archiveChanged()
+        let beforeOlder = request.taskID
+        request.loadOlder()
+        XCTAssertEqual(request.limit, 200)
+        XCTAssertNotEqual(request.taskID, beforeOlder)
+        XCTAssertFalse(request.takeDebounce(), "Load older after a notification must load immediately")
+
+        request.archiveChanged()
+        XCTAssertTrue(request.takeDebounce())
+        XCTAssertFalse(request.takeDebounce(), "The debounce applies to one load only")
     }
 
     // Mirrors the Dictations/Ask reloads: each archive-change notification restarts the load, and only

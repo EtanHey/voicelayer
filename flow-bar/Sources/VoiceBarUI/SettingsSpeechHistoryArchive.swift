@@ -117,6 +117,28 @@ enum SettingsSpeechHistoryArchive {
     }
 }
 
+/// What the Speech scope's `.task(id:)` loads next. Only an archive-change notification debounces;
+/// Refresh and Load older are user actions and load immediately even if a notification just arrived.
+struct SettingsSpeechHistoryReloadRequest: Equatable {
+    static let pageSize = 100
+    private(set) var limit = pageSize
+    private var generation = 0
+    private var debounced = false
+
+    /// Changes whenever a new load is wanted; `takeDebounce()` deliberately leaves it alone.
+    var taskID: String { "\(limit)-\(generation)" }
+
+    mutating func archiveChanged() { generation &+= 1; debounced = true }
+    mutating func refresh() { generation &+= 1; debounced = false }
+    mutating func loadOlder() { limit += Self.pageSize; debounced = false }
+
+    /// Whether the load starting now should wait out the debounce; clears the flag.
+    mutating func takeDebounce() -> Bool {
+        defer { debounced = false }
+        return debounced
+    }
+}
+
 /// One Speech history load, run from the scope's `.task(id:)`. Returns nil when that task was
 /// cancelled (a newer load replaced it), so stale entries are never applied.
 ///
