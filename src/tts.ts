@@ -2045,11 +2045,16 @@ export async function awaitCurrentPlayback(options: { forCaptureAdmission?: bool
   // Snapshot generation ownership before yielding, including already-aborted cleanup.
   const generations = [...cancelledLongReadTeardowns, ...(options.forCaptureAdmission ? [] : speechPreparationSettlements)];
   if (activeLongRead) generations.push(activeLongRead.done);
+  // Capture the queue now; later unrelated speech must not join this acknowledgement.
+  const queueDrained = options.forCaptureAdmission ? undefined : playbackQueueManager.awaitDrained();
   const settled = async () => {
-    // Captured preparations can enqueue after the current queue has drained.
-    // For capture admission, ordinary preparations remain excluded above.
-    await Promise.all(generations);
-    await playbackQueueManager.awaitDrained();
+    if (options.forCaptureAdmission) {
+      await Promise.all(generations);
+      await playbackQueueManager.awaitDrained();
+    } else {
+      // Each captured short-speech settlement includes its own eventual player.
+      await Promise.all([...generations, queueDrained]);
+    }
   };
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -2672,9 +2677,12 @@ export async function speak(
   let settle!: () => void;
   const settlement = new Promise<void>(resolve => { settle = resolve; });
   speechPreparationSettlements.add(settlement);
+  let playback: QueuedPlaybackHandle | undefined;
+  const onQueued = options?.onPlaybackQueued;
   const onCompleted = options?.onPlaybackComplete;
   try {
     const result = await prepareSpeech(text, { ...options, speechArchive: archive,
+      onPlaybackQueued: handle => { playback = handle; onQueued?.(handle); },
       onPlaybackComplete: outcome => {
         try { archive.finish(outcome.status === "completed" ? "completed" : outcome.status === "failed" ? "failed" : "stopped",
           outcome.status === "completed" ? "PLAYBACK_COMPLETED" : outcome.status === "failed" ? "PLAYER_FAILED" : "USER_STOP"); }
@@ -2692,7 +2700,11 @@ export async function speak(
   } finally {
     speechPreparations.delete(controller);
     preparationArchives.delete(controller);
-    speechPreparationSettlements.delete(settlement); settle();
+    const finish = () => { speechPreparationSettlements.delete(settlement); settle(); };
+    // Preparation may enqueue after a waiter's queue snapshot has drained. Keep
+    // this operation's barrier through its player, without adopting newer speech.
+    if (playback) void playback.playerExited.then(finish, finish);
+    else finish();
   }
 }
 
