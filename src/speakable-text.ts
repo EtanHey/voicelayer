@@ -244,11 +244,14 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   // Edge treats bare compounds as paths and drops their first word.
   // Speak the separator explicitly, preserving independent source anchors.
   // Main leaves compounds after non-ASCII boundaries lexical; preserve that speech.
+  // A dictionary rule that covers the slash owns the compound; its replacement runs below.
   {
     const input = pieces.map(p => p.text).join("");
+    const ruled = rules.flatMap(rule => Array.from(input.matchAll(new RegExp(rule.pattern.source,
+      rule.pattern.flags.includes("g") ? rule.pattern.flags : rule.pattern.flags + "g"))));
     applyEdits(pieces, input, proseSlashMatches(input).filter(m => m.index === 0 || !/[^\x00-\x7f]/.test(input[m.index - 1])).map(m => ({
       start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: " slash "
-    })), false, true);
+    })).filter(slash => !ruled.some(r => r.index < slash.end && slash.start < r.index + r[0].length)), false, true);
   }
   edit(/`+|\*\*|\*([^*\n]+)\*|~~/g, m => m[1] ?? "");
   edit(/(?<![A-Za-z0-9\u0080-\uffff_])_([^_\n]+)_(?![A-Za-z0-9\u0080-\uffff_])/gu, m => m[1]);

@@ -88,6 +88,15 @@ test("sticky replacement preserves a nonzero match offset on Bun 1.3.9", () => {
   }
 });
 
+test("a dictionary rule for a whole slash compound wins over the prose slash split", () => {
+  const rules = [{pattern: /read\/write/g, replacement: "custom"}];
+  for (const engine of ["edge", "clone"] as const) {
+    expect(projectSpeakableText("read/write", rules, engine).speechText).toBe("custom");
+    expect(projectSpeakableText("Use read/write mode, not client/server.", rules, engine).speechText)
+      .toBe("Use custom mode, not client slash server.");
+  }
+});
+
 test("dictionary rules win, including phrases and chained replacements", () => {
   const rules = [{pattern: /\bMP3 audio\b/gi, replacement: "custom voice"},
     {pattern: /\bcustom\b/gi, replacement: "Chosen"}, {pattern: /\bAPI\b/g, replacement: "ay pee eye"}];
