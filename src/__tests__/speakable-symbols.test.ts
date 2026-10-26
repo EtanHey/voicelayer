@@ -13,8 +13,8 @@ for (const engine of ["clone", "edge"] as const) {
     const raw = "list/paragraph completion/cancellation";
     const p = projectSpeakableText(raw, [], engine);
     expect(p.displayText).toBe(raw);
-    expect(p.speechText).toBe("list or paragraph completion or cancellation");
-    expect(projectSpeakableText("Use list/paragraph.", [], engine).speechText).toBe("Use list or paragraph.");
+    expect(p.speechText).toBe("list slash paragraph completion slash cancellation");
+    expect(projectSpeakableText("Use list/paragraph.", [], engine).speechText).toBe("Use list slash paragraph.");
     const spoken = p.speechText.split(" ").map((text, i) => ({text, offset_ms: i * 200, duration_ms: 150}));
     expect(alignWordBoundariesToDisplayText(raw, p.speechText, spoken, p.ranges)).toEqual([
       {text: "list", offset_ms: 0, duration_ms: 150},
@@ -54,7 +54,7 @@ test("stray backtick across chunks preserves document token parity", () => {
 
 for (const engine of ["edge", "clone"] as const) {
   test(`${engine}: general alphabetic alternatives`, () => {
-    for (const [raw, spoken] of [["client/server", "client or server"], ["and/or", "and or"], ["List/Paragraph", "List or Paragraph"], ["read/write", "read or write"], ["lists/paragraph", "lists or paragraph"]]) {
+    for (const [raw, spoken] of [["client/server", "client slash server"], ["and/or", "and slash or"], ["List/Paragraph", "List slash Paragraph"], ["read/write", "read slash write"], ["lists/paragraph", "lists slash paragraph"]]) {
       expect(projectSpeakableText(raw, [], engine).speechText).toBe(spoken);
       expect(displayTokens(raw).map(t => t[0])).toEqual(raw.split(/(?=\/)/));
     }
@@ -87,8 +87,8 @@ for (const engine of ["clone", "edge"] as const) {
   test(`${engine}: repeated compounds have independent intervals`, () => {
     const raw = "list/paragraph,completion/cancellation";
     const p = projectSpeakableText(raw, [], engine);
-    expect(p.speechText).toBe("list or paragraph,completion or cancellation");
-    const rows = ["list", "or", "paragraph,completion", "or", "cancellation"].map((text, i) => ({text, offset_ms: 100 + i * 200, duration_ms: 150}));
+    expect(p.speechText).toBe("list slash paragraph,completion slash cancellation");
+    const rows = ["list", "slash", "paragraph,completion", "slash", "cancellation"].map((text, i) => ({text, offset_ms: 100 + i * 200, duration_ms: 150}));
     expect(alignWordBoundariesToDisplayText(raw, p.speechText, rows, p.ranges)).toEqual([
       {text: "list", offset_ms: 100, duration_ms: 150},
       {text: "/paragraph,completion", offset_ms: 300, duration_ms: 350},

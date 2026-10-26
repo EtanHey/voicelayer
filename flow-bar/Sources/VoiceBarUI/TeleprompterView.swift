@@ -1021,6 +1021,14 @@ private struct TeleprompterBlockView: View, Equatable {
                         .layoutValue(key: TeleprompterFlowItemKey.self,
                                      value: TeleprompterFlowItem(lineBreak: layout.lineBreak, isListMarker: true))
                 }
+                if let separator = layout.separator {
+                    Text(separator)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(notchPalette.primary.color.opacity(0.78))
+                        .accessibilityHidden(true)
+                        .layoutValue(key: TeleprompterFlowItemKey.self,
+                                     value: TeleprompterFlowItem(gluesToPrevious: true))
+                }
                 Group {
                     if let onSeek, isReadback || TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {
                         Button {

@@ -72,7 +72,7 @@ writeFileSync(${JSON.stringify(prefix + ".hash")},createHash('sha256').update(re
     requestId: "request-a", chunkId: "chunk-2", playbackRate: 1, decoder: { binary, model: join(root, "model"), ffmpeg } };
   return { input, prefix };
 }
-test("slash alternatives align each raw display word independently", async () => {
+test("slash compounds align each raw display word independently", async () => {
   const { input } = await request("list/paragraph completion/cancellation");
   const result = await alignCloneAudio(input);
   expect(result.words.map(w => w.text)).toEqual(["list", "/paragraph", "completion", "/cancellation"]);

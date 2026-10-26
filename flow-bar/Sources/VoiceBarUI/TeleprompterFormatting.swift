@@ -33,6 +33,8 @@ public struct TeleprompterWordLayout: Equatable {
     public var lineBreak: TeleprompterLineBreak = .none
     public var isListMarker = false
     public var decoration: String?
+    /// A source slash is rendered outside the timed word highlight.
+    public var separator: String?
     public var isHeading = false
     public var gluesToPrevious = false
     /// Words that light up as one: a token's pieces, and punctuation glued to its word.
@@ -76,6 +78,10 @@ public enum TeleprompterFormatting {
                 continue
             }
             let (token, breaks, slashContinuation) = tokens[tokenIndex]
+            if slashContinuation && token.hasPrefix("/") {
+                result[position].separator = "/"
+                result[position].displayText = String(result[position].displayText.dropFirst())
+            }
             guard tokenIndex > 0 else {
                 result[position].isListMarker = isLineStartMarker(token)
                 continue

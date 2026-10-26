@@ -19,6 +19,8 @@ final class SpeakableSymbolsTests: XCTestCase {
         let layout = TeleprompterFormatting.layout(text: text, words: words)
         XCTAssertEqual(layout.map(\.highlightGroup), [0, 1, 2, 3])
         XCTAssertTrue(layout[1].gluesToPrevious)
+        XCTAssertEqual(layout[1].separator, "/")
+        XCTAssertEqual(layout[1].displayText, "paragraph")
     }
 
     func testPathsURLsAndFractionsStayWhole() {
@@ -51,7 +53,7 @@ final class SpeakableSymbolsTests: XCTestCase {
             let words = TeleprompterContentModel.words(text: text, wordBoundaries: [])
             let layouts = TeleprompterFormatting.layout(text: text, words: words)
             let rendered = layouts.enumerated().map { i, layout in
-                (i == 0 || layout.gluesToPrevious ? "" : " ") + layout.displayText
+                (i == 0 || layout.gluesToPrevious ? "" : " ") + (layout.separator ?? "") + layout.displayText
             }.joined()
             XCTAssertEqual(rendered, text)
         }

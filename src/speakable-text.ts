@@ -1,4 +1,4 @@
-import { proseSlashPattern, proseSlashMatches } from "./tts/display-tokens";
+import { proseSlashMatches } from "./tts/display-tokens";
 import type { ProjectionRange } from "./tts/structured-speech";
 
 export type SpeakableEngine = "edge" | "clone";
@@ -239,11 +239,13 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     const input = pieces.map(p => p.text).join("");
     applyEdits(pieces, input, jsonEdits(input), false);
   }
-  // Edit only the separator so both words retain independent source anchors.
+  // Edge treats bare compounds as paths and drops their first word.
+  // Speak the separator explicitly, preserving independent source anchors.
+  // Main leaves compounds after non-ASCII boundaries lexical; preserve that speech.
   {
     const input = pieces.map(p => p.text).join("");
-    applyEdits(pieces, input, proseSlashMatches(input).map(m => ({
-      start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: m[0] === "and/or" ? " " : " or "
+    applyEdits(pieces, input, proseSlashMatches(input).filter(m => m.index === 0 || !/[^\x00-\x7f]/.test(input[m.index - 1])).map(m => ({
+      start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: " slash "
     })), false, true);
   }
   edit(/`+|\*\*|\*([^*\n]+)\*|~~/g, m => m[1] ?? "");
@@ -282,7 +284,6 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     if (engine === "clone" && !/^(?:https?:|www\.)/.test(match[0])) {
       match[0] += displayText.slice(match.index + match[0].length).match(/^[\\/]+/)?.[0] ?? "";
     }
-    if (Array.from(match[0].matchAll(proseSlashPattern)).some(m => m[0] === match[0])) continue;
     const start = match.index, end = start + match[0].length;
     if (/^\d+(?:\/\d+)+$/.test(match[0])) continue;
     if (!pieces.some(p => p.protected && p.start >= start && p.end <= end)) continue;
