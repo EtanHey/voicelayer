@@ -90,3 +90,15 @@ test("numbered task-list items speak the number, drop the checkbox like unnumber
     expect(structured.speechText).toBe("1. Buy milk. 2. Done thing. 3) Caps.");
   }
 });
+
+test("a numbered link whose label looks like a checkbox keeps its label", () => {
+  for (const engine of ["edge", "clone"] as const) {
+    for (const label of ["x", "X", " "]) {
+      const line = `1. [${label}](https://example.com) next`;
+      const projected = projectSpeakableText(line, [], engine);
+      expect(projected.displayText).toBe(line);
+      if (label.trim()) expect(projected.speechText).toContain(`${label} next`);
+      expect(projected.speechText).not.toContain("example");
+    }
+  }
+});
