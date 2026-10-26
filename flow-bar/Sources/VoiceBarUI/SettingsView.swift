@@ -518,6 +518,7 @@ public struct SettingsView: View {
     @State private var speechEntries: [SettingsSpeechHistoryEntry] = []
     @State private var selectedSpeechID: String?
     @State private var speechReloadID = UUID()
+    @State private var speechReloadDebounced = false
     @State private var speechLimit = 100
     @State private var selectedHistoryScope: SettingsHistoryScope
     @State private var askHistoryDayGroups: [SettingsAskHistoryDayGroup]
@@ -1425,11 +1426,15 @@ public struct SettingsView: View {
         .task(id: "\(speechLimit)-\(speechReloadID)") {
             let limit = speechLimit
             let root = speechHistoryRoot
-            let entries = await Task.detached(priority: .utility) { SettingsSpeechHistoryArchive.load(from: root, limit: limit) }.value
-            guard !Task.isCancelled else { return }
+            let debounce = speechReloadDebounced
+            speechReloadDebounced = false
+            guard let entries = await SettingsSpeechHistoryReload.run(debounce: debounce, load: {
+                SettingsSpeechHistoryArchive.load(from: root, limit: limit)
+            }) else { return }
             speechEntries = entries
         }
         .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
+            speechReloadDebounced = true
             speechReloadID = UUID()
         }
     }

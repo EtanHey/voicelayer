@@ -116,3 +116,29 @@ enum SettingsSpeechHistoryArchive {
             audioPaths: paths)
     }
 }
+
+/// One Speech history load, run from the scope's `.task(id:)`. Returns nil when that task was
+/// cancelled (a newer load replaced it), so stale entries are never applied.
+///
+/// AIDEV-NOTE: Same debounce as `loadHistory`/`loadAskHistory`: an archive-change reload waits 300 ms
+/// inside the cancellable task, so a burst of notifications restarts the wait and scans once. The scan
+/// runs detached off the main actor; the cancellation handler forwards cancellation to it, and
+/// `SettingsArchiveScanner.scan` checks `Task.isCancelled` per day and per entry.
+enum SettingsSpeechHistoryReload {
+    static func run(
+        debounce: Bool,
+        load: @escaping @Sendable () -> [SettingsSpeechHistoryEntry]
+    ) async -> [SettingsSpeechHistoryEntry]? {
+        if debounce {
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        guard !Task.isCancelled else { return nil }
+        let scan = Task.detached(priority: .utility, operation: load)
+        let entries = await withTaskCancellationHandler {
+            await scan.value
+        } onCancel: {
+            scan.cancel()
+        }
+        return Task.isCancelled ? nil : entries
+    }
+}
