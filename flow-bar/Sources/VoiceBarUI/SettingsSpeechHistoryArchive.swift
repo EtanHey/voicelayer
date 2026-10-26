@@ -116,3 +116,65 @@ enum SettingsSpeechHistoryArchive {
             audioPaths: paths)
     }
 }
+
+/// What the Speech scope's `.task(id:)` loads next. Only an archive-change notification debounces;
+/// Refresh and Load older are user actions and load immediately even if a notification just arrived.
+struct SettingsSpeechHistoryReloadRequest: Equatable {
+    static let pageSize = 100
+    private(set) var limit = pageSize
+    private var generation = 0
+    private var debounced = false
+
+    /// Changes whenever a new load is wanted; `takeDebounce()` deliberately leaves it alone.
+    var taskID: String { "\(limit)-\(generation)" }
+
+    mutating func archiveChanged() { generation &+= 1; debounced = true }
+    mutating func refresh() { generation &+= 1; debounced = false }
+    mutating func loadOlder() { limit += Self.pageSize; debounced = false }
+
+    /// Whether the load starting now should wait out the debounce; clears the flag.
+    mutating func takeDebounce() -> Bool {
+        defer { debounced = false }
+        return debounced
+    }
+}
+
+/// One Speech history load, run from the scope's `.task(id:)`. Returns nil when that task was
+/// cancelled (a newer load replaced it), so stale entries are never applied.
+///
+/// AIDEV-NOTE: Same debounce as `loadHistory`/`loadAskHistory`: an archive-change reload waits 300 ms
+/// inside the cancellable task, so a burst of notifications restarts the wait and scans once. The scan
+/// runs detached off the main actor; the cancellation handler forwards cancellation to it, and
+/// `SettingsArchiveScanner.scan` checks `Task.isCancelled` per day and per entry.
+enum SettingsSpeechHistoryReload {
+    static func run(
+        debounce: Bool,
+        load: @escaping @Sendable () -> [SettingsSpeechHistoryEntry]
+    ) async -> [SettingsSpeechHistoryEntry]? {
+        if debounce {
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        guard !Task.isCancelled else { return nil }
+        let scan = Task.detached(priority: .utility, operation: load)
+        let entries = await withTaskCancellationHandler {
+            await scan.value
+        } onCancel: {
+            scan.cancel()
+        }
+        return Task.isCancelled ? nil : entries
+    }
+
+    /// Runs `run` and hands its entries to `apply` on the main actor.
+    @MainActor
+    static func reload(
+        debounce: Bool,
+        load: @escaping @Sendable () -> [SettingsSpeechHistoryEntry],
+        apply: ([SettingsSpeechHistoryEntry]) -> Void
+    ) async {
+        guard let entries = await run(debounce: debounce, load: load) else { return }
+        // `run` checked cancellation off the main actor; a reload or unmount can cancel this task
+        // after that check and before this continuation runs. No await between here and the apply.
+        guard !Task.isCancelled else { return }
+        apply(entries)
+    }
+}

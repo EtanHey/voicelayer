@@ -517,8 +517,7 @@ public struct SettingsView: View {
     private let speechHistoryRoot: URL
     @State private var speechEntries: [SettingsSpeechHistoryEntry] = []
     @State private var selectedSpeechID: String?
-    @State private var speechReloadID = UUID()
-    @State private var speechLimit = 100
+    @State private var speechReload = SettingsSpeechHistoryReloadRequest()
     @State private var selectedHistoryScope: SettingsHistoryScope
     @State private var askHistoryDayGroups: [SettingsAskHistoryDayGroup]
     @State private var askHistoryLoadedEntryCount: Int
@@ -1371,7 +1370,7 @@ public struct SettingsView: View {
             HStack {
                 Text("\(speechEntries.count) speech record\(speechEntries.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Refresh") { selectedSpeechID = nil; speechReloadID = UUID() }
+                Button("Refresh") { selectedSpeechID = nil; speechReload.refresh() }
             }.padding(.horizontal, 18).padding(.vertical, 10)
             Divider()
             if speechEntries.isEmpty {
@@ -1415,22 +1414,23 @@ public struct SettingsView: View {
                                 }
                             }
                         }
-                        if speechEntries.count >= speechLimit {
-                            Button("Load older") { speechLimit += 100 }
+                        if speechEntries.count >= speechReload.limit {
+                            Button("Load older") { speechReload.loadOlder() }
                         }
                     }.padding(18)
                 }
             }
         }
-        .task(id: "\(speechLimit)-\(speechReloadID)") {
-            let limit = speechLimit
+        .task(id: speechReload.taskID) {
+            let limit = speechReload.limit
             let root = speechHistoryRoot
-            let entries = await Task.detached(priority: .utility) { SettingsSpeechHistoryArchive.load(from: root, limit: limit) }.value
-            guard !Task.isCancelled else { return }
-            speechEntries = entries
+            let debounce = speechReload.takeDebounce()
+            await SettingsSpeechHistoryReload.reload(debounce: debounce, load: {
+                SettingsSpeechHistoryArchive.load(from: root, limit: limit)
+            }, apply: { speechEntries = $0 })
         }
         .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
-            speechReloadID = UUID()
+            speechReload.archiveChanged()
         }
     }
 

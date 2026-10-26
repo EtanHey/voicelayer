@@ -82,6 +82,119 @@ final class SettingsSpeechHistoryTests: XCTestCase {
         XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).first?.missingAudioCount, 1)
     }
 
+    func testArchiveLoadStopsScanningWhenCancelled() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for index in 0..<3 {
+            let id = "2026-10-26T12-00-0\(index)-000Z-abcdef12"
+            let entry = root.appendingPathComponent("2026-10-26/\(id)")
+            try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
+            let metadata: [String: Any] = ["schema_version": 1, "source": "speak", "id": id,
+                "created_at": "2026-10-26T12:00:0\(index)Z", "status": "completed"]
+            try JSONSerialization.data(withJSONObject: metadata).write(to: entry.appendingPathComponent("metadata.json"))
+        }
+        XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).count, 3)
+        let cancelled = Task.detached { () -> [SettingsSpeechHistoryEntry] in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return SettingsSpeechHistoryArchive.load(from: root)
+        }
+        let entries = await cancelled.value
+        XCTAssertEqual(entries, [], "A cancelled scan must stop before reading entries")
+    }
+
+    // `.task(id:)` cancels the previous task when the id changes; the scan it started must stop too.
+    func testRestartedLoadCancelsPreviousScan() async {
+        let probe = ReloadProbe()
+        let first = Task {
+            await SettingsSpeechHistoryReload.run(debounce: false) {
+                probe.record(.started)
+                let deadline = Date().addingTimeInterval(3)
+                while !Task.isCancelled, Date() < deadline { Thread.sleep(forTimeInterval: 0.005) }
+                probe.record(Task.isCancelled ? .cancelled : .ranToDeadline)
+                return []
+            }
+        }
+        let startDeadline = Date().addingTimeInterval(2)
+        while !probe.events.contains(.started), Date() < startDeadline { await Task.yield() }
+        XCTAssertEqual(probe.events, [.started], "The first scan never started")
+        first.cancel()
+        let second = await SettingsSpeechHistoryReload.run(debounce: false) { [] }
+        let stale = await first.value
+        XCTAssertNil(stale, "A restarted load must not deliver the stale scan")
+        XCTAssertEqual(second, [])
+        XCTAssertEqual(probe.events, [.started, .cancelled], "The previous scan must observe cancellation")
+    }
+
+    // `run` checks cancellation off the main actor; a cancel can land after it returns entries but
+    // before the main-actor continuation applies them. Holding the main actor opens exactly that window.
+    @MainActor
+    func testCancelAfterLoadReturnsSkipsApply() async {
+        let probe = ReloadProbe()
+        var applied: [[SettingsSpeechHistoryEntry]] = []
+        let reload = Task {
+            await SettingsSpeechHistoryReload.reload(debounce: false, load: {
+                probe.record(.started)
+                while !probe.isReleased { Thread.sleep(forTimeInterval: 0.001) }
+                probe.record(.returned)
+                return []
+            }, apply: { applied.append($0) })
+        }
+        let startDeadline = Date().addingTimeInterval(2)
+        while !probe.events.contains(.started), Date() < startDeadline { await Task.yield() }
+        guard probe.events.contains(.started) else {
+            reload.cancel()
+            return XCTFail("The load never started")
+        }
+        // No awaits from here until the cancel: the main actor stays busy, so the apply cannot run.
+        probe.release()
+        while !probe.events.contains(.returned) { Thread.sleep(forTimeInterval: 0.001) }
+        Thread.sleep(forTimeInterval: 0.2) // let `run` finish its own check and return the entries
+        reload.cancel()
+        await reload.value
+        XCTAssertTrue(applied.isEmpty, "A load cancelled before its main-actor apply must not apply")
+    }
+
+    // Refresh and Load older are user actions: a notification that just arrived must not make them wait.
+    func testButtonsLoadImmediatelyAfterArchiveChange() {
+        var request = SettingsSpeechHistoryReloadRequest()
+        let initial = request.taskID
+        request.archiveChanged()
+        XCTAssertNotEqual(request.taskID, initial)
+        request.refresh()
+        XCTAssertFalse(request.takeDebounce(), "Refresh after a notification must load immediately")
+
+        request.archiveChanged()
+        let beforeOlder = request.taskID
+        request.loadOlder()
+        XCTAssertEqual(request.limit, 200)
+        XCTAssertNotEqual(request.taskID, beforeOlder)
+        XCTAssertFalse(request.takeDebounce(), "Load older after a notification must load immediately")
+
+        request.archiveChanged()
+        XCTAssertTrue(request.takeDebounce())
+        XCTAssertFalse(request.takeDebounce(), "The debounce applies to one load only")
+    }
+
+    // Mirrors the Dictations/Ask reloads: each archive-change notification restarts the load, and only
+    // the one that survives the 300 ms wait scans.
+    func testNotificationBurstProducesOneLoad() async {
+        let probe = ReloadProbe()
+        var current: Task<[SettingsSpeechHistoryEntry]?, Never>?
+        for _ in 0..<5 {
+            current?.cancel()
+            current = Task {
+                await SettingsSpeechHistoryReload.run(debounce: true) {
+                    probe.record(.started)
+                    return []
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        let entries = await current?.value
+        XCTAssertEqual(entries, [])
+        XCTAssertEqual(probe.events, [.started], "A burst of notifications must scan once")
+    }
+
     @MainActor
     func testSeekingToChunkEndContinuesRetainedQueue() {
         assertSeekingContinuesQueue(skip: false)
@@ -167,4 +280,15 @@ final class SettingsSpeechHistoryTests: XCTestCase {
         }
     }
 
+}
+
+private final class ReloadProbe: @unchecked Sendable {
+    enum Event: Equatable { case started, cancelled, ranToDeadline, returned }
+    private let lock = NSLock()
+    private var recorded: [Event] = []
+    private var released = false
+    var events: [Event] { lock.withLock { recorded } }
+    var isReleased: Bool { lock.withLock { released } }
+    func record(_ event: Event) { lock.withLock { recorded.append(event) } }
+    func release() { lock.withLock { released = true } }
 }
