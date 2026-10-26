@@ -97,6 +97,18 @@ test("a dictionary rule for a whole slash compound wins over the prose slash spl
   }
 });
 
+test("a rule on one half of a prose slash compound keeps every word, in order", () => {
+  const read = {pattern: /\bread\b/gi, replacement: "reed"}, write = {pattern: /\bwrite\b/gi, replacement: "right"};
+  const cases: [typeof read[], string][] = [
+    [[read], "Use reed slash write mode, not client slash server."],
+    [[write], "Use read slash right mode, not client slash server."],
+    [[read, write], "Use reed slash right mode, not client slash server."],
+  ];
+  for (const engine of ["edge", "clone"] as const) for (const [rules, spoken] of cases) {
+    expect(projectSpeakableText("Use read/write mode, not client/server.", rules, engine).speechText).toBe(spoken);
+  }
+});
+
 test("a whole-compound rule reserves its slash only when it applies in rule order", () => {
   // Rule shapes from pronunciation.ts: whole word, case-insensitive.
   const read = {pattern: /\bread\b/gi, replacement: "reed"};

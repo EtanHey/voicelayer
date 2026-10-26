@@ -254,8 +254,19 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
         return replaced.slice(m.index, replaced.length - (m.input.length - m.index - m[0].length));
       }, true);
   };
+  // Source offsets of prose slashes spoken as "slash": these compounds are words, not paths.
+  const spokenSlashes = new Set<number>();
   {
     const input = pieces.map(p => p.text).join("");
+    // Identity pieces map one-to-one back to the source; replaced text has no single offset.
+    const sourceAt = (at: number) => {
+      let cursor = 0;
+      for (const p of pieces) {
+        if (at < cursor + p.text.length) return p.atomic ? undefined : p.start + at - cursor;
+        cursor += p.text.length;
+      }
+      return undefined;
+    };
     const slashes = proseSlashMatches(input).filter(m => m.index === 0 || !/[^\x00-\x7f]/.test(input[m.index - 1])).map(m => ({
       start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: " slash "
     }));
@@ -267,18 +278,13 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
       const trial = pieces.map(p => ({...p}));
       applyRules(trial);
       owned = at => {
-        let cursor = 0;
-        for (const p of pieces) {
-          if (at < cursor + p.text.length) {
-            const source = p.start + at - cursor;
-            return !p.atomic && trial.some(t => t.protected && t.start <= source && source < t.end);
-          }
-          cursor += p.text.length;
-        }
-        return false;
+        const source = sourceAt(at);
+        return source !== undefined && trial.some(t => t.protected && t.start <= source && source < t.end);
       };
     }
-    applyEdits(pieces, input, slashes.filter(slash => !owned(slash.start)), false, true);
+    const spoken = slashes.filter(slash => !owned(slash.start));
+    for (const slash of spoken) { const source = sourceAt(slash.start); if (source !== undefined) spokenSlashes.add(source); }
+    applyEdits(pieces, input, spoken, false, true);
   }
   edit(/`+|\*\*|\*([^*\n]+)\*|~~/g, m => m[1] ?? "");
   edit(/(?<![A-Za-z0-9\u0080-\uffff_])_([^_\n]+)_(?![A-Za-z0-9\u0080-\uffff_])/gu, m => m[1]);
@@ -311,6 +317,8 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     }
     const start = match.index, end = start + match[0].length;
     if (/^\d+(?:\/\d+)+$/.test(match[0])) continue;
+    // A spoken prose compound keeps both halves; the edge basename rule would drop the first.
+    if (match[0].split("").some((c, i) => c === "/" && spokenSlashes.has(start + i))) continue;
     if (!pieces.some(p => p.protected && p.start >= start && p.end <= end)) continue;
     if (rules.some(rule => { const m = new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "")).exec(match[0]); return m?.index === 0 && m[0].length === match[0].length; })) continue;
     let offset = 0, left = -1, right = -1;
