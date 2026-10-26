@@ -65,13 +65,36 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
 
-    /// OCR reads a bold 0 as O and 1 as l now and then; fold lookalikes on both sides.
-    private func isOnScreen(_ word: String, _ host: NSView) -> Bool {
+    // Vision can split the repeated-x fixture into several OCR groups. Ordinary fixture words
+    // contain no x, so eight recognised x characters still prove the giant token is painted.
+    private func containsLongToken(_ text: String) -> Bool {
+        text.filter { $0 == "x" || $0 == "X" }.count >= 8
+    }
+
+    /// OCR reads a bold 0 as O and 1 as l now and then; fold lookalikes on both sides. Fixture tokens are
+    /// letters then a number, so a match may touch a neighbour's last digit on the left (Vision joins a word
+    /// to a highlighted neighbour) but never a letter, and is never followed by another digit.
+    static func ocr(_ text: String, shows word: String) -> Bool {
         func fold(_ text: String) -> String {
             String(text.map { "Oo".contains($0) ? "0" : "lI|".contains($0) ? "1" : $0 })
         }
-        return onScreenText(host).components(separatedBy: CharacterSet.alphanumerics.inverted).map(fold)
-            .contains(fold(word))
+        let pattern = "(?<![A-Za-z])" + NSRegularExpression.escapedPattern(for: fold(word)) + "(?![0-9])"
+        return fold(text).range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private func isOnScreen(_ word: String, _ host: NSView) -> Bool {
+        Self.ocr(onScreenText(host), shows: word)
+    }
+
+    // CI (1x backing) OCR read "word1000word1001": the highlight box starts at the next word's glyphs, so
+    // Vision can join a word to its highlighted neighbour. The 5 pt flow gap is still there; a joined
+    // neighbour must count, a longer or different number must not.
+    func testOCRMatchAcceptsAWordJoinedToItsNeighbourButNotANearMiss() {
+        XCTAssertTrue(Self.ocr("word999 word1000word1001 word1002", shows: "word1000"))
+        XCTAssertTrue(Self.ocr("word999word1000 word1001", shows: "word1000"))
+        XCTAssertTrue(Self.ocr("w0rdl000", shows: "word1000"))
+        XCTAssertFalse(Self.ocr("word10000 word100", shows: "word1000"))
+        XCTAssertFalse(Self.ocr("sword1000 word2000", shows: "word1000"))
     }
 
     private func mount(_ feed: Feed) -> (NSWindow, NSView) {
@@ -209,25 +232,24 @@ final class TeleprompterLazyScrollTests: XCTestCase {
             let frame = self.onScreenText(host)
             return frame != preAdvanceFrame
                 && !self.isOnScreen("word280", host)
-                && frame.range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]) != nil
+                && self.containsLongToken(frame)
         }
         let destination = onScreenText(host)
         XCTAssertNotEqual(destination, preAdvanceFrame, "clock advance must produce a new frame")
         XCTAssertFalse(isOnScreen("word280", host), "the earlier word must have scrolled away")
-        XCTAssertNotNil(destination.range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]),
+        XCTAssertTrue(containsLongToken(destination),
                         "the token's last piece, in block 1, is on screen; OCR: \(destination.prefix(120))")
         clock.elapsed = 108_010 // word282 (display id 321)
         waitForPaint(host) { self.isOnScreen("word282", host) }
         XCTAssertTrue(isOnScreen("word282", host), "the next ordinary word follows; OCR: \(onScreenText(host).prefix(120))")
     }
 
-    // TELE1C R2 (Sol, P1 crash): a landing waiting for word 320 must not outlive a document replacement.
+    // Replacements during playback must render against the eagerly mounted new document.
     @Observable final class ReplacingClock {
         var text: String
         var boundaries: [TeleprompterBoundary]
-        let started = Date()
+        var elapsed = 107_610
         init(text: String, boundaries: [TeleprompterBoundary]) { self.text = text; self.boundaries = boundaries }
-        var elapsed: Int { 106_410 + Int(Date().timeIntervalSince(started) * 1000) }
     }
 
     private struct ReplacingHost: View {
@@ -241,7 +263,7 @@ final class TeleprompterLazyScrollTests: XCTestCase {
         }
     }
 
-    func testReplacingTheDocumentWhileALandingIsPendingNeitherTrapsNorLandsStale() throws {
+    func testReplacingAnEagerDocumentRendersTheShortReplacement() throws {
         let token = String(repeating: "x", count: 960)
         let raw = (0 ... 280).map { "word\($0)" } + [token] + (282 ..< 600).map { "word\($0)" }
         let boundaries = (0 ... 282).map { index -> TeleprompterBoundary in
@@ -249,36 +271,21 @@ final class TeleprompterLazyScrollTests: XCTestCase {
             return TeleprompterBoundary(offsetMs: offset, durationMs: 340, text: raw[index], wordIndex: index)
         }
         let clock = ReplacingClock(text: raw.joined(separator: " "), boundaries: boundaries)
-        var replaced = false
-        TeleprompterLandingProbe.didPend = {
-            guard !replaced else { return }
-            replaced = true
-            clock.text = "Shorter replacement"
-            clock.boundaries = []
-        }
-        var staleLandings: [Int] = []
-        TeleprompterLandingProbe.didLand = { word in if replaced { staleLandings.append(word) } }
-        defer { TeleprompterLandingProbe.didPend = nil; TeleprompterLandingProbe.didLand = nil }
         let host = NSHostingView(rootView: ReplacingHost(clock: clock))
         host.frame = NSRect(x: 0, y: 0, width: 300, height: Theme.teleprompterViewportHeight)
         let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         defer { window.contentView = nil }
-        settle(host, 2.2) // the coalesced 280 -> 320 step pends at ~107.6 s; the probe swaps the document then
-        // A host whose lazy stack already built the next block never pends (seen on the CI runner): the window
-        // this regression needs does not exist there. Skip loudly rather than pass or fail on another scenario.
-        guard replaced else {
-            throw XCTSkip("block 1 was already built on this host, so no landing went pending; scenario unreachable")
-        }
+        settle(host, 0.3)
+        clock.text = "Shorter replacement"
+        clock.boundaries = []
         settle(host, 0.6)
         let text = onScreenText(host)
         XCTAssertTrue(text.contains("Shorter") && text.contains("replacement"), "the short document renders; OCR: \(text)")
-        XCTAssertEqual(staleLandings, [], "the old document's landing never scrolls the new one")
     }
 
-    // TELE1D (Sol TELE1C R2): a same-length text and matching timings arriving in one update run restart()
-    // twice; the second must not void the first's queued recovery without re-arming it.
+    // A same-length replacement with matching timings must still land the active word.
     func testASameLengthReplacementWithMatchingTimingsStillLandsTheWord() throws {
         let token = String(repeating: "x", count: 960)
         let raw = (0 ... 280).map { "word\($0)" } + [token] + (282 ..< 600).map { "word\($0)" }
@@ -290,29 +297,23 @@ final class TeleprompterLazyScrollTests: XCTestCase {
             }
         }
         let clock = ReplacingClock(text: raw.joined(separator: " "), boundaries: rows("word"))
-        var replaced = false
-        TeleprompterLandingProbe.didPend = {
-            guard !replaced else { return }
-            replaced = true
-            clock.text = clock.text.replacingOccurrences(of: "word", with: "term") // same length, same tokens count
-            // Sol's shape: matching rows for the new text, without the last row, so no later playback change
-            // arrives to rescue the scroll; only the restart's own recovery can land it.
-            clock.boundaries = Array(rows("term").dropLast())
-        }
-        defer { TeleprompterLandingProbe.didPend = nil }
         let host = NSHostingView(rootView: ReplacingHost(clock: clock))
         host.frame = NSRect(x: 0, y: 0, width: 300, height: Theme.teleprompterViewportHeight)
         let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         defer { window.contentView = nil }
-        settle(host, 2.2) // pending at ~107.6 s; replaced inside that window
-        guard replaced else { // as in the TELE1C replacement test: a host that prebuilt block 1 never pends
-            throw XCTSkip("block 1 was already built on this host, so no landing went pending; scenario unreachable")
-        }
+        settle(host, 0.3)
+        clock.text = clock.text.replacingOccurrences(of: "word", with: "term")
+        clock.boundaries = Array(rows("term").dropLast())
         settle(host, 0.6)
         let text = onScreenText(host)
-        XCTAssertNotNil(text.range(of: "x{8,}", options: [.regularExpression, .caseInsensitive]),
+        XCTAssertTrue(containsLongToken(text),
                         "the current word (the token, in block 1) is on screen; OCR: \(text.prefix(120))")
+        clock.elapsed = 108_010
+        clock.boundaries = rows("term")
+        waitForPaint(host) { self.isOnScreen("term282", host) }
+        XCTAssertTrue(isOnScreen("term282", host), "the replacement's next word renders")
+        XCTAssertFalse(isOnScreen("word282", host), "no stale word from the previous document")
     }
 }

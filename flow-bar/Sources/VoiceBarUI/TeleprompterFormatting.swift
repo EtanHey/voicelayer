@@ -211,25 +211,34 @@ public struct TeleprompterRenderedDocument {
 
 /// A highlight tick re-renders the view, never the document: formatting reruns only for new text or timings.
 public final class TeleprompterRenderCache {
-    private var key: (text: String, wordBoundaries: [TeleprompterBoundary], displayBlocks: [TeleprompterDisplayBlock])?
+    private var key: (text: String, wordBoundaries: [TeleprompterBoundary], displayBlocks: [TeleprompterDisplayBlock], hasCompleteDisplay: Bool)?
     private var cached: TeleprompterRenderedDocument?
     private(set) var computations = 0
 
     public init() {}
 
     public func document(text: String, wordBoundaries: [TeleprompterBoundary],
-                         displayBlocks: [TeleprompterDisplayBlock] = []) -> TeleprompterRenderedDocument {
+                         displayBlocks: [TeleprompterDisplayBlock] = [],
+                         hasCompleteDisplay: Bool = false) -> TeleprompterRenderedDocument {
         if let key, let cached, key.text == text, key.wordBoundaries == wordBoundaries,
-           key.displayBlocks == displayBlocks { return cached }
+           key.displayBlocks == displayBlocks, key.hasCompleteDisplay == hasCompleteDisplay { return cached }
         computations += 1
         let words = TeleprompterContentModel.words(text: text, wordBoundaries: wordBoundaries)
-        let layouts = TeleprompterFormatting.layout(text: text, words: words, displayBlocks: displayBlocks)
+        // Only a complete preparing display fixes the geometry for the whole read.
+        // Older daemons and oversized payloads supply structure chunk by chunk.
+        let layouts: [TeleprompterWordLayout]
+        if hasCompleteDisplay, key?.hasCompleteDisplay == true, key?.text == text,
+           let cached, cached.words.map(\.text) == words.map(\.text) {
+            layouts = cached.layouts
+        } else {
+            layouts = TeleprompterFormatting.layout(text: text, words: words, displayBlocks: displayBlocks)
+        }
         let blocks = TeleprompterFormatting.blocks(layouts: layouts, words: words)
         var blockOfWord = Array(repeating: 0, count: words.count)
         for (index, block) in blocks.enumerated() { for word in block { blockOfWord[word] = index } }
         let document = TeleprompterRenderedDocument(words: words, layouts: layouts, blocks: blocks,
                                                     blockOfWord: blockOfWord)
-        key = (text, wordBoundaries, displayBlocks)
+        key = (text, wordBoundaries, displayBlocks, hasCompleteDisplay)
         cached = document
         return document
     }
