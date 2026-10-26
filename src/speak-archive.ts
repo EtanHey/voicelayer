@@ -1,6 +1,8 @@
+import { beginSpeechReceipt, finishSpeechReceipt, indexOpenSpeech } from "./speech-open-index";
 import { createHash } from "crypto";
 import * as fs from "fs";
-import { dirname, isAbsolute, join, normalize, parse } from "path";
+import { dirname, join } from "path";
+import { preparePrivateSpeechDirectory, UnsafeSpeechDirectory } from "./speech-archive-directory";
 import { archiveId, recordingsArchiveRoot } from "./recordings-archive-fs";
 
 export interface SpeakReceiptRequest {
@@ -78,29 +80,6 @@ function privateDirectory(path: string): void {
       stat.uid !== process.getuid?.()) throw new ReceiptFailure("UNSAFE_PATH");
 }
 
-// Inspect each component before descent; never canonicalize an alias into acceptance.
-// Existing shared ancestor permissions are not changed. The archive root/day must be private.
-function prepareRoot(root: string): void {
-  if (!isAbsolute(root) || normalize(root) !== root || root === parse(root).root) {
-    throw new ReceiptFailure("UNSAFE_PATH");
-  }
-  let current = parse(root).root;
-  for (const component of root.slice(current.length).split("/")) {
-    current = join(current, component);
-    try {
-      const stat = fs.lstatSync(current);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new ReceiptFailure("UNSAFE_PATH");
-    } catch (error) {
-      if (!hasCode(error, "ENOENT")) throw error;
-      fs.mkdirSync(current, { mode: 0o700 });
-      syncDirectory(current);
-      syncDirectory(dirname(current));
-    }
-  }
-  privateDirectory(root);
-  syncDirectory(root);
-  syncDirectory(dirname(root));
-}
 
 function prepareDay(path: string): void {
   try { fs.mkdirSync(path, { mode: 0o700 }); }
@@ -170,7 +149,7 @@ export function createSpeakReceipt(
     const encoded = Buffer.from(JSON.stringify(metadata, null, 2) + "\n", "utf8");
     stage = "allocate";
     const root = recordingsArchiveRoot(); // Call-time isolation checks remain authoritative.
-    prepareRoot(root);
+    preparePrivateSpeechDirectory(root);
     const day = join(root, timestamp.slice(0, 10));
     prepareDay(day);
     const path = join(day, id);
@@ -186,11 +165,14 @@ export function createSpeakReceipt(
     stage = "input";
     writeReceiptFile(path, "input.txt", input);
     stage = "metadata"; // A received receipt is published only after the exact input syncs.
+    beginSpeechReceipt(id);
     writeReceiptFile(path, "metadata.json", encoded);
+    indexOpenSpeech(id);
+    finishSpeechReceipt(id, process.pid);
     return { kind: "created", context: { ...partial, metadata } };
   } catch (error) {
     // Never return/log the raw filesystem exception, request text or transport object.
     return { kind: "failed", stage,
-      code: error instanceof ReceiptFailure ? error.code : "IO_ERROR", partial };
+      code: error instanceof ReceiptFailure ? error.code : error instanceof UnsafeSpeechDirectory ? "UNSAFE_PATH" : "IO_ERROR", partial };
   }
 }
