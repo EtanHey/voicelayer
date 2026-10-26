@@ -1,6 +1,7 @@
 import { expect, test, spyOn, setSystemTime } from "bun:test";
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
+import { speechOpenIndex, speechPendingIndex, beginSpeechReceipt } from "../speech-open-index";
 import { beginSpeechArchive, recoverSpeechArchives, unlinkSpeechAudio } from "../speech-archive-live";
 import { transitionSpeakArchive } from "../speak-archive-store";
 const disk = (path: string) => JSON.parse(readFileSync(join(path, "metadata.json"), "utf8"));
@@ -31,7 +32,7 @@ test("restart recovers preparing, playing and paused as interrupted", async () =
     const archive = beginSpeechArchive(`fixture ${state}`);
     if (state !== "preparing") archive.move(state);
     await archive.settled();
-    writeFileSync(join(process.env.QA_VOICE_RECORDINGS_DIR!, ".speech-open", archive.context.id), "2147483647");
+    writeFileSync(join(speechOpenIndex(), archive.context.id), "2147483647");
     await recoverSpeechArchives();
     expect(disk(archive.context.path).speech).toMatchObject({ state: "interrupted", reason: "PROCESS_RESTART" });
     const before = readFileSync(join(archive.context.path, "metadata.json"), "utf8");
@@ -108,7 +109,7 @@ test("recovery skips another live writer and recovers indexed missing metadata",
   expect(disk(live.context.path).speech.state).toBe("preparing");
   const missing = beginSpeechArchive("missing metadata still has durable input"); await missing.settled();
   unlinkSync(join(missing.context.path, "metadata.json"));
-  writeFileSync(join(process.env.QA_VOICE_RECORDINGS_DIR!, ".speech-open", missing.context.id), "2147483647");
+  writeFileSync(join(speechOpenIndex(), missing.context.id), "2147483647");
   await recoverSpeechArchives();
   expect(disk(missing.context.path)).toMatchObject({ status: "interrupted_unknown", recovery: { metadata_missing: true } });
   live.finish("cancelled", "USER_CANCEL"); await live.settled();
@@ -123,7 +124,7 @@ test("one-time migration recovers pre-index open records", async () => {
       const archive = beginSpeechArchive(`legacy ${state}`);
       if (state !== "preparing") archive.move(state);
       await archive.settled();
-      unlinkSync(join(root, ".speech-open", archive.context.id));
+      unlinkSync(join(speechOpenIndex(), archive.context.id));
     }
     await recoverSpeechArchives();
     const { readdirSync } = await import("fs");
@@ -133,7 +134,7 @@ test("one-time migration recovers pre-index open records", async () => {
       }
     }
     const later = beginSpeechArchive("after migration"); await later.settled();
-    unlinkSync(join(root, ".speech-open", later.context.id));
+    unlinkSync(join(speechOpenIndex(), later.context.id));
     await recoverSpeechArchives();
     expect(disk(later.context.path).speech.state).toBe("preparing");
     later.finish("cancelled", "USER_CANCEL"); await later.settled();
@@ -155,7 +156,7 @@ test("legacy migration checkpoints a bounded slice and resumes after restart", a
       mkdirSync(join(dir, "audio")); writeFileSync(join(dir, "audio", "invalid.mp3"), "fixture");
     }
     const legacy = beginSpeechArchive("resume legacy fixture"); await legacy.settled();
-    unlinkSync(join(root, ".speech-open", legacy.context.id));
+    unlinkSync(join(speechOpenIndex(), legacy.context.id));
     expect(await migrateLegacySpeechSlice()).toEqual({ more: true, recovered: [] });
     expect(readFileSync(join(root, ".speech-index-migration-v1"), "utf8")).toBe("2020-01-01T00-00-00-000Z-00000063");
     expect(disk(legacy.context.path).speech.state).toBe("preparing");
@@ -164,5 +165,60 @@ test("legacy migration checkpoints a bounded slice and resumes after restart", a
     expect(disk(legacy.context.path).speech).toMatchObject({ state: "interrupted", reason: "PROCESS_RESTART" });
     expect(readFileSync(join(root, ".speech-index-migration-v1"), "utf8")).toBe("done");
     expect(readFileSync(join(day, "2020-01-01T00-00-00-000Z-00000000", "metadata.json"), "utf8")).toBe('{"source":"speak","status":"completed"}');
+  } finally { process.env.QA_VOICE_RECORDINGS_DIR = original; }
+});
+
+
+test("startup recovers pending publication gaps after legacy migration has finished", async () => {
+  const root = process.env.QA_VOICE_RECORDINGS_DIR!;
+  await recoverSpeechArchives();
+  for (const missingMetadata of [false, true]) {
+    const archive = beginSpeechArchive("pending publication fixture"); await archive.settled();
+    unlinkSync(join(speechOpenIndex(), archive.context.id));
+    beginSpeechReceipt(archive.context.id);
+    const pending = join(speechPendingIndex(), archive.context.id);
+    const { renameSync, existsSync } = await import("fs");
+    renameSync(join(pending, String(process.pid)), join(pending, "2147483647"));
+    if (missingMetadata) unlinkSync(join(archive.context.path, "metadata.json"));
+    await recoverSpeechArchives();
+    expect(disk(archive.context.path).status).toBe("interrupted_unknown");
+    expect(existsSync(pending)).toBe(false);
+    expect(readFileSync(join(archive.context.path, "input.txt"), "utf8")).toBe("pending publication fixture");
+  }
+});
+
+test("legacy migration leaves a live pending receipt alone", async () => {
+  const { migrateLegacySpeechSlice } = await import("../speech-archive-legacy-migration");
+  const root = process.env.QA_VOICE_RECORDINGS_DIR!;
+  const archive = beginSpeechArchive("live pending publication fixture"); await archive.settled();
+  unlinkSync(join(speechOpenIndex(), archive.context.id));
+  beginSpeechReceipt(archive.context.id);
+  const { rmSync } = await import("fs");
+  rmSync(join(root, ".speech-index-migration-v1"), { force: true });
+  await migrateLegacySpeechSlice();
+  expect(disk(archive.context.path).speech.state).toBe("preparing");
+});
+
+
+test("bounded startup slices recover every pending intent beyond one hundred", async () => {
+  const original = process.env.QA_VOICE_RECORDINGS_DIR!;
+  const root = join(process.env.VOICELAYER_TEST_RUN_ROOT!, "pending-slices");
+  mkdirSync(root, { mode: 0o700 }); process.env.QA_VOICE_RECORDINGS_DIR = root;
+  const { renameSync, existsSync } = await import("fs");
+  const paths: string[] = [];
+  try {
+    for (let n = 0; n < 105; n++) {
+      const archive = beginSpeechArchive(`pending slice fixture ${n}`); await archive.settled();
+      unlinkSync(join(speechOpenIndex(), archive.context.id));
+      beginSpeechReceipt(archive.context.id);
+      const pending = join(speechPendingIndex(), archive.context.id);
+      renameSync(join(pending, String(process.pid)), join(pending, "2147483647"));
+      paths.push(archive.context.path);
+    }
+    await recoverSpeechArchives();
+    for (const path of paths) {
+      expect(disk(path).status).toBe("interrupted_unknown");
+      expect(existsSync(join(speechPendingIndex(), path.split("/").at(-1)!))).toBe(false);
+    }
   } finally { process.env.QA_VOICE_RECORDINGS_DIR = original; }
 });
