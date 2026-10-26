@@ -33,6 +33,8 @@ public struct TeleprompterWordLayout: Equatable {
     public var lineBreak: TeleprompterLineBreak = .none
     public var isListMarker = false
     public var decoration: String?
+    /// A source slash is rendered outside the timed word highlight.
+    public var separator: String?
     public var isHeading = false
     public var gluesToPrevious = false
     /// Words that light up as one: a token's pieces, and punctuation glued to its word.
@@ -53,19 +55,13 @@ public enum TeleprompterFormatting {
     public static func layout(text: String, words: [TeleprompterWord],
                               displayBlocks: [TeleprompterDisplayBlock] = []) -> [TeleprompterWordLayout] {
         let plain = words.map { TeleprompterWordLayout(displayText: $0.text, highlightGroup: $0.id) }
-        var tokens: [(text: String, newlines: Int)] = []
-        var newlines = 0
-        var index = text.startIndex
-        while index < text.endIndex {
-            if text[index].isWhitespace {
-                if text[index].isNewline { newlines += 1 }
-                index = text.index(after: index)
-                continue
-            }
-            let start = index
-            while index < text.endIndex, !text[index].isWhitespace { index = text.index(after: index) }
-            tokens.append((String(text[start ..< index]), newlines))
-            newlines = 0
+        var tokens: [(text: String, newlines: Int, continuation: Bool)] = []
+        var cursor = text.startIndex
+        for token in TeleprompterContentModel.displayTokens(text) {
+            guard let range = text.range(of: token, range: cursor..<text.endIndex) else { return plain }
+            let gap = text[cursor..<range.lowerBound]
+            tokens.append((token, gap.filter { $0.isNewline }.count, range.lowerBound == cursor && cursor != text.startIndex))
+            cursor = range.upperBound
         }
         let tokenOfWord = tokens.indices.flatMap { token in
             Array(repeating: token, count: TeleprompterContentModel.displayPieceCount(tokens[token].text))
@@ -81,7 +77,11 @@ public enum TeleprompterFormatting {
                 result[position].highlightGroup = result[position - 1].highlightGroup
                 continue
             }
-            let (token, breaks) = tokens[tokenIndex]
+            let (token, breaks, slashContinuation) = tokens[tokenIndex]
+            if slashContinuation && token.hasPrefix("/") {
+                result[position].separator = "/"
+                result[position].displayText = String(result[position].displayText.dropFirst())
+            }
             guard tokenIndex > 0 else {
                 result[position].isListMarker = isLineStartMarker(token)
                 continue
@@ -89,11 +89,11 @@ public enum TeleprompterFormatting {
             var lineBreak: TeleprompterLineBreak = breaks >= 2 ? .paragraph : breaks == 1 ? .line : .none
             let isMarker = bullets.contains(token) || (lineBreak != .none && isLineStartMarker(token))
             if isMarker, lineBreak == .none { lineBreak = .line }
-            let glues = lineBreak == .none && token.allSatisfy(closingPunctuation.contains)
+            let glues = lineBreak == .none && (slashContinuation || token.allSatisfy(closingPunctuation.contains))
             result[position].lineBreak = lineBreak
             result[position].isListMarker = isMarker
             result[position].gluesToPrevious = glues
-            if glues { result[position].highlightGroup = result[position - 1].highlightGroup }
+            if glues && !slashContinuation { result[position].highlightGroup = result[position - 1].highlightGroup }
         }
         // Overlay only exact speech-token positions. Decorations have no word id, time or seek target.
         var position = 0
@@ -211,25 +211,34 @@ public struct TeleprompterRenderedDocument {
 
 /// A highlight tick re-renders the view, never the document: formatting reruns only for new text or timings.
 public final class TeleprompterRenderCache {
-    private var key: (text: String, wordBoundaries: [TeleprompterBoundary], displayBlocks: [TeleprompterDisplayBlock])?
+    private var key: (text: String, wordBoundaries: [TeleprompterBoundary], displayBlocks: [TeleprompterDisplayBlock], hasCompleteDisplay: Bool)?
     private var cached: TeleprompterRenderedDocument?
     private(set) var computations = 0
 
     public init() {}
 
     public func document(text: String, wordBoundaries: [TeleprompterBoundary],
-                         displayBlocks: [TeleprompterDisplayBlock] = []) -> TeleprompterRenderedDocument {
+                         displayBlocks: [TeleprompterDisplayBlock] = [],
+                         hasCompleteDisplay: Bool = false) -> TeleprompterRenderedDocument {
         if let key, let cached, key.text == text, key.wordBoundaries == wordBoundaries,
-           key.displayBlocks == displayBlocks { return cached }
+           key.displayBlocks == displayBlocks, key.hasCompleteDisplay == hasCompleteDisplay { return cached }
         computations += 1
         let words = TeleprompterContentModel.words(text: text, wordBoundaries: wordBoundaries)
-        let layouts = TeleprompterFormatting.layout(text: text, words: words, displayBlocks: displayBlocks)
+        // Only a complete preparing display fixes the geometry for the whole read.
+        // Older daemons and oversized payloads supply structure chunk by chunk.
+        let layouts: [TeleprompterWordLayout]
+        if hasCompleteDisplay, key?.hasCompleteDisplay == true, key?.text == text,
+           let cached, cached.words.map(\.text) == words.map(\.text) {
+            layouts = cached.layouts
+        } else {
+            layouts = TeleprompterFormatting.layout(text: text, words: words, displayBlocks: displayBlocks)
+        }
         let blocks = TeleprompterFormatting.blocks(layouts: layouts, words: words)
         var blockOfWord = Array(repeating: 0, count: words.count)
         for (index, block) in blocks.enumerated() { for word in block { blockOfWord[word] = index } }
         let document = TeleprompterRenderedDocument(words: words, layouts: layouts, blocks: blocks,
                                                     blockOfWord: blockOfWord)
-        key = (text, wordBoundaries, displayBlocks)
+        key = (text, wordBoundaries, displayBlocks, hasCompleteDisplay)
         cached = document
         return document
     }

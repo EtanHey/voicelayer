@@ -1,3 +1,4 @@
+import { proseSlashMatches } from "./tts/display-tokens";
 import type { ProjectionRange } from "./tts/structured-speech";
 
 export type SpeakableEngine = "edge" | "clone";
@@ -226,11 +227,26 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
   });
   edit(/^[ \t]*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?[ \t]*(?:\r?\n|$)/gm, "");
   edit(/^([ \t]*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
-  edit(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]*)?)/gm, "");
+  // Keep the marker's own source span: alignment maps the spoken number back to it.
+  edit(/^[ \t]*(\d+)[.)](?=[ \t]+)/gm, m => {
+    const line = m.input.slice(m.index).split(/\r?\n/, 1)[0];
+    // Let the voice frontend pronounce digits in Hebrew rather than injecting English.
+    return `${/[\u0590-\u05ff]/.test(line) || m[1].length > 2 ? m[1] : number(m[1])}.`;
+  }, true);
+  edit(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-+*][ \t]+(?:\[[ xX]\][ \t]*)?)/gm, "");
   edit(/!?\[([^\]\n]+)\]\((?:[^()\n]|\([^()\n]*\))*\)/g, m => m[1]);
   if (engine === "clone") {
     const input = pieces.map(p => p.text).join("");
     applyEdits(pieces, input, jsonEdits(input), false);
+  }
+  // Edge treats bare compounds as paths and drops their first word.
+  // Speak the separator explicitly, preserving independent source anchors.
+  // Main leaves compounds after non-ASCII boundaries lexical; preserve that speech.
+  {
+    const input = pieces.map(p => p.text).join("");
+    applyEdits(pieces, input, proseSlashMatches(input).filter(m => m.index === 0 || !/[^\x00-\x7f]/.test(input[m.index - 1])).map(m => ({
+      start: m.index + m[0].indexOf("/"), end: m.index + m[0].indexOf("/") + 1, text: " slash "
+    })), false, true);
   }
   edit(/`+|\*\*|\*([^*\n]+)\*|~~/g, m => m[1] ?? "");
   edit(/(?<![A-Za-z0-9\u0080-\uffff_])_([^_\n]+)_(?![A-Za-z0-9\u0080-\uffff_])/gu, m => m[1]);

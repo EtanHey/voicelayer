@@ -550,6 +550,10 @@ public final class VoiceState {
         return isShowingLongReadDocument ? longReadDocument?.boundaries ?? wordBoundaries : wordBoundaries
     }
 
+    public var teleprompterHasCompleteDisplay: Bool {
+        !isShowingLongReadDocument || longReadDocument?.hasCompleteDisplay == true
+    }
+
     public var teleprompterDisplayBlocks: [TeleprompterDisplayBlock] {
         if mode == .idle { return retainedDisplayBlocks }
         if isShowingLongReadDocument { return longReadDocument?.displayBlocks ?? [] }
@@ -2682,8 +2686,24 @@ public final class VoiceState {
             guard event["aligned_words"] != nil || event["words"] is [[String: Any]] else { return }
             let chunkStart = playbackChunkStartMilliseconds
             let chunkMs = (event["duration_ms"] as? NSNumber).map(\.intValue).flatMap { $0 > 0 ? $0 : nil }
+            // An unmatched opening token must not inherit the player-spawn edge as its
+            // acoustic onset. Decode already includes the file's leading silence; without
+            // that evidence leave the prefix untimed rather than animate it in the gap.
+            // Resume/seek envelopes start at the sliced audio, so retain an onset already
+            // established for this chunk rather than move its opening words on each seek.
+            let knownOpening = wordBoundaries.first.flatMap { row -> Int? in
+                row.wordIndex == 0 && row.isInterpolated ? row.offsetMs : nil
+            }
+            let interpolationStart = knownOpening ?? playbackAmplitudeEnvelope.flatMap { envelope -> Int? in
+                guard envelope.source == .decodedRMS,
+                      let first = envelope.samples.firstIndex(where: { $0 > 0 }),
+                      let envelopeStart = playbackAmplitudeStartedAt, let clockStart = playbackStartedAt
+                else { return nil }
+                return max(chunkStart, Int(((envelopeStart - clockStart) * 1000).rounded()) +
+                           first * envelope.sampleIntervalMilliseconds)
+            }
             wordBoundaries = TeleprompterBoundary.interpolated(
-                TeleprompterBoundary.subtitleWords(event, chunkStartMs: chunkStart), text: statusText, startMs: chunkStart,
+                TeleprompterBoundary.subtitleWords(event, chunkStartMs: chunkStart), text: statusText, startMs: interpolationStart,
                 endMs: chunkMs.map { chunkStart + $0 } ?? (playbackLongReadID == nil ? playbackDurationMilliseconds : nil))
             if TeleprompterContentModel.words(text: statusText, wordBoundaries: wordBoundaries).contains(where: { $0.offsetMs != nil }) {
                 playbackTimelineChunks[chunkStart] = (statusText, wordBoundaries)

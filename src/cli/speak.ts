@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { flushSpeechArchives } from "../speech-archive-live";
 import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 import { getMcpSocketPath } from "../paths";
@@ -141,6 +142,7 @@ export async function speakLocally(request: Extract<SpeechRequest, { cmd: "speak
     throw error;
   } finally {
     if (interrupted && runtime) await runtime.awaitCurrentPlayback();
+    await flushSpeechArchives(receipt.context);
     process.off("SIGINT", onInt); process.off("SIGTERM", onTerm);
   }
 }
@@ -172,5 +174,6 @@ if (import.meta.main) {
     stderr: message => { process.stderr.write(message); }, stdout: message => { process.stdout.write(message); },
     request: requestSpeech, local: speakLocally,
   });
+  await flushSpeechArchives();
   process.exit(code);
 }

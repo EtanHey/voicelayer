@@ -72,6 +72,14 @@ writeFileSync(${JSON.stringify(prefix + ".hash")},createHash('sha256').update(re
     requestId: "request-a", chunkId: "chunk-2", playbackRate: 1, decoder: { binary, model: join(root, "model"), ffmpeg } };
   return { input, prefix };
 }
+test("slash compounds align each raw display word independently", async () => {
+  const { input } = await request("list/paragraph completion/cancellation");
+  const result = await alignCloneAudio(input);
+  expect(result.words.map(w => w.text)).toEqual(["list", "/paragraph", "completion", "/cancellation"]);
+  expect(result.words.map(w => w.offset_ms)).toEqual([100, 300, 700, 900]);
+  expect(result.words.map(w => w.duration_ms)).toEqual([160, 360, 160, 360]);
+});
+
 const offsets = (result: Awaited<ReturnType<typeof alignCloneAudio>>) => result.words.map(w => w.offset_ms);
 const started = (prefix: string) => waitForPidFile(prefix + ".pid");
 function reaped(pid: number) { expect(() => process.kill(pid, 0)).toThrow(); }

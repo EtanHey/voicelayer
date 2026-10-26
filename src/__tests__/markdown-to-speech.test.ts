@@ -7,7 +7,7 @@ describe("markdownToSpeech", () => {
     ["[VoiceLayer](https://example.com) and https://example.org/path", "VoiceLayer and link"],
     ["Before\n```ts\nconst secret = 42;\n```\nAfter", "Before code block After"],
     ["Before\n~~~python\nprint('hello')\n~~~\nAfter", "Before code block After"],
-    ["- One\n* Two\n3. Three", "One. Two. Three."],
+    ["- One\n* Two\n3. Three", "One. Two. 3. Three."],
     ["| Name | Value |\n| --- | ---: |\n| A | 5 |", "Name, Value. A, 5."],
     ["שלום **עולם**", "שלום עולם"],
     ["Title\n=====\nVisit <https://example.com>.", "Title Visit link."],

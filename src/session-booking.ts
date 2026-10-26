@@ -268,12 +268,7 @@ function cleanup() {
   releaseVoiceSession();
 }
 
-process.on("SIGTERM", () => {
-  cleanup();
-  process.exit(0);
-});
-process.on("SIGINT", () => {
-  cleanup();
-  process.exit(0);
-});
+// Libraries clean up resources; entry points own exit after asynchronous teardown.
+process.on("SIGTERM", cleanup);
+process.on("SIGINT", cleanup);
 process.on("exit", cleanup);

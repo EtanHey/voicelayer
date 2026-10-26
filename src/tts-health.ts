@@ -224,6 +224,8 @@ export async function synthesizeWithRetry(
         ),
       );
 
+      const killOnExit = () => { try { synth.kill("SIGKILL"); } catch {} };
+      process.once("exit", killOnExit);
       let timedOut = false;
       let escalation: ReturnType<typeof setTimeout> | undefined;
       const kill = () => {
@@ -241,6 +243,7 @@ export async function synthesizeWithRetry(
         throwIfAbortedSafe(signal);
         if (timedOut) exitCode = -1;
       } finally {
+        process.removeListener("exit", killOnExit);
         clearTimeout(timeout);
         clearTimeout(escalation);
         signal?.removeEventListener("abort", kill);

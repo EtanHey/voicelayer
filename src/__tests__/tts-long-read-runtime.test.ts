@@ -1,3 +1,8 @@
+import { speechArchiveWriter } from "../speech-archive-writer";
+import * as speechReceipts from "../speak-archive";
+import { beginSpeechArchive, LiveSpeechArchive, flushSpeechArchives } from "../speech-archive-live";
+import { join } from "path";
+import { serializeEvent } from "../socket-protocol";
 import { projectStructuredSpeech } from "../tts/structured-speech";
 import * as pronunciation from "../pronunciation";
 import * as settings from "../tts-settings";
@@ -14,7 +19,7 @@ import * as booking from "../session-booking";
 import * as longReadRunner from "../tts/long-read";
 import { handleVoiceAsk } from "../handlers";
 import { pausePlayback, isPlaybackPaused } from "../tts";
-import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForTTS, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
+import { awaitCurrentPlayback, getHistoryEntry, getPlaybackQueueDepth, loadHistory, speak, speakLongRead, stopPlayback, seekPlayback, cancelPlayback, chunkTextForLongRead, playAudioNonBlocking, reserveCaptureAdmission } from "../tts";
 import { handleSocketCommand, resetSelectionReadQueueForTests } from "../socket-handlers";
 import * as tts from "../tts";
 import { TTS_HISTORY_FILE } from "../paths";
@@ -101,10 +106,184 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   });
   afterEach(async () => {
     stopPlayback(); for (const release of releaseAlignments) release(); for (const player of players) player.exit.resolve(143); for (const child of histories) child.exit.resolve(0); for (const h of handles) await h.done; await awaitCurrentPlayback();
+    await flushSpeechArchives();
     for (const spy of spies) spy.mockRestore(); Bun.spawn = originalSpawn; Bun.spawnSync = originalSpawnSync;
     try { unlinkSync(TTS_HISTORY_FILE); } catch {}
   });
   const start = (engine: "edge" | "clone" = "edge", readText = text) => { const h = speakLongRead(readText, { engine, voice: "fixture", rate: "+0%" }); handles.push(h); return h; };
+
+  for (const fault of ["playerEnded", "finish"] as const) it(`SPEECH-WIRE ${fault} archive fault still delivers completion observer`, async () => {
+    const outcomes: unknown[] = [];
+    spies.push(spyOn(LiveSpeechArchive.prototype, fault).mockImplementation(() => { throw Error("synthetic archive fault"); }));
+    autoPlay = true;
+    await speak("Callback fixture.", { voice: "en-US-JennyNeural", onPlaybackComplete: outcome => { outcomes.push(outcome); } });
+    await awaitCurrentPlayback();
+    expect(outcomes).toHaveLength(1);
+  });
+
+  it("SPEECH-WIRE rejected player-end and terminal writes preserve exactly one caller outcome", async () => {
+    const archive = beginSpeechArchive("persistence fault callback"); await archive.settled();
+    const write = speechArchiveWriter.write.bind(speechArchiveWriter), outcomes: unknown[] = [];
+    const failed = spyOn(speechArchiveWriter, "write").mockImplementation(async (...args) => {
+      if (args[1].kind === "end" || args[1].kind === "move" && args[1].to === "completed") throw Error("synthetic persistence failure");
+      return write(...args);
+    });
+    autoPlay = true;
+    try {
+      await speak("Persistence fixture.", { archiveContext: archive.context, voice: "en-US-JennyNeural", onPlaybackComplete: outcome => { outcomes.push(outcome); } });
+      await awaitCurrentPlayback(); await archive.settled();
+      expect(outcomes).toHaveLength(1); expect(archive.failures.map(f => f.operation.kind)).toEqual(["end", "move"]);
+    } finally { failed.mockRestore(); }
+    await archive.retryFailed();
+    const m = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
+    expect(m.speech.state).toBe("completed");
+    expect(m.speech.transitions.filter((t: { to: string }) => t.to === "completed")).toHaveLength(1);
+    expect(outcomes).toHaveLength(1);
+  });
+
+  for (const mode of ["short", "long"] as const) it(`SPEECH-WIRE ${mode} starts its first player while durable admission is held`, async () => {
+    const gate = deferred<void>(), write = speechArchiveWriter.write.bind(speechArchiveWriter);
+    let entered = false;
+    spies.push(spyOn(speechArchiveWriter, "write").mockImplementation(async (...args) => { entered = true; await gate.promise; return write(...args); }));
+    autoPlay = true;
+    try {
+      const work = mode === "short" ? speak("Latency fixture.", { voice: "en-US-JennyNeural" }) : start("edge", "Latency fixture.").done;
+      await playerBarrier.at(0);
+      expect(entered).toBe(true);
+      const source = players[0].argv.at(-1)!;
+      await work; await awaitCurrentPlayback();
+      // Cleanup is requested after the player exits, but the writer still owns its source.
+      expect(existsSync(source)).toBe(true);
+      await fixtureCheckpoint(); // Controls/event loop progress while durable storage remains gated.
+    } finally { gate.resolve(); await flushSpeechArchives(); }
+  });
+
+  for (const engine of ["edge", "clone"] as const) {
+    it(`SPEECH-WIRE live ${engine} archive records actual generation and completion`, async () => {
+      autoPlay = true;
+      if (engine === "clone") spies.push(spyOn(qwen, "synthesizeCloned").mockResolvedValue(Buffer.from("clone audio")));
+      const archive = beginSpeechArchive("  **Original** selection\n");
+      await archive.settled();
+      const h = speakLongRead("Actual generated words.", { engine, voice: "fixture", rate: "+0%" }, Date.now(), { archiveContext: archive.context });
+      handles.push(h); await h.done; await flushSpeechArchives();
+      const m = JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8"));
+      expect(m.speech.state).toBe("completed");
+      expect(m.speech.generated[0]).toMatchObject({ text: "Actual generated words.", engine: engine === "edge" ? "edge-tts" : "qwen3-tts" });
+      expect(existsSync(join(archive.context.path, m.speech.generated[0].audio_path))).toBe(true);
+      expect(readFileSync(join(archive.context.path, "input.txt"), "utf8")).toBe("  **Original** selection\n");
+    });
+  }
+  it("SPEECH-WIRE player errors persist failed rather than stopped", async () => {
+    failPlayerSpawn = true;
+    const archive = beginSpeechArchive("Failure fixture.");
+    await archive.settled();
+    const h = speakLongRead("Failure fixture.", { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), { archiveContext: archive.context });
+    handles.push(h); await h.done; await flushSpeechArchives();
+    expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech.state).toBe("failed");
+  });
+  it("SPEECH-WIRE Ask archives its real spoken question", async () => {
+    const create = speechReceipts.createSpeakReceipt;
+    let context: speechReceipts.SpeakArchiveContext | undefined;
+    spies.push(spyOn(speechReceipts, "createSpeakReceipt").mockImplementation(request => {
+      const receipt = create(request);
+      if (receipt.kind === "created" && request.request_source === "ask_prompt") context = receipt.context;
+      return receipt;
+    }));
+    spies.push(spyOn(booking, "isVoiceBooked").mockReturnValue({ booked: true, ownedByUs: true }));
+    spies.push(spyOn(input, "waitForInput").mockResolvedValue("fixture answer"));
+    autoPlay = true;
+    const answer = await handleVoiceAsk({ message: "  Durable question?  ", voice: "en-US-JennyNeural", timeout_seconds: 5 });
+    expect(answer.isError).not.toBe(true);
+    expect(context).toBeDefined();
+    await flushSpeechArchives();
+    const m = JSON.parse(readFileSync(join(context!.path, "metadata.json"), "utf8"));
+    expect(m.speech).toMatchObject({ state: "completed", generated: [{ text: "Durable question?" }] });
+    expect(readFileSync(join(context!.path, "input.txt"), "utf8")).toBe("  Durable question?  ");
+  });
+  it("SPEECH-WIRE real pause and resume persist the same output", async () => {
+    const archive = beginSpeechArchive("Pause fixture.");
+    await archive.settled();
+    const h = speakLongRead("Pause fixture.", { engine: "edge", voice: "fixture", rate: "+0%" }, Date.now(), { archiveContext: archive.context });
+    handles.push(h); await playerBarrier.at(0);
+    expect(pausePlayback().outcome).toBe("accept");
+    await flushSpeechArchives();
+    expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech.state).toBe("paused");
+    expect(tts.resumePlayback().outcome).toBe("accept");
+    await playerBarrier.at(1); players[1].exit.resolve(0); await h.done; await flushSpeechArchives();
+    expect(JSON.parse(readFileSync(join(archive.context.path, "metadata.json"), "utf8")).speech.transitions.map((t: { to: string }) => t.to))
+      .toEqual(["preparing", "playing", "paused", "playing", "completed"]);
+  });
+  it("SPEECH-PACING prepares the next waveform while current audio plays", async () => {
+    holdDecoder = true;
+    const h = start("edge", "First short sentence. " + "More words for the next sentence. ".repeat(5));
+    await decoderBarrier.at(0);
+    decoders[0].exit.resolve(0);
+    await playerBarrier.at(0);
+    await synthBarrier.at(1);
+    await fixtureCheckpoint();
+    expect(decoders.length).toBe(2);
+    // Inject 700 ms of preparation inside a 1000 ms playing chunk.
+    clockMs += 700;
+    decoders[1].exit.resolve(0);
+    await fixtureCheckpoint();
+    clockMs += 300;
+    const previousAudioEnded = clockMs;
+    players[0].exit.resolve(0);
+    await playerBarrier.at(1);
+    expect(clockMs - previousAudioEnded).toBe(0);
+    expect(decoders.length).toBe(2); // No decode starts at the join.
+    players[1].exit.resolve(0);
+    await h.done;
+  });
+
+  it("SPEECH-PACING dismisses before slow History persistence", async () => {
+    holdHistory = true;
+    const h = start("edge", "Finished now.");
+    await playerBarrier.at(0);
+    clockMs += 1000;
+    players[0].exit.resolve(0);
+    await historyBarrier.at(0);
+    expect(events.some(e => e.type === "state" && e.state === "idle" && e.source === "playback")).toBe(true);
+    clockMs += 6500; // Persistence is still blocked long after the idle event.
+    histories[0].exit.resolve(0);
+    await h.done;
+  });
+
+  it("SPEECH-PACING final audio dismisses while clone alignment is still reaping", async () => {
+    const fixture = cloneFixture();
+    const h = start("clone", "Finished clone.");
+    await playerBarrier.at(0);
+    await fixture.entered.at(0);
+    clockMs += 1000;
+    players[0].exit.resolve(0);
+    await fixtureCheckpoint();
+    expect(events.some(e => e.type === "state" && e.state === "idle" && e.source === "playback")).toBe(true);
+    expect(getPlaybackQueueDepth()).toBeGreaterThan(0); // Capture safety still waits for the child.
+    for (const release of releaseAlignments) release();
+    await h.done;
+  });
+
+  it("SPEECH-PACING measures clone startup separately from waveform preparation", async () => {
+    const parts: string[] = [];
+    spies.push(spyOn(qwen, "synthesizeCloned").mockImplementation(async part => {
+      if (!parts.length) clockMs += 900; // Injected engine time, not a hardware benchmark.
+      parts.push(part);
+      return Buffer.from("clone audio");
+    }));
+    holdDecoder = true;
+    const h = start("clone", "First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8));
+    await decoderBarrier.at(0);
+    expect(parts[0]).toBe("First sentence. The rest of this read is synthesized in the background.");
+    expect(parts[0].length).toBeLessThanOrEqual(100);
+    clockMs += 300;
+    holdDecoder = false;
+    for (const child of decoders) child.exit.resolve(0);
+    await playerBarrier.at(0);
+    expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(1200);
+    autoPlay = true;
+    players[0].exit.resolve(0);
+    await h.done;
+  });
 
   it("SEL11 preserves request identity and original-text hash in Preparing and player receipts", async () => {
     const identity = { request_id: "selection-B", text_hash: createHash("sha256").update("**hello** world").digest("hex") };
@@ -317,7 +496,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(acknowledged).toBe(false);
     const inputs = historyInputs[0].map((line) => line.slice(6, -1));
     expect(inputs.every(existsSync)).toBe(true);
-    history.exit.resolve(0); await ack; await h.done;
+    history.exit.resolve(0); await ack; await h.done; await flushSpeechArchives();
     expect(inputs.every((path) => !existsSync(path))).toBe(true);
   });
 
@@ -424,7 +603,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const paragraphs = Array.from({ length: 12 }, (_, i) => `Paragraph ${i} keeps its own break and enough words to fill a chunk.`).join("\n\n");
     const h = start("edge", paragraphs); await fixtureCheckpoint();
     const preparing = events.find((event) => event.state === "speaking" && event.long_read?.preparing);
-    const texts = chunkTextForTTS(paragraphs);
+    const texts = chunkTextForLongRead(paragraphs);
     expect(texts.length).toBeGreaterThan(1);
     expect(preparing.long_read).toMatchObject({ id: h.id, chunk_count: texts.length, text: paragraphs });
     let words = 0;
@@ -440,15 +619,18 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const structuredDisplay = projectStructuredSpeech("2. Alpha.\n3. Beta.");
     const h = speakLongRead(structuredDisplay.speechText, { engine: "edge", voice: "fixture", rate: "+0%" },
       Date.now(), { request_id: "structured-read", structuredDisplay });
-    handles.push(h); await h.done;
+    handles.push(h); await h.done; await flushSpeechArchives();
     const played = events.find(event => event.state === "speaking" && !event.long_read?.preparing);
     expect(played).toBeDefined();
     expect(played.text).toBe(structuredDisplay.speechText);
+    const preparing = events.find(event => event.long_read?.preparing);
+    expect(preparing.long_read.display.blocks).toEqual(played.long_read.display.blocks);
+    expect(JSON.parse(serializeEvent(preparing)).long_read.display).toEqual(preparing.long_read.display);
     expect(played.long_read.display.text).toBe(played.text);
-    expect(played.long_read.display.blocks.map((block: { marker: string }) => block.marker)).toEqual(["2.", "3."]);
-    expect(synths[0].argv.find(arg => arg.startsWith("--text="))).toBe("--text=Alpha. Beta.");
+    expect(played.long_read.display.blocks.map((block: { marker: string }) => block.marker)).toEqual([undefined, undefined]);
+    expect(synths[0].argv.find(arg => arg.startsWith("--text="))).toBe("--text=two. Alpha. 3. Beta.");
     const subtitle = events.find(event => event.type === "subtitle");
-    expect(subtitle.words.map((word: { text: string }) => word.text)).toEqual(["Alpha.", "Beta."]);
+    expect(subtitle.words.map((word: { text: string }) => word.text)).toEqual(["2.", "Alpha.", "3.", "Beta."]);
     expect(played.request_id).toBe("structured-read");
     expect(seekPlayback(0, "readback", played.readback_id)).toMatchObject({ outcome: "accept" });
     await awaitCurrentPlayback();
@@ -470,8 +652,10 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   });
 
   it("new long read preempts the old generation and stale results never restart it", async () => {
+    const finishes = spyOn(LiveSpeechArchive.prototype, "finish"); spies.push(finishes);
     holdSynth = true; const old = start(); await synthBarrier.at(1); await playerBarrier.at(0);
     const current = start(); await synthBarrier.at(2);
+    expect(finishes).toHaveBeenCalledWith("stopped", "REPLACED");
     expect(synths[1].killed).toBe(true); synths[2].exit.resolve(0);
     await playerBarrier.at(1); stopPlayback(120); await Promise.all([old.done, current.done]);
     expect(players).toHaveLength(2);
@@ -618,9 +802,9 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     recordFirstAudio("long", 9999); recordFirstAudio("short", 1234);
     const logs = spyOn(console, "error").mockImplementation(() => {}); spies.push(logs);
     holdDecoder = true; const h = start();
-    const decoder = await decoderBarrier.at(0);
+    await decoderBarrier.at(0);
     expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(9999);
-    clockMs += 650; holdDecoder = false; decoder.exit.resolve(0);
+    clockMs += 650; holdDecoder = false; for (const child of decoders) child.exit.resolve(0);
     await playerBarrier.at(0); await h.started;
     expect(readTTSControlsStatus().profiles.long.last_first_audio_ms).toBe(650);
     expect(readTTSControlsStatus().profiles.short.last_first_audio_ms).toBe(1234);
@@ -672,6 +856,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     expect(events.filter((e) => e.type === "subtitle").every((e) => e.words[0].offset_ms === 0)).toBe(true);
     expect(loadHistory()).toHaveLength(1); expect(loadHistory()[0].text).toBe(text);
     expect(historyInputs[0]).toHaveLength(speaking.length);
+    await flushSpeechArchives();
     for (const line of historyInputs[0]) expect(existsSync(line.slice(6, -1))).toBe(false);
   });
 
@@ -718,7 +903,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
 
   it("keeps the ring bounded at twenty entries", async () => {
     autoPlay = true;
-    for (let i = 0; i < 22; i++) { const h = speakLongRead(`Read ${i}.`, { engine: "edge", voice: "fixture", rate: "+0%" }); handles.push(h); await h.done; }
+    for (let i = 0; i < 22; i++) { const h = speakLongRead(`Read ${i}.`, { engine: "edge", voice: "fixture", rate: "+0%" }); handles.push(h); await h.done; await flushSpeechArchives(); }
     expect(loadHistory()).toHaveLength(20); expect(new Set(loadHistory().map((e) => e.id)).size).toBe(20);
   });
   // P16b (Sol R2-2 probe, verbatim intent): F5's capture Stop/Cancel over a parked long read acknowledges at once.
@@ -745,7 +930,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     const select = (id: string, words: string) => handleSocketCommand({ cmd: "speak_text", id, text: words, text_hash: hash, profile: "short", source: "selection", ...(id === "A" ? {} : { queue: true }) } as any);
     const lastQueue = () => events.filter(e => e.type === "read_queue").at(-1);
     const receipts = (id: string) => events.filter(e => e.type === "state" && e.state === "speaking" && e.request_id === id);
-    const settle = async () => { for (let i = 0; i < 20; i++) await fixtureCheckpoint(); };
+    const settle = async () => { for (let i = 0; i < 20; i++) await fixtureCheckpoint(); await flushSpeechArchives(); };
     afterEach(() => resetSelectionReadQueueForTests());
 
     describe("QPRE1 prepares the next read's first chunk in the background", () => {
@@ -816,19 +1001,24 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       const twoChunks = Array.from({ length: 9 }, (_, i) => `Alpha sentence ${i} has enough words to fill a chunk.`).join(" ");
 
       it("never prepares while A still has chunks to synthesize; then only B's first chunk, never C", async () => {
-        expect(chunkTextForTTS(twoChunks)).toHaveLength(2);
+        expect(chunkTextForLongRead(twoChunks)).toHaveLength(3);
         holdSynth = true;
         select("A", twoChunks);
         await playerBarrier.at(0);
-        await synthBarrier.at(1); // A's last chunk, held in synthesis.
+        await synthBarrier.at(1); // A's second chunk, held in synthesis.
         select("B", "Bravo queued selection."); select("C", "Charlie queued selection.");
         await settle();
         expect(spoken("Bravo")).toHaveLength(0);
         synths[1].exit.resolve(0);
-        await synthBarrier.at(2);
+        await fixtureCheckpoint();
+        expect(spoken("Bravo")).toHaveLength(0);
+        players[0].exit.resolve(0);
+        await synthBarrier.at(2); // Third and final chunk.
+        synths[2].exit.resolve(0);
+        await synthBarrier.at(3);
         expect(spoken("Bravo")).toHaveLength(1);
         expect(spoken("Charlie")).toHaveLength(0);
-        expect(players).toHaveLength(1);
+        expect(players).toHaveLength(2);
         expect(receipts("B")).toEqual([]);
         expect(lastQueue()).toEqual({ type: "read_queue", count: 2, current_request_id: "A" });
       });
@@ -938,6 +1128,21 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(tts.isPlaybackPaused()).toBe(false);
     });
 
+    it("SPEECH-WIRE terminal archive fault cannot strand the queued successor", async () => {
+      const finish = LiveSpeechArchive.prototype.finish;
+      let injected = false;
+      spies.push(spyOn(LiveSpeechArchive.prototype, "finish").mockImplementation(function(this: LiveSpeechArchive, ...args: Parameters<typeof finish>) {
+        if (!injected && args[0] === "completed") { injected = true; throw Error("synthetic terminal persistence failure"); }
+        return finish.apply(this, args);
+      }));
+      select("A", "Alpha completes despite archive failure."); await playerBarrier.at(0);
+      select("B", "Bravo must advance."); players[0].exit.resolve(0);
+      await settle(); await settle();
+      expect(injected).toBe(true);
+      expect(receipts("B").length).toBeGreaterThan(0);
+      expect(players.length).toBeGreaterThan(1);
+    });
+
     it("SOL-2: a non-zero player exit settles as failed: queued B and C never start", async () => {
       select("A", "Alpha fails to play.");
       await playerBarrier.at(0);
@@ -975,6 +1180,33 @@ describe("long-read real runtime with owned synth/player fakes", () => {
       expect(receipts("B").length).toBeGreaterThan(0);
       expect(receipts("C")).toEqual([]);
       expect(lastQueue()).toEqual({ type: "read_queue", count: 1, current_request_id: "B" });
+    });
+
+    it("capture Cancel preserves a prefetched queued archive through completed playback", async () => {
+      const create = speechReceipts.createSpeakReceipt;
+      let queued: speechReceipts.SpeakArchiveContext | undefined;
+      spies.push(spyOn(speechReceipts, "createSpeakReceipt").mockImplementation(request => {
+        const result = create(request);
+        if (request.input === "Bravo prefetched archive.") {
+          if (result.kind !== "created") throw Error(result.code);
+          queued = result.context;
+        }
+        return result;
+      }));
+      select("A", "Alpha active read."); await playerBarrier.at(0);
+      select("B", "Bravo prefetched archive."); await synthBarrier.at(1); await settle();
+      expect(queued).toBeDefined();
+      const disk = () => JSON.parse(readFileSync(join(queued!.path, "metadata.json"), "utf8"));
+      expect(disk().speech.state).toBe("preparing");
+      await handleSocketCommand({ cmd: "stop", retain_read_queue: true } as any); await settle();
+      const capture = startCapture();
+      expect(await handleSocketCommand({ cmd: "cancel" })).toMatchObject({ outcome: "accept" });
+      capture.state.mockReturnValue("idle"); capture.done.resolve(""); await settle();
+      expect(disk().speech.state).toBe("preparing");
+      expect(handleSocketCommand({ cmd: "read_next", request_id: "A" } as any)).toMatchObject({ outcome: "accept" });
+      await playerBarrier.at(1); players[1].exit.resolve(0);
+      await awaitCurrentPlayback(); await flushSpeechArchives();
+      expect(disk().speech.state).toBe("completed");
     });
 
     // QUEUE1b: a queue F5 retained (suspended) survives the capture, and dies on agent speech or Ask.

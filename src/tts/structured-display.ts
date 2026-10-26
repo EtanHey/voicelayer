@@ -1,3 +1,4 @@
+import { displayTokens } from "./display-tokens";
 import { buildSectionMap } from "./sections";
 import type { DisplayBlockKind, ProjectionRange, StructuredSpeech, TextRange } from "./structured-speech";
 
@@ -53,7 +54,7 @@ function projectReadDisplay(projection: StructuredSpeech, texts: string[], budge
     const start = projection.speechText.indexOf(text, cursor);
     if (start < 0 || projection.speechText.slice(cursor, start).trim()) return texts.map(() => undefined);
     cursor = start + text.length;
-    const tokens = Array.from(text.matchAll(/\S+/gu));
+    const tokens = displayTokens(text);
     const runs: StructuredChunkDisplay["blocks"] = [];
     for (let word = 0; word < tokens.length;) {
       const at = start + tokens[word].index;
@@ -76,7 +77,7 @@ function projectReadDisplay(projection: StructuredSpeech, texts: string[], budge
       runs.push({ kind: block.kind, source: { ...block.source }, speech, ranges,
         word_start: first, word_end: word, section_id: `section:${group.start}`, starts_block,
         starts_section: !projection.speechText.slice(group.start, at).trim(),
-        ...(marker && marker.length <= 32 ? { marker } : {}) });
+        ...(marker && !/^\d+[.)]$/.test(marker) && marker.length <= 32 ? { marker } : {}) });
     }
     result.push({ version: 1, text, speech_start: start, blocks: runs });
   }

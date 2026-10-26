@@ -129,14 +129,25 @@ public struct TeleprompterBoundary: Equatable {
     }
 
     /// WORDTIME1: clone timing leaves short and punctuation-glued tokens null. Each one gets an even
-    /// share of the gap between its timed neighbours (the chunk start before the first, the chunk's
+    /// share of the gap between its timed neighbours (decoded audio onset before the first, the chunk's
     /// audio end after the last), so every displayed word highlights and seeks. Offsets stay in token
     /// order; a gap with no room, or a tail with no known audio end, stays untimed.
-    static func interpolated(_ rows: [Self], text: String, startMs: Int, endMs: Int?) -> [Self] {
-        let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    static func interpolated(_ rows: [Self], text: String, startMs: Int?, endMs: Int?) -> [Self] {
+        let tokens = TeleprompterContentModel.displayTokens(text)
         guard rows.contains(where: { $0.wordIndex != nil }),
               let byIndex = indexedRows(rows, tokens: tokens) else { return rows }
         var result = tokens.indices.map { byIndex[$0] ?? Self(offsetMs: nil, durationMs: nil, text: tokens[$0], wordIndex: $0) }
+        // Inspect source line position, not just the marker glyph: a + b is prose.
+        let source = text as NSString
+        let markerRanges = Set(try! NSRegularExpression(pattern: #"(?m)^[ \t]*([-+*•◦▪‣])(?=[ \t])"#)
+            .matches(in: text, range: NSRange(location: 0, length: source.length)).map { $0.range(at: 1).location })
+        var cursor = 0
+        let markerIndices = Set(tokens.indices.filter { index in
+            let range = source.range(of: tokens[index], range: NSRange(location: cursor, length: source.length - cursor))
+            guard range.location != NSNotFound else { return false }
+            cursor = NSMaxRange(range)
+            return markerRanges.contains(range.location)
+        })
         let timed = result.indices.filter { result[$0].offsetMs != nil }
         guard let first = timed.first, let last = timed.last else { return result }
         func end(_ index: Int) -> Int { result[index].offsetMs! + (result[index].durationMs ?? 0) }
@@ -144,13 +155,14 @@ public struct TeleprompterBoundary: Equatable {
             guard !gap.isEmpty, to > from else { return }
             let span = Double(to - from), count = Double(gap.count)
             for (step, index) in gap.enumerated() {
+                guard !markerIndices.contains(index) else { continue }
                 let start = from + Int(span * Double(step) / count), stop = from + Int(span * Double(step + 1) / count)
                 guard stop > start else { continue }
                 result[index] = Self(offsetMs: start, durationMs: stop - start, text: tokens[index],
                                      wordIndex: index, isInterpolated: true)
             }
         }
-        fill(0 ..< first, from: max(0, startMs), to: result[first].offsetMs!)
+        if let startMs { fill(0 ..< first, from: max(0, startMs), to: result[first].offsetMs!) }
         for (left, right) in zip(timed, timed.dropFirst()) where right > left + 1 {
             let next = result[right].offsetMs!
             // Overlapping neighbours: share the left word's window rather than tie with it.
@@ -285,6 +297,24 @@ public enum TeleprompterPacePolicy {
 }
 
 public enum TeleprompterContentModel {
+    // Mirrors display-tokens.ts: prose alternatives, lexical paths/code, and chunk context resets.
+    static func displayTokens(_ text: String) -> [String] {
+        let pattern = #"https?://[^\s<>]+|www\.[^\s<>]+|(`+)(?!`)[^\u2029]*?(?<!`)\1(?!`)|\]\([^\n\u2029]*?\)|(?<![\p{L}\p{M}\p{N}\p{S}\p{Cf}_./\\:`~-])(?!(?:TCP/IP|he/she|assets/[A-Za-z]+)(?![A-Za-z]))[A-Za-z]{2,}/[A-Za-z]{2,}(?=(?:[.,;!?):\]"'’]*)(?:\s|$|,(?=[A-Za-z]{2,}/)))"#
+        let regex = try! NSRegularExpression(pattern: pattern)
+        let source = text as NSString
+        let cuts = Set(regex.matches(in: text, range: NSRange(location: 0, length: source.length)).filter { !source.substring(with: $0.range).hasPrefix("http://") && !source.substring(with: $0.range).hasPrefix("https://") && !source.substring(with: $0.range).hasPrefix("www.") && !source.substring(with: $0.range).hasPrefix("`") && !source.substring(with: $0.range).hasPrefix("](") }.map {
+            $0.range.location + (source.substring(with: $0.range) as NSString).range(of: "/").location
+        })
+        let words = try! NSRegularExpression(pattern: #"\S+"#)
+        return words.matches(in: text, range: NSRange(location: 0, length: source.length)).flatMap { match -> [String] in
+            let range = match.range
+            let boundaries = [range.location] + cuts.filter { $0 > range.location && $0 < NSMaxRange(range) }.sorted() + [NSMaxRange(range)]
+            return zip(boundaries, boundaries.dropFirst()).map { start, end in
+                source.substring(with: NSRange(location: start, length: end - start))
+            }
+        }
+    }
+
     public static let maxDisplayTokenLength = 24
     private static let maximumBoundaryComparisonCharacters = 512
 
@@ -293,7 +323,7 @@ public enum TeleprompterContentModel {
         wordBoundaries: [TeleprompterBoundary]
     ) -> [TeleprompterWord] {
         if wordBoundaries.contains(where: { $0.wordIndex != nil }) {
-            let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            let tokens = TeleprompterContentModel.displayTokens(text)
             guard let byIndex = TeleprompterBoundary.indexedRows(wordBoundaries, tokens: tokens) else {
                 return words(text: text, wordBoundaries: [])
             }
@@ -304,8 +334,7 @@ public enum TeleprompterContentModel {
                     hasInterpolatedTiming: boundary?.isInterpolated ?? false))
             })
         }
-        let textWords = text
-            .split(whereSeparator: { $0.isWhitespace })
+        let textWords = displayTokens(text)
             .map { word in
                 TeleprompterWord(
                     id: 0,
@@ -362,7 +391,7 @@ public enum TeleprompterContentModel {
     /// TELE1: legacy (Edge) rows, one per whitespace token, keyed by token index. Nil unless the counts
     /// match and the rows plausibly spell the text, the same test the per-chunk zip uses.
     static func legacyTokenRows(text: String, boundaries: [TeleprompterBoundary]) -> [Int: TeleprompterBoundary]? {
-        let tokens = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let tokens = TeleprompterContentModel.displayTokens(text)
         let rows = boundaries.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard !tokens.isEmpty, rows.count == tokens.count, boundariesPlausiblyBelong(
             to: tokens.map { TeleprompterWord(id: 0, text: $0, offsetMs: nil, durationMs: nil) },
@@ -499,14 +528,6 @@ public enum TeleprompterScrollPolicy {
     public static func contentIdentity(for text: String) -> String {
         text
     }
-
-    /// TELE1: a move inside the current block glides, and so does playback reading on to the very next
-    /// word. Anything else is a jump, reached block-first. Neither is trusted to land: after layout the view
-    /// checks that the destination block is mounted (TELE1C).
-    public static func scrollsSmoothly(from old: Int, to new: Int, blockOfWord: [Int], isPlaybackStep: Bool) -> Bool {
-        guard blockOfWord.indices.contains(old), blockOfWord.indices.contains(new) else { return false }
-        return blockOfWord[old] == blockOfWord[new] || isPlaybackStep && new == old + 1
-    }
 }
 
 public enum TeleprompterVisibilityPolicy {
@@ -536,9 +557,9 @@ public enum TeleprompterPlaybackPolicy {
         in words: [TeleprompterWord],
         elapsedMilliseconds: Int
     ) -> Int {
-        guard let firstWord = words.first else { return 0 }
+        guard !words.isEmpty else { return 0 }
         let elapsedMilliseconds = max(0, elapsedMilliseconds)
-        var currentWordID = firstWord.id
+        var currentWordID = -1
         for index in words.indices {
             guard let offset = playbackOffsetMilliseconds(forWordAt: index, in: words) else { continue }
             guard offset <= elapsedMilliseconds else {
@@ -620,6 +641,7 @@ struct TeleprompterPointerState {
 public struct TeleprompterView: View {
     public let text: String
     public var displayBlocks: [TeleprompterDisplayBlock] = []
+    public var hasCompleteDisplay = false
     public var playbackEpoch = 0
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [TeleprompterBoundary] = []
@@ -636,6 +658,7 @@ public struct TeleprompterView: View {
         text: String,
         wordBoundaries: [TeleprompterBoundary] = [],
         displayBlocks: [TeleprompterDisplayBlock] = [],
+        hasCompleteDisplay: Bool = false,
         isReadback: Bool = false,
         playbackEpoch: Int = 0,
         playbackElapsedMilliseconds: @escaping () -> Int,
@@ -648,6 +671,7 @@ public struct TeleprompterView: View {
     ) {
         self.text = text
         self.displayBlocks = displayBlocks
+        self.hasCompleteDisplay = hasCompleteDisplay
         self.wordBoundaries = wordBoundaries
         self.isReadback = isReadback
         self.playbackEpoch = playbackEpoch
@@ -674,6 +698,7 @@ public struct TeleprompterView: View {
 
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
+    @State private var contentHeight: CGFloat = 0
     @State private var hoveredWordID: Int?
     @State private var pointerState = TeleprompterPointerState()
     @State private var currentIndex: Int
@@ -681,28 +706,10 @@ public struct TeleprompterView: View {
     @State private var renderCache = TeleprompterRenderCache()
     /// True while the animation task is the one moving `currentIndex`; any restart clears it.
     @State private var isPlaybackStep = false
-    /// TELE1C: blocks the lazy stack has built, and a cross-block scroll still waiting for its block.
-    @State private var mountedBlocks: Set<Int> = []
-    /// The text `mountedBlocks` belongs to: a replaced document starts an empty set.
-    @State private var mountedDocument = ""
-    @State private var pendingLanding: PendingLanding?
-    /// TELE1C R2: bumped by every restart, document change, readback and disappearance. A pending landing or a
-    /// deferred scroll pass from an older generation is void, so it never touches the new document.
-    @State private var landingGeneration = 0
-    /// TELE1D: the generation whose after-layout landing check is queued but has not run yet. Voiding it must
-    /// re-arm the scroll just like voiding a pending landing, or a second restart in one update loses it.
-    @State private var queuedRecovery: Int?
-
-    private struct PendingLanding {
-        let word: Int
-        let block: Int
-        let anchor: UnitPoint
-        let generation: Int
-    }
-
     /// Words, formatting and blocks, computed once per text and timeline (a highlight tick reuses them).
     private var rendered: TeleprompterRenderedDocument {
-        renderCache.document(text: text, wordBoundaries: wordBoundaries, displayBlocks: displayBlocks)
+        renderCache.document(text: text, wordBoundaries: wordBoundaries, displayBlocks: displayBlocks,
+                             hasCompleteDisplay: hasCompleteDisplay)
     }
 
     private var teleprompterWords: [TeleprompterWord] {
@@ -725,13 +732,15 @@ public struct TeleprompterView: View {
                     isReadback: isReadback
                 )
             ) {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
                     blockViews(proxy)
                 }
                 .padding(.horizontal, Theme.teleprompterShellInset)
                 .frame(width: wrapWidth, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
                 .padding(.horizontal, contentInset)
-                .padding(.vertical, contentInset)
+                .padding(.top, contentInset)
+                .padding(.bottom, contentInset + (contentHeight + 2 * contentInset > viewportHeight ? viewportHeight / 2 : 0))
                 .frame(
                     maxWidth: .infinity,
                     minHeight: viewportHeight,
@@ -739,6 +748,10 @@ public struct TeleprompterView: View {
                 )
             }
             .id(TeleprompterScrollPolicy.contentIdentity(for: text))
+            .coordinateSpace(name: "teleprompterViewport")
+            .onPreferenceChange(TeleprompterWordFrames.self) { frames in
+                TeleprompterLandingProbe.didMeasure?(frames)
+            }
             .clipped()
             .onAppear {
                 scrollToCurrentWord(with: proxy, animated: false)
@@ -748,34 +761,31 @@ public struct TeleprompterView: View {
             }
             .onDisappear {
                 stopAnimating()
-                invalidateLandings()
                 pointerState.reset(pop: { NSCursor.pop() })
                 hoveredWordID = nil
+            }
+            .onChange(of: contentHeight) { _, _ in
+                scrollToCurrentWord(with: proxy, animated: false)
             }
             .onChange(of: text) { _, _ in
                 restart()
                 scrollToCurrentWord(with: proxy, animated: false)
             }
             .onChange(of: wordBoundaries) { _, _ in
-                // New timings (a chunk's subtitle) re-arm the clock; a moved word scrolls via currentIndex. A
-                // landing the restart voided for a word that did not move is re-armed under the new generation.
-                let before = currentIndex
-                if restart(), currentIndex == before { scrollToCurrentWord(with: proxy, animated: false) }
+                // Timings change the clock, not the eagerly measured geometry.
+                restart()
             }
             .onChange(of: playbackEpoch) { _, _ in
                 restart()
                 scrollToCurrentWord(with: proxy, animated: false)
             }
-            .onChange(of: currentIndex) { old, new in
-                // Playback glides; a jump (a seek's timings arriving, a timeline update) may target a block the
-                // lazy stack has not built, so it reaches that block first.
-                scrollToCurrentWord(with: proxy, animated: TeleprompterScrollPolicy.scrollsSmoothly(
-                    from: old, to: new, blockOfWord: rendered.blockOfWord, isPlaybackStep: isPlaybackStep))
+            .onChange(of: currentIndex) { _, _ in
+                // Playback glides; explicit timeline jumps land immediately.
+                scrollToCurrentWord(with: proxy, animated: isPlaybackStep)
             }
             .onChange(of: isReadback) { _, readback in
                 if readback {
                     stopAnimating()
-                    invalidateLandings()
                 } else {
                     restart()
                 }
@@ -783,7 +793,7 @@ public struct TeleprompterView: View {
         }
     }
 
-    /// TELE1: one lazily laid-out flow per block, so a long read measures only what is on screen, and a
+    /// One eagerly measured flow per block gives all visible rows the same geometry. A
     /// highlight tick re-renders only the blocks whose inputs changed (the current one, and the one it left).
     private func blockViews(_ proxy: ScrollViewProxy) -> some View {
         let document = rendered
@@ -814,15 +824,7 @@ public struct TeleprompterView: View {
             .equatable()
             .padding(.top, index == 0 ? 0 : document.layouts[block.lowerBound].lineBreak == .paragraph ? 9 : 3)
             .id(blockID)
-            // TELE1C: the lazy stack says which blocks exist; a scroll that is waiting for one lands here.
-            .onAppear {
-                if mountedDocument != text { mountedBlocks = []; mountedDocument = text }
-                mountedBlocks.insert(index)
-                if let pending = pendingLanding, pending.generation == landingGeneration, pending.block == index {
-                    land(pending, with: proxy)
-                }
-            }
-            .onDisappear { if mountedDocument == text { mountedBlocks.remove(index) } }
+
         }
     }
 
@@ -931,78 +933,22 @@ public struct TeleprompterView: View {
         with proxy: ScrollViewProxy,
         animated: Bool = true
     ) {
-        let blocks = rendered.blockOfWord, document = text, generation = landingGeneration
-        guard blocks.indices.contains(currentIndex) else { return }
-
+        guard rendered.words.indices.contains(currentIndex) else { return }
+        // Every block is measured eagerly at the same width. One word anchor is
+        // sufficient; block-first and delayed retries used to produce double jumps.
         let anchor: UnitPoint = switch TeleprompterScrollPolicy.position(for: currentIndex) {
         case .top: .top
         case .center: .center
         }
-        let target = currentIndex
-        if animated, target > 0 {
-            withAnimation(Self.scrollAnimation) {
-                proxy.scrollTo(target, anchor: anchor)
-            }
+        if animated {
+            withAnimation(Self.scrollAnimation) { proxy.scrollTo(currentIndex, anchor: anchor) }
         } else {
-            // A jump may land in a block the lazy stack has not built yet: reach the block, then the word
-            // once that block is laid out (a second pass covers a block that needed one more layout).
-            proxy.scrollTo(TeleprompterBlockID(index: blocks[target]), anchor: anchor)
-            // Each deferred pass drops if the highlight moved on (CodeRabbit, #481) or the generation did.
-            DispatchQueue.main.async {
-                guard landingGeneration == generation, currentIndex == target else { return }
-                proxy.scrollTo(target, anchor: anchor)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    guard landingGeneration == generation, currentIndex == target else { return }
-                    proxy.scrollTo(target, anchor: anchor)
-                }
-            }
-        }
-        // TELE1C: never infer that a scroll landed. After layout, a destination whose block is still not
-        // built is reached again: its block, and the word once the block appears.
-        // Every index comes from this document's own block map, captured with its generation.
-        queuedRecovery = generation
-        DispatchQueue.main.async {
-            guard landingGeneration == generation, currentIndex == target else { return }
-            queuedRecovery = nil
-            let block = blocks[target]
-            guard mountedDocument != document || !mountedBlocks.contains(block) else { return }
-            pendingLanding = PendingLanding(word: target, block: block, anchor: anchor, generation: generation)
-            TeleprompterLandingProbe.didPend?()
-            proxy.scrollTo(TeleprompterBlockID(index: block), anchor: anchor)
+            proxy.scrollTo(currentIndex, anchor: anchor)
         }
     }
 
-    /// Scrolls to a waiting word once its block exists: the block again after layout, then the word.
-    private func land(_ pending: PendingLanding, with proxy: ScrollViewProxy) {
-        pendingLanding = nil
-        func isCurrent() -> Bool { landingGeneration == pending.generation && currentIndex == pending.word }
-        guard isCurrent() else { return }
-        DispatchQueue.main.async {
-            guard isCurrent() else { return }
-            proxy.scrollTo(TeleprompterBlockID(index: pending.block), anchor: pending.anchor)
-            DispatchQueue.main.async {
-                guard isCurrent() else { return }
-                TeleprompterLandingProbe.didLand?(pending.word)
-                proxy.scrollTo(pending.word, anchor: pending.anchor)
-            }
-        }
-    }
-
-    /// Voids every pending landing and deferred scroll pass. Returns whether a recovery was outstanding: a
-    /// landing waiting for its block, or a queued after-layout check that had not run yet.
-    @discardableResult
-    private func invalidateLandings() -> Bool {
-        let hadRecovery = pendingLanding != nil || queuedRecovery == landingGeneration
-        landingGeneration &+= 1
-        pendingLanding = nil
-        queuedRecovery = nil
-        return hadRecovery
-    }
-
-    /// Restarts the highlight from the clock. Returns whether it voided an outstanding recovery.
-    @discardableResult
-    private func restart() -> Bool {
-        let hadLanding = invalidateLandings()
+    /// Restarts the highlight from the clock.
+    private func restart() {
         defer { startAnimating() }
         stopAnimating()
         isPlaybackStep = false
@@ -1010,7 +956,6 @@ public struct TeleprompterView: View {
             in: teleprompterWords, elapsedMilliseconds: highlightElapsedMilliseconds,
             isReadback: isReadback || wordBoundaries.isEmpty
         )
-        return hadLanding
     }
 }
 
@@ -1060,11 +1005,11 @@ private struct TeleprompterBlockView: View, Equatable {
             ForEach(Array(words.enumerated()), id: \.element.id) { position, word in
                 let layout = layouts[position]
                 let head = layout.highlightGroup - first
-                let isCurrent = layout.highlightGroup == highlightedGroup
+                let isCurrent = !layout.isListMarker && layout.highlightGroup == highlightedGroup
                 let highlight = WordHighlight(
                     isCurrent: isCurrent,
-                    isAvailable: canHighlight(word) || words.indices.contains(head) && canHighlight(words[head]) ||
-                        isCurrent && highlightedGroupIsTimed,
+                    isAvailable: !layout.isListMarker && (canHighlight(word) || words.indices.contains(head) && canHighlight(words[head]) ||
+                        isCurrent && highlightedGroupIsTimed),
                     joinsPrevious: layout.gluesToPrevious,
                     joinsNext: layouts.indices.contains(position + 1) && layouts[position + 1].gluesToPrevious
                 )
@@ -1075,6 +1020,14 @@ private struct TeleprompterBlockView: View, Equatable {
                         .accessibilityHidden(true)
                         .layoutValue(key: TeleprompterFlowItemKey.self,
                                      value: TeleprompterFlowItem(lineBreak: layout.lineBreak, isListMarker: true))
+                }
+                if let separator = layout.separator {
+                    Text(separator)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(notchPalette.primary.color.opacity(0.78))
+                        .accessibilityHidden(true)
+                        .layoutValue(key: TeleprompterFlowItemKey.self,
+                                     value: TeleprompterFlowItem(gluesToPrevious: true))
                 }
                 Group {
                     if let onSeek, isReadback || TeleprompterSeekPolicy.offset(for: word, isReadback: isReadback) != nil {
@@ -1094,6 +1047,14 @@ private struct TeleprompterBlockView: View, Equatable {
                         wordLabel(word, text: layout.displayText, heading: layout.isHeading, highlight: highlight)
                     }
                 }
+                .background {
+                    if TeleprompterLandingProbe.didMeasure != nil {
+                        GeometryReader { geometry in
+                            Color.clear.preference(key: TeleprompterWordFrames.self,
+                                value: [word.id: geometry.frame(in: .named("teleprompterViewport"))])
+                        }
+                    }
+                }
                 .id(word.id)
                 .layoutValue(key: TeleprompterFlowItemKey.self, value: layout.decoration == nil ? layout.flowItem
                              : TeleprompterFlowItem(gluesToPrevious: layout.gluesToPrevious))
@@ -1102,10 +1063,9 @@ private struct TeleprompterBlockView: View, Equatable {
     }
 
     private func wordLabel(_ word: TeleprompterWord, text: String, heading: Bool, highlight: WordHighlight) -> some View {
-        let isLit = highlight.isAvailable && highlight.isCurrent
         let leading: CGFloat = highlight.joinsPrevious ? 0 : 3, trailing: CGFloat = highlight.joinsNext ? 0 : 3
         return Text(text)
-            .font(.system(size: 16, weight: isLit || heading ? .semibold : .medium))
+            .font(.system(size: 16, weight: heading ? .semibold : .medium))
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: wrapWidth, alignment: .leading)
@@ -1150,10 +1110,14 @@ private struct TeleprompterBlockView: View, Equatable {
     }
 }
 
-/// Test seams: when a scroll starts waiting for its block (so a test can change the document inside that
-/// window), and when a waiting landing scrolls. Never set in production.
+/// Mounted word geometry for presentation tests. Never set in production.
 @MainActor enum TeleprompterLandingProbe {
-    static var didPend: (() -> Void)?
-    /// Fires with the word when a waiting landing actually scrolls.
-    static var didLand: ((Int) -> Void)?
+    static var didMeasure: (([Int: CGRect]) -> Void)?
+}
+
+private struct TeleprompterWordFrames: PreferenceKey {
+    static let defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
 }

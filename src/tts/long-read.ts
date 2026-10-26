@@ -1,3 +1,4 @@
+import { displayTokens } from "./display-tokens";
 import type { SpeakArchiveContext } from "../speak-archive";
 import type { PlaybackOutcomeEvent, StateEvent, WordBoundary } from "../socket-protocol";
 
@@ -37,21 +38,29 @@ export interface LongReadDependencies {
     started: Promise<boolean>;
     exited: Promise<Pick<PlaybackOutcomeEvent, "status" | "stopped_at_ms">>;
   };
+  /** Audible completion precedes History persistence and artifact cleanup. */
+  playbackFinished?(): void;
   /** Whole utterance once: every synthesized chunk in order, plus the canonical text. */
   saveHistory(audio: PlayedChunk[], info: { text: string; missingChunks: number[] }): Promise<void>;
-  dispose(chunk: LongReadChunk, index: number): void;
+  dispose(chunk: LongReadChunk, index: number): void | Promise<void>;
 }
 
 /** TELE1: the teleprompter shows one document; chunk boundaries stay audio-only. `chunk_word_starts`
  * indexes each chunk's first whitespace token in `text`. Synthesis chunks drop the line breaks between
  * sentences, so the display text keeps them whenever its tokens are exactly the chunks' tokens. */
 export function longReadDocument(displayText: string, texts: string[]): { text: string; chunk_word_starts: number[] } {
-  const tokens = (text: string) => text.match(/\S+/gu) ?? [];
+  const tokens = (text: string) => displayTokens(text).map(m => m[0]);
   const chunkTokens = texts.map(tokens), all = chunkTokens.flat(), display = tokens(displayText);
   let next = 0;
   const chunk_word_starts = chunkTokens.map((chunk) => { const at = next; next += chunk.length; return at; });
   const same = display.length === all.length && display.every((token, i) => token === all[i]);
-  return { text: same ? displayText : texts.join(" "), chunk_word_starts };
+  // Keep the chunk-local code context when the original document cannot tile it.
+  // U+2029 is whitespace in both clients and resets backtick/link context without
+  // adding a display token. A space would let a stray backtick pair across chunks.
+  const joined = texts.join(" ");
+  const joinedTokens = tokens(joined);
+  const joinedTiles = joinedTokens.length === all.length && joinedTokens.every((token, i) => token === all[i]);
+  return { text: same ? displayText : joinedTiles ? joined : texts.join("\u2029"), chunk_word_starts };
 }
 
 type Synthesis = { chunk: LongReadChunk } | { error: unknown };
@@ -194,6 +203,7 @@ export async function runLongRead(
       if (outcome.status !== "completed") break;
       currentIndex = index + 1; localOffsetMs = 0; isSeek = false;
     }
+    if (currentIndex === texts.length && !signal.aborted) deps.playbackFinished?.();
   } finally {
     closing = true;
     seeking?.abort();
@@ -215,7 +225,7 @@ export async function runLongRead(
         await deps.saveHistory(audio, { text: texts.join(" "), missingChunks });
       }
     } finally {
-      for (const [index, chunk] of owned) deps.dispose(chunk, index);
+      for (const [index, chunk] of owned) await deps.dispose(chunk, index);
     }
   }
 }

@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { flushSpeechArchives, interruptLiveSpeech } from "./speech-archive-live";
+import { stopPlayback, awaitCurrentPlayback } from "./tts";
 /**
  * VoiceLayer MCP Server — thin orchestrator.
  *
@@ -118,17 +120,23 @@ async function main() {
 
 // --- Graceful shutdown ---
 
-process.on("SIGTERM", () => {
+let shuttingDown = false;
+async function shutdown(code: number): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  stopPlayback();
+  try { await awaitCurrentPlayback(); }
+  catch { console.error("[speech] shutdown playback settlement incomplete"); }
+  interruptLiveSpeech();
+  await flushSpeechArchives();
   disconnectFromBar();
-  process.exit(0);
-});
-process.on("SIGINT", () => {
-  disconnectFromBar();
-  process.exit(0);
-});
+  process.exit(code);
+}
+process.on("SIGTERM", () => { void shutdown(0); });
+process.on("SIGINT", () => { void shutdown(0); });
+process.stdin.on("end", () => { void shutdown(0); });
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("[voicelayer] Fatal:", err);
-  disconnectFromBar();
-  process.exit(1);
+  await shutdown(1);
 });

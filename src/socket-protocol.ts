@@ -621,6 +621,10 @@ export type SocketResponse = HealthResponse | AckEvent | VocabListResponse;
  */
 export const VOICEBAR_SOCKET_EVENT_MAX_BYTES = 8_191;
 
+// VoiceBar's NDJSON framer accepts 4 MiB. Reserve a bounded larger frame for
+// structured reads: the complete preparing document must precede timed chunks.
+export const VOICEBAR_STRUCTURED_READ_MAX_BYTES = 1024 * 1024;
+
 function serializedByteLength(payload: string): number {
   return new TextEncoder().encode(payload).byteLength;
 }
@@ -696,7 +700,14 @@ export function serializeEvent(event: SocketEvent): string {
     return payload;
   }
 
-  // The same retained chunk also appears on pause/resume receipts. Layout is optional on both.
+  // Preserve complete geometry on preparing, chunk and pause/resume events.
+  if (((normalizedEvent.type === "state" && normalizedEvent.state === "speaking") ||
+      normalizedEvent.type === "playback_state") && normalizedEvent.long_read?.display &&
+      serializedByteLength(payload) <= VOICEBAR_STRUCTURED_READ_MAX_BYTES) {
+    return payload;
+  }
+
+  // Beyond the structured-read budget, fall back to the historical text frame.
   if (((normalizedEvent.type === "state" && normalizedEvent.state === "speaking") ||
       normalizedEvent.type === "playback_state") && normalizedEvent.long_read?.display) {
     const { display: _display, ...long_read } = normalizedEvent.long_read;

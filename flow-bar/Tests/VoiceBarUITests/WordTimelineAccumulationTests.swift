@@ -12,7 +12,8 @@ final class WordTimelineAccumulationTests: XCTestCase {
         var event: [String: Any] = ["type": "state", "state": "speaking", "text": text,
                                     "duration_ms": duration, "playback_offset_ms": chunkStart]
         if let read { event["long_read"] = ["id": read, "chunk_start_ms": chunkStart] }
-        state.handleEvent(event)
+        state.handleEvent(event, playbackAmplitude: PlaybackAmplitudeEnvelope(source: .decodedRMS,
+            sampleIntervalMilliseconds: 50, samples: [0.5]))
     }
 
     private func words(_ state: VoiceState) -> [TeleprompterWord] {

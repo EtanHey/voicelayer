@@ -15,6 +15,7 @@ public struct TeleprompterLongReadDocument: Equatable {
     private let chunkWordStarts: [Int]
     /// Global word index → timing. A seek or a readback replay of the same read keeps it.
     private var timings: [Int: TeleprompterBoundary] = [:]
+    public private(set) var hasCompleteDisplay = false
     private var displayChunks: [Int: [TeleprompterDisplayBlock]] = [:]
 
     /// Nil for a daemon that sends no document, or a document that does not tile its chunks.
@@ -22,13 +23,17 @@ public struct TeleprompterLongReadDocument: Equatable {
         guard let readID = longRead["id"] as? String, let text = longRead["text"] as? String,
               let starts = longRead["chunk_word_starts"] as? [Int],
               starts.count == longRead["chunk_count"] as? Int, starts.first == 0 else { return nil }
-        let tokens = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        let tokens = TeleprompterContentModel.displayTokens(text)
         guard let last = starts.last, last < tokens.count,
               zip(starts, starts.dropFirst()).allSatisfy({ $0 < $1 }) else { return nil }
         self.readID = readID
         self.text = text
         self.tokens = tokens
         chunkWordStarts = starts
+        if let display = TeleprompterStructuredDisplay.decode(longRead["display"], text: text) {
+            displayChunks[0] = display.blocks
+            hasCompleteDisplay = true
+        }
     }
 
     /// The chunk's first word in the document, or nil when the chunk is not exactly that slice of it.
@@ -39,7 +44,7 @@ public struct TeleprompterLongReadDocument: Equatable {
               chunkWordStarts.indices.contains(chunkIndex) else { return nil }
         let start = chunkWordStarts[chunkIndex]
         let end = chunkIndex + 1 < chunkWordStarts.count ? chunkWordStarts[chunkIndex + 1] : tokens.count
-        let chunkTokens = chunkText.split(whereSeparator: \.isWhitespace).map(String.init)
+        let chunkTokens = TeleprompterContentModel.displayTokens(chunkText)
         return tokens[start ..< end].elementsEqual(chunkTokens) ? start : nil
     }
 
@@ -48,7 +53,7 @@ public struct TeleprompterLongReadDocument: Equatable {
     /// Indexed rows must match their tokens; legacy rows must be one plausible row per token. Anything
     /// else is an identity mismatch and records nothing. An untimed chunk erases nothing.
     public mutating func record(chunkText: String, boundaries: [TeleprompterBoundary], wordStart: Int) {
-        let chunkTokens = chunkText.split(whereSeparator: \.isWhitespace).map(String.init)
+        let chunkTokens = TeleprompterContentModel.displayTokens(chunkText)
         let rows: [Int: TeleprompterBoundary]
         if boundaries.contains(where: { $0.wordIndex != nil }) {
             guard let indexed = TeleprompterBoundary.indexedRows(boundaries, tokens: chunkTokens) else { return }
@@ -69,6 +74,7 @@ public struct TeleprompterLongReadDocument: Equatable {
     }
 
     mutating func recordDisplay(_ display: TeleprompterStructuredDisplay?, wordStart: Int) {
+        guard !hasCompleteDisplay else { return }
         displayChunks[wordStart] = display?.positioned(at: wordStart)
     }
 
