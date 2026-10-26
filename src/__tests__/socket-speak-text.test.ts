@@ -141,11 +141,11 @@ describe("QUEUE1 Option+F5 read queue over the socket", () => {
     handleSocketCommand({ cmd: "speak_text", id: "A", text: a, source: "selection", format: "markdown" });
     handleSocketCommand({ cmd: "speak_text", id: "B", text: b, source: "selection", format: "markdown", queue: true });
     expect(starts).toHaveBeenCalledTimes(1);
-    expect(starts.mock.calls[0]?.[0]).toBe("Alpha. Beta.");
+    expect(starts.mock.calls[0]?.[0]).toBe("2. Alpha. 3. Beta.");
     expect(starts.mock.calls[0]?.[2]?.structuredDisplay?.displayText).toBe(a);
     expect(starts.mock.calls[0]?.[2]?.text_hash).toBe(normalizedSpeechHash(a));
     handleSocketCommand({ cmd: "read_next", request_id: "A" });
-    expect(starts.mock.calls[1]?.[0]).toBe("Heading Gamma.");
+    expect(starts.mock.calls[1]?.[0]).toBe("Heading 4. Gamma.");
     expect(starts.mock.calls[1]?.[2]?.structuredDisplay?.displayText).toBe(b);
     expect(starts.mock.calls[1]?.[2]?.text_hash).toBe(normalizedSpeechHash(b));
     expect(starts.mock.calls[1]?.[2]?.archiveContext).not.toBe(starts.mock.calls[0]?.[2]?.archiveContext);
