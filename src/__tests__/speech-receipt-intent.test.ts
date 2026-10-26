@@ -10,6 +10,15 @@ const request = { input: "synthetic durable input", request_id: "fixture", reque
   requested: { mode: null, profile: null, engine: null, voice: null, rate: null },
   build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null } } as const;
 
+test("a preloaded child retains its parent's isolated archive redirect", () => {
+  const child = Bun.spawnSync([process.execPath, "--preload", "./src/__tests__/setup/preload.ts", "-e",
+    `import { createSpeakReceipt } from './src/speak-archive';
+     console.log(createSpeakReceipt(${JSON.stringify(request)}).kind);`],
+    { env: process.env, stdout: "pipe", stderr: "pipe" });
+  expect(child.exitCode).toBe(0);
+  expect(child.stdout.toString().trim()).toBe("created");
+});
+
 test("open index stays outside records and inside the isolated run", () => {
   const root = process.env.QA_VOICE_RECORDINGS_DIR!;
   const result = createSpeakReceipt(request);
