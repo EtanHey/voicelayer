@@ -33,6 +33,7 @@ import base64
 import hmac
 import logging
 import os
+import re
 import secrets
 import sys
 import tempfile
@@ -248,6 +249,8 @@ def model_idle_seconds() -> float:
                 raw = None
         except (OSError, ValueError, AttributeError):
             pass
+    if isinstance(raw, str) and not re.fullmatch(r"\s*[0-9]+(\.[0-9]+)?\s*", raw):
+        return 600
     try:
         value = float(raw) if not isinstance(raw, bool) else 0
         return value if 0 < value <= 2_147_483 else 600

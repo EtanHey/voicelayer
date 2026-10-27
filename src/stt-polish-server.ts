@@ -1,3 +1,4 @@
+import { residencyBusy } from "./model-residency-busy";
 import { reserveVoiceMaintenance } from "./session-booking";
 import { ModelResidency, modelIdleSeconds } from "./model-residency";
 import { accessSync, constants } from "fs";
@@ -35,7 +36,7 @@ type SpawnPolishProcess = (
 ) => ManagedPolishProcess;
 
 export type STTPolishServerStatus =
-  | { status: "disabled" | "external" | "missing-binary" | "timeout" }
+  | { status: "disabled" | "external" | "missing-binary" | "timeout" | "stopped" }
   | { status: "launch-failed"; error: string }
   | { status: "already-ready" | "ready" | "starting"; pid?: number };
 
@@ -79,15 +80,14 @@ let polishLaunch: Promise<STTPolishServerStatus> | null = null;
 let idleEnv: STTPolishEnv | undefined;
 const polishResidency = new ModelResidency(async () => {
   if (!polishProcess) return;
-  const release = reserveVoiceMaintenance(() => false);
+  const release = reserveVoiceMaintenance(residencyBusy);
   if (!release) return false;
   try {
-    const proc = polishProcess;
     await stopSTTPolishServerAndWait();
-    await proc.exited;
+    publishSTTPolishServerStatus({ status: "stopped" });
     return true;
   } finally { release(); }
-}, () => modelIdleSeconds(idleEnv));
+}, () => modelIdleSeconds(idleEnv), residencyBusy);
 
 export function withSTTPolishServer<T>(work: () => Promise<T>, options: EnsureSTTPolishServerOptions & { loadOnDemand?: boolean } = {}): Promise<T> {
   idleEnv = options.env;
@@ -294,8 +294,9 @@ async function startAndWaitForPolishServer(
   const proc = spawnPolishServer(args, options);
   polishProcess = proc;
   // Retain custody until exit is observed, including after a startup timeout.
+  let exited = false;
   void proc.exited?.then(
-    () => { if (polishProcess === proc) polishProcess = null; },
+    () => { exited = true; if (polishProcess === proc) polishProcess = null; },
     () => {},
   );
   const abandon = (): STTPolishServerStatus => {
@@ -310,6 +311,7 @@ async function startAndWaitForPolishServer(
   let readinessChecks = 0;
   while (Date.now() < deadline) {
     if (cancelled()) return abandon();
+    if (exited) return { status: "launch-failed", error: stderrTail.text || "Polish server exited during startup" };
     readinessChecks++;
     if (
       (await isReady(endpoint, options)) &&
@@ -331,7 +333,7 @@ async function startAndWaitForPolishServer(
       );
       return { status: "ready", pid: proc.pid };
     }
-    await (options.sleep ?? Bun.sleep)(500);
+    await Promise.race([(options.sleep ?? Bun.sleep)(500), proc.exited ?? new Promise<never>(() => {})]);
   }
   if (cancelled()) return abandon();
 

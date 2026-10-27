@@ -106,3 +106,9 @@ def test_persisted_idle_setting_matches_typescript_contract(monkeypatch, tmp_pat
     assert model_idle_seconds() == 12
     monkeypatch.setenv("VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS", "")
     assert model_idle_seconds() == 600
+
+
+def test_strict_decimal_idle_environment_matches_typescript(monkeypatch):
+    for raw, expected in [("1_000", 600), ("0x10", 600), ("1e3", 600), ("+12", 600), (" 12.5 ", 12.5), ("0", 600), ("Infinity", 600)]:
+        monkeypatch.setenv("VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS", raw)
+        assert model_idle_seconds() == expected

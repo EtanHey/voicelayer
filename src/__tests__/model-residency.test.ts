@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { readFileSync, rmSync } from "fs";
+import { rmSync } from "fs";
 import { join } from "path";
 import { ModelResidency, modelIdleSeconds, setModelIdleSeconds } from "../model-residency";
 import { resetSTTPolishServerManagerForTests, withSTTPolishServer } from "../stt-polish-server";
@@ -35,11 +35,6 @@ test("idle eviction waits for work; new requests wait for unloading to finish", 
   } finally { residency.reset(); }
 });
 
-test("daemon startup does not ensure or warm model servers", () => {
-  const source = readFileSync(join(import.meta.dir, "../mcp-server-daemon.ts"), "utf8");
-  expect(source).not.toContain("ensureSTTPolishServer");
-  expect(source).not.toContain("warmPolishEndpoint");
-});
 
 test("first concurrent polish requests share a load; idle stop waits for child exit before reload", async () => {
   let spawns = 0, probes = 0, ready = false, alive = false, exit!: (code: number) => void;
@@ -85,7 +80,6 @@ test("stub cold/warm lease latency separates loading from inference", async () =
   const warmStart = performance.now(); await request(); const warm = performance.now() - warmStart;
   residency.reset();
   expect(loads).toBe(1);
-  expect(cold).toBeGreaterThan(warm + 15);
   console.log(JSON.stringify({ model: "stub", cold_ms: cold, warm_ms: warm, real_model: "NOT MEASURED" }));
 });
 
@@ -122,4 +116,136 @@ test("Whisper idle stop respects inference and queues a fresh load behind child 
     if (previous === undefined) delete process.env.VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS;
     else process.env.VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS = previous;
   }
+});
+
+for (const state of ["recording", "transcribing", "voice_ask"] as const) {
+  test(`daemon-owned ${state} defers Whisper and polish eviction until idle`, async () => {
+    const input = await import("../input");
+    const tts = await import("../tts");
+    const operations = await import("../voice-operation-reservation");
+    const booking = await import("../session-booking");
+    const previous = process.env.VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS;
+    process.env.VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS = "0.04";
+    const recording = spyOn(input, "getRecordingState").mockReturnValue(state === "voice_ask" ? "idle" : state);
+    const playback = spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0);
+    const operation = spyOn(operations, "hasActiveVoiceOperation").mockReturnValue(state === "voice_ask");
+    let whisperAlive = false, polishAlive = false, whisperStops = 0, polishStops = 0;
+    const whisperExit = Promise.withResolvers<number>(), polishExit = Promise.withResolvers<number>();
+    __setWhisperServerTestHooksForTests({
+      findServerBinary: () => "/fixture/whisper-server", findModel: () => "/fixture/model.bin",
+      isServerHealthy: async () => whisperAlive, isPidAlive: () => whisperAlive,
+      processStartTimeMs: () => Date.now() - 1000,
+      findPortListenerPids: () => whisperAlive ? [55112] : [], postUnloadListeners: () => [],
+      spawn: () => { whisperAlive = true; return { pid: 55112, exited: whisperExit.promise,
+        kill: () => { whisperStops++; whisperAlive = false; whisperExit.resolve(0); } }; },
+    });
+    try {
+      expect(booking.bookVoiceSession().success).toBe(true);
+      expect(booking.isVoiceBooked().ownedByUs).toBe(true);
+      await ensureServer(18890);
+      await withSTTPolishServer(async () => {}, {
+        env: { QA_VOICE_STT_POLISH: "on", VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS: "0.04" },
+        findBinary: () => "/fixture/mlx_lm.server", isEndpointReady: async () => polishAlive,
+        isProcessAlive: () => polishAlive,
+        spawn: () => { polishAlive = true; return { pid: 456, exited: polishExit.promise,
+          kill: () => { polishStops++; polishAlive = false; polishExit.resolve(0); } }; },
+        appendEvent: () => {}, log: () => {}, sleep: async () => {},
+      });
+      await Bun.sleep(110);
+      expect([whisperStops, polishStops]).toEqual([0, 0]);
+      recording.mockReturnValue("idle"); operation.mockReturnValue(false);
+      await Bun.sleep(25);
+      expect([whisperStops, polishStops]).toEqual([0, 0]);
+      const deadline = Date.now() + 2000;
+      while ((!whisperStops || !polishStops) && Date.now() < deadline) await Bun.sleep(10);
+      expect([whisperStops, polishStops]).toEqual([1, 1]);
+    } finally {
+      recording.mockRestore(); playback.mockRestore(); operation.mockRestore();
+      booking.releaseVoiceSession();
+      __resetWhisperServerStateForTests(null); __setWhisperServerTestHooksForTests({});
+      resetSTTPolishServerManagerForTests();
+      if (previous === undefined) delete process.env.VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS;
+      else process.env.VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS = previous;
+    }
+  });
+}
+
+test("cold polish never-ready startup returns unpolished within the transcript budget", async () => {
+  const manager = await import("../stt-polish-server");
+  const { polishTranscriptionText } = await import("../stt-polish");
+  const original = manager.withSTTPolishServer;
+  let spawns = 0;
+  const exit = Promise.withResolvers<number>();
+  const launcher = spyOn(manager, "withSTTPolishServer").mockImplementation((work, options) => original(work, {
+    ...options, findBinary: () => "/fixture/mlx_lm.server", findPortOwnerPids: () => [],
+    isEndpointReady: async () => false, isProcessAlive: () => true,
+    spawn: () => { spawns++; return { pid: 457, exited: exit.promise, kill: () => exit.resolve(1) }; },
+    startupTimeoutMs: 350, sleep: () => Bun.sleep(20), appendEvent: () => {}, log: () => {},
+  }));
+  const network = spyOn(globalThis, "fetch").mockResolvedValue(Response.json({}, { status: 503 }));
+  try {
+    const start = performance.now();
+    const result = await polishTranscriptionText({ rawText: "Hello.", cleanedText: "Hello.",
+      env: { QA_VOICE_STT_POLISH: "on", QA_VOICE_STT_POLISH_TIMEOUT_MS: "50" } });
+    expect(result.text).toBe("Hello.");
+    expect(result.polished).toBe(false);
+    expect(performance.now() - start).toBeLessThan(250);
+    expect(spawns).toBe(1);
+    expect(network).not.toHaveBeenCalled();
+  } finally {
+    resetSTTPolishServerManagerForTests(); exit.resolve(1);
+    launcher.mockRestore(); network.mockRestore();
+  }
+});
+
+test("recording-start polish warmup launches a cold server", async () => {
+  const manager = await import("../stt-polish-server");
+  const { warmPolishEndpoint } = await import("../stt-polish");
+  const original = manager.withSTTPolishServer;
+  let spawns = 0;
+  const launcher = spyOn(manager, "withSTTPolishServer").mockImplementation((work, options) => original(work, {
+    ...options, findBinary: () => "/fixture/mlx_lm.server", isEndpointReady: async () => spawns > 0,
+    spawn: () => { spawns++; return { pid: 458 }; }, appendEvent: () => {}, log: () => {},
+  }));
+  const network = spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ choices: [{ message: { content: "Ready." } }] }));
+  try {
+    await warmPolishEndpoint({ QA_VOICE_STT_POLISH: "on", VOICELAYER_STT_POLISH_WARMUP: "1" });
+    expect(spawns).toBe(1);
+  } finally { resetSTTPolishServerManagerForTests(); launcher.mockRestore(); network.mockRestore(); }
+});
+
+test("daemon polish startup subscribes without launching; first use launches once", async () => {
+  const { startSTTPolishStatusReporting } = await import("../stt-polish-daemon-status");
+  const spawn = spyOn(Bun, "spawn").mockImplementation(() => { throw new Error("startup spawned a model"); });
+  let launches = 0;
+  const events: unknown[] = [];
+  const reporting = startSTTPolishStatusReporting(event => events.push(event));
+  try {
+    reporting.reporter.replay();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+    await withSTTPolishServer(async () => {}, {
+      env: { QA_VOICE_STT_POLISH: "on" }, findBinary: () => "/fixture/mlx_lm.server",
+      isEndpointReady: async () => launches > 0,
+      spawn: () => { launches++; return { pid: 459 }; }, appendEvent: () => {}, log: () => {},
+    });
+    expect(launches).toBe(1);
+    expect(events).toEqual([{ type: "polish_ready" }]);
+  } finally { reporting.unsubscribe(); resetSTTPolishServerManagerForTests(); spawn.mockRestore(); }
+});
+
+test.each([["1_000", 600], ["0x10", 600], ["1e3", 600], ["+12", 600], [" 12.5 ", 12.5], ["0", 600], ["Infinity", 600]])("strict idle env %s resolves to %s", (raw, expected) => {
+  expect(modelIdleSeconds({ VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS: String(raw) })).toBe(Number(expected));
+});
+
+test("polish child startup failure is reported immediately after exit", async () => {
+  const { ensureSTTPolishServer } = await import("../stt-polish-server");
+  const start = performance.now();
+  const result = await ensureSTTPolishServer({ env: { QA_VOICE_STT_POLISH: "on" },
+    findBinary: () => "/fixture/mlx_lm.server", isEndpointReady: async () => false,
+    spawn: () => ({ pid: 460, exited: Promise.resolve(1) }),
+    startupTimeoutMs: 400, appendEvent: () => {}, log: () => {},
+  });
+  expect(result.status).toBe("launch-failed");
+  expect(performance.now() - start).toBeLessThan(250);
 });

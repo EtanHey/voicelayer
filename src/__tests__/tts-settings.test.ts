@@ -82,15 +82,16 @@ test("P3 selected voice survives relaunch with one atomic pair and independent p
     expect(resolveSpeakProfile("long", "", {...e})).toMatchObject({engine:"edge",voice:"en-US-GuyNeural"});
   } finally { profile.mockRestore(); }
 });
-test("clone health probe caches success and failure without synthesizing", async () => {
+test.each([true, false])("clone health probe caches loaded=%s success and load failure without synthesizing", async (modelLoaded) => {
   await probeCloneDaemon();
   const auth = spyOn(qwen,"buildDaemonRequestHeaders").mockReturnValue({Authorization:"Bearer fixture"});
   try {
   let calls=0;
-  const fetcher=(async (url: unknown)=>{expect(String(url)).toBe("http://127.0.0.1:8880/health"); calls++; return new Response(JSON.stringify({status:"ok",model_loaded:true}),{status:200});}) as typeof fetch;
-  expect(await probeCloneDaemon(fetcher,Date.now()+10000)).toBe("up");
-  expect(await probeCloneDaemon(fetcher,Date.now()+10001)).toBe("up"); expect(calls).toBe(1);
-  expect(await probeCloneDaemon((async()=>{throw new Error("down");}) as typeof fetch,Date.now()+20000)).toBe("down");
+  const fetcher=(async (url: unknown)=>{expect(String(url)).toBe("http://127.0.0.1:8880/health"); calls++; return new Response(JSON.stringify({status:"ok",model_loaded:modelLoaded}),{status:200});}) as typeof fetch;
+  expect(await probeCloneDaemon(fetcher,Date.now()+(modelLoaded ? 10000 : 40000))).toBe("up");
+  expect(await probeCloneDaemon(fetcher,Date.now()+(modelLoaded ? 10001 : 40001))).toBe("up"); expect(calls).toBe(1);
+  expect(await probeCloneDaemon((async()=>Response.json({status:"error",model_loaded:false})) as typeof fetch,Date.now()+(modelLoaded ? 15000 : 45000))).toBe("down");
+  expect(await probeCloneDaemon((async()=>{throw new Error("down");}) as typeof fetch,Date.now()+(modelLoaded ? 20000 : 50000))).toBe("down");
   } finally { auth.mockRestore(); }
 });
 

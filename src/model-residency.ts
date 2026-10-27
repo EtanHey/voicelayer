@@ -10,7 +10,8 @@ const settingsPath = (env: Env) => env.VOICELAYER_MODEL_SETTINGS_PATH?.trim() ||
 
 export function modelIdleSeconds(env: Env = process.env): number {
   if (env.VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS !== undefined) {
-    const value = Number(env.VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS);
+    const raw = env.VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS;
+    const value = /^\s*[0-9]+(\.[0-9]+)?\s*$/.test(raw) ? Number(raw) : NaN;
     return validSeconds(value) ? value : DEFAULT_SECONDS;
   }
   const path = settingsPath(env);
@@ -34,7 +35,7 @@ export class ModelResidency {
   private unloading: Promise<void> | null = null;
   private generation = 0;
 
-  constructor(private readonly unload: () => Promise<void | boolean>, private readonly seconds: () => number = modelIdleSeconds) {}
+  constructor(private readonly unload: () => Promise<void | boolean>, private readonly seconds: () => number = modelIdleSeconds, private readonly isBusy: () => boolean = () => false) {}
 
   reset(): void { clearTimeout(this.timer); this.generation++; }
 
@@ -49,10 +50,20 @@ export class ModelResidency {
     }
   }
 
+  private waitUntilIdle(generation: number): void {
+    this.timer = setTimeout(() => {
+      if (this.users || generation !== this.generation) return;
+      if (this.isBusy()) this.waitUntilIdle(generation);
+      else this.arm();
+    }, Math.min(1000, this.seconds() * 1000));
+    this.timer.unref();
+  }
+
   private arm(): void {
     const generation = this.generation;
     this.timer = setTimeout(() => {
       if (this.users || generation !== this.generation) return;
+      if (this.isBusy()) { this.waitUntilIdle(generation); return; }
       this.unloading = Promise.resolve().then(this.unload).then((result) => {
         if (result === false && !this.users && generation === this.generation) this.arm();
       }).catch((error: unknown) => {

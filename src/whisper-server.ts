@@ -9,6 +9,7 @@
  * We POST WAV audio chunks to /inference and get back JSON transcriptions.
  */
 
+import { residencyBusy } from "./model-residency-busy";
 import { ModelResidency } from "./model-residency";
 import { homedir } from "os";
 import { join } from "path";
@@ -163,15 +164,16 @@ let serverState: WhisperServerState | null = null;
 const whisperResidency = new ModelResidency(async () => {
   if (!serverState || serverState.adopted) return;
   const state = serverState;
-  const result = await unloadOwnedServer(() => false);
+  const result = await unloadOwnedServer(residencyBusy);
   if (result.outcome === "reject" && result.reason === "child exit unconfirmed" && state.proc) {
+    if (residencyBusy()) return false;
     state.proc.kill("SIGKILL");
-    await state.proc.exited;
+    await waitForWhisperProcessExit(state.proc);
     if (serverState === state) stopServer();
     return true;
   }
   return result.outcome === "accept";
-});
+}, undefined, residencyBusy);
 const launchPromises = new Map<number, Promise<number>>();
 
 interface WhisperServerTestHooks {
