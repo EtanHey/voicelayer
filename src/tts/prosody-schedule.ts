@@ -5,10 +5,12 @@ export interface SegmentSchedulerOptions<T> {
   concurrency?: number;
   /** Chunks after the requested one whose segments are queued at the same time. */
   lookahead?: number;
+  canStart?(segmentIndex: number): boolean;
   /** Releases a result that was synthesized but never handed out. */
   dispose?(result: T): void;
 }
 export interface SegmentScheduler<T> {
+  resume(): void;
   /** Chunk `index`'s segment results, in order. Also queues the next `lookahead` chunks. */
   chunk(index: number): Promise<T[]>;
   /** Every started engine request has settled: reap before history or disposal. */
@@ -24,7 +26,7 @@ interface Task<T> { promise: Promise<T>; resolve(value: T): void; reject(error: 
 export function createSegmentScheduler<T>(
   plan: Pick<ProsodyPlan, "segments" | "chunks">,
   synthesize: (segment: ProsodySegment, index: number, signal: AbortSignal) => Promise<T>,
-  { signal, concurrency = PROSODY_SYNTH_CONCURRENCY, lookahead = 2, dispose }: SegmentSchedulerOptions<T>,
+  { signal, concurrency = PROSODY_SYNTH_CONCURRENCY, lookahead = 2, dispose, canStart }: SegmentSchedulerOptions<T>,
 ): SegmentScheduler<T> {
   const tasks: Task<T>[] = [];
   const inFlight = new Set<Promise<unknown>>();
@@ -60,7 +62,7 @@ export function createSegmentScheduler<T>(
     }
   };
   const pump = () => {
-    while (stopped === undefined && running < concurrency && next < tasks.length) {
+    while (stopped === undefined && running < concurrency && next < tasks.length && (canStart?.(next) ?? true)) {
       const index = next++, task = tasks[index];
       task.started = true; running++;
       const run = synthesize(plan.segments[index], index, signal).then(
@@ -72,6 +74,7 @@ export function createSegmentScheduler<T>(
   };
 
   return {
+    resume: pump,
     chunk(index) {
       const chunk = plan.chunks[index];
       if (!chunk) return Promise.reject(new Error(`No prosody chunk ${index}`));

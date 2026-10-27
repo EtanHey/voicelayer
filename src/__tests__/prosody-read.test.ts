@@ -7,6 +7,7 @@ import { createProsodyRead, decodeAudioToPCM, encodePCMToMp3, isStructuredPlan, 
 import { projectStructuredSpeech } from "../tts/structured-speech";
 import { ttsFilePath } from "../paths";
 import { unlinkSync } from "node:fs";
+import { fixtureCheckpoint } from "./long-read-fixture-barriers";
 
 const RATE = PROSODY_SAMPLE_RATE;
 const PAUSE = PROSODY_POLICY.pauses;
@@ -57,6 +58,36 @@ describe("isStructuredPlan: prosody engages only when the text has structure", (
 
 describe("createProsodyRead", () => {
   const doc = "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three";
+  for (const failure of ["stop", "decode"] as const) it(`S2 overlapping clone decoding is reaped after ${failure}`, async () => {
+    const text = "## Status\n" + "- Keep every complete word in the archive.\n".repeat(8);
+    const p = planProsody({ readText: text, projection: projectSpeakableText(text, [], "clone"), engine: "clone", listNumbers: "inline" });
+    const { engine, calls, files } = fakeEngine(), controller = new AbortController();
+    const decode = engine.decode;
+    let rejectDecode!: (error: Error) => void, decoding = 0;
+    engine.decode = async (file, signal) => {
+      if (file !== "seg-1.mp3") return decode(file, signal);
+      decoding++;
+      try { return await new Promise<Float32Array>((_resolve, reject) => {
+        rejectDecode = reject;
+        signal.addEventListener("abort", () => reject(new Error("stopped decoder")), { once: true });
+      }); } finally { decoding--; }
+    };
+    const read = createProsodyRead(p, engine, controller.signal, 1, { overlapDecode: true });
+    const first = await read.chunk(0);
+    read.firstAudioStarted(first.audioFile);
+    const second = read.chunk(1);
+    void second.catch(() => {});
+    await fixtureCheckpoint();
+    expect(decoding).toBe(1);
+    if (failure === "stop") controller.abort(); else rejectDecode(new Error("decoder failed"));
+    await expect(second).rejects.toThrow(failure === "stop" ? "stopped decoder" : "decoder failed");
+    const count = calls.synthesized.length;
+    await read.close();
+    expect(decoding).toBe(0);
+    expect(calls.synthesized).toHaveLength(count);
+    expect([...files.keys()]).toEqual([first.audioFile]);
+    engine.unlink(first.audioFile);
+  });
   it("S2 reuses a complete prepared clone opening without resynthesizing its segments", async () => {
     const text = "## Status\n" + "- This item contains enough words to cover preparation of another request.\n".repeat(6);
     const p = planProsody({ readText: text, projection: projectSpeakableText(text, [], "clone"), engine: "clone", listNumbers: "inline" });
@@ -65,7 +96,7 @@ describe("createProsodyRead", () => {
     const preparing = createProsodyRead(p, engine, signal, 1, { lookahead: 0 });
     const prepared = await preparing.chunk(0);
     await preparing.close();
-    expect(p.chunks[0].end).toBeGreaterThan(1);
+    expect(p.chunks[0].end).toBe(1);
     expect(calls.synthesized).toHaveLength(p.chunks[0].end);
     const read = createProsodyRead(p, engine, signal, 1, { prepared });
     const first = await read.chunk(0);

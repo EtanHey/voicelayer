@@ -299,9 +299,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
     holdDecoder = true;
     const h = start("clone", "First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8));
     await decoderBarrier.at(0);
-    expect(parts[0]).toBe(chunkTextForLongRead("First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8), "clone")[0]);
-    expect(parts[0].length).toBeGreaterThanOrEqual(120);
-    expect(parts[0].length).toBeLessThanOrEqual(200);
+    expect(parts[0]).toBe(chunkTextForLongRead("First sentence. " + "The rest of this read is synthesized in the background. ".repeat(8))[0]);
     clockMs += 300;
     holdDecoder = false;
     for (const child of decoders) child.exit.resolve(0);
@@ -483,7 +481,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
   it("CLN1b next chunk playback never waits for old alignment and publishes local offsets", async () => {
     const fixture = cloneFixture(); start("clone"); await playerBarrier.at(0);
     const first = await fixture.entered.at(0), oldResult = fixture.result(first);
-    expect(qwen.synthesizeCloned).toHaveBeenCalledTimes(2); // current + one lookahead
+    expect(qwen.synthesizeCloned).toHaveBeenCalledTimes(3);
     players[0].exit.resolve(0); await playerBarrier.at(1);
     expect(first.signal!.aborted).toBe(true);
     fixture.pending[0].resolve(oldResult);
@@ -1062,7 +1060,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         await handleSocketCommand({ cmd: "stop" });
       });
 
-      it("S1 queued structured clone reads reuse the complete planned opening and start gapless", async () => {
+      it("S1 queued structured clone reads reuse one prepared request and start gapless", async () => {
         select("A", "Alpha single chunk.");
         await playerBarrier.at(0);
         spies.push(spyOn(settings, "resolveSpeakProfile").mockReturnValue({
@@ -1086,7 +1084,7 @@ describe("long-read real runtime with owned synth/player fakes", () => {
         }));
         select("B", "## Bravo heading\n\n1. Read the next item.");
         await ready.promise; await settle();
-        expect(clone.mock.calls.map(call => call[0])).toEqual(["Bravo heading.", "one. Read the next item."]);
+        expect(clone.mock.calls.map(call => call[0])).toEqual(["Bravo heading."]);
         const before = performance.now();
         players[0].exit.resolve(0);
         await playerBarrier.at(1);

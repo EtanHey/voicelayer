@@ -65,16 +65,31 @@ type Synthesized =
   | { raw: false; pcm: Float32Array; words: WordBoundary[] };
 
 export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, signal: AbortSignal, concurrency?: number,
-  { prepared, lookahead }: { prepared?: ProsodyReadChunk; lookahead?: number } = {}) {
+  { prepared, lookahead, overlapDecode = false, playbackLookahead }: {
+    prepared?: ProsodyReadChunk; lookahead?: number; overlapDecode?: boolean; playbackLookahead?: number;
+  } = {}) {
   const firstEnd = plan.chunks[0]?.end ?? 0;
+  let playingChunk = 0;
+  const decodeFailure = new AbortController();
+  const decoding = new Set<Promise<Synthesized>>();
   const schedulerPlan = prepared ? { segments: plan.segments.slice(firstEnd), chunks: plan.chunks.slice(1).map(chunk =>
     ({ ...chunk, first: chunk.first - firstEnd, end: chunk.end - firstEnd })) } : plan;
-  const scheduler = createSegmentScheduler<Synthesized>(schedulerPlan, async (segment, index, signal) => {
+  const scheduler = createSegmentScheduler<{ ready: Promise<Synthesized>; rawFile?: string }>(schedulerPlan, async (segment, index, signal) => {
     const result = await engine.synthesize(segment, signal);
-    if (!prepared && index === 0 && firstEnd === 1) return { raw: true, ...result };
-    try { return { raw: false, pcm: await engine.decode(result.audioFile, signal), words: result.words }; }
-    finally { engine.unlink(result.audioFile); }
-  }, { signal, concurrency, lookahead, dispose: (result) => { if (result.raw) engine.unlink(result.audioFile); } });
+    if (!prepared && index === 0 && firstEnd === 1)
+      return { ready: Promise.resolve({ raw: true, ...result }), rawFile: result.audioFile };
+    const ready = (async (): Promise<Synthesized> => {
+      try { return { raw: false, pcm: await engine.decode(result.audioFile, signal), words: result.words }; }
+      finally { engine.unlink(result.audioFile); }
+    })();
+    decoding.add(ready);
+    void ready.then(() => decoding.delete(ready), error => { decoding.delete(ready); decodeFailure.abort(error); });
+    if (!overlapDecode) await ready;
+    return { ready };
+  }, { signal: AbortSignal.any([signal, decodeFailure.signal]), concurrency, lookahead,
+    canStart: playbackLookahead === undefined ? undefined : index => index < (schedulerPlan.chunks[
+      Math.min(playingChunk + playbackLookahead - (prepared ? 1 : 0), schedulerPlan.chunks.length - 1)]?.end ?? 0),
+    dispose: (result) => { if (result.rawFile) engine.unlink(result.rawFile); } });
   let preparedDelivered = false;
   let previousTailMs: Promise<number> = Promise.resolve(0);
   // Chunk 0's tail: decoded only after its player started; resolves 0 if it never starts or on abort.
@@ -92,6 +107,7 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
   const spoken = (index: number) => plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map((s) => s.text).join(" ");
 
   return {
+    playbackStarted(index: number) { playingChunk = Math.max(playingChunk, index); scheduler.resume(); },
     async chunk(index: number): Promise<ProsodyReadChunk> {
       if (prepared && index === 0) {
         throwIfAbortedSafe(signal);
@@ -99,7 +115,8 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
         preparedDelivered = true; firstRaw = prepared; previousTailMs = tail;
         return prepared;
       }
-      const parts = await scheduler.chunk(prepared ? index - 1 : index);
+      const pending = await scheduler.chunk(prepared ? index - 1 : index);
+      const parts = await Promise.all(pending.map(part => part.ready));
       const [first] = parts;
       if (index === 0 && parts.length === 1 && first.raw) {
         firstRaw = first;
@@ -137,6 +154,7 @@ export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, 
       signal.removeEventListener("abort", cancelTail);
       await settleTail();
       await scheduler.close();
+      await Promise.allSettled([...decoding]);
       if (prepared && !preparedDelivered) { preparedDelivered = true; engine.unlink(prepared.audioFile); }
     },
   };

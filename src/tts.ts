@@ -76,7 +76,7 @@ import { longReadDocument, runLongRead, type LongReadSeek, type SeekResult } fro
 import { PreparedReadStart, type PreparedChunk } from "./tts/selection-read-preparation";
 import { SPEAK_TEXT_MAX_CHARS } from "./socket-protocol";
 import { assembleLongReadHistory, runAudioCommand } from "./tts/long-read-audio";
-import { CLONE_CHUNK_POLICY, planProsody, type ProsodyPlan } from "./tts/prosody";
+import { CLONE_CHUNK_POLICY, createCloneChunkBudget, planProsody, type ProsodyPlan } from "./tts/prosody";
 import { createProsodyRead, decodeAudioToPCM, encodePCMToMp3, isStructuredPlan, sliceProjection } from "./tts/prosody-read";
 import { hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { getEffectiveRecordingState } from "./recording-state";
@@ -402,12 +402,29 @@ export function chunkTextForTTS(text: string, maxLen = TTS_CHUNK_MAX_CHARS): str
   return chunks.length > 0 ? chunks : [text];
 }
 
-export function chunkTextForLongRead(text: string, engine: "edge" | "clone" = "edge"): string[] {
+function clonePlaybackSpeed(rate: string): number {
+  const speed = 1 + Number.parseFloat(rate) / 100;
+  return Number.isFinite(speed) ? Math.max(0.01, speed) : 1;
+}
+
+export function chunkTextForLongRead(text: string, engine: "edge" | "clone" = "edge", playbackSpeed = 1): string[] {
   if (engine === "clone") {
-    const chunks = chunkTextForTTS(text, CLONE_CHUNK_POLICY.bodyMaxChars);
-    if (chunks.length > 1 && chunks[0].length < CLONE_CHUNK_POLICY.startupChars
-        && chunks[0].length + 1 + chunks[1].length <= TTS_CHUNK_MAX_CHARS)
-      chunks.splice(0, 2, chunks.slice(0, 2).join(" "));
+    const [first, ...later] = chunkTextForLongRead(text);
+    const chunks = [first], budget = createCloneChunkBudget(TTS_CHUNK_MAX_CHARS, playbackSpeed);
+    budget.append(first.length);
+    for (const chunk of later) {
+      let remaining = chunk;
+      while (remaining) {
+        const limit = budget.chars();
+        const firstWordEnd = remaining.search(/\s/u);
+        const end = remaining.length <= limit ? remaining.length
+          : [...remaining.slice(0, limit + 1).matchAll(/\s+/gu)].map(match => match.index).filter(end => end > 0).at(-1)
+            ?? Math.min(firstWordEnd > 0 ? firstWordEnd : remaining.length, TTS_CHUNK_MAX_CHARS);
+        const next = remaining.slice(0, end).trimEnd();
+        chunks.push(next); budget.append(next.length);
+        remaining = remaining.slice(end).trimStart();
+      }
+    }
     return chunks;
   }
   if (text.length <= 100 || !text.trim()) return [text];
@@ -2366,7 +2383,7 @@ async function synthesizeLongReadChunk(displayChunk: string, profile: LongReadPr
       return await synthesizeEdge(voice, edgeFallbackRate);
     }
     writeFileSync(audioFile, audio);
-    const speed = Math.max(0.01, 1 + Number.parseFloat(profile.rate) / 100);
+    const speed = clonePlaybackSpeed(profile.rate);
     if (Number.isFinite(speed) && speed !== 1) {
       const filters: string[] = [];
       let remaining = speed;
@@ -2428,7 +2445,7 @@ export async function prepareSelectionReadStart(
   const displayText = sanitizeTtsText(text);
   const profile = resolveLongReadProfile(kind, text);
   const prosody = structuredReadPlan(displayText, profile, structuredDisplay);
-  const displayChunk = prosody?.plan.chunks[0]?.text ?? chunkTextForLongRead(displayText, profile.engine)[0];
+  const displayChunk = prosody?.plan.chunks[0]?.text ?? chunkTextForLongRead(displayText, profile.engine, clonePlaybackSpeed(profile.rate))[0];
   if (!displayChunk?.trim()) throw new Error("Speech text is empty after sanitizing");
   const policy = chunkSynthesisPolicy();
   // No retry: the edge retry log quotes the text, and a failed prefetch just synthesizes at the start.
@@ -2462,6 +2479,7 @@ function structuredReadPlan(displayText: string, profile: LongReadProfile, struc
   if (!resolveBinary("ffmpeg")) return undefined;
   const projection = projectSpeakableText(displayText, pronunciationRules(), profile.engine);
   const plan = planProsody({ readText: displayText, projection, structure, engine: profile.engine, listNumbers: profile.engine === "clone" ? "inline" : "separate",
+    playbackSpeed: clonePlaybackSpeed(profile.rate),
     ...(profile.engine === "clone" ? { concurrency: 1 } : {}) });
   return isStructuredPlan(plan) ? { plan, projection } : undefined;
 }
@@ -2500,9 +2518,11 @@ function createStructuredProsodyRead(plan: ProsodyPlan, profile: LongReadProfile
       catch (error) { disposeLongReadChunkFiles(audioFile); throw error; }
     },
     unlink: disposeLongReadChunkFiles,
-  }, signal, profile.engine === "clone" ? 1 : undefined, { lookahead,
+  }, signal, profile.engine === "clone" ? 1 : undefined, { lookahead, overlapDecode: profile.engine === "clone",
+    playbackLookahead: profile.engine === "clone" ? CLONE_CHUNK_POLICY.lookahead : undefined,
     prepared: cached ? { audioFile: cached.chunk.audioFile, durationMs: cached.chunk.durationMs,
-      words: cached.chunk.wordBoundaries, spokenText: cached.spokenText ?? plan.speechText } : undefined });
+      words: cached.chunk.wordBoundaries, spokenText: cached.spokenText
+        ?? plan.segments.slice(0, plan.chunks[0].end).map(segment => segment.text).join(" ") } : undefined });
   return { ...read, provenance(index: number) {
     if (index === 0 && cached) return { voice: cached.voice, engine: cached.engine };
     const sources = plan.segments.slice(plan.chunks[index].first, plan.chunks[index].end).map(segment =>
@@ -2541,7 +2561,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
   const id = `long-read-${process.pid}-${++longReadCounter}`;
   const prosody = structuredReadPlan(displayText, profile, identity.structuredDisplay);
   const prosodyPlan = prosody?.plan;
-  const texts = prosodyPlan ? prosodyPlan.chunks.map((chunk) => chunk.text) : chunkTextForLongRead(displayText, profile.engine);
+  const texts = prosodyPlan ? prosodyPlan.chunks.map((chunk) => chunk.text) : chunkTextForLongRead(displayText, profile.engine, clonePlaybackSpeed(profile.rate));
   // Optional source layout decorates the exact startup/body chunks without changing speech.
   const displays = identity.structuredDisplay?.speechText === displayText
     ? structuredReadDisplay(identity.structuredDisplay, texts, TTS_CHUNK_MAX_CHARS) : [];
@@ -2667,6 +2687,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
               console.error(`[tts] first_audio_ms=${ms} profile=${kind} engine=${engine} voice=${voice} chars=${chars}`);
             }
             started = true; resolveStarted(true); audioStarted = true; handleStarted();
+            prosodyRead?.playbackStarted(info.chunk_index);
             firstAudio?.firstAudioStarted(chunk.audioFile);
           },
           onCompleted: (outcome) => {
@@ -2707,7 +2728,7 @@ export function speakLongRead(text: string, profile: LongReadProfile, receivedAt
         chunkAlignedWords.delete(chunk.audioFile); chunkEngines.delete(chunk.audioFile); chunkVoices.delete(chunk.audioFile);
         try { unlinkSpeechAudio(chunk.audioFile); } catch {}
       },
-    }, 1); } finally { await prosodyRead?.close(); }
+    }, profile.engine === "clone" ? CLONE_CHUNK_POLICY.lookahead : 1); } finally { await prosodyRead?.close(); }
   };
   // Preserve stopped audio: finish its history/cleanup before a replacement starts.
   handle.done = (predecessors.length ? Promise.all(predecessors).then(run) : run()).catch((error) => {
