@@ -206,6 +206,7 @@ export function handleSocketCommand(
         request_source: command.source === "selection" || command.source === "clipboard" || command.source === "cli"
           ? command.source : null,
         connection: null, format: command.format ?? null, blocking: null,
+        ...(command.capture_path !== undefined ? { capture_path: command.capture_path } : {}),
         requested: { mode: null, profile: command.profile ?? null, engine: null, voice: null, rate: null },
         build: { app_version: null, daemon_version: null, git_sha: null, executable_hash: null },
       });
