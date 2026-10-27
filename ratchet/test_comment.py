@@ -74,7 +74,7 @@ class CommentTests(unittest.TestCase):
         self.assertIsInstance(outcome, comment.Unavailable)
         body = comment.body_for(outcome, "e" * 40, "a" * 40,
                                 "https://github.com/example/project/actions/runs/123")
-        self.assertIn("table unavailable: result SHA mismatch", body)
+        self.assertIn("table unavailable: baseline advanced", body)
         self.assertNotIn("|", body)
         self.assertNotIn("PASS", body)
         self.assertIn("e" * 40, body)
@@ -110,7 +110,7 @@ class CommentTests(unittest.TestCase):
                                      "base": {"sha": "a" * 40, "ref": "main"}})
             with self.subTest(state=state), patch.object(comment, "api", api):
                 reason = comment.publish("example/project", 7, "a" * 40, "a" * 40, "new body")
-                self.assertIn("superseded or closed", reason)
+                self.assertIn("superseded or closed", reason.reason)
                 self.assertEqual(api.call_count, 1)
 
     def test_current_head_upserts_unavailable_and_failures_stay_red(self):
@@ -119,11 +119,11 @@ class CommentTests(unittest.TestCase):
         existing = {"id": 9, "user": {"login": "github-actions[bot]"}, "body": comment.MARKER}
         with patch.object(comment, "api", side_effect=[current, [[existing]], current, {}]) as api:
             body = comment.body_for(comment.Unavailable("missing result artifact"), "a" * 40, "a" * 40, None)
-            self.assertIsNone(comment.publish("example/project", 7, "a" * 40, "a" * 40, body))
+            self.assertIsNone(comment.publish("example/project", 7, "a" * 40, "a" * 40, body).reason)
             self.assertEqual(api.call_args.args[1], "PATCH")
             self.assertEqual(api.call_args.kwargs["payload"], {"body": body})
         with patch.object(comment, "api", side_effect=[current, [[existing, existing]]]):
-            with self.assertRaisesRegex(AssertionError, "multiple ratchet comments"):
+            with self.assertRaisesRegex(RuntimeError, "multiple ratchet comments"):
                 comment.publish("example/project", 7, "a" * 40, "a" * 40, body)
         with patch.object(comment, "api", side_effect=RuntimeError("publisher bug")):
             with self.assertRaisesRegex(RuntimeError, "publisher bug"):
@@ -139,7 +139,7 @@ class CommentTests(unittest.TestCase):
         moved["head"]["sha"] = "e" * 40
         with patch.object(comment, "api", side_effect=[current, [[]], moved]) as api:
             reason = comment.publish("example/project", 7, "a" * 40, "a" * 40, "body")
-            self.assertIsNotNone(reason)
+            self.assertIsNotNone(reason.reason)
             self.assertEqual(api.call_count, 3)
 
     def test_base_advanced_before_write_upserts_unavailable(self):
@@ -148,7 +148,7 @@ class CommentTests(unittest.TestCase):
         moved = copy.deepcopy(current)
         moved["base"]["sha"] = "e" * 40
         with patch.object(comment, "api", side_effect=[current, [[]], moved, {}]) as api:
-            self.assertIn("base advanced", comment.publish("example/project", 7, "a" * 40, "a" * 40, "table"))
+            self.assertIn("base advanced", comment.publish("example/project", 7, "a" * 40, "a" * 40, "table").reason)
             body = api.call_args.kwargs["payload"]["body"]
             self.assertIn("table unavailable: base advanced", body)
             self.assertIn("e" * 40, body)
@@ -167,6 +167,78 @@ class CommentTests(unittest.TestCase):
             with patch("sys.argv", args + ["--pr", "7"]), patch.object(comment, "publish", side_effect=RuntimeError("publisher bug")):
                 with self.assertRaisesRegex(RuntimeError, "publisher bug"):
                     comment.main()
+
+    def test_head_mismatch_is_distinct_from_advanced_baseline(self):
+        changed = copy.deepcopy(self.data)
+        changed[0]["measured_sha"] = "e" * 40
+        self.assertEqual(self.outcome(head=changed).reason, "result head mismatch")
+        self.assertEqual(self.outcome(base_sha="e" * 40).reason, "baseline advanced")
+        self.assertEqual(self.outcome(baseline=changed, head=changed,
+                                      base_sha="e" * 40).reason, "result head mismatch")
+
+    def pinned_body(self, run_id, attempt=1, unavailable=False, base_sha="a" * 40,
+                    head_sha="a" * 40):
+        outcome = comment.Unavailable("missing result artifact") if unavailable else self.outcome()
+        return comment.body_for(outcome, base_sha, head_sha,
+                                comment.source_url("example/project", run_id), attempt)
+
+    def test_same_head_preserves_newer_runs_and_attempts(self):
+        for old_run, old_attempt, new_run, new_attempt in ((124, 1, 123, 9), (123, 2, 123, 1)):
+            for unavailable in (False, True):
+                with self.subTest(run=old_run, attempt=old_attempt, unavailable=unavailable):
+                    self.assert_preserved(self.pinned_body(old_run, old_attempt),
+                                          self.pinned_body(new_run, new_attempt, unavailable))
+
+    def assert_preserved(self, existing_body, candidate, base_sha="a" * 40):
+        current = {"state": "open", "head": {"sha": "a" * 40},
+                   "base": {"sha": base_sha, "ref": "main"}}
+        existing = {"id": 9, "user": {"login": "github-actions[bot]"}, "body": existing_body}
+        with patch.object(comment, "api", side_effect=[current, [[existing]], current]) as api:
+            publication = comment.publish("example/project", 7, base_sha, "a" * 40, candidate)
+            self.assertIsNotNone(publication.reason)
+            self.assertEqual(publication.body, existing_body)
+            self.assertTrue(all(call.args[1:] == () for call in api.call_args_list))
+
+    def test_older_run_cannot_downgrade_table_after_baseline_advances(self):
+        self.assert_preserved(self.pinned_body(124),
+                              self.pinned_body(123, unavailable=True, base_sha="e" * 40),
+                              base_sha="e" * 40)
+
+    def test_unavailable_never_downgrades_valid_same_head_and_base(self):
+        self.assert_preserved(self.pinned_body(123), self.pinned_body(124, unavailable=True))
+        legacy = comment.render(self.read(self.data), self.read(self.data), "a" * 40, "a" * 40)
+        self.assert_preserved(legacy, self.pinned_body(124, unavailable=True))
+
+    def test_newer_table_can_replace_old_or_unavailable_table(self):
+        for existing_body in (self.pinned_body(123), self.pinned_body(124, unavailable=True),
+                              self.pinned_body(125, head_sha="e" * 40)):
+            current = {"state": "open", "head": {"sha": "a" * 40},
+                       "base": {"sha": "a" * 40, "ref": "main"}}
+            existing = {"id": 9, "user": {"login": "github-actions[bot]"}, "body": existing_body}
+            candidate = self.pinned_body(124, attempt=2)
+            with self.subTest(existing=existing_body), patch.object(comment, "api", side_effect=[current, [[existing]], current, {}]) as api:
+                publication = comment.publish("example/project", 7, "a" * 40, "a" * 40, candidate)
+                self.assertIsNone(publication.reason)
+                self.assertEqual(api.call_args.kwargs["payload"], {"body": candidate})
+
+    def test_summary_uses_published_baseline_when_base_moves(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary.md"
+            args = ["comment.py", "--baseline", directory + "/missing.json",
+                    "--head", directory + "/missing.json", "--baseline-sha", "a" * 40,
+                    "--head-sha", "a" * 40, "--pr", "7", "--source-run", "123",
+                    "--run-attempt", "2"]
+            current = {"state": "open", "head": {"sha": "a" * 40},
+                       "base": {"sha": "a" * 40, "ref": "main"}}
+            moved = copy.deepcopy(current)
+            moved["base"]["sha"] = "e" * 40
+            with patch("sys.argv", args), patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": str(summary)}), patch("builtins.print"), patch.object(comment, "api", side_effect=[current, [[]], moved, {}]) as api:
+                comment.main()
+            published = api.call_args.kwargs["payload"]["body"]
+            self.assertEqual(summary.read_text(), published)
+            self.assertIn("Baseline: `" + "e" * 40 + "`", published)
+            self.assertIn('"source_run_id": 123', published)
+            self.assertIn('"run_attempt": 2', published)
 
     def test_source_url_is_parsed_and_pinned_to_repository(self):
         url = comment.source_url("example/project", 123)

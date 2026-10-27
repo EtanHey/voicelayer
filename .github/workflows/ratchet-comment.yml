@@ -7,6 +7,10 @@ permissions:
   contents: read
   actions: read
   pull-requests: write
+concurrency:
+  group: ratchet-comment-${{ github.event.workflow_run.head_sha }}
+  queue: max
+  cancel-in-progress: false
 jobs:
   comment:
     runs-on: ubuntu-latest
@@ -67,9 +71,10 @@ jobs:
           HEAD_SHA: ${{ steps.context.outputs.head }}
           UNAVAILABLE: ${{ steps.context.outputs.unavailable }}
           SOURCE_RUN: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           REPO: ${{ github.repository }}
         run: |
           python3 ratchet/comment.py --baseline .verified/ratchet/baseline/result.json \
             --head .verified/ratchet/head/result.json --baseline-sha "$BASE_SHA" \
             --head-sha "$HEAD_SHA" --pr "$PR" --repo "$REPO" \
-            --source-run "$SOURCE_RUN" --unavailable-reason "$UNAVAILABLE"
+            --source-run "$SOURCE_RUN" --run-attempt "$RUN_ATTEMPT" --unavailable-reason "$UNAVAILABLE"
