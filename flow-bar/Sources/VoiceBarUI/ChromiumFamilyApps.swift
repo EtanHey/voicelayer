@@ -9,6 +9,17 @@ import Foundation
 /// `Resources/app.asar` is corroborated by a framework carrying Chromium's own runtime
 /// data; an archive resource alone is not evidence of Chromium (PASTE2 R1).
 public enum ChromiumFamilyApps {
+    private static let copyPreferredBrowserBundleIDs = [
+        "net.imput.helium", "com.google.Chrome", "company.thebrowser.Browser",
+        "com.brave.Browser", "com.microsoft.edgemac", "org.chromium.Chromium",
+    ]
+
+    public static func prefersCopy(bundleIdentifier: String) -> Bool {
+        copyPreferredBrowserBundleIDs.contains {
+            bundleIdentifier == $0 || bundleIdentifier.hasPrefix($0 + ".")
+        }
+    }
+
     public static let frameworks = [
         "Electron Framework.framework", "Chromium Embedded Framework.framework", "Chromium Framework.framework",
         "Google Chrome Framework.framework", "Microsoft Edge Framework.framework", "Brave Browser Framework.framework",
