@@ -8,6 +8,7 @@ import {
   __setWhisperServerLaunchRecordForTests,
   __setWhisperServerTestHooksForTests,
   unloadOwnedServer,
+  ensureServer,
 } from "../whisper-server";
 
 describe("explicit whisper-server unload", () => {
@@ -89,6 +90,46 @@ describe("explicit whisper-server unload", () => {
     listeners = [];
     exit(0);
     expect(await pending).toEqual({ outcome: "accept", residency: "not_loaded" });
+  });
+
+  test("an unconfirmed unload blocks replacement until a late child exit, then reloads once", async () => {
+    let exit!: (code: number) => void;
+    const exited = new Promise<number>((resolve) => { exit = resolve; });
+    let spawns = 0;
+    let alive = false;
+    const signals: string[] = [];
+    __setWhisperServerTestHooksForTests({
+      reserveVoiceMaintenance: () => () => {},
+      residentLiveStack: () => false,
+      findServerBinary: () => "/tmp/whisper-server",
+      findModel: () => "/tmp/model.bin",
+      readHelpText: () => ({ helpText: "" }),
+      isPidAlive: () => alive,
+      processStartTimeMs: () => Date.now() - 1_000,
+      isServerHealthy: async () => alive,
+      findPortListenerPids: () => alive ? [55110 + spawns] : [],
+      findExternalWhisperServerPids: () => [],
+      spawn: () => {
+        spawns++;
+        alive = true;
+        return {
+          pid: 55110 + spawns, stderr: null, exitCode: null,
+          exited: spawns === 1 ? exited : new Promise<number>(() => {}),
+          kill: (signal?: number | NodeJS.Signals) => { signals.push(String(signal)); },
+        };
+      },
+    });
+    expect(await ensureServer(18884)).toBe(18884);
+    expect(await unloadOwnedServer(() => false)).toEqual({ outcome: "reject", reason: "child exit unconfirmed" });
+    expect(signals).toEqual(["SIGTERM"]);
+    await expect(ensureServer(18884)).rejects.toThrow("unload unconfirmed");
+    expect(spawns).toBe(1);
+    alive = false;
+    exit(0);
+    await exited;
+    expect(await ensureServer(18884)).toBe(18884);
+    expect(await ensureServer(18884)).toBe(18884);
+    expect(spawns).toBe(2);
   });
 
   test("F5 capture starts while a signalled unload yields its result", async () => {

@@ -314,7 +314,14 @@ async function startAndWaitForPolishServer(
   // Retain custody until exit is observed, including after a startup timeout.
   let exited = false;
   void proc.exited?.then(
-    () => { exited = true; if (polishProcess === proc && stoppingPolishProcess !== proc) polishProcess = null; },
+    () => {
+      exited = true;
+      if (polishProcess === proc) polishProcess = null;
+      if (stoppingPolishProcess === proc) {
+        stoppingPolishProcess = null;
+        publishSTTPolishServerStatus({ status: "stopped" });
+      }
+    },
     () => {},
   );
   const abandon = (): STTPolishServerStatus => {
