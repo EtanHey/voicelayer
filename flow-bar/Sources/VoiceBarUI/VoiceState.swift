@@ -1699,7 +1699,7 @@ public final class VoiceState {
         }
         if cancelledTranscription {
             showConfirmation(
-                "Transcription cancelled. Audio saved; re-transcribe it from History when processing finishes.",
+                "Transcription cancelled. Audio saved. Re-transcribe it from History when processing finishes.",
                 duration: 5.0
             )
             expandFromCollapse()
@@ -4195,8 +4195,8 @@ public final class VoiceState {
         )
     }
 
-    private static let genericPasteFailureMessage = "Paste failed. Click back into the input and try again."
-    private static let pasteFailureRetryMessage = "Paste failed. Click the input and press Shift+F5."
+    private static let genericPasteFailureMessage = "Paste failed. Click the text field and try again."
+    private static let pasteFailureRetryMessage = "Paste failed. Click the text field and press Shift+F5."
 
     private static let richHostTypingBundleIdentifiers: Set<String> = [
         "com.t3tools.t3code", "net.imput.helium", "com.google.GeminiMacOS",

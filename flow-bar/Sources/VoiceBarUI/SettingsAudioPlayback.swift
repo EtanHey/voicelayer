@@ -133,16 +133,13 @@ public final class SettingsAudioPlayback {
             stop()
             return
         }
-        guard !isVoiceBusy else {
-            failureMessage = SettingsHistoryCopy.playBusy
-            return
-        }
         failureMessage = nil
+        guard !isVoiceBusy else { return }
         if playingURL != nil { stop() }
         if start(url) {
             playingURL = url
         } else {
-            failureMessage = "Audio could not start. Try Play again or reveal the file in Finder."
+            failureMessage = "Audio couldn't start. Try Play again or reveal the file in Finder."
         }
     }
 
@@ -201,7 +198,7 @@ public final class SettingsAudioPlayback {
         guard !isVoiceBusy, start(next) else {
             queuedURLs = []
             queueHead = nil
-            failureMessage = "Audio could not continue. Try Play again."
+            failureMessage = "Audio couldn't continue. Try Play again."
             return
         }
         playingURL = next

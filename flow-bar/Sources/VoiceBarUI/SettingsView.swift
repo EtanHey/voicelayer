@@ -1302,12 +1302,9 @@ public struct SettingsView: View {
     private var historyTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             historyScopePicker
-            if let historyNoticeKind {
-                SettingsHistoryNotice(kind: historyNoticeKind)
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 8)
-                    .transition(.opacity)
-            }
+            SettingsHistoryNoticeSlot(kind: historyNoticeKind)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 8)
 
             // AIDEV-NOTE: lane E (QA 2.2.25 C10). A `switch` here tore down and rebuilt the whole list on every
             // Dictations ↔ Ask click; on the 11k archive that rebuild was most of the switch's main-thread time.
@@ -1947,7 +1944,7 @@ public struct SettingsView: View {
                 if let heardLabel {
                     Label(heardLabel, systemImage: "text.viewfinder")
                         .help(
-                            "Transcribed: the audio sent to speech-to-text after trailing silence was trimmed"
+                            "Transcribed: the audio VoiceBar transcribed, after cutting the silence at the end"
                         )
                         .accessibilityLabel("Transcribed length \(heardLabel)")
                 }

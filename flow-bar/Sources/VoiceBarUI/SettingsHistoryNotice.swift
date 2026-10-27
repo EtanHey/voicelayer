@@ -18,6 +18,25 @@ struct SettingsHistoryNotice: View {
                 return nil
             }
         }
+
+        var symbol: String {
+            switch self {
+            case .busy: "play.slash"
+            case .failure: "exclamationmark.triangle.fill"
+            }
+        }
+
+        var announcement: String? {
+            guard case let .failure(failure) = self else { return nil }
+            return failure
+        }
+
+        var message: String {
+            switch self {
+            case .busy: SettingsHistoryCopy.playBusy
+            case let .failure(failure): failure
+            }
+        }
     }
 
     let kind: Kind
@@ -25,15 +44,17 @@ struct SettingsHistoryNotice: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: symbol).foregroundStyle(symbolStyle)
-                Text(message)
-                    .foregroundStyle(messageStyle)
+                Image(systemName: kind.symbol).foregroundStyle(symbolStyle)
+                Text(kind.message)
+                    .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .combine)
             Spacer(minLength: 8)
-            if case let .failure(failure) = kind {
-                SettingsCopyButton(text: failure, label: "History playback error")
+            if case .failure = kind {
+                SettingsCopyButton(text: kind.message, label: "History playback error")
+            } else {
+                SettingsCopyButton(text: kind.message, label: "History playback error").hidden()
             }
         }
         .font(.caption)
@@ -44,20 +65,6 @@ struct SettingsHistoryNotice: View {
         .onChange(of: kind) { _, _ in announceFailure() }
     }
 
-    private var message: String {
-        switch kind {
-        case .busy: SettingsHistoryCopy.playBusy
-        case let .failure(failure): failure
-        }
-    }
-
-    private var symbol: String {
-        switch kind {
-        case .busy: "speaker.slash"
-        case .failure: "exclamationmark.triangle"
-        }
-    }
-
     private var symbolStyle: Color {
         switch kind {
         case .busy: .secondary
@@ -65,15 +72,21 @@ struct SettingsHistoryNotice: View {
         }
     }
 
-    private var messageStyle: Color {
-        switch kind {
-        case .busy: .secondary
-        case .failure: .primary
-        }
-    }
-
     private func announceFailure() {
-        guard case let .failure(failure) = kind else { return }
-        AccessibilityNotification.Announcement(failure).post()
+        guard let announcement = kind.announcement else { return }
+        AccessibilityNotification.Announcement(announcement).post()
+    }
+}
+
+struct SettingsHistoryNoticeSlot: View {
+    let kind: SettingsHistoryNotice.Kind?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            SettingsHistoryNotice(kind: .busy).hidden()
+            if let kind {
+                SettingsHistoryNotice(kind: kind).transition(.opacity)
+            }
+        }
     }
 }

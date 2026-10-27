@@ -6,7 +6,7 @@ import XCTest
 
 @MainActor
 final class SettingsHistoryNoticeTests: XCTestCase {
-    func testTheBusySentenceIsOneConstantInTheBannerTheTooltipAndThePlaybackModel() {
+    func testTheBusySentenceIsOneConstantInTheBannerAndTheTooltip() {
         XCTAssertEqual(SettingsHistoryCopy.playBusy, "Can't play while VoiceBar is recording, transcribing or speaking.")
 
         let clip = SettingsHistoryMediaPart(
@@ -18,17 +18,78 @@ final class SettingsHistoryNoticeTests: XCTestCase {
                                                    isTranscribing: false, isVoiceBusy: true)
         XCTAssertEqual(busy.availability(.play, for: clip), .unavailable(SettingsHistoryCopy.playBusy))
 
-        let playback = SettingsAudioPlayback(start: { _ in true }, stop: {}, canPlay: { false })
-        playback.toggle(URL(fileURLWithPath: "/tmp/notice/audio.wav"))
-        XCTAssertEqual(playback.failureMessage, SettingsHistoryCopy.playBusy)
-        XCTAssertEqual(SettingsHistoryNotice.Kind(isVoiceBusy: true, failureMessage: "Audio could not start."), .busy)
+        XCTAssertEqual(SettingsHistoryNotice.Kind(isVoiceBusy: true, failureMessage: "Audio couldn't start."), .busy)
     }
 
     func testAFailureShowsOnlyWhenVoiceIsIdle() {
         XCTAssertNil(SettingsHistoryNotice.Kind(isVoiceBusy: false, failureMessage: nil))
         XCTAssertNil(SettingsHistoryNotice.Kind(isVoiceBusy: false, failureMessage: "  \n"))
-        XCTAssertEqual(SettingsHistoryNotice.Kind(isVoiceBusy: false, failureMessage: "Audio could not start."),
-                       .failure("Audio could not start."))
+        XCTAssertEqual(SettingsHistoryNotice.Kind(isVoiceBusy: false, failureMessage: "Audio couldn't start."),
+                       .failure("Audio couldn't start."))
+    }
+
+    func testABusyRefusalLeavesNothingBehindOnceVoiceIsIdle() {
+        var voiceIsBusy = false
+        let playback = SettingsAudioPlayback(start: { _ in false }, stop: {}, canPlay: { !voiceIsBusy })
+        let clip = URL(fileURLWithPath: "/tmp/notice/audio.wav")
+        func notice() -> SettingsHistoryNotice.Kind? {
+            SettingsHistoryNotice.Kind(isVoiceBusy: playback.isVoiceBusy, failureMessage: playback.failureMessage)
+        }
+
+        playback.toggle(clip)
+        XCTAssertEqual(notice(), .failure("Audio couldn't start. Try Play again or reveal the file in Finder."))
+
+        voiceIsBusy = true
+        playback.toggle(clip)
+        XCTAssertEqual(notice(), .busy)
+        XCTAssertNil(playback.failureMessage, "busy is state, never a stored failure")
+
+        voiceIsBusy = false
+        XCTAssertNil(notice(), "nothing is left to show or announce once voice goes idle")
+    }
+
+    func testOnlyAFailureIsAnnounced() {
+        XCTAssertNil(SettingsHistoryNotice.Kind.busy.announcement)
+        XCTAssertEqual(SettingsHistoryNotice.Kind.failure("Audio couldn't start.").announcement, "Audio couldn't start.")
+    }
+
+    func testTheNoticeSymbolsExist() {
+        XCTAssertEqual(SettingsHistoryNotice.Kind.busy.symbol, "play.slash")
+        XCTAssertEqual(SettingsHistoryNotice.Kind.failure("x").symbol, "exclamationmark.triangle.fill")
+        for kind in [SettingsHistoryNotice.Kind.busy, .failure("x")] {
+            XCTAssertNotNil(NSImage(systemSymbolName: kind.symbol, accessibilityDescription: nil), kind.symbol)
+        }
+    }
+
+    func testBusyAndFailureFillOneReservedSlotSoTheListNeverMoves() throws {
+        let idle = try render(scope: .recording, playback: Self.idlePlayback())
+        var heights: [Int] = []
+        for playback in [Self.busyPlayback(), Self.failedPlayback()] {
+            let shown = try render(scope: .recording, playback: playback)
+            let notice = try XCTUnwrap(noticeRows(from: idle, to: shown))
+            heights.append(notice.count)
+            let below = notice.upperBound ..< min(idle.height, notice.upperBound + Int(120 * scale))
+            XCTAssertEqual(changedColumns(from: idle, to: shown, rows: below).count, 0,
+                           "the toolbar and the first rows stay where they were")
+        }
+        XCTAssertEqual(heights[0], heights[1], accuracy: 1, "busy and failure are the same height")
+    }
+
+    func testNoticeTextReadsAtAAContrastInLightAndDark() throws {
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let idle = try render(scope: .recording, playback: Self.idlePlayback(), appearance: appearance)
+            for (name, playback) in [("busy", Self.busyPlayback()), ("failure", Self.failedPlayback())] {
+                let shown = try render(scope: .recording, playback: playback, appearance: appearance)
+                let rows = try XCTUnwrap(noticeRows(from: idle, to: shown), name)
+                let columns = changedColumns(from: idle, to: shown, rows: rows)
+                let left = try XCTUnwrap(columns.first, name)
+                let right = try XCTUnwrap(columns.last, name)
+                let fill = shown.pixel(x: left + Int(4 * scale), y: (rows.lowerBound + rows.upperBound) / 2)
+                let textColumns = (left + Int(34 * scale)) ... right
+                let strongest = rows.flatMap { y in textColumns.map { x in contrast(shown.pixel(x: x, y: y), fill) } }.max() ?? 0
+                XCTAssertGreaterThanOrEqual(strongest, 4.5, "\(name) text in \(appearance.rawValue)")
+            }
+        }
     }
 
     func testTheBusyNoticeSitsInsideTheSamePaddingAsTheScopePicker() throws {
@@ -67,6 +128,27 @@ final class SettingsHistoryNoticeTests: XCTestCase {
                 try data.write(to: outputDirectory.appendingPathComponent("history-notice-\(state)-\(appearanceName).png"))
             }
         }
+    }
+
+    private func noticeRows(from idle: RenderedImage, to shown: RenderedImage) -> Range<Int>? {
+        func differs(_ y: Int) -> Bool {
+            (0 ..< idle.width).contains { x in !same(idle.pixel(x: x, y: y), shown.pixel(x: x, y: y)) }
+        }
+        guard let top = (0 ..< idle.height).first(where: differs) else { return nil }
+        let bottom = (top ..< idle.height).first { !differs($0) } ?? idle.height
+        return top ..< bottom
+    }
+
+    private func contrast(_ lhs: RenderedImage.Pixel, _ rhs: RenderedImage.Pixel) -> Double {
+        func luminance(_ pixel: RenderedImage.Pixel) -> Double {
+            func linear(_ channel: Int) -> Double {
+                let value = Double(channel) / 255
+                return value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * linear(pixel.r) + 0.7152 * linear(pixel.g) + 0.0722 * linear(pixel.b)
+        }
+        let (light, dark) = (max(luminance(lhs), luminance(rhs)), min(luminance(lhs), luminance(rhs)))
+        return (light + 0.05) / (dark + 0.05)
     }
 
     private let scale: CGFloat = 2
@@ -113,8 +195,12 @@ final class SettingsHistoryNoticeTests: XCTestCase {
         lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b && lhs.a == rhs.a
     }
 
-    private func render(scope: SettingsHistoryScope, playback: SettingsAudioPlayback) throws -> RenderedImage {
-        try RenderedImage(XCTUnwrap(renderBitmap(scope: scope, playback: playback, appearance: .aqua).cgImage))
+    private func render(
+        scope: SettingsHistoryScope,
+        playback: SettingsAudioPlayback,
+        appearance: NSAppearance.Name = .aqua
+    ) throws -> RenderedImage {
+        try RenderedImage(XCTUnwrap(renderBitmap(scope: scope, playback: playback, appearance: appearance).cgImage))
     }
 
     private func renderBitmap(

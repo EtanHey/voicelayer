@@ -82,6 +82,34 @@ final class SettingsCopyLintTests: XCTestCase {
         let literals = SwiftStringLiteralScanner.literals(in: source)
         XCTAssertEqual(literals.map(\.text), [#"He said "hi" — then left"#, #"a "quoted" word — here"#])
     }
+
+    func testIndentationComesOffSourceLinesBeforeEscapesAreDecoded() {
+        let source = ##"""
+        let hint = """
+            Ready\n— retry
+              kept two spaces
+            """
+        let raw = #"""
+            Ready\#n— retry
+            """#
+        let joined = """
+            one \
+            line
+            """
+        """##
+        XCTAssertEqual(SwiftStringLiteralScanner.literals(in: source).map(\.text),
+                       ["Ready\n— retry\n  kept two spaces", "Ready\n— retry", "one line"])
+    }
+
+    func testAnInterpolationLeavesAStandInSoItsNeighboursNeverJoin() {
+        let source = #"""
+        Text("Version \(major).\(minor).\(patch).")
+        Text("Loading \(name)...")
+        Text("\(left) — \(right)")
+        """#
+        let violations = SwiftStringLiteralScanner.literals(in: source).map { UICopyRule.violations(in: $0.text) }
+        XCTAssertEqual(violations, [[], ["three dots"], ["em dash"]])
+    }
 }
 
 enum UICopyRule {
@@ -123,13 +151,50 @@ enum SwiftStringLiteralScanner {
         let endsInterpolation: Bool
     }
 
+    private struct SourceLine {
+        var indentation = ""
+        var text = ""
+        var continuesPreviousLine = false
+    }
+
     private struct StringFrame {
         let line: Int
         let hashes: Int
         let isMultiline: Bool
         let isLog: Bool
-        var text = ""
+        var sourceLines = [SourceLine()]
+
+        mutating func appendDecoded(_ text: String) {
+            sourceLines[sourceLines.count - 1].text.append(text)
+        }
+
+        mutating func appendSource(_ character: Character) {
+            var current = sourceLines[sourceLines.count - 1]
+            if isMultiline, character == "\n" {
+                sourceLines.append(SourceLine())
+            } else if isMultiline, current.text.isEmpty, character == " " || character == "\t" {
+                current.indentation.append(character)
+                sourceLines[sourceLines.count - 1] = current
+            } else {
+                appendDecoded(String(character))
+            }
+        }
+
+        mutating func continueOnNextSourceLine() {
+            sourceLines.append(SourceLine(continuesPreviousLine: true))
+        }
+
+        var text: String {
+            guard isMultiline else { return sourceLines.map(\.text).joined() }
+            let closingIndent = sourceLines.last?.indentation.count ?? 0
+            return sourceLines.dropLast().enumerated().map { offset, sourceLine in
+                let separator = offset == 0 || sourceLine.continuesPreviousLine ? "" : "\n"
+                return separator + String(sourceLine.indentation.dropFirst(closingIndent)) + sourceLine.text
+            }.joined()
+        }
     }
+
+    static let interpolationStandIn = "_"
 
     private enum Frame {
         case code(CodeFrame)
@@ -245,11 +310,6 @@ enum SwiftStringLiteralScanner {
             case var .string(string):
                 let delimiter = (string.isMultiline ? "\"\"\"" : "\"") + String(repeating: "#", count: string.hashes)
                 if matches(delimiter, at: index) {
-                    if string.isMultiline {
-                        let lines = string.text.split(separator: "\n", omittingEmptySubsequences: false)
-                        let indent = lines.last.map { $0.prefix { $0 == " " }.count } ?? 0
-                        string.text = lines.dropLast().map { String($0.dropFirst(indent)) }.joined(separator: "\n")
-                    }
                     frames.removeLast()
                     found.append(SwiftStringLiteral(line: string.line, text: string.text, isLogText: string.isLog))
                     index += delimiter.count
@@ -260,6 +320,7 @@ enum SwiftStringLiteralScanner {
                 if matches(escape, at: index) {
                     let next = index + escape.count
                     if next < characters.count, characters[next] == "(" {
+                        string.appendDecoded(interpolationStandIn)
                         frames[frames.count - 1] = .string(string)
                         frames.append(.code(CodeFrame(endsInterpolation: true)))
                         index = next + 1
@@ -267,12 +328,16 @@ enum SwiftStringLiteralScanner {
                     }
                     if matches("u{", at: next), let close = characters[next...].firstIndex(of: "}"),
                        let scalar = UInt32(String(characters[next + 2 ..< close]), radix: 16).flatMap(Unicode.Scalar.init) {
-                        string.text.append(Character(scalar))
+                        string.appendDecoded(String(Character(scalar)))
                         index = close + 1
                     } else if next < characters.count {
                         let escaped = characters[next]
-                        if escaped == "\n" { line += 1 }
-                        string.text.append(["n": "\n", "t": "\t", "0": "\0", "r": "\r"][escaped] ?? escaped)
+                        if escaped == "\n" {
+                            line += 1
+                            string.continueOnNextSourceLine()
+                        } else {
+                            string.appendDecoded(String(["n": "\n", "t": "\t", "0": "\0", "r": "\r"][escaped] ?? escaped))
+                        }
                         index = next + 1
                     } else {
                         index = next
@@ -281,7 +346,7 @@ enum SwiftStringLiteralScanner {
                     continue
                 }
                 if character == "\n" { line += 1 }
-                string.text.append(character)
+                string.appendSource(character)
                 frames[frames.count - 1] = .string(string)
                 index += 1
             }
