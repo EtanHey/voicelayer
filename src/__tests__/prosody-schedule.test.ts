@@ -18,7 +18,7 @@ class FakeClock {
   async until<T>(promise: Promise<T>): Promise<T> {
     let done = false;
     promise.then(() => { done = true; }, () => { done = true; });
-    for (;;) {
+    for (let step = 0; step < 1000; step++) {
       await this.flush();
       if (done) return promise;
       this.timers.sort((a, b) => a.at - b.at || a.seq - b.seq);
@@ -26,6 +26,7 @@ class FakeClock {
       if (!next) throw new Error("deadlock: nothing scheduled");
       this.now = next.at; next.fire();
     }
+    throw new Error("Virtual clock exceeded 1000 steps");
   }
 }
 
@@ -52,6 +53,14 @@ describe("Macroscope #562: delivered results are not retained by the scheduler",
 });
 
 describe("FakeClock is immune to the event loop and to replaced globals", () => {
+  it("fails within a virtual-step budget when timers keep rescheduling", async () => {
+    const clock = new FakeClock();
+    const reschedule = (remaining: number): void => {
+      if (remaining) void clock.sleep(0).then(() => reschedule(remaining - 1));
+    };
+    reschedule(1001);
+    await expect(clock.until(new Promise<never>(() => {}))).rejects.toThrow("Virtual clock exceeded 1000 steps");
+  }, 1000);
   // Full-suite flake (2026-10-26): after socket-byte-framing.test.ts left a VoiceBar client's keepalive and
   // socket alive, Bun ran nested setImmediate callbacks only on real timer wakeups (~1 s apart), so a
   // setImmediate-based flush advanced virtual time once per real second and these tests hit 5 s timeouts.
@@ -109,6 +118,54 @@ describe("createSegmentScheduler: bounded, ordered, abortable", () => {
     expect(new Set(disposed).size).toBe(disposed.length);
   });
   const doc = "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three\n- Four\n- Five\n\nDone.";
+  it("reaps in-flight synthesis after another start throws synchronously", async () => {
+    const p = plan(doc), controller = new AbortController();
+    const started: number[] = [], disposed: number[] = [];
+    const firstEngine = Promise.withResolvers<number>();
+    const failure = new Error("engine start failed");
+    const scheduler = createSegmentScheduler(p, (_segment, index) => {
+      started.push(index);
+      if (index === 1) throw failure;
+      return firstEngine.promise;
+    }, { signal: controller.signal, dispose: (result) => disposed.push(result) });
+    const failedChunk = scheduler.chunk(1);
+    await expect(failedChunk).rejects.toBe(failure);
+    controller.abort();
+    let drained = false;
+    const drain = scheduler.settled().then(() => { drained = true; });
+    await Bun.sleep(0);
+    expect(drained).toBe(false);
+    firstEngine.resolve(0);
+    await drain;
+    await scheduler.close();
+    expect(started).toEqual([0, 1]);
+    expect(disposed).toEqual([0]);
+    await expect(scheduler.chunk(2)).rejects.toThrow();
+  }, 1000);
+  it("an already-aborted signal rejects chunks without starting synthesis", async () => {
+    const controller = new AbortController(), started: number[] = [];
+    controller.abort(new Error("cancelled before scheduling"));
+    const scheduler = createSegmentScheduler(plan(doc), async (_segment, index) => {
+      started.push(index); return index;
+    }, { signal: controller.signal });
+    await expect(scheduler.chunk(0)).rejects.toBe(controller.signal.reason);
+    await scheduler.settled();
+    await scheduler.close();
+    expect(started).toEqual([]);
+  }, 1000);
+  it("abort during an engine start stops the pump and reaps that engine", async () => {
+    const controller = new AbortController(), started: number[] = [];
+    const scheduler = createSegmentScheduler(plan(doc), (_segment, index, signal) => {
+      started.push(index);
+      controller.abort(new Error("cancelled during start"));
+      signal.throwIfAborted();
+      return Promise.resolve(index);
+    }, { signal: controller.signal });
+    await expect(scheduler.chunk(1)).rejects.toBe(controller.signal.reason);
+    await scheduler.settled();
+    await scheduler.close();
+    expect(started).toEqual([0]);
+  }, 1000);
   it("never exceeds the concurrency limit and starts segments strictly in order", async () => {
     const clock = new FakeClock(), p = plan(doc);
     let running = 0, peak = 0;
@@ -133,25 +190,35 @@ describe("createSegmentScheduler: bounded, ordered, abortable", () => {
     expect(started.length).toBeGreaterThan(p.chunks[0].end);
   });
   it("after abort nothing new starts, queued requests reject, and settled() waits for in-flight ones", async () => {
-    const clock = new FakeClock(), p = plan(doc), controller = new AbortController();
+    const p = plan(doc), controller = new AbortController();
     const started: number[] = [], finished: number[] = [];
+    const engines = p.segments.map(() => Promise.withResolvers<void>());
     const scheduler = createSegmentScheduler(p, async (_s, index, signal) => {
-      started.push(index); await clock.sleep(50); finished.push(index);
+      started.push(index); await engines[index].promise; finished.push(index);
       if (signal.aborted) throw new Error("killed");
       return index;
     }, { signal: controller.signal });
     const first = scheduler.chunk(0), second = scheduler.chunk(1);
     first.catch(() => {}); second.catch(() => {});
-    await clock.until(Promise.resolve());
     controller.abort();
-    await expect(clock.until(first)).rejects.toThrow();
-    await expect(clock.until(second)).rejects.toThrow();
-    await clock.until(scheduler.settled());
+    await expect(second).rejects.toBe(controller.signal.reason);
+    let drained = 0;
+    const drains = [scheduler.settled(), scheduler.settled()].map((drain) => drain.then(() => { drained++; }));
+    for (const index of [2, 1]) {
+      engines[index].resolve();
+      await Bun.sleep(0);
+      expect(drained).toBe(0);
+    }
+    engines[0].resolve();
+    await expect(first).rejects.toThrow("killed");
+    await Promise.all(drains);
+    expect(drained).toBe(2);
     expect(started).toEqual([0, 1, 2]);
-    expect(finished).toEqual([0, 1, 2]);
+    expect(finished).toEqual([2, 1, 0]);
     await expect(scheduler.chunk(2)).rejects.toThrow();
     expect(started).toEqual([0, 1, 2]);
-  });
+    await scheduler.close();
+  }, 1000);
   it("a failed request stops later starts and fails its chunk with the original error", async () => {
     const clock = new FakeClock(), p = plan(doc);
     const started: number[] = [];

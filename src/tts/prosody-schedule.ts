@@ -27,7 +27,7 @@ export function createSegmentScheduler<T>(
   { signal, concurrency = PROSODY_SYNTH_CONCURRENCY, lookahead = 2, dispose }: SegmentSchedulerOptions<T>,
 ): SegmentScheduler<T> {
   const tasks: Task<T>[] = [];
-  const inFlight = new Set<Promise<unknown>>();
+  const drainWaiters = new Set<() => void>();
   /** Ownership transfers to the caller only when a whole chunk is delivered; everything else is ours. */
   const handedOut = new Set<number>(), released = new Set<number>();
   let next = 0, running = 0, stopped: unknown, closed = false;
@@ -59,15 +59,29 @@ export function createSegmentScheduler<T>(
       if (stopped !== undefined) reject(stopped);
     }
   };
+  const start = (index: number, task: Task<T>): Promise<T> => {
+    try {
+      return synthesize(plan.segments[index], index, signal);
+    } catch (error) {
+      task.reject(error);
+      stop(new Error("Synthesis stopped after an earlier failure"));
+      return Promise.reject(error);
+    }
+  };
   const pump = () => {
     while (stopped === undefined && running < concurrency && next < tasks.length) {
       const index = next++, task = tasks[index];
       task.started = true; running++;
-      const run = synthesize(plan.segments[index], index, signal).then(
+      void start(index, task).then(
         (value) => { task.result = { value }; task.resolve(value); },
         (error) => { task.reject(error); stop(new Error("Synthesis stopped after an earlier failure")); },
-      ).finally(() => { running--; inFlight.delete(run); pump(); });
-      inFlight.add(run);
+      ).finally(() => {
+        running--; pump();
+        if (running === 0) {
+          for (const resolve of drainWaiters) resolve();
+          drainWaiters.clear();
+        }
+      });
     }
   };
 
@@ -88,8 +102,8 @@ export function createSegmentScheduler<T>(
         return values;
       });
     },
-    async settled() {
-      while (inFlight.size) await Promise.allSettled([...inFlight]);
+    settled() {
+      return running === 0 ? Promise.resolve() : new Promise<void>((resolve) => drainWaiters.add(resolve));
     },
     async close() {
       closed = true;
