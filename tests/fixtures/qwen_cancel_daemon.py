@@ -47,10 +47,26 @@ def generate_audio(model, text, output_path, **kwargs):
     (Path(output_path) / "synthesis.mp3").write_bytes(result)
 
 
+def load_model(_):
+    (root / "loading").touch()
+    deadline = time.monotonic() + 5
+    while (root / "block-load").exists() and not (root / "release-load").exists():
+        if time.monotonic() >= deadline:
+            raise RuntimeError("stub model load gate timed out")
+        time.sleep(0.01)
+    return StepModel()
+
+
+def clear_cache():
+    with (root / "cache-cleared").open("a") as output:
+        output.write("clear\n")
+
+
 sys.modules.update({
+    "mlx.core": SimpleNamespace(clear_cache=clear_cache),
     "mlx_audio": SimpleNamespace(),
     "mlx_audio.tts": SimpleNamespace(),
-    "mlx_audio.tts.utils": SimpleNamespace(load=lambda _: StepModel()),
+    "mlx_audio.tts.utils": SimpleNamespace(load=load_model),
     "mlx_audio.tts.generate": SimpleNamespace(generate_audio=generate_audio),
 })
 os.environ["VOICELAYER_MODEL_IDLE_UNLOAD_SECONDS"] = "600"

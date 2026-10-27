@@ -42,7 +42,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install daemon test dependencies
-        run: python3 -m pip install fastapi uvicorn pytest httpx
+        run: python3 -m pip install -r tests/requirements-tts-daemon.txt
 
       - name: Test TTS daemon
         run: python3 -m pytest -q tests/test_tts_daemon_cancel.py tests/test_tts_daemon.py tests/test_tts_daemon_security.py tests/test_model_residency.py

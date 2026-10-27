@@ -3,7 +3,22 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-test("aborting clone synthesis releases the Python worker for the next clone", async () => {
+const pythonDependencies = Bun.spawnSync({
+  cmd: ["python3", "-c", "import fastapi, uvicorn"],
+  env: process.env,
+  stdout: "ignore",
+  stderr: "pipe",
+});
+const hasPythonDependencies = pythonDependencies.exitCode === 0;
+if (!hasPythonDependencies) {
+  console.warn(
+    "SKIP qwen3-cancel: python3 cannot import fastapi, uvicorn. " +
+    "Install tests/requirements-tts-daemon.txt for this integration test.\n" +
+    pythonDependencies.stderr.toString(),
+  );
+}
+
+test.skipIf(!hasPythonDependencies)("aborting clone synthesis releases the Python worker for the next clone", async () => {
   const root = mkdtempSync(join(tmpdir(), "qwen-cancel-"));
   const child = Bun.spawn({
     cmd: [process.execPath, "-e", `

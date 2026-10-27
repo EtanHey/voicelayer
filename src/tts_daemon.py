@@ -481,9 +481,15 @@ def create_app(
     def synthesize_resident(req, request, cancelled):
         check_cancelled(cancelled)
         with resident_model():
-            check_cancelled(cancelled)
-            with cancellable_generation(model, cancelled):
-                return synthesize_loaded(req, request)
+            try:
+                check_cancelled(cancelled)
+                with cancellable_generation(model, cancelled):
+                    return synthesize_loaded(req, request)
+            except SynthesisCancelled:
+                gc.collect()
+                if "mlx.core" in sys.modules:
+                    sys.modules["mlx.core"].clear_cache()
+                raise
 
     def synthesize_loaded(req: SynthesizeRequest, request: Request):
         """Synthesize speech using a bearer-authenticated WAV under ~/.voicelayer/voices/."""

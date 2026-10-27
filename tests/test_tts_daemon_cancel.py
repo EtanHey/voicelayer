@@ -68,6 +68,7 @@ def test_disconnect_stops_generation_and_next_request_succeeds(daemon, text):
     assert response.status_code == 200
     assert set(response.json()) == {"audio_b64", "duration_ms"}
     assert (root / f"closed-{text}").exists()
+    assert (root / "cache-cleared").exists()
     assert len((root / f"steps-{text}").read_text().splitlines()) < 300
     assert all(not Path(p).exists() for p in (root / "output-dirs").read_text().splitlines())
 
@@ -91,3 +92,18 @@ def test_generation_failure_releases_worker(daemon):
     root, _, client = daemon
     assert client.post("/synthesize", json=payload(root, "error")).status_code == 500
     assert client.post("/synthesize", json=payload(root, "next")).status_code == 200
+
+
+def test_disconnect_during_model_load_skips_generation_and_releases_worker(daemon):
+    root, port, client = daemon
+    (root / "block-load").touch()
+    with start_request(root, port, "slow"):
+        wait_for(lambda: (root / "loading").exists())
+    time.sleep(0.15)
+    (root / "release-load").touch()
+    started = time.monotonic()
+    response = client.post("/synthesize", json=payload(root, "next"))
+    assert time.monotonic() - started < 1
+    assert response.status_code == 200
+    assert not (root / "started-slow").exists()
+    assert (root / "cache-cleared").exists()
