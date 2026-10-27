@@ -9,7 +9,7 @@ test("aborting clone synthesis releases the Python worker for the next clone", a
     cmd: [process.execPath, "-e", `
       import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
       import { join } from "node:path";
-      const root = process.env.HOME;
+      const root = process.env.QWEN_CANCEL_TEST_ROOT;
       const daemon = Bun.spawn({
         cmd: ["python3", "tests/fixtures/qwen_cancel_daemon.py", root],
         env: process.env, stdout: "ignore", stderr: "inherit",
@@ -57,7 +57,7 @@ test("aborting clone synthesis releases the Python worker for the next clone", a
         await daemon.exited;
       }
     `],
-    env: { ...process.env, HOME: root },
+    env: { ...process.env, HOME: root, QWEN_CANCEL_TEST_ROOT: root },
     stdout: "pipe",
     stderr: "pipe",
   });
