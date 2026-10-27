@@ -81,9 +81,9 @@ history = RUN / "history.json"
 history.write_text(json.dumps([dict(trace=paths[source] + [re.search(r'event = "(\w+)"', nodes[target])[1]],
                                   state=re.search(r'\bstate = "(\w+)"', nodes[target])[1],
                                   moves=int(re.search(r'\bmoves = (\d+)', nodes[target])[1])) for source, target in edges]))
-run = subprocess.run(["bun", "test", "src/__tests__/speech-queue-model.test.ts", "src/__tests__/speech-history-model.test.ts"], cwd=ROOT,
+run = subprocess.run(["timeout", "-s", "KILL", "900", "bun", "test", "src/__tests__/speech-queue-model.test.ts", "src/__tests__/speech-history-model.test.ts"], cwd=ROOT,
                      env={**os.environ, "VOICELAYER_SPEECH_QUEUE_MODEL_CASES": str(corpus),
-                          "VOICELAYER_SPEECH_HISTORY_MODEL_CASES": str(history)}, capture_output=True, text=True, timeout=120)
+                          "VOICELAYER_SPEECH_HISTORY_MODEL_CASES": str(history)}, capture_output=True, text=True)
 (RUN / "conformance.log").write_text(run.stdout + run.stderr)
 print(run.stdout + run.stderr, end="", flush=True)
 if run.returncode:

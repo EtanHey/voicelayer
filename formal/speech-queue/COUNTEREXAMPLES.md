@@ -2,7 +2,7 @@
 
 Status: bounded backend verification; **the four installed-app bugs remain unresolved**. No product fix, install, microphone, speaker, live socket or private archive access is part of this change.
 
-Run `formal/speech-queue/check.sh` from the repository. Requires Python 3, Bun dependencies (`bun install --frozen-lockfile`), Java and `~/.local/bin/tlc`. Tested with the existing tla2tools-1.7.4.jar launcher, which reports TLC2 2.19, revision `5a47802`. Logs, graph and generated replay corpus stay in a unique `.build.noindex/formal-speech-queue/run-*` directory. An unexpected TLC result, parse failure, timeout or real-code mismatch exits nonzero.
+Run `formal/speech-queue/check.sh` from the repository. Requires Python 3, Bun dependencies (`bun install --frozen-lockfile`), GNU `timeout`, Java and `~/.local/bin/tlc`. Tested with the existing tla2tools-1.7.4.jar launcher, which reports TLC2 2.19, revision `5a47802`. Logs, graph and generated replay corpus stay in a unique `.build.noindex/formal-speech-queue/run-*` directory. Tests run in the foreground under `timeout -s KILL 900 bun test`; an unexpected TLC result, parse failure, timeout or real-code mismatch exits nonzero.
 
 ## What changed from TLA3
 
@@ -32,7 +32,7 @@ The restored baseline passed: `Current.cfg` explored 11,163 states and 148,728 r
 
 The unchanged fixtures passed, 301 tests / 0 failures, with the canonical preload:
 ```sh
-bun test src/__tests__/{selection-read-queue,socket-stop-queue,wordtime-history,speech-state,speech-state-store,speech-state-followups,mcp-speak-archive-ingress,socket-raw-speak-archive-ingress,cli-local-speak-archive-ingress,ask-preview-speak-archive-ingress}.test.ts
+timeout -s KILL 900 bun test src/__tests__/{selection-read-queue,socket-stop-queue,wordtime-history,speech-state,speech-state-store,speech-state-followups,mcp-speak-archive-ingress,socket-raw-speak-archive-ingress,cli-local-speak-archive-ingress,ask-preview-speak-archive-ingress}.test.ts
 ```
 
 ## Live bug disposition
@@ -46,6 +46,8 @@ bun test src/__tests__/{selection-read-queue,socket-stop-queue,wordtime-history,
 **4. History stuck Playing/PID reuse — outside in-memory queue state.** `src/speech-archive-recovery-worker.ts:43-47` trusts numeric-PID liveness via `process.kill(pid, 0)` and skips recovery when that PID exists, without process-start identity. `flow-bar/Sources/VoiceBarUI/SettingsSpeechHistoryArchive.swift:101-118` renders the stored playing state. A reused PID can therefore evade that recovery branch, but no private entry or restarted daemon was tested. Durable writer/recovery ownership needs its own model and real recovery regression; a queue pass provides no History proof.
 
 The brief's optional B-queue QA findings file was absent during source reconnaissance. No video-derived claim is made. Use `/statechart` to interpret TLC traces and `/maintain-formal-verification-skill` when updating the model: reread mapped source, rerun conformance and negative experiments, then advance `sync_sha`; do not weaken an invariant to clear a source finding.
+
+**Prosody abort hang (separate lane):** the lead reported `src/__tests__/prosody-schedule.test.ts:134` ran for 23.5 hours at 97% CPU. That test awaits `scheduler.settled()` through `FakeClock.until`, whose microtask/timer loop is not represented here. These queue/terminal safety models contain no scheduler tasks, virtual clock, event-loop fairness or abort/drain liveness. They do not explain the hang or prove its repair; that test and its scheduler remain unchanged.
 
 ## API constraints for NL T3 alignment
 
