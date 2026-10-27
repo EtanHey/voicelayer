@@ -19,6 +19,7 @@ import {
   SpeechPreparationStoppedError,
   speak,
   getHistoryEntry,
+  historyReplayMetadata,
   playAudioNonBlocking,
   awaitCurrentPlayback,
   getPlaybackQueueDepth,
@@ -1088,10 +1089,7 @@ export async function handleReplay(args: unknown): Promise<McpResult> {
 
   // Play audio non-blocking — pass metadata for queue-aware broadcasting
   try {
-    playAudioNonBlocking(entry.file, {
-      text: entry.text.slice(0, 2000),
-      voice: entry.voice,
-    });
+    playAudioNonBlocking(entry.file, historyReplayMetadata(entry));
   } catch (err) {
     return textResult(
       formatError(

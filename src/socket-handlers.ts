@@ -28,6 +28,7 @@ import {
   speak,
   awaitCurrentPlayback,
   getHistoryEntry,
+  historyReplayMetadata,
   playAudioNonBlocking,
   restartPlayback,
   stopPlayback,
@@ -68,7 +69,7 @@ import type {
   SocketResponse,
 } from "./socket-protocol";
 import { buildHealthResponse } from "./daemon-health";
-import { displayTokenBoundaries, getPlaybackQueueDepth } from "./tts";
+import { getPlaybackQueueDepth } from "./tts";
 import { getRecordingState, reportInputDeviceLost } from "./input";
 import {
   addAlias,
@@ -99,7 +100,6 @@ import {
 import { whisperLifecycleGate } from "./whisper-lifecycle-gate";
 import { reserveStandardVoiceOperation, hasActiveVoiceOperation } from "./voice-operation-reservation";
 import { projectStructuredSpeech } from "./tts/structured-speech";
-import { clipAlignedWordsToText, clipWordBoundariesToText, replayDisplayText } from "./tts/history-timings";
 
 let modelStatusRevision = 0;
 function publishModelStatusEvent(): void {
@@ -326,15 +326,7 @@ export function handleSocketCommand(
       const entry = getHistoryEntry(0);
       if (entry && existsSync(entry.file)) {
         try {
-          const text = replayDisplayText(entry.text);
-          // WORDTIME1: a replay carries the timings the read used, so it is never less timed than the first run.
-          playAudioNonBlocking(entry.file, {
-            text,
-            voice: entry.voice,
-            ...(entry.alignedWords?.length ? { alignedWords: clipAlignedWordsToText(entry.alignedWords, text) } : {}),
-            ...(entry.wordBoundaries?.length ? { wordBoundaries: text === entry.text ? entry.wordBoundaries
-              : clipWordBoundariesToText(displayTokenBoundaries(entry.text, entry.wordBoundaries), text) } : {}),
-          });
+          playAudioNonBlocking(entry.file, historyReplayMetadata(entry));
         } catch (err) {
           return buildAck(
             command,

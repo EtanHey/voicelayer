@@ -2474,7 +2474,8 @@ public final class VoiceState {
                     let stored = playbackTimelineChunks[playbackChunkStartMilliseconds]
                     wordBoundaries = stored?.text == event["text"] as? String ? stored?.words ?? [] : []
                 }
-                updateLongReadDocument(longRead, readbackID: playbackReadbackID, chunkText: event["text"] as? String ?? "")
+                updateLongReadDocument(longRead, readbackID: playbackReadbackID,
+                                       chunkText: event["text"] as? String ?? "", displayValue: event["display"])
                 mode = .speaking
                 isTeleprompterDismissed = false
                 // Every speaking edge is the daemon playing: the resumed read or its replacement.
@@ -3446,8 +3447,8 @@ public final class VoiceState {
 
     /// Preparing brings the read's document; each chunk that is exactly its slice keeps that one page.
     /// A readback replay of the same audio keeps it too. Anything else is today's per-chunk text.
-    private func updateLongReadDocument(_ longRead: [String: Any]?, readbackID: String?, chunkText: String) {
-        let display = TeleprompterStructuredDisplay.decode(longRead?["display"], text: chunkText)
+    private func updateLongReadDocument(_ longRead: [String: Any]?, readbackID: String?, chunkText: String, displayValue: Any?) {
+        let display = TeleprompterStructuredDisplay.decode(displayValue ?? longRead?["display"], text: chunkText)
         currentStructuredDisplay = display
         isShowingLongReadDocument = false
         longReadDocumentWordStart = nil
