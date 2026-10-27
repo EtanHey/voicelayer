@@ -165,9 +165,23 @@ test("history membership repairs deletion and rejects marker symlinks", () => {
   fs.writeFileSync(outside, "synthetic retained bytes");
   fs.unlinkSync(marker);
   fs.symlinkSync(outside, marker);
-  expect(transitionSpeakArchive(c, "failed").kind).toBe("failed");
+  expect(transitionSpeakArchive(c, "failed").kind).toBe("stored");
+  expect(fs.existsSync(join(speechOpenIndex(), c.id))).toBe(false);
   expect(fs.readFileSync(outside, "utf8")).toBe("synthetic retained bytes");
   fs.unlinkSync(marker);
   expect(recoverSpeakArchive(c.id).kind).toBe("stored");
   expect(fs.lstatSync(marker).isFile()).toBe(true);
+});
+
+test("directory history marker preserves terminal writes and unchanged recovery", () => {
+  const c = receipt(), marker = join(speechHistoryIndex(), c.id);
+  fs.unlinkSync(marker); fs.mkdirSync(marker, { mode: 0o700 });
+  expect(transitionSpeakArchive(c, "preparing").kind).toBe("stored");
+  expect(transitionSpeakArchive(c, "failed").kind).toBe("stored");
+  expect(fs.existsSync(join(speechOpenIndex(), c.id))).toBe(false);
+  expect(disk(c).status).toBe("failed");
+  expect(recoverSpeakArchive(c.id).kind).toBe("stored");
+  const before = fs.readFileSync(join(c.path, "metadata.json"));
+  expect(recoverSpeakArchive(c.id).kind).toBe("stored");
+  expect(fs.readFileSync(join(c.path, "metadata.json"))).toEqual(before);
 });

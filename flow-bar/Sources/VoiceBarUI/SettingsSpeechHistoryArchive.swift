@@ -149,7 +149,6 @@ struct SettingsSpeechHistoryReloadRequest: Equatable {
 
 /// One Speech history load, run from the scope's `.task(id:)`. Returns nil when that task was
 /// cancelled (a newer load replaced it), so stale entries are never applied.
-///
 enum SettingsSpeechHistoryReload {
     static func run(
         debounce: Bool,

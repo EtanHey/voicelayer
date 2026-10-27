@@ -68,6 +68,28 @@ final class SettingsSpeechHistoryTests: XCTestCase {
         XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root, limit: 0), [])
     }
 
+    func testMissingMarkerAndPendingMetadataAreHealedOnReopen() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let index = URL(fileURLWithPath: root.path + ".speech-history-v1")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: index)
+        }
+        let id = "2026-10-26T12-00-00-000Z-00000001"
+        let entry = root.appendingPathComponent("2026-10-26/" + id)
+        try FileManager.default.createDirectory(at: entry, withIntermediateDirectories: true)
+        let day = entry.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_760_486_400)], ofItemAtPath: day.path)
+        XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root), [])
+        let modified = try FileManager.default.attributesOfItem(atPath: day.path)[.modificationDate]
+        try #"{"schema_version":1,"source":"speak","id":"\#(id)","created_at":"2026-10-26T12:00:00Z","status":"received"}"#
+            .write(to: entry.appendingPathComponent("metadata.json"), atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: try XCTUnwrap(modified)], ofItemAtPath: day.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: index.appendingPathComponent(id).path))
+        XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).map(\.id), [id])
+        XCTAssertEqual(SettingsSpeechHistoryArchive.load(from: root).map(\.id), [id])
+    }
+
     func testCancelledMigrationDoesNotPublishCheckpoint() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let index = URL(fileURLWithPath: root.path + ".speech-history-v1")

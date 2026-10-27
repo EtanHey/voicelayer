@@ -44,7 +44,7 @@ enum SettingsSpeechHistoryIndex {
                 let id = entry.lastPathComponent
                 guard validID(id), id.hasPrefix(key + "T"), safeDirectory(entry) else { continue }
                 let metadata = entry.appendingPathComponent("metadata.json")
-                guard let file = safeFile(metadata) else { continue }
+                guard let file = safeFile(metadata) else { readable = false; continue }
                 metadataRead(file)
                 guard let data = try? Data(contentsOf: file) else { readable = false; continue }
                 if (try? JSONDecoder().decode(Source.self, from: data))?.source == "speak" { speech.append(id) }

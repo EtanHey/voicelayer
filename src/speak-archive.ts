@@ -169,8 +169,8 @@ export function createSpeakReceipt(
     beginSpeechReceipt(id);
     writeReceiptFile(path, "metadata.json", encoded);
     indexOpenSpeech(id);
-    indexSpeechHistory(id);
     finishSpeechReceipt(id, process.pid);
+    indexSpeechHistory(id);
     return { kind: "created", context: { ...partial, metadata } };
   } catch (error) {
     // Never return/log the raw filesystem exception, request text or transport object.

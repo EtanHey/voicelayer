@@ -138,8 +138,8 @@ function persist(entry: string, m: SpeakStoreMetadata) {
       ? audio.reduce((sum, a) => sum + a!.duration_ms!, 0) : null;
   }
   m.updated_at = new Date().toISOString(); publish(entry, "metadata.json", encode(m));
-  indexSpeechHistory(m.id);
   if (terminal.has(m.status)) unindexSpeech(m.id);
+  indexSpeechHistory(m.id);
   return m;
 }
 function current(entry: string, context: Context) {
@@ -357,8 +357,8 @@ export function recoverSpeakArchive(id: string): SpeakStoreResult {
       if (audioExists) sync(join(entry, "audio"));
       if (before.equals(encode(m))) {
         sync(entry);
-        indexSpeechHistory(m.id);
         if (terminal.has(m.status)) unindexSpeech(m.id);
+        indexSpeechHistory(m.id);
         return m;
       }
     } catch { throw new Failure("SYNC_UNCERTAIN"); }
