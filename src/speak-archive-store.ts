@@ -49,6 +49,7 @@ const metadata = z.object({ speech: speechSchema.optional(), schema_version: z.l
   request_source: z.enum(["voice_speak", "selection", "clipboard", "cli", "preview", "ask_prompt", "direct"]).nullable(),
   connection: z.enum(["stdio", "daemon", "cli_local"]).nullable(), format: z.enum(["plain", "markdown"]).nullable(),
   blocking: z.boolean().nullable(), requested: config,
+  capture_path: z.enum(["ax", "copy"]).optional(),
   build: z.object({ app_version: nullableText, daemon_version: nullableText, git_sha: nullableText, executable_hash: nullableText }),
   input: z.object({ bytes: count, sha256: hash }), status, generation_id: nullableText,
   parent_ask_id: nullableText.default(null), caller_request_id: nullableText.default(null),
