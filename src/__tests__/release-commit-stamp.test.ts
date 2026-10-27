@@ -8,7 +8,7 @@ const commit = "1234567890abcdef1234567890abcdef12345678";
 const otherCommit = "abcdef1234567890abcdef1234567890abcdef12";
 
 function run(args: string[], cwd: string, env = process.env) {
-  return Bun.spawnSync(args, { cwd, env, stdout: "pipe", stderr: "pipe" });
+  return Bun.spawnSync(args, { cwd, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
 }
 
 function fixture() {
