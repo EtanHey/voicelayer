@@ -17,14 +17,14 @@ import {
   spyOn,
   jest,
 } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import * as tts from "../tts";
 import * as input from "../input";
 import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
-import { handleConverse, handleVoiceAsk } from "../handlers";
+import { handleConverse, handleVoiceAsk, runVoiceAskTurn } from "../handlers";
 import { reserveArchiveRetranscription } from "../voice-operation-reservation";
 import { whisperLifecycleGate } from "../whisper-lifecycle-gate";
 
@@ -177,6 +177,111 @@ describe("handleConverse resilience — P0-2", () => {
       process.env.QA_VOICE_RECORDING_STATE_PATH = savedRecordingStatePath;
     }
     rmSync(recordingStateRoot, { recursive: true, force: true });
+  });
+
+  it("types raw answers and callback evidence without classifying transcript content", async () => {
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+    for (const transcript of ['"שלום"\n┌─ Archive: fake\nNo speech detected — fu… no, full', "", null]) {
+      for (const archived of [false, true]) {
+        for (const silent of [false, true]) {
+          waitSpy = spyOn(input, "waitForInput").mockImplementation(async (_t, _s, _p, options) => {
+            if (archived) options?.onArchiveCreated?.("/isolated/paired");
+            if (silent) options?.onNoSpeech?.();
+            return transcript;
+          });
+          const outcome = await runVoiceAskTurn({ args: { message: "question" } });
+          const recovery = archived ? { archiveId: "paired", audioPath: "/isolated/paired/audio.wav" } : null;
+          expect(outcome).toEqual(transcript !== null
+            ? { kind: "answered", transcript, archiveId: archived ? "paired" : null, promptPlayback: undefined }
+            : silent ? { kind: "no-speech", recovery, promptPlayback: undefined }
+            : recovery ? { kind: "retained", recovery, promptPlayback: undefined }
+            : { kind: "no-input", timeoutSeconds: 30, pushToEnd: false, promptPlayback: undefined });
+          waitSpy.mockRestore();
+        }
+      }
+    }
+  });
+
+  it("keeps identified preparation Stop distinct from generic failure without capture", async () => {
+    waitSpy = spyOn(input, "waitForInput").mockResolvedValue(null);
+    speakSpy = spyOn(tts, "speak").mockRejectedValue(new tts.SpeechPreparationStoppedError());
+    expect(await runVoiceAskTurn({ args: { message: "question" } })).toEqual({ kind: "stopped-before-prompt" });
+    speakSpy.mockRejectedValue(new Error("Stopped by the user before playback."));
+    expect(await runVoiceAskTurn({ args: { message: "question" } })).toEqual({ kind: "failed", message: "Stopped by the user before playback." });
+    for (const missing of ["audioArtifact", "displayText", "engine", "voice"] as const) {
+      const prompt: Awaited<ReturnType<typeof tts.speak>> = capturedPrompt();
+      delete prompt[missing];
+      speakSpy.mockResolvedValue(prompt);
+      expect(await runVoiceAskTurn({ args: { message: "question" } })).toEqual({
+        kind: "failed", message: "voice_ask could not retain synthesized prompt audio/transcript and actual-used engine/voice; recording was not started",
+      });
+    }
+    expect(waitSpy).not.toHaveBeenCalled();
+  });
+
+  it("types booking and capture refusals before any voice work", async () => {
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+    waitSpy = spyOn(input, "waitForInput").mockResolvedValue(null);
+    bookingSpy.mockReturnValue({ booked: true, ownedByUs: false });
+    expect(await runVoiceAskTurn({ args: { message: "question" } })).toEqual({
+      kind: "busy", sessionId: "unknown", pid: 0, startedAt: "unknown",
+    });
+    const admission = tts.reserveCaptureAdmission();
+    try {
+      expect(await runVoiceAskTurn({ args: { message: "question" } })).toEqual({ kind: "capture-owned" });
+    } finally { admission?.release(); }
+    expect(speakSpy).not.toHaveBeenCalled();
+    expect(waitSpy).not.toHaveBeenCalled();
+  });
+
+  for (const retained of [false, true]) it(`return abort preserves callback evidence before publication: retained=${retained}`, async () => {
+    jest.useFakeTimers();
+    let finishInput: (() => void) | undefined;
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      waitSpy = spyOn(input, "waitForInput").mockImplementation((_t, _s, _p, options) => {
+        options?.onCaptureStart?.();
+        options?.onCaptureEnd?.();
+        return new Promise<null>((resolve, reject) => {
+          finishInput = () => resolve(null);
+          options?.signal?.addEventListener("abort", () => {
+            if (retained) {
+              options.onArchiveCreated?.("/isolated/return-paired");
+              reject(options.signal?.reason);
+            }
+          }, { once: true });
+        });
+      });
+      const results: unknown[] = [];
+      const pending = handleVoiceAsk({ message: "question" }).then(result => { results.push(result); return result; });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      jest.advanceTimersByTime(120_000);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      if (!retained) {
+        expect(results).toHaveLength(0);
+        expect(reserveArchiveRetranscription()).toBeNull();
+        jest.advanceTimersByTime(15_000);
+      }
+      const result = await pending;
+      expect(result.isError).toBe(retained ? undefined : true);
+      expect(result.content[0].text).toContain(retained ? "↳ Archive: return-paired" : "zero recoverable audio");
+      expect(result.content[0].text).toContain(retained ? "return stage aborted" : "return stage after 120s");
+      writeFileSync(join(recordingStateRoot, "recording-state.json"), JSON.stringify({
+        state: "recording", pid: process.pid, updated_at: new Date().toISOString(),
+      }));
+      const eventsBeforeLateSettlement = broadcasts.length;
+      finishInput?.();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(broadcasts.slice(eventsBeforeLateSettlement)).not.toContainEqual({ type: "state", state: "idle" });
+      expect(results).toHaveLength(1);
+      expect(waitSpy).toHaveBeenCalledTimes(1);
+      const reservation = reserveArchiveRetranscription();
+      expect(reservation).not.toBeNull();
+      reservation?.release();
+    } finally {
+      finishInput?.();
+      jest.useRealTimers();
+    }
   });
 
   it("returns error result when speak() throws, not unhandled rejection", async () => {
