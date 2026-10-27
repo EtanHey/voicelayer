@@ -8,6 +8,7 @@
     "voicelayer": "src/cli/voicelayer.sh"
   },
   "files": [
+    "build-info.json",
     "src/**/*.ts",
     "src/**/*.py",
     "!src/__tests__/**",
