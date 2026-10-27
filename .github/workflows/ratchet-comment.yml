@@ -9,6 +9,7 @@ permissions:
   pull-requests: write
 concurrency:
   group: ratchet-comment-${{ github.event.workflow_run.head_sha }}
+  queue: max
   cancel-in-progress: false
 jobs:
   comment:
