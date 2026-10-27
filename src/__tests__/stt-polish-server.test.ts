@@ -421,26 +421,26 @@ describe("stt-polish-server", () => {
 
   it("reaps stale local polish port owners on an explicit force restart", async () => {
     resetSTTPolishServerManagerForTests();
+    let alive = true;
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
     const spawnCalls: string[][] = [];
     let readinessChecks = 0;
-    let ownerAlive = true;
 
     const result = await ensureSTTPolishServer({
       env: { QA_VOICE_STT_POLISH: "on" },
       findBinary: () => "/tmp/mlx_lm.server",
       isResidentStack: () => true,
       forceRestart: true,
+      isProcessAlive: (pid) => pid === 70870 && alive,
       findStalePortOwnerPids: () => [70870],
-      isProcessAlive: (pid) => pid === 70870 && ownerAlive,
       killProcess: (pid, signal) => {
         killed.push({ pid, signal });
-        ownerAlive = false;
+        if (signal === "SIGTERM") alive = false;
       },
       isEndpointReady: async () => ++readinessChecks >= 2,
       spawn: (args) => {
-        expect(ownerAlive).toBe(false);
+        expect(alive).toBe(false);
         spawnCalls.push(args);
         return { pid: 456, exited: new Promise(() => {}) };
       },
@@ -552,6 +552,31 @@ describe("stt-polish-server", () => {
     expect(killed).toEqual([{ pid: 70870, signal: "SIGTERM" }, { pid: 70870, signal: "SIGKILL" }]);
     expect(spawns).toBe(0);
     resetSTTPolishServerManagerForTests();
+  });
+
+  it("preserves a listed polish port owner after its PID is observed dead", async () => {
+    resetSTTPolishServerManagerForTests();
+    let spawns = 0;
+    const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
+    try {
+      const result = await ensureSTTPolishServer({
+        env: { QA_VOICE_STT_POLISH: "on" },
+        forceRestart: true,
+        findBinary: () => "/tmp/mlx_lm.server",
+        isResidentStack: () => true,
+        isProcessAlive: () => false,
+        findStalePortOwnerPids: () => [70870],
+        findPortOwnerPids: () => [70870],
+        killProcess: (pid, signal) => { killed.push({ pid, signal }); },
+        isEndpointReady: async () => false,
+        spawn: () => { spawns++; return { pid: 456 }; },
+        appendEvent: () => {}, sleep: async () => {}, log: () => {},
+        startupTimeoutMs: 1,
+      });
+      expect(result).toEqual({ status: "starting", pid: 70870 });
+      expect(killed).toEqual([{ pid: 70870, signal: "SIGTERM" }]);
+      expect(spawns).toBe(0);
+    } finally { resetSTTPolishServerManagerForTests(); }
   });
 
   it("coalesces force restart with an in-flight polish launch", async () => {
