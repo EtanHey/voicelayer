@@ -118,6 +118,20 @@ describe("createSegmentScheduler: bounded, ordered, abortable", () => {
     expect(new Set(disposed).size).toBe(disposed.length);
   });
   const doc = "## Status\n\nThe build is green.\n\n- One\n- Two\n- Three\n- Four\n- Five\n\nDone.";
+  it("drains synthesis that returns a plain value instead of a promise", async () => {
+    const clock = new FakeClock(), p = plan(doc);
+    const started: number[] = [];
+    const scheduler = createSegmentScheduler(p, (_segment, index) => {
+      started.push(index);
+      return index as unknown as Promise<number>;
+    }, { signal: new AbortController().signal });
+    const first = Promise.resolve().then(() => scheduler.chunk(0));
+    const outcome = await first.then((value) => ({ value }), (error: unknown) => ({ error }));
+    await clock.until(scheduler.settled());
+    expect(outcome).toEqual({ value: [0] });
+    expect(started).toEqual(Array.from({ length: p.chunks[2].end }, (_, index) => index));
+    await clock.until(scheduler.close());
+  }, 1000);
   it("reaps in-flight synthesis after another start throws synchronously", async () => {
     const p = plan(doc), controller = new AbortController();
     const started: number[] = [], disposed: number[] = [];

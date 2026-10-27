@@ -61,7 +61,7 @@ export function createSegmentScheduler<T>(
   };
   const start = (index: number, task: Task<T>): Promise<T> => {
     try {
-      return synthesize(plan.segments[index], index, signal);
+      return Promise.resolve(synthesize(plan.segments[index], index, signal));
     } catch (error) {
       task.reject(error);
       stop(new Error("Synthesis stopped after an earlier failure"));
