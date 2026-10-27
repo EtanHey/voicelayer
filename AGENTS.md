@@ -208,7 +208,9 @@ Use `brain_search` before reading files. VoiceLayer history is indexed.
   boots it out and deletes its plist, printing *"Retired. VoiceBar.app now owns the MCP daemon child
   process."* A second owner is the double-owner bug that took five commits to fix.
 - Singleton daemon on `/tmp/voicelayer-mcp.sock` — replaces per-session `voicelayer-mcp` spawning.
-- `.mcp.json` config: `{ "command": "socat", "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] }`
+- `.mcp.json` config: `{ "command": "voicelayer-mcp-bridge", "args": [] }`
+- The bridge keeps stdio open across daemon restarts and replays the MCP handshake before draining its bounded queue. Interrupted requests return an error and are never retried; execution may already have occurred. It only connects; VoiceBar owns daemon startup.
+- Socket overrides: `VOICELAYER_MCP_SOCKET_PATH`, then `QA_VOICE_MCP_SOCKET_PATH`. If the bridge binary is missing, migration retains socat as a fallback (without reconnect support).
 - Migration: `bash scripts/migrate-to-daemon.sh` (migrates all repos under ~/Gits).
 
 ## Build artifacts and Spotlight

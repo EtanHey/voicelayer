@@ -8,6 +8,8 @@
 - No discovery file — fixed socket path. Voice Bar survives MCP reconnects.
 
 ## MCP Daemon Ownership
+- Seat `.mcp.json`: `{ "command": "voicelayer-mcp-bridge", "args": [] }`. The packaged bridge reconnects, replays `initialize` and `notifications/initialized`, then drains at most 128 queued frames (1 MiB total). Interrupted requests receive an error with their ID and are never retried; execution may already have occurred.
+- `bash scripts/migrate-to-daemon.sh [--dry-run] [--root DIRECTORY]` updates matching seats idempotently, preserving metadata and backups. Missing bridge binary falls back to socat, which cannot reconnect. Migration does not start the daemon.
 - Daily-driver supervision is `launchd -> VoiceBar.app -> child MCP daemon`.
 - `com.voicelayer.mcp-daemon` is retired. `bash launchd/install.sh` now removes that old daemon LaunchAgent instead of installing it.
 - VoiceBar is the sole daemon owner. It launches `src/mcp-server-daemon.ts` as a child process so macOS microphone TCC is inherited from the app.
