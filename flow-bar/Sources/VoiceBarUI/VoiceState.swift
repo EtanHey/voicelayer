@@ -44,8 +44,8 @@ public struct SelectionCaptureResult: Equatable {
     /// AXManualAccessibility recovery for a Chromium/Electron app whose AX tree was still off.
     public enum AXEnable: String { case attempted, set, failed }
 
-    public let outcome: Outcome
-    public let text: String?
+    public private(set) var outcome: Outcome
+    public private(set) var text: String?
     public private(set) var axRead: AXRead = .notAttempted
     public private(set) var path: Path = .unknown
     public private(set) var preflightAXEnable: AXEnable?
@@ -72,6 +72,14 @@ public struct SelectionCaptureResult: Equatable {
         var result = self
         result.axRead = axRead
         result.path = path
+        return result
+    }
+
+    public func usingAXText(_ text: String) -> Self {
+        var result = self
+        result.outcome = .completed
+        result.text = text
+        result.path = .ax
         return result
     }
 
@@ -1317,6 +1325,9 @@ public final class VoiceState {
                                           "format": fromClipboard ? "plain" : "markdown",
                                           "source": fromClipboard ? "clipboard" : "selection",
                                           "text_hash": Self.selectionHash(text)]
+            if !fromClipboard, result.path == .ax || result.path == .copy {
+                command["capture_path"] = result.path.rawValue
+            }
             // The existing queue route also owns the first explicit clipboard read, without claiming AX selection.
             if replacing || fromClipboard { command["queue"] = true }
             sendCommand?(command)

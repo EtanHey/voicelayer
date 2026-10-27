@@ -1,4 +1,4 @@
-import { expect, test, spyOn, setSystemTime } from "bun:test";
+import { beforeAll, describe, expect, test, spyOn, setSystemTime } from "bun:test";
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
 import { speechOpenIndex, speechPendingIndex, beginSpeechReceipt } from "../speech-open-index";
@@ -75,32 +75,38 @@ test("capture Cancel preserves a queue-owned preparing archive", async () => {
   expect(disk(queued.context.path).speech.state).toBe("completed");
 });
 
-test("startup recovery stays off the event loop with 10k terminal records", async () => {
-  const original = process.env.QA_VOICE_RECORDINGS_DIR!;
+describe("10k terminal archive recovery", () => {
   const root = join(process.env.VOICELAYER_TEST_RUN_ROOT!, "ten-thousand-terminal");
-  mkdirSync(root, { mode: 0o700 });
-  process.env.QA_VOICE_RECORDINGS_DIR = root;
-  try {
-    const day = join(root, "2026-10-26"); mkdirSync(day, { mode: 0o700 });
+  const day = join(root, "2026-10-26");
+  beforeAll(() => {
+    mkdirSync(root, { mode: 0o700 });
+    mkdirSync(day, { mode: 0o700 });
     for (let n = 0; n < 10000; n++) {
       const dir = join(day, `2026-10-26T00-00-00-000Z-${n.toString(16).padStart(8, "0")}`);
       mkdirSync(dir, { mode: 0o700 });
       writeFileSync(join(dir, "metadata.json"), '{"source":"speak","status":"completed"}', { mode: 0o600 });
     }
-    const errors = spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  test("startup recovery stays off the event loop with 10k terminal records", async () => {
+    const original = process.env.QA_VOICE_RECORDINGS_DIR!;
+    process.env.QA_VOICE_RECORDINGS_DIR = root;
     try {
-      // Startup only schedules a worker; terminal count cannot add synchronous I/O.
-      const start = performance.now();
-      const recovered = recoverSpeechArchives();
-      expect(performance.now() - start).toBeLessThan(100);
-      let heartbeat = false;
-      await new Promise<void>(resolve => setTimeout(() => { heartbeat = true; resolve(); }, 0));
-      expect(heartbeat).toBe(true);
-      await recovered;
-      expect(errors).not.toHaveBeenCalled();
-      expect(readFileSync(join(day, "2026-10-26T00-00-00-000Z-00000000", "metadata.json"), "utf8")).toBe('{"source":"speak","status":"completed"}');
-    } finally { errors.mockRestore(); }
-  } finally { process.env.QA_VOICE_RECORDINGS_DIR = original; }
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        // Startup only schedules a worker; terminal count cannot add synchronous I/O.
+        const start = performance.now();
+        const recovered = recoverSpeechArchives();
+        expect(performance.now() - start).toBeLessThan(100);
+        let heartbeat = false;
+        await new Promise<void>(resolve => setTimeout(() => { heartbeat = true; resolve(); }, 0));
+        expect(heartbeat).toBe(true);
+        await recovered;
+        expect(errors).not.toHaveBeenCalled();
+        expect(readFileSync(join(day, "2026-10-26T00-00-00-000Z-00000000", "metadata.json"), "utf8")).toBe('{"source":"speak","status":"completed"}');
+      } finally { errors.mockRestore(); }
+    } finally { process.env.QA_VOICE_RECORDINGS_DIR = original; }
+  });
 });
 
 test("recovery skips another live writer and recovers indexed missing metadata", async () => {
