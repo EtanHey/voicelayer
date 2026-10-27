@@ -2,11 +2,14 @@ import { describe, expect, it, spyOn } from "bun:test";
 import * as binaries from "../resolve-binary";
 import type { WordBoundary } from "../socket-protocol";
 import { projectSpeakableText } from "../speakable-text";
-import { PAUSE, planProsody, type ProsodySegment } from "../tts/prosody";
+import { PROSODY_POLICY, planProsody, type ProsodySegment } from "../tts/prosody";
 import { createProsodyRead, decodeAudioToPCM, encodePCMToMp3, isStructuredPlan, PROSODY_SAMPLE_RATE, sliceProjection, type ProsodyReadEngine } from "../tts/prosody-read";
 import { projectStructuredSpeech } from "../tts/structured-speech";
+import { ttsFilePath } from "../paths";
+import { unlinkSync } from "node:fs";
 
 const RATE = PROSODY_SAMPLE_RATE;
+const PAUSE = PROSODY_POLICY.pauses;
 const plan = (text: string) => planProsody({ readText: text, projection: projectSpeakableText(text, [], "edge") });
 
 /** Engine fake: each segment is 100 ms silence, one 300 ms tone per word, 200 ms silence. Files are names in a map. */
@@ -114,6 +117,33 @@ describe("createProsodyRead", () => {
     const p = planProsody({ readText: structure.speechText, projection: projectSpeakableText(structure.speechText, [], "edge"), structure });
     expect(isStructuredPlan(p)).toBe(true);
     expect(p.chunks[0].text).toBe("Choose");
+  });
+  it("S1 clone word coordinates and structural gaps survive final MP3 encoding", async () => {
+    const text = "## Choose\n1. Red apple\n2. Green pear";
+    const p = planProsody({ readText: text, projection: projectSpeakableText(text, [], "clone"), listNumbers: "inline" });
+    const { engine } = fakeEngine();
+    const files: string[] = [];
+    engine.encode = async (pcm, signal) => {
+      const file = ttsFilePath(process.pid, 900000 + files.length); files.push(file);
+      await encodePCMToMp3(pcm, file, signal); return file;
+    };
+    const signal = new AbortController().signal;
+    const read = createProsodyRead(p, engine, signal);
+    try {
+      const first = await read.chunk(0); read.firstAudioStarted(first.audioFile);
+      const second = await read.chunk(1);
+      const tailMs = first.durationMs - first.words.at(-1)!.offset_ms - first.words.at(-1)!.duration_ms;
+      expect(tailMs + second.words[0].offset_ms).toBeGreaterThanOrEqual(PAUSE.h2);
+      const endOfItem = second.words[2].offset_ms + second.words[2].duration_ms;
+      expect(second.words[3].offset_ms - endOfItem).toBeGreaterThanOrEqual(PAUSE.shortItem);
+      const decoded = await decodeAudioToPCM(second.audioFile, signal);
+      expect(decoded.length / 24).toBeCloseTo(second.durationMs, 0);
+      for (const [from, to] of [[0, second.words[0].offset_ms - 30], [endOfItem + 30, second.words[3].offset_ms - 30]]) {
+        const gap = decoded.slice(Math.ceil(from * 24), Math.floor(to * 24));
+        expect(gap.length).toBeGreaterThan(0);
+        expect(gap.every(sample => Math.abs(sample) < 0.005)).toBe(true);
+      }
+    } finally { await read.close(); for (const file of files) unlinkSync(file); }
   });
 });
 

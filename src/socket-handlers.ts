@@ -143,7 +143,7 @@ function startSelectionRead(read: QueuedSelectionRead, prepared?: PreparedReadSt
 /** QPRE1: the queue head's first chunk is prepared once the playing read's synthesis is complete. */
 const selectionReadPreparation = {
   prepare: (read: QueuedSelectionRead, signal: AbortSignal, owner: string) =>
-    prepareSelectionReadStart(read.text, read.profile, owner, signal, read.archiveContext),
+    prepareSelectionReadStart(read.text, read.profile, owner, signal, read.archiveContext, read.structuredDisplay),
 };
 const newSelectionReadQueue = () => new SelectionReadQueue<PreparedReadStart>(startSelectionRead,
   (state) => broadcast({ type: "read_queue", ...state }), SELECTION_READ_QUEUE_LIMIT, selectionReadPreparation);

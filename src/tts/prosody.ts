@@ -1,12 +1,16 @@
 import type { SpeakableText } from "../speakable-text";
+import { createHash } from "node:crypto";
 import { projectStructuredSpeech, type ProjectionRange, type StructuredSpeech, type TextRange } from "./structured-speech";
 
 /** Total silence (ms) from the last word of one utterance to the first of the next. */
-export const PAUSE = { heading: 800, h1: 900, h2: 750, beforeHeading: 600,
-  label: 320, listIntro: 600, shortItem: 450, longItem: 700,
-  sentence: 550, paragraph: 1000, beforeAside: 200, afterAside: 300, askQuestion: 600,
-  /** After a spoken list number: short (1–5 word) and long items. */
-  number: 250, longNumber: 280 };
+export const PROSODY_POLICY = Object.freeze({
+  version: "vl-structural-pauses-v1",
+  cloneEmphasis: "none",
+  pauses: Object.freeze({ heading: 800, h1: 900, h2: 750, beforeHeading: 600,
+    label: 320, listIntro: 600, shortItem: 450, longItem: 700,
+    sentence: 550, paragraph: 1000, beforeAside: 200, afterAside: 300, askQuestion: 600,
+    number: 250, longNumber: 280 }),
+});
 /** Same limit as the long-read chunker (TTS_CHUNK_MAX_CHARS); one owner of request size. */
 export const PROSODY_MAX_CHARS = 400;
 /** Engine requests in flight at once for one read. */
@@ -43,6 +47,7 @@ export interface ProsodyChunk {
   trailingPauseMs: number;
 }
 export interface ProsodyPlan {
+  renderIdentity: string;
   readText: string;
   /** Engine texts joined by single spaces: what the synthesizer and the clone aligner receive. */
   speechText: string;
@@ -50,6 +55,7 @@ export interface ProsodyPlan {
   chunks: ProsodyChunk[];
 }
 export interface ProsodyInput {
+  policy?: { version: string; cloneEmphasis: "none"; pauses: { [K in keyof typeof PROSODY_POLICY.pauses]: number } };
   /** The text the read is about: sanitized markdown (speak), or flattened structured speech (selection). */
   readText: string;
   /** Main's projection of `readText`, computed once by the caller; never redone per fragment. */
@@ -91,6 +97,8 @@ interface Unit { at: number; kind: ProsodySegmentKind; emphasis: boolean; pauseM
 /** Plan structural utterances over an already-projected read. Pure. */
 export function planProsody(input: ProsodyInput): ProsodyPlan {
   const { readText, projection } = input;
+  const policy = input.policy ?? PROSODY_POLICY;
+  const PAUSE = policy.pauses;
   if (projection.displayText !== readText) throw new Error("Prosody projection must be of the read text");
   const maxChars = input.maxChars ?? PROSODY_MAX_CHARS;
   const structured = input.structure?.speechText === readText ? input.structure : undefined;
@@ -336,7 +344,10 @@ export function planProsody(input: ProsodyInput): ProsodyPlan {
     delete (segment as { item?: boolean }).item;
   }
   if (segments.length) segments.at(-1)!.pauseMs = 0;
-  return { readText, speechText: segments.map((s) => s.text).join(" "), segments, chunks: planChunks(readText, segments, maxChars, input.concurrency ?? PROSODY_SYNTH_CONCURRENCY) };
+  const chunks = planChunks(readText, segments, maxChars, input.concurrency ?? PROSODY_SYNTH_CONCURRENCY);
+  let renderIdentity: string | undefined;
+  return { readText, speechText: segments.map((s) => s.text).join(" "), segments, chunks,
+    get renderIdentity() { return renderIdentity ??= createHash("sha256").update(JSON.stringify([policy, projection, segments, chunks])).digest("hex"); } };
 }
 
 /** Chunk 0 is the first utterance alone, so first audio waits for one short request. Chunk 1 fits

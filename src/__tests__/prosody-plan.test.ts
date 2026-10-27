@@ -1,9 +1,25 @@
 import { describe, expect, it } from "bun:test";
 import { projectSpeakableText } from "../speakable-text";
 import { chunkTextForTTS, TTS_CHUNK_MAX_CHARS } from "../tts";
-import { PAUSE, PROSODY_MAX_CHARS, planProsody, type ProsodyPlan } from "../tts/prosody";
+import { PROSODY_POLICY, PROSODY_MAX_CHARS, planProsody, type ProsodyPlan } from "../tts/prosody";
 import type { SpeakableText } from "../speakable-text";
 import { projectStructuredSpeech } from "../tts/structured-speech";
+import * as policies from "../tts/prosody";
+const PAUSE = PROSODY_POLICY.pauses;
+
+it("S1 render and timing identity include the versioned pause policy and planned silences", () => {
+  const readText = "## Heading\n1. First item\n2. Second item";
+  const input = { readText, projection: projectSpeakableText(readText, [], "clone"), listNumbers: "inline" as const };
+  const initial = planProsody(input);
+  const versioned = planProsody({ ...input, policy: { ...policies.PROSODY_POLICY, version: "next" } });
+  const changed = planProsody({ ...input, policy: { ...policies.PROSODY_POLICY,
+    pauses: { ...policies.PROSODY_POLICY.pauses, shortItem: 500 } } });
+  expect(initial.renderIdentity).toBeTruthy();
+  expect(planProsody(input).renderIdentity).toBe(initial.renderIdentity);
+  expect(versioned.renderIdentity).not.toBe(initial.renderIdentity);
+  expect(changed.renderIdentity).not.toBe(initial.renderIdentity);
+  expect(initial.segments.map(s => s.text)).toEqual(versioned.segments.map(s => s.text));
+});
 
 /** voice_speak path: the read text is the sanitized markdown itself. */
 function speakPlan(readText: string, options: { ask?: boolean; engine?: "edge" | "clone" } = {}): ProsodyPlan {

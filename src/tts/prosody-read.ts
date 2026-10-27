@@ -3,7 +3,7 @@ import type { SpeakableText } from "../speakable-text";
 import type { ProjectionRange, TextRange } from "./structured-speech";
 import { resolveBinaryAsync } from "../resolve-binary";
 import type { WordBoundary } from "../socket-protocol";
-import { mapper, PAUSE, type ProsodyPlan, type ProsodySegment } from "./prosody";
+import { mapper, PROSODY_POLICY, type ProsodyPlan, type ProsodySegment } from "./prosody";
 import { measurePCMExtent, splicePCM } from "./prosody-pcm";
 import { createSegmentScheduler } from "./prosody-schedule";
 
@@ -22,7 +22,7 @@ export interface ProsodyReadChunk { audioFile: string; durationMs: number; words
 
 /** Prosody engages only for structure; plain prose (any length) keeps the existing chunker byte-for-byte. */
 export function isStructuredPlan(plan: ProsodyPlan): boolean {
-  return plan.segments.some((s) => s.kind !== "prose" || s.pauseMs > PAUSE.sentence);
+  return plan.segments.some((s) => s.kind !== "prose" || s.pauseMs > PROSODY_POLICY.pauses.sentence);
 }
 
 /** The whole read's projection restricted to one chunk (trimmed read span), in chunk-local offsets.
@@ -69,14 +69,14 @@ type Synthesized =
  * leading pad. Every later chunk splices its utterances with exact planned silence into one MP3.
  * Requests run at most 3 at once. The tail decode is owned: abort cancels it, and `close()` and
  * `settleTail()` wait for it to settle. */
-export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, signal: AbortSignal) {
+export function createProsodyRead(plan: ProsodyPlan, engine: ProsodyReadEngine, signal: AbortSignal, concurrency?: number) {
   const firstEnd = plan.chunks[0]?.end ?? 0;
   const scheduler = createSegmentScheduler<Synthesized>(plan, async (segment, index, signal) => {
     const result = await engine.synthesize(segment, signal);
     if (index < firstEnd) return { raw: true, ...result };
     try { return { raw: false, pcm: await engine.decode(result.audioFile, signal), words: result.words }; }
     finally { engine.unlink(result.audioFile); }
-  }, { signal, dispose: (result) => { if (result.raw) engine.unlink(result.audioFile); } });
+  }, { signal, concurrency, dispose: (result) => { if (result.raw) engine.unlink(result.audioFile); } });
   let previousTailMs: Promise<number> = Promise.resolve(0);
   // Chunk 0's tail: decoded only after its player started; resolves 0 if it never starts or on abort.
   const tailAbort = new AbortController();
