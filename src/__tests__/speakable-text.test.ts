@@ -73,6 +73,11 @@ for (const engine of ["edge", "clone"] as const) {
     ['Etan said "[ ] x" here', engine === "clone" ? "Etan said x here" : 'Etan said " x" here'],
     ["Before [ ] unchecked [x] checked [X] checked after", "Before unchecked checked checked after"],
     ["[ ]\n[x]\t[X]", ""],
+    ["Done [x]. Next", "Done . Next"],
+    ["Ready [X]!", "Ready !"],
+    ["Pending [ ];", "Pending ;"],
+    ["Done [x])", "Done )"],
+    ["- [x];", ";."],
     ['Task lists: "1. [ ] x" is no longer spoken "one. an empty list x".', engine === "clone"
       ? "Task lists: 1. x is no longer spoken one. an empty list x."
       : 'Task lists: "1. x" is no longer spoken "one. an empty list x".'],
@@ -90,6 +95,11 @@ for (const engine of ["edge", "clone"] as const) {
   for (const [display, clone, edge] of [
     ["`[ ]`", "an empty list", "[ ]"],
     ["const a = []", "const a equals an empty list", "const a equals []"],
+    ["const a = [ ];", "const a equals an empty list;", "const a equals [ ];"],
+    ["x = [x], y", "x equals open bracket x close bracket , y", "x equals [x], y"],
+    ["return [ ];", "return an empty list;", "return [ ];"],
+    ["arr[x];", "arr open bracket x close bracket ;", "arr[x];"],
+    ["x + [x];", "x + open bracket x close bracket ;", "x + [x];"],
     ["foo[] arr[ ]", "foo an empty list arr an empty list", "foo[] arr[ ]"],
     ["arr[x] arr[X]", "arr open bracket x close bracket arr open bracket X close bracket", "arr[x] arr[X]"],
     ["[x](https://example.com)", "x", "x"],

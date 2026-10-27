@@ -226,7 +226,11 @@ export function projectSpeakableText(displayText: string, rules: readonly Pronun
     return atStart || /^\.?$/.test(after) ? "" : ", ";
   });
   edit(/^[ \t]*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?[ \t]*(?:\r?\n|$)/gm, "");
-  edit(/(?<![^\s"'“‘])\[[ xX]\](?=$|[\s"'”’.,;:!?)])/g, "");
+  edit(/(?<![^\s"'“‘])\[[ xX]\](?=$|[\s"'”’.,;:!?)])/g, m => {
+    const prefix = m.input.slice(m.input.lastIndexOf("\n", m.index - 1) + 1, m.index);
+    if (/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+$/.test(prefix)) return "";
+    return /(?:[=(:,+\-*/%<>!&|^~?]|\b(?:return|yield|throw))[ \t]*$/.test(prefix) ? undefined : "";
+  });
   edit(/^([ \t]*(?:[-+*]|\d+[.)])[ \t]+)([^\r\n]+)/gm, m => m[1] + m[2] + (/[.!?]$/.test(m[2].trimEnd()) ? "" : "."));
   edit(/(?<=^[ \t]*\d+[.)][ \t]+)\[[ xX]\](?!\()[ \t]*/gm, "");
   // Keep the marker's own source span: alignment maps the spoken number back to it.
